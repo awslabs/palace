@@ -113,6 +113,12 @@ public:
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
 
+  // Add the exact boundary coefficients used by the standard-space voltage
+  // and modal-overlap linear forms. Singular postprocessing uses these same
+  // coefficients with its enriched trace quadrature.
+  void AddSParameterBdrCoefficients(SumVectorCoefficient &fb) const;
+  void AddVoltageBdrCoefficients(SumVectorCoefficient &fb) const;
+
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
@@ -159,6 +165,13 @@ public:
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+
+  // Scalar boundary coefficients indexed by original mesh attribute. These
+  // match the three Add*BdrCoefficients methods and are used by the singular
+  // trace assembly, which cannot consume a standard-space libCEED coefficient.
+  std::map<int, double> GetStiffnessBdrCoefficientMap(double coeff = 1.0) const;
+  std::map<int, double> GetDampingBdrCoefficientMap(double coeff = 1.0) const;
+  std::map<int, double> GetMassBdrCoefficientMap(double coeff = 1.0) const;
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for

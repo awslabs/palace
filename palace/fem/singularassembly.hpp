@@ -5,6 +5,7 @@
 #define PALACE_FEM_SINGULARASSEMBLY_HPP
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -286,6 +287,29 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
     const std::vector<IsotropicMaterialCoefficients> &materials,
     const AdaptiveAssemblyOptions &options);
 
+// Assemble the singular portions of a tangential H(curl) boundary mass
+// operator
+//
+//   integral_Gamma coefficient (n x u) dot (n x v) dS.
+//
+// Coefficients are indexed by the original positive mesh boundary attribute.
+// The standard-standard block remains assembled by Palace's ordinary boundary
+// integrator; these routines return only the standard-enrichment and
+// enrichment-enrichment blocks needed to complete the combined space.
+//
+// Boundary quadrature is feature aligned and rejects a selected boundary
+// segment or face containing a nonintegrable singular edge. Curved boundary
+// and volume transformations are evaluated pointwise.
+LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
+    const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const std::map<int, double> &boundary_coefficients,
+    const AdaptiveAssemblyOptions &options);
+
+LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const std::map<int, double> &boundary_coefficients,
+    const AdaptiveAssemblyOptions &options);
+
 // Form true-DOF parallel blocks as P_test^T A_local P_trial. The custom
 // enrichment prolongations are built from the canonical parallel numbering;
 // the standard prolongations come from MFEM. Error bounds use entrywise
@@ -301,6 +325,32 @@ ParallelSparseOperatorBlocks
 AssembleParallelSparseH1EnrichmentMatrices(const LocalSparseH1EnrichmentMatrices &local,
                                            const ParallelDofNumbering &parallel_numbering,
                                            const mfem::ParFiniteElementSpace &h1_fespace);
+
+ParallelSparseOperatorBlocks
+AssembleParallelSparseNDBoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
+                                             const ParallelDofNumbering &parallel_numbering,
+                                             const mfem::ParFiniteElementSpace &nd_fespace);
+
+// Assemble the enrichment entries of
+//
+//   integral_Gamma coefficient dot v dS
+//
+// into the process-local owned enrichment true-DOF vector. The coefficient
+// itself is responsible for restricting its support to the desired boundary
+// attributes. Standard entries continue to use MFEM's boundary linear form.
+void AssembleParallelNDBoundaryLinearForm(const DofTopology &topology,
+                                          const ParallelDofNumbering &parallel_numbering,
+                                          mfem::ParFiniteElementSpace &nd_fespace,
+                                          mfem::VectorCoefficient &coefficient,
+                                          const AdaptiveAssemblyOptions &options,
+                                          mfem::Vector &enrichment_true_dofs);
+
+void AssembleParallelNDBoundaryLinearForm(const TriangleDofTopology &topology,
+                                          const ParallelDofNumbering &parallel_numbering,
+                                          mfem::ParFiniteElementSpace &nd_fespace,
+                                          mfem::VectorCoefficient &coefficient,
+                                          const AdaptiveAssemblyOptions &options,
+                                          mfem::Vector &enrichment_true_dofs);
 
 // Construct the exact true-DOF map from enriched scalar potentials to their
 // matching enriched ND gradient functions. Every H1 column has one coefficient

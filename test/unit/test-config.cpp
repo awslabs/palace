@@ -1828,7 +1828,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     auto config = MakeConfig();
     config["Problem"]["Type"] = "Driven";
     config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
-    CHECK_THROWS(IoData(config, false));
+    CHECK_NOTHROW(IoData(config, false));
 
     config["Boundaries"]["SurfaceCurrent"] = {
         {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
@@ -1840,6 +1840,37 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Problem"]["Type"] = "Eigenmode";
     config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 1}, {"Target", 1.0}};
     CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Lumped-port full-wave support")
+  {
+    auto config = MakeConfig();
+    config["Problem"]["Type"] = "Driven";
+    config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
+                                           {"Attributes", {2}},
+                                           {"Direction", "+X"},
+                                           {"R", 50.0},
+                                           {"Excitation", true}}};
+    config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+
+    config = MakeConfig();
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
+                                           {"Attributes", {2}},
+                                           {"Direction", "+X"},
+                                           {"L", 1.0e-9},
+                                           {"C", 1.0e-12}}};
+    config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Boundaries"]["LumpedPort"][0].erase("L");
+    config["Boundaries"]["LumpedPort"][0].erase("C");
+    config["Boundaries"]["LumpedPort"][0]["R"] = 50.0;
+    CHECK_THROWS(IoData(config, false));
+
+    config["Boundaries"]["LumpedPort"][0]["Active"] = false;
+    CHECK_NOTHROW(IoData(config, false));
   }
 }
 

@@ -184,21 +184,7 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
   if (!s)
   {
     SumVectorCoefficient fb(mesh.SpaceDimension());
-    for (const auto &elem : elems)
-    {
-      // Reference the S-parameter projection to the same real resistance used to normalize
-      // the incident drive (R for a resistive port; the unit reference for a purely
-      // reactive R == 0 port, so this does not divide by zero). The reactance is already
-      // present in the system matrix, so the projected field is the physical response; a
-      // purely reactive port's own S is not a meaningful traveling-wave quantity
-      // regardless.
-      const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
-      const double Hinc = (std::abs(Rs) > 0.0)
-                              ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                                elem->GetGeometryLength() * elems.size())
-                              : 0.0;
-      fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
-    }
+    AddSParameterBdrCoefficients(fb);
     s = std::make_unique<mfem::LinearForm>(&nd_fespace);
     s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
     s->UseFastAssembly(false);
@@ -217,17 +203,38 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
   if (!v)
   {
     SumVectorCoefficient fb(mesh.SpaceDimension());
-    for (const auto &elem : elems)
-    {
-      fb.AddCoefficient(
-          elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())));
-    }
+    AddVoltageBdrCoefficients(fb);
     v = std::make_unique<mfem::LinearForm>(&nd_fespace);
     v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
     v->UseFastAssembly(false);
     v->UseDevice(false);
     v->Assemble();
     v->UseDevice(true);
+  }
+}
+
+void LumpedPortData::AddSParameterBdrCoefficients(SumVectorCoefficient &fb) const
+{
+  for (const auto &elem : elems)
+  {
+    // Use the same real reference resistance as the incident drive. The port reactance
+    // remains in the system matrix; for a purely reactive port, the unit reference only
+    // supplies a finite normalization for this modal-overlap functional.
+    const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
+    const double Hinc = (std::abs(Rs) > 0.0)
+                            ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                              elem->GetGeometryLength() * elems.size())
+                            : 0.0;
+    fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+  }
+}
+
+void LumpedPortData::AddVoltageBdrCoefficients(SumVectorCoefficient &fb) const
+{
+  for (const auto &elem : elems)
+  {
+    fb.AddCoefficient(
+        elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())));
   }
 }
 
@@ -623,6 +630,69 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
       }
     }
   }
+}
+
+std::map<int, double> LumpedPortOperator::GetStiffnessBdrCoefficientMap(double coeff) const
+{
+  std::map<int, double> coefficients;
+  for (const auto &[idx, data] : ports)
+  {
+    if (!data.active || std::abs(data.L) == 0.0)
+    {
+      continue;
+    }
+    for (const auto &elem : data.elems)
+    {
+      const double Ls = data.L * data.GetToSquare(*elem);
+      for (int attribute : elem->GetAttrList())
+      {
+        coefficients[attribute] += coeff / Ls;
+      }
+    }
+  }
+  return coefficients;
+}
+
+std::map<int, double> LumpedPortOperator::GetDampingBdrCoefficientMap(double coeff) const
+{
+  std::map<int, double> coefficients;
+  for (const auto &[idx, data] : ports)
+  {
+    if (!data.active || std::abs(data.R) == 0.0)
+    {
+      continue;
+    }
+    for (const auto &elem : data.elems)
+    {
+      const double Rs = data.R * data.GetToSquare(*elem);
+      for (int attribute : elem->GetAttrList())
+      {
+        coefficients[attribute] += coeff / Rs;
+      }
+    }
+  }
+  return coefficients;
+}
+
+std::map<int, double> LumpedPortOperator::GetMassBdrCoefficientMap(double coeff) const
+{
+  std::map<int, double> coefficients;
+  for (const auto &[idx, data] : ports)
+  {
+    if (!data.active || std::abs(data.C) == 0.0)
+    {
+      continue;
+    }
+    for (const auto &elem : data.elems)
+    {
+      const double Cs = data.C / data.GetToSquare(*elem);
+      for (int attribute : elem->GetAttrList())
+      {
+        coefficients[attribute] += coeff * Cs;
+      }
+    }
+  }
+  return coefficients;
 }
 
 void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,

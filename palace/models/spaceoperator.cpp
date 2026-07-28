@@ -182,6 +182,7 @@ void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver)
   const fem::singular::AdaptiveAssemblyOptions options{
       solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
       solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions};
+  singular_assembly_options = options;
   const auto local = tetrahedral ? fem::singular::AssembleLocalSparseEnrichmentMatrices(
                                        *singular_dofs, GetH1Space().Get(),
                                        GetNDSpace().Get(), materials, options)
@@ -202,6 +203,29 @@ void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver)
     singular_domain_imag_matrices = fem::singular::AssembleParallelSparseEnrichmentMatrices(
         local_imaginary, *singular_numbering, GetH1Space().Get(), GetNDSpace().Get());
   }
+
+  const auto assemble_lumped_boundary = [&](const std::map<int, double> &coefficients)
+  {
+    fem::singular::ParallelSparseOperatorBlocks result;
+    if (coefficients.empty())
+    {
+      return result;
+    }
+    const auto local_boundary =
+        tetrahedral
+            ? fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+                  *singular_dofs, GetNDSpace().Get(), coefficients, options)
+            : fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+                  *triangle_singular_dofs, GetNDSpace().Get(), coefficients, options);
+    return fem::singular::AssembleParallelSparseNDBoundaryMassMatrices(
+        local_boundary, *singular_numbering, GetNDSpace().Get());
+  };
+  singular_lumped_stiffness_matrices =
+      assemble_lumped_boundary(lumped_port_op.GetStiffnessBdrCoefficientMap());
+  singular_lumped_damping_matrices =
+      assemble_lumped_boundary(lumped_port_op.GetDampingBdrCoefficientMap());
+  singular_lumped_mass_matrices =
+      assemble_lumped_boundary(lumped_port_op.GetMassBdrCoefficientMap());
 
   auto enrichment_gradient =
       fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
@@ -274,9 +298,10 @@ void SpaceOperator::CheckSingularExcitations(ProblemType problem_type) const
               "load vectors!");
 
   const auto source_attributes = surf_j_op.GetAttrList();
-  MFEM_VERIFY(source_attributes.Size() > 0,
-              "Driven singular elements currently require at least one surface-current "
-              "source!");
+  if (source_attributes.Size() == 0)
+  {
+    return;
+  }
   const int maximum_attribute =
       GetMesh().Get().bdr_attributes.Size() ? GetMesh().Get().bdr_attributes.Max() : 0;
   const auto source_marker = mesh::AttrToMarker(maximum_attribute, source_attributes);
@@ -571,6 +596,34 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
+fem::singular::ParallelSparseOperatorBlocks
+AddSingularOperatorBlocks(const fem::singular::ParallelSparseOperatorBlocks &domain,
+                          const fem::singular::ParallelSparseOperatorBlocks &boundary)
+{
+  MFEM_VERIFY(domain.standard_enrichment && domain.enrichment_standard &&
+                  domain.enrichment_enrichment,
+              "Cannot combine incomplete singular domain operator blocks!");
+  const bool has_boundary = boundary.standard_enrichment != nullptr;
+  MFEM_VERIFY(!has_boundary ||
+                  (boundary.enrichment_standard && boundary.enrichment_enrichment),
+              "Cannot combine incomplete singular boundary operator blocks!");
+  const auto add = [has_boundary](const mfem::HypreParMatrix &a,
+                                  const std::unique_ptr<mfem::HypreParMatrix> &b)
+  {
+    return has_boundary ? std::unique_ptr<mfem::HypreParMatrix>(mfem::Add(1.0, a, 1.0, *b))
+                        : std::make_unique<mfem::HypreParMatrix>(a);
+  };
+
+  fem::singular::ParallelSparseOperatorBlocks result;
+  result.standard_enrichment =
+      add(*domain.standard_enrichment, boundary.standard_enrichment);
+  result.enrichment_standard =
+      add(*domain.enrichment_standard, boundary.enrichment_standard);
+  result.enrichment_enrichment =
+      add(*domain.enrichment_enrichment, boundary.enrichment_enrichment);
+  return result;
+}
+
 }  // namespace
 
 template <typename OperType>
@@ -610,8 +663,9 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
                            "curl-curl operator without Floquet terms!");
     auto standard =
         ParOperator(std::move(kr), GetNDSpace()).StealParallelAssemble(skip_zeros);
-    auto combined = fem::singular::BuildParallelEnrichedOperator(
-        *standard, singular_domain_matrices.nd_curl_curl);
+    const auto enrichment = AddSingularOperatorBlocks(singular_domain_matrices.nd_curl_curl,
+                                                      singular_lumped_stiffness_matrices);
+    auto combined = fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
     combined->EliminateBC(combined_nd_dbc_tdof_list, diag_policy);
     if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
@@ -660,6 +714,24 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   }
   constexpr bool skip_zeros = false;
   auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, skip_zeros);
+  if (HasSingularEnrichment())
+  {
+    MFEM_VERIFY(c && !mat_op.HasConductivity() && !mat_op.HasFloquetFrequencyScaling(),
+                "Full-wave singular damping assembly supports only lumped resistance!");
+    auto standard =
+        ParOperator(std::move(c), GetNDSpace()).StealParallelAssemble(skip_zeros);
+    auto combined = fem::singular::BuildParallelEnrichedOperator(
+        *standard, singular_lumped_damping_matrices);
+    combined->EliminateBC(combined_nd_dbc_tdof_list, diag_policy);
+    if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    {
+      return std::make_unique<ComplexWrapperOperator>(std::move(combined), nullptr);
+    }
+    else
+    {
+      return combined;
+    }
+  }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -712,8 +784,10 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
                     "domain permittivity operator!");
     auto standard_real =
         ParOperator(std::move(mr), GetNDSpace()).StealParallelAssemble(skip_zeros);
-    auto combined_real = fem::singular::BuildParallelEnrichedOperator(
-        *standard_real, singular_domain_matrices.nd_mass);
+    const auto real_enrichment = AddSingularOperatorBlocks(singular_domain_matrices.nd_mass,
+                                                           singular_lumped_mass_matrices);
+    auto combined_real =
+        fem::singular::BuildParallelEnrichedOperator(*standard_real, real_enrichment);
     combined_real->EliminateBC(combined_nd_dbc_tdof_list, diag_policy);
     if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
@@ -750,6 +824,27 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
     M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M;
   }
+}
+
+std::unique_ptr<Operator>
+SpaceOperator::GetBulkMassMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  MFEM_VERIFY(HasSingularEnrichment(),
+              "The combined bulk mass matrix requires singular enrichment!");
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fr(mat_op.MaxCeedAttribute());
+  AddRealMassCoefficients(1.0, fr);
+  constexpr bool skip_zeros = false;
+  auto mr =
+      AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, nullptr, nullptr, skip_zeros);
+  MFEM_VERIFY(mr, "Full-wave singular divergence projection requires a positive real "
+                  "bulk permittivity operator!");
+  auto standard =
+      ParOperator(std::move(mr), GetNDSpace()).StealParallelAssemble(skip_zeros);
+  auto combined = fem::singular::BuildParallelEnrichedOperator(
+      *standard, singular_domain_matrices.nd_mass);
+  combined->EliminateBC(combined_nd_dbc_tdof_list, diag_policy);
+  return combined;
 }
 
 template <typename OperType>
@@ -1687,8 +1782,16 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
   Vector standard_rhs(GetNDSpace().GetTrueVSize());
   standard_rhs.UseDevice(true);
   standard_rhs = 0.0;
-  bool nnz = AddExcitationVector1Internal(excitation_idx, standard_rhs);
-  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
+  Vector singular_rhs;
+  Vector *singular_rhs_ptr = nullptr;
+  if (HasSingularEnrichment())
+  {
+    singular_rhs.SetSize(static_cast<int>(singular_numbering->nd.owned_size));
+    singular_rhs.UseDevice(true);
+    singular_rhs = 0.0;
+    singular_rhs_ptr = &singular_rhs;
+  }
+  bool nnz = AddExcitationVector1Internal(excitation_idx, standard_rhs, singular_rhs_ptr);
 
   RHS.SetSize(GetNDTrueVSize());
   RHS.UseDevice(true);
@@ -1697,6 +1800,11 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
   {
     RHS[i] = standard_rhs[i];
   }
+  for (int i = 0; i < singular_rhs.Size(); i++)
+  {
+    RHS[standard_rhs.Size() + i] = singular_rhs[i];
+  }
+  linalg::SetSubVector(RHS, combined_nd_dbc_tdof_list, 0.0);
   return nnz;
 }
 
@@ -1707,10 +1815,19 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   ComplexVector standard_rhs(GetNDSpace().GetTrueVSize());
   standard_rhs.UseDevice(true);
   standard_rhs = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, standard_rhs.Real());
+  Vector singular_rhs;
+  Vector *singular_rhs_ptr = nullptr;
+  if (HasSingularEnrichment())
+  {
+    singular_rhs.SetSize(static_cast<int>(singular_numbering->nd.owned_size));
+    singular_rhs.UseDevice(true);
+    singular_rhs = 0.0;
+    singular_rhs_ptr = &singular_rhs;
+  }
+  bool nnz1 =
+      AddExcitationVector1Internal(excitation_idx, standard_rhs.Real(), singular_rhs_ptr);
   standard_rhs *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, standard_rhs);
-  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
 
   RHS.SetSize(GetNDTrueVSize());
   RHS.UseDevice(true);
@@ -1720,6 +1837,11 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
     RHS.Real()[i] = standard_rhs.Real()[i];
     RHS.Imag()[i] = standard_rhs.Imag()[i];
   }
+  for (int i = 0; i < singular_rhs.Size(); i++)
+  {
+    RHS.Imag()[standard_rhs.Size() + i] = omega * singular_rhs[i];
+  }
+  linalg::SetSubVector(RHS, combined_nd_dbc_tdof_list, 0.0);
   return nnz1 || nnz2;
 }
 
@@ -1821,8 +1943,16 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
   Vector standard_rhs(GetNDSpace().GetTrueVSize());
   standard_rhs.UseDevice(true);
   standard_rhs = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, standard_rhs);
-  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
+  Vector singular_rhs;
+  Vector *singular_rhs_ptr = nullptr;
+  if (HasSingularEnrichment())
+  {
+    singular_rhs.SetSize(static_cast<int>(singular_numbering->nd.owned_size));
+    singular_rhs.UseDevice(true);
+    singular_rhs = 0.0;
+    singular_rhs_ptr = &singular_rhs;
+  }
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, standard_rhs, singular_rhs_ptr);
 
   RHS1.SetSize(GetNDTrueVSize());
   RHS1.UseDevice(true);
@@ -1831,6 +1961,11 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
   {
     RHS1.Real()[i] = standard_rhs[i];
   }
+  for (int i = 0; i < singular_rhs.Size(); i++)
+  {
+    RHS1.Real()[standard_rhs.Size() + i] = singular_rhs[i];
+  }
+  linalg::SetSubVector(RHS1, combined_nd_dbc_tdof_list, 0.0);
   return nnz1;
 }
 
@@ -1841,7 +1976,6 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   standard_rhs.UseDevice(true);
   standard_rhs = 0.0;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, standard_rhs);
-  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
 
   RHS2.SetSize(GetNDTrueVSize());
   RHS2.UseDevice(true);
@@ -1851,20 +1985,28 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
     RHS2.Real()[i] = standard_rhs.Real()[i];
     RHS2.Imag()[i] = standard_rhs.Imag()[i];
   }
+  linalg::SetSubVector(RHS2, combined_nd_dbc_tdof_list, 0.0);
   return nnz2;
 }
 
-bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
+bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1,
+                                                 Vector *singular_RHS1)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
   // The g'(t) or iω factors are not accounted for here, they are accounted for in the time
   // integration or frequency sweep later.
   MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
+  MFEM_VERIFY(!singular_RHS1 || (HasSingularEnrichment() &&
+                                 singular_RHS1->Size() ==
+                                     static_cast<int>(singular_numbering->nd.owned_size)),
+              "Invalid singular T-vector size for AddExcitationVector1Internal!");
 
   // Boundary sources
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  SumVectorCoefficient singular_fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
+  lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, singular_fb);
   surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
 
   // Domain sources (current dipoles) - use integrator-based approach
@@ -1896,6 +2038,25 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   rhs1.Assemble();
   rhs1.UseDevice(true);
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
+  int singular_empty = singular_fb.empty();
+  Mpi::GlobalMin(1, &singular_empty, GetComm());
+  if (singular_RHS1 && !singular_empty)
+  {
+    if (singular_dofs)
+    {
+      fem::singular::AssembleParallelNDBoundaryLinearForm(
+          *singular_dofs, *singular_numbering, GetNDSpace().Get(), singular_fb,
+          singular_assembly_options, *singular_RHS1);
+    }
+    else
+    {
+      MFEM_VERIFY(triangle_singular_dofs,
+                  "Singular excitation assembly requires simplex ND topology!");
+      fem::singular::AssembleParallelNDBoundaryLinearForm(
+          *triangle_singular_dofs, *singular_numbering, GetNDSpace().Get(), singular_fb,
+          singular_assembly_options, *singular_RHS1);
+    }
+  }
   return true;
 }
 
@@ -1936,6 +2097,72 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
     GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Imag());
   }
   return true;
+}
+
+std::complex<double>
+SpaceOperator::GetSingularBoundaryFunctional(SumVectorCoefficient &coefficient,
+                                             const ComplexVector &field)
+{
+  MFEM_VERIFY(HasSingularEnrichment() && field.Size() == GetNDTrueVSize(),
+              "Singular boundary functional requires a combined ND true-DOF field!");
+
+  mfem::ParLinearForm standard_form(&GetNDSpace().Get());
+  standard_form.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coefficient));
+  standard_form.UseFastAssembly(false);
+  standard_form.UseDevice(false);
+  standard_form.Assemble();
+  standard_form.UseDevice(true);
+  Vector standard_true_dofs(GetNDSpace().GetTrueVSize());
+  standard_true_dofs.UseDevice(true);
+  standard_true_dofs = 0.0;
+  GetNDSpace().GetProlongationMatrix()->MultTranspose(standard_form, standard_true_dofs);
+
+  Vector enrichment_true_dofs;
+  if (singular_dofs)
+  {
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        *singular_dofs, *singular_numbering, GetNDSpace().Get(), coefficient,
+        singular_assembly_options, enrichment_true_dofs);
+  }
+  else
+  {
+    MFEM_VERIFY(triangle_singular_dofs,
+                "Singular boundary functional requires simplex ND topology!");
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        *triangle_singular_dofs, *singular_numbering, GetNDSpace().Get(), coefficient,
+        singular_assembly_options, enrichment_true_dofs);
+  }
+
+  std::complex<double> result = 0.0;
+  for (int i = 0; i < standard_true_dofs.Size(); i++)
+  {
+    result +=
+        standard_true_dofs[i] * std::complex<double>(field.Real()[i], field.Imag()[i]);
+  }
+  for (int i = 0; i < enrichment_true_dofs.Size(); i++)
+  {
+    const int combined_dof = standard_true_dofs.Size() + i;
+    result += enrichment_true_dofs[i] *
+              std::complex<double>(field.Real()[combined_dof], field.Imag()[combined_dof]);
+  }
+  Mpi::GlobalSum(1, &result, GetComm());
+  return result;
+}
+
+std::complex<double> SpaceOperator::GetSingularLumpedPortVoltage(int port_idx,
+                                                                 const ComplexVector &field)
+{
+  SumVectorCoefficient coefficient(GetMesh().SpaceDimension());
+  lumped_port_op.GetPort(port_idx).AddVoltageBdrCoefficients(coefficient);
+  return GetSingularBoundaryFunctional(coefficient, field);
+}
+
+std::complex<double>
+SpaceOperator::GetSingularLumpedPortSParameter(int port_idx, const ComplexVector &field)
+{
+  SumVectorCoefficient coefficient(GetMesh().SpaceDimension());
+  lumped_port_op.GetPort(port_idx).AddSParameterBdrCoefficients(coefficient);
+  return GetSingularBoundaryFunctional(coefficient, field);
 }
 
 void SpaceOperator::GetConstantInitialVector(ComplexVector &v)

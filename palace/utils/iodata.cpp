@@ -340,13 +340,14 @@ void IoData::CheckConfiguration()
       constexpr std::array<double, 3> zero_wave_vector{0.0, 0.0, 0.0};
       MFEM_VERIFY(boundaries.impedance.empty() && boundaries.conductivity.empty() &&
                       boundaries.rational_impedance.empty() &&
-                      boundaries.farfield.empty() && boundaries.lumpedport.empty() &&
-                      boundaries.waveport.empty() && boundaries.floquetport.empty() &&
+                      boundaries.farfield.empty() && boundaries.waveport.empty() &&
+                      boundaries.floquetport.empty() &&
                       boundaries.periodic.boundary_pairs.empty() &&
                       boundaries.periodic.wave_vector == zero_wave_vector,
                   "Full-wave singular simulations currently support only PEC, auxiliary "
-                  "PEC, natural PMC, and source-only boundary terms; impedance, absorbing, "
-                  "port, and periodic terms are not yet supported!");
+                  "PEC, natural PMC, lumped-port, and source boundary terms; impedance, "
+                  "absorbing, wave-port, Floquet-port, and periodic terms are not yet "
+                  "supported!");
       for (const auto &material : domains.materials)
       {
         MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&
@@ -369,12 +370,22 @@ void IoData::CheckConfiguration()
                         solver.driven.save_indices.empty(),
                     "Driven singular simulations currently require a uniform frequency "
                     "sweep without saved standard-grid fields or PROM!");
-        MFEM_VERIFY(domains.current_dipole.empty() && !boundaries.current.empty(),
-                    "Driven singular simulations currently require a surface-current "
-                    "source and do not yet support current dipoles!");
+        MFEM_VERIFY(domains.current_dipole.empty(),
+                    "Driven singular simulations do not yet support current dipoles!");
       }
       else
       {
+        const bool has_active_resistive_port = std::any_of(
+            boundaries.lumpedport.begin(), boundaries.lumpedport.end(),
+            [](const auto &entry)
+            {
+              const auto &port = entry.second;
+              return port.active && (std::abs(port.R) > 0.0 || std::abs(port.Rs) > 0.0);
+            });
+        MFEM_VERIFY(!has_active_resistive_port,
+                    "Singular eigenmode simulations support inductive and capacitive "
+                    "lumped ports, but resistive ports require the damped quadratic "
+                    "eigenvalue path and are not yet supported!");
         MFEM_VERIFY(solver.eigenmode.n_post == 0,
                     "Eigenmode singular simulations do not yet support saved "
                     "standard-grid fields; set Solver.Eigenmode.Save = 0!");

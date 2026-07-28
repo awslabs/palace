@@ -209,16 +209,19 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   auto K_zero = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
   auto M_zero = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M_bulk = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
   const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(K.get());
   const auto *hypre_K_zero = dynamic_cast<const mfem::HypreParMatrix *>(K_zero.get());
   const auto *hypre_M = dynamic_cast<const mfem::HypreParMatrix *>(M.get());
   const auto *hypre_M_zero = dynamic_cast<const mfem::HypreParMatrix *>(M_zero.get());
+  const auto *hypre_M_bulk = dynamic_cast<const mfem::HypreParMatrix *>(M_bulk.get());
   const auto *hypre_G =
       dynamic_cast<const mfem::HypreParMatrix *>(&space_op.GetGradMatrix());
   REQUIRE(hypre_K);
   REQUIRE(hypre_K_zero);
   REQUIRE(hypre_M);
   REQUIRE(hypre_M_zero);
+  REQUIRE(hypre_M_bulk);
   REQUIRE(hypre_G);
 
   CHECK(K->Height() == space_op.GetNDTrueVSize());
@@ -287,7 +290,7 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   }
 
   // The projector must act on both standard and enrichment coordinates.
-  DivFreeSolver<ComplexVector> divfree(iodata, Mpi::World(), *hypre_M_zero, *hypre_G,
+  DivFreeSolver<ComplexVector> divfree(iodata, Mpi::World(), *hypre_M_bulk, *hypre_G,
                                        space_op.GetCombinedH1DbcTDofList());
   ComplexVector electric(hypre_M_zero->Width()), projected(hypre_M_zero->Width()),
       mass_electric(hypre_M_zero->Height());
@@ -298,8 +301,8 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   divfree.Mult(projected);
 
   ComplexVector weak_divergence(hypre_G->Width());
-  hypre_M_zero->Mult(projected.Real(), mass_electric.Real());
-  hypre_M_zero->Mult(projected.Imag(), mass_electric.Imag());
+  hypre_M_bulk->Mult(projected.Real(), mass_electric.Real());
+  hypre_M_bulk->Mult(projected.Imag(), mass_electric.Imag());
   hypre_G->MultTranspose(mass_electric.Real(), weak_divergence.Real());
   hypre_G->MultTranspose(mass_electric.Imag(), weak_divergence.Imag());
   linalg::SetSubVector(weak_divergence, space_op.GetCombinedH1DbcTDofList(), 0.0);

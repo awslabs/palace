@@ -40,6 +40,46 @@ fem::singular::Vector3 Cross(const fem::singular::Vector3 &a,
   return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
 }
 
+class TangentialConstantCoefficient : public mfem::VectorCoefficient
+{
+private:
+  mfem::Vector constant;
+
+public:
+  explicit TangentialConstantCoefficient(const mfem::Vector &constant)
+    : mfem::VectorCoefficient(constant.Size()), constant(constant)
+  {
+  }
+
+  void Eval(mfem::Vector &value, mfem::ElementTransformation &transformation,
+            const mfem::IntegrationPoint &point) override
+  {
+    transformation.SetIntPoint(&point);
+    const auto &jacobian = transformation.Jacobian();
+    REQUIRE(jacobian.Height() == constant.Size());
+    REQUIRE(jacobian.Width() == constant.Size() - 1);
+    value.SetSize(constant.Size());
+    if (constant.Size() == 2)
+    {
+      mfem::Vector tangent(2);
+      tangent[0] = jacobian(0, 0);
+      tangent[1] = jacobian(1, 0);
+      tangent /= tangent.Norml2();
+      value = tangent;
+      value *= tangent * constant;
+      return;
+    }
+
+    mfem::Vector normal(3);
+    normal[0] = jacobian(1, 0) * jacobian(2, 1) - jacobian(2, 0) * jacobian(1, 1);
+    normal[1] = jacobian(2, 0) * jacobian(0, 1) - jacobian(0, 0) * jacobian(2, 1);
+    normal[2] = jacobian(0, 0) * jacobian(1, 1) - jacobian(1, 0) * jacobian(0, 1);
+    normal /= normal.Norml2();
+    value = constant;
+    value.Add(-(normal * constant), normal);
+  }
+};
+
 fem::singular::BarycentricGradients
 AffineBarycentricGradients(const fem::singular::Vector3 &a, const fem::singular::Vector3 &b,
                            const fem::singular::Vector3 &c, double &jacobian_determinant)
@@ -105,6 +145,23 @@ mfem::Mesh AffineTetrahedronMesh(const fem::singular::Vector3 &origin,
   return mesh;
 }
 
+mfem::Mesh BoundaryTetrahedronMesh()
+{
+  mfem::Mesh mesh(3, 4, 1, 4, 3);
+  mesh.AddVertex(0.0, 0.0, 0.0);
+  mesh.AddVertex(1.3, 0.1, 0.0);
+  mesh.AddVertex(0.2, 1.1, 0.1);
+  mesh.AddVertex(0.1, 0.2, 1.2);
+  mesh.AddTet(0, 1, 2, 3, 1);
+  mesh.AddBdrTriangle(0, 2, 1, 11);
+  mesh.AddBdrTriangle(0, 1, 3, 12);
+  mesh.AddBdrTriangle(1, 2, 3, 13);
+  mesh.AddBdrTriangle(2, 0, 3, 14);
+  mesh.FinalizeTopology();
+  mesh.Finalize(false, false);
+  return mesh;
+}
+
 mfem::Mesh AffineTriangleMesh(const fem::singular::Vector2 &origin,
                               const fem::singular::Vector2 &a,
                               const fem::singular::Vector2 &b)
@@ -116,6 +173,21 @@ mfem::Mesh AffineTriangleMesh(const fem::singular::Vector2 &origin,
   mesh.AddVertex(vertex_a.data());
   mesh.AddVertex(vertex_b.data());
   mesh.AddTriangle(0, 1, 2, 1);
+  mesh.FinalizeTopology();
+  mesh.Finalize(false, false);
+  return mesh;
+}
+
+mfem::Mesh BoundaryTriangleMesh()
+{
+  mfem::Mesh mesh(2, 3, 1, 3, 2);
+  mesh.AddVertex(0.0, 0.0);
+  mesh.AddVertex(1.3, 0.1);
+  mesh.AddVertex(0.2, 1.1);
+  mesh.AddTriangle(0, 1, 2, 1);
+  mesh.AddBdrSegment(0, 1, 11);
+  mesh.AddBdrSegment(1, 2, 12);
+  mesh.AddBdrSegment(2, 0, 13);
   mesh.FinalizeTopology();
   mesh.Finalize(false, false);
   return mesh;
@@ -869,7 +941,7 @@ CouplingEnergies AssembleSharedFaceCoupling(bool permute_vertices)
   CouplingEnergies local{};
   bool has_signed_nd_dof = false;
   bool has_nontrivial_face_transform = false;
-  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 6};
 
   for (int element = 0; element < mesh.GetNE(); element++)
   {
@@ -1174,6 +1246,600 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
   CHECK_THROWS_AS(fem::singular::AssembleTriangleElementEnrichmentMatrices(
                       element_dofs, grad_lambda, jacobian_determinant, impossible),
                   std::runtime_error);
+}
+
+TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
+          "[singularelements][singularassembly][boundary][tetrahedron][Serial]")
+{
+  constexpr double nu = 2.0 / 3.0;
+  constexpr double coefficient = 1.7;
+  const auto edge_bases =
+      fem::singular::EnumerateHigherOrderEdgeGradientBases({0, 1, 2, 3}, 1, nu);
+  const auto edge_basis =
+      std::find_if(edge_bases.begin(), edge_bases.end(), [](const auto &basis)
+                   { return basis.nodes[2] == 2 && basis.interpolation_indices[3] == 0; });
+  REQUIRE(edge_basis != edge_bases.end());
+
+  fem::singular::DofTopology topology;
+  topology.nd_dofs.resize(1);
+  topology.elements.resize(1);
+  topology.elements[0].nd = {{0, *edge_basis}};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
+
+  for (bool curved : {false, true})
+  {
+    auto mesh = BoundaryTetrahedronMesh();
+    if (curved)
+    {
+      SetQuadraticGeometry(mesh, true);
+    }
+    mfem::ND_FECollection nd_collection(2, 3);
+    mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+    const auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+        topology, nd_space, {{11, coefficient}}, options);
+    REQUIRE(blocks.standard_enrichment);
+    REQUIRE(blocks.enrichment_standard);
+    REQUIRE(blocks.enrichment_enrichment);
+    REQUIRE(blocks.standard_enrichment_estimated_absolute_error);
+    REQUIRE(blocks.enrichment_enrichment_estimated_absolute_error);
+    CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+    CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
+    CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
+
+    mfem::Vector standard(nd_space.GetVSize());
+    for (int i = 0; i < standard.Size(); i++)
+    {
+      standard[i] = 0.07 * (i + 1) - 0.31;
+    }
+    mfem::Vector enrichment({0.37});
+    mfem::Vector work(blocks.standard_enrichment->Height());
+    blocks.standard_enrichment->Mult(enrichment, work);
+    const double assembled_coupling = 2.0 * (standard * work);
+    work.SetSize(blocks.enrichment_enrichment->Height());
+    blocks.enrichment_enrichment->Mult(enrichment, work);
+    const double assembled_enrichment = enrichment * work;
+    const double assembled = assembled_coupling + assembled_enrichment;
+
+    int boundary = -1;
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (mesh.GetBdrAttribute(i) == 11)
+      {
+        boundary = i;
+        break;
+      }
+    }
+    REQUIRE(boundary >= 0);
+    int face_index = -1, orientation = -1;
+    mesh.GetBdrElementFace(boundary, &face_index, &orientation);
+    mfem::FaceElementTransformations face;
+    mfem::IsoparametricTransformation element1, element2;
+    mesh.GetFaceElementTransformations(face_index, face, element1, element2);
+    REQUIRE(face.Elem1);
+    REQUIRE(!face.Elem2);
+
+    const auto map_boundary_point = [&](const std::array<double, 3> &lambda)
+    {
+      mfem::IntegrationPoint boundary_point;
+      boundary_point.Set2(lambda[1], lambda[2]);
+      const auto face_point = mfem::Mesh::TransformBdrElementToFace(
+          face.GetGeometryType(), orientation, boundary_point);
+      face.SetAllIntPoints(&face_point);
+      return boundary_point;
+    };
+    std::array<int, 3> face_nodes{};
+    for (int vertex = 0; vertex < 3; vertex++)
+    {
+      std::array<double, 3> lambda{};
+      lambda[vertex] = 1.0;
+      map_boundary_point(lambda);
+      const auto &point = face.Elem1->GetIntPoint();
+      const std::array<double, 4> element_lambda{1.0 - point.x - point.y - point.z, point.x,
+                                                 point.y, point.z};
+      face_nodes[vertex] = static_cast<int>(
+          std::distance(element_lambda.begin(),
+                        std::max_element(element_lambda.begin(), element_lambda.end())));
+    }
+    const auto opposite_entry = std::find(face_nodes.begin(), face_nodes.end(), 2);
+    REQUIRE(opposite_entry != face_nodes.end());
+    const int opposite =
+        static_cast<int>(std::distance(face_nodes.begin(), opposite_entry));
+    std::array<int, 2> edge_nodes{};
+    int next = 0;
+    for (int vertex = 0; vertex < 3; vertex++)
+    {
+      if (vertex != opposite)
+      {
+        edge_nodes[next++] = vertex;
+      }
+    }
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_space.GetElementVDofs(face.Elem1No, standard_dofs, dof_transformation);
+    mfem::Vector standard_local;
+    standard.GetSubVector(standard_dofs, standard_local);
+    dof_transformation.InvTransformPrimal(standard_local);
+    mfem::DenseMatrix standard_shape(nd_space.GetFE(face.Elem1No)->GetDof(), 3);
+    auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
+    REQUIRE(boundary_transformation);
+
+    {
+      const std::array<double, 3> lambda{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
+      const auto boundary_point = map_boundary_point(lambda);
+      const auto &element_point = face.Elem1->GetIntPoint();
+      double jacobian_determinant = 0.0;
+      const auto grad_lambda = fem::singular::GetBarycentricGradients(
+          *face.Elem1, element_point, jacobian_determinant);
+      const fem::singular::BarycentricPoint element_lambda{
+          1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
+          element_point.y, element_point.z};
+      const auto singular =
+          fem::singular::EvaluateHigherOrderBasis(element_lambda, grad_lambda, *edge_basis);
+      boundary_transformation->SetIntPoint(&boundary_point);
+      const auto &jacobian = boundary_transformation->Jacobian();
+      const fem::singular::Vector3 first{jacobian(0, 0), jacobian(1, 0), jacobian(2, 0)};
+      const fem::singular::Vector3 second{jacobian(0, 1), jacobian(1, 1), jacobian(2, 1)};
+      auto normal = Cross(first, second);
+      const double boundary_weight = std::sqrt(Dot(normal, normal));
+      REQUIRE(boundary_weight > 0.0);
+      for (double &value : normal)
+      {
+        value /= boundary_weight;
+      }
+      const double trace_norm =
+          Dot(singular.value, singular.value) - std::pow(Dot(singular.value, normal), 2);
+      CAPTURE(face_nodes, element_lambda, singular.value, normal, trace_norm);
+      REQUIRE(trace_norm > 1.0e-8);
+    }
+
+    const auto direct_integral = [&](double singular_power, bool coupling)
+    {
+      long double result = 0.0L;
+      constexpr double grading = 3.0;
+      const double effective_power = grading * (singular_power + 1.0) - 1.0;
+      const auto radial_rule =
+          fem::singular::BuildWeightedSegmentQuadrature(48, effective_power, 0.0);
+      const auto tangential_rule =
+          fem::singular::BuildWeightedSegmentQuadrature(48, 0.0, 0.0);
+      for (const auto &radial_quadrature : radial_rule)
+      {
+        const double parameter = radial_quadrature.coordinate;
+        const double radial = std::pow(parameter, grading);
+        const double radial_jacobian = grading * std::pow(parameter, grading - 1.0);
+        const double jacobi_weight = std::pow(parameter, effective_power);
+        for (const auto &tangential_quadrature : tangential_rule)
+        {
+          const double tangential = tangential_quadrature.coordinate;
+          std::array<double, 3> lambda{};
+          lambda[opposite] = radial;
+          lambda[edge_nodes[0]] = (1.0 - radial) * (1.0 - tangential);
+          lambda[edge_nodes[1]] = (1.0 - radial) * tangential;
+          const auto boundary_point = map_boundary_point(lambda);
+          const auto &element_point = face.Elem1->GetIntPoint();
+          double jacobian_determinant = 0.0;
+          const auto grad_lambda = fem::singular::GetBarycentricGradients(
+              *face.Elem1, element_point, jacobian_determinant);
+          nd_space.GetFE(face.Elem1No)->CalcPhysVShape(*face.Elem1, standard_shape);
+          const fem::singular::BarycentricPoint element_lambda{
+              1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
+              element_point.y, element_point.z};
+          const auto singular = fem::singular::EvaluateHigherOrderBasis(
+              element_lambda, grad_lambda, *edge_basis);
+
+          boundary_transformation->SetIntPoint(&boundary_point);
+          const auto &jacobian = boundary_transformation->Jacobian();
+          const fem::singular::Vector3 first{jacobian(0, 0), jacobian(1, 0),
+                                             jacobian(2, 0)};
+          const fem::singular::Vector3 second{jacobian(0, 1), jacobian(1, 1),
+                                              jacobian(2, 1)};
+          auto normal = Cross(first, second);
+          const double boundary_weight = std::sqrt(Dot(normal, normal));
+          REQUIRE(boundary_weight > 0.0);
+          for (double &value : normal)
+          {
+            value /= boundary_weight;
+          }
+
+          fem::singular::Vector3 standard_value{};
+          for (int i = 0; i < standard_local.Size(); i++)
+          {
+            for (int d = 0; d < 3; d++)
+            {
+              standard_value[d] += standard_local[i] * standard_shape(i, d);
+            }
+          }
+          const double standard_trace =
+              Dot(standard_value, singular.value) -
+              Dot(standard_value, normal) * Dot(singular.value, normal);
+          const double singular_trace = Dot(singular.value, singular.value) -
+                                        std::pow(Dot(singular.value, normal), 2);
+          const double product = coupling ? 2.0 * enrichment[0] * standard_trace
+                                          : enrichment[0] * enrichment[0] * singular_trace;
+          const double scale = radial_quadrature.weight * tangential_quadrature.weight *
+                               radial_jacobian * (1.0 - radial) * coefficient *
+                               boundary_weight / jacobi_weight;
+          result += static_cast<long double>(scale * product);
+        }
+      }
+      return result;
+    };
+    const long double direct_coupling = direct_integral(nu - 1.0, true);
+    const long double direct_enrichment = direct_integral(2.0 * (nu - 1.0), false);
+    const long double direct = direct_coupling + direct_enrichment;
+    CAPTURE(curved, edge_basis->nodes, edge_basis->interpolation_indices,
+            assembled_coupling, assembled_enrichment, direct_coupling, direct_enrichment);
+    REQUIRE(std::abs(assembled_coupling) > 1.0e-8);
+    REQUIRE(std::abs(assembled_enrichment) > 1.0e-8);
+    REQUIRE(std::abs(direct_coupling) > 1.0e-8L);
+    REQUIRE(std::abs(direct_enrichment) > 1.0e-8L);
+
+    const auto standard_absolute = AbsoluteValue(standard);
+    const auto enrichment_absolute = AbsoluteValue(enrichment);
+    work.SetSize(blocks.standard_enrichment_estimated_absolute_error->Height());
+    blocks.standard_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+    double error_bound = 2.0 * (standard_absolute * work);
+    work.SetSize(blocks.enrichment_enrichment_estimated_absolute_error->Height());
+    blocks.enrichment_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+    error_bound += enrichment_absolute * work;
+    CAPTURE(curved, assembled, direct, assembled_coupling, direct_coupling,
+            assembled_enrichment, direct_enrichment, error_bound);
+    CHECK(std::abs(assembled - static_cast<double>(direct)) <= error_bound + 5.0e-10);
+  }
+
+  auto nonintegrable = topology;
+  nonintegrable.elements[0].nd[0].basis.nu = 0.5;
+  auto mesh = BoundaryTetrahedronMesh();
+  mfem::ND_FECollection nd_collection(1, 3);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  CHECK_THROWS_WITH(fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+                        nonintegrable, nd_space, {{11, 1.0}}, options),
+                    Catch::Matchers::ContainsSubstring("nonintegrable singular edge"));
+
+  const auto node_bases =
+      fem::singular::EnumerateHigherOrderNodeGradientBases({0, 1, 2, 3}, 1, 0.5);
+  const auto node_basis =
+      std::find_if(node_bases.begin(), node_bases.end(), [](const auto &basis)
+                   { return basis.nodes[1] == 2 && basis.interpolation_indices[3] == 0; });
+  REQUIRE(node_basis != node_bases.end());
+  auto point_singular = topology;
+  point_singular.elements[0].nd[0].basis = *node_basis;
+  CHECK_NOTHROW(fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+      point_singular, nd_space, {{11, 1.0}}, options));
+}
+
+TEST_CASE("Triangular singular boundary mass matches the physical tangential trace",
+          "[singularelements][singularassembly][boundary][triangle][Serial]")
+{
+  constexpr double nu = 2.0 / 3.0;
+  constexpr double coefficient = 1.7;
+  const fem::singular::TriangleBasis gradient_1{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, nu};
+  const fem::singular::TriangleBasis gradient_2{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 2, 1}, 1, nu};
+  const fem::singular::TriangleBasis rotational{
+      fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL, {0, 1, 2}, 1, nu};
+  fem::singular::TriangleDofTopology topology;
+  topology.nd_dofs.resize(3);
+  topology.elements.resize(1);
+  topology.elements[0].nd = {{0, gradient_1}, {1, gradient_2}, {2, rotational}};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 6};
+
+  for (bool curved : {false, true})
+  {
+    auto mesh = BoundaryTriangleMesh();
+    if (curved)
+    {
+      SetQuadraticGeometry(mesh, true);
+    }
+    mfem::ND_FECollection nd_collection(2, 2);
+    mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+    const auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+        topology, nd_space, {{11, coefficient}}, options);
+    REQUIRE(blocks.standard_enrichment);
+    REQUIRE(blocks.enrichment_standard);
+    REQUIRE(blocks.enrichment_enrichment);
+    REQUIRE(blocks.standard_enrichment_estimated_absolute_error);
+    REQUIRE(blocks.enrichment_enrichment_estimated_absolute_error);
+    CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+    CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
+    CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
+
+    mfem::Vector standard(nd_space.GetVSize());
+    for (int i = 0; i < standard.Size(); i++)
+    {
+      standard[i] = 0.13 * (i + 1) - 0.27;
+    }
+    mfem::Vector enrichment({0.37, -0.21, 0.16});
+    mfem::Vector work(blocks.standard_enrichment->Height());
+    blocks.standard_enrichment->Mult(enrichment, work);
+    const double assembled_coupling = 2.0 * (standard * work);
+    work.SetSize(blocks.enrichment_enrichment->Height());
+    blocks.enrichment_enrichment->Mult(enrichment, work);
+    const double assembled_enrichment = enrichment * work;
+    const double assembled = assembled_coupling + assembled_enrichment;
+
+    int boundary = -1;
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (mesh.GetBdrAttribute(i) == 11)
+      {
+        boundary = i;
+        break;
+      }
+    }
+    REQUIRE(boundary >= 0);
+    int face_index = -1, orientation = -1;
+    mesh.GetBdrElementFace(boundary, &face_index, &orientation);
+    mfem::FaceElementTransformations face;
+    mfem::IsoparametricTransformation element1, element2;
+    mesh.GetFaceElementTransformations(face_index, face, element1, element2);
+    REQUIRE(face.Elem1);
+    REQUIRE(!face.Elem2);
+
+    const auto map_boundary_point = [&](double coordinate)
+    {
+      mfem::IntegrationPoint boundary_point;
+      boundary_point.x = coordinate;
+      const auto face_point = mfem::Mesh::TransformBdrElementToFace(
+          face.GetGeometryType(), orientation, boundary_point);
+      face.SetAllIntPoints(&face_point);
+      return boundary_point;
+    };
+    const auto triangle_node = [&]()
+    {
+      std::array<int, 2> nodes{};
+      for (int endpoint = 0; endpoint < 2; endpoint++)
+      {
+        map_boundary_point(static_cast<double>(endpoint));
+        const auto &point = face.Elem1->GetIntPoint();
+        const std::array<double, 3> lambda{1.0 - point.x - point.y, point.x, point.y};
+        nodes[endpoint] = static_cast<int>(
+            std::distance(lambda.begin(), std::max_element(lambda.begin(), lambda.end())));
+      }
+      return nodes;
+    }();
+    REQUIRE((triangle_node[0] == 0 || triangle_node[1] == 0));
+    const double alpha = triangle_node[0] == 0 ? nu - 1.0 : 0.0;
+    const double beta = triangle_node[1] == 0 ? nu - 1.0 : 0.0;
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_space.GetElementVDofs(face.Elem1No, standard_dofs, dof_transformation);
+    mfem::Vector standard_local;
+    standard.GetSubVector(standard_dofs, standard_local);
+    dof_transformation.InvTransformPrimal(standard_local);
+    mfem::DenseMatrix standard_shape(nd_space.GetFE(face.Elem1No)->GetDof(), 2);
+    auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
+    REQUIRE(boundary_transformation);
+    long double direct_coupling = 0.0L, direct_enrichment = 0.0L;
+    constexpr double radial_power = 3.0;
+    const auto accumulate_direct =
+        [&](int endpoint, double power, bool coupling, long double &result)
+    {
+      const double effective_power = radial_power * (power + 1.0) - 1.0;
+      for (const auto &quadrature :
+           fem::singular::BuildWeightedSegmentQuadrature(48, effective_power, 0.0))
+      {
+        const double radial = quadrature.coordinate;
+        const double distance = 0.5 * std::pow(radial, radial_power);
+        const double coordinate = endpoint == 0 ? distance : 1.0 - distance;
+        const auto boundary_point = map_boundary_point(coordinate);
+        const auto &element_point = face.Elem1->GetIntPoint();
+        double jacobian_determinant = 0.0;
+        const auto grad_lambda = fem::singular::GetTriangleBarycentricGradients(
+            *face.Elem1, element_point, jacobian_determinant);
+        nd_space.GetFE(face.Elem1No)->CalcPhysVShape(*face.Elem1, standard_shape);
+        const fem::singular::TriangleBarycentricPoint lambda{
+            1.0 - element_point.x - element_point.y, element_point.x, element_point.y};
+
+        boundary_transformation->SetIntPoint(&boundary_point);
+        const auto &jacobian = boundary_transformation->Jacobian();
+        fem::singular::Vector2 tangent{jacobian(0, 0), jacobian(1, 0)};
+        const double boundary_weight =
+            std::sqrt(tangent[0] * tangent[0] + tangent[1] * tangent[1]);
+        REQUIRE(boundary_weight > 0.0);
+        tangent[0] /= boundary_weight;
+        tangent[1] /= boundary_weight;
+
+        fem::singular::Vector2 standard_value{};
+        for (int i = 0; i < standard_local.Size(); i++)
+        {
+          standard_value[0] += standard_local[i] * standard_shape(i, 0);
+          standard_value[1] += standard_local[i] * standard_shape(i, 1);
+        }
+        fem::singular::Vector2 singular_value{};
+        for (int i = 0; i < enrichment.Size(); i++)
+        {
+          fem::singular::TriangleVectorBasisValue basis;
+          const auto &descriptor = topology.elements[0].nd[i].basis;
+          const bool has_trace =
+              descriptor.family == fem::singular::HigherOrderBasisFamily::NODE_GRADIENT &&
+              std::find(triangle_node.begin(), triangle_node.end(), descriptor.nodes[0]) !=
+                  triangle_node.end() &&
+              std::find(triangle_node.begin(), triangle_node.end(), descriptor.nodes[1]) !=
+                  triangle_node.end();
+          if (!has_trace)
+          {
+            continue;
+          }
+          if (descriptor.family == fem::singular::HigherOrderBasisFamily::NODE_GRADIENT)
+          {
+            basis = fem::singular::EvaluateTriangleNodeGradient(
+                lambda, grad_lambda, descriptor.nodes[0], descriptor.nodes[1],
+                descriptor.nu);
+          }
+          singular_value[0] += enrichment[i] * basis.value[0];
+          singular_value[1] += enrichment[i] * basis.value[1];
+        }
+        const double standard_trace = Dot(standard_value, tangent);
+        const double singular_trace = Dot(singular_value, tangent);
+        const double radial_jacobian =
+            0.5 * radial_power * std::pow(radial, radial_power - 1.0);
+        const double jacobi_weight = std::pow(radial, effective_power);
+        const long double scale =
+            static_cast<long double>(quadrature.weight * radial_jacobian / jacobi_weight) *
+            static_cast<long double>(coefficient * boundary_weight);
+        result += scale *
+                  static_cast<long double>(coupling ? 2.0 * standard_trace * singular_trace
+                                                    : singular_trace * singular_trace);
+      }
+    };
+    for (int endpoint = 0; endpoint < 2; endpoint++)
+    {
+      const double power = endpoint == 0 ? alpha : beta;
+      accumulate_direct(endpoint, power, true, direct_coupling);
+      accumulate_direct(endpoint, 2.0 * power, false, direct_enrichment);
+    }
+    const long double direct = direct_coupling + direct_enrichment;
+
+    const auto standard_absolute = AbsoluteValue(standard);
+    const auto enrichment_absolute = AbsoluteValue(enrichment);
+    work.SetSize(blocks.standard_enrichment_estimated_absolute_error->Height());
+    blocks.standard_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+    double error_bound = 2.0 * (standard_absolute * work);
+    work.SetSize(blocks.enrichment_enrichment_estimated_absolute_error->Height());
+    blocks.enrichment_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+    error_bound += enrichment_absolute * work;
+    CAPTURE(curved, assembled, direct, assembled_coupling, direct_coupling,
+            assembled_enrichment, direct_enrichment, error_bound);
+    CHECK(std::abs(assembled - static_cast<double>(direct)) <= error_bound + 2.0e-10);
+  }
+
+  auto nonintegrable = topology;
+  for (auto &entry : nonintegrable.elements[0].nd)
+  {
+    entry.basis.nu = 0.5;
+  }
+  auto mesh = BoundaryTriangleMesh();
+  mfem::ND_FECollection nd_collection(1, 2);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  CHECK_THROWS_WITH(fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+                        nonintegrable, nd_space, {{11, 1.0}}, options),
+                    Catch::Matchers::ContainsSubstring("nonintegrable singular endpoint"));
+}
+
+TEST_CASE("Tetrahedral singular boundary linear form matches boundary mass variation",
+          "[singularelements][singularassembly][boundary][linearform][tetrahedron][Serial]")
+{
+  constexpr double nu = 2.0 / 3.0;
+  const auto bases =
+      fem::singular::EnumerateHigherOrderEdgeGradientBases({0, 1, 2, 3}, 1, nu);
+  const auto basis = std::find_if(
+      bases.begin(), bases.end(), [](const auto &candidate)
+      { return candidate.nodes[2] == 2 && candidate.interpolation_indices[3] == 0; });
+  REQUIRE(basis != bases.end());
+
+  fem::singular::DofKey key;
+  key.family = basis->family;
+  key.order = basis->order;
+  key.singular_entity = Entity({0, 1});
+  key.support_entity = Entity({0, 1, 2});
+  key.component_entity = Entity({0, 1, 2});
+  key.interpolation_weights = basis->interpolation_indices;
+  fem::singular::DofTopology topology;
+  topology.nd_dofs = {key};
+  topology.elements.resize(1);
+  topology.elements[0].nd = {{0, *basis}};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 6};
+
+  for (bool curved : {false, true})
+  {
+    auto serial_mesh = BoundaryTetrahedronMesh();
+    if (curved)
+    {
+      SetQuadraticGeometry(serial_mesh, true);
+    }
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    mfem::ND_FECollection collection(2, 3);
+    mfem::ParFiniteElementSpace space(&mesh, &collection);
+    const auto numbering = fem::singular::BuildParallelDofNumbering(Mpi::World(), topology);
+    const auto local = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+        topology, space, {{11, 1.0}, {12, 1.0}, {13, 1.0}, {14, 1.0}}, options);
+    const auto parallel = fem::singular::AssembleParallelSparseNDBoundaryMassMatrices(
+        local, numbering, space);
+    REQUIRE(parallel.enrichment_standard);
+
+    mfem::Vector constant({0.31, -0.47, 0.83});
+    mfem::VectorConstantCoefficient volume_coefficient(constant);
+    mfem::ParGridFunction projected(&space);
+    projected.ProjectCoefficient(volume_coefficient);
+    mfem::Vector standard_true_dofs;
+    projected.GetTrueDofs(standard_true_dofs);
+    mfem::Vector expected(static_cast<int>(numbering.nd.owned_size));
+    parallel.enrichment_standard->Mult(standard_true_dofs, expected);
+
+    TangentialConstantCoefficient boundary_coefficient(constant);
+    mfem::Vector assembled;
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        topology, numbering, space, boundary_coefficient, options, assembled);
+    REQUIRE(assembled.Size() == expected.Size());
+    for (int i = 0; i < assembled.Size(); i++)
+    {
+      CAPTURE(curved, i, assembled[i], expected[i]);
+      CHECK(std::abs(assembled[i] - expected[i]) <=
+            2.0e-7 * std::max({1.0, std::abs(assembled[i]), std::abs(expected[i])}));
+    }
+  }
+}
+
+TEST_CASE("Triangular singular boundary linear form matches boundary mass variation",
+          "[singularelements][singularassembly][boundary][linearform][triangle][Serial]")
+{
+  constexpr double nu = 2.0 / 3.0;
+  const fem::singular::TriangleBasis basis{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, nu};
+  fem::singular::DofKey key;
+  key.family = basis.family;
+  key.order = basis.order;
+  key.singular_entity = Entity({0});
+  key.support_entity = Entity({0, 1});
+  key.component_entity = Entity({0, 1});
+  key.interpolation_weights = {1, 1, 0, 0};
+  fem::singular::TriangleDofTopology topology;
+  topology.nd_dofs = {key};
+  topology.elements.resize(1);
+  topology.elements[0].nd = {{0, basis}};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 6};
+
+  for (bool curved : {false, true})
+  {
+    auto serial_mesh = BoundaryTriangleMesh();
+    if (curved)
+    {
+      SetQuadraticGeometry(serial_mesh, true);
+    }
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    mfem::ND_FECollection collection(2, 2);
+    mfem::ParFiniteElementSpace space(&mesh, &collection);
+    const auto numbering = fem::singular::BuildParallelDofNumbering(Mpi::World(), topology);
+    const auto local = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+        topology, space, {{11, 1.0}, {12, 1.0}, {13, 1.0}}, options);
+    const auto parallel = fem::singular::AssembleParallelSparseNDBoundaryMassMatrices(
+        local, numbering, space);
+    REQUIRE(parallel.enrichment_standard);
+
+    mfem::Vector constant({0.31, -0.47});
+    mfem::VectorConstantCoefficient volume_coefficient(constant);
+    mfem::ParGridFunction projected(&space);
+    projected.ProjectCoefficient(volume_coefficient);
+    mfem::Vector standard_true_dofs;
+    projected.GetTrueDofs(standard_true_dofs);
+    mfem::Vector expected(static_cast<int>(numbering.nd.owned_size));
+    parallel.enrichment_standard->Mult(standard_true_dofs, expected);
+
+    TangentialConstantCoefficient boundary_coefficient(constant);
+    mfem::Vector assembled;
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        topology, numbering, space, boundary_coefficient, options, assembled);
+    REQUIRE(assembled.Size() == expected.Size());
+    for (int i = 0; i < assembled.Size(); i++)
+    {
+      CAPTURE(curved, i, assembled[i], expected[i]);
+      CHECK(std::abs(assembled[i] - expected[i]) <=
+            2.0e-7 * std::max({1.0, std::abs(assembled[i]), std::abs(expected[i])}));
+    }
+  }
 }
 
 TEST_CASE("Quadratic affine simplices retain singular reference assembly",

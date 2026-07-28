@@ -96,6 +96,10 @@ private:
   std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
   fem::singular::ParallelSparseEnrichmentMatrices singular_domain_matrices;
   fem::singular::ParallelSparseEnrichmentMatrices singular_domain_imag_matrices;
+  fem::singular::ParallelSparseOperatorBlocks singular_lumped_stiffness_matrices;
+  fem::singular::ParallelSparseOperatorBlocks singular_lumped_damping_matrices;
+  fem::singular::ParallelSparseOperatorBlocks singular_lumped_mass_matrices;
+  fem::singular::AdaptiveAssemblyOptions singular_assembly_options{};
   std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
   mfem::Array<int> singular_nd_essential_true_dofs;
   mfem::Array<int> singular_h1_essential_true_dofs;
@@ -137,8 +141,11 @@ private:
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
   // Helper functions for excitation vector assembly.
-  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
+  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS,
+                                    Vector *singular_RHS = nullptr);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
+  std::complex<double> GetSingularBoundaryFunctional(SumVectorCoefficient &coefficient,
+                                                     const ComplexVector &field);
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
@@ -286,6 +293,12 @@ public:
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+
+  // Construct the real bulk-permittivity mass matrix without capacitive boundary terms.
+  // The singular Maxwell divergence projector uses this operator to match the standard
+  // Palace Gauss-law metric while the complete mass matrix remains in the eigenproblem.
+  std::unique_ptr<Operator> GetBulkMassMatrix(Operator::DiagonalPolicy diag_policy);
+
   template <typename OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
@@ -463,6 +476,13 @@ public:
   // already been initialised at the requested frequency.
   void GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
                                        ComplexVector &Et_primary);
+
+  // Evaluate the same lumped-port voltage and modal-overlap functionals used
+  // by standard postprocessing on a combined standard-plus-singular field.
+  std::complex<double> GetSingularLumpedPortVoltage(int port_idx,
+                                                    const ComplexVector &field);
+  std::complex<double> GetSingularLumpedPortSParameter(int port_idx,
+                                                       const ComplexVector &field);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

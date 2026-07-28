@@ -241,6 +241,13 @@ double RelativeDifference(double first, double second)
   return std::abs(first - second) / std::max(std::abs(first), std::abs(second));
 }
 
+double RelativeComplexDifference(double first_real, double first_imag, double second_real,
+                                 double second_imag)
+{
+  return std::hypot(first_real - second_real, first_imag - second_imag) /
+         std::max(std::hypot(first_real, first_imag), std::hypot(second_real, second_imag));
+}
+
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
 // (phase isn't reproducible). NaN entries (evanescent modes) and signals below
 // -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
@@ -348,6 +355,45 @@ TEST_CASE("singular_wedge_loss_eigenmode", "[Serial][Parallel][Regression]")
                                   "loss_eigenmode", opts);
 }
 
+TEST_CASE("singular_wedge_loss_eigenmode_agreement", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-7;
+  opts.atol = 1.0e-13;
+  opts.excluded_columns = {"Error ("};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_loss_compare_eigenmode.json",
+                                  "loss_compare_eigenmode", opts);
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.push_back("Minimum");
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_loss_standard_eigenmode.json",
+                                  "loss_standard_eigenmode", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular =
+        LoadRegressionOutputTable("singular_wedge", "loss_compare_eigenmode", "eig.csv");
+    auto standard =
+        LoadRegressionOutputTable("singular_wedge", "loss_standard_eigenmode", "eig.csv");
+
+    const double singular_frequency_real = GetTableValue(singular, "Re{f} (GHz)");
+    const double standard_frequency_real = GetTableValue(standard, "Re{f} (GHz)");
+    const double singular_frequency_imag = GetTableValue(singular, "Im{f} (GHz)");
+    const double standard_frequency_imag = GetTableValue(standard, "Im{f} (GHz)");
+    const double singular_q = GetTableValue(singular, "Q");
+    const double standard_q = GetTableValue(standard, "Q");
+    CAPTURE(singular_frequency_real, standard_frequency_real, singular_frequency_imag,
+            standard_frequency_imag, singular_q, standard_q);
+    CHECK(RelativeDifference(singular_frequency_real, standard_frequency_real) < 5.0e-4);
+    CHECK(RelativeDifference(singular_frequency_imag, standard_frequency_imag) < 5.0e-4);
+    CHECK(RelativeDifference(singular_q, standard_q) < 1.0e-8);
+  }
+}
+
 TEST_CASE("singular_wedge_driven", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -399,6 +445,166 @@ TEST_CASE("singular_wedge_loss_driven", "[Serial][Parallel][Regression]")
   opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_loss_driven.json",
                                   "loss_driven", opts);
+}
+
+TEST_CASE("singular_wedge_lumped_driven", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-7;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Relative residual"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_lumped_driven.json",
+                                  "lumped_driven", opts);
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.push_back("Minimum");
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_lumped_standard_driven.json",
+                                  "lumped_standard_driven", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular =
+        LoadRegressionOutputTable("singular_wedge", "lumped_driven", "singular-driven.csv");
+    auto standard = LoadRegressionOutputTable("singular_wedge", "lumped_standard_driven",
+                                              "domain-E.csv");
+    auto standard_voltage =
+        LoadRegressionOutputTable("singular_wedge", "lumped_standard_driven", "port-V.csv");
+    auto standard_scattering =
+        LoadRegressionOutputTable("singular_wedge", "lumped_standard_driven", "port-S.csv");
+    auto singular_surface =
+        LoadRegressionOutputTable("singular_wedge", "lumped_driven", "surface-Q.csv");
+    auto standard_surface = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_standard_driven", "surface-Q.csv");
+
+    const double singular_electric = GetTableValue(singular, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard, "E_elec (J)");
+    const double singular_magnetic = GetTableValue(singular, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard, "E_mag (J)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 3.0e-3);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 5.0e-4);
+    CHECK(RelativeDifference(singular_electric + singular_magnetic,
+                             standard_electric + standard_magnetic) < 5.0e-4);
+
+    const double singular_voltage_real = GetTableValue(singular, "Re{V[1]} (V)");
+    const double singular_voltage_imag = GetTableValue(singular, "Im{V[1]} (V)");
+    const double standard_voltage_real = GetTableValue(standard_voltage, "Re{V[1]} (V)");
+    const double standard_voltage_imag = GetTableValue(standard_voltage, "Im{V[1]} (V)");
+    CAPTURE(singular_voltage_real, singular_voltage_imag, standard_voltage_real,
+            standard_voltage_imag);
+    CHECK(RelativeComplexDifference(singular_voltage_real, singular_voltage_imag,
+                                    standard_voltage_real, standard_voltage_imag) < 2.0e-4);
+
+    const double standard_scattering_db =
+        GetTableValue(standard_scattering, "|S[1][1]| (dB)");
+    const double standard_scattering_phase =
+        GetTableValue(standard_scattering, "arg(S[1][1]) (deg.)") * M_PI / 180.0;
+    const double standard_scattering_magnitude =
+        std::pow(10.0, standard_scattering_db / 20.0);
+    const double standard_scattering_real =
+        standard_scattering_magnitude * std::cos(standard_scattering_phase);
+    const double standard_scattering_imag =
+        standard_scattering_magnitude * std::sin(standard_scattering_phase);
+    const double singular_scattering_real = GetTableValue(singular, "Re{S[1]}");
+    const double singular_scattering_imag = GetTableValue(singular, "Im{S[1]}");
+    CAPTURE(singular_scattering_real, singular_scattering_imag, standard_scattering_real,
+            standard_scattering_imag);
+    CHECK(RelativeComplexDifference(singular_scattering_real, singular_scattering_imag,
+                                    standard_scattering_real,
+                                    standard_scattering_imag) < 2.0e-4);
+
+    const double singular_participation = GetTableValue(singular_surface, "p_surf[1]");
+    const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
+    CAPTURE(singular_participation, standard_participation);
+    CHECK(singular_participation / standard_participation > 2.0);
+  }
+}
+
+TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-7;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Error (", "Relative weak divergence", "Im{V[1]}", "p_ind[1]"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_lumped_eigenmode.json",
+                                  "lumped_eigenmode", opts);
+
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.push_back("Minimum");
+  standard_opts.excluded_columns.push_back("Q");
+  standard_opts.excluded_columns.push_back("p[1]");
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_lumped_standard_eigenmode.json",
+                                  "lumped_standard_eigenmode", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular_mode =
+        LoadRegressionOutputTable("singular_wedge", "lumped_eigenmode", "eig.csv");
+    auto standard_mode =
+        LoadRegressionOutputTable("singular_wedge", "lumped_standard_eigenmode", "eig.csv");
+    auto singular_diagnostics = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_eigenmode", "singular-eigenmode.csv");
+    auto standard_voltage = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_standard_eigenmode", "port-V.csv");
+    auto standard_current = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_standard_eigenmode", "port-I.csv");
+    auto standard_epr = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_standard_eigenmode", "port-EPR.csv");
+    auto singular_surface =
+        LoadRegressionOutputTable("singular_wedge", "lumped_eigenmode", "surface-Q.csv");
+    auto standard_surface = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_standard_eigenmode", "surface-Q.csv");
+
+    const double singular_frequency = GetTableValue(singular_mode, "Re{f} (GHz)");
+    const double standard_frequency = GetTableValue(standard_mode, "Re{f} (GHz)");
+    const double singular_frequency_imaginary = GetTableValue(singular_mode, "Im{f} (GHz)");
+    const double standard_frequency_imaginary = GetTableValue(standard_mode, "Im{f} (GHz)");
+    const double singular_backward_error = GetTableValue(singular_mode, "Error (Bkwd.)");
+    const double singular_absolute_error = GetTableValue(singular_mode, "Error (Abs.)");
+    const double singular_energy_mismatch =
+        GetTableValue(singular_diagnostics, "Relative energy mismatch");
+    CAPTURE(singular_frequency, standard_frequency, singular_frequency_imaginary,
+            standard_frequency_imaginary, singular_backward_error, singular_absolute_error,
+            singular_energy_mismatch);
+    CHECK(RelativeDifference(singular_frequency, standard_frequency) < 5.0e-4);
+    CHECK(std::abs(singular_frequency_imaginary) < 1.0e-12);
+    CHECK(std::abs(standard_frequency_imaginary) < 1.0e-12);
+    CHECK(singular_backward_error < 1.0e-10);
+    CHECK(singular_absolute_error < 1.0e-9);
+    CHECK(singular_energy_mismatch < 1.0e-10);
+
+    const double singular_voltage =
+        std::hypot(GetTableValue(singular_diagnostics, "Re{V[1]} (V)"),
+                   GetTableValue(singular_diagnostics, "Im{V[1]} (V)"));
+    const double standard_voltage_magnitude =
+        std::hypot(GetTableValue(standard_voltage, "Re{V[1]} (V)"),
+                   GetTableValue(standard_voltage, "Im{V[1]} (V)"));
+    const double singular_current =
+        std::hypot(GetTableValue(singular_diagnostics, "Re{I[1]} (A)"),
+                   GetTableValue(singular_diagnostics, "Im{I[1]} (A)"));
+    const double standard_current_magnitude =
+        std::hypot(GetTableValue(standard_current, "Re{I[1]} (A)"),
+                   GetTableValue(standard_current, "Im{I[1]} (A)"));
+    CAPTURE(singular_voltage, standard_voltage_magnitude, singular_current,
+            standard_current_magnitude);
+    CHECK(RelativeDifference(singular_voltage, standard_voltage_magnitude) < 1.5e-2);
+    CHECK(RelativeDifference(singular_current, standard_current_magnitude) < 1.5e-2);
+
+    const double singular_epr = std::abs(GetTableValue(singular_diagnostics, "p_ind[1]"));
+    const double standard_epr_magnitude = std::abs(GetTableValue(standard_epr, "p[1]"));
+    CAPTURE(singular_epr, standard_epr_magnitude);
+    CHECK(RelativeDifference(singular_epr, standard_epr_magnitude) < 2.0e-1);
+
+    const double singular_participation = GetTableValue(singular_surface, "p_surf[1]");
+    const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
+    CAPTURE(singular_participation, standard_participation);
+    CHECK(RelativeDifference(singular_participation, standard_participation) > 2.0e-2);
+  }
 }
 
 TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
@@ -830,6 +1036,56 @@ TEST_CASE("singular_line_boundarymode", "[Serial][Parallel][Regression]")
       CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
   palace::test::RunRegressionCase("singular_line_boundarymode",
                                   "singular_line_boundarymode.json", "lossless", opts);
+  auto standard_opts = opts;
+  standard_opts.rtol = 5.0e-7;
+  standard_opts.atol = 1.0e-13;
+  standard_opts.excluded_columns = {"Minimum", "Error (", "Im{kn}", "Im{n_eff}"};
+  standard_opts.custom_checks.clear();
+  palace::test::RunRegressionCase("singular_line_boundarymode",
+                                  "singular_line_standard_boundarymode.json",
+                                  "standard_lossless", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular_mode =
+        LoadRegressionOutputTable("singular_line_boundarymode", "lossless", "mode-kn.csv");
+    auto standard_mode = LoadRegressionOutputTable("singular_line_boundarymode",
+                                                   "standard_lossless", "mode-kn.csv");
+    auto singular_diagnostics = LoadRegressionOutputTable(
+        "singular_line_boundarymode", "lossless", "singular-mode-diagnostics.csv");
+    auto standard_energy = LoadRegressionOutputTable("singular_line_boundarymode",
+                                                     "standard_lossless", "domain-E.csv");
+    auto singular_surface = LoadRegressionOutputTable("singular_line_boundarymode",
+                                                      "lossless", "surface-Q.csv");
+    auto standard_surface = LoadRegressionOutputTable("singular_line_boundarymode",
+                                                      "standard_lossless", "surface-Q.csv");
+
+    const double singular_kn = GetTableValue(singular_mode, "Re{kn} (1/m)");
+    const double standard_kn = GetTableValue(standard_mode, "Re{kn} (1/m)");
+    const double singular_neff = GetTableValue(singular_mode, "Re{n_eff}");
+    const double standard_neff = GetTableValue(standard_mode, "Re{n_eff}");
+    CAPTURE(singular_kn, standard_kn, singular_neff, standard_neff);
+    CHECK(RelativeDifference(singular_kn, standard_kn) < 5.0e-4);
+    CHECK(RelativeDifference(singular_neff, standard_neff) < 5.0e-4);
+
+    const double singular_electric =
+        GetTableValue(singular_diagnostics, "Total electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    const double singular_magnetic =
+        GetTableValue(singular_diagnostics, "Total magnetic field energy (J)");
+    const double singular_power = GetTableValue(singular_diagnostics, "Re{P} (normalized)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, singular_power);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 5.0e-4);
+    CHECK(RelativeDifference(singular_electric, singular_magnetic) < 1.0e-10);
+    CHECK(std::abs(singular_power - 1.0) < 1.0e-10);
+
+    const double singular_participation = GetTableValue(singular_surface, "p_surf[1]");
+    const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
+    CAPTURE(singular_participation, standard_participation);
+    CHECK(std::max(singular_participation, standard_participation) /
+              std::min(singular_participation, standard_participation) >
+          2.0);
+  }
 }
 
 TEST_CASE("singular_line_boundarymode_loss", "[Serial][Parallel][Regression]")
@@ -849,6 +1105,37 @@ TEST_CASE("singular_line_boundarymode_loss", "[Serial][Parallel][Regression]")
       CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
   palace::test::RunRegressionCase("singular_line_boundarymode",
                                   "singular_line_boundarymode_loss.json", "loss", opts);
+  auto standard_opts = opts;
+  standard_opts.rtol = 5.0e-7;
+  standard_opts.atol = 1.0e-13;
+  standard_opts.excluded_columns = {"Minimum", "Error ("};
+  standard_opts.custom_checks.clear();
+  palace::test::RunRegressionCase("singular_line_boundarymode",
+                                  "singular_line_standard_boundarymode_loss.json",
+                                  "standard_loss", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular =
+        LoadRegressionOutputTable("singular_line_boundarymode", "loss", "mode-kn.csv");
+    auto standard = LoadRegressionOutputTable("singular_line_boundarymode", "standard_loss",
+                                              "mode-kn.csv");
+
+    const double singular_kn_real = GetTableValue(singular, "Re{kn} (1/m)");
+    const double standard_kn_real = GetTableValue(standard, "Re{kn} (1/m)");
+    const double singular_kn_imag = GetTableValue(singular, "Im{kn} (1/m)");
+    const double standard_kn_imag = GetTableValue(standard, "Im{kn} (1/m)");
+    const double singular_neff_real = GetTableValue(singular, "Re{n_eff}");
+    const double standard_neff_real = GetTableValue(standard, "Re{n_eff}");
+    const double singular_neff_imag = GetTableValue(singular, "Im{n_eff}");
+    const double standard_neff_imag = GetTableValue(standard, "Im{n_eff}");
+    CAPTURE(singular_kn_real, standard_kn_real, singular_kn_imag, standard_kn_imag,
+            singular_neff_real, standard_neff_real, singular_neff_imag, standard_neff_imag);
+    CHECK(RelativeDifference(singular_kn_real, standard_kn_real) < 5.0e-4);
+    CHECK(RelativeDifference(singular_kn_imag, standard_kn_imag) < 5.0e-4);
+    CHECK(RelativeDifference(singular_neff_real, standard_neff_real) < 5.0e-4);
+    CHECK(RelativeDifference(singular_neff_imag, standard_neff_imag) < 5.0e-4);
+  }
 }
 
 TEST_CASE("singular_line_eigenmode", "[Serial][Parallel][Regression]")

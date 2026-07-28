@@ -270,9 +270,9 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  MFEM_VERIFY(!C && K->Real() && !K->Imag() && M->Real(),
-              "Driven singular simulations require real stiffness, complex electric "
-              "mass, and no damping operator!");
+  MFEM_VERIFY(K->Real() && !K->Imag() && (!C || (C->Real() && !C->Imag())) && M->Real(),
+              "Driven singular simulations require real stiffness and damping with a "
+              "complex electric mass operator!");
 
   auto ksp = MakeSingularComplexKspSolver(iodata, space_op.GetComm());
   ComplexVector rhs(space_op.GetNDTrueVSize()), electric_field(space_op.GetNDTrueVSize()),
@@ -336,6 +336,21 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
     output.table.insert("electric_energy", "Electric field energy (J)");
     output.table.insert("magnetic_energy", "Magnetic field energy (J)");
     output.table.insert("relative_residual", "Relative residual");
+    for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
+    {
+      output.table.insert(fmt::format("voltage_real_{}", port_index),
+                          fmt::format("Re{{V[{}]}} (V)", port_index));
+      output.table.insert(fmt::format("voltage_imag_{}", port_index),
+                          fmt::format("Im{{V[{}]}} (V)", port_index));
+      output.table.insert(fmt::format("current_real_{}", port_index),
+                          fmt::format("Re{{I[{}]}} (A)", port_index));
+      output.table.insert(fmt::format("current_imag_{}", port_index),
+                          fmt::format("Im{{I[{}]}} (A)", port_index));
+      output.table.insert(fmt::format("s_real_{}", port_index),
+                          fmt::format("Re{{S[{}]}}", port_index));
+      output.table.insert(fmt::format("s_imag_{}", port_index),
+                          fmt::format("Im{{S[{}]}}", port_index));
+    }
     output.table[0].print_as_int = true;
     output.table[1].print_as_int = true;
     output.WriteFullTableTrunc();
@@ -381,9 +396,8 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
       auto extra = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
       MFEM_VERIFY(!extra,
                   "Driven singular simulations do not support extra boundary operators!");
-      auto A =
-          space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, K.get(),
-                                   static_cast<const ComplexOperator *>(nullptr), M.get());
+      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                        K.get(), C.get(), M.get());
       ksp->SetOperators(*A, *A);
 
       Mpi::Print("\nIt {:d}/{:d}: omega/2pi = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
@@ -422,6 +436,34 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.electric);
       const double magnetic_energy =
           iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.magnetic);
+      struct LumpedPortMeasurement
+      {
+        int index;
+        std::complex<double> voltage;
+        std::complex<double> current;
+        std::complex<double> scattering;
+      };
+      std::vector<LumpedPortMeasurement> lumped_port_measurements;
+      const auto [drive_is_simple, drive_port_type, drive_port_index] =
+          excitation_spec.IsSimple();
+      for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
+      {
+        const auto voltage =
+            space_op.GetSingularLumpedPortVoltage(port_index, electric_field);
+        const auto current = voltage / port.GetCharacteristicImpedance(omega);
+        auto scattering =
+            space_op.GetSingularLumpedPortSParameter(port_index, electric_field);
+        if (drive_is_simple && drive_port_type == PortType::LumpedPort &&
+            drive_port_index == port_index)
+        {
+          scattering.real(scattering.real() - 1.0);
+        }
+        lumped_port_measurements.push_back({port_index, voltage, current, scattering});
+        Mpi::Print(" Port {:d}: V = {:.6e}{:+.6e}i, I = {:.6e}{:+.6e}i, "
+                   "S = {:.6e}{:+.6e}i\n",
+                   port_index, voltage.real(), voltage.imag(), current.real(),
+                   current.imag(), scattering.real(), scattering.imag());
+      }
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e}, rel. residual = {:.3e})\n"
                  " Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
                  linalg::Norml2(space_op.GetComm(), electric_field),
@@ -437,6 +479,21 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
         output.table["electric_energy"] << electric_energy;
         output.table["magnetic_energy"] << magnetic_energy;
         output.table["relative_residual"] << relative_residual;
+        for (const auto &measurement : lumped_port_measurements)
+        {
+          const auto voltage =
+              iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(measurement.voltage);
+          const auto current =
+              iodata.units.Dimensionalize<Units::ValueType::CURRENT>(measurement.current);
+          output.table[fmt::format("voltage_real_{}", measurement.index)] << voltage.real();
+          output.table[fmt::format("voltage_imag_{}", measurement.index)] << voltage.imag();
+          output.table[fmt::format("current_real_{}", measurement.index)] << current.real();
+          output.table[fmt::format("current_imag_{}", measurement.index)] << current.imag();
+          output.table[fmt::format("s_real_{}", measurement.index)]
+              << measurement.scattering.real();
+          output.table[fmt::format("s_imag_{}", measurement.index)]
+              << measurement.scattering.imag();
+        }
         output.WriteFullTableTrunc();
         if (!surface_measurements.empty())
         {
@@ -467,6 +524,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           {"ElectricEnergy", "0.5 E^H M_epsilon E"},
           {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
+          {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"FieldGridOutput", false},
           {"ErrorEstimator", false},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3

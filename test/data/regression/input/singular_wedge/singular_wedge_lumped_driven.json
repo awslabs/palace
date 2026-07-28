@@ -1,13 +1,12 @@
 {
   "Problem": {
-    "Type": "BoundaryMode",
+    "Type": "Driven",
     "Verbose": 1,
-    "Output": "postpro/lossless"
+    "Output": "postpro/lumped_driven"
   },
   "Model": {
-    "Mesh": "singular_line_boundarymode.mesh",
+    "Mesh": "singular_wedge_lumped_refined.mesh",
     "L0": 1.0,
-    "CrackInternalBoundaryElements": false,
     "Refinement": {
       "MaxIts": 0
     }
@@ -23,45 +22,58 @@
   },
   "Boundaries": {
     "PEC": {
-      "Attributes": [1, 7]
+      "Attributes": [7, 8]
     },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "R": 50.0,
+        "Excitation": 1,
+        "Elements": [
+          {
+            "Attributes": [9],
+            "Direction": [1.0, 1.0, -1.0]
+          }
+        ]
+      }
+    ],
     "Postprocessing": {
       "Dielectric": [
         {
           "Index": 1,
           "Attributes": [7],
-          "Type": "Default",
+          "Type": "MS",
           "Thickness": 0.002,
           "Permittivity": 10.0,
-          "LossTan": 1.0,
-          "EdgeCutoff": 0.05
+          "LossTan": 1.0
         }
       ]
     }
   },
   "Solver": {
-    "Order": 1,
+    "Order": 2,
     "Device": "CPU",
-    "BoundaryMode": {
-      "Freq": 10.0,
-      "N": 4,
-      "Save": 0,
-      "Target": 1.0,
-      "Tol": 1.0e-8
+    "Driven": {
+      "Samples": [
+        {
+          "Type": "Point",
+          "Freq": [0.05]
+        }
+      ]
     },
     "SingularElements": {
       "Attributes": [7],
       "Order": 1,
       "QuadratureOrder": 8,
-      "AbsTol": 2.0e-6,
-      "RelTol": 2.0e-6,
+      "AbsTol": 1.0e-3,
+      "RelTol": 1.0e-3,
       "MaxSubdivisions": 6
     },
     "Linear": {
       "Type": "SuperLU",
       "KSPType": "GMRES",
       "Tol": 1.0e-10,
-      "MaxIts": 500,
+      "MaxIts": 100,
       "MGMaxLevels": 1
     }
   }

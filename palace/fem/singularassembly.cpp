@@ -10,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 #include <fmt/format.h>
@@ -2445,6 +2446,1295 @@ void ApplyIsotropicMaterialCoefficients(const IsotropicMaterialCoefficients &coe
   ScaleCouplingMatrices(
       matrices.nd_curl_curl_standard_enrichment, matrices.nd_curl_curl_enrichment_standard,
       matrices.nd_curl_curl_estimated_absolute_error, coefficients.inverse_magnetic);
+}
+
+namespace
+{
+
+struct ElementNDBoundaryMassMatrices
+{
+  mfem::DenseMatrix standard_enrichment;
+  mfem::DenseMatrix enrichment_standard;
+  mfem::DenseMatrix enrichment_enrichment;
+  mfem::DenseMatrix standard_enrichment_estimated_absolute_error;
+  mfem::DenseMatrix enrichment_enrichment_estimated_absolute_error;
+};
+
+struct WeightedSegmentIntegral
+{
+  std::vector<double> value;
+  std::vector<double> estimated_absolute_error;
+};
+
+struct TetrahedronFaceTracePowers
+{
+  std::array<double, 3> node{};
+  std::array<std::array<double, 3>, 3> edge{};
+};
+
+struct TetrahedronBoundaryTraceValues
+{
+  std::vector<Vector3> standard;
+  std::vector<Vector3> enrichment;
+  Vector3 normal;
+  double scale;
+};
+
+int SetBoundaryIntegrationPoint(mfem::Mesh &mesh, int boundary,
+                                const mfem::IntegrationPoint &boundary_point,
+                                mfem::FaceElementTransformations &face,
+                                mfem::IsoparametricTransformation &element1,
+                                mfem::IsoparametricTransformation &element2)
+{
+  int face_index = -1, orientation = -1;
+  mesh.GetBdrElementFace(boundary, &face_index, &orientation);
+  mesh.GetFaceElementTransformations(face_index, face, element1, element2);
+  if (!face.Elem1 || face.Elem2 || face.Elem1No < 0 ||
+      face.GetGeometryType() == mfem::Geometry::INVALID)
+  {
+    throw std::domain_error(
+        "Singular lumped-port traces currently require a conforming one-sided "
+        "boundary element!");
+  }
+  const auto face_point = mfem::Mesh::TransformBdrElementToFace(
+      face.GetGeometryType(), orientation, boundary_point);
+  face.SetAllIntPoints(&face_point);
+  return face.Elem1No;
+}
+
+int GetTetrahedronVertex(const mfem::IntegrationPoint &point)
+{
+  const std::array<double, 4> lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
+                                     point.z};
+  const auto maximum = std::max_element(lambda.begin(), lambda.end());
+  if (*maximum < 1.0 - 256.0 * std::numeric_limits<double>::epsilon())
+  {
+    throw std::runtime_error(
+        "Singular boundary trace could not identify a tetrahedron vertex!");
+  }
+  return static_cast<int>(std::distance(lambda.begin(), maximum));
+}
+
+std::array<int, 3> GetTetrahedronBoundaryNodes(mfem::Mesh &mesh, int boundary,
+                                               mfem::FaceElementTransformations &face,
+                                               mfem::IsoparametricTransformation &element1,
+                                               mfem::IsoparametricTransformation &element2,
+                                               int &element)
+{
+  std::array<mfem::IntegrationPoint, 3> points;
+  points[0].Set2(0.0, 0.0);
+  points[1].Set2(1.0, 0.0);
+  points[2].Set2(0.0, 1.0);
+  std::array<int, 3> nodes{-1, -1, -1};
+  element = -1;
+  for (int vertex = 0; vertex < 3; vertex++)
+  {
+    const int current = SetBoundaryIntegrationPoint(mesh, boundary, points[vertex], face,
+                                                    element1, element2);
+    if (element >= 0 && current != element)
+    {
+      throw std::runtime_error(
+          "Singular boundary trace changed adjacent element across one face!");
+    }
+    element = current;
+    nodes[vertex] = GetTetrahedronVertex(face.Elem1->GetIntPoint());
+  }
+  auto sorted = nodes;
+  std::sort(sorted.begin(), sorted.end());
+  if (sorted[0] < 0 || sorted[2] > 3 ||
+      std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end())
+  {
+    throw std::runtime_error(
+        "Singular boundary trace could not map a complete tetrahedron face!");
+  }
+  return nodes;
+}
+
+bool HasTetrahedronBoundaryTrace(const HigherOrderBasis &basis,
+                                 const std::array<int, 3> &nodes)
+{
+  for (int i = 0; i < 4; i++)
+  {
+    if (basis.interpolation_indices[i] > 0 &&
+        std::find(nodes.begin(), nodes.end(), basis.nodes[i]) == nodes.end())
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+TetrahedronFaceTracePowers GetTetrahedronBoundaryPowers(const HigherOrderBasis &basis,
+                                                        const std::array<int, 3> &nodes)
+{
+  TetrahedronFaceTracePowers powers;
+  if (!IsGradientFamily(basis.family))
+  {
+    return powers;
+  }
+  const auto face_node = [&nodes](int element_node)
+  {
+    const auto node = std::find(nodes.begin(), nodes.end(), element_node);
+    if (node == nodes.end())
+    {
+      throw std::invalid_argument(
+          "A singular gradient trace does not contain its singular entity!");
+    }
+    return static_cast<int>(std::distance(nodes.begin(), node));
+  };
+  const double power = basis.nu - 1.0;
+  if (basis.family == HigherOrderBasisFamily::NODE_GRADIENT)
+  {
+    powers.node[face_node(basis.nodes[0])] = power;
+  }
+  else
+  {
+    const int first = face_node(basis.nodes[0]);
+    const int second = face_node(basis.nodes[1]);
+    powers.edge[first][second] = powers.edge[second][first] = power;
+  }
+  return powers;
+}
+
+TetrahedronFaceTracePowers AddTetrahedronBoundaryPowers(const TetrahedronFaceTracePowers &a,
+                                                        const TetrahedronFaceTracePowers &b)
+{
+  TetrahedronFaceTracePowers result;
+  for (int i = 0; i < 3; i++)
+  {
+    result.node[i] = a.node[i] + b.node[i];
+    for (int j = 0; j < 3; j++)
+    {
+      result.edge[i][j] = a.edge[i][j] + b.edge[i][j];
+    }
+  }
+  return result;
+}
+
+template <typename Integrand>
+WeightedSegmentIntegral
+IntegrateTetrahedronBoundaryTrace(const TetrahedronFaceTracePowers &powers, int value_size,
+                                  const AdaptiveAssemblyOptions &options,
+                                  const Integrand &integrand)
+{
+  if (value_size < 1)
+  {
+    throw std::invalid_argument(
+        "Tetrahedral singular boundary trace received invalid integration dimensions!");
+  }
+  for (int i = 0; i < 3; i++)
+  {
+    if (!std::isfinite(powers.node[i]))
+    {
+      throw std::invalid_argument(
+          "Tetrahedral singular boundary trace received a nonfinite node power!");
+    }
+    for (int j = 0; j < 3; j++)
+    {
+      const double scale =
+          std::max({1.0, std::abs(powers.edge[i][j]), std::abs(powers.edge[j][i])});
+      if (!std::isfinite(powers.edge[i][j]) ||
+          std::abs(powers.edge[i][j] - powers.edge[j][i]) >
+              64.0 * std::numeric_limits<double>::epsilon() * scale)
+      {
+        throw std::invalid_argument(
+            "Tetrahedral singular boundary trace received invalid edge powers!");
+      }
+    }
+  }
+
+  const auto integrate = [&](int order)
+  {
+    std::vector<long double> accumulation(static_cast<std::size_t>(value_size));
+    constexpr double radial_power = 3.0;
+    constexpr double chart_determinant = 1.0 / 6.0;
+    for (int vertex = 0; vertex < 3; vertex++)
+    {
+      for (int neighbor = 0; neighbor < 3; neighbor++)
+      {
+        if (neighbor == vertex)
+        {
+          continue;
+        }
+        int opposite = 0;
+        while (opposite == vertex || opposite == neighbor)
+        {
+          opposite++;
+        }
+        const double outer_edge_power = powers.edge[vertex][neighbor];
+        const double radial_singular_power = powers.node[vertex] +
+                                             powers.edge[vertex][neighbor] +
+                                             powers.edge[vertex][opposite];
+        const double effective_radial_power =
+            2.0 * radial_power - 1.0 + radial_power * radial_singular_power;
+        if (!(outer_edge_power > -1.0) || !(effective_radial_power > -1.0))
+        {
+          throw std::domain_error(
+              "A lumped-port boundary face contains a nonintegrable singular edge or "
+              "point. Split the port from the enriched feature or exclude enrichment "
+              "near the port!");
+        }
+        const auto radial_rule =
+            BuildWeightedSegmentQuadrature(order, effective_radial_power, 0.0);
+        const double effective_tangential_power =
+            radial_power * (outer_edge_power + 1.0) - 1.0;
+        const auto tangential_rule =
+            BuildWeightedSegmentQuadrature(order, effective_tangential_power, 0.0);
+        for (const auto &radial_quadrature : radial_rule)
+        {
+          const double parameter = radial_quadrature.coordinate;
+          const double radial = std::pow(parameter, radial_power);
+          const double radial_weight =
+              std::pow(parameter, radial_power * radial_singular_power);
+          for (const auto &tangential_quadrature : tangential_rule)
+          {
+            const double tangential_parameter = tangential_quadrature.coordinate;
+            const double tangential = std::pow(tangential_parameter, radial_power);
+            const double tangential_weight =
+                std::pow(tangential_parameter, radial_power * outer_edge_power);
+            if (!std::isfinite(radial_weight) || !(radial_weight > 0.0) ||
+                !std::isfinite(tangential_weight) || !(tangential_weight > 0.0))
+            {
+              throw std::runtime_error(
+                  "Tetrahedral singular boundary trace produced an invalid chart "
+                  "weight!");
+            }
+
+            std::array<double, 3> lambda{};
+            for (int i = 0; i < 3; i++)
+            {
+              const double a = i == vertex ? 1.0 : 0.0;
+              const double b = (i == vertex || i == neighbor) ? 0.5 : 0.0;
+              constexpr double c = 1.0 / 3.0;
+              lambda[i] =
+                  (1.0 - radial) * a + radial * ((1.0 - tangential) * b + tangential * c);
+            }
+            mfem::IntegrationPoint point;
+            point.Set2(lambda[1], lambda[2]);
+            const auto values = integrand(point);
+            if (values.size() != accumulation.size())
+            {
+              throw std::runtime_error(
+                  "Tetrahedral singular boundary trace integrand changed dimensions!");
+            }
+            const double chart_scale =
+                radial_quadrature.weight * tangential_quadrature.weight * radial_power *
+                radial_power * chart_determinant / (radial_weight * tangential_weight);
+            if (!std::isfinite(chart_scale) || !(chart_scale > 0.0))
+            {
+              throw std::runtime_error(
+                  "Tetrahedral singular boundary trace produced an invalid chart "
+                  "Jacobian!");
+            }
+            for (std::size_t i = 0; i < values.size(); i++)
+            {
+              const double contribution = chart_scale * values[i];
+              if (!std::isfinite(contribution))
+              {
+                throw std::runtime_error(
+                    "Tetrahedral singular boundary trace produced a nonfinite "
+                    "contribution!");
+              }
+              accumulation[i] += contribution;
+            }
+          }
+        }
+      }
+    }
+    std::vector<double> result(accumulation.size());
+    std::transform(accumulation.begin(), accumulation.end(), result.begin(),
+                   [](long double value) { return static_cast<double>(value); });
+    return result;
+  };
+
+  constexpr int order_increment = 2;
+  int comparison_order = std::max(4, options.quadrature_order);
+  auto comparison = integrate(comparison_order);
+  std::vector<double> value;
+  std::vector<double> estimated_absolute_error(static_cast<std::size_t>(value_size));
+  int order = comparison_order + order_increment;
+  for (int refinement = 0; refinement <= options.maximum_subdivisions; refinement++)
+  {
+    value = integrate(order);
+    bool converged = true;
+    for (std::size_t i = 0; i < value.size(); i++)
+    {
+      const double scale = std::max({1.0, std::abs(value[i]), std::abs(comparison[i])});
+      const double error = 8.0 * std::abs(value[i] - comparison[i]) +
+                           256.0 * std::numeric_limits<double>::epsilon() * scale;
+      estimated_absolute_error[i] = error;
+      const double tolerance =
+          options.absolute_tolerance + options.relative_tolerance * std::abs(value[i]);
+      converged = converged && std::isfinite(error) && error <= tolerance;
+    }
+    if (converged)
+    {
+      return {std::move(value), std::move(estimated_absolute_error)};
+    }
+    if (refinement < options.maximum_subdivisions)
+    {
+      comparison = value;
+      comparison_order = order;
+      order += order_increment;
+    }
+  }
+  throw std::runtime_error(
+      fmt::format("Tetrahedral singular boundary trace quadrature did not meet tolerance "
+                  "(orders = {}/{}, order refinements = {})!",
+                  order, comparison_order, options.maximum_subdivisions));
+}
+
+double TangentialDot(const Vector3 &a, const Vector3 &b, const Vector3 &normal)
+{
+  return Dot(a, b) - Dot(a, normal) * Dot(b, normal);
+}
+
+int GetTriangleVertex(const mfem::IntegrationPoint &point)
+{
+  const std::array<double, 3> lambda{1.0 - point.x - point.y, point.x, point.y};
+  const auto maximum = std::max_element(lambda.begin(), lambda.end());
+  if (*maximum < 1.0 - 256.0 * std::numeric_limits<double>::epsilon())
+  {
+    throw std::runtime_error(
+        "Singular boundary trace could not identify a triangle vertex!");
+  }
+  return static_cast<int>(std::distance(lambda.begin(), maximum));
+}
+
+std::array<int, 2> GetTriangleBoundaryNodes(mfem::Mesh &mesh, int boundary,
+                                            mfem::FaceElementTransformations &face,
+                                            mfem::IsoparametricTransformation &element1,
+                                            mfem::IsoparametricTransformation &element2,
+                                            int &element)
+{
+  std::array<int, 2> nodes{-1, -1};
+  element = -1;
+  for (int endpoint = 0; endpoint < 2; endpoint++)
+  {
+    mfem::IntegrationPoint point;
+    point.x = static_cast<double>(endpoint);
+    const int current =
+        SetBoundaryIntegrationPoint(mesh, boundary, point, face, element1, element2);
+    if (element >= 0 && current != element)
+    {
+      throw std::runtime_error(
+          "Singular boundary trace changed adjacent element across one segment!");
+    }
+    element = current;
+    nodes[endpoint] = GetTriangleVertex(face.Elem1->GetIntPoint());
+  }
+  if (nodes[0] < 0 || nodes[1] < 0 || nodes[0] == nodes[1])
+  {
+    throw std::runtime_error(
+        "Singular boundary trace could not map a complete triangle edge!");
+  }
+  return nodes;
+}
+
+std::array<double, 2> GetTriangleBoundaryPowers(const TriangleBasis &basis,
+                                                const std::array<int, 2> &nodes)
+{
+  if (basis.family != HigherOrderBasisFamily::NODE_GRADIENT)
+  {
+    throw std::invalid_argument(
+        "Only triangular node-gradient functions have a nonzero boundary trace!");
+  }
+  std::array<double, 2> powers{};
+  const int singular_node = TriangleSingularNode(basis);
+  for (int endpoint = 0; endpoint < 2; endpoint++)
+  {
+    if (singular_node == nodes[endpoint])
+    {
+      powers[endpoint] = basis.nu - 1.0;
+    }
+  }
+  return powers;
+}
+
+bool HasTriangleBoundaryTrace(const TriangleBasis &basis, const std::array<int, 2> &nodes)
+{
+  if (basis.family == HigherOrderBasisFamily::NODE_ROTATIONAL)
+  {
+    return false;
+  }
+  if (basis.family != HigherOrderBasisFamily::NODE_GRADIENT)
+  {
+    throw std::invalid_argument(
+        "Triangular boundary trace received an unsupported basis family!");
+  }
+  return std::find(nodes.begin(), nodes.end(), basis.nodes[0]) != nodes.end() &&
+         std::find(nodes.begin(), nodes.end(), basis.nodes[1]) != nodes.end();
+}
+
+template <typename Integrand>
+WeightedSegmentIntegral
+IntegrateTriangleBoundaryTrace(const std::array<double, 2> &powers, int value_size,
+                               const AdaptiveAssemblyOptions &options,
+                               const Integrand &integrand)
+{
+  if (value_size < 1 || !std::isfinite(powers[0]) || !std::isfinite(powers[1]))
+  {
+    throw std::invalid_argument(
+        "Triangular singular boundary trace received invalid integration dimensions!");
+  }
+  if (!(powers[0] > -1.0) || !(powers[1] > -1.0))
+  {
+    throw std::domain_error(
+        "A lumped-port boundary segment contains a nonintegrable singular endpoint. "
+        "Split the port from the enriched feature or exclude enrichment near the port!");
+  }
+
+  const auto integrate = [&](int order)
+  {
+    std::vector<long double> accumulation(static_cast<std::size_t>(value_size));
+    // Cubic grading exactly resolves the fractional residual power for nu = 2/3
+    // without placing high-order nodes close enough to round onto the endpoint.
+    constexpr double radial_power = 3.0;
+    for (int endpoint = 0; endpoint < 2; endpoint++)
+    {
+      const double effective_power = radial_power * (powers[endpoint] + 1.0) - 1.0;
+      const auto rule = BuildWeightedSegmentQuadrature(order, effective_power, 0.0);
+      for (const auto &quadrature : rule)
+      {
+        const double radial = quadrature.coordinate;
+        const double distance = 0.5 * std::pow(radial, radial_power);
+        const double coordinate = endpoint == 0 ? distance : 1.0 - distance;
+        const double jacobian = 0.5 * radial_power * std::pow(radial, radial_power - 1.0);
+        const double weight_function = std::pow(radial, effective_power);
+        if (!std::isfinite(jacobian) || !(jacobian > 0.0) ||
+            !std::isfinite(weight_function) || !(weight_function > 0.0))
+        {
+          throw std::runtime_error(
+              "Triangular singular boundary trace produced an invalid graded map!");
+        }
+        const auto values = integrand(coordinate);
+        if (values.size() != accumulation.size())
+        {
+          throw std::runtime_error(
+              "Triangular singular boundary trace integrand changed dimensions!");
+        }
+        for (std::size_t i = 0; i < values.size(); i++)
+        {
+          const double contribution =
+              quadrature.weight * jacobian * values[i] / weight_function;
+          if (!std::isfinite(contribution))
+          {
+            throw std::runtime_error(
+                "Triangular singular boundary trace produced a nonfinite "
+                "contribution!");
+          }
+          accumulation[i] += contribution;
+        }
+      }
+    }
+    std::vector<double> result(accumulation.size());
+    std::transform(accumulation.begin(), accumulation.end(), result.begin(),
+                   [](long double value) { return static_cast<double>(value); });
+    return result;
+  };
+
+  constexpr int order_increment = 4;
+  int comparison_order = std::max(4, 2 * options.quadrature_order);
+  auto comparison = integrate(comparison_order);
+  std::vector<double> value;
+  std::vector<double> estimated_absolute_error(static_cast<std::size_t>(value_size));
+  int order = comparison_order + order_increment;
+  for (int refinement = 0; refinement <= options.maximum_subdivisions; refinement++)
+  {
+    value = integrate(order);
+    bool converged = true;
+    for (std::size_t i = 0; i < value.size(); i++)
+    {
+      const double scale = std::max({1.0, std::abs(value[i]), std::abs(comparison[i])});
+      const double error = 8.0 * std::abs(value[i] - comparison[i]) +
+                           256.0 * std::numeric_limits<double>::epsilon() * scale;
+      estimated_absolute_error[i] = error;
+      const double tolerance =
+          options.absolute_tolerance + options.relative_tolerance * std::abs(value[i]);
+      converged = converged && std::isfinite(error) && error <= tolerance;
+    }
+    if (converged)
+    {
+      return {std::move(value), std::move(estimated_absolute_error)};
+    }
+    if (refinement < options.maximum_subdivisions)
+    {
+      comparison = value;
+      comparison_order = order;
+      order += order_increment;
+    }
+  }
+  throw std::runtime_error(
+      fmt::format("Triangular singular boundary trace quadrature did not meet tolerance "
+                  "(orders = {}/{}, order refinements = {})!",
+                  order, comparison_order, options.maximum_subdivisions));
+}
+
+ElementNDBoundaryMassMatrices AssembleTetrahedronElementNDBoundaryMassMatrices(
+    const ElementDofMap &element_dofs, const mfem::FiniteElement &nd_fe, mfem::Mesh &mesh,
+    int boundary, double coefficient, const AdaptiveAssemblyOptions &options)
+{
+  if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3 ||
+      nd_fe.GetGeomType() != mfem::Geometry::TETRAHEDRON ||
+      nd_fe.GetRangeType() != mfem::FiniteElement::VECTOR ||
+      nd_fe.GetMapType() != mfem::FiniteElement::H_CURL || !std::isfinite(coefficient))
+  {
+    throw std::invalid_argument(
+        "Tetrahedral singular boundary mass assembly received invalid input!");
+  }
+  ValidateAdaptiveAssemblyOptions(options);
+  mfem::FaceElementTransformations face;
+  mfem::IsoparametricTransformation element1, element2;
+  int element = -1;
+  const auto boundary_nodes =
+      GetTetrahedronBoundaryNodes(mesh, boundary, face, element1, element2, element);
+
+  const int standard_size = nd_fe.GetDof();
+  const int enrichment_size = static_cast<int>(element_dofs.nd.size());
+  auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
+  if (!boundary_transformation ||
+      boundary_transformation->GetGeometryType() != mfem::Geometry::TRIANGLE)
+  {
+    throw std::runtime_error(
+        "Tetrahedral singular boundary mass assembly requires triangle boundaries!");
+  }
+
+  mfem::DenseMatrix standard_value(standard_size, 3);
+  const auto evaluate_traces = [&](const mfem::IntegrationPoint &boundary_point)
+  {
+    const int current = SetBoundaryIntegrationPoint(mesh, boundary, boundary_point, face,
+                                                    element1, element2);
+    if (current != element)
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary mass changed adjacent element!");
+    }
+    const auto &element_point = face.Elem1->GetIntPoint();
+    double jacobian_determinant = 0.0;
+    const auto grad_lambda =
+        GetBarycentricGradients(*face.Elem1, element_point, jacobian_determinant);
+    nd_fe.CalcPhysVShape(*face.Elem1, standard_value);
+
+    boundary_transformation->SetIntPoint(&boundary_point);
+    const auto &jacobian = boundary_transformation->Jacobian();
+    if (jacobian.Height() != 3 || jacobian.Width() != 2)
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary mass found an invalid surface Jacobian!");
+    }
+    const Vector3 first{jacobian(0, 0), jacobian(1, 0), jacobian(2, 0)};
+    const Vector3 second{jacobian(0, 1), jacobian(1, 1), jacobian(2, 1)};
+    Vector3 normal = Cross(first, second);
+    const double boundary_weight = std::sqrt(Dot(normal, normal));
+    if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary mass found a degenerate triangle!");
+    }
+    for (double &value : normal)
+    {
+      value /= boundary_weight;
+    }
+
+    const BarycentricPoint lambda{1.0 - element_point.x - element_point.y - element_point.z,
+                                  element_point.x, element_point.y, element_point.z};
+    TetrahedronBoundaryTraceValues result;
+    result.standard.resize(static_cast<std::size_t>(standard_size));
+    for (int i = 0; i < standard_size; i++)
+    {
+      result.standard[i] = {standard_value(i, 0), standard_value(i, 1),
+                            standard_value(i, 2)};
+    }
+    result.enrichment.reserve(static_cast<std::size_t>(enrichment_size));
+    for (const auto &dof : element_dofs.nd)
+    {
+      result.enrichment.push_back(
+          EvaluateHigherOrderBasis(lambda, grad_lambda, dof.basis).value);
+    }
+    result.normal = normal;
+    result.scale = coefficient * boundary_weight;
+    return result;
+  };
+
+  ElementNDBoundaryMassMatrices result;
+  result.standard_enrichment.SetSize(standard_size, enrichment_size);
+  result.enrichment_standard.SetSize(enrichment_size, standard_size);
+  result.enrichment_enrichment.SetSize(enrichment_size);
+  result.standard_enrichment_estimated_absolute_error.SetSize(standard_size,
+                                                              enrichment_size);
+  result.enrichment_enrichment_estimated_absolute_error.SetSize(enrichment_size);
+  for (int enrichment = 0; enrichment < enrichment_size; enrichment++)
+  {
+    const auto &basis = element_dofs.nd[enrichment].basis;
+    if (!HasTetrahedronBoundaryTrace(basis, boundary_nodes))
+    {
+      continue;
+    }
+    const auto powers = GetTetrahedronBoundaryPowers(basis, boundary_nodes);
+    const auto integral = IntegrateTetrahedronBoundaryTrace(
+        powers, standard_size, options,
+        [&](const mfem::IntegrationPoint &point)
+        {
+          const auto values = evaluate_traces(point);
+          std::vector<double> result(static_cast<std::size_t>(standard_size));
+          for (int standard = 0; standard < standard_size; standard++)
+          {
+            result[standard] =
+                values.scale * TangentialDot(values.standard[standard],
+                                             values.enrichment[enrichment], values.normal);
+          }
+          return result;
+        });
+    for (int standard = 0; standard < standard_size; standard++)
+    {
+      result.standard_enrichment(standard, enrichment) = integral.value[standard];
+      result.standard_enrichment_estimated_absolute_error(standard, enrichment) =
+          integral.estimated_absolute_error[standard];
+    }
+  }
+  result.enrichment_standard.Transpose(result.standard_enrichment);
+  for (int row = 0; row < enrichment_size; row++)
+  {
+    const auto &row_basis = element_dofs.nd[row].basis;
+    if (!HasTetrahedronBoundaryTrace(row_basis, boundary_nodes))
+    {
+      continue;
+    }
+    const auto row_powers = GetTetrahedronBoundaryPowers(row_basis, boundary_nodes);
+    for (int column = row; column < enrichment_size; column++)
+    {
+      const auto &column_basis = element_dofs.nd[column].basis;
+      if (!HasTetrahedronBoundaryTrace(column_basis, boundary_nodes))
+      {
+        continue;
+      }
+      const auto powers = AddTetrahedronBoundaryPowers(
+          row_powers, GetTetrahedronBoundaryPowers(column_basis, boundary_nodes));
+      const auto integral = IntegrateTetrahedronBoundaryTrace(
+          powers, 1, options,
+          [&](const mfem::IntegrationPoint &point)
+          {
+            const auto values = evaluate_traces(point);
+            return std::vector<double>{
+                values.scale * TangentialDot(values.enrichment[row],
+                                             values.enrichment[column], values.normal)};
+          });
+      result.enrichment_enrichment(row, column) =
+          result.enrichment_enrichment(column, row) = integral.value[0];
+      result.enrichment_enrichment_estimated_absolute_error(row, column) =
+          result.enrichment_enrichment_estimated_absolute_error(column, row) =
+              integral.estimated_absolute_error[0];
+    }
+  }
+  return result;
+}
+
+ElementNDBoundaryMassMatrices AssembleTriangleElementNDBoundaryMassMatrices(
+    const TriangleElementDofMap &element_dofs, const mfem::FiniteElement &nd_fe,
+    mfem::Mesh &mesh, int boundary, double coefficient,
+    const AdaptiveAssemblyOptions &options)
+{
+  if (mesh.Dimension() != 2 || mesh.SpaceDimension() != 2 ||
+      nd_fe.GetGeomType() != mfem::Geometry::TRIANGLE ||
+      nd_fe.GetRangeType() != mfem::FiniteElement::VECTOR ||
+      nd_fe.GetMapType() != mfem::FiniteElement::H_CURL || !std::isfinite(coefficient))
+  {
+    throw std::invalid_argument(
+        "Triangular singular boundary mass assembly received invalid input!");
+  }
+  ValidateAdaptiveAssemblyOptions(options);
+  mfem::FaceElementTransformations face;
+  mfem::IsoparametricTransformation element1, element2;
+  int element = -1;
+  const auto boundary_nodes =
+      GetTriangleBoundaryNodes(mesh, boundary, face, element1, element2, element);
+
+  const int standard_size = nd_fe.GetDof();
+  const int enrichment_size = static_cast<int>(element_dofs.nd.size());
+  auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
+  if (!boundary_transformation ||
+      boundary_transformation->GetGeometryType() != mfem::Geometry::SEGMENT)
+  {
+    throw std::runtime_error(
+        "Triangular singular boundary mass assembly requires segment boundaries!");
+  }
+
+  mfem::DenseMatrix standard_value(standard_size, 2);
+  const auto evaluate_traces = [&](double coordinate)
+  {
+    mfem::IntegrationPoint boundary_point;
+    boundary_point.x = coordinate;
+    const int current = SetBoundaryIntegrationPoint(mesh, boundary, boundary_point, face,
+                                                    element1, element2);
+    if (current != element)
+    {
+      throw std::runtime_error(
+          "Triangular singular boundary mass changed adjacent element!");
+    }
+    const auto &element_point = face.Elem1->GetIntPoint();
+    double jacobian_determinant = 0.0;
+    const auto grad_lambda =
+        GetTriangleBarycentricGradients(*face.Elem1, element_point, jacobian_determinant);
+    nd_fe.CalcPhysVShape(*face.Elem1, standard_value);
+
+    boundary_transformation->SetIntPoint(&boundary_point);
+    const auto &jacobian = boundary_transformation->Jacobian();
+    Vector2 tangent{jacobian(0, 0), jacobian(1, 0)};
+    const double boundary_weight = std::sqrt(Dot(tangent, tangent));
+    if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
+    {
+      throw std::runtime_error(
+          "Triangular singular boundary mass found a degenerate segment!");
+    }
+    tangent[0] /= boundary_weight;
+    tangent[1] /= boundary_weight;
+
+    const TriangleBarycentricPoint lambda{1.0 - element_point.x - element_point.y,
+                                          element_point.x, element_point.y};
+    std::vector<double> standard_trace(static_cast<std::size_t>(standard_size));
+    for (int i = 0; i < standard_size; i++)
+    {
+      standard_trace[i] =
+          standard_value(i, 0) * tangent[0] + standard_value(i, 1) * tangent[1];
+    }
+    std::vector<double> enrichment_trace(static_cast<std::size_t>(enrichment_size));
+    for (int i = 0; i < enrichment_size; i++)
+    {
+      const auto basis =
+          EvaluateTriangleBasis(lambda, grad_lambda, element_dofs.nd[i].basis);
+      enrichment_trace[i] = Dot(basis.value, tangent);
+    }
+    return std::make_tuple(std::move(standard_trace), std::move(enrichment_trace),
+                           coefficient * boundary_weight);
+  };
+
+  ElementNDBoundaryMassMatrices result;
+  result.standard_enrichment.SetSize(standard_size, enrichment_size);
+  result.enrichment_standard.SetSize(enrichment_size, standard_size);
+  result.enrichment_enrichment.SetSize(enrichment_size);
+  result.standard_enrichment_estimated_absolute_error.SetSize(standard_size,
+                                                              enrichment_size);
+  result.enrichment_enrichment_estimated_absolute_error.SetSize(enrichment_size);
+  for (int enrichment = 0; enrichment < enrichment_size; enrichment++)
+  {
+    if (!HasTriangleBoundaryTrace(element_dofs.nd[enrichment].basis, boundary_nodes))
+    {
+      continue;
+    }
+    const auto powers =
+        GetTriangleBoundaryPowers(element_dofs.nd[enrichment].basis, boundary_nodes);
+    const auto integral = IntegrateTriangleBoundaryTrace(
+        powers, standard_size, options,
+        [&](double coordinate)
+        {
+          auto [standard_trace, enrichment_trace, scale] = evaluate_traces(coordinate);
+          for (int standard = 0; standard < standard_size; standard++)
+          {
+            standard_trace[standard] *= scale * enrichment_trace[enrichment];
+          }
+          return standard_trace;
+        });
+    for (int standard = 0; standard < standard_size; standard++)
+    {
+      result.standard_enrichment(standard, enrichment) = integral.value[standard];
+      result.standard_enrichment_estimated_absolute_error(standard, enrichment) =
+          integral.estimated_absolute_error[standard];
+    }
+  }
+  result.enrichment_standard.Transpose(result.standard_enrichment);
+  for (int row = 0; row < enrichment_size; row++)
+  {
+    if (!HasTriangleBoundaryTrace(element_dofs.nd[row].basis, boundary_nodes))
+    {
+      continue;
+    }
+    const auto row_powers =
+        GetTriangleBoundaryPowers(element_dofs.nd[row].basis, boundary_nodes);
+    for (int column = row; column < enrichment_size; column++)
+    {
+      if (!HasTriangleBoundaryTrace(element_dofs.nd[column].basis, boundary_nodes))
+      {
+        continue;
+      }
+      const auto column_powers =
+          GetTriangleBoundaryPowers(element_dofs.nd[column].basis, boundary_nodes);
+      const std::array<double, 2> powers{row_powers[0] + column_powers[0],
+                                         row_powers[1] + column_powers[1]};
+      const auto integral = IntegrateTriangleBoundaryTrace(
+          powers, 1, options,
+          [&](double coordinate)
+          {
+            auto [standard_trace, enrichment_trace, scale] = evaluate_traces(coordinate);
+            return std::vector<double>{scale * enrichment_trace[row] *
+                                       enrichment_trace[column]};
+          });
+      result.enrichment_enrichment(row, column) =
+          result.enrichment_enrichment(column, row) = integral.value[0];
+      result.enrichment_enrichment_estimated_absolute_error(row, column) =
+          result.enrichment_enrichment_estimated_absolute_error(column, row) =
+              integral.estimated_absolute_error[0];
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
+LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
+    const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const std::map<int, double> &boundary_coefficients,
+    const AdaptiveAssemblyOptions &options)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = nd_fespace.GetMesh();
+  if (!mesh || mesh->Dimension() != 3 || mesh->SpaceDimension() != 3 ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.nd_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Tetrahedral singular boundary mass topology and space must share one "
+        "three-dimensional mesh!");
+  }
+  for (const auto &[attribute, coefficient] : boundary_coefficients)
+  {
+    if (attribute <= 0 || !std::isfinite(coefficient))
+    {
+      throw std::invalid_argument(
+          "Tetrahedral singular boundary mass requires positive attributes and finite "
+          "coefficients!");
+    }
+  }
+
+  LocalSparseOperatorBlocks result;
+  InitializeLocalSparseBlock(result, nd_fespace.GetVSize(),
+                             static_cast<int>(topology.nd_dofs.size()));
+  for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
+  {
+    const auto coefficient = boundary_coefficients.find(mesh->GetBdrAttribute(boundary));
+    if (coefficient == boundary_coefficients.end() || coefficient->second == 0.0)
+    {
+      continue;
+    }
+
+    int element = -1, local_face = -1;
+    mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
+    if (element < 0 || element >= mesh->GetNE())
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary mass could not find its adjacent element!");
+    }
+    const auto &element_dofs = topology.elements[element];
+    if (element_dofs.nd.empty())
+    {
+      continue;
+    }
+    const auto enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs.nd, topology.nd_dofs.size());
+
+    ElementNDBoundaryMassMatrices matrices;
+    try
+    {
+      matrices = AssembleTetrahedronElementNDBoundaryMassMatrices(
+          element_dofs, *nd_fespace.GetFE(element), *mesh, boundary, coefficient->second,
+          options);
+    }
+    catch (const std::exception &error)
+    {
+      throw std::runtime_error(fmt::format(
+          "Tetrahedral singular boundary mass assembly failed on local boundary element "
+          "{} (attribute {}, adjacent element {}): {}",
+          boundary, mesh->GetBdrAttribute(boundary), element, error.what()));
+    }
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    ValidateStandardRowTransformation(
+        dof_transformation, matrices.standard_enrichment, matrices.enrichment_standard,
+        matrices.standard_enrichment_estimated_absolute_error);
+    ApplyStandardRowTransformation(dof_transformation, matrices.standard_enrichment,
+                                   matrices.enrichment_standard,
+                                   matrices.standard_enrichment_estimated_absolute_error);
+    const auto unsigned_standard_dofs = UnsignedDofs(standard_dofs);
+
+    result.enrichment_enrichment->AddSubMatrix(enrichment_dofs, enrichment_dofs,
+                                               matrices.enrichment_enrichment);
+    result.standard_enrichment->AddSubMatrix(standard_dofs, enrichment_dofs,
+                                             matrices.standard_enrichment);
+    result.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+        enrichment_dofs, enrichment_dofs,
+        matrices.enrichment_enrichment_estimated_absolute_error);
+    result.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+        unsigned_standard_dofs, enrichment_dofs,
+        matrices.standard_enrichment_estimated_absolute_error);
+  }
+  FinalizeLocalSparseBlock(result);
+  return result;
+}
+
+LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const std::map<int, double> &boundary_coefficients,
+    const AdaptiveAssemblyOptions &options)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = nd_fespace.GetMesh();
+  if (!mesh || mesh->Dimension() != 2 || mesh->SpaceDimension() != 2 ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.nd_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Triangular singular boundary mass topology and space must share one "
+        "two-dimensional mesh!");
+  }
+  for (const auto &[attribute, coefficient] : boundary_coefficients)
+  {
+    if (attribute <= 0 || !std::isfinite(coefficient))
+    {
+      throw std::invalid_argument(
+          "Triangular singular boundary mass requires positive attributes and finite "
+          "coefficients!");
+    }
+  }
+
+  LocalSparseOperatorBlocks result;
+  InitializeLocalSparseBlock(result, nd_fespace.GetVSize(),
+                             static_cast<int>(topology.nd_dofs.size()));
+  for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
+  {
+    const auto coefficient = boundary_coefficients.find(mesh->GetBdrAttribute(boundary));
+    if (coefficient == boundary_coefficients.end() || coefficient->second == 0.0)
+    {
+      continue;
+    }
+
+    int element = -1, local_face = -1;
+    mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
+    if (element < 0 || element >= mesh->GetNE())
+    {
+      throw std::runtime_error(
+          "Triangular singular boundary mass could not find its adjacent element!");
+    }
+    const auto &element_dofs = topology.elements[element];
+    if (element_dofs.nd.empty())
+    {
+      continue;
+    }
+    const auto enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs.nd, topology.nd_dofs.size());
+
+    ElementNDBoundaryMassMatrices matrices;
+    try
+    {
+      matrices = AssembleTriangleElementNDBoundaryMassMatrices(
+          element_dofs, *nd_fespace.GetFE(element), *mesh, boundary, coefficient->second,
+          options);
+    }
+    catch (const std::exception &error)
+    {
+      throw std::runtime_error(fmt::format(
+          "Triangular singular boundary mass assembly failed on local boundary element "
+          "{} (attribute {}, adjacent element {}): {}",
+          boundary, mesh->GetBdrAttribute(boundary), element, error.what()));
+    }
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    ValidateStandardRowTransformation(
+        dof_transformation, matrices.standard_enrichment, matrices.enrichment_standard,
+        matrices.standard_enrichment_estimated_absolute_error);
+    ApplyStandardRowTransformation(dof_transformation, matrices.standard_enrichment,
+                                   matrices.enrichment_standard,
+                                   matrices.standard_enrichment_estimated_absolute_error);
+    const auto unsigned_standard_dofs = UnsignedDofs(standard_dofs);
+
+    result.enrichment_enrichment->AddSubMatrix(enrichment_dofs, enrichment_dofs,
+                                               matrices.enrichment_enrichment);
+    result.standard_enrichment->AddSubMatrix(standard_dofs, enrichment_dofs,
+                                             matrices.standard_enrichment);
+    result.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+        enrichment_dofs, enrichment_dofs,
+        matrices.enrichment_enrichment_estimated_absolute_error);
+    result.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+        unsigned_standard_dofs, enrichment_dofs,
+        matrices.standard_enrichment_estimated_absolute_error);
+  }
+  FinalizeLocalSparseBlock(result);
+  return result;
+}
+
+ParallelSparseOperatorBlocks
+AssembleParallelSparseNDBoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
+                                             const ParallelDofNumbering &parallel_numbering,
+                                             const mfem::ParFiniteElementSpace &nd_fespace)
+{
+  const MPI_Comm comm = nd_fespace.GetComm();
+  auto enrichment_prolongation =
+      BuildParallelEnrichmentProlongation(comm, parallel_numbering.nd);
+  const auto *standard_prolongation = nd_fespace.Dof_TrueDof_Matrix();
+  if (!standard_prolongation)
+  {
+    throw std::runtime_error(
+        "MFEM did not provide an ND finite-element prolongation matrix!");
+  }
+  auto absolute_prolongation = BuildAbsoluteProlongation(*standard_prolongation);
+
+  ParallelSparseOperatorBlocks result;
+  AssembleParallelSparseBlock(comm, local, *standard_prolongation, *absolute_prolongation,
+                              *enrichment_prolongation, result);
+  return result;
+}
+
+void AssembleParallelNDBoundaryLinearForm(const DofTopology &topology,
+                                          const ParallelDofNumbering &parallel_numbering,
+                                          mfem::ParFiniteElementSpace &nd_fespace,
+                                          mfem::VectorCoefficient &coefficient,
+                                          const AdaptiveAssemblyOptions &options,
+                                          mfem::Vector &enrichment_true_dofs)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = nd_fespace.GetParMesh();
+  if (!mesh || mesh->Dimension() != 3 || mesh->SpaceDimension() != 3 ||
+      coefficient.GetVDim() != 3 ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.nd_dofs.size() != parallel_numbering.nd.local_to_true.size() ||
+      parallel_numbering.nd.owned_size >
+          static_cast<HYPRE_BigInt>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Tetrahedral singular boundary linear form received inconsistent topology, "
+        "numbering, coefficient, or space!");
+  }
+
+  mfem::Vector local(static_cast<int>(topology.nd_dofs.size()));
+  local = 0.0;
+  for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
+  {
+    int element = -1, local_face = -1;
+    mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
+    if (element < 0 || element >= mesh->GetNE())
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary linear form could not find its adjacent "
+          "element!");
+    }
+    const auto &element_dofs = topology.elements[element];
+    if (element_dofs.nd.empty())
+    {
+      continue;
+    }
+
+    mfem::FaceElementTransformations face;
+    mfem::IsoparametricTransformation element1, element2;
+    int mapped_element = -1;
+    const auto boundary_nodes = GetTetrahedronBoundaryNodes(*mesh, boundary, face, element1,
+                                                            element2, mapped_element);
+    if (mapped_element != element)
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary linear form found inconsistent adjacent "
+          "elements!");
+    }
+    auto *boundary_transformation = mesh->GetBdrElementTransformation(boundary);
+    if (!boundary_transformation ||
+        boundary_transformation->GetGeometryType() != mfem::Geometry::TRIANGLE)
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular boundary linear form requires triangle boundaries!");
+    }
+
+    const int enrichment_size = static_cast<int>(element_dofs.nd.size());
+    for (int i = 0; i < enrichment_size; i++)
+    {
+      const auto &descriptor = element_dofs.nd[i].basis;
+      if (!HasTetrahedronBoundaryTrace(descriptor, boundary_nodes))
+      {
+        continue;
+      }
+      const auto powers = GetTetrahedronBoundaryPowers(descriptor, boundary_nodes);
+      const auto integral = IntegrateTetrahedronBoundaryTrace(
+          powers, 1, options,
+          [&](const mfem::IntegrationPoint &boundary_point)
+          {
+            const int current = SetBoundaryIntegrationPoint(*mesh, boundary, boundary_point,
+                                                            face, element1, element2);
+            if (current != element)
+            {
+              throw std::runtime_error(
+                  "Tetrahedral singular boundary linear form changed adjacent element!");
+            }
+            const auto &element_point = face.Elem1->GetIntPoint();
+            double jacobian_determinant = 0.0;
+            const auto grad_lambda =
+                GetBarycentricGradients(*face.Elem1, element_point, jacobian_determinant);
+            const BarycentricPoint lambda{
+                1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
+                element_point.y, element_point.z};
+
+            boundary_transformation->SetIntPoint(&boundary_point);
+            const double boundary_weight = boundary_transformation->Weight();
+            if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
+            {
+              throw std::runtime_error(
+                  "Tetrahedral singular boundary linear form found a degenerate "
+                  "triangle!");
+            }
+            mfem::Vector coefficient_value(3);
+            coefficient.Eval(coefficient_value, *boundary_transformation, boundary_point);
+            if (!std::isfinite(coefficient_value[0]) ||
+                !std::isfinite(coefficient_value[1]) ||
+                !std::isfinite(coefficient_value[2]))
+            {
+              throw std::runtime_error(
+                  "Tetrahedral singular boundary linear form coefficient is nonfinite!");
+            }
+
+            const Vector3 value{coefficient_value[0], coefficient_value[1],
+                                coefficient_value[2]};
+            const auto basis = EvaluateHigherOrderBasis(lambda, grad_lambda, descriptor);
+            return std::vector<double>{boundary_weight * Dot(basis.value, value)};
+          });
+      const std::size_t dof = element_dofs.nd[i].dof;
+      if (dof >= topology.nd_dofs.size())
+      {
+        throw std::invalid_argument(
+            "Tetrahedral singular boundary linear form has an invalid local DOF!");
+      }
+      local[static_cast<int>(dof)] += integral.value[0];
+    }
+  }
+
+  auto prolongation =
+      BuildParallelEnrichmentProlongation(nd_fespace.GetComm(), parallel_numbering.nd);
+  enrichment_true_dofs.SetSize(static_cast<int>(parallel_numbering.nd.owned_size));
+  enrichment_true_dofs = 0.0;
+  prolongation->MultTranspose(local, enrichment_true_dofs);
+}
+
+void AssembleParallelNDBoundaryLinearForm(const TriangleDofTopology &topology,
+                                          const ParallelDofNumbering &parallel_numbering,
+                                          mfem::ParFiniteElementSpace &nd_fespace,
+                                          mfem::VectorCoefficient &coefficient,
+                                          const AdaptiveAssemblyOptions &options,
+                                          mfem::Vector &enrichment_true_dofs)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = nd_fespace.GetParMesh();
+  if (!mesh || mesh->Dimension() != 2 || mesh->SpaceDimension() != 2 ||
+      coefficient.GetVDim() != 2 ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.nd_dofs.size() != parallel_numbering.nd.local_to_true.size() ||
+      parallel_numbering.nd.owned_size >
+          static_cast<HYPRE_BigInt>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Triangular singular boundary linear form received inconsistent topology, "
+        "numbering, coefficient, or space!");
+  }
+
+  mfem::Vector local(static_cast<int>(topology.nd_dofs.size()));
+  local = 0.0;
+  for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
+  {
+    int element = -1, local_face = -1;
+    mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
+    if (element < 0 || element >= mesh->GetNE())
+    {
+      throw std::runtime_error(
+          "Triangular singular boundary linear form could not find its adjacent element!");
+    }
+    const auto &element_dofs = topology.elements[element];
+    if (element_dofs.nd.empty())
+    {
+      continue;
+    }
+
+    mfem::FaceElementTransformations face;
+    mfem::IsoparametricTransformation element1, element2;
+    int mapped_element = -1;
+    const auto boundary_nodes =
+        GetTriangleBoundaryNodes(*mesh, boundary, face, element1, element2, mapped_element);
+    if (mapped_element != element)
+    {
+      throw std::runtime_error(
+          "Triangular singular boundary linear form found inconsistent adjacent "
+          "elements!");
+    }
+    auto *boundary_transformation = mesh->GetBdrElementTransformation(boundary);
+    if (!boundary_transformation ||
+        boundary_transformation->GetGeometryType() != mfem::Geometry::SEGMENT)
+    {
+      throw std::runtime_error(
+          "Triangular singular boundary linear form requires segment boundaries!");
+    }
+
+    const int enrichment_size = static_cast<int>(element_dofs.nd.size());
+    for (int i = 0; i < enrichment_size; i++)
+    {
+      if (!HasTriangleBoundaryTrace(element_dofs.nd[i].basis, boundary_nodes))
+      {
+        continue;
+      }
+      const auto powers =
+          GetTriangleBoundaryPowers(element_dofs.nd[i].basis, boundary_nodes);
+      const auto integral = IntegrateTriangleBoundaryTrace(
+          powers, 1, options,
+          [&](double coordinate)
+          {
+            mfem::IntegrationPoint boundary_point;
+            boundary_point.x = coordinate;
+            const int current = SetBoundaryIntegrationPoint(*mesh, boundary, boundary_point,
+                                                            face, element1, element2);
+            if (current != element)
+            {
+              throw std::runtime_error(
+                  "Triangular singular boundary linear form changed adjacent element!");
+            }
+            const auto &element_point = face.Elem1->GetIntPoint();
+            double jacobian_determinant = 0.0;
+            const auto grad_lambda = GetTriangleBarycentricGradients(
+                *face.Elem1, element_point, jacobian_determinant);
+            const TriangleBarycentricPoint lambda{1.0 - element_point.x - element_point.y,
+                                                  element_point.x, element_point.y};
+
+            boundary_transformation->SetIntPoint(&boundary_point);
+            const double boundary_weight = boundary_transformation->Weight();
+            if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
+            {
+              throw std::runtime_error(
+                  "Triangular singular boundary linear form found a degenerate "
+                  "segment!");
+            }
+            mfem::Vector coefficient_value(2);
+            coefficient.Eval(coefficient_value, *boundary_transformation, boundary_point);
+            if (!std::isfinite(coefficient_value[0]) ||
+                !std::isfinite(coefficient_value[1]))
+            {
+              throw std::runtime_error(
+                  "Triangular singular boundary linear form coefficient is nonfinite!");
+            }
+
+            const Vector2 value{coefficient_value[0], coefficient_value[1]};
+            const auto basis =
+                EvaluateTriangleBasis(lambda, grad_lambda, element_dofs.nd[i].basis);
+            return std::vector<double>{boundary_weight * Dot(basis.value, value)};
+          });
+      const std::size_t dof = element_dofs.nd[i].dof;
+      if (dof >= topology.nd_dofs.size())
+      {
+        throw std::invalid_argument(
+            "Triangular singular boundary linear form has an invalid local DOF!");
+      }
+      local[static_cast<int>(dof)] += integral.value[0];
+    }
+  }
+
+  auto prolongation =
+      BuildParallelEnrichmentProlongation(nd_fespace.GetComm(), parallel_numbering.nd);
+  enrichment_true_dofs.SetSize(static_cast<int>(parallel_numbering.nd.owned_size));
+  enrichment_true_dofs = 0.0;
+  prolongation->MultTranspose(local, enrichment_true_dofs);
 }
 
 LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(

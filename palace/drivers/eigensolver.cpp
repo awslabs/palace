@@ -542,6 +542,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
               "electric mass operator!");
   auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
   auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M_bulk = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
   const double target = iodata.solver.eigenmode.target;
 
   std::unique_ptr<EigenvalueSolver> eigen;
@@ -589,13 +590,21 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
 
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0)
+  const bool has_reactive_lumped_boundary =
+      !space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap().empty() ||
+      !space_op.GetLumpedPortOp().GetMassBdrCoefficientMap().empty();
+  if (iodata.solver.linear.divfree_max_it > 0 && !has_reactive_lumped_boundary)
   {
     Mpi::Print(" Configuring enriched divergence-free projection\n");
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
-        iodata, space_op.GetComm(), *M_energy, space_op.GetGradMatrix(),
+        iodata, space_op.GetComm(), *M_bulk, space_op.GetGradMatrix(),
         space_op.GetCombinedH1DbcTDofList());
     eigen->SetDivFreeProjector(*divfree);
+  }
+  else if (iodata.solver.linear.divfree_max_it > 0)
+  {
+    Mpi::Print(" Skipping enriched divergence-free projection because reactive lumped "
+               "boundaries lift the curl-gradient nullspace\n");
   }
 
   if (iodata.solver.eigenmode.init_v0)
@@ -710,6 +719,19 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     energy_output.table.insert("magnetic_energy", "Magnetic field energy (J)");
     energy_output.table.insert("energy_mismatch", "Relative energy mismatch");
     energy_output.table.insert("weak_divergence", "Relative weak divergence");
+    for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
+    {
+      energy_output.table.insert(fmt::format("voltage_real_{}", port_index),
+                                 fmt::format("Re{{V[{}]}} (V)", port_index));
+      energy_output.table.insert(fmt::format("voltage_imag_{}", port_index),
+                                 fmt::format("Im{{V[{}]}} (V)", port_index));
+      energy_output.table.insert(fmt::format("current_real_{}", port_index),
+                                 fmt::format("Re{{I[{}]}} (A)", port_index));
+      energy_output.table.insert(fmt::format("current_imag_{}", port_index),
+                                 fmt::format("Im{{I[{}]}} (A)", port_index));
+      energy_output.table.insert(fmt::format("inductive_participation_{}", port_index),
+                                 fmt::format("p_ind[{}]", port_index));
+    }
     energy_output.table[0].print_as_int = true;
     energy_output.WriteFullTableTrunc();
 
@@ -775,9 +797,35 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     const double energy_mismatch =
         std::abs(energy.electric - energy.magnetic) /
         std::max({energy.electric, energy.magnetic, std::numeric_limits<double>::min()});
+    struct LumpedPortMeasurement
+    {
+      int index;
+      std::complex<double> voltage;
+      std::complex<double> current;
+      double inductive_participation;
+    };
+    std::vector<LumpedPortMeasurement> lumped_port_measurements;
+    for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
+    {
+      const auto voltage =
+          space_op.GetSingularLumpedPortVoltage(port_index, electric_field);
+      const auto current = voltage / port.GetCharacteristicImpedance(omega.real());
+      const std::complex<double> inductive_current =
+          std::abs(port.L) > 0.0
+              ? voltage /
+                    port.GetCharacteristicImpedance(omega.real(), LumpedPortData::Branch::L)
+              : 0.0;
+      const double inductive_energy =
+          0.5 * std::abs(port.L) *
+          std::real(inductive_current * std::conj(inductive_current));
+      const double inductive_participation =
+          std::copysign(inductive_energy / energy.electric, inductive_current.real());
+      lumped_port_measurements.push_back(
+          {port_index, voltage, current, inductive_participation});
+    }
 
-    M_energy->Mult(electric_field.Real(), mass_electric.Real());
-    M_energy->Mult(electric_field.Imag(), mass_electric.Imag());
+    M_bulk->Mult(electric_field.Real(), mass_electric.Real());
+    M_bulk->Mult(electric_field.Imag(), mass_electric.Imag());
     gradient.MultTranspose(mass_electric.Real(), weak_divergence.Real());
     gradient.MultTranspose(mass_electric.Imag(), weak_divergence.Imag());
     linalg::SetSubVector(weak_divergence, space_op.GetCombinedH1DbcTDofList(), 0.0);
@@ -809,6 +857,23 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       energy_output.table["magnetic_energy"] << magnetic_energy;
       energy_output.table["energy_mismatch"] << energy_mismatch;
       energy_output.table["weak_divergence"] << relative_weak_divergence;
+      for (const auto &measurement : lumped_port_measurements)
+      {
+        const auto voltage =
+            iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(measurement.voltage);
+        const auto current =
+            iodata.units.Dimensionalize<Units::ValueType::CURRENT>(measurement.current);
+        energy_output.table[fmt::format("voltage_real_{}", measurement.index)]
+            << voltage.real();
+        energy_output.table[fmt::format("voltage_imag_{}", measurement.index)]
+            << voltage.imag();
+        energy_output.table[fmt::format("current_real_{}", measurement.index)]
+            << current.real();
+        energy_output.table[fmt::format("current_imag_{}", measurement.index)]
+            << current.imag();
+        energy_output.table[fmt::format("inductive_participation_{}", measurement.index)]
+            << measurement.inductive_participation;
+      }
       energy_output.WriteFullTableTrunc();
       if (!surface_measurements.empty())
       {
@@ -835,6 +900,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"ElectricEnergy", "0.5 E^H M_epsilon E"},
           {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
+          {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"DivergenceProjection", divfree != nullptr},
           {"FieldGridOutput", false},
           {"ErrorEstimator", false},

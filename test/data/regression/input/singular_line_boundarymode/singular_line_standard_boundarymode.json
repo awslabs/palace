@@ -2,7 +2,7 @@
   "Problem": {
     "Type": "BoundaryMode",
     "Verbose": 1,
-    "Output": "postpro/lossless"
+    "Output": "postpro/standard_lossless"
   },
   "Model": {
     "Mesh": "singular_line_boundarymode.mesh",
@@ -44,18 +44,10 @@
     "Device": "CPU",
     "BoundaryMode": {
       "Freq": 10.0,
-      "N": 4,
+      "N": 1,
       "Save": 0,
       "Target": 1.0,
       "Tol": 1.0e-8
-    },
-    "SingularElements": {
-      "Attributes": [7],
-      "Order": 1,
-      "QuadratureOrder": 8,
-      "AbsTol": 2.0e-6,
-      "RelTol": 2.0e-6,
-      "MaxSubdivisions": 6
     },
     "Linear": {
       "Type": "SuperLU",
