@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+#include <fmt/format.h>
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -373,6 +374,29 @@ void MaterialOperator::SetUpMaterialProperties(
 
     count++;
   }
+
+  // Every domain retained in the mesh needs a material definition. This is normally
+  // guaranteed by unused-element cleaning, but must also hold when cleaning is disabled.
+  // Attribute presence is rank-local, so report the globally smallest missing attribute
+  // only after every rank has participated in the reduction. Skip the local scan on an
+  // element-empty rank because BuildCeedAttributes inserts a synthetic attribute 1 there.
+  int missing_attr = std::numeric_limits<int>::max();
+  if (mesh.GetNE() > 0)
+  {
+    for (const auto &[attr, local_attr] : loc_attr)
+    {
+      if (attr_mat[local_attr - 1] < 0)
+      {
+        missing_attr = std::min(missing_attr, attr);
+      }
+    }
+  }
+  Mpi::GlobalMin(1, &missing_attr, mesh.GetComm());
+  MFEM_VERIFY(missing_attr == std::numeric_limits<int>::max(),
+              fmt::format("Mesh domain attribute {:d} has no corresponding entry in "
+                          "config[\"Domains\"][\"Materials\"]!",
+                          missing_attr));
+
   bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
                       has_wave_attr};
   Mpi::GlobalOr(4, has_attr, mesh.GetComm());
