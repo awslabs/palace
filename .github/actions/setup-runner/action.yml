@@ -66,9 +66,9 @@ runs:
     - name: Disable unattended upgrades
       shell: bash
       run: |
-        # Stop the periodic apt units and unattended-upgrades. `systemctl stop`
-        # waits for the cgroup to drain, so any in-flight apt-get is gone (not
-        # merely orphaned) by the time this returns.
+        # Stop the periodic APT units and ask unattended-upgrades to shut down
+        # cleanly. Any remaining dpkg lock contention is handled by the timeout
+        # below.
         sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer || true
         sudo systemctl stop apt-daily.service apt-daily-upgrade.service || true
         sudo systemctl stop unattended-upgrades.service || true
