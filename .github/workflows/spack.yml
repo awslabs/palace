@@ -51,6 +51,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           run-regression-tests: 'false'
 
@@ -62,6 +63,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           variant: +cuda+cudss
           run-regression-tests: 'false'
@@ -74,6 +76,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           variant: "+openmp+int64"
           run-regression-tests: 'false'
@@ -86,6 +89,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           variant: " cxxstd=20"
           run-regression-tests: 'false'
@@ -98,6 +102,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: llvm
           additional-test-cases: transmon_coarse
 
@@ -109,6 +114,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: intel-oneapi
           additional-test-cases: transmon_coarse
 
@@ -120,6 +126,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           additional-test-cases: transmon_coarse
 
@@ -131,6 +138,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: llvm
           additional-test-cases: transmon_coarse
 
@@ -142,6 +150,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           math-libs: armpl-gcc
           additional-test-cases: transmon_coarse
@@ -171,6 +180,13 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-latest
+    # Serialize index writers across branches and PRs. Cache package pushes are
+    # immutable and may remain concurrent, but index.spack has one shared tag.
+    # A newer run for the same ref may cancel the parent workflow; until a
+    # replacement upload completes, OCI readers retain the prior complete tag.
+    concurrency:
+      group: palace-1.2-buildcache-index
+      cancel-in-progress: false
     steps:
       - name: Install Spack 1.2
         uses: actions/checkout@v6

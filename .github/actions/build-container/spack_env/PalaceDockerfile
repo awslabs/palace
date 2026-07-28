@@ -67,14 +67,17 @@ RUN cd {{ paths.environment }} && spack env activate . && \
     fi
 
 # palace@develop is pinned to branch="main", so every branch shares a spec
-# hash with different source. Build Palace --no-cache and push only deps.
+# hash with different source. Build Palace --no-cache. Dependency cache
+# publication happens in a separate, permission-gated workflow step.
 RUN cd {{ paths.environment }} && spack env activate . && \
     spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
     spack install --only package --no-cache -j$(nproc) --fail-fast
 
-# Push deps only; Palace itself is branch-specific (see above).
-RUN cd {{ paths.environment }} && spack env activate . && \
-    spack buildcache push --only dependencies --unsigned local-buildcache
+# Preserve the complete install tree in `builder` for the separately gated
+# buildcache publication step. Runtime-only pruning happens in a derived stage.
+# Spack's base template hard-codes COPY --from=builder for the final image, so
+# the Generate Dockerfile workflow step rewrites those copies to this stage.
+FROM builder AS runtime-builder
 
 # Remove unnecessary deps
 # TODO: Remove gcc and build-only dependencies to reduce image size.
