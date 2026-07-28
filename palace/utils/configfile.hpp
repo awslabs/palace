@@ -652,6 +652,11 @@ public:
   // Loss tangent.
   double tandelta = 0.0;
 
+  // Physical distance from a singular metal edge/corner excluded from the raw
+  // thin-layer surface integral [m]. A zero value requests the untruncated
+  // integral and is valid only when the trace is integrable.
+  double edge_cutoff = 0.0;
+
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
 

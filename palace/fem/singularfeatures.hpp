@@ -117,12 +117,27 @@ struct TriangleSelectedSegment
   int boundary_attribute;
 };
 
+struct TriangleWedgeSector
+{
+  int domain_attribute;
+  double angle;
+  double permittivity;
+};
+
+struct TriangleMaterial
+{
+  int domain_attribute;
+  double permittivity;
+};
+
 struct TriangleTipVertex
 {
   std::size_t id;
   int mesh_vertex;
   std::vector<std::size_t> selected_segments;
   double nu;
+  FeatureVertexType type = FeatureVertexType::ENDPOINT;
+  std::vector<TriangleWedgeSector> sectors;
 };
 
 struct TriangleElementNodeFeature
@@ -162,15 +177,38 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                            const std::vector<int> &boundary_attributes,
                                            double nu = 0.5);
 
-// Extract endpoint singularities of selected straight, zero-thickness internal
-// PEC line chains in a serial, conforming triangular mesh. Curved elements are
-// accepted, but selected PEC segments must be geometrically straight.
-// Endpoints on the exterior mesh boundary are excluded. Bends, branches,
-// selected exterior edges, and non-triangular meshes are rejected until their
-// wedge exponents and continuity contracts are implemented.
+// Extract both internal zero-thickness sheet perimeters and straight exterior
+// finite-metal wedge edges. Exterior edges require two selected PEC faces and
+// an ordered fan of positive isotropic material sectors; their exponent is the
+// leading Dirichlet transmission-wedge eigenvalue. Smooth exterior edges are
+// retained as selected sheet faces but are not enriched.
+FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
+                                           const std::vector<int> &boundary_attributes,
+                                           const std::vector<TriangleMaterial> &materials,
+                                           double sheet_nu = 0.5);
+
+// Backward-compatible internal-line extractor. This intentionally supplies no
+// material data, so selected one-sided boundaries remain unsupported.
 TriangleFeatureTopology
 ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
                              const std::vector<int> &boundary_attributes, double nu = 0.5);
+
+// Extract singular endpoints of internal zero-thickness PEC line chains and
+// singular corners of one-sided finite-metal PEC boundaries. Internal tips use
+// line_tip_nu. At one-sided corners, the leading electric exponent is the
+// smallest positive Dirichlet transmission-wedge eigenvalue computed from the
+// ordered isotropic material sectors. Smooth nonsingular boundary vertices are
+// retained as selected segments but are not enriched. Anisotropic material is
+// rejected only when it occurs in an enriched corner fan.
+TriangleFeatureTopology ExtractSerialLineFeatures(
+    const mfem::Mesh &mesh, const std::vector<int> &boundary_attributes,
+    const std::vector<TriangleMaterial> &materials, double line_tip_nu = 0.5);
+
+// Return the smallest positive exponent for a piecewise-isotropic angular
+// transmission problem with homogeneous Dirichlet conditions on both wedge
+// faces. A return value of one means that no singular exponent was found below
+// one.
+double ComputeDirichletWedgeExponent(const std::vector<TriangleWedgeSector> &sectors);
 
 // Reconstruct rank-local feature incidence from a serial feature blueprint.
 // serial_vertex_ids maps every rank-local mesh vertex to its source serial

@@ -6,14 +6,127 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <nlohmann/json.hpp>
 
 #include "linalg/operator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
+
+std::vector<fem::singular::TriangleMaterial>
+GetSingularTriangleMaterials(const IoData &iodata)
+{
+  std::map<int, double> permittivity;
+  for (const auto &material : iodata.domains.materials)
+  {
+    const double epsilon = material.epsilon_r.s[0];
+    const bool isotropic =
+        std::all_of(material.epsilon_r.s.begin() + 1, material.epsilon_r.s.end(),
+                    [epsilon](double value) { return value == epsilon; });
+    if (!isotropic)
+    {
+      // The corner extractor diagnoses an anisotropic material only when it occurs in
+      // an enriched fan. Unrelated anisotropic domains must not disable an otherwise
+      // isotropic electrostatic corner.
+      continue;
+    }
+    MFEM_VERIFY(std::isfinite(epsilon) && epsilon > 0.0,
+                "Triangular singular feature extraction requires positive permittivity "
+                "in every isotropic material sector!");
+    for (int attribute : material.attributes)
+    {
+      MFEM_VERIFY(attribute > 0 && permittivity.emplace(attribute, epsilon).second,
+                  "Triangular singular feature extraction found an invalid or duplicate "
+                  "material domain attribute "
+                      << attribute << "!");
+    }
+  }
+  std::vector<fem::singular::TriangleMaterial> result;
+  result.reserve(permittivity.size());
+  for (const auto &[attribute, epsilon] : permittivity)
+  {
+    result.push_back({attribute, epsilon});
+  }
+  return result;
+}
+
+nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata)
+{
+  auto interfaces = nlohmann::json::array();
+  for (const auto &[index, data] : iodata.boundaries.postpro.dielectric)
+  {
+    const double cutoff_mesh_units =
+        data.edge_cutoff * iodata.units.GetMeshLengthRelativeScale();
+    const double cutoff_meters =
+        iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.edge_cutoff);
+    interfaces.push_back(
+        {{"Index", index},
+         {"Regularization", data.edge_cutoff > 0.0 ? "explicit edge cutoff" : "none"},
+         {"EdgeCutoffMeshUnits", cutoff_mesh_units},
+         {"EdgeCutoffMeters", cutoff_meters}});
+  }
+  return {{"OutputFile", "surface-Q.csv"},
+          {"Definition", "thin-layer surface integral; a positive edge cutoff excludes the "
+                         "corresponding singular endpoint neighborhood"},
+          {"Interfaces", std::move(interfaces)},
+          {"IncludesExcludedEdgeNeighborhood", false},
+          {"ResponseCorrected", false},
+          {"UnregularizedNuAtMostOneHalfAccepted", false}};
+}
+
+namespace
+{
+
+nlohmann::json MakeSingularSurfaceIntegrabilityMetadata(std::vector<double> exponents)
+{
+  MFEM_VERIFY(!exponents.empty(),
+              "Singular surface integrability metadata requires at least one exponent!");
+  std::sort(exponents.begin(), exponents.end());
+  exponents.erase(std::unique(exponents.begin(), exponents.end()), exponents.end());
+  MFEM_VERIFY(std::isfinite(exponents.front()) && exponents.front() > 0.0 &&
+                  std::isfinite(exponents.back()) && exponents.back() < 1.0,
+              "Singular surface integrability metadata received an invalid exponent!");
+  const double minimum_exponent = exponents.front();
+  const double maximum_exponent = exponents.back();
+  const bool finite = minimum_exponent > 0.5;
+  return {{"Criterion", "finite exactly when every active electric exponent has nu > 1/2"},
+          {"Exponents", std::move(exponents)},
+          {"MinimumExponent", minimum_exponent},
+          {"MaximumExponent", maximum_exponent},
+          {"UnregularizedFinite", finite},
+          {"RequiresPhysicalRegularization", !finite}};
+}
+
+}  // namespace
+
+nlohmann::json
+GetSingularSurfaceIntegrabilityMetadata(const fem::singular::FeatureTopology &features)
+{
+  std::vector<double> exponents;
+  exponents.reserve(features.features.size());
+  for (const auto &feature : features.features)
+  {
+    exponents.push_back(feature.nu);
+  }
+  return MakeSingularSurfaceIntegrabilityMetadata(std::move(exponents));
+}
+
+nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
+    const fem::singular::TriangleFeatureTopology &features)
+{
+  std::vector<double> exponents;
+  exponents.reserve(features.vertices.size());
+  for (const auto &vertex : features.vertices)
+  {
+    exponents.push_back(vertex.nu);
+  }
+  return MakeSingularSurfaceIntegrabilityMetadata(std::move(exponents));
+}
 
 void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
                                           const std::unique_ptr<mfem::Mesh> &serial_mesh,
@@ -39,7 +152,8 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
     if (dimension == 3)
     {
       serial_sheet_features = fem::singular::ExtractSerialSheetFeatures(
-          *serial_mesh, iodata.solver.singular_elements.attributes);
+          *serial_mesh, iodata.solver.singular_elements.attributes,
+          GetSingularTriangleMaterials(iodata));
     }
     else
     {
@@ -49,8 +163,9 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
       MFEM_VERIFY(iodata.solver.singular_elements.order == 1,
                   "Triangular full-wave singular enrichment currently supports only "
                   "Solver.SingularElements.Order = 1!");
-      serial_line_features = fem::singular::ExtractSerialLineTipFeatures(
-          *serial_mesh, iodata.solver.singular_elements.attributes);
+      serial_line_features = fem::singular::ExtractSerialLineFeatures(
+          *serial_mesh, iodata.solver.singular_elements.attributes,
+          GetSingularTriangleMaterials(iodata));
     }
   }
   Mpi::Broadcast(1, &dimension, 0, comm);
@@ -58,7 +173,7 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
   {
     fem::singular::BroadcastSerialLineTipFeatures(serial_line_features, comm);
     MFEM_VERIFY(!serial_line_features.Empty(),
-                "Full-wave singular extraction produced no internal PEC line tips!");
+                "Full-wave singular extraction produced no PEC line tips or corners!");
   }
   else
   {

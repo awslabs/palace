@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <set>
@@ -432,7 +433,9 @@ void ValidateTriangleFeatureTopology(const mfem::Mesh &mesh,
     const auto &vertex = features.vertices[i];
     if (vertex.id != i || vertex.mesh_vertex < 0 ||
         vertex.mesh_vertex >= static_cast<int>(serial_vertex_ids.size()) ||
-        !std::isfinite(vertex.nu) || vertex.nu <= 0.0 || vertex.nu >= 1.0)
+        !std::isfinite(vertex.nu) || vertex.nu <= 0.0 || vertex.nu >= 1.0 ||
+        (vertex.type != FeatureVertexType::ENDPOINT &&
+         vertex.type != FeatureVertexType::CORNER))
     {
       throw std::invalid_argument("Singular line-tip topology is inconsistent!");
     }
@@ -505,18 +508,152 @@ PackedDofKey PackDofKey(const DofKey &key)
   return packed;
 }
 
+std::uint64_t HashPackedDofKey(const PackedDofKey &key)
+{
+  // Bytewise FNV-1a gives a decomposition-independent rendezvous rank without
+  // depending on the host representation of the fixed-width integer key.
+  std::uint64_t hash = 14695981039346656037ULL;
+  for (GlobalVertexId value : key)
+  {
+    const auto word = static_cast<std::uint64_t>(value);
+    for (int byte = 0; byte < 8; byte++)
+    {
+      hash ^= (word >> (8 * byte)) & 0xffULL;
+      hash *= 1099511628211ULL;
+    }
+  }
+  return hash;
+}
+
+template <std::size_t RecordSize>
+using IntegerRecord = std::array<GlobalVertexId, RecordSize>;
+
+template <std::size_t RecordSize>
+std::vector<IntegerRecord<RecordSize>> ExchangeIntegerRecords(
+    MPI_Comm comm, const std::vector<std::vector<IntegerRecord<RecordSize>>> &send_records)
+{
+  static_assert(RecordSize > 0);
+  const int ranks = Mpi::Size(comm);
+  bool valid = send_records.size() == static_cast<std::size_t>(ranks);
+  std::vector<int> send_counts(ranks), receive_counts(ranks);
+  std::int64_t send_total = 0;
+  if (valid)
+  {
+    for (int rank = 0; rank < ranks; rank++)
+    {
+      if (send_records[rank].size() >
+          static_cast<std::size_t>(std::numeric_limits<int>::max() / RecordSize))
+      {
+        valid = false;
+        break;
+      }
+      send_counts[rank] = static_cast<int>(send_records[rank].size() * RecordSize);
+      send_total += send_counts[rank];
+      if (send_total > std::numeric_limits<int>::max())
+      {
+        valid = false;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error(
+        "Distributed singular DOF exchange exceeds MPI integer counts!");
+  }
+
+  MPI_Alltoall(send_counts.data(), 1, MPI_INT, receive_counts.data(), 1, MPI_INT, comm);
+  std::vector<int> send_displacements(ranks), receive_displacements(ranks);
+  std::int64_t receive_total = 0;
+  valid = true;
+  for (int rank = 0; rank < ranks; rank++)
+  {
+    if (receive_counts[rank] < 0 ||
+        receive_counts[rank] % static_cast<int>(RecordSize) != 0 ||
+        receive_total > std::numeric_limits<int>::max() - receive_counts[rank])
+    {
+      valid = false;
+      break;
+    }
+    receive_displacements[rank] = static_cast<int>(receive_total);
+    receive_total += receive_counts[rank];
+  }
+  int displacement = 0;
+  for (int rank = 0; rank < ranks; rank++)
+  {
+    send_displacements[rank] = displacement;
+    displacement += send_counts[rank];
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error(
+        "Distributed singular DOF exchange exceeds MPI integer counts!");
+  }
+
+  std::vector<GlobalVertexId> send_buffer(static_cast<std::size_t>(send_total));
+  std::size_t next = 0;
+  for (const auto &destination : send_records)
+  {
+    for (const auto &record : destination)
+    {
+      std::copy(record.begin(), record.end(), send_buffer.begin() + next);
+      next += RecordSize;
+    }
+  }
+  if (next != send_buffer.size())
+  {
+    throw std::logic_error(
+        "Distributed singular DOF exchange packed inconsistent send dimensions!");
+  }
+
+  std::vector<GlobalVertexId> receive_buffer(static_cast<std::size_t>(receive_total));
+  MPI_Alltoallv(send_buffer.data(), send_counts.data(), send_displacements.data(),
+                mpi::DataType<GlobalVertexId>(), receive_buffer.data(),
+                receive_counts.data(), receive_displacements.data(),
+                mpi::DataType<GlobalVertexId>(), comm);
+
+  std::vector<IntegerRecord<RecordSize>> result(static_cast<std::size_t>(receive_total) /
+                                                RecordSize);
+  for (std::size_t record = 0; record < result.size(); record++)
+  {
+    std::copy(receive_buffer.begin() + record * RecordSize,
+              receive_buffer.begin() + (record + 1) * RecordSize, result[record].begin());
+  }
+  return result;
+}
+
+constexpr std::size_t KeyOccurrenceRecordSize = PackedDofKeySize + 2;
+using KeyOccurrenceRecord = IntegerRecord<KeyOccurrenceRecordSize>;
+using NumberingResponseRecord = IntegerRecord<3>;
+
+PackedDofKey GetRecordKey(const KeyOccurrenceRecord &record)
+{
+  PackedDofKey key;
+  std::copy(record.begin(), record.begin() + PackedDofKeySize, key.begin());
+  return key;
+}
+
+KeyOccurrenceRecord MakeKeyOccurrenceRecord(const PackedDofKey &key, int rank, int local)
+{
+  KeyOccurrenceRecord record;
+  std::copy(key.begin(), key.end(), record.begin());
+  record[PackedDofKeySize] = rank;
+  record[PackedDofKeySize + 1] = local;
+  return record;
+}
+
 TrueDofMap BuildTrueDofMap(MPI_Comm comm, const std::vector<DofKey> &keys)
 {
   bool locally_valid =
       std::is_sorted(keys.begin(), keys.end()) &&
       std::adjacent_find(keys.begin(), keys.end()) == keys.end() &&
-      keys.size() <=
-          static_cast<std::size_t>(std::numeric_limits<int>::max()) / PackedDofKeySize;
-  std::vector<GlobalVertexId> packed_local;
+      keys.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max());
+  std::vector<PackedDofKey> packed_local(keys.size());
   PackedDofKey previous{};
   if (locally_valid)
   {
-    packed_local.resize(keys.size() * PackedDofKeySize);
     try
     {
       for (std::size_t i = 0; i < keys.size(); i++)
@@ -527,8 +664,7 @@ TrueDofMap BuildTrueDofMap(MPI_Comm comm, const std::vector<DofKey> &keys)
           locally_valid = false;
           break;
         }
-        std::copy(packed.begin(), packed.end(),
-                  packed_local.begin() + i * PackedDofKeySize);
+        packed_local[i] = packed;
         previous = packed;
       }
     }
@@ -545,113 +681,202 @@ TrueDofMap BuildTrueDofMap(MPI_Comm comm, const std::vector<DofKey> &keys)
   }
 
   const int ranks = Mpi::Size(comm);
-  const int local_count = static_cast<int>(packed_local.size());
-  std::vector<int> receive_counts(ranks), displacements(ranks);
-  Mpi::Allgather(1, &local_count, receive_counts.data(), comm);
-  std::int64_t total_count = 0;
-  for (int rank = 0; rank < ranks; rank++)
+  const int my_rank = Mpi::Rank(comm);
+  std::vector<std::vector<KeyOccurrenceRecord>> rendezvous_send(ranks);
+  for (std::size_t local = 0; local < packed_local.size(); local++)
   {
-    if (receive_counts[rank] < 0 ||
-        receive_counts[rank] % static_cast<int>(PackedDofKeySize) != 0 ||
-        total_count > std::numeric_limits<int>::max() - receive_counts[rank])
-    {
-      throw std::overflow_error(
-          "Parallel singular DOF key exchange exceeds MPI integer counts!");
-    }
-    displacements[rank] = static_cast<int>(total_count);
-    total_count += receive_counts[rank];
+    const int rendezvous = static_cast<int>(HashPackedDofKey(packed_local[local]) %
+                                            static_cast<std::uint64_t>(ranks));
+    rendezvous_send[rendezvous].push_back(
+        MakeKeyOccurrenceRecord(packed_local[local], my_rank, static_cast<int>(local)));
   }
+  const auto rendezvous_records = ExchangeIntegerRecords(comm, rendezvous_send);
 
-  std::vector<GlobalVertexId> packed_global(static_cast<std::size_t>(total_count));
-  Mpi::Allgatherv(local_count, packed_local.data(), packed_global.data(),
-                  receive_counts.data(), displacements.data(), comm);
-
-  std::map<PackedDofKey, std::set<int>> participants;
-  for (int rank = 0; rank < ranks; rank++)
+  using Occurrence = std::pair<int, int>;
+  std::map<PackedDofKey, std::vector<Occurrence>> rendezvous_groups;
+  locally_valid = true;
+  for (const auto &record : rendezvous_records)
   {
-    const int count = receive_counts[rank] / static_cast<int>(PackedDofKeySize);
-    for (int i = 0; i < count; i++)
+    const auto key = GetRecordKey(record);
+    const GlobalVertexId origin_rank = record[PackedDofKeySize];
+    const GlobalVertexId origin_local = record[PackedDofKeySize + 1];
+    if (HashPackedDofKey(key) % static_cast<std::uint64_t>(ranks) !=
+            static_cast<std::uint64_t>(my_rank) ||
+        origin_rank < 0 || origin_rank >= ranks || origin_local < 0 ||
+        origin_local > std::numeric_limits<int>::max())
     {
-      PackedDofKey packed;
-      const auto begin = packed_global.begin() + displacements[rank] + i * PackedDofKeySize;
-      std::copy(begin, begin + PackedDofKeySize, packed.begin());
-      if (!participants[packed].insert(rank).second)
+      locally_valid = false;
+      break;
+    }
+    rendezvous_groups[key].emplace_back(static_cast<int>(origin_rank),
+                                        static_cast<int>(origin_local));
+  }
+  std::vector<std::vector<KeyOccurrenceRecord>> owner_send(ranks);
+  if (locally_valid)
+  {
+    for (auto &[key, occurrences] : rendezvous_groups)
+    {
+      std::sort(occurrences.begin(), occurrences.end());
+      if (occurrences.empty() ||
+          std::adjacent_find(occurrences.begin(), occurrences.end(),
+                             [](const auto &left, const auto &right)
+                             { return left.first == right.first; }) != occurrences.end())
       {
-        throw std::invalid_argument(
-            "One rank supplied a duplicate canonical singular DOF key!");
+        locally_valid = false;
+        break;
+      }
+      const int owner = occurrences.front().first;
+      for (const auto &[origin_rank, origin_local] : occurrences)
+      {
+        owner_send[owner].push_back(
+            MakeKeyOccurrenceRecord(key, origin_rank, origin_local));
       }
     }
   }
-
-  std::vector<HYPRE_BigInt> owned_sizes(ranks);
-  for (const auto &[key, key_participants] : participants)
+  Mpi::GlobalAnd(1, &locally_valid, comm);
+  if (!locally_valid)
   {
-    (void)key;
-    if (key_participants.empty())
+    throw std::invalid_argument(
+        "Distributed singular DOF rendezvous received inconsistent key occurrences!");
+  }
+  const auto owner_records = ExchangeIntegerRecords(comm, owner_send);
+
+  std::map<PackedDofKey, std::vector<Occurrence>> owned_groups;
+  locally_valid = true;
+  for (const auto &record : owner_records)
+  {
+    const auto key = GetRecordKey(record);
+    const GlobalVertexId origin_rank = record[PackedDofKeySize];
+    const GlobalVertexId origin_local = record[PackedDofKeySize + 1];
+    if (origin_rank < 0 || origin_rank >= ranks || origin_local < 0 ||
+        origin_local > std::numeric_limits<int>::max())
     {
-      throw std::logic_error("A communicated singular DOF has no participating rank!");
+      locally_valid = false;
+      break;
     }
-    owned_sizes[*key_participants.begin()]++;
+    owned_groups[key].emplace_back(static_cast<int>(origin_rank),
+                                   static_cast<int>(origin_local));
   }
-
-  std::vector<HYPRE_BigInt> owned_offsets(ranks);
-  HYPRE_BigInt global_size = 0;
-  for (int rank = 0; rank < ranks; rank++)
+  if (locally_valid)
   {
-    owned_offsets[rank] = global_size;
-    if (owned_sizes[rank] > std::numeric_limits<HYPRE_BigInt>::max() - global_size)
+    for (auto &[key, occurrences] : owned_groups)
     {
-      throw std::overflow_error("Parallel singular true-DOF count overflow!");
+      (void)key;
+      std::sort(occurrences.begin(), occurrences.end());
+      if (occurrences.empty() || occurrences.front().first != my_rank ||
+          std::adjacent_find(occurrences.begin(), occurrences.end(),
+                             [](const auto &left, const auto &right)
+                             { return left.first == right.first; }) != occurrences.end())
+      {
+        locally_valid = false;
+        break;
+      }
     }
-    global_size += owned_sizes[rank];
+  }
+  locally_valid = locally_valid &&
+                  owned_groups.size() <=
+                      static_cast<std::size_t>(std::numeric_limits<HYPRE_BigInt>::max());
+  Mpi::GlobalAnd(1, &locally_valid, comm);
+  if (!locally_valid)
+  {
+    throw std::invalid_argument(
+        "Distributed singular DOF ownership exchange received inconsistent records!");
   }
 
-  struct GlobalDof
-  {
-    int owner;
-    HYPRE_BigInt true_dof;
-  };
-  std::map<PackedDofKey, GlobalDof> global_dofs;
-  std::vector<HYPRE_BigInt> owner_position(ranks);
-  for (const auto &[key, key_participants] : participants)
-  {
-    const int owner = *key_participants.begin();
-    global_dofs.emplace(key,
-                        GlobalDof{owner, owned_offsets[owner] + owner_position[owner]++});
-  }
-
+  const std::array<HYPRE_BigInt, 2> local_sizes{
+      static_cast<HYPRE_BigInt>(keys.size()),
+      static_cast<HYPRE_BigInt>(owned_groups.size())};
+  std::vector<HYPRE_BigInt> gathered_sizes(2 * ranks);
+  Mpi::Allgather(2, local_sizes.data(), gathered_sizes.data(), comm);
+  std::vector<HYPRE_BigInt> owned_offsets(ranks), owned_sizes(ranks);
   TrueDofMap result;
-  result.local_size = static_cast<HYPRE_BigInt>(keys.size());
   for (int rank = 0; rank < ranks; rank++)
   {
-    const HYPRE_BigInt rank_local_size =
-        receive_counts[rank] / static_cast<int>(PackedDofKeySize);
-    if (rank < Mpi::Rank(comm))
+    const HYPRE_BigInt rank_local_size = gathered_sizes[2 * rank];
+    const HYPRE_BigInt rank_owned_size = gathered_sizes[2 * rank + 1];
+    if (rank_local_size < 0 || rank_owned_size < 0 ||
+        rank_local_size >
+            std::numeric_limits<HYPRE_BigInt>::max() - result.global_local_size ||
+        rank_owned_size > std::numeric_limits<HYPRE_BigInt>::max() - result.global_size)
+    {
+      locally_valid = false;
+      break;
+    }
+    if (rank < my_rank)
     {
       result.local_offset += rank_local_size;
     }
-    if (rank_local_size >
-        std::numeric_limits<HYPRE_BigInt>::max() - result.global_local_size)
-    {
-      throw std::overflow_error("Parallel singular local DOF count overflow!");
-    }
     result.global_local_size += rank_local_size;
+    owned_offsets[rank] = result.global_size;
+    owned_sizes[rank] = rank_owned_size;
+    result.global_size += rank_owned_size;
   }
-  result.global_size = global_size;
-  result.owned_offset = owned_offsets[Mpi::Rank(comm)];
-  result.owned_size = owned_sizes[Mpi::Rank(comm)];
+  Mpi::GlobalAnd(1, &locally_valid, comm);
+  if (!locally_valid)
+  {
+    throw std::overflow_error("Parallel singular DOF count overflow!");
+  }
+  result.local_size = local_sizes[0];
+  result.owned_offset = owned_offsets[my_rank];
+  result.owned_size = owned_sizes[my_rank];
+
+  static_assert(std::numeric_limits<GlobalVertexId>::is_signed);
+  static_assert(std::numeric_limits<HYPRE_BigInt>::is_signed);
+  static_assert(sizeof(GlobalVertexId) >= sizeof(HYPRE_BigInt));
+  std::vector<std::vector<NumberingResponseRecord>> response_send(ranks);
+  HYPRE_BigInt owner_position = 0;
+  for (const auto &[key, occurrences] : owned_groups)
+  {
+    (void)key;
+    const HYPRE_BigInt true_dof = result.owned_offset + owner_position++;
+    for (const auto &[origin_rank, origin_local] : occurrences)
+    {
+      response_send[origin_rank].push_back(
+          {origin_local, my_rank, static_cast<GlobalVertexId>(true_dof)});
+    }
+  }
+  if (owner_position != result.owned_size)
+  {
+    throw std::logic_error(
+        "Distributed singular DOF ownership produced inconsistent local dimensions!");
+  }
+  const auto responses = ExchangeIntegerRecords(comm, response_send);
+
   result.owner.resize(keys.size());
   result.local_to_true.resize(keys.size());
-  for (std::size_t i = 0; i < keys.size(); i++)
+  std::vector<bool> assigned(keys.size());
+  locally_valid = responses.size() == keys.size();
+  if (locally_valid)
   {
-    const auto global = global_dofs.find(PackDofKey(keys[i]));
-    if (global == global_dofs.end())
+    for (const auto &response : responses)
     {
-      throw std::logic_error(
-          "A rank-local singular DOF is absent from its global key exchange!");
+      const GlobalVertexId local = response[0];
+      const GlobalVertexId owner = response[1];
+      const GlobalVertexId true_dof = response[2];
+      if (local < 0 || local >= static_cast<GlobalVertexId>(keys.size()) || owner < 0 ||
+          owner >= ranks || owner > my_rank || true_dof < 0 ||
+          true_dof >= result.global_size ||
+          true_dof < owned_offsets[static_cast<int>(owner)] ||
+          true_dof >= owned_offsets[static_cast<int>(owner)] +
+                          owned_sizes[static_cast<int>(owner)] ||
+          assigned[static_cast<std::size_t>(local)])
+      {
+        locally_valid = false;
+        break;
+      }
+      assigned[static_cast<std::size_t>(local)] = true;
+      result.owner[static_cast<std::size_t>(local)] = static_cast<int>(owner);
+      result.local_to_true[static_cast<std::size_t>(local)] =
+          static_cast<HYPRE_BigInt>(true_dof);
     }
-    result.owner[i] = global->second.owner;
-    result.local_to_true[i] = global->second.true_dof;
+    locally_valid = locally_valid && std::all_of(assigned.begin(), assigned.end(),
+                                                 [](bool value) { return value; });
+  }
+  Mpi::GlobalAnd(1, &locally_valid, comm);
+  if (!locally_valid)
+  {
+    throw std::runtime_error(
+        "Distributed singular DOF numbering received inconsistent owner responses!");
   }
   return result;
 }
@@ -967,8 +1192,10 @@ BuildTriangleH1DofFeatureMembership(const TriangleFeatureTopology &features,
   {
     const auto &vertex = features.vertices[feature];
     if (vertex.id != feature || vertex.mesh_vertex < 0 ||
-        vertex.selected_segments.size() != 1 ||
-        vertex.selected_segments[0] >= features.selected_segments.size() ||
+        vertex.selected_segments.empty() || vertex.selected_segments.size() > 2 ||
+        std::any_of(vertex.selected_segments.begin(), vertex.selected_segments.end(),
+                    [&features](std::size_t segment)
+                    { return segment >= features.selected_segments.size(); }) ||
         !tip_features.emplace(static_cast<GlobalVertexId>(vertex.mesh_vertex), feature)
              .second)
     {

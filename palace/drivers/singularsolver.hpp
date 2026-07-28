@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include "fem/singularfeatures.hpp"
 #include "linalg/vector.hpp"
@@ -23,6 +24,15 @@ namespace mesh
 struct PartitionMetadata;
 
 }  // namespace mesh
+
+std::vector<fem::singular::TriangleMaterial>
+GetSingularTriangleMaterials(const IoData &iodata);
+
+nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata);
+nlohmann::json
+GetSingularSurfaceIntegrabilityMetadata(const fem::singular::FeatureTopology &features);
+nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
+    const fem::singular::TriangleFeatureTopology &features);
 
 // Immutable-source feature extraction and partition transport shared by the
 // driven and eigenmode singular-element drivers.

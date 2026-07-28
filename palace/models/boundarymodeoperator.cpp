@@ -266,14 +266,20 @@ BoundaryModeOperator::ComputeSingularFieldEnergies(double omega, std::complex<do
   const auto quadratic_energy =
       [this](const ComplexVector &field, const mfem::HypreParMatrix &matrix, double scale)
   {
-    const std::complex<double> product = linalg::Dot(GetComm(), field, matrix, field);
-    const double tolerance = 1.0e-10 * std::max(1.0, std::abs(product.real()));
-    MFEM_VERIFY(std::isfinite(product.real()) && std::isfinite(product.imag()) &&
-                    std::abs(product.imag()) <= tolerance && product.real() >= -tolerance &&
+    Vector work(matrix.Height());
+    work.UseDevice(true);
+    matrix.Mult(field.Real(), work);
+    const double real_product = linalg::Dot(GetComm(), field.Real(), work);
+    matrix.Mult(field.Imag(), work);
+    const double imaginary_product = linalg::Dot(GetComm(), field.Imag(), work);
+    const double tolerance =
+        1.0e-10 * std::max({1.0, std::abs(real_product), std::abs(imaginary_product)});
+    MFEM_VERIFY(std::isfinite(real_product) && std::isfinite(imaginary_product) &&
+                    real_product >= -tolerance && imaginary_product >= -tolerance &&
                     std::isfinite(scale) && scale > 0.0,
-                "Singular BoundaryMode energy quadratic form is not finite, real, and "
+                "Singular BoundaryMode energy quadratic form is not finite and "
                 "nonnegative!");
-    return scale * std::max(0.0, product.real());
+    return scale * (std::max(0.0, real_product) + std::max(0.0, imaginary_product));
   };
 
   ComplexVector grad_en(GetNDTrueVSize());

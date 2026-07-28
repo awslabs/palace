@@ -41,7 +41,40 @@
         "Index": 1,
         "Attributes": [1]
       }
-    ]
+    ],
+    "Postprocessing":
+    {
+      "Dielectric":
+      [
+        {
+          "Index": 1,
+          "Attributes": [4],
+          "Type": "SA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 4.0,
+          "LossTan": 2.0e-3,
+          "EdgeCutoff": 2.0e-3
+        },
+        {
+          "Index": 2,
+          "Attributes": [1],
+          "Type": "MS",
+          "Thickness": 2.0e-3,
+          "Permittivity": 11.47,
+          "LossTan": 3.0e-4,
+          "EdgeCutoff": 2.0e-3
+        },
+        {
+          "Index": 3,
+          "Attributes": [1],
+          "Type": "MA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 3.0e-2,
+          "EdgeCutoff": 2.0e-3
+        }
+      ]
+    }
   },
   "Solver":
   {

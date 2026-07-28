@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/singularfield.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -21,6 +22,7 @@
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/singularsurfacepostoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -642,7 +644,52 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   eigen->RescaleEigenvectors(num_converged);
   SaveMetadata(*ksp);
 
-  TableWithCSVFile eig_output, energy_output;
+  const fem::singular::AdaptiveAssemblyOptions surface_options{
+      iodata.solver.singular_elements.quadrature_order,
+      iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
+      iodata.solver.singular_elements.max_subdivisions};
+  std::unique_ptr<fem::singular::EnrichedNDFieldEvaluator> tetrahedral_real_evaluator,
+      tetrahedral_imaginary_evaluator;
+  std::unique_ptr<fem::singular::TriangleEnrichedNDFieldEvaluator>
+      triangular_real_evaluator, triangular_imaginary_evaluator;
+  std::unique_ptr<TetrahedronSingularSurfacePostOperator> tetrahedral_surface_postoperator;
+  std::unique_ptr<TriangleSingularSurfacePostOperator> triangular_surface_postoperator;
+  if (space_op.GetMesh().Dimension() == 3)
+  {
+    const auto *topology = space_op.GetSingularDofTopology();
+    MFEM_VERIFY(topology,
+                "Three-dimensional eigenmode singular surface postprocessing requires "
+                "tetrahedral singular DOF topology!");
+    tetrahedral_real_evaluator = std::make_unique<fem::singular::EnrichedNDFieldEvaluator>(
+        *topology, space_op.GetSingularParallelNumbering(), space_op.GetNDSpace().Get());
+    tetrahedral_imaginary_evaluator =
+        std::make_unique<fem::singular::EnrichedNDFieldEvaluator>(
+            *topology, space_op.GetSingularParallelNumbering(),
+            space_op.GetNDSpace().Get());
+    tetrahedral_surface_postoperator =
+        std::make_unique<TetrahedronSingularSurfacePostOperator>(
+            iodata.boundaries.postpro, space_op.GetMaterialOp(),
+            space_op.GetNDSpace().Get());
+  }
+  else
+  {
+    const auto *topology = space_op.GetTriangleSingularDofTopology();
+    MFEM_VERIFY(topology,
+                "Two-dimensional eigenmode singular surface postprocessing requires "
+                "triangular singular DOF topology!");
+    triangular_real_evaluator =
+        std::make_unique<fem::singular::TriangleEnrichedNDFieldEvaluator>(
+            *topology, space_op.GetSingularParallelNumbering(),
+            space_op.GetNDSpace().Get());
+    triangular_imaginary_evaluator =
+        std::make_unique<fem::singular::TriangleEnrichedNDFieldEvaluator>(
+            *topology, space_op.GetSingularParallelNumbering(),
+            space_op.GetNDSpace().Get());
+    triangular_surface_postoperator = std::make_unique<TriangleSingularSurfacePostOperator>(
+        iodata.boundaries.postpro, space_op.GetMaterialOp(), space_op.GetNDSpace().Get());
+  }
+
+  TableWithCSVFile eig_output, energy_output, surface_output;
   if (root)
   {
     eig_output = TableWithCSVFile(post_dir / "eig.csv");
@@ -663,6 +710,24 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     energy_output.table.insert("weak_divergence", "Relative weak divergence");
     energy_output.table[0].print_as_int = true;
     energy_output.WriteFullTableTrunc();
+
+    const bool has_surface = tetrahedral_surface_postoperator
+                                 ? !tetrahedral_surface_postoperator->Empty()
+                                 : !triangular_surface_postoperator->Empty();
+    if (has_surface)
+    {
+      surface_output = TableWithCSVFile(post_dir / "surface-Q.csv");
+      surface_output.table.insert("idx", "m", -1, 0, 0, "");
+      surface_output.table[0].print_as_int = true;
+      for (const auto &[index, data] : iodata.boundaries.postpro.dielectric)
+      {
+        surface_output.table.insert(fmt::format("p_{}", index),
+                                    fmt::format("p_surf[{}]", index));
+        surface_output.table.insert(fmt::format("Q_{}", index),
+                                    fmt::format("Q_surf[{}]", index));
+      }
+      surface_output.WriteFullTableTrunc();
+    }
   }
 
   ComplexVector electric_field(space_op.GetNDTrueVSize()),
@@ -684,6 +749,23 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
 
     const auto energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_energy,
                                                       *K_energy, electric_field, omega);
+    std::vector<TriangleSingularSurfacePostOperator::Measurement> surface_measurements;
+    if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
+    {
+      tetrahedral_real_evaluator->SetFromTrueDofs(electric_field.Real());
+      tetrahedral_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+      surface_measurements = tetrahedral_surface_postoperator->Measure(
+          *tetrahedral_real_evaluator, *tetrahedral_imaginary_evaluator, energy.electric,
+          surface_options);
+    }
+    else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
+    {
+      triangular_real_evaluator->SetFromTrueDofs(electric_field.Real());
+      triangular_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+      surface_measurements = triangular_surface_postoperator->Measure(
+          *triangular_real_evaluator, *triangular_imaginary_evaluator, energy.electric,
+          surface_options);
+    }
     const double electric_energy =
         iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.electric);
     const double magnetic_energy =
@@ -726,19 +808,39 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       energy_output.table["energy_mismatch"] << energy_mismatch;
       energy_output.table["weak_divergence"] << relative_weak_divergence;
       energy_output.WriteFullTableTrunc();
+      if (!surface_measurements.empty())
+      {
+        surface_output.table["idx"] << mode + 1;
+        for (const auto &measurement : surface_measurements)
+        {
+          surface_output.table[fmt::format("p_{}", measurement.index)]
+              << measurement.participation;
+          surface_output.table[fmt::format("Q_{}", measurement.index)]
+              << measurement.quality_factor;
+        }
+        surface_output.WriteFullTableTrunc();
+      }
     }
   }
 
-  SaveMetadata("SingularFullWave",
-               nlohmann::json{{"Enabled", true},
-                              {"Dimension", space_op.GetMesh().Dimension()},
-                              {"EigenvalueOutput", "eig.csv"},
-                              {"EnergyOutput", "singular-eigenmode.csv"},
-                              {"ElectricEnergy", "0.5 E^H M_epsilon E"},
-                              {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
-                              {"DivergenceProjection", divfree != nullptr},
-                              {"FieldGridOutput", false},
-                              {"ErrorEstimator", false}});
+  SaveMetadata(
+      "SingularFullWave",
+      nlohmann::json{
+          {"Enabled", true},
+          {"Dimension", space_op.GetMesh().Dimension()},
+          {"EigenvalueOutput", "eig.csv"},
+          {"EnergyOutput", "singular-eigenmode.csv"},
+          {"ElectricEnergy", "0.5 E^H M_epsilon E"},
+          {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+          {"DivergenceProjection", divfree != nullptr},
+          {"FieldGridOutput", false},
+          {"ErrorEstimator", false},
+          {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
+                                       ? GetSingularSurfaceIntegrabilityMetadata(
+                                             *singular_features.GetSheetFeatures())
+                                       : GetSingularSurfaceIntegrabilityMetadata(
+                                             *singular_features.GetLineFeatures())},
+          {"SurfaceParticipation", GetSingularSurfaceParticipationMetadata(iodata)}});
   MFEM_VERIFY(num_converged >= iodata.solver.eigenmode.n,
               "Singular eigenmode solve found " << num_converged << " modes when "
                                                 << iodata.solver.eigenmode.n

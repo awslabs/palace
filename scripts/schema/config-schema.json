@@ -402,7 +402,7 @@
         "SingularElements": {
           "$ref": "#/$defs/SingularElements",
           "title": "Singular Elements",
-          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC lines in two dimensions or sheets in three dimensions. Supported on CPU, single-level simplex meshes for electrostatic, BoundaryMode, driven, and eigenmode simulations. BoundaryMode and full-wave paths currently require isotropic lossless materials; driven/eigenmode additionally require assembled operators and SuperLU_DIST and exclude ports, periodic/absorbing/impedance boundaries, configured field or surface postprocessing, and saved grid fields."
+          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC lines or one-sided finite-metal PEC boundaries in two dimensions, and internal zero-thickness PEC sheets in three dimensions. Supported on CPU, single-level simplex meshes for electrostatic, BoundaryMode, driven, and eigenmode simulations. BoundaryMode and full-wave paths currently require isotropic lossless materials; driven/eigenmode additionally require assembled operators and SuperLU_DIST and exclude ports, periodic/absorbing/impedance boundaries, configured field or surface postprocessing, and saved grid fields."
         },
         "Linear": {
           "$ref": "#/$defs/Linear",
@@ -1804,6 +1804,12 @@
           "type": "number",
           "description": "Loss tangent of this dielectric interface.",
           "default": 0.0
+        },
+        "EdgeCutoff": {
+          "type": "number",
+          "description": "Physical distance in mesh length units excluded from each singular metal edge or corner when singular-element surface postprocessing is enabled. The default zero requests the untruncated surface integral, which is rejected for a nonintegrable ideal thin-sheet trace with nu <= 1/2. A positive value produces an explicitly cutoff-dependent outer thin-layer participation; it is not a finite-thickness response correction.",
+          "minimum": 0.0,
+          "default": 0.0
         }
       }
     },
@@ -2783,7 +2789,7 @@
     "SingularElements": {
       "type": "object",
       "title": "Singular Elements",
-      "description": "Configures additive singular basis functions for explicitly selected internal zero-thickness PEC lines on triangular meshes or PEC sheets on tetrahedral meshes. Selected attributes are automatically excluded from internal-boundary cracking so their conforming two-sided topology is preserved. Ordinary curved elements are unrestricted. Enriched elements may use affine, high-order affine, or genuinely curved isoparametric maps, but each selected singular line or sheet-perimeter segment must remain geometrically straight. The implementation is CPU-only and does not support mesh refinement through an enabled singular solve.",
+      "description": "Configures additive singular basis functions for explicitly selected internal zero-thickness PEC lines or one-sided finite-metal PEC boundaries on triangular meshes, or internal PEC sheets on tetrahedral meshes. In two dimensions, internal line tips use `nu = 1/2`; corners formed by two selected one-sided PEC segments use the smallest positive Dirichlet transmission-wedge exponent inferred from the ordered isotropic material sectors. Smooth collinear one-sided vertices are not enriched. Selected internal attributes are automatically excluded from boundary cracking so their conforming two-sided topology is preserved. Ordinary curved elements are unrestricted. Enriched elements may use affine, high-order affine, or genuinely curved isoparametric maps, but each selected singular line or sheet-perimeter segment must remain geometrically straight. The implementation is CPU-only and does not support mesh refinement through an enabled singular solve.",
       "additionalProperties": false,
       "required": [
         "Attributes"
@@ -2791,7 +2797,7 @@
       "properties": {
         "Attributes": {
           "type": "array",
-          "description": "Nonempty set of internal zero-thickness PEC boundary attributes enriched with exponent `nu = 1/2`. In two dimensions these are straight line chains whose interior endpoints are enriched; in three dimensions these are sheets whose topological perimeter is enriched.",
+          "description": "Nonempty set of PEC boundary attributes to inspect for singular features. In two dimensions, selected straight internal line chains are enriched at interior endpoints with `nu = 1/2`, while corners of selected one-sided finite-metal boundaries receive an automatically inferred isotropic material-wedge exponent. Both PEC faces meeting at a finite-metal corner must be selected. In three dimensions, selected attributes must be internal zero-thickness sheets whose topological perimeter is enriched with `nu = 1/2`.",
           "additionalItems": false,
           "uniqueItems": true,
           "minItems": 1,

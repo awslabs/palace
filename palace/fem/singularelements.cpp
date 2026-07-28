@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
+#include <Eigen/Eigenvalues>
 #include <mfem.hpp>
 
 namespace palace
@@ -25,7 +26,7 @@ namespace
 
 constexpr double BarycentricTolerance = 1.0e-12;
 constexpr int MaximumQuadratureOrder = 21;
-constexpr int MaximumDuffyQuadratureOrder = 63;
+constexpr int MaximumDuffyQuadratureOrder = 127;
 constexpr int MaximumSubdivisionDepth = 8;
 constexpr int MaximumAdaptiveSubdivisionDepth = 12;
 
@@ -979,7 +980,7 @@ void ValidateDuffyQuadratureParameters(int order, double radial_power)
   if (order < 1 || order > MaximumDuffyQuadratureOrder)
   {
     throw std::invalid_argument(
-        "Singular-element Duffy quadrature order must be in [1, 63]!");
+        "Singular-element Duffy quadrature order must be in [1, 127]!");
   }
   if (!std::isfinite(radial_power) || !(radial_power > 0.0))
   {
@@ -1438,6 +1439,82 @@ double TriangleNodeRadialCoordinate(const TriangleBarycentricPoint &lambda, int 
     }
   }
   return rho;
+}
+
+std::vector<WeightedSegmentQuadraturePoint>
+BuildWeightedSegmentQuadrature(int order, double alpha, double beta)
+{
+  if (order < 1 || !std::isfinite(alpha) || !std::isfinite(beta) || !(alpha > -1.0) ||
+      !(beta > -1.0))
+  {
+    throw std::invalid_argument(
+        "Weighted segment quadrature requires positive order and finite endpoint "
+        "exponents greater than -1!");
+  }
+
+  // Golub-Welsch for Jacobi weight (1-x)^beta (1+x)^alpha on [-1,1].
+  // Mapping x = 2t-1 gives t^alpha (1-t)^beta on [0,1].
+  const double jacobi_alpha = beta;
+  const double jacobi_beta = alpha;
+  const double exponent_sum = jacobi_alpha + jacobi_beta;
+  Eigen::MatrixXd jacobi = Eigen::MatrixXd::Zero(order, order);
+  for (int n = 0; n < order; n++)
+  {
+    const double two_n_sum = 2.0 * n + exponent_sum;
+    jacobi(n, n) =
+        (n == 0 && std::abs(exponent_sum) <= 32.0 * std::numeric_limits<double>::epsilon())
+            ? (jacobi_beta - jacobi_alpha) / (exponent_sum + 2.0)
+            : (jacobi_beta * jacobi_beta - jacobi_alpha * jacobi_alpha) /
+                  (two_n_sum * (two_n_sum + 2.0));
+    if (n == 0)
+    {
+      continue;
+    }
+    const double numerator =
+        4.0 * n * (n + jacobi_alpha) * (n + jacobi_beta) * (n + exponent_sum);
+    const double denominator =
+        two_n_sum * two_n_sum * (two_n_sum - 1.0) * (two_n_sum + 1.0);
+    const double recurrence = numerator / denominator;
+    if (!std::isfinite(recurrence) || !(recurrence > 0.0))
+    {
+      throw std::runtime_error(
+          "Weighted segment quadrature produced an invalid Jacobi recurrence!");
+    }
+    const double off_diagonal = std::sqrt(recurrence);
+    jacobi(n - 1, n) = off_diagonal;
+    jacobi(n, n - 1) = off_diagonal;
+  }
+
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(jacobi);
+  if (eigensolver.info() != Eigen::Success)
+  {
+    throw std::runtime_error(
+        "Weighted segment quadrature eigendecomposition did not converge!");
+  }
+  const double total_weight = std::exp(std::lgamma(alpha + 1.0) + std::lgamma(beta + 1.0) -
+                                       std::lgamma(alpha + beta + 2.0));
+  if (!std::isfinite(total_weight) || !(total_weight > 0.0))
+  {
+    throw std::runtime_error(
+        "Weighted segment quadrature produced an invalid total weight!");
+  }
+
+  std::vector<WeightedSegmentQuadraturePoint> rule;
+  rule.reserve(order);
+  for (int q = 0; q < order; q++)
+  {
+    const double coordinate = 0.5 * (eigensolver.eigenvalues()[q] + 1.0);
+    const double leading_component = eigensolver.eigenvectors()(0, q);
+    const double weight = total_weight * leading_component * leading_component;
+    if (!std::isfinite(coordinate) || !(coordinate > 0.0) || !(coordinate < 1.0) ||
+        !std::isfinite(weight) || !(weight > 0.0))
+    {
+      throw std::runtime_error(
+          "Weighted segment quadrature produced an invalid point or weight!");
+    }
+    rule.push_back({coordinate, weight});
+  }
+  return rule;
 }
 
 TriangleVectorBasisValue
@@ -2335,7 +2412,7 @@ std::size_t ReferenceTriangleNodeDuffyQuadraturePointCount(int order)
   if (order < 1 || order > MaximumDuffyQuadratureOrder)
   {
     throw std::invalid_argument(
-        "Singular-element Duffy quadrature order must be in [1, 63]!");
+        "Singular-element Duffy quadrature order must be in [1, 127]!");
   }
   const std::size_t points = static_cast<std::size_t>(
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, order).GetNPoints());

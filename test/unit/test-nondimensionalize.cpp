@@ -380,10 +380,12 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
   {
     config::InterfaceDielectricData data;
     data.t = 0.001;
+    data.edge_cutoff = 0.002;
 
     config::Nondimensionalize(units, data);
 
     CHECK(data.t == Approx(0.001 / units.GetMeshLengthRelativeScale()));
+    CHECK(data.edge_cutoff == Approx(0.002 / units.GetMeshLengthRelativeScale()));
   }
 
   SECTION("DrivenSolverData")

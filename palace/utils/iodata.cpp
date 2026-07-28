@@ -356,11 +356,10 @@ void IoData::CheckConfiguration()
       }
       MFEM_VERIFY(
           domains.postpro.energy.empty() && domains.postpro.probe.empty() &&
-              boundaries.postpro.flux.empty() && boundaries.postpro.dielectric.empty() &&
-              boundaries.postpro.impedance.empty() && boundaries.postpro.voltage.empty() &&
-              boundaries.postpro.farfield.empty(),
-          "Full-wave singular field reconstruction and configured domain/boundary "
-          "postprocessing are not yet supported!");
+              boundaries.postpro.flux.empty() && boundaries.postpro.impedance.empty() &&
+              boundaries.postpro.voltage.empty() && boundaries.postpro.farfield.empty(),
+          "Full-wave singular simulations currently support only singular dielectric "
+          "surface postprocessing!");
       if (problem.type == ProblemType::DRIVEN)
       {
         MFEM_VERIFY(solver.driven.adaptive_tol <= 0.0 &&

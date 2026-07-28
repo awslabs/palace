@@ -111,6 +111,24 @@ H1FieldValue EvaluatePermutation(const std::array<int, 4> &local_to_physical)
 
   fem::singular::EnrichedH1FieldEvaluator evaluator(topology, numbering, fespace);
   CHECK_THROWS_AS(evaluator.GetOwnedCoefficientDiagnostics(), std::logic_error);
+  const auto face_singularities = evaluator.GetElementFaceSingularities(0, {0, 1, 2});
+  REQUIRE(face_singularities.size() == 1);
+  CHECK(face_singularities[0].type == fem::singular::TetrahedronFaceSingularityType::NODE);
+  CHECK(face_singularities[0].nodes[0] == canonical_nodes[0]);
+  CHECK(face_singularities[0].nodes[1] == -1);
+  CHECK(face_singularities[0].nu == basis.nu);
+  std::array<int, 3> opposite_face{};
+  int opposite_node = 0;
+  for (int node = 0; node < 4; node++)
+  {
+    if (node != canonical_nodes[0])
+    {
+      opposite_face[opposite_node++] = node;
+    }
+  }
+  CHECK(evaluator.GetElementFaceSingularities(0, opposite_face).empty());
+  CHECK_THROWS_AS(evaluator.GetElementFaceSingularities(0, {0, 0, 1}),
+                  std::invalid_argument);
   evaluator.SetFromTrueDofs(combined_true_dofs);
   const auto coefficient_diagnostics = evaluator.GetOwnedCoefficientDiagnostics();
   REQUIRE(coefficient_diagnostics.size() == 1);
@@ -172,6 +190,33 @@ H1FieldValue EvaluatePermutation(const std::array<int, 4> &local_to_physical)
         WithinAbs(standard_gradient[d] + kSingularCoefficient * singular_gradient.value[d],
                   2.0e-12));
   }
+
+  BarycentricPoint face_lambda{0.31, 0.27, 0.42, 0.0};
+  mfem::IntegrationPoint face_point;
+  face_point.Set3(face_lambda[1], face_lambda[2], face_lambda[3]);
+  const auto face_value = evaluator.EvaluateClosure(0, face_point);
+  transformation->SetIntPoint(&face_point);
+  transformation->Transform(face_point, physical_point);
+  const auto face_grad_lambda = fem::singular::GetBarycentricGradients(
+      *transformation, face_point, jacobian_determinant);
+  const auto face_singular =
+      fem::singular::EvaluateHigherOrderBasis(face_lambda, face_grad_lambda, basis);
+  const double face_singular_potential =
+      fem::singular::EvaluateHigherOrderGradientPotential(face_lambda, basis);
+  CHECK_THAT(face_value.potential,
+             WithinAbs(StandardPotential(physical_point) +
+                           kSingularCoefficient * face_singular_potential,
+                       2.0e-13));
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(
+        face_value.gradient[d],
+        WithinAbs(standard_gradient[d] + kSingularCoefficient * face_singular.value[d],
+                  2.0e-12));
+  }
+  mfem::IntegrationPoint outside_point;
+  outside_point.Set3(0.7, 0.7, 0.0);
+  CHECK_THROWS_AS(evaluator.EvaluateClosure(0, outside_point), std::invalid_argument);
   return evaluated;
 }
 
@@ -187,6 +232,129 @@ TEST_CASE("Combined singular H1 field evaluation is affine and permutation covar
   for (int d = 0; d < 3; d++)
   {
     CHECK_THAT(permuted.gradient[d], WithinAbs(canonical.gradient[d], 2.0e-12));
+  }
+}
+
+TEST_CASE("Combined singular tetrahedral ND field evaluates value and curl",
+          "[singularfield][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  mfem::Mesh serial_mesh(3, 4, 1, 0, 3);
+  for (const auto &vertex : kVertices)
+  {
+    serial_mesh.AddVertex(vertex.data());
+  }
+  serial_mesh.AddTet(0, 1, 2, 3, 1);
+  serial_mesh.FinalizeTopology();
+  serial_mesh.Finalize(false, false);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+
+  const auto gradient_bases =
+      fem::singular::EnumerateHigherOrderNodeGradientBases({0, 1, 2, 3}, 2, 0.5);
+  const auto rotational_bases =
+      fem::singular::EnumerateHigherOrderNodeRotationalBases({0, 1, 2, 3}, 2, 0.5);
+  REQUIRE_FALSE(gradient_bases.empty());
+  REQUIRE_FALSE(rotational_bases.empty());
+  const std::array<fem::singular::HigherOrderBasis, 2> bases{gradient_bases.front(),
+                                                             rotational_bases.front()};
+
+  fem::singular::DofTopology topology;
+  topology.nd_dofs.resize(bases.size());
+  topology.elements.resize(1);
+  for (std::size_t dof = 0; dof < bases.size(); dof++)
+  {
+    topology.nd_dofs[dof].family = bases[dof].family;
+    topology.nd_dofs[dof].order = bases[dof].order;
+    topology.elements[0].nd.push_back({dof, bases[dof]});
+  }
+
+  fem::singular::ParallelDofNumbering numbering;
+  numbering.nd.global_local_size = bases.size();
+  numbering.nd.local_offset = 0;
+  numbering.nd.local_size = bases.size();
+  numbering.nd.global_size = bases.size();
+  numbering.nd.owned_offset = 0;
+  numbering.nd.owned_size = bases.size();
+  numbering.nd.owner = {0, 0};
+  numbering.nd.local_to_true = {0, 1};
+
+  mfem::ND_FECollection collection(2, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &collection);
+  mfem::VectorFunctionCoefficient standard_coefficient(
+      3,
+      [](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(3);
+        value[0] = 1.0 + 2.0 * x[1];
+        value[1] = -0.5 + 3.0 * x[2];
+        value[2] = 0.25 + 4.0 * x[0];
+      });
+  mfem::ParGridFunction standard_field(&fespace);
+  standard_field.ProjectCoefficient(standard_coefficient);
+  mfem::Vector standard_true_dofs(fespace.GetTrueVSize());
+  standard_field.ParallelProject(standard_true_dofs);
+
+  constexpr std::array<double, 2> coefficients{-0.43, 0.27};
+  mfem::Vector combined(standard_true_dofs.Size() + coefficients.size());
+  for (int i = 0; i < standard_true_dofs.Size(); i++)
+  {
+    combined[i] = standard_true_dofs[i];
+  }
+  for (std::size_t i = 0; i < coefficients.size(); i++)
+  {
+    combined[standard_true_dofs.Size() + static_cast<int>(i)] = coefficients[i];
+  }
+
+  fem::singular::EnrichedNDFieldEvaluator evaluator(topology, numbering, fespace);
+  const auto face_singularities = evaluator.GetElementFaceSingularities(0, {0, 1, 2});
+  REQUIRE(face_singularities.size() == 1);
+  CHECK(face_singularities[0].type == fem::singular::TetrahedronFaceSingularityType::NODE);
+  CHECK(face_singularities[0].nodes == std::array<int, 2>{0, -1});
+  CHECK(face_singularities[0].nu == 0.5);
+  evaluator.SetFromTrueDofs(combined);
+
+  mfem::IntegrationPoint point;
+  point.Set3(kPhysicalBarycentricPoint[1], kPhysicalBarycentricPoint[2],
+             kPhysicalBarycentricPoint[3]);
+  const auto value = evaluator.Evaluate(0, point);
+  auto *transformation = mesh.GetElementTransformation(0);
+  REQUIRE(transformation);
+  transformation->SetIntPoint(&point);
+  mfem::Vector physical_point(3);
+  transformation->Transform(point, physical_point);
+  double jacobian_determinant;
+  const auto grad_lambda =
+      fem::singular::GetBarycentricGradients(*transformation, point, jacobian_determinant);
+  fem::singular::Vector3 expected_value{1.0 + 2.0 * physical_point[1],
+                                        -0.5 + 3.0 * physical_point[2],
+                                        0.25 + 4.0 * physical_point[0]};
+  fem::singular::Vector3 expected_curl{-3.0, -4.0, -2.0};
+  for (std::size_t i = 0; i < bases.size(); i++)
+  {
+    const auto basis = fem::singular::EvaluateHigherOrderBasis(kPhysicalBarycentricPoint,
+                                                               grad_lambda, bases[i]);
+    for (int d = 0; d < 3; d++)
+    {
+      expected_value[d] += coefficients[i] * basis.value[d];
+      expected_curl[d] += coefficients[i] * basis.curl[d];
+    }
+  }
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(value.value[d], WithinAbs(expected_value[d], 3.0e-12));
+    CHECK_THAT(value.curl[d], WithinAbs(expected_curl[d], 3.0e-12));
+  }
+
+  mfem::IntegrationPoint face_point;
+  face_point.Set3(0.23, 0.31, 0.0);
+  const auto face_value = evaluator.EvaluateClosure(0, face_point);
+  for (double component : face_value.value)
+  {
+    CHECK(std::isfinite(component));
+  }
+  for (double component : face_value.curl)
+  {
+    CHECK(std::isfinite(component));
   }
 }
 
@@ -423,6 +591,28 @@ TEST_CASE("Combined triangular singular H1 field evaluation and sampling",
   CHECK_THAT(value.gradient[0], WithinAbs(1.5 - 0.37 * singular.value[0], 2.0e-12));
   CHECK_THAT(value.gradient[1], WithinAbs(-0.4 - 0.37 * singular.value[1], 2.0e-12));
 
+  mfem::IntegrationPoint edge_point;
+  edge_point.Set2(0.35, 0.0);
+  const auto edge_value = evaluator.EvaluateClosure(0, edge_point);
+  double expanded_potential = 0.0;
+  fem::singular::Vector2 expanded_gradient{};
+  for (const auto &term : evaluator.EvaluateValueTraceExpansion(0, edge_point, {0, 1}))
+  {
+    expanded_potential += std::pow(edge_point.x, term.exponents.left) *
+                          std::pow(1.0 - edge_point.x, term.exponents.right) *
+                          term.coefficient;
+  }
+  for (const auto &term : evaluator.EvaluateGradientTraceExpansion(0, edge_point, {0, 1}))
+  {
+    const double weight = std::pow(edge_point.x, term.exponents.left) *
+                          std::pow(1.0 - edge_point.x, term.exponents.right);
+    expanded_gradient[0] += weight * term.coefficient[0];
+    expanded_gradient[1] += weight * term.coefficient[1];
+  }
+  CHECK_THAT(expanded_potential, WithinAbs(edge_value.potential, 2.0e-13));
+  CHECK_THAT(expanded_gradient[0], WithinAbs(edge_value.gradient[0], 2.0e-12));
+  CHECK_THAT(expanded_gradient[1], WithinAbs(edge_value.gradient[1], 2.0e-12));
+
   mfem::L2_FECollection sample_collection(2, 2, mfem::BasisType::GaussLegendre,
                                           mfem::FiniteElement::VALUE);
   mfem::ParFiniteElementSpace sampled_potential_space(&mesh, &sample_collection);
@@ -548,6 +738,38 @@ TEST_CASE("Combined triangular singular ND field evaluation curl and energy",
                            0.27 * rotational.value[1],
                        3.0e-12));
   CHECK_THAT(value.curl, WithinAbs(0.8 - 0.27 * rotational.curl, 3.0e-12));
+  CHECK(evaluator.GetElementNodeSingularExponent(0, 0) == 0.5);
+  CHECK(evaluator.GetElementNodeSingularExponent(0, 1) == 1.0);
+
+  mfem::IntegrationPoint edge_point;
+  edge_point.Set2(0.35, 0.0);
+  const fem::singular::TriangleBarycentricPoint edge_lambda{0.65, 0.35, 0.0};
+  const auto edge_gradient =
+      fem::singular::EvaluateTriangleNodeGradient(edge_lambda, grad_lambda, 0, 1, 0.5);
+  const auto edge_rotational =
+      fem::singular::EvaluateTriangleNodeRotational(edge_lambda, grad_lambda, 0, 1, 2, 0.5);
+  transformation->Transform(edge_point, physical_point);
+  const auto edge_value = evaluator.EvaluateClosure(0, edge_point);
+  CHECK_THAT(edge_value.value[0],
+             WithinAbs(0.8 - 0.4 * physical_point[1] + 0.31 * edge_gradient.value[0] -
+                           0.27 * edge_rotational.value[0],
+                       3.0e-12));
+  CHECK_THAT(edge_value.value[1],
+             WithinAbs(-0.2 + 0.4 * physical_point[0] + 0.31 * edge_gradient.value[1] -
+                           0.27 * edge_rotational.value[1],
+                       3.0e-12));
+  CHECK_THAT(edge_value.curl, WithinAbs(0.8 - 0.27 * edge_rotational.curl, 3.0e-12));
+  fem::singular::Vector2 expanded_edge_value{};
+  for (const auto &term : evaluator.EvaluateTraceExpansion(0, edge_point, {0, 1}))
+  {
+    const double weight = std::pow(edge_point.x, term.exponents.left) *
+                          std::pow(1.0 - edge_point.x, term.exponents.right);
+    expanded_edge_value[0] += weight * term.coefficient[0];
+    expanded_edge_value[1] += weight * term.coefficient[1];
+  }
+  CHECK_THAT(expanded_edge_value[0], WithinAbs(edge_value.value[0], 3.0e-12));
+  CHECK_THAT(expanded_edge_value[1], WithinAbs(edge_value.value[1], 3.0e-12));
+  CHECK_THROWS_AS(evaluator.Evaluate(0, edge_point), std::invalid_argument);
 
   mfem::L2_FECollection sample_collection(2, 2, mfem::BasisType::GaussLegendre,
                                           mfem::FiniteElement::VALUE);

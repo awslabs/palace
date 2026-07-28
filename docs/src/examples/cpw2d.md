@@ -99,6 +99,16 @@ quadratic Gmsh mesh used by the baseline thin-metal example:
   - `cpw2d_thin_boundarymode_singular.json`
   - `cpw2d_thin_driven_singular.json`
 
+The finite-thickness PEC comparison uses
+`cpw2d_thick_boundarymode_standard.json` and
+`cpw2d_thick_boundarymode_singular.json` on the same quadratic thick-metal mesh
+with standard polynomial order two. The singular configuration selects both PEC
+faces at each metal corner. Palace walks the complete incident triangle fan,
+groups its ordered isotropic material sectors, and computes the smallest positive
+Dirichlet transmission-wedge exponent. For the substrate-vacuum corners in this
+mesh, the exponent is approximately `nu = 0.5255535`; a homogeneous 270-degree
+dielectric corner instead gives `nu = 2/3`.
+
 The two standard configurations and their singular counterparts use the same mesh and
 materials. The singular configurations add first-order triangular basis functions at the
 four endpoints of the zero-thickness trace and ground lines:
@@ -132,11 +142,31 @@ but that global setting is not required; nonselected boundary attributes continu
 follow it normally.
 
 The electrostatic solve reports capacitance, combined-field domain energy, canonical
-singular coefficients, and fitted tip slopes. The singular `BoundaryMode` solve supports
-isotropic lossless materials with PEC or natural PMC boundaries and reports propagation
-constants, combined-field energies, canonical ND/H1 coefficients, and fitted transverse
-field slopes. Voltage, impedance, surface measurements, and the standard error estimator
-are disabled on the enriched `BoundaryMode` path.
+singular coefficients, fitted tip slopes, and combined-field dielectric surface
+participation. The singular `BoundaryMode` solve supports isotropic lossless materials
+with PEC or natural PMC boundaries and reports propagation constants, combined-field
+energies, canonical ND/H1 coefficients, fitted transverse field slopes, and dielectric
+surface participation. Voltage, impedance, and the standard error estimator remain
+disabled on the enriched `BoundaryMode` path.
+
+The thin-sheet examples specify an explicit cutoff on each dielectric interface:
+
+```json
+"EdgeCutoff": 2.0e-3
+```
+
+The value is in mesh length units, so `2.0e-3` is 2 nm for these micrometer meshes.
+The reported value in `surface-Q.csv` is the outer thin-layer integral with the
+neighborhood closer than `EdgeCutoff` to each singular line tip excluded. It includes the
+complete standard-plus-singular field. Decreasing the cutoff increases the result
+logarithmically. This is a cutoff-dependent diagnostic, not a finite-thickness response
+correction, and it does not include the energy in the excluded neighborhood. Omitting the
+cutoff for an active `nu <= 1/2` trace is rejected rather than returning a quadrature- or
+mesh-dependent finite number.
+
+The finite-thickness thick-metal corner has `nu > 1/2`, so its surface trace is integrable.
+The paired thick `BoundaryMode` configurations therefore leave `EdgeCutoff` at zero and
+the singular case computes the untruncated combined-field MS and MA participation.
 
 The driven configuration is a restricted full-wave validation case with a surface-current
 source. Singular driven and eigenmode simulations currently require CPU execution,
@@ -145,10 +175,10 @@ with SuperLU_DIST. Ports, periodic boundaries, impedance or absorbing boundaries
 grid fields, configured field/surface postprocessing, adaptive frequency sweeps, and PROM
 are not yet supported on this path.
 
-The zero-thickness surface integral of ``|E|^2`` diverges logarithmically at a sheet edge.
-Consequently, these configurations do not report raw SA, MS, or MA participation. Physical
-participation requires resolved finite-thickness interface geometry or a separately
-validated finite-fabrication response correction applied to the converged outer field.
+The zero-thickness surface integral of ``|E|^2`` still diverges logarithmically at a sheet
+edge. A fabricated-device participation requires resolved finite-thickness interface
+geometry or a separately validated response correction which combines the converged outer
+field with an inner edge model.
 
 ### Thick metal with impedance BC
 

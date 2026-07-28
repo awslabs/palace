@@ -29,6 +29,28 @@
   "Boundaries": {
     "PEC": {
       "Attributes": [10, 11, 12, 20, 21]
+    },
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [10, 11],
+          "Type": "MS",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 1.0,
+          "EdgeCutoff": 2.0e-3
+        },
+        {
+          "Index": 2,
+          "Attributes": [10, 11],
+          "Type": "MA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 1.0,
+          "EdgeCutoff": 2.0e-3
+        }
+      ]
     }
   },
   "Solver": {

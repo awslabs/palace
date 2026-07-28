@@ -14,6 +14,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "drivers/singularsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -21,6 +22,7 @@
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/singularsurfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -62,6 +64,12 @@ struct SingularTipSlopeMeasurement
 {
   int source;
   fem::singular::H1TipSlopeDiagnostic diagnostic;
+};
+
+struct SingularSurfaceMeasurement
+{
+  int source;
+  std::vector<TriangleSingularSurfacePostOperator::Measurement> interfaces;
 };
 
 constexpr std::size_t CoefficientIntegerFields = 23;
@@ -849,6 +857,46 @@ void WriteSingularDomainEnergy(
   output.WriteFullTableTrunc();
 }
 
+void WriteSingularSurfaceMeasurements(
+    const fs::path &post_dir, const std::vector<SingularSurfaceMeasurement> &measurements,
+    bool root)
+{
+  if (!root || measurements.empty() || measurements.front().interfaces.empty())
+  {
+    return;
+  }
+  TableWithCSVFile output(post_dir / "surface-Q.csv");
+  output.table.insert(Column("i", "i", 0, 0, 2, ""));
+  for (const auto &interface : measurements.front().interfaces)
+  {
+    output.table.insert(fmt::format("p_{}", interface.index),
+                        fmt::format("p_surf[{}]", interface.index));
+    output.table.insert(fmt::format("Q_{}", interface.index),
+                        fmt::format("Q_surf[{}]", interface.index));
+  }
+  for (const auto &measurement : measurements)
+  {
+    if (measurement.interfaces.size() != measurements.front().interfaces.size())
+    {
+      throw std::runtime_error(
+          "Singular electrostatic surface measurements changed interface count!");
+    }
+    output.table["i"] << measurement.source;
+    for (std::size_t i = 0; i < measurement.interfaces.size(); i++)
+    {
+      const auto &interface = measurement.interfaces[i];
+      if (interface.index != measurements.front().interfaces[i].index)
+      {
+        throw std::runtime_error(
+            "Singular electrostatic surface measurements changed interface ordering!");
+      }
+      output.table[fmt::format("p_{}", interface.index)] << interface.participation;
+      output.table[fmt::format("Q_{}", interface.index)] << interface.quality_factor;
+    }
+  }
+  output.WriteFullTableTrunc();
+}
+
 void InsertIntegerDiagnosticColumn(Table &table, std::string name, std::string header)
 {
   table.insert(Column(std::move(name), std::move(header), 0, 0, 0, ""));
@@ -1056,7 +1104,8 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
     if (mesh_dimension == 3)
     {
       serial_singular_features = fem::singular::ExtractSerialSheetFeatures(
-          *smesh, iodata.solver.singular_elements.attributes);
+          *smesh, iodata.solver.singular_elements.attributes,
+          GetSingularTriangleMaterials(iodata));
     }
     else
     {
@@ -1066,8 +1115,9 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
       MFEM_VERIFY(iodata.solver.singular_elements.order == 1,
                   "Triangular singular electrostatic enrichment currently supports only "
                   "Solver.SingularElements.Order = 1!");
-      serial_triangle_singular_features = fem::singular::ExtractSerialLineTipFeatures(
-          *smesh, iodata.solver.singular_elements.attributes);
+      serial_triangle_singular_features = fem::singular::ExtractSerialLineFeatures(
+          *smesh, iodata.solver.singular_elements.attributes,
+          GetSingularTriangleMaterials(iodata));
     }
   }
   Mpi::Broadcast(1, &mesh_dimension, 0, comm);
@@ -1075,7 +1125,7 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
   {
     fem::singular::BroadcastSerialLineTipFeatures(serial_triangle_singular_features, comm);
     MFEM_VERIFY(!serial_triangle_singular_features.Empty(),
-                "Singular feature extraction produced no internal PEC line tips!");
+                "Singular feature extraction produced no PEC line tips or corners!");
   }
   else
   {
@@ -1167,6 +1217,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::vector<SingularCoefficientMeasurement> coefficient_measurements;
     std::vector<SingularEdgeSlopeMeasurement> edge_slope_measurements;
     std::vector<SingularTipSlopeMeasurement> tip_slope_measurements;
+    std::vector<SingularSurfaceMeasurement> surface_measurements;
     const fem::singular::EdgeSlopeOptions edge_slope_options;
     domain_energy.reserve(n_step);
     const auto &singular_diagnostics = laplace_op.GetSingularDiagnostics();
@@ -1237,8 +1288,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {"MaximumBarycentricRadius", edge_slope_options.maximum_barycentric_radius},
           {"ExpectedSlope", "nu - 1"},
           {"PhysicalAmplitude", false}}},
-        {"IdealSheetSurfaceParticipation",
-         {{"Enabled", false}, {"Reason", "logarithmically divergent for nu <= 1/2"}}}};
+        {"SurfaceIntegrability",
+         triangle_singular
+             ? GetSingularSurfaceIntegrabilityMetadata(local_triangle_singular_features)
+             : GetSingularSurfaceIntegrabilityMetadata(local_singular_features)}};
     if (triangle_singular)
     {
       const int high_order =
@@ -1248,6 +1301,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       quadrature["Rule"] = "feature-aligned and partitioned triangle Duffy quadrature";
       quadrature["DuffyReferenceOrder"] = high_order;
       quadrature["DuffyComparisonOrder"] = high_order - 8;
+      quadrature["DuffyRadialPower"] = fem::singular::TriangleDuffyRadialPower;
       quadrature["DuffyMaximumTableEntriesPerRank"] = 0;
       quadrature["DuffyTotalCacheHits"] = 0;
       quadrature["RecursiveSubdivision"] = false;
@@ -1256,14 +1310,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       quadrature.erase("TotalLeafCount");
       quadrature.erase("MaximumDepth");
       singular_metadata["Dimension"] = 2;
-      singular_metadata["SingularFeature"] = "internal PEC line tip";
-      singular_metadata["Postprocessing"] = {{"Capacitance", true},
-                                             {"CombinedDiscreteGradient", true},
-                                             {"CombinedFieldEvaluation", true},
-                                             {"DomainEnergy", true},
-                                             {"CoefficientDiagnostics", true},
-                                             {"TipSlopeDiagnostics", true},
-                                             {"DiscontinuousParaViewSampling", true}};
+      singular_metadata["SingularFeature"] =
+          "internal PEC line tip or one-sided finite-metal corner";
+      singular_metadata["Postprocessing"] = {
+          {"Capacitance", true},
+          {"CombinedDiscreteGradient", true},
+          {"CombinedFieldEvaluation", true},
+          {"DomainEnergy", true},
+          {"SurfaceMeasurements", true},
+          {"SurfaceQuadrature", "basis-aware Gauss-Jacobi power expansion"},
+          {"CoefficientDiagnostics", true},
+          {"TipSlopeDiagnostics", true},
+          {"DiscontinuousParaViewSampling", true}};
       singular_metadata.erase("EdgeSlopeOutput");
       singular_metadata["TipSlopeOutput"] = {
           {"File", "singular-tip-slopes.csv"},
@@ -1277,13 +1335,55 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else
     {
       singular_metadata["Dimension"] = 3;
-      singular_metadata["SingularFeature"] = "PEC sheet edge";
+      singular_metadata["SingularFeature"] =
+          "internal PEC sheet edge or one-sided finite-metal wedge edge";
+      singular_metadata["Postprocessing"] = {
+          {"Capacitance", true},
+          {"CombinedDiscreteGradient", true},
+          {"CombinedFieldEvaluation", true},
+          {"DomainEnergy", true},
+          {"SurfaceMeasurements", true},
+          {"SurfaceQuadrature",
+           "edge-aligned graded Gauss-Jacobi with logarithmic cutoff map"},
+          {"CoefficientDiagnostics", true},
+          {"EdgeSlopeDiagnostics", true},
+          {"DiscontinuousParaViewSampling", true}};
     }
     SaveMetadata("SingularElements", singular_metadata);
     auto field_evaluator =
         triangle_singular ? nullptr : laplace_op.GetSingularFieldEvaluator();
+    auto imaginary_field_evaluator =
+        triangle_singular ? nullptr : laplace_op.GetSingularFieldEvaluator();
     auto triangle_field_evaluator =
         triangle_singular ? laplace_op.GetTriangleSingularFieldEvaluator() : nullptr;
+    auto triangle_imaginary_field_evaluator =
+        triangle_singular ? laplace_op.GetTriangleSingularFieldEvaluator() : nullptr;
+    std::unique_ptr<TriangleSingularSurfacePostOperator> singular_surface_postoperator;
+    std::unique_ptr<TetrahedronSingularSurfacePostOperator>
+        tetrahedron_singular_surface_postoperator;
+    if (triangle_singular)
+    {
+      singular_surface_postoperator = std::make_unique<TriangleSingularSurfacePostOperator>(
+          iodata.boundaries.postpro, laplace_op.GetMaterialOp(),
+          laplace_op.GetH1Space().Get());
+      singular_metadata["Postprocessing"]["SurfaceMeasurements"] =
+          !singular_surface_postoperator->Empty();
+      singular_metadata["SurfaceParticipation"] =
+          GetSingularSurfaceParticipationMetadata(iodata);
+    }
+    else
+    {
+      tetrahedron_singular_surface_postoperator =
+          std::make_unique<TetrahedronSingularSurfacePostOperator>(
+              iodata.boundaries.postpro, laplace_op.GetMaterialOp(),
+              laplace_op.GetH1Space().Get());
+      singular_metadata["Postprocessing"]["SurfaceMeasurements"] =
+          !tetrahedron_singular_surface_postoperator->Empty();
+      singular_metadata["Postprocessing"]["SurfaceQuadrature"] =
+          "edge-aligned graded Gauss-Jacobi with logarithmic cutoff map";
+      singular_metadata["SurfaceParticipation"] =
+          GetSingularSurfaceParticipationMetadata(iodata);
+    }
     std::unique_ptr<SingularParaviewOutput> field_output;
     if (iodata.problem.output_formats.paraview && iodata.solver.electrostatic.n_post > 0)
     {
@@ -1299,10 +1399,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         laplace_op.GetComm(),
         "Singular electrostatic postprocessing is currently limited to capacitance "
         "and domain energy extracted from the combined field plus optional combined-field "
-        "ParaView sampling. Surface measurements, interface participation ratios, "
-        "MFEM grid-function output, and error estimation are disabled. The raw "
-        "zero-thickness surface participation at an ideal PEC line tip or sheet edge "
-        "is divergent and will not be reported!\n");
+        "ParaView sampling. Integrable two-dimensional dielectric surface measurements "
+        "use the combined H1 gradient and basis-aware Gauss-Jacobi quadrature. "
+        "Three-dimensional dielectric surface measurements use combined-field "
+        "edge-aligned singular quadrature. MFEM grid-function output and error estimation "
+        "remain disabled. Ideal zero-thickness line-tip or sheet-edge traces with nu <= "
+        "1/2 require explicit physical regularization.\n");
 
     Mpi::Print("\nComputing singular electrostatic fields for {:d} terminal {}\n", n_step,
                (n_step > 1) ? "boundaries" : "boundary");
@@ -1328,10 +1430,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       if (triangle_singular)
       {
         triangle_field_evaluator->SetFromTrueDofs(V[step]);
+        Vector zero(V[step].Size());
+        zero = 0.0;
+        triangle_imaginary_field_evaluator->SetFromTrueDofs(zero);
       }
       else
       {
         field_evaluator->SetFromTrueDofs(V[step]);
+        Vector zero(V[step].Size());
+        zero = 0.0;
+        imaginary_field_evaluator->SetFromTrueDofs(zero);
       }
       auto source_coefficients = GatherCoefficientMeasurements(
           laplace_op.GetComm(), idx,
@@ -1377,11 +1485,33 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         domain_energy.push_back(MeasureSingularDomainEnergy(
             iodata, laplace_op, *triangle_field_evaluator, V[step], idx));
+        if (!singular_surface_postoperator->Empty())
+        {
+          surface_measurements.push_back(
+              {idx, singular_surface_postoperator->MeasureElectrostatic(
+                        *triangle_field_evaluator, *triangle_imaginary_field_evaluator,
+                        domain_energy.back().total_energy,
+                        {iodata.solver.singular_elements.quadrature_order,
+                         iodata.solver.singular_elements.abs_tol,
+                         iodata.solver.singular_elements.rel_tol,
+                         iodata.solver.singular_elements.max_subdivisions})});
+        }
       }
       else
       {
         domain_energy.push_back(MeasureSingularDomainEnergy(
             iodata, laplace_op, *field_evaluator, V[step], idx));
+        if (!tetrahedron_singular_surface_postoperator->Empty())
+        {
+          surface_measurements.push_back(
+              {idx, tetrahedron_singular_surface_postoperator->MeasureElectrostatic(
+                        *field_evaluator, *imaginary_field_evaluator,
+                        domain_energy.back().total_energy,
+                        {iodata.solver.singular_elements.quadrature_order,
+                         iodata.solver.singular_elements.abs_tol,
+                         iodata.solver.singular_elements.rel_tol,
+                         iodata.solver.singular_elements.max_subdivisions})});
+        }
       }
       if (field_output && step < iodata.solver.electrostatic.n_post)
       {
@@ -1424,6 +1554,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     SaveMetadata("SingularElements", singular_metadata);
     WriteSingularDomainEnergy(post_dir, iodata, domain_energy, root);
+    WriteSingularSurfaceMeasurements(post_dir, surface_measurements, root);
     WriteSingularCoefficientMeasurements(post_dir, iodata, coefficient_measurements, root);
     if (triangle_singular)
     {

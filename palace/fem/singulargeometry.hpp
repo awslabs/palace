@@ -124,7 +124,7 @@ inline double GetElementTransformationRelativeJacobianVariation(
 }
 
 inline bool IsAffineElementTransformation(mfem::ElementTransformation &transformation,
-                                          double relative_tolerance = 1.0e-10)
+                                          double relative_tolerance = 1.0e-9)
 {
   if (!std::isfinite(relative_tolerance) || relative_tolerance < 0.0)
   {

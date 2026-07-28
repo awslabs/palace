@@ -30,6 +30,12 @@ using Vector2 = std::array<double, 2>;
 using TriangleBarycentricPoint = std::array<double, 3>;
 using TriangleBarycentricGradients = std::array<Vector2, 3>;
 
+struct WeightedSegmentQuadraturePoint
+{
+  double coordinate;
+  double weight;
+};
+
 struct VectorBasisValue
 {
   Vector3 value;
@@ -198,6 +204,15 @@ ScalarPolynomialValue EvaluateShiftedSilvesterLagrange(int grid_denominator, int
 double NodeRadialCoordinate(const BarycentricPoint &lambda, int i);
 double EdgeRadialCoordinate(const BarycentricPoint &lambda, int i, int j);
 double TriangleNodeRadialCoordinate(const TriangleBarycentricPoint &lambda, int i);
+
+// Gauss-Jacobi rule on [0, 1] for
+//
+//   integral_0^1 t^alpha (1-t)^beta f(t) dt.
+//
+// Both endpoint exponents must be greater than -1. The returned weights
+// include the Jacobi weight and therefore sum to B(alpha + 1, beta + 1).
+std::vector<WeightedSegmentQuadraturePoint>
+BuildWeightedSegmentQuadrature(int order, double alpha, double beta);
 
 // Lowest-order additive triangular bases from Graglia-Lombardi (2004),
 // expressed in the barycentric and normalization conventions of Elkin et al.

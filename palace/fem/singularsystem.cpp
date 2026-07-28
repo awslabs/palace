@@ -105,15 +105,117 @@ bool ValidEssentialDofs(const mfem::Array<int> &dofs, int size)
   return true;
 }
 
-std::map<HYPRE_BigInt, std::vector<std::size_t>>
-GatherFeatureMembership(MPI_Comm comm,
-                        const std::vector<std::vector<std::size_t>> &local_membership,
-                        const TrueDofMap &numbering, std::size_t number_features)
+template <std::size_t RecordSize>
+std::vector<std::array<HYPRE_BigInt, RecordSize>> ExchangeBigIntRecords(
+    MPI_Comm comm,
+    const std::vector<std::vector<std::array<HYPRE_BigInt, RecordSize>>> &send_records)
 {
+  static_assert(RecordSize > 0);
+  const int ranks = Mpi::Size(comm);
+  bool valid = send_records.size() == static_cast<std::size_t>(ranks);
+  std::vector<int> send_counts(ranks), receive_counts(ranks);
+  std::int64_t send_total = 0;
+  if (valid)
+  {
+    for (int destination = 0; destination < ranks; destination++)
+    {
+      if (send_records[destination].size() >
+          static_cast<std::size_t>(std::numeric_limits<int>::max() / RecordSize))
+      {
+        valid = false;
+        break;
+      }
+      send_counts[destination] =
+          static_cast<int>(RecordSize * send_records[destination].size());
+      send_total += send_counts[destination];
+      if (send_total > std::numeric_limits<int>::max())
+      {
+        valid = false;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error(
+        "Parallel singular integer-record exchange exceeds MPI counts!");
+  }
+
+  MPI_Alltoall(send_counts.data(), 1, MPI_INT, receive_counts.data(), 1, MPI_INT, comm);
+  std::vector<int> send_displacements(ranks), receive_displacements(ranks);
+  std::int64_t receive_total = 0;
+  int send_displacement = 0;
+  for (int source = 0; source < ranks; source++)
+  {
+    send_displacements[source] = send_displacement;
+    send_displacement += send_counts[source];
+    if (receive_counts[source] < 0 ||
+        receive_counts[source] % static_cast<int>(RecordSize) != 0 ||
+        receive_total > std::numeric_limits<int>::max() - receive_counts[source])
+    {
+      valid = false;
+      break;
+    }
+    receive_displacements[source] = static_cast<int>(receive_total);
+    receive_total += receive_counts[source];
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error(
+        "Parallel singular integer-record exchange exceeds MPI counts!");
+  }
+
+  std::vector<HYPRE_BigInt> send_buffer(static_cast<std::size_t>(send_total));
+  std::size_t next = 0;
+  for (const auto &destination : send_records)
+  {
+    for (const auto &record : destination)
+    {
+      std::copy(record.begin(), record.end(), send_buffer.begin() + next);
+      next += RecordSize;
+    }
+  }
+  if (next != send_buffer.size())
+  {
+    throw std::logic_error(
+        "Parallel singular integer-record exchange packed inconsistent dimensions!");
+  }
+  std::vector<HYPRE_BigInt> receive_buffer(static_cast<std::size_t>(receive_total));
+  MPI_Alltoallv(send_buffer.data(), send_counts.data(), send_displacements.data(),
+                mpi::DataType<HYPRE_BigInt>(), receive_buffer.data(), receive_counts.data(),
+                receive_displacements.data(), mpi::DataType<HYPRE_BigInt>(), comm);
+
+  std::vector<std::array<HYPRE_BigInt, RecordSize>> result(
+      static_cast<std::size_t>(receive_total) / RecordSize);
+  for (std::size_t record = 0; record < result.size(); record++)
+  {
+    std::copy(receive_buffer.begin() + record * RecordSize,
+              receive_buffer.begin() + (record + 1) * RecordSize, result[record].begin());
+  }
+  return result;
+}
+
+std::map<HYPRE_BigInt, std::vector<std::size_t>>
+BuildLocalFeatureMembership(MPI_Comm comm,
+                            const std::vector<std::vector<std::size_t>> &local_membership,
+                            const TrueDofMap &numbering, std::size_t number_features,
+                            const std::vector<HYPRE_BigInt> &requested_true_dofs)
+{
+  const int ranks = Mpi::Size(comm);
+  const int rank = Mpi::Rank(comm);
   bool valid = number_features > 0 &&
+               number_features <=
+                   static_cast<std::size_t>(std::numeric_limits<HYPRE_BigInt>::max()) &&
                local_membership.size() == numbering.local_to_true.size() &&
-               local_membership.size() == numbering.owner.size();
-  std::vector<HYPRE_BigInt> packed_local;
+               local_membership.size() == numbering.owner.size() &&
+               numbering.global_size > 0 && numbering.owned_offset >= 0 &&
+               numbering.owned_size >= 0 &&
+               numbering.owned_offset <= numbering.global_size - numbering.owned_size;
+  std::map<HYPRE_BigInt, std::vector<std::size_t>> result;
+  using MembershipRecord = std::array<HYPRE_BigInt, 3>;
+  std::vector<std::vector<MembershipRecord>> send_records(ranks);
   if (valid)
   {
     for (std::size_t i = 0; i < local_membership.size(); i++)
@@ -122,22 +224,22 @@ GatherFeatureMembership(MPI_Comm comm,
       if (membership.empty() || !std::is_sorted(membership.begin(), membership.end()) ||
           std::adjacent_find(membership.begin(), membership.end()) != membership.end() ||
           membership.back() >= number_features || numbering.local_to_true[i] < 0 ||
-          numbering.local_to_true[i] >= numbering.global_size)
+          numbering.local_to_true[i] >= numbering.global_size || numbering.owner[i] < 0 ||
+          numbering.owner[i] >= ranks)
       {
         valid = false;
         break;
       }
-      if (membership.size() >
-          static_cast<std::size_t>(std::numeric_limits<int>::max()) / 2 -
-              packed_local.size() / 2)
+      const auto [entry, inserted] = result.emplace(numbering.local_to_true[i], membership);
+      if (!inserted && entry->second != membership)
       {
         valid = false;
         break;
       }
       for (std::size_t feature : membership)
       {
-        packed_local.push_back(numbering.local_to_true[i]);
-        packed_local.push_back(static_cast<HYPRE_BigInt>(feature));
+        send_records[numbering.owner[i]].push_back(
+            {numbering.local_to_true[i], rank, static_cast<HYPRE_BigInt>(feature)});
       }
     }
   }
@@ -148,59 +250,253 @@ GatherFeatureMembership(MPI_Comm comm,
         "Parallel singular feature patches received invalid DOF membership!");
   }
 
-  const int ranks = Mpi::Size(comm);
-  const int local_count = static_cast<int>(packed_local.size());
-  std::vector<int> receive_counts(ranks), displacements(ranks);
-  Mpi::Allgather(1, &local_count, receive_counts.data(), comm);
-  std::int64_t total_count = 0;
-  for (int rank = 0; rank < ranks; rank++)
+  constexpr int record_size = std::tuple_size_v<MembershipRecord>;
+  std::vector<int> send_counts(ranks), receive_counts(ranks);
+  std::int64_t send_total = 0;
+  for (int destination = 0; destination < ranks; destination++)
   {
-    if (receive_counts[rank] < 0 || receive_counts[rank] % 2 != 0 ||
-        total_count > std::numeric_limits<int>::max() - receive_counts[rank])
+    if (send_records[destination].size() >
+        static_cast<std::size_t>(std::numeric_limits<int>::max() / record_size))
     {
-      throw std::overflow_error(
-          "Parallel singular feature membership exceeds MPI integer counts!");
+      valid = false;
+      break;
     }
-    displacements[rank] = static_cast<int>(total_count);
-    total_count += receive_counts[rank];
+    send_counts[destination] =
+        static_cast<int>(record_size * send_records[destination].size());
+    send_total += send_counts[destination];
+    if (send_total > std::numeric_limits<int>::max())
+    {
+      valid = false;
+      break;
+    }
   }
-  std::vector<HYPRE_BigInt> packed_global(static_cast<std::size_t>(total_count));
-  Mpi::Allgatherv(local_count, packed_local.data(), packed_global.data(),
-                  receive_counts.data(), displacements.data(), comm);
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error(
+        "Parallel singular feature membership exceeds MPI integer counts!");
+  }
 
-  std::map<HYPRE_BigInt, std::set<std::size_t>> gathered_sets;
-  for (std::size_t i = 0; i < packed_global.size(); i += 2)
+  MPI_Alltoall(send_counts.data(), 1, MPI_INT, receive_counts.data(), 1, MPI_INT, comm);
+  std::vector<int> send_displacements(ranks), receive_displacements(ranks);
+  std::int64_t receive_total = 0;
+  int send_displacement = 0;
+  for (int source = 0; source < ranks; source++)
   {
-    const HYPRE_BigInt true_dof = packed_global[i];
-    const HYPRE_BigInt feature = packed_global[i + 1];
-    if (true_dof < 0 || true_dof >= numbering.global_size || feature < 0 ||
-        feature >= static_cast<HYPRE_BigInt>(number_features))
+    send_displacements[source] = send_displacement;
+    send_displacement += send_counts[source];
+    if (receive_counts[source] < 0 || receive_counts[source] % record_size != 0 ||
+        receive_total > std::numeric_limits<int>::max() - receive_counts[source])
     {
-      throw std::invalid_argument(
-          "Parallel singular feature membership contains an invalid global index!");
+      valid = false;
+      break;
     }
-    gathered_sets[true_dof].insert(static_cast<std::size_t>(feature));
+    receive_displacements[source] = static_cast<int>(receive_total);
+    receive_total += receive_counts[source];
   }
-  if (gathered_sets.size() != static_cast<std::size_t>(numbering.global_size))
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error(
+        "Parallel singular feature membership exceeds MPI integer counts!");
+  }
+
+  std::vector<HYPRE_BigInt> send_buffer(static_cast<std::size_t>(send_total));
+  std::size_t next = 0;
+  for (const auto &destination : send_records)
+  {
+    for (const auto &record : destination)
+    {
+      std::copy(record.begin(), record.end(), send_buffer.begin() + next);
+      next += record_size;
+    }
+  }
+  if (next != send_buffer.size())
+  {
+    throw std::logic_error(
+        "Parallel singular feature membership packed inconsistent dimensions!");
+  }
+  std::vector<HYPRE_BigInt> receive_buffer(static_cast<std::size_t>(receive_total));
+  MPI_Alltoallv(send_buffer.data(), send_counts.data(), send_displacements.data(),
+                mpi::DataType<HYPRE_BigInt>(), receive_buffer.data(), receive_counts.data(),
+                receive_displacements.data(), mpi::DataType<HYPRE_BigInt>(), comm);
+
+  std::map<HYPRE_BigInt, std::map<int, std::set<std::size_t>>> received;
+  for (std::size_t offset = 0; offset < receive_buffer.size(); offset += record_size)
+  {
+    const HYPRE_BigInt true_dof = receive_buffer[offset];
+    const HYPRE_BigInt origin = receive_buffer[offset + 1];
+    const HYPRE_BigInt feature = receive_buffer[offset + 2];
+    if (true_dof < numbering.owned_offset ||
+        true_dof >= numbering.owned_offset + numbering.owned_size || origin < 0 ||
+        origin >= ranks || feature < 0 ||
+        feature >= static_cast<HYPRE_BigInt>(number_features) ||
+        !received[true_dof][static_cast<int>(origin)]
+             .insert(static_cast<std::size_t>(feature))
+             .second)
+    {
+      valid = false;
+      break;
+    }
+  }
+  if (valid)
+  {
+    for (HYPRE_BigInt local = 0; local < numbering.owned_size; local++)
+    {
+      const HYPRE_BigInt true_dof = numbering.owned_offset + local;
+      const auto authoritative = result.find(true_dof);
+      const auto occurrences = received.find(true_dof);
+      if (authoritative == result.end() || occurrences == received.end())
+      {
+        valid = false;
+        break;
+      }
+      const std::set<std::size_t> expected(authoritative->second.begin(),
+                                           authoritative->second.end());
+      for (const auto &[origin, membership] : occurrences->second)
+      {
+        (void)origin;
+        if (membership != expected)
+        {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid)
+      {
+        break;
+      }
+    }
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
   {
     throw std::invalid_argument(
-        "Parallel singular feature membership does not cover every enrichment DOF!");
+        "Shared singular DOFs have inconsistent feature membership across ranks!");
   }
 
-  std::map<HYPRE_BigInt, std::vector<std::size_t>> result;
-  for (const auto &[true_dof, membership] : gathered_sets)
+  std::vector<HYPRE_BigInt> owned_sizes(ranks);
+  Mpi::Allgather(1, &numbering.owned_size, owned_sizes.data(), comm);
+  std::vector<HYPRE_BigInt> owned_partition(ranks + 1);
+  for (int owner = 0; owner < ranks; owner++)
   {
-    result.emplace(true_dof,
-                   std::vector<std::size_t>(membership.begin(), membership.end()));
-  }
-  for (std::size_t i = 0; i < local_membership.size(); i++)
-  {
-    const auto membership = result.find(numbering.local_to_true[i]);
-    if (membership == result.end() || membership->second != local_membership[i])
+    if (owned_sizes[owner] < 0 ||
+        owned_partition[owner] > numbering.global_size - owned_sizes[owner])
     {
-      throw std::invalid_argument(
-          "Shared singular DOFs have inconsistent feature membership across ranks!");
+      valid = false;
+      break;
     }
+    owned_partition[owner + 1] = owned_partition[owner] + owned_sizes[owner];
+  }
+  valid = valid && owned_partition.back() == numbering.global_size &&
+          numbering.owned_offset == owned_partition[rank] &&
+          numbering.owned_size == owned_sizes[rank];
+  std::vector<HYPRE_BigInt> requests = requested_true_dofs;
+  std::sort(requests.begin(), requests.end());
+  requests.erase(std::unique(requests.begin(), requests.end()), requests.end());
+  if (!requests.empty() &&
+      (requests.front() < 0 || requests.back() >= numbering.global_size))
+  {
+    valid = false;
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Parallel singular feature membership query has inconsistent ownership!");
+  }
+
+  using QueryRecord = std::array<HYPRE_BigInt, 2>;
+  using ResponseRecord = std::array<HYPRE_BigInt, 2>;
+  std::vector<std::vector<QueryRecord>> query_send(ranks);
+  for (HYPRE_BigInt true_dof : requests)
+  {
+    if (result.find(true_dof) != result.end())
+    {
+      continue;
+    }
+    const auto upper =
+        std::upper_bound(owned_partition.begin(), owned_partition.end(), true_dof);
+    const int owner = static_cast<int>(std::distance(owned_partition.begin(), upper)) - 1;
+    if (owner < 0 || owner >= ranks)
+    {
+      valid = false;
+      break;
+    }
+    query_send[owner].push_back({true_dof, rank});
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Parallel singular feature membership query has no valid owner!");
+  }
+  const auto received_queries = ExchangeBigIntRecords(comm, query_send);
+
+  std::vector<std::vector<ResponseRecord>> response_send(ranks);
+  std::set<std::pair<HYPRE_BigInt, int>> unique_queries;
+  for (const auto &query : received_queries)
+  {
+    const HYPRE_BigInt true_dof = query[0];
+    const HYPRE_BigInt requester = query[1];
+    const auto membership = result.find(true_dof);
+    if (true_dof < numbering.owned_offset ||
+        true_dof >= numbering.owned_offset + numbering.owned_size || requester < 0 ||
+        requester >= ranks || membership == result.end() ||
+        !unique_queries.emplace(true_dof, static_cast<int>(requester)).second)
+    {
+      valid = false;
+      break;
+    }
+    for (std::size_t feature : membership->second)
+    {
+      response_send[requester].push_back({true_dof, static_cast<HYPRE_BigInt>(feature)});
+    }
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Parallel singular feature membership owner received an invalid query!");
+  }
+  const auto responses = ExchangeBigIntRecords(comm, response_send);
+
+  std::map<HYPRE_BigInt, std::set<std::size_t>> fetched;
+  for (const auto &response : responses)
+  {
+    const HYPRE_BigInt true_dof = response[0];
+    const HYPRE_BigInt feature = response[1];
+    if (!std::binary_search(requests.begin(), requests.end(), true_dof) || feature < 0 ||
+        feature >= static_cast<HYPRE_BigInt>(number_features) ||
+        !fetched[true_dof].insert(static_cast<std::size_t>(feature)).second)
+    {
+      valid = false;
+      break;
+    }
+  }
+  if (valid)
+  {
+    for (HYPRE_BigInt true_dof : requests)
+    {
+      if (result.find(true_dof) != result.end())
+      {
+        continue;
+      }
+      const auto membership = fetched.find(true_dof);
+      if (membership == fetched.end() || membership->second.empty())
+      {
+        valid = false;
+        break;
+      }
+      result.emplace(true_dof, std::vector<std::size_t>(membership->second.begin(),
+                                                        membership->second.end()));
+    }
+  }
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Parallel singular feature membership query received an invalid response!");
   }
   return result;
 }
@@ -389,8 +685,20 @@ ParallelFeaturePatches BuildParallelFeaturePatches(
     throw std::invalid_argument(
         "Cannot build singular feature patches from inconsistent operator blocks!");
   }
-  const auto global_membership = GatherFeatureMembership(
-      comm, local_enrichment_features, enrichment_numbering, number_features);
+
+  mfem::SparseMatrix diagonal, off_diagonal;
+  HYPRE_BigInt *off_diagonal_columns = nullptr;
+  standard_enrichment.GetDiag(diagonal);
+  standard_enrichment.GetOffd(off_diagonal, off_diagonal_columns);
+  std::vector<HYPRE_BigInt> requested_membership;
+  requested_membership.reserve(off_diagonal.Width());
+  for (int column = 0; column < off_diagonal.Width(); column++)
+  {
+    requested_membership.push_back(off_diagonal_columns[column]);
+  }
+  const auto local_membership =
+      BuildLocalFeatureMembership(comm, local_enrichment_features, enrichment_numbering,
+                                  number_features, requested_membership);
 
   std::vector<std::vector<int>> local_enrichment(number_features);
   std::vector<int> enrichment_multiplicity(enrichment_local_size);
@@ -439,10 +747,6 @@ ParallelFeaturePatches BuildParallelFeaturePatches(
         "Singular feature patches do not cover every enrichment true DOF!");
   }
 
-  mfem::SparseMatrix diagonal, off_diagonal;
-  HYPRE_BigInt *off_diagonal_columns = nullptr;
-  standard_enrichment.GetDiag(diagonal);
-  standard_enrichment.GetOffd(off_diagonal, off_diagonal_columns);
   const auto *diagonal_offsets = diagonal.HostReadI();
   const auto *diagonal_columns = diagonal.HostReadJ();
   const auto *diagonal_values = diagonal.HostReadData();
@@ -467,8 +771,8 @@ ParallelFeaturePatches BuildParallelFeaturePatches(
             "Singular standard-enrichment diagonal block has an invalid column!");
       }
       const HYPRE_BigInt global_column = enrichment_numbering.owned_offset + column;
-      const auto membership = global_membership.find(global_column);
-      if (membership == global_membership.end())
+      const auto membership = local_membership.find(global_column);
+      if (membership == local_membership.end())
       {
         throw std::runtime_error(
             "A coupled singular enrichment DOF has no feature membership!");
@@ -488,8 +792,8 @@ ParallelFeaturePatches BuildParallelFeaturePatches(
         throw std::runtime_error(
             "Singular standard-enrichment off-diagonal block has an invalid column!");
       }
-      const auto membership = global_membership.find(off_diagonal_columns[column]);
-      if (membership == global_membership.end())
+      const auto membership = local_membership.find(off_diagonal_columns[column]);
+      if (membership == local_membership.end())
       {
         throw std::runtime_error(
             "An off-rank singular enrichment DOF has no feature membership!");

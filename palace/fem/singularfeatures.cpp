@@ -29,6 +29,7 @@ namespace
 {
 
 using EdgeKey = std::array<int, 2>;
+using FaceKey = std::array<int, 3>;
 using StableEdgeKey = std::array<GlobalVertexId, 2>;
 using StableElementKey = std::array<GlobalVertexId, 4>;
 using json = nlohmann::json;
@@ -39,6 +40,23 @@ struct SelectedEdge
   std::vector<int> boundary_elements;
   std::vector<int> boundary_attributes;
 };
+
+FaceKey GetFaceKey(const mfem::Mesh &mesh, int face)
+{
+  mfem::Array<int> vertices;
+  mesh.GetFaceVertices(face, vertices);
+  if (vertices.Size() != 3)
+  {
+    throw std::runtime_error("Singular-feature extraction found an invalid mesh face!");
+  }
+  FaceKey key{vertices[0], vertices[1], vertices[2]};
+  std::sort(key.begin(), key.end());
+  if (std::adjacent_find(key.begin(), key.end()) != key.end())
+  {
+    throw std::runtime_error("Singular-feature extraction found a degenerate mesh face!");
+  }
+  return key;
+}
 
 EdgeKey GetEdgeKey(const mfem::Mesh &mesh, int edge)
 {
@@ -51,6 +69,61 @@ EdgeKey GetEdgeKey(const mfem::Mesh &mesh, int edge)
   EdgeKey key{vertices[0], vertices[1]};
   std::sort(key.begin(), key.end());
   return key;
+}
+
+bool IsGeometricallyStraightElementEdge(const mfem::Mesh &mesh, int element, int edge)
+{
+  if (element < 0 || element >= mesh.GetNE())
+  {
+    throw std::invalid_argument(
+        "Singular-feature edge requires a valid incident mesh element!");
+  }
+
+  mfem::Array<int> element_edges, orientations;
+  mesh.GetElementEdges(element, element_edges, orientations);
+  const int *local_edge = std::find(element_edges.begin(), element_edges.end(), edge);
+  if (local_edge == element_edges.end())
+  {
+    throw std::invalid_argument(
+        "Singular-feature edge is not incident to its selected mesh element!");
+  }
+  const int local_edge_index = static_cast<int>(local_edge - element_edges.begin());
+
+  const auto *mesh_element = mesh.GetElement(element);
+  const int geometry = mesh_element->GetGeometryType();
+  const auto *reference_vertices = mfem::Geometries.GetVertices(geometry);
+  const int *local_vertices = mesh_element->GetEdgeVertices(local_edge_index);
+  if (!reference_vertices || !local_vertices || local_vertices[0] < 0 ||
+      local_vertices[1] < 0 || local_vertices[0] >= reference_vertices->GetNPoints() ||
+      local_vertices[1] >= reference_vertices->GetNPoints())
+  {
+    throw std::runtime_error(
+        "Singular-feature edge has invalid reference-element topology!");
+  }
+
+  mfem::IsoparametricTransformation element_transformation;
+  mesh.GetElementTransformation(element, &element_transformation);
+  const int map_order = std::max(1, element_transformation.Order());
+  mfem::H1_SegmentElement segment_element(map_order);
+  mfem::IsoparametricTransformation edge_transformation;
+  edge_transformation.SetFE(&segment_element);
+  mfem::DenseMatrix physical_points(mesh.SpaceDimension(), segment_element.GetDof());
+  mfem::Vector physical_point(mesh.SpaceDimension());
+  const auto &start = reference_vertices->IntPoint(local_vertices[0]);
+  const auto &end = reference_vertices->IntPoint(local_vertices[1]);
+  const auto &segment_nodes = segment_element.GetNodes();
+  for (int i = 0; i < segment_nodes.GetNPoints(); i++)
+  {
+    const double t = segment_nodes.IntPoint(i).x;
+    mfem::IntegrationPoint point;
+    point.x = (1.0 - t) * start.x + t * end.x;
+    point.y = (1.0 - t) * start.y + t * end.y;
+    point.z = (1.0 - t) * start.z + t * end.z;
+    element_transformation.Transform(point, physical_point);
+    physical_points.SetCol(i, physical_point);
+  }
+  edge_transformation.SetPointMat(physical_points);
+  return IsGeometricallyStraightSegmentTransformation(edge_transformation);
 }
 
 std::array<double, 3> DirectionFromVertex(const mfem::Mesh &mesh, int vertex,
@@ -591,10 +664,20 @@ void ValidateTriangleFeatureBlueprintStructure(const TriangleFeatureTopology &fe
     if (vertex.id != i || vertex.mesh_vertex < 0 ||
         !tip_vertices.insert(vertex.mesh_vertex).second ||
         vertex.selected_segments.empty() || !std::isfinite(vertex.nu) || vertex.nu <= 0.0 ||
-        vertex.nu >= 1.0)
+        vertex.nu >= 1.0 ||
+        (vertex.type != FeatureVertexType::ENDPOINT &&
+         vertex.type != FeatureVertexType::CORNER))
     {
       throw std::invalid_argument(
           "Singular line-tip blueprint contains an invalid tip record!");
+    }
+    if ((vertex.type == FeatureVertexType::ENDPOINT &&
+         (vertex.selected_segments.size() != 1 || !vertex.sectors.empty())) ||
+        (vertex.type == FeatureVertexType::CORNER &&
+         (vertex.selected_segments.size() != 2 || vertex.sectors.empty())))
+    {
+      throw std::invalid_argument(
+          "Singular line-tip blueprint contains inconsistent endpoint/corner metadata!");
     }
     for (std::size_t segment : vertex.selected_segments)
     {
@@ -603,6 +686,25 @@ void ValidateTriangleFeatureBlueprintStructure(const TriangleFeatureTopology &fe
         throw std::invalid_argument(
             "Singular line tip references an invalid selected segment!");
       }
+    }
+    double opening_angle = 0.0;
+    for (const auto &sector : vertex.sectors)
+    {
+      if (sector.domain_attribute <= 0 || !std::isfinite(sector.angle) ||
+          !(sector.angle > 0.0) || !std::isfinite(sector.permittivity) ||
+          !(sector.permittivity > 0.0))
+      {
+        throw std::invalid_argument(
+            "Singular PEC corner contains an invalid material sector!");
+      }
+      opening_angle += sector.angle;
+    }
+    if (vertex.type == FeatureVertexType::CORNER &&
+        (!std::isfinite(opening_angle) || !(opening_angle > 0.0) ||
+         !(opening_angle < 6.28318530717958647693)))
+    {
+      throw std::invalid_argument(
+          "Singular PEC corner contains an invalid dielectric opening angle!");
     }
   }
   std::set<StableEdgeKey> selected_edges;
@@ -642,8 +744,14 @@ json PackTriangleFeatureTopology(const TriangleFeatureTopology &features)
               {"elements", json::array()}};
   for (const auto &vertex : features.vertices)
   {
-    packed["vertices"].push_back(
-        {vertex.id, vertex.mesh_vertex, vertex.selected_segments, vertex.nu});
+    json sectors = json::array();
+    for (const auto &sector : vertex.sectors)
+    {
+      sectors.push_back({sector.domain_attribute, sector.angle, sector.permittivity});
+    }
+    packed["vertices"].push_back({vertex.id, vertex.mesh_vertex, vertex.selected_segments,
+                                  vertex.nu, static_cast<int>(vertex.type),
+                                  std::move(sectors)});
   }
   for (const auto &segment : features.selected_segments)
   {
@@ -674,9 +782,18 @@ TriangleFeatureTopology UnpackTriangleFeatureTopology(const json &packed)
   features.elements.resize(packed.at("num_elements").get<std::size_t>());
   for (const auto &entry : packed.at("vertices"))
   {
-    features.vertices.push_back({entry.at(0).get<std::size_t>(), entry.at(1).get<int>(),
-                                 entry.at(2).get<std::vector<std::size_t>>(),
-                                 entry.at(3).get<double>()});
+    TriangleTipVertex vertex{entry.at(0).get<std::size_t>(),
+                             entry.at(1).get<int>(),
+                             entry.at(2).get<std::vector<std::size_t>>(),
+                             entry.at(3).get<double>(),
+                             static_cast<FeatureVertexType>(entry.at(4).get<int>()),
+                             {}};
+    for (const auto &sector : entry.at(5))
+    {
+      vertex.sectors.push_back({sector.at(0).get<int>(), sector.at(1).get<double>(),
+                                sector.at(2).get<double>()});
+    }
+    features.vertices.push_back(std::move(vertex));
   }
   for (const auto &entry : packed.at("selected_segments"))
   {
@@ -704,11 +821,864 @@ TriangleFeatureTopology UnpackTriangleFeatureTopology(const json &packed)
   return features;
 }
 
+long double
+EvaluateDirichletWedgeCharacteristic(const std::vector<TriangleWedgeSector> &sectors,
+                                     long double nu)
+{
+  if (!(nu > 0.0L))
+  {
+    long double limit = 0.0L;
+    for (const auto &sector : sectors)
+    {
+      limit += static_cast<long double>(sector.angle) / sector.permittivity;
+    }
+    return limit;
+  }
+
+  // Propagate [f, epsilon f'/nu] through each constant-material sector. Starting
+  // from [0, 1] enforces the first PEC face; the first component at the second
+  // face is the characteristic function. Division by nu removes its trivial
+  // zero at the origin.
+  long double f = 0.0L;
+  long double flux = 1.0L;
+  for (const auto &sector : sectors)
+  {
+    const long double phase = nu * sector.angle;
+    const long double cosine = std::cos(phase);
+    const long double sine = std::sin(phase);
+    const long double epsilon = sector.permittivity;
+    const long double next_f = cosine * f + sine * flux / epsilon;
+    const long double next_flux = -epsilon * sine * f + cosine * flux;
+    f = next_f;
+    flux = next_flux;
+  }
+  return f / nu;
+}
+
 }  // namespace
 
-TriangleFeatureTopology
-ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
-                             const std::vector<int> &boundary_attributes, double nu)
+double ComputeDirichletWedgeExponent(const std::vector<TriangleWedgeSector> &sectors)
+{
+  if (sectors.empty())
+  {
+    throw std::invalid_argument(
+        "A Dirichlet material wedge requires at least one angular sector!");
+  }
+  double opening_angle = 0.0;
+  for (const auto &sector : sectors)
+  {
+    if (sector.domain_attribute <= 0 || !std::isfinite(sector.angle) ||
+        !(sector.angle > 0.0) || !std::isfinite(sector.permittivity) ||
+        !(sector.permittivity > 0.0))
+    {
+      throw std::invalid_argument("A Dirichlet material wedge contains an invalid sector!");
+    }
+    opening_angle += sector.angle;
+  }
+  if (!std::isfinite(opening_angle) || !(opening_angle > 0.0) ||
+      opening_angle > 6.28318530717958647693 + 1.0e-10)
+  {
+    throw std::invalid_argument(
+        "A Dirichlet material wedge has an invalid total opening angle!");
+  }
+
+  constexpr int scan_intervals = 16384;
+  long double lower = 0.0L;
+  long double lower_value = EvaluateDirichletWedgeCharacteristic(sectors, lower);
+  for (int interval = 1; interval <= scan_intervals; interval++)
+  {
+    const long double upper = static_cast<long double>(interval) / scan_intervals;
+    const long double upper_value = EvaluateDirichletWedgeCharacteristic(sectors, upper);
+    if (!std::isfinite(lower_value) || !std::isfinite(upper_value))
+    {
+      throw std::runtime_error(
+          "Dirichlet material-wedge eigenvalue evaluation produced nonfinite data!");
+    }
+    if (upper_value == 0.0L || std::signbit(lower_value) != std::signbit(upper_value))
+    {
+      long double left = lower;
+      long double right = upper;
+      long double left_value = lower_value;
+      for (int iteration = 0; iteration < 100; iteration++)
+      {
+        const long double middle = 0.5L * (left + right);
+        const long double middle_value =
+            EvaluateDirichletWedgeCharacteristic(sectors, middle);
+        if (middle_value == 0.0L)
+        {
+          left = right = middle;
+          break;
+        }
+        if (std::signbit(left_value) != std::signbit(middle_value))
+        {
+          right = middle;
+        }
+        else
+        {
+          left = middle;
+          left_value = middle_value;
+        }
+      }
+      const double root = static_cast<double>(0.5L * (left + right));
+      return root < 1.0 - 1.0e-12 ? root : 1.0;
+    }
+    lower = upper;
+    lower_value = upper_value;
+  }
+  return 1.0;
+}
+
+namespace
+{
+
+struct TetrahedronEdgeAngleData
+{
+  double dot;
+  double oriented_area;
+  double angle;
+};
+
+TetrahedronEdgeAngleData GetTetrahedronEdgeAngleDataAt(const mfem::Mesh &mesh, int element,
+                                                       const EdgeKey &edge_vertices,
+                                                       double coordinate)
+{
+  const auto *tetrahedron = mesh.GetElement(element);
+  if (!tetrahedron || tetrahedron->GetGeometryType() != mfem::Geometry::TETRAHEDRON ||
+      !std::isfinite(coordinate) || coordinate < 0.0 || coordinate > 1.0)
+  {
+    throw std::invalid_argument(
+        "A PEC edge-wedge fan contains an invalid tetrahedron or edge coordinate!");
+  }
+  std::array<int, 2> edge_local{-1, -1};
+  std::array<int, 2> opposite_local{-1, -1};
+  int opposite_count = 0;
+  for (int local = 0; local < 4; local++)
+  {
+    const int vertex = tetrahedron->GetVertices()[local];
+    if (vertex == edge_vertices[0])
+    {
+      edge_local[0] = local;
+    }
+    else if (vertex == edge_vertices[1])
+    {
+      edge_local[1] = local;
+    }
+    else
+    {
+      opposite_local[opposite_count++] = local;
+    }
+  }
+  if (edge_local[0] < 0 || edge_local[1] < 0 || opposite_count != 2)
+  {
+    throw std::invalid_argument(
+        "A PEC edge-wedge tetrahedron does not contain the selected mesh edge!");
+  }
+
+  const auto *reference_vertices =
+      mfem::Geometries.GetVertices(mfem::Geometry::TETRAHEDRON);
+  if (!reference_vertices || reference_vertices->GetNPoints() != 4)
+  {
+    throw std::runtime_error("The reference tetrahedron has invalid vertex data!");
+  }
+  const auto &start = reference_vertices->IntPoint(edge_local[0]);
+  const auto &end = reference_vertices->IntPoint(edge_local[1]);
+  mfem::IntegrationPoint point;
+  point.x = (1.0 - coordinate) * start.x + coordinate * end.x;
+  point.y = (1.0 - coordinate) * start.y + coordinate * end.y;
+  point.z = (1.0 - coordinate) * start.z + coordinate * end.z;
+
+  mfem::IsoparametricTransformation transformation;
+  mesh.GetElementTransformation(element, &transformation);
+  mfem::Vector physical_start(3), physical_end(3);
+  transformation.Transform(start, physical_start);
+  transformation.Transform(end, physical_end);
+  mfem::Vector tangent(physical_end);
+  tangent -= physical_start;
+  const double tangent_norm = tangent.Norml2();
+  if (!std::isfinite(tangent_norm) || !(tangent_norm > 0.0))
+  {
+    throw std::invalid_argument(
+        "A PEC edge-wedge tetrahedron has a degenerate edge tangent!");
+  }
+  tangent /= tangent_norm;
+
+  transformation.SetIntPoint(&point);
+  const auto &jacobian = transformation.Jacobian();
+  if (jacobian.Height() != 3 || jacobian.Width() != 3)
+  {
+    throw std::runtime_error(
+        "A PEC edge-wedge tetrahedron has an invalid physical Jacobian!");
+  }
+  const auto physical_direction = [&](const mfem::IntegrationPoint &target)
+  {
+    mfem::Vector reference(3), physical(3);
+    reference[0] = target.x - point.x;
+    reference[1] = target.y - point.y;
+    reference[2] = target.z - point.z;
+    jacobian.Mult(reference, physical);
+    return physical;
+  };
+
+  std::array<mfem::Vector, 2> radial{
+      physical_direction(reference_vertices->IntPoint(opposite_local[0])),
+      physical_direction(reference_vertices->IntPoint(opposite_local[1]))};
+  for (auto &direction : radial)
+  {
+    direction.Add(-(direction * tangent), tangent);
+    const double norm = direction.Norml2();
+    if (!std::isfinite(norm) || !(norm > 0.0))
+    {
+      throw std::invalid_argument(
+          "A PEC edge-wedge tetrahedron is degenerate normal to its edge!");
+    }
+  }
+  mfem::Vector cross(3);
+  cross[0] = radial[0][1] * radial[1][2] - radial[0][2] * radial[1][1];
+  cross[1] = radial[0][2] * radial[1][0] - radial[0][0] * radial[1][2];
+  cross[2] = radial[0][0] * radial[1][1] - radial[0][1] * radial[1][0];
+  const double dot = radial[0] * radial[1];
+  const double oriented_area = cross * tangent;
+  const double angle = std::atan2(std::abs(oriented_area), dot);
+  if (!std::isfinite(angle) || !(angle > 0.0) || !(angle < 3.14159265358979323846))
+  {
+    throw std::invalid_argument(
+        "A PEC edge-wedge tetrahedron has an invalid cross-sectional angle!");
+  }
+  return {dot, oriented_area, angle};
+}
+
+long double BinomialCoefficient(int n, int k)
+{
+  if (n < 0 || k < 0 || k > n)
+  {
+    throw std::invalid_argument("Invalid Bernstein polynomial degree!");
+  }
+  k = std::min(k, n - k);
+  long double value = 1.0L;
+  for (int i = 1; i <= k; i++)
+  {
+    value *= static_cast<long double>(n - k + i) / i;
+  }
+  return value;
+}
+
+mfem::Vector MultiplyBernsteinPolynomials(const mfem::Vector &left,
+                                          const mfem::Vector &right)
+{
+  if (left.Size() < 1 || right.Size() < 1)
+  {
+    throw std::invalid_argument("Cannot multiply empty Bernstein polynomials!");
+  }
+  const int left_order = left.Size() - 1;
+  const int right_order = right.Size() - 1;
+  mfem::Vector product(left_order + right_order + 1);
+  product = 0.0;
+  for (int i = 0; i <= left_order; i++)
+  {
+    for (int j = 0; j <= right_order; j++)
+    {
+      const int k = i + j;
+      const long double weight = BinomialCoefficient(left_order, i) *
+                                 BinomialCoefficient(right_order, j) /
+                                 BinomialCoefficient(left_order + right_order, k);
+      product[k] += static_cast<double>(weight * left[i] * right[j]);
+    }
+  }
+  return product;
+}
+
+mfem::Vector DifferentiateBernsteinPolynomial(const mfem::Vector &polynomial)
+{
+  if (polynomial.Size() < 2)
+  {
+    throw std::invalid_argument("Cannot differentiate a constant Bernstein polynomial!");
+  }
+  const int order = polynomial.Size() - 1;
+  mfem::Vector derivative(order);
+  for (int i = 0; i < order; i++)
+  {
+    derivative[i] = order * (polynomial[i + 1] - polynomial[i]);
+  }
+  return derivative;
+}
+
+bool HasStrictlyPositiveBernsteinPolynomial(const mfem::Vector &polynomial,
+                                            double tolerance, int depth = 0)
+{
+  constexpr int maximum_depth = 30;
+  if (polynomial.Size() < 1 || !std::isfinite(tolerance) || tolerance < 0.0)
+  {
+    return false;
+  }
+  double minimum = std::numeric_limits<double>::infinity();
+  double maximum = -std::numeric_limits<double>::infinity();
+  for (double coefficient : polynomial)
+  {
+    if (!std::isfinite(coefficient))
+    {
+      return false;
+    }
+    minimum = std::min(minimum, coefficient);
+    maximum = std::max(maximum, coefficient);
+  }
+  if (minimum > tolerance)
+  {
+    return true;
+  }
+  if (maximum <= tolerance || depth == maximum_depth)
+  {
+    return false;
+  }
+  mfem::Vector left, right;
+  detail::SplitBernsteinCoefficients(polynomial, left, right);
+  return HasStrictlyPositiveBernsteinPolynomial(left, tolerance, depth + 1) &&
+         HasStrictlyPositiveBernsteinPolynomial(right, tolerance, depth + 1);
+}
+
+double BernsteinCoefficientScale(const mfem::Vector &polynomial)
+{
+  double scale = 0.0;
+  for (double coefficient : polynomial)
+  {
+    scale = std::max(scale, std::abs(coefficient));
+  }
+  return scale;
+}
+
+double GetTetrahedronEdgeAngle(const mfem::Mesh &mesh, int element,
+                               const EdgeKey &edge_vertices)
+{
+  mfem::IsoparametricTransformation transformation;
+  mesh.GetElementTransformation(element, &transformation);
+  const auto midpoint = GetTetrahedronEdgeAngleDataAt(mesh, element, edge_vertices, 0.5);
+  if (transformation.OrderJ() == 0)
+  {
+    return midpoint.angle;
+  }
+
+  // With a globally straight physical edge, projection onto its fixed normal
+  // plane makes the two radial vectors polynomial in the edge coordinate. Their
+  // dot product a(t) and oriented area b(t) have degree at most twice the map
+  // order. The wedge angle satisfies
+  //
+  //   theta'(t) = (a b' - b a') / (a^2 + b^2).
+  //
+  // Bernstein bounds therefore certify a constant cross-sectional angle over
+  // the complete edge, rather than only at a finite set of sample points.
+  const int map_order = std::max(1, transformation.Order());
+  const int invariant_order = 2 * map_order;
+  const int coefficient_count = invariant_order + 1;
+  mfem::DenseMatrix bernstein_values(coefficient_count);
+  mfem::DenseMatrix invariant_values(coefficient_count, 2);
+  mfem::Vector bernstein_shape(coefficient_count);
+  const double orientation = std::signbit(midpoint.oriented_area) ? -1.0 : 1.0;
+  for (int q = 0; q < coefficient_count; q++)
+  {
+    const double coordinate = static_cast<double>(q) / invariant_order;
+    mfem::Poly_1D::CalcBernstein(invariant_order, coordinate, bernstein_shape);
+    bernstein_values.SetRow(q, bernstein_shape);
+    const auto data =
+        GetTetrahedronEdgeAngleDataAt(mesh, element, edge_vertices, coordinate);
+    invariant_values(q, 0) = data.dot;
+    invariant_values(q, 1) = orientation * data.oriented_area;
+  }
+  mfem::DenseMatrix invariant_control;
+  mfem::DenseMatrixInverse(bernstein_values).Mult(invariant_values, invariant_control);
+  mfem::Vector dot_control(coefficient_count), area_control(coefficient_count);
+  invariant_control.GetColumn(0, dot_control);
+  invariant_control.GetColumn(1, area_control);
+
+  // Independently verify the polynomial recovery. An ill-conditioned nodal to
+  // Bernstein conversion is rejected instead of weakening the global bound.
+  const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * invariant_order + 2);
+  double invariant_scale = std::max(BernsteinCoefficientScale(dot_control),
+                                    BernsteinCoefficientScale(area_control));
+  for (int q = -2; q < rule.GetNPoints(); q++)
+  {
+    const double coordinate = q < 0 ? (q == -2 ? 0.0 : 1.0) : rule.IntPoint(q).x;
+    const auto data =
+        GetTetrahedronEdgeAngleDataAt(mesh, element, edge_vertices, coordinate);
+    mfem::Poly_1D::CalcBernstein(invariant_order, coordinate, bernstein_shape);
+    double reconstructed_dot = 0.0;
+    double reconstructed_area = 0.0;
+    for (int i = 0; i < coefficient_count; i++)
+    {
+      reconstructed_dot += bernstein_shape[i] * dot_control[i];
+      reconstructed_area += bernstein_shape[i] * area_control[i];
+    }
+    const double actual_area = orientation * data.oriented_area;
+    invariant_scale =
+        std::max({invariant_scale, std::abs(data.dot), std::abs(actual_area)});
+    const double representation_tolerance =
+        1.0e-10 * std::max(invariant_scale, std::numeric_limits<double>::min());
+    if (std::abs(reconstructed_dot - data.dot) > representation_tolerance ||
+        std::abs(reconstructed_area - actual_area) > representation_tolerance)
+    {
+      throw std::invalid_argument(
+          "A curved PEC edge wedge could not certify its cross-sectional angle "
+          "polynomial!");
+    }
+  }
+
+  const double area_tolerance =
+      8192.0 * std::numeric_limits<double>::epsilon() *
+      std::max(BernsteinCoefficientScale(area_control), std::numeric_limits<double>::min());
+  if (!HasStrictlyPositiveBernsteinPolynomial(area_control, area_tolerance))
+  {
+    throw std::invalid_argument(
+        "A curved PEC edge wedge has a degenerate or reversing cross section!");
+  }
+
+  const auto dot_derivative = DifferentiateBernsteinPolynomial(dot_control);
+  const auto area_derivative = DifferentiateBernsteinPolynomial(area_control);
+  auto angle_numerator = MultiplyBernsteinPolynomials(dot_control, area_derivative);
+  const auto second_numerator = MultiplyBernsteinPolynomials(area_control, dot_derivative);
+  for (int i = 0; i < angle_numerator.Size(); i++)
+  {
+    angle_numerator[i] -= second_numerator[i];
+  }
+  auto angle_denominator = MultiplyBernsteinPolynomials(dot_control, dot_control);
+  const auto area_squared = MultiplyBernsteinPolynomials(area_control, area_control);
+  for (int i = 0; i < angle_denominator.Size(); i++)
+  {
+    angle_denominator[i] += area_squared[i];
+  }
+  const mfem::Vector constant_one({1.0, 1.0});
+  const auto elevated_numerator =
+      MultiplyBernsteinPolynomials(angle_numerator, constant_one);
+  if (elevated_numerator.Size() != angle_denominator.Size())
+  {
+    throw std::logic_error(
+        "PEC edge-wedge angle certification produced inconsistent polynomial degrees!");
+  }
+
+  const double derivative_tolerance = 1.0e-9 * std::max(1.0, midpoint.angle);
+  mfem::Vector positive_margin(angle_denominator.Size()),
+      negative_margin(angle_denominator.Size());
+  for (int i = 0; i < angle_denominator.Size(); i++)
+  {
+    positive_margin[i] =
+        derivative_tolerance * angle_denominator[i] + elevated_numerator[i];
+    negative_margin[i] =
+        derivative_tolerance * angle_denominator[i] - elevated_numerator[i];
+  }
+  const double margin_scale = std::max(BernsteinCoefficientScale(positive_margin),
+                                       BernsteinCoefficientScale(negative_margin));
+  const double margin_tolerance =
+      8192.0 * std::numeric_limits<double>::epsilon() *
+      std::max(margin_scale, std::numeric_limits<double>::min());
+  if (!HasStrictlyPositiveBernsteinPolynomial(positive_margin, margin_tolerance) ||
+      !HasStrictlyPositiveBernsteinPolynomial(negative_margin, margin_tolerance))
+  {
+    throw std::invalid_argument(
+        "A curved PEC edge wedge has a cross-sectional angle which varies along the "
+        "feature!");
+  }
+  return midpoint.angle;
+}
+
+std::vector<TriangleWedgeSector>
+BuildTetrahedronEdgeSectors(const mfem::Mesh &mesh, int mesh_edge,
+                            const EdgeKey &edge_vertices,
+                            const std::vector<int> &selected_boundary_elements,
+                            const std::map<int, double> &permittivity)
+{
+  if (selected_boundary_elements.size() != 2)
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC wedge edge requires exactly two selected boundary faces!");
+  }
+
+  struct FanTetrahedron
+  {
+    int element;
+    std::array<FaceKey, 2> radial_faces;
+    double angle;
+    int domain_attribute;
+    double permittivity;
+  };
+  std::vector<FanTetrahedron> fan;
+  std::map<FaceKey, std::vector<std::size_t>> face_tetrahedra;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const auto *tetrahedron = mesh.GetElement(element);
+    const int *vertices = tetrahedron->GetVertices();
+    if (std::find(vertices, vertices + 4, edge_vertices[0]) == vertices + 4 ||
+        std::find(vertices, vertices + 4, edge_vertices[1]) == vertices + 4)
+    {
+      continue;
+    }
+    if (!IsGeometricallyStraightElementEdge(mesh, element, mesh_edge))
+    {
+      throw std::invalid_argument(
+          "Selected finite-metal wedge edges must be geometrically straight!");
+    }
+    std::array<int, 2> opposite_vertices;
+    int next = 0;
+    for (int local = 0; local < 4; local++)
+    {
+      if (vertices[local] != edge_vertices[0] && vertices[local] != edge_vertices[1])
+      {
+        opposite_vertices[next++] = vertices[local];
+      }
+    }
+    if (next != 2 || opposite_vertices[0] == opposite_vertices[1])
+    {
+      throw std::invalid_argument(
+          "A PEC edge-wedge tetrahedron has invalid radial-face topology!");
+    }
+    std::array<FaceKey, 2> radial_faces{
+        FaceKey{edge_vertices[0], edge_vertices[1], opposite_vertices[0]},
+        FaceKey{edge_vertices[0], edge_vertices[1], opposite_vertices[1]}};
+    std::sort(radial_faces[0].begin(), radial_faces[0].end());
+    std::sort(radial_faces[1].begin(), radial_faces[1].end());
+    const int attribute = mesh.GetAttribute(element);
+    const auto material = permittivity.find(attribute);
+    if (material == permittivity.end())
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC wedge edge has no isotropic permittivity for domain "
+          "attribute " +
+          std::to_string(attribute) + "!");
+    }
+    const std::size_t index = fan.size();
+    fan.push_back({element, radial_faces,
+                   GetTetrahedronEdgeAngle(mesh, element, edge_vertices), attribute,
+                   material->second});
+    face_tetrahedra[radial_faces[0]].push_back(index);
+    face_tetrahedra[radial_faces[1]].push_back(index);
+  }
+  if (fan.empty())
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC wedge edge has no incident tetrahedral fan!");
+  }
+
+  std::array<FaceKey, 2> boundary_faces;
+  for (int side = 0; side < 2; side++)
+  {
+    int face, orientation;
+    mesh.GetBdrElementFace(selected_boundary_elements[side], &face, &orientation);
+    boundary_faces[side] = GetFaceKey(mesh, face);
+    const auto incidence = face_tetrahedra.find(boundary_faces[side]);
+    if (incidence == face_tetrahedra.end() || incidence->second.size() != 1)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC wedge boundary face does not bound exactly one "
+          "tetrahedron!");
+    }
+  }
+  if (boundary_faces[0] == boundary_faces[1])
+  {
+    throw std::invalid_argument("A one-sided PEC wedge edge has duplicate boundary faces!");
+  }
+
+  std::vector<TriangleWedgeSector> sectors;
+  std::set<std::size_t> visited;
+  FaceKey current_face = boundary_faces[0];
+  std::size_t current_tetrahedron = face_tetrahedra.at(current_face)[0];
+  while (true)
+  {
+    if (!visited.insert(current_tetrahedron).second)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC edge-wedge fan contains a cycle or branch!");
+    }
+    const auto &tetrahedron = fan[current_tetrahedron];
+    if (!sectors.empty() &&
+        sectors.back().domain_attribute == tetrahedron.domain_attribute &&
+        sectors.back().permittivity == tetrahedron.permittivity)
+    {
+      sectors.back().angle += tetrahedron.angle;
+    }
+    else
+    {
+      sectors.push_back(
+          {tetrahedron.domain_attribute, tetrahedron.angle, tetrahedron.permittivity});
+    }
+
+    FaceKey next_face;
+    if (tetrahedron.radial_faces[0] == current_face)
+    {
+      next_face = tetrahedron.radial_faces[1];
+    }
+    else if (tetrahedron.radial_faces[1] == current_face)
+    {
+      next_face = tetrahedron.radial_faces[0];
+    }
+    else
+    {
+      throw std::logic_error("A one-sided PEC edge-wedge fan walk lost its incoming face!");
+    }
+    if (next_face == boundary_faces[1])
+    {
+      break;
+    }
+    const auto incidence = face_tetrahedra.find(next_face);
+    if (incidence == face_tetrahedra.end() || incidence->second.size() != 2)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC edge-wedge fan is interrupted by another exterior face!");
+    }
+    current_tetrahedron = incidence->second[0] == current_tetrahedron
+                              ? incidence->second[1]
+                              : incidence->second[0];
+    current_face = next_face;
+  }
+  if (visited.size() != fan.size())
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC wedge edge has disconnected or nonmanifold incident "
+        "tetrahedra!");
+  }
+  double opening_angle = 0.0;
+  for (const auto &sector : sectors)
+  {
+    opening_angle += sector.angle;
+  }
+  if (!std::isfinite(opening_angle) || !(opening_angle > 0.0) ||
+      !(opening_angle < 6.28318530717958647693 - 1.0e-10))
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC wedge edge has an invalid dielectric opening angle!");
+  }
+  return sectors;
+}
+
+double GetTriangleCornerAngle(const mfem::Mesh &mesh, int element, int vertex)
+{
+  const auto *triangle = mesh.GetElement(element);
+  if (!triangle || triangle->GetGeometryType() != mfem::Geometry::TRIANGLE)
+  {
+    throw std::invalid_argument(
+        "A PEC material-wedge fan contains a nontriangular element!");
+  }
+  int local_vertex = -1;
+  for (int local = 0; local < 3; local++)
+  {
+    if (triangle->GetVertices()[local] == vertex)
+    {
+      local_vertex = local;
+      break;
+    }
+  }
+  if (local_vertex < 0)
+  {
+    throw std::invalid_argument(
+        "A PEC material-wedge fan does not contain its corner vertex!");
+  }
+
+  constexpr std::array<std::array<double, 2>, 3> reference_vertices{
+      std::array<double, 2>{0.0, 0.0}, std::array<double, 2>{1.0, 0.0},
+      std::array<double, 2>{0.0, 1.0}};
+  mfem::IntegrationPoint point;
+  point.Set2(reference_vertices[local_vertex][0], reference_vertices[local_vertex][1]);
+  mfem::IsoparametricTransformation transformation;
+  mesh.GetElementTransformation(element, &transformation);
+  transformation.SetIntPoint(&point);
+  const auto &jacobian = transformation.Jacobian();
+  if (jacobian.Height() != 2 || jacobian.Width() != 2)
+  {
+    throw std::runtime_error(
+        "A PEC material-wedge triangle has an invalid physical Jacobian!");
+  }
+
+  std::array<std::array<double, 2>, 2> tangent;
+  int next = 0;
+  for (int local = 0; local < 3; local++)
+  {
+    if (local == local_vertex)
+    {
+      continue;
+    }
+    mfem::Vector reference_direction(2), physical_direction(2);
+    for (int d = 0; d < 2; d++)
+    {
+      reference_direction[d] =
+          reference_vertices[local][d] - reference_vertices[local_vertex][d];
+    }
+    jacobian.Mult(reference_direction, physical_direction);
+    const double norm = physical_direction.Norml2();
+    if (!std::isfinite(norm) || !(norm > 0.0))
+    {
+      throw std::invalid_argument(
+          "A PEC material-wedge triangle is degenerate at its corner!");
+    }
+    tangent[next++] = {physical_direction[0] / norm, physical_direction[1] / norm};
+  }
+  const double dot = tangent[0][0] * tangent[1][0] + tangent[0][1] * tangent[1][1];
+  const double cross = tangent[0][0] * tangent[1][1] - tangent[0][1] * tangent[1][0];
+  const double angle = std::atan2(std::abs(cross), std::clamp(dot, -1.0, 1.0));
+  if (!std::isfinite(angle) || !(angle > 0.0) || !(angle < 3.14159265358979323846))
+  {
+    throw std::invalid_argument(
+        "A PEC material-wedge triangle has an invalid corner angle!");
+  }
+  return angle;
+}
+
+std::vector<TriangleWedgeSector>
+BuildTriangleCornerSectors(const mfem::Mesh &mesh, int vertex,
+                           const std::vector<std::size_t> &selected_segment_indices,
+                           const std::vector<TriangleSelectedSegment> &selected_segments,
+                           const std::vector<int> &incident_elements,
+                           const std::map<int, double> &permittivity)
+{
+  if (selected_segment_indices.size() != 2 || incident_elements.empty())
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC corner requires two boundary segments and an element fan!");
+  }
+
+  struct FanTriangle
+  {
+    int element;
+    std::array<EdgeKey, 2> rays;
+    double angle;
+    int domain_attribute;
+    double permittivity;
+  };
+  std::vector<FanTriangle> fan;
+  fan.reserve(incident_elements.size());
+  std::map<EdgeKey, std::vector<std::size_t>> ray_triangles;
+  for (int element : incident_elements)
+  {
+    const auto *triangle = mesh.GetElement(element);
+    if (!triangle || triangle->GetGeometryType() != mfem::Geometry::TRIANGLE)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner contains a nontriangular element!");
+    }
+    std::array<EdgeKey, 2> rays;
+    int next = 0;
+    for (int local = 0; local < 3; local++)
+    {
+      const int other = triangle->GetVertices()[local];
+      if (other == vertex)
+      {
+        continue;
+      }
+      rays[next] = {vertex, other};
+      std::sort(rays[next].begin(), rays[next].end());
+      next++;
+    }
+    if (next != 2 || rays[0] == rays[1])
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner has invalid radial-edge topology!");
+    }
+    const int attribute = mesh.GetAttribute(element);
+    const auto material = permittivity.find(attribute);
+    if (material == permittivity.end())
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner has no isotropic permittivity for domain attribute " +
+          std::to_string(attribute) + "!");
+    }
+    const std::size_t index = fan.size();
+    fan.push_back({element, rays, GetTriangleCornerAngle(mesh, element, vertex), attribute,
+                   material->second});
+    ray_triangles[rays[0]].push_back(index);
+    ray_triangles[rays[1]].push_back(index);
+  }
+
+  std::array<EdgeKey, 2> boundary_rays;
+  for (int side = 0; side < 2; side++)
+  {
+    const std::size_t segment = selected_segment_indices[side];
+    if (segment >= selected_segments.size())
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner references an invalid boundary segment!");
+    }
+    boundary_rays[side] = selected_segments[segment].mesh_vertices;
+    const auto incidence = ray_triangles.find(boundary_rays[side]);
+    if (incidence == ray_triangles.end() || incidence->second.size() != 1)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner boundary ray does not bound exactly one triangle!");
+    }
+  }
+  if (boundary_rays[0] == boundary_rays[1])
+  {
+    throw std::invalid_argument("A one-sided PEC corner has duplicate boundary rays!");
+  }
+
+  std::vector<TriangleWedgeSector> sectors;
+  std::set<std::size_t> visited;
+  EdgeKey current_ray = boundary_rays[0];
+  std::size_t current_triangle = ray_triangles.at(current_ray)[0];
+  while (true)
+  {
+    if (!visited.insert(current_triangle).second)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner element fan contains a cycle or branch!");
+    }
+    const auto &triangle = fan[current_triangle];
+    if (!sectors.empty() && sectors.back().domain_attribute == triangle.domain_attribute &&
+        sectors.back().permittivity == triangle.permittivity)
+    {
+      sectors.back().angle += triangle.angle;
+    }
+    else
+    {
+      sectors.push_back({triangle.domain_attribute, triangle.angle, triangle.permittivity});
+    }
+
+    EdgeKey next_ray;
+    if (triangle.rays[0] == current_ray)
+    {
+      next_ray = triangle.rays[1];
+    }
+    else if (triangle.rays[1] == current_ray)
+    {
+      next_ray = triangle.rays[0];
+    }
+    else
+    {
+      throw std::logic_error(
+          "A one-sided PEC corner fan walk lost its incoming radial edge!");
+    }
+    if (next_ray == boundary_rays[1])
+    {
+      break;
+    }
+    const auto incidence = ray_triangles.find(next_ray);
+    if (incidence == ray_triangles.end() || incidence->second.size() != 2)
+    {
+      throw std::invalid_argument(
+          "A one-sided PEC corner fan is interrupted by another exterior boundary!");
+    }
+    current_triangle = incidence->second[0] == current_triangle ? incidence->second[1]
+                                                                : incidence->second[0];
+    current_ray = next_ray;
+  }
+  if (visited.size() != fan.size())
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC corner has disconnected or nonmanifold incident triangles!");
+  }
+
+  double opening_angle = 0.0;
+  for (const auto &sector : sectors)
+  {
+    opening_angle += sector.angle;
+  }
+  if (!std::isfinite(opening_angle) || !(opening_angle > 0.0) ||
+      !(opening_angle < 6.28318530717958647693 - 1.0e-10))
+  {
+    throw std::invalid_argument(
+        "A one-sided PEC corner has an invalid dielectric opening angle!");
+  }
+  return sectors;
+}
+
+}  // namespace
+
+TriangleFeatureTopology ExtractSerialLineFeatures(
+    const mfem::Mesh &mesh, const std::vector<int> &boundary_attributes,
+    const std::vector<TriangleMaterial> &materials, double line_tip_nu)
 {
   const auto *parallel_mesh = dynamic_cast<const mfem::ParMesh *>(&mesh);
   if (parallel_mesh && parallel_mesh->GetNRanks() > 1)
@@ -734,10 +1704,23 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
           "Singular-line extraction initially supports only triangular meshes!");
     }
   }
-  if (!std::isfinite(nu) || nu <= 0.0 || nu >= 1.0)
+  if (!std::isfinite(line_tip_nu) || line_tip_nu <= 0.0 || line_tip_nu >= 1.0)
   {
     throw std::invalid_argument(
         "Singular-line exponent must be finite and satisfy 0 < nu < 1!");
+  }
+  std::map<int, double> material_permittivity;
+  for (const auto &material : materials)
+  {
+    if (material.domain_attribute <= 0 || !std::isfinite(material.permittivity) ||
+        !(material.permittivity > 0.0) ||
+        !material_permittivity.emplace(material.domain_attribute, material.permittivity)
+             .second)
+    {
+      throw std::invalid_argument(
+          "Singular-line extraction received invalid or duplicate isotropic material "
+          "data!");
+    }
   }
 
   std::set<int> selected_attributes;
@@ -759,6 +1742,7 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
 
   std::set<int> present_attributes;
   std::map<EdgeKey, TriangleSelectedSegment> selected_edges;
+  std::map<EdgeKey, bool> selected_edge_internal;
   for (int boundary_element = 0; boundary_element < mesh.GetNBE(); boundary_element++)
   {
     const int attribute = mesh.GetBdrAttribute(boundary_element);
@@ -776,17 +1760,21 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
     int edge, orientation, element_1, element_2;
     mesh.GetBdrElementFace(boundary_element, &edge, &orientation);
     mesh.GetFaceElements(edge, &element_1, &element_2);
-    if (element_1 < 0 || element_2 < 0)
+    if (element_1 < 0)
+    {
+      throw std::invalid_argument(
+          "A selected PEC line segment has no incident mesh element!");
+    }
+    const bool internal = element_2 >= 0;
+    if (!internal && material_permittivity.empty())
     {
       throw std::invalid_argument(
           "Selected zero-thickness PEC lines must be internal mesh boundaries!");
     }
-    mfem::IsoparametricTransformation edge_transformation;
-    mesh.GetEdgeTransformation(edge, &edge_transformation);
-    if (!IsGeometricallyStraightSegmentTransformation(edge_transformation))
+    if (!IsGeometricallyStraightElementEdge(mesh, element_1, edge))
     {
       throw std::invalid_argument(
-          "Selected zero-thickness PEC line segments must be geometrically straight!");
+          "Selected singular PEC line segments must be geometrically straight!");
     }
     const auto key = GetEdgeKey(mesh, edge);
     if (!selected_edges
@@ -794,8 +1782,9 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
              .second)
     {
       throw std::invalid_argument(
-          "A selected zero-thickness PEC segment is represented more than once!");
+          "A selected singular PEC segment is represented more than once!");
     }
+    selected_edge_internal.emplace(key, internal);
   }
   if (present_attributes != selected_attributes)
   {
@@ -834,15 +1823,40 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
     }
   }
 
+  std::vector<std::vector<int>> vertex_elements(mesh.GetNV());
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const auto *triangle = mesh.GetElement(element);
+    for (int local = 0; local < 3; local++)
+    {
+      vertex_elements[triangle->GetVertices()[local]].push_back(element);
+    }
+  }
+
   constexpr double straight_tolerance = 1.0e-10;
   for (const auto &[vertex, segments] : vertex_segments)
   {
     if (segments.size() > 2)
     {
       throw std::invalid_argument(
-          "Selected zero-thickness PEC lines contain a branch or junction!");
+          "Selected singular PEC lines contain a branch or junction!");
     }
-    if (segments.size() == 2)
+    bool has_internal = false;
+    bool has_one_sided = false;
+    for (std::size_t segment : segments)
+    {
+      const auto &selected = result.selected_segments[segment];
+      const bool internal = selected_edge_internal.at(selected.mesh_vertices);
+      has_internal = has_internal || internal;
+      has_one_sided = has_one_sided || !internal;
+    }
+    if (has_internal && has_one_sided)
+    {
+      throw std::invalid_argument(
+          "A singular PEC vertex mixes internal-sheet and one-sided boundary segments!");
+    }
+
+    if (has_internal && segments.size() == 2)
     {
       std::array<std::array<double, 2>, 2> direction;
       for (int side = 0; side < 2; side++)
@@ -857,15 +1871,56 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
       if (dot > -1.0 + straight_tolerance)
       {
         throw std::invalid_argument(
-            "Selected zero-thickness PEC lines must be straight; corner exponents "
-            "are not implemented yet!");
+            "Selected internal zero-thickness PEC lines must be straight!");
       }
       continue;
     }
 
-    if (exterior_vertices.find(vertex) == exterior_vertices.end())
+    if (has_internal)
     {
-      result.vertices.push_back({result.vertices.size(), vertex, segments, nu});
+      if (exterior_vertices.find(vertex) == exterior_vertices.end())
+      {
+        result.vertices.push_back({result.vertices.size(),
+                                   vertex,
+                                   segments,
+                                   line_tip_nu,
+                                   FeatureVertexType::ENDPOINT,
+                                   {}});
+      }
+      continue;
+    }
+
+    // A single selected one-sided segment ends where another, unselected boundary
+    // condition begins. That mixed-boundary corner is intentionally outside the
+    // selected finite conductor and is not enriched.
+    if (segments.size() == 1)
+    {
+      continue;
+    }
+
+    std::array<std::array<double, 2>, 2> direction;
+    for (int side = 0; side < 2; side++)
+    {
+      const auto &segment = result.selected_segments[segments[side]];
+      const auto physical_direction =
+          DirectionFromVertex(mesh, vertex, segment.mesh_vertices);
+      direction[side] = {physical_direction[0], physical_direction[1]};
+    }
+    const double dot =
+        direction[0][0] * direction[1][0] + direction[0][1] * direction[1][1];
+    if (dot <= -1.0 + straight_tolerance)
+    {
+      continue;
+    }
+
+    auto sectors =
+        BuildTriangleCornerSectors(mesh, vertex, segments, result.selected_segments,
+                                   vertex_elements[vertex], material_permittivity);
+    const double corner_nu = ComputeDirichletWedgeExponent(sectors);
+    if (corner_nu < 1.0)
+    {
+      result.vertices.push_back({result.vertices.size(), vertex, segments, corner_nu,
+                                 FeatureVertexType::CORNER, std::move(sectors)});
     }
   }
 
@@ -894,8 +1949,23 @@ ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
   return result;
 }
 
+TriangleFeatureTopology
+ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
+                             const std::vector<int> &boundary_attributes, double nu)
+{
+  return ExtractSerialLineFeatures(mesh, boundary_attributes, {}, nu);
+}
+
 FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                            const std::vector<int> &boundary_attributes,
+                                           double nu)
+{
+  return ExtractSerialSheetFeatures(mesh, boundary_attributes, {}, nu);
+}
+
+FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
+                                           const std::vector<int> &boundary_attributes,
+                                           const std::vector<TriangleMaterial> &materials,
                                            double nu)
 {
   ValidateMesh(mesh);
@@ -903,6 +1973,19 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
   {
     throw std::invalid_argument(
         "Singular-feature exponent must be finite and satisfy 0 < nu < 1!");
+  }
+  std::map<int, double> material_permittivity;
+  for (const auto &material : materials)
+  {
+    if (material.domain_attribute <= 0 || !std::isfinite(material.permittivity) ||
+        !(material.permittivity > 0.0) ||
+        !material_permittivity.emplace(material.domain_attribute, material.permittivity)
+             .second)
+    {
+      throw std::invalid_argument(
+          "Singular sheet/wedge extraction received invalid or duplicate isotropic "
+          "material data!");
+    }
   }
 
   std::set<int> selected_attributes;
@@ -924,6 +2007,7 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
 
   std::set<int> present_attributes;
   std::map<int, int> selected_faces;
+  std::map<int, bool> selected_face_internal;
   std::map<EdgeKey, SelectedEdge> selected_edges;
   mfem::Array<int> edges, orientations;
   for (int boundary_element = 0; boundary_element < mesh.GetNBE(); boundary_element++)
@@ -943,16 +2027,22 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     int face, orientation, element_1, element_2;
     mesh.GetBdrElementFace(boundary_element, &face, &orientation);
     mesh.GetFaceElements(face, &element_1, &element_2);
-    if (element_1 < 0 || element_2 < 0)
+    if (element_1 < 0)
+    {
+      throw std::invalid_argument("A selected PEC face has no incident mesh element!");
+    }
+    const bool internal = element_2 >= 0;
+    if (!internal && material_permittivity.empty())
     {
       throw std::invalid_argument(
-          "Selected zero-thickness PEC sheets must be internal mesh boundaries!");
+          "Selected one-sided finite-metal PEC faces require isotropic material data!");
     }
     if (!selected_faces.emplace(face, boundary_element).second)
     {
       throw std::invalid_argument(
           "A selected zero-thickness PEC face is represented more than once!");
     }
+    selected_face_internal.emplace(face, internal);
 
     mesh.GetBdrElementEdges(boundary_element, edges, orientations);
     if (edges.Size() != 3)
@@ -1005,25 +2095,80 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     }
   }
 
+  std::vector<double> segment_exponents;
   for (auto &[key, edge] : selected_edges)
   {
-    if (edge.boundary_elements.size() != 1)
+    bool has_internal_face = false;
+    bool has_external_face = false;
+    for (int boundary_element : edge.boundary_elements)
     {
-      continue;
+      int face, orientation;
+      mesh.GetBdrElementFace(boundary_element, &face, &orientation);
+      const bool internal = selected_face_internal.at(face);
+      has_internal_face = has_internal_face || internal;
+      has_external_face = has_external_face || !internal;
+    }
+    if (has_internal_face && has_external_face)
+    {
+      throw std::invalid_argument(
+          "One selected PEC mesh edge mixes internal-sheet and one-sided boundary "
+          "faces!");
+    }
+
+    double edge_nu = 1.0;
+    if (has_internal_face)
+    {
+      if (edge.boundary_elements.size() != 1)
+      {
+        continue;
+      }
+      edge_nu = nu;
+    }
+    else
+    {
+      if (edge.boundary_elements.size() != 2)
+      {
+        // A single selected one-sided face ends at an unselected boundary
+        // condition. That mixed-condition edge is outside the selected finite
+        // conductor wedge.
+        continue;
+      }
+      const auto sectors = BuildTetrahedronEdgeSectors(
+          mesh, edge.mesh_edge, key, edge.boundary_elements, material_permittivity);
+      edge_nu = ComputeDirichletWedgeExponent(sectors);
+      if (!(edge_nu < 1.0))
+      {
+        continue;
+      }
+    }
+
+    if (!std::isfinite(edge_nu) || !(edge_nu > 0.0) || !(edge_nu < 1.0))
+    {
+      throw std::runtime_error("Selected PEC edge produced an invalid singular exponent!");
     }
     std::sort(edge.boundary_attributes.begin(), edge.boundary_attributes.end());
     edge.boundary_attributes.erase(
         std::unique(edge.boundary_attributes.begin(), edge.boundary_attributes.end()),
         edge.boundary_attributes.end());
-    mfem::IsoparametricTransformation edge_transformation;
-    mesh.GetEdgeTransformation(edge.mesh_edge, &edge_transformation);
-    if (!IsGeometricallyStraightSegmentTransformation(edge_transformation))
+    int face, orientation, element_1, element_2;
+    mesh.GetBdrElementFace(edge.boundary_elements.front(), &face, &orientation);
+    mesh.GetFaceElements(face, &element_1, &element_2);
+    if (element_1 < 0 ||
+        !IsGeometricallyStraightElementEdge(mesh, element_1, edge.mesh_edge) ||
+        (element_2 >= 0 &&
+         !IsGeometricallyStraightElementEdge(mesh, element_2, edge.mesh_edge)))
     {
       throw std::invalid_argument(
-          "Selected PEC sheet perimeter edges must be geometrically straight!");
+          "Selected PEC sheet or wedge edges must be geometrically straight!");
     }
     result.segments.push_back(
         {edge.mesh_edge, key, 0, std::move(edge.boundary_attributes)});
+    segment_exponents.push_back(edge_nu);
+  }
+
+  if (segment_exponents.size() != result.segments.size())
+  {
+    throw std::logic_error("Singular-feature extraction lost a segment exponent!");
   }
 
   std::map<int, std::size_t> vertex_index;
@@ -1034,8 +2179,17 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       auto [it, inserted] = vertex_index.emplace(vertex, result.vertices.size());
       if (inserted)
       {
-        result.vertices.push_back(
-            {result.vertices.size(), vertex, FeatureVertexType::REGULAR, {}, {}, nu});
+        result.vertices.push_back({result.vertices.size(),
+                                   vertex,
+                                   FeatureVertexType::REGULAR,
+                                   {},
+                                   {},
+                                   segment_exponents[segment]});
+      }
+      else
+      {
+        result.vertices[it->second].nu =
+            std::min(result.vertices[it->second].nu, segment_exponents[segment]);
       }
       result.vertices[it->second].segments.push_back(segment);
     }
@@ -1047,8 +2201,9 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     if (vertex.segments.size() == 1)
     {
       vertex.type = FeatureVertexType::ENDPOINT;
+      continue;
     }
-    else if (vertex.segments.size() == 2)
+    if (vertex.segments.size() == 2)
     {
       const auto direction_0 = DirectionFromVertex(
           mesh, vertex.mesh_vertex, result.segments[vertex.segments[0]].mesh_vertices);
@@ -1059,15 +2214,24 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       {
         dot += direction_0[d] * direction_1[d];
       }
+      const double nu_0 = segment_exponents[vertex.segments[0]];
+      const double nu_1 = segment_exponents[vertex.segments[1]];
       constexpr double straight_tolerance = 1.0e-10;
+      constexpr double exponent_tolerance = 1.0e-12;
+      const bool same_exponent =
+          std::abs(nu_0 - nu_1) <= exponent_tolerance * std::max({1.0, nu_0, nu_1});
+      if (!same_exponent)
+      {
+        throw std::invalid_argument(
+            "A selected PEC wedge edge changes singular exponent at a mesh vertex; "
+            "three-dimensional point-transition enrichment is not implemented!");
+      }
       vertex.type = dot <= -1.0 + straight_tolerance ? FeatureVertexType::REGULAR
                                                      : FeatureVertexType::CORNER;
+      continue;
     }
-    else
-    {
-      throw std::invalid_argument(
-          "Selected PEC sheet perimeter contains an unsupported junction!");
-    }
+    throw std::invalid_argument(
+        "Selected PEC sheet or wedge edges contain an unsupported junction!");
   }
 
   std::vector<int> segment_feature(result.segments.size(), -1);
@@ -1078,7 +2242,7 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       continue;
     }
     const std::size_t feature = result.features.size();
-    StraightFeature record{feature, {}, {}, nu, true};
+    StraightFeature record{feature, {}, {}, segment_exponents[seed], true};
     std::queue<std::size_t> queue;
     queue.push(seed);
     segment_feature[seed] = static_cast<int>(feature);

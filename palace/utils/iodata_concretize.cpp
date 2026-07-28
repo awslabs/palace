@@ -424,7 +424,8 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                    if (it != pp.dielectric.end())
                    {
                      ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
-                                            {"LossTan", it->second.tandelta}});
+                                            {"LossTan", it->second.tandelta},
+                                            {"EdgeCutoff", it->second.edge_cutoff}});
                    }
                  });
 

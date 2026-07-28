@@ -1,0 +1,87 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "postpro"
+  },
+  "Model": {
+    "Mesh": "singular_corner_electrostatic.mesh",
+    "L0": 1.0,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [2],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [1, 2]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [8]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [7]
+      }
+    ],
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [7],
+          "Type": "MS",
+          "Thickness": 0.002,
+          "Permittivity": 11.47,
+          "LossTan": 0.0003
+        },
+        {
+          "Index": 2,
+          "Attributes": [7],
+          "Type": "MA",
+          "Thickness": 0.002,
+          "Permittivity": 10.0,
+          "LossTan": 0.03
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Electrostatic": {
+      "Save": 0
+    },
+    "SingularElements": {
+      "Attributes": [7],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 2.0e-6,
+      "RelTol": 2.0e-6,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 500,
+      "MGMaxLevels": 1
+    }
+  }
+}

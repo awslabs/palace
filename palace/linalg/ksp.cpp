@@ -334,6 +334,13 @@ MakeSingularDirectKspSolverImpl(const IoData &iodata, MPI_Comm comm)
   auto linear = iodata.solver.linear;
   linear.krylov_solver = KrylovSolver::GMRES;
   linear.initial_guess = false;
+  if (linear.sym_factorization == SymbolicFactorization::DEFAULT && Mpi::Size(comm) > 1)
+  {
+    // SuperLU_DIST's default METIS_AT_PLUS_A ordering can produce an inaccurate
+    // distributed factorization for indefinite combined singular-element systems.
+    // Prefer the distributed ordering, while preserving an explicit user choice.
+    linear.sym_factorization = SymbolicFactorization::PARMETIS;
+  }
   auto pc = MakeWrapperSolver<OperType, SuperLUSolver>(
       linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
       iodata.problem.verbose - 1);

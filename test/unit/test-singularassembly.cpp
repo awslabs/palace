@@ -1120,7 +1120,8 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
       const auto &row_basis = element_dofs.h1[row].basis;
       const auto &column_basis = element_dofs.h1[column].basis;
       const double direct = fem::singular::IntegrateReferenceTriangleNodeDuffy(
-          fem::singular::H1DuffyReferenceOrder + 4, 0, fem::singular::H1DuffyRadialPower,
+          fem::singular::H1DuffyReferenceOrder + 4, 0,
+          fem::singular::TriangleDuffyRadialPower,
           [&](const fem::singular::TriangleBarycentricPoint &lambda)
           {
             return jacobian_determinant *
@@ -1144,7 +1145,8 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
     {
       const auto &basis = element_dofs.h1[enrichment_index].basis;
       const double direct = fem::singular::IntegrateReferenceTriangleNodeDuffy(
-          fem::singular::H1DuffyReferenceOrder + 4, 0, fem::singular::H1DuffyRadialPower,
+          fem::singular::H1DuffyReferenceOrder + 4, 0,
+          fem::singular::TriangleDuffyRadialPower,
           [&](const fem::singular::TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -1421,7 +1423,8 @@ TEST_CASE("Curved simplex singular matrices use pointwise physical geometry",
       long double curl_curl = 0.0L;
       mfem::IntegrationPoint point;
       fem::singular::ForEachReferenceTriangleNodeDuffyQuadraturePoint(
-          fem::singular::H1DuffyReferenceOrder + 2, 0, fem::singular::H1DuffyRadialPower,
+          fem::singular::H1DuffyReferenceOrder + 2, 0,
+          fem::singular::TriangleDuffyRadialPower,
           [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -3152,6 +3155,25 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
   CheckClose(GatherParallelMatrix(*overlapping_feature_patches.patches[0].matrix),
              GatherParallelMatrix(*coupled_patch.matrix));
   CHECK(overlapping_feature_patches.patches[1].global_enrichment_dofs > 0);
+
+  auto inconsistent_membership = one_feature_membership;
+  bool changed_shared_membership = false;
+  for (std::size_t i = 0; i < inconsistent_membership.size(); i++)
+  {
+    if (numbering.h1.owner[i] != Mpi::Rank(Mpi::World()))
+    {
+      inconsistent_membership[i] = {1};
+      changed_shared_membership = true;
+      break;
+    }
+  }
+  Mpi::GlobalOr(1, &changed_shared_membership, Mpi::World());
+  REQUIRE(changed_shared_membership);
+  CHECK_THROWS_AS(
+      fem::singular::BuildParallelFeaturePatches(
+          *correction_dirichlet.constrained, *correction_blocks.standard_enrichment,
+          parallel_h1_space.GetTrueVSize(), inconsistent_membership, numbering.h1, 2),
+      std::invalid_argument);
 
   mfem::Vector patch_vector(coupled_patch.true_dofs.Size());
   mfem::Vector restricted_full(correction_dirichlet.constrained->Width());

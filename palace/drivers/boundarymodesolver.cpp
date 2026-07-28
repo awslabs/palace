@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 #include <nlohmann/json.hpp>
+#include "drivers/singularsolver.hpp"
 #include "fem/singularfield.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
@@ -25,6 +26,7 @@
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
 #include "models/postoperator.hpp"
+#include "models/singularsurfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -120,6 +122,12 @@ struct SingularModeTipSlopeMeasurement
 {
   int mode;
   fem::singular::H1TipSlopeDiagnostic diagnostic;
+};
+
+struct SingularModeSurfaceMeasurement
+{
+  int mode;
+  std::vector<TriangleSingularSurfacePostOperator::Measurement> interfaces;
 };
 
 constexpr std::size_t ModeCoefficientIntegerFields = 24;
@@ -847,6 +855,46 @@ void WriteSingularModeTipSlopeMeasurements(
   output.WriteFullTableTrunc();
 }
 
+void WriteSingularModeSurfaceMeasurements(
+    const fs::path &post_dir,
+    const std::vector<SingularModeSurfaceMeasurement> &measurements, bool root)
+{
+  if (!root || measurements.empty() || measurements.front().interfaces.empty())
+  {
+    return;
+  }
+  TableWithCSVFile output(post_dir / "surface-Q.csv");
+  output.table.insert(Column("idx", "m", -1, 0, 2, ""));
+  for (const auto &interface : measurements.front().interfaces)
+  {
+    output.table.insert(fmt::format("p_{}", interface.index),
+                        fmt::format("p_surf[{}]", interface.index));
+    output.table.insert(fmt::format("Q_{}", interface.index),
+                        fmt::format("Q_surf[{}]", interface.index));
+  }
+  for (const auto &measurement : measurements)
+  {
+    if (measurement.interfaces.size() != measurements.front().interfaces.size())
+    {
+      throw std::runtime_error(
+          "Singular BoundaryMode surface measurements changed interface count!");
+    }
+    output.table["idx"] << measurement.mode;
+    for (std::size_t i = 0; i < measurement.interfaces.size(); i++)
+    {
+      const auto &interface = measurement.interfaces[i];
+      if (interface.index != measurements.front().interfaces[i].index)
+      {
+        throw std::runtime_error(
+            "Singular BoundaryMode surface measurements changed interface ordering!");
+      }
+      output.table[fmt::format("p_{}", interface.index)] << interface.participation;
+      output.table[fmt::format("Q_{}", interface.index)] << interface.quality_factor;
+    }
+  }
+  output.WriteFullTableTrunc();
+}
+
 class SingularBoundaryModeParaviewOutput
 {
 private:
@@ -1115,13 +1163,14 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
     MFEM_VERIFY(iodata.solver.singular_elements.order == 1,
                 "Triangular BoundaryMode singular enrichment currently supports only "
                 "Solver.SingularElements.Order = 1!");
-    serial_singular_features = fem::singular::ExtractSerialLineTipFeatures(
-        *smesh, iodata.solver.singular_elements.attributes);
+    serial_singular_features = fem::singular::ExtractSerialLineFeatures(
+        *smesh, iodata.solver.singular_elements.attributes,
+        GetSingularTriangleMaterials(iodata));
   }
   fem::singular::BroadcastSerialLineTipFeatures(serial_singular_features, comm);
   MFEM_VERIFY(!serial_singular_features.Empty(),
-              "BoundaryMode singular feature extraction produced no internal PEC line "
-              "tips!");
+              "BoundaryMode singular feature extraction produced no PEC line tips or "
+              "corners!");
 }
 
 bool BoundaryModeSolver::RequiresSourceSerialMeshMetadata() const
@@ -1243,11 +1292,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   singular_measurements.reserve(std::min(num_conv, num_modes));
   std::vector<SingularModeCoefficientMeasurement> singular_coefficient_measurements;
   std::vector<SingularModeTipSlopeMeasurement> singular_tip_slope_measurements;
+  std::vector<SingularModeSurfaceMeasurement> singular_surface_measurements;
   std::unique_ptr<fem::singular::TriangleEnrichedNDFieldEvaluator>
       singular_et_real_evaluator, singular_et_imag_evaluator;
   std::unique_ptr<fem::singular::TriangleEnrichedH1FieldEvaluator>
       singular_en_real_evaluator, singular_en_imag_evaluator;
   std::unique_ptr<SingularBoundaryModeParaviewOutput> singular_paraview;
+  std::unique_ptr<TriangleSingularSurfacePostOperator> singular_surface_postoperator;
   if (singular)
   {
     const auto &singular_dofs = mode_op.GetSingularDofTopology();
@@ -1264,6 +1315,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     singular_en_imag_evaluator =
         std::make_unique<fem::singular::TriangleEnrichedH1FieldEvaluator>(
             singular_dofs, singular_numbering, mode_op.GetH1Space().Get());
+    singular_surface_postoperator = std::make_unique<TriangleSingularSurfacePostOperator>(
+        iodata.boundaries.postpro, mode_op.GetMaterialOp(), mode_op.GetNDSpace().Get());
     if (iodata.problem.output_formats.paraview && bm.n_post > 0)
     {
       singular_paraview = std::make_unique<SingularBoundaryModeParaviewOutput>(
@@ -1313,17 +1366,20 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                iodata.problem.output_formats.paraview && bm.n_post > 0},
               {"MFEMGridFunction", false},
               {"VoltageAndImpedance", false},
-              {"SurfaceMeasurements", false}}},
+              {"SurfaceMeasurements", !singular_surface_postoperator->Empty()},
+              {"SurfaceQuadrature", "endpoint-weighted Gauss-Jacobi"}}},
             {"ErrorEstimator", false},
-            {"IdealSheetSurfaceParticipation",
-             {{"Enabled", false}, {"Reason", "logarithmically divergent for nu <= 1/2"}}}});
+            {"SurfaceIntegrability",
+             GetSingularSurfaceIntegrabilityMetadata(local_singular_features)},
+            {"SurfaceParticipation", GetSingularSurfaceParticipationMetadata(iodata)}});
     Mpi::Warning(
         mode_op.GetComm(),
         "Singular BoundaryMode reconstructs combined ND/H1 fields and reports exact "
-        "transverse/normal electric and magnetic energies. Voltage, impedance, surface "
-        "measurements, MFEM grid-function output, and the standard flux error estimator "
-        "remain disabled. Standard-only postprocessing cannot consume the enriched "
-        "eigenvectors!\n");
+        "transverse/normal electric and magnetic energies. Integrable dielectric surface "
+        "measurements use the combined field and endpoint-weighted quadrature. Voltage, "
+        "impedance, MFEM grid-function output, and the standard flux error estimator "
+        "remain disabled. Ideal-sheet surface traces with nu <= 1/2 require an explicit "
+        "physical cutoff or response model.\n");
   }
 
   const int n_print = std::min(num_conv, num_modes);
@@ -1342,7 +1398,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const std::complex<double> P_initial = mode_op.ComputePoyntingPower(omega, kn, et, en);
     if (std::abs(P_initial) > 0.0)
     {
-      e0 *= 1.0 / std::sqrt(std::abs(P_initial));
+      const double normalization = 1.0 / std::sqrt(std::abs(P_initial));
+      et *= normalization;
+      en *= normalization;
     }
     const std::complex<double> P_normalized =
         mode_op.ComputePoyntingPower(omega, kn, et, en);
@@ -1358,6 +1416,19 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       singular_et_imag_evaluator->SetFromTrueDofs(et.Imag());
       singular_en_real_evaluator->SetFromTrueDofs(en.Real());
       singular_en_imag_evaluator->SetFromTrueDofs(en.Imag());
+      if (!singular_surface_postoperator->Empty())
+      {
+        singular_surface_measurements.push_back(
+            {i + 1,
+             singular_surface_postoperator->Measure(
+                 *singular_et_real_evaluator, *singular_et_imag_evaluator,
+                 field_energies.electric_transverse + field_energies.electric_normal,
+                 {iodata.solver.singular_elements.quadrature_order,
+                  iodata.solver.singular_elements.abs_tol,
+                  iodata.solver.singular_elements.rel_tol,
+                  iodata.solver.singular_elements.max_subdivisions},
+                 singular_en_real_evaluator.get(), singular_en_imag_evaluator.get())});
+      }
       const auto &numbering = mode_op.GetSingularDofNumbering();
       auto mode_coefficients = GatherModeCoefficientMeasurements(
           mode_op.GetComm(), i + 1,
@@ -1428,6 +1499,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                              singular_coefficient_measurements, root);
     WriteSingularModeTipSlopeMeasurements(post_dir, iodata, singular_tip_slope_measurements,
                                           root);
+    WriteSingularModeSurfaceMeasurements(post_dir, singular_surface_measurements, root);
   }
   else
   {

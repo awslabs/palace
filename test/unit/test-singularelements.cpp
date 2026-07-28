@@ -3378,6 +3378,17 @@ TEST_CASE("Singular triangle node Duffy quadrature", "[singularelements][triangl
     CHECK_THAT(value, WithinAbs(1.0 / (exponent + 2.0), 3.0e-14));
   }
 
+  constexpr double transmission_nu = 0.5255535;
+  const double transmission_exponent = 2.0 * transmission_nu - 2.0;
+  const double transmission_value = fem::singular::IntegrateReferenceTriangleNodeDuffy(
+      95, 0, fem::singular::TriangleDuffyRadialPower,
+      [transmission_exponent](const TriangleBarycentricPoint &lambda)
+      {
+        return std::pow(fem::singular::TriangleNodeRadialCoordinate(lambda, 0),
+                        transmission_exponent);
+      });
+  CHECK_THAT(transmission_value, WithinAbs(1.0 / (transmission_exponent + 2.0), 2.0e-13));
+
   const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
   const auto gradient_mass = [&grad_lambda](int quadrature_order)
   {
@@ -3423,6 +3434,39 @@ TEST_CASE("Singular triangle rejects invalid inputs",
       fem::singular::IntegrateReferenceTriangleNodeDuffy(
           12, 0, 6.0, [](const auto &) { return std::numeric_limits<double>::infinity(); }),
       std::domain_error);
+}
+
+TEST_CASE("Weighted segment quadrature integrates Jacobi moments",
+          "[singularelements][quadrature][Serial]")
+{
+  for (const auto [alpha, beta] : std::array<std::pair<double, double>, 4>{
+           std::pair{0.0, 0.0}, std::pair{-0.75, 0.0}, std::pair{0.25, 1.5},
+           std::pair{2.0 * 0.525553491856 - 2.0, 2.0 * 0.525553491856 - 2.0}})
+  {
+    const auto rule = fem::singular::BuildWeightedSegmentQuadrature(8, alpha, beta);
+    REQUIRE(rule.size() == 8);
+    for (int degree = 0; degree <= 15; degree++)
+    {
+      long double value = 0.0L;
+      for (const auto &point : rule)
+      {
+        value += point.weight * std::pow(point.coordinate, degree);
+      }
+      const double exact =
+          std::exp(std::lgamma(alpha + degree + 1.0) + std::lgamma(beta + 1.0) -
+                   std::lgamma(alpha + beta + degree + 2.0));
+      CAPTURE(alpha, beta, degree, value, exact);
+      CHECK_THAT(static_cast<double>(value), WithinRel(exact, 2.0e-12));
+    }
+  }
+
+  CHECK_THROWS_AS(fem::singular::BuildWeightedSegmentQuadrature(0, 0.0, 0.0),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::BuildWeightedSegmentQuadrature(4, -1.0, 0.0),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::BuildWeightedSegmentQuadrature(
+                      4, std::numeric_limits<double>::quiet_NaN(), 0.0),
+                  std::invalid_argument);
 }
 
 }  // namespace palace

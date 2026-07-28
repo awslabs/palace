@@ -196,10 +196,10 @@ TriangleDofTopology BuildLocalTriangleDofTopology(
 // each rank. The minimum participating rank owns a shared key, and owned keys
 // occupy one contiguous block per rank.
 //
-// This correctness-first implementation all-gathers fixed-width integer key
-// encodings. It is deterministic and avoids raw-struct or floating-point
-// communication, but should be replaced by distributed key rendezvous before
-// production-scale layouts.
+// Fixed-width integer keys use a deterministic distributed rendezvous. Each
+// owner sorts its keys before assigning true-DOF numbers, preserving
+// decomposition-independent numbering without replicating the global key
+// table.
 ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm, const DofTopology &topology);
 
 ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm,

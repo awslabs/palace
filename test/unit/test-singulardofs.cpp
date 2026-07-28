@@ -750,6 +750,109 @@ TEST_CASE("Singular DOF keys produce matching H1 and tangential ND traces",
   }
 }
 
+TEST_CASE("Random singular ND fields are globally Hcurl conforming",
+          "[singulardofs][Serial]")
+{
+  auto mesh = RectangleSheetMesh();
+  const auto features = fem::singular::ExtractSerialSheetFeatures(mesh, {7, 8});
+  constexpr std::array<std::array<double, 3>, 5> face_weights{
+      std::array<double, 3>{0.217, 0.331, 0.452},
+      std::array<double, 3>{0.113, 0.521, 0.366},
+      std::array<double, 3>{0.587, 0.172, 0.241},
+      std::array<double, 3>{0.302, 0.619, 0.079},
+      std::array<double, 3>{0.431, 0.293, 0.276}};
+
+  for (int order = 1; order <= 3; order++)
+  {
+    CAPTURE(order);
+    const auto dofs = fem::singular::BuildSerialDofTopology(mesh, features, order);
+    std::vector<double> coefficients(dofs.nd_dofs.size());
+    for (std::size_t i = 0; i < coefficients.size(); i++)
+    {
+      coefficients[i] = std::sin(0.731 * static_cast<double>(i + 1)) +
+                        0.37 * std::cos(1.193 * static_cast<double>(i + 1));
+    }
+
+    int shared_faces = 0;
+    for (int first = 0; first < mesh.GetNE(); first++)
+    {
+      std::set<int> first_vertices(mesh.GetElement(first)->GetVertices(),
+                                   mesh.GetElement(first)->GetVertices() + 4);
+      for (int second = first + 1; second < mesh.GetNE(); second++)
+      {
+        std::vector<int> intersection;
+        const int *second_vertices = mesh.GetElement(second)->GetVertices();
+        for (int i = 0; i < 4; i++)
+        {
+          if (first_vertices.count(second_vertices[i]) != 0)
+          {
+            intersection.push_back(second_vertices[i]);
+          }
+        }
+        if (intersection.size() != 3)
+        {
+          continue;
+        }
+        shared_faces++;
+        std::sort(intersection.begin(), intersection.end());
+        const std::array<int, 3> face{intersection[0], intersection[1], intersection[2]};
+        const auto gradients_first = PhysicalBarycentricGradients(mesh, first);
+        const auto gradients_second = PhysicalBarycentricGradients(mesh, second);
+        const std::array<fem::singular::Vector3, 2> tangents{
+            MeshEdge(mesh, face[0], face[1]), MeshEdge(mesh, face[0], face[2])};
+
+        const auto face_point =
+            [&face](const mfem::Element &element, const std::array<double, 3> &weights)
+        {
+          fem::singular::BarycentricPoint lambda{};
+          for (int i = 0; i < 3; i++)
+          {
+            const int *vertex =
+                std::find(element.GetVertices(), element.GetVertices() + 4, face[i]);
+            REQUIRE(vertex != element.GetVertices() + 4);
+            lambda[vertex - element.GetVertices()] = weights[i];
+          }
+          return lambda;
+        };
+        const auto evaluate = [&](int element,
+                                  const fem::singular::BarycentricPoint &lambda,
+                                  const fem::singular::BarycentricGradients &gradients)
+        {
+          fem::singular::Vector3 value{};
+          for (const auto &dof : dofs.elements[element].nd)
+          {
+            const auto basis =
+                fem::singular::EvaluateHigherOrderBasis(lambda, gradients, dof.basis);
+            for (int d = 0; d < 3; d++)
+            {
+              value[d] += coefficients[dof.dof] * basis.value[d];
+            }
+          }
+          return value;
+        };
+
+        for (const auto &weights : face_weights)
+        {
+          const auto lambda_first = face_point(*mesh.GetElement(first), weights);
+          const auto lambda_second = face_point(*mesh.GetElement(second), weights);
+          const auto value_first = evaluate(first, lambda_first, gradients_first);
+          const auto value_second = evaluate(second, lambda_second, gradients_second);
+          for (int component = 0; component < 2; component++)
+          {
+            const double trace_first = Dot(value_first, tangents[component]);
+            const double trace_second = Dot(value_second, tangents[component]);
+            const double scale =
+                1.0 + std::max(std::abs(trace_first), std::abs(trace_second));
+            CAPTURE(first, second, component, weights);
+            CHECK(std::abs(trace_first - trace_second) <= 5.0e-10 * scale);
+          }
+        }
+      }
+    }
+    CHECK(shared_faces > 0);
+  }
+}
+
 TEST_CASE("Singular H1 essential DOFs are classified by PEC sheet trace",
           "[singulardofs][Serial]")
 {

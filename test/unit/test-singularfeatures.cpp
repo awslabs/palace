@@ -10,7 +10,9 @@
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/singularfeatures.hpp"
 #include "fem/singulargeometry.hpp"
@@ -138,6 +140,57 @@ mfem::Mesh PerimeterJunctionMesh()
   return mesh;
 }
 
+mfem::Mesh FiniteMetalWedgeMesh(bool heterogeneous = false)
+{
+  // Three right-angle tetrahedral sectors fill a 3*pi/2 dielectric fan around
+  // edge (0, 1). The omitted fourth sector is the finite metal.
+  mfem::Mesh mesh(3, 6, 3, 2, 3);
+  mesh.AddVertex(0.0, 0.0, -1.0);
+  mesh.AddVertex(0.0, 0.0, 1.0);
+  mesh.AddVertex(1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, 1.0, 0.0);
+  mesh.AddVertex(-1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, -1.0, 0.0);
+
+  mesh.AddTet(0, 1, 2, 3, 1);
+  mesh.AddTet(0, 1, 3, 4, 1);
+  mesh.AddTet(0, 1, 4, 5, heterogeneous ? 2 : 1);
+  mesh.AddBdrTriangle(0, 1, 2, 7);
+  mesh.AddBdrTriangle(0, 5, 1, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
+mfem::Mesh SplitFiniteMetalWedgeMesh(bool axial_exponent_transition = false)
+{
+  // Split the same 3*pi/2 fan into two segments along edge (0, 1, 2).
+  // With axial_exponent_transition, only the upper final sector changes
+  // material, so the two collinear edge segments have different exponents.
+  mfem::Mesh mesh(3, 7, 6, 4, 3);
+  mesh.AddVertex(0.0, 0.0, -1.0);
+  mesh.AddVertex(0.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, 0.0, 1.0);
+  mesh.AddVertex(1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, 1.0, 0.0);
+  mesh.AddVertex(-1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, -1.0, 0.0);
+
+  mesh.AddTet(0, 1, 3, 4, 1);
+  mesh.AddTet(1, 2, 3, 4, 1);
+  mesh.AddTet(0, 1, 4, 5, 1);
+  mesh.AddTet(1, 2, 4, 5, 1);
+  mesh.AddTet(0, 1, 5, 6, 1);
+  mesh.AddTet(1, 2, 5, 6, axial_exponent_transition ? 2 : 1);
+  mesh.AddBdrTriangle(0, 1, 3, 7);
+  mesh.AddBdrTriangle(1, 2, 3, 7);
+  mesh.AddBdrTriangle(0, 6, 1, 7);
+  mesh.AddBdrTriangle(1, 6, 2, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
 mfem::Mesh InternalLineTipMesh(bool bend = false, bool selected_external_edge = false,
                                bool straight_chain = false)
 {
@@ -182,6 +235,66 @@ mfem::Mesh InternalLineTipMesh(bool bend = false, bool selected_external_edge = 
   return mesh;
 }
 
+mfem::Mesh FiniteMetalCornerMesh(bool heterogeneous = true)
+{
+  // The omitted upper-right quadrant is metal. The six triangles form the
+  // 3*pi/2 dielectric fan between the two selected PEC rays.
+  mfem::Mesh mesh(2, 8, 6, 8, 2);
+  mesh.AddVertex(0.0, 0.0);
+  mesh.AddVertex(1.0, 0.0);
+  mesh.AddVertex(1.0, -1.0);
+  mesh.AddVertex(0.0, -1.0);
+  mesh.AddVertex(-1.0, -1.0);
+  mesh.AddVertex(-1.0, 0.0);
+  mesh.AddVertex(-1.0, 1.0);
+  mesh.AddVertex(0.0, 1.0);
+
+  mesh.AddTriangle(0, 2, 1, 1);
+  mesh.AddTriangle(0, 3, 2, 1);
+  mesh.AddTriangle(0, 4, 3, 1);
+  mesh.AddTriangle(0, 5, 4, 1);
+  mesh.AddTriangle(0, 6, 5, heterogeneous ? 2 : 1);
+  mesh.AddTriangle(0, 7, 6, heterogeneous ? 2 : 1);
+
+  mesh.AddBdrSegment(0, 1, 7);
+  mesh.AddBdrSegment(7, 0, 7);
+  mesh.AddBdrSegment(1, 2, 8);
+  mesh.AddBdrSegment(2, 3, 8);
+  mesh.AddBdrSegment(3, 4, 8);
+  mesh.AddBdrSegment(4, 5, 8);
+  mesh.AddBdrSegment(5, 6, 8);
+  mesh.AddBdrSegment(6, 7, 8);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
+mfem::Mesh StraightFiniteMetalBoundaryMesh()
+{
+  mfem::Mesh mesh(2, 6, 4, 6, 2);
+  mesh.AddVertex(0.0, 0.0);
+  mesh.AddVertex(1.0, 0.0);
+  mesh.AddVertex(2.0, 0.0);
+  mesh.AddVertex(0.0, 1.0);
+  mesh.AddVertex(1.0, 1.0);
+  mesh.AddVertex(2.0, 1.0);
+
+  mesh.AddTriangle(0, 1, 4, 1);
+  mesh.AddTriangle(0, 4, 3, 1);
+  mesh.AddTriangle(1, 2, 5, 1);
+  mesh.AddTriangle(1, 5, 4, 1);
+
+  mesh.AddBdrSegment(0, 1, 7);
+  mesh.AddBdrSegment(1, 2, 7);
+  mesh.AddBdrSegment(2, 5, 8);
+  mesh.AddBdrSegment(5, 4, 8);
+  mesh.AddBdrSegment(4, 3, 8);
+  mesh.AddBdrSegment(3, 0, 8);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
 void SetQuadraticGeometry(mfem::Mesh &mesh, bool curve_selected_feature)
 {
   const int dimension = mesh.SpaceDimension();
@@ -200,6 +313,35 @@ void SetQuadraticGeometry(mfem::Mesh &mesh, bool curve_selected_feature)
         {
           value[2] +=
               curve_selected_feature ? 0.1 * x[0] * (1.0 - x[0]) : 0.1 * x[0] * x[2];
+        }
+      });
+  mesh.GetNodes()->ProjectCoefficient(geometry);
+}
+
+void SetFiniteMetalWedgeGeometry(mfem::Mesh &mesh, bool varying_angle)
+{
+  const int order = varying_angle ? 4 : 2;
+  mesh.SetCurvature(order, false, 3, mfem::Ordering::byVDIM);
+  mfem::VectorFunctionCoefficient geometry(
+      3,
+      [varying_angle](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(3);
+        value = x;
+        if (varying_angle)
+        {
+          // This quartic shear leaves the z-axis feature straight and vanishes
+          // at t = 1/4, 1/2, and 3/4 along it. A three-sample angle check would
+          // therefore miss the variation between those points.
+          value[0] += 0.4 * x[1] * x[2] * (x[2] * x[2] - 0.25);
+        }
+        else
+        {
+          // Isotropic radial scaling curves the tetrahedra while preserving
+          // every cross-sectional wedge angle along the straight z-axis.
+          const double scale = 1.0 + 0.1 * x[2];
+          value[0] *= scale;
+          value[1] *= scale;
         }
       });
   mesh.GetNodes()->ProjectCoefficient(geometry);
@@ -331,8 +473,7 @@ TEST_CASE("Straight high-order singular segments require globally regular maps",
   set_map(
       [](double t)
       {
-        return (((t - 0.5) * (t - 0.5) * (t - 0.5) + 0.125) / 3.0 +
-                positive_floor * t) /
+        return (((t - 0.5) * (t - 0.5) * (t - 0.5) + 0.125) / 3.0 + positive_floor * t) /
                positive_integral;
       },
       [](double) { return 0.0; });
@@ -477,6 +618,69 @@ TEST_CASE("Singular line feature extraction rejects unsupported topology",
   }
 }
 
+TEST_CASE("Dirichlet material-wedge exponents recover homogeneous and transmission roots",
+          "[singularfeatures][triangle][Serial]")
+{
+  constexpr double pi = 3.14159265358979323846;
+  CHECK(fem::singular::ComputeDirichletWedgeExponent({{1, 1.5 * pi, 1.0}}) ==
+        Catch::Approx(2.0 / 3.0).epsilon(2.0e-13));
+
+  const std::vector<fem::singular::TriangleWedgeSector> sectors{{1, pi, 11.47},
+                                                                {2, 0.5 * pi, 1.0}};
+  const double nu = fem::singular::ComputeDirichletWedgeExponent(sectors);
+  CHECK(nu == Catch::Approx(0.5255535).epsilon(2.0e-7));
+  CHECK(std::abs(11.47 / std::tan(pi * nu) + 1.0 / std::tan(0.5 * pi * nu)) < 1.0e-11);
+
+  CHECK(fem::singular::ComputeDirichletWedgeExponent({{1, pi, 1.0}}) == 1.0);
+  CHECK_THROWS_AS(fem::singular::ComputeDirichletWedgeExponent({}), std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::ComputeDirichletWedgeExponent({{1, 0.5 * pi, -1.0}}),
+                  std::invalid_argument);
+}
+
+TEST_CASE("Singular line features extract one-sided finite-metal corners",
+          "[singularfeatures][triangle][Serial]")
+{
+  constexpr double pi = 3.14159265358979323846;
+  const std::vector<fem::singular::TriangleMaterial> materials{{1, 11.47}, {2, 1.0}};
+  auto mesh = FiniteMetalCornerMesh();
+  const auto topology = fem::singular::ExtractSerialLineFeatures(mesh, {7}, materials);
+  REQUIRE(topology.selected_segments.size() == 2);
+  REQUIRE(topology.vertices.size() == 1);
+  const auto &corner = topology.vertices[0];
+  CHECK(corner.mesh_vertex == 0);
+  CHECK(corner.type == fem::singular::FeatureVertexType::CORNER);
+  REQUIRE(corner.selected_segments.size() == 2);
+  REQUIRE(corner.sectors.size() == 2);
+  CHECK(corner.sectors[0].angle + corner.sectors[1].angle ==
+        Catch::Approx(1.5 * pi).epsilon(2.0e-14));
+  CHECK(corner.nu == Catch::Approx(0.5255535).epsilon(2.0e-7));
+
+  std::size_t incidence_count = 0;
+  for (const auto &element : topology.elements)
+  {
+    incidence_count += element.nodes.size();
+  }
+  CHECK(incidence_count == 6);
+
+  auto homogeneous_mesh = FiniteMetalCornerMesh(false);
+  const auto homogeneous =
+      fem::singular::ExtractSerialLineFeatures(homogeneous_mesh, {7}, {{1, 1.0}});
+  REQUIRE(homogeneous.vertices.size() == 1);
+  CHECK(homogeneous.vertices[0].nu == Catch::Approx(2.0 / 3.0).epsilon(2.0e-13));
+  REQUIRE(homogeneous.vertices[0].sectors.size() == 1);
+  CHECK(homogeneous.vertices[0].sectors[0].angle ==
+        Catch::Approx(1.5 * pi).epsilon(2.0e-14));
+
+  auto straight_mesh = StraightFiniteMetalBoundaryMesh();
+  const auto straight =
+      fem::singular::ExtractSerialLineFeatures(straight_mesh, {7}, {{1, 1.0}});
+  CHECK(straight.selected_segments.size() == 2);
+  CHECK(straight.vertices.empty());
+
+  CHECK_THROWS_AS(fem::singular::ExtractSerialLineFeatures(mesh, {7}, {{1, 11.47}}),
+                  std::invalid_argument);
+}
+
 TEST_CASE("Serial singular line-tip blueprints broadcast sparsely",
           "[singularfeatures][triangle][Parallel]")
 {
@@ -521,6 +725,33 @@ TEST_CASE("Serial singular line-tip blueprints broadcast sparsely",
       CHECK(broadcast.elements[element].nodes[node].canonical_nodes ==
             expected.elements[element].nodes[node].canonical_nodes);
     }
+  }
+}
+
+TEST_CASE("Finite-metal corner blueprints preserve material sectors across broadcast",
+          "[singularfeatures][triangle][Parallel]")
+{
+  auto mesh = FiniteMetalCornerMesh();
+  const auto expected =
+      fem::singular::ExtractSerialLineFeatures(mesh, {7}, {{1, 11.47}, {2, 1.0}});
+  auto broadcast =
+      Mpi::Root(Mpi::World()) ? expected : fem::singular::TriangleFeatureTopology{};
+  fem::singular::BroadcastSerialLineTipFeatures(broadcast, Mpi::World());
+
+  REQUIRE(broadcast.vertices.size() == 1);
+  REQUIRE(expected.vertices.size() == 1);
+  const auto &actual_corner = broadcast.vertices[0];
+  const auto &expected_corner = expected.vertices[0];
+  CHECK(actual_corner.type == fem::singular::FeatureVertexType::CORNER);
+  CHECK(actual_corner.selected_segments == expected_corner.selected_segments);
+  CHECK(actual_corner.nu == expected_corner.nu);
+  REQUIRE(actual_corner.sectors.size() == expected_corner.sectors.size());
+  for (std::size_t i = 0; i < expected_corner.sectors.size(); i++)
+  {
+    CHECK(actual_corner.sectors[i].domain_attribute ==
+          expected_corner.sectors[i].domain_attribute);
+    CHECK(actual_corner.sectors[i].angle == expected_corner.sectors[i].angle);
+    CHECK(actual_corner.sectors[i].permittivity == expected_corner.sectors[i].permittivity);
   }
 }
 
@@ -613,6 +844,79 @@ TEST_CASE("Singular sheet features group collinear mesh edges into straight feat
   CHECK(straight.mesh_vertices == std::vector<int>{0, 1, 2});
   CHECK(straight.nu == 2.0 / 3.0);
   CHECK_FALSE(straight.closed);
+}
+
+TEST_CASE("Finite-metal wedge features infer homogeneous and transmission exponents",
+          "[singularfeatures][Serial]")
+{
+  constexpr double pi = 3.14159265358979323846;
+  auto homogeneous_mesh = FiniteMetalWedgeMesh();
+  const auto homogeneous = fem::singular::ExtractSerialSheetFeatures(
+      homogeneous_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  REQUIRE(homogeneous.sheet_faces.size() == 2);
+  REQUIRE(homogeneous.segments.size() == 1);
+  REQUIRE(homogeneous.features.size() == 1);
+  REQUIRE(homogeneous.vertices.size() == 2);
+  CHECK(homogeneous.segments[0].mesh_vertices == std::array<int, 2>{0, 1});
+  CHECK(homogeneous.features[0].nu == Catch::Approx(2.0 / 3.0).margin(2.0e-13));
+  CHECK(homogeneous.features[0].segments == std::vector<std::size_t>{0});
+  CHECK_FALSE(homogeneous.features[0].closed);
+  for (const auto &vertex : homogeneous.vertices)
+  {
+    CHECK(vertex.type == fem::singular::FeatureVertexType::ENDPOINT);
+    CHECK(vertex.nu == Catch::Approx(2.0 / 3.0).margin(2.0e-13));
+  }
+  for (const auto &element : homogeneous.elements)
+  {
+    REQUIRE(element.edges.size() == 1);
+    REQUIRE(element.nodes.size() == 2);
+    CHECK(element.edges[0].segment == 0);
+  }
+
+  auto curved_constant_angle_mesh = FiniteMetalWedgeMesh();
+  SetFiniteMetalWedgeGeometry(curved_constant_angle_mesh, false);
+  const auto curved_constant_angle = fem::singular::ExtractSerialSheetFeatures(
+      curved_constant_angle_mesh, {7},
+      std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  REQUIRE(curved_constant_angle.features.size() == 1);
+  CHECK(curved_constant_angle.features[0].nu == Catch::Approx(2.0 / 3.0).margin(2.0e-12));
+
+  auto curved_varying_angle_mesh = FiniteMetalWedgeMesh();
+  SetFiniteMetalWedgeGeometry(curved_varying_angle_mesh, true);
+  CHECK_THROWS_WITH(
+      fem::singular::ExtractSerialSheetFeatures(
+          curved_varying_angle_mesh, {7},
+          std::vector<fem::singular::TriangleMaterial>{{1, 1.0}}),
+      Catch::Matchers::ContainsSubstring("cross-sectional angle which varies"));
+
+  auto heterogeneous_mesh = FiniteMetalWedgeMesh(true);
+  const std::vector<fem::singular::TriangleMaterial> materials{{1, 11.47}, {2, 1.0}};
+  const auto heterogeneous =
+      fem::singular::ExtractSerialSheetFeatures(heterogeneous_mesh, {7}, materials);
+  REQUIRE(heterogeneous.features.size() == 1);
+  const double expected =
+      fem::singular::ComputeDirichletWedgeExponent({{1, pi, 11.47}, {2, 0.5 * pi, 1.0}});
+  CHECK(heterogeneous.features[0].nu == Catch::Approx(expected).margin(2.0e-13));
+  CHECK(heterogeneous.features[0].nu < 2.0 / 3.0);
+
+  CHECK_THROWS_AS(fem::singular::ExtractSerialSheetFeatures(
+                      heterogeneous_mesh, {7},
+                      std::vector<fem::singular::TriangleMaterial>{{1, 11.47}}),
+                  std::invalid_argument);
+
+  auto split_mesh = SplitFiniteMetalWedgeMesh();
+  const auto split = fem::singular::ExtractSerialSheetFeatures(
+      split_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  REQUIRE(split.segments.size() == 2);
+  REQUIRE(split.features.size() == 1);
+  CHECK(split.features[0].segments == std::vector<std::size_t>{0, 1});
+  CHECK(split.features[0].nu == Catch::Approx(2.0 / 3.0).margin(2.0e-13));
+
+  auto transition_mesh = SplitFiniteMetalWedgeMesh(true);
+  CHECK_THROWS_WITH(fem::singular::ExtractSerialSheetFeatures(
+                        transition_mesh, {7},
+                        std::vector<fem::singular::TriangleMaterial>{{1, 11.47}, {2, 1.0}}),
+                    Catch::Matchers::ContainsSubstring("point-transition enrichment"));
 }
 
 TEST_CASE("Singular sheet feature IDs and basis tuples ignore element ordering",

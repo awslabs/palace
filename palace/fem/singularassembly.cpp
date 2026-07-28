@@ -443,8 +443,9 @@ TriangleQuadratureResult IntegrateTriangleDuffy(int row_node, int column_node,
                                                 const AdaptiveAssemblyOptions &options,
                                                 Integrand &&integrand)
 {
-  const int high_order = std::max(H1DuffyReferenceOrder, 2 * options.quadrature_order + 15);
-  const int comparison_order = high_order - 8;
+  const int initial_high_order =
+      std::max(H1DuffyReferenceOrder, 2 * options.quadrature_order + 15);
+  constexpr int order_increment = 8;
   const bool partitioned = row_node >= 0 && column_node >= 0 && row_node != column_node;
   const int aligned_node = row_node >= 0 ? row_node : column_node;
   if (aligned_node < 0 || aligned_node >= 3)
@@ -457,13 +458,13 @@ TriangleQuadratureResult IntegrateTriangleDuffy(int row_node, int column_node,
   {
     if (!partitioned)
     {
-      return IntegrateReferenceTriangleNodeDuffy(order, aligned_node, H1DuffyRadialPower,
-                                                 integrand);
+      return IntegrateReferenceTriangleNodeDuffy(order, aligned_node,
+                                                 TriangleDuffyRadialPower, integrand);
     }
     const auto chart = [&](int node, int other)
     {
       return IntegrateReferenceTriangleNodeDuffy(
-          order, node, H1DuffyRadialPower,
+          order, node, TriangleDuffyRadialPower,
           [&](const TriangleBarycentricPoint &lambda)
           {
             return TriangleDuffyPartitionWeight(lambda, node, other) * integrand(lambda);
@@ -472,27 +473,42 @@ TriangleQuadratureResult IntegrateTriangleDuffy(int row_node, int column_node,
     return chart(row_node, column_node) + chart(column_node, row_node);
   };
 
-  const double value = integrate(high_order);
-  const double comparison = integrate(comparison_order);
-  const double scale = std::max({1.0, std::abs(value), std::abs(comparison)});
-  const double error = H1DuffyErrorSafetyFactor * std::abs(value - comparison) +
-                       64.0 * std::numeric_limits<double>::epsilon() * scale;
-  const double tolerance =
-      options.absolute_tolerance + options.relative_tolerance * std::abs(value);
-  if (!std::isfinite(value) || !std::isfinite(comparison) || !std::isfinite(error) ||
-      error < 0.0 || error > tolerance)
-  {
-    throw std::runtime_error(fmt::format(
-        "Triangular singular Duffy integral did not meet tolerance: value = {:.17g}, "
-        "comparison = {:.17g}, estimated absolute error = {:.17g}, tolerance = "
-        "{:.17g}, orders = {}/{}!",
-        value, comparison, error, tolerance, high_order, comparison_order));
-  }
   const std::size_t charts = partitioned ? 2 : 1;
-  const std::size_t point_count =
-      charts * (ReferenceTriangleNodeDuffyQuadraturePointCount(high_order) +
-                ReferenceTriangleNodeDuffyQuadraturePointCount(comparison_order));
-  return {value, error, point_count};
+  int comparison_order = initial_high_order - order_increment;
+  double comparison = integrate(comparison_order);
+  std::size_t point_count =
+      charts * ReferenceTriangleNodeDuffyQuadraturePointCount(comparison_order);
+  double value = std::numeric_limits<double>::quiet_NaN();
+  double error = std::numeric_limits<double>::infinity();
+  double tolerance = 0.0;
+  int high_order = initial_high_order;
+  for (int refinement = 0; refinement <= options.maximum_subdivisions; refinement++)
+  {
+    value = integrate(high_order);
+    point_count += charts * ReferenceTriangleNodeDuffyQuadraturePointCount(high_order);
+    const double scale = std::max({1.0, std::abs(value), std::abs(comparison)});
+    error = H1DuffyErrorSafetyFactor * std::abs(value - comparison) +
+            64.0 * std::numeric_limits<double>::epsilon() * scale;
+    tolerance = options.absolute_tolerance + options.relative_tolerance * std::abs(value);
+    if (std::isfinite(value) && std::isfinite(comparison) && std::isfinite(error) &&
+        error >= 0.0 && error <= tolerance)
+    {
+      return {value, error, point_count};
+    }
+    if (refinement == options.maximum_subdivisions)
+    {
+      break;
+    }
+    comparison = value;
+    comparison_order = high_order;
+    high_order += order_increment;
+  }
+  throw std::runtime_error(fmt::format(
+      "Triangular singular Duffy integral did not meet tolerance: value = {:.17g}, "
+      "comparison = {:.17g}, estimated absolute error = {:.17g}, tolerance = "
+      "{:.17g}, orders = {}/{}, order refinements = {}!",
+      value, comparison, error, tolerance, high_order, comparison_order,
+      options.maximum_subdivisions));
 }
 
 void ValidateInputs(const ElementDofMap &element_dofs,
@@ -2632,11 +2648,14 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
     }
     catch (const std::exception &error)
     {
+      const auto &basis = element_dofs.nd.front().basis;
       throw std::runtime_error(fmt::format(
           "Triangular singular sparse assembly failed on local mesh element {} "
-          "(relative Jacobian variation = {:.3e}): {}",
+          "(relative Jacobian variation = {:.3e}, first singular basis family = {}, "
+          "nodes = [{}, {}, {}], nu = {:.17g}): {}",
           element, GetElementTransformationRelativeJacobianVariation(transformation),
-          error.what()));
+          static_cast<int>(basis.family), basis.nodes[0], basis.nodes[1], basis.nodes[2],
+          basis.nu, error.what()));
     }
     ApplyIsotropicMaterialCoefficients(materials[element], enrichment);
     ApplyIsotropicMaterialCoefficients(materials[element], coupling);

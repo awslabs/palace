@@ -625,6 +625,7 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   t = dielectric.at("Thickness");             // Required
   epsilon_r = dielectric.at("Permittivity");  // Required
   tandelta = dielectric.value("LossTan", tandelta);
+  edge_cutoff = dielectric.value("EdgeCutoff", edge_cutoff);
 }
 
 ModeImpedanceData::ModeImpedanceData(const json &imp)
@@ -1699,6 +1700,7 @@ void Nondimensionalize(const Units &units, SurfaceFluxData &data)
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
 {
   data.t /= units.GetMeshLengthRelativeScale();
+  data.edge_cutoff /= units.GetMeshLengthRelativeScale();
 }
 
 void Nondimensionalize(const Units &units, EigenSolverData &data)

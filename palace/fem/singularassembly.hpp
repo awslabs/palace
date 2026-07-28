@@ -26,6 +26,7 @@ inline constexpr int H1DuffyReferenceOrder = 47;
 inline constexpr int H1DuffyComparisonOrder = 39;
 inline constexpr double H1DuffyRadialPower = 6.0;
 inline constexpr double H1DuffyErrorSafetyFactor = 8.0;
+inline constexpr double TriangleDuffyRadialPower = 4.0;
 
 struct AdaptiveAssemblyOptions
 {

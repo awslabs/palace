@@ -1,0 +1,75 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "postpro/electrostatic"
+  },
+  "Model": {
+    "Mesh": "singular_wedge.mesh",
+    "L0": 1.0,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 2.3
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [8]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [7]
+      }
+    ],
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [7],
+          "Type": "MS",
+          "Thickness": 0.002,
+          "Permittivity": 10.0,
+          "LossTan": 1.0
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Electrostatic": {
+      "Save": 0
+    },
+    "SingularElements": {
+      "Attributes": [7],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 1.0e-3,
+      "RelTol": 1.0e-3,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 500,
+      "MGMaxLevels": 1
+    }
+  }
+}

@@ -275,6 +275,47 @@ TEST_CASE("singular_sheet_eigenmode", "[Serial][Parallel][Regression]")
                                   "singular_sheet_eigenmode.json", "eigenmode", opts);
 }
 
+TEST_CASE("singular_wedge_electrostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 1.0e-20;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-coefficients.csv"] =
+      CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+  opts.custom_checks["singular-edge-slopes.csv"] =
+      CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_electrostatic.json",
+                                  "electrostatic", opts);
+}
+
+TEST_CASE("singular_wedge_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 1.0e-13;
+  opts.excluded_columns = {"Error ("};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_eigenmode.json",
+                                  "eigenmode", opts);
+}
+
+TEST_CASE("singular_wedge_driven", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Relative residual"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_driven.json", "driven",
+                                  opts);
+}
+
 TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -668,6 +709,22 @@ TEST_CASE("singular_line_electrostatic", "[Serial][Parallel][Regression]")
       CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
   palace::test::RunRegressionCase("singular_line_electrostatic",
                                   "singular_line_electrostatic.json", "", opts);
+}
+
+TEST_CASE("singular_corner_electrostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-8;
+  opts.atol = 1.0e-20;
+  opts.excluded_columns = {"true_dof"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-coefficients.csv"] =
+      CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+  opts.custom_checks["singular-tip-slopes.csv"] =
+      CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("singular_corner_electrostatic",
+                                  "singular_corner_electrostatic.json", "", opts);
 }
 
 TEST_CASE("singular_line_boundarymode", "[Serial][Parallel][Regression]")

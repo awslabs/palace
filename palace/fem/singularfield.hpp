@@ -26,6 +26,27 @@ struct H1FieldValue
   Vector3 gradient{};
 };
 
+struct NDFieldValue
+{
+  Vector3 value{};
+  Vector3 curl{};
+};
+
+enum class TetrahedronFaceSingularityType
+{
+  NODE,
+  EDGE
+};
+
+// One singular entity whose closure intersects a tetrahedron face. Nodes use
+// nodes[0] and set nodes[1] to -1; edges use both local tetrahedron nodes.
+struct TetrahedronFaceSingularity
+{
+  TetrahedronFaceSingularityType type;
+  std::array<int, 2> nodes{-1, -1};
+  double nu = 1.0;
+};
+
 struct TriangleH1FieldValue
 {
   double potential = 0.0;
@@ -36,6 +57,29 @@ struct TriangleNDFieldValue
 {
   Vector2 value{};
   double curl = 0.0;
+};
+
+struct TriangleTraceExponents
+{
+  double left = 0.0;
+  double right = 0.0;
+};
+
+// A coefficient in a boundary-trace power expansion. Along an oriented
+// triangle edge with coordinate t, the represented contribution is
+// t^left (1-t)^right times the stored coefficient. Keeping the powers
+// explicit allows quadratic surface observables to use the matching
+// Gauss-Jacobi weight instead of sampling an already-squared singular field.
+struct TriangleVectorTraceTerm
+{
+  TriangleTraceExponents exponents;
+  Vector2 coefficient{};
+};
+
+struct TriangleScalarTraceTerm
+{
+  TriangleTraceExponents exponents;
+  double coefficient = 0.0;
 };
 
 struct TriangleBoundaryModeMagneticFieldValue
@@ -106,9 +150,28 @@ struct H1TipSlopeDiagnostic
   bool valid;
 };
 
+// Rank-local storage for singular basis data on MFEM face-neighbor elements.
+// The element maps index coefficients received through an elementwise L2(0)
+// exchange, so no global enrichment vector is replicated on every rank.
+template <typename ElementMap>
+struct FaceNeighborEnrichmentData
+{
+  int maximum_element_dofs = 0;
+  std::vector<ElementMap> element_dofs;
+  std::unique_ptr<mfem::L2_FECollection> coefficient_collection;
+  std::unique_ptr<mfem::ParFiniteElementSpace> coefficient_space;
+  std::unique_ptr<mfem::ParGridFunction> coefficient_field;
+  mfem::Vector coefficients;
+};
+
 // Evaluate one element's scalar singular potential and physical gradient from
 // rank-local canonical enrichment coefficients.
 H1FieldValue EvaluateElementH1Enrichment(const ElementDofMap &element_dofs,
+                                         const mfem::Vector &local_coefficients,
+                                         const BarycentricPoint &lambda,
+                                         const BarycentricGradients &grad_lambda);
+
+NDFieldValue EvaluateElementNDEnrichment(const ElementDofMap &element_dofs,
                                          const mfem::Vector &local_coefficients,
                                          const BarycentricPoint &lambda,
                                          const BarycentricGradients &grad_lambda);
@@ -145,8 +208,12 @@ private:
   mfem::ParGridFunction standard_field;
   std::unique_ptr<mfem::HypreParMatrix> enrichment_prolongation;
   mfem::Vector local_enrichment;
+  FaceNeighborEnrichmentData<ElementDofMap> face_neighbor_enrichment;
   std::vector<double> h1_exponents;
   bool initialized;
+
+  H1FieldValue EvaluateBarycentric(int element, const mfem::IntegrationPoint &point,
+                                   const BarycentricPoint &lambda);
 
 public:
   EnrichedH1FieldEvaluator(const DofTopology &topology,
@@ -157,6 +224,15 @@ public:
 
   // The integration point must be strictly inside the reference tetrahedron.
   H1FieldValue Evaluate(int element, const mfem::IntegrationPoint &point);
+
+  // Evaluate on the closed reference tetrahedron, excluding a singular node
+  // or edge itself. This is intended for trace and boundary integration.
+  H1FieldValue EvaluateClosure(int element, const mfem::IntegrationPoint &point);
+
+  // Return each distinct singular node or edge contained in the specified
+  // element face exactly once. Face nodes are element-local tetrahedron nodes.
+  std::vector<TetrahedronFaceSingularity>
+  GetElementFaceSingularities(int element, const std::array<int, 3> &face_nodes) const;
 
   // Integrate epsilon * |grad(V)|^2 over one physical element. The factor 1/2
   // used for stored electrostatic energy is deliberately not included.
@@ -183,6 +259,47 @@ public:
   const mfem::Vector &GetLocalEnrichmentDofs() const { return local_enrichment; }
 };
 
+// Reconstruct and evaluate a combined standard-plus-singular tetrahedral
+// H(curl) field. Input true vectors use the process-local ordering
+// [standard, owned enrichment] produced by BuildParallelEnrichedOperator.
+class EnrichedNDFieldEvaluator
+{
+private:
+  const DofTopology &topology;
+  const ParallelDofNumbering &numbering;
+  mfem::ParFiniteElementSpace &fespace;
+  mfem::ParGridFunction standard_field;
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_prolongation;
+  mfem::Vector local_enrichment;
+  FaceNeighborEnrichmentData<ElementDofMap> face_neighbor_enrichment;
+  std::vector<double> nd_exponents;
+  bool initialized;
+
+  NDFieldValue EvaluateBarycentric(int element, const mfem::IntegrationPoint &point,
+                                   const BarycentricPoint &lambda);
+
+public:
+  EnrichedNDFieldEvaluator(const DofTopology &topology,
+                           const ParallelDofNumbering &numbering,
+                           mfem::ParFiniteElementSpace &fespace);
+
+  void SetFromTrueDofs(const mfem::Vector &combined_true_dofs);
+
+  // The integration point must be strictly inside the reference tetrahedron.
+  NDFieldValue Evaluate(int element, const mfem::IntegrationPoint &point);
+
+  // Evaluate on the closed reference tetrahedron, excluding a singular node
+  // or edge itself. This is intended for trace and boundary integration.
+  NDFieldValue EvaluateClosure(int element, const mfem::IntegrationPoint &point);
+
+  // Return each distinct gradient-singular node or edge contained in the
+  // specified element face exactly once.
+  std::vector<TetrahedronFaceSingularity>
+  GetElementFaceSingularities(int element, const std::array<int, 3> &face_nodes) const;
+
+  const mfem::Vector &GetLocalEnrichmentDofs() const { return local_enrichment; }
+};
+
 // Two-dimensional counterpart of EnrichedH1FieldEvaluator for the additive
 // triangular basis. Combined vectors use the same process-local
 // [standard, owned enrichment] ordering.
@@ -195,6 +312,7 @@ private:
   mfem::ParGridFunction standard_field;
   std::unique_ptr<mfem::HypreParMatrix> enrichment_prolongation;
   mfem::Vector local_enrichment;
+  FaceNeighborEnrichmentData<TriangleElementDofMap> face_neighbor_enrichment;
   std::vector<double> h1_exponents;
   bool initialized;
 
@@ -210,6 +328,22 @@ public:
 
   // The integration point must be strictly inside the reference triangle.
   TriangleH1FieldValue Evaluate(int element, const mfem::IntegrationPoint &point);
+
+  // Evaluate on the closed reference triangle, excluding the singular vertex
+  // itself. This is intended for trace and boundary-integration operators.
+  TriangleH1FieldValue EvaluateClosure(int element, const mfem::IntegrationPoint &point);
+
+  std::vector<TriangleVectorTraceTerm>
+  EvaluateGradientTraceExpansion(int element, const mfem::IntegrationPoint &point,
+                                 const std::array<int, 2> &endpoint_nodes);
+
+  std::vector<TriangleScalarTraceTerm>
+  EvaluateValueTraceExpansion(int element, const mfem::IntegrationPoint &point,
+                              const std::array<int, 2> &endpoint_nodes);
+
+  // Return the singular exponent associated with an element-local vertex, or
+  // one for a regular vertex.
+  double GetElementNodeSingularExponent(int element, int node) const;
 
   // Integrate epsilon * |grad(V)|^2 over one physical triangle. A partitioned
   // node-Duffy rule is used when one triangle contains multiple singular tips.
@@ -242,6 +376,7 @@ private:
   mfem::ParGridFunction standard_field;
   std::unique_ptr<mfem::HypreParMatrix> enrichment_prolongation;
   mfem::Vector local_enrichment;
+  FaceNeighborEnrichmentData<TriangleElementDofMap> face_neighbor_enrichment;
   std::vector<double> nd_exponents;
   bool initialized;
 
@@ -257,6 +392,18 @@ public:
 
   // The integration point must be strictly inside the reference triangle.
   TriangleNDFieldValue Evaluate(int element, const mfem::IntegrationPoint &point);
+
+  // Evaluate on the closed reference triangle, excluding the singular vertex
+  // itself. This is intended for trace and boundary-integration operators.
+  TriangleNDFieldValue EvaluateClosure(int element, const mfem::IntegrationPoint &point);
+
+  std::vector<TriangleVectorTraceTerm>
+  EvaluateTraceExpansion(int element, const mfem::IntegrationPoint &point,
+                         const std::array<int, 2> &endpoint_nodes);
+
+  // Return the singular exponent associated with an element-local vertex, or
+  // one for a regular vertex.
+  double GetElementNodeSingularExponent(int element, int node) const;
 
   // Integrate coefficient * |field|^2 over one physical triangle.
   AdaptiveQuadratureResult
