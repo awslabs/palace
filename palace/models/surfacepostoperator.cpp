@@ -8,6 +8,7 @@
 #include <cmath>
 #include <complex>
 #include <set>
+#include <tuple>
 #include <utility>
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -313,7 +314,8 @@ SurfacePostOperator::SurfacePostOperator(
   MFEM_VERIFY(postpro.dielectric.empty() || problem_type != ProblemType::MAGNETOSTATIC,
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
-  using EdgeDistanceTreeKey = std::pair<std::vector<int>, std::vector<int>>;
+  using EdgeDistanceTreeKey =
+      std::tuple<std::vector<int>, std::vector<int>, std::optional<std::array<double, 3>>>;
   std::map<EdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       edge_distance_trees;
   using AutomaticEdgeDistanceTreeKey =
@@ -406,15 +408,16 @@ SurfacePostOperator::SurfacePostOperator(
     }
     else
     {
-      const EdgeDistanceTreeKey tree_key{data.edge_attributes,
-                                         data.edge_exclude_attributes};
+      const EdgeDistanceTreeKey tree_key{data.edge_attributes, data.edge_exclude_attributes,
+                                         data.edge_frame_normal};
       auto tree_it = edge_distance_trees.find(tree_key);
       if (tree_it == edge_distance_trees.end())
       {
         tree_it =
             edge_distance_trees
                 .try_emplace(tree_key, BuildEdgeDistanceTree(mesh, data.edge_attributes,
-                                                             data.edge_exclude_attributes))
+                                                             data.edge_exclude_attributes,
+                                                             data.edge_frame_normal))
                 .first;
       }
       it->second.edge_distance_tree = tree_it->second;

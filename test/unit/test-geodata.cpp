@@ -620,6 +620,48 @@ TEST_CASE("Polarized edge energy frame", "[geodata][Serial]")
   }
 }
 
+TEST_CASE("Manual polarized edge extraction ignores process-normal seams",
+          "[geodata][Serial]")
+{
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  const std::array<double, 3> process_normal{0.0, 0.0, 1.0};
+
+  int attribute = 0;
+  std::vector<mesh::BoundaryEdgeSegment> unfiltered;
+  for (const int candidate : serial_mesh.bdr_attributes)
+  {
+    auto marker = mesh::BdrAttrToMarker(mesh, std::vector<int>{candidate}, true);
+    auto segments = mesh::GetBoundaryEdgeSegments(mesh, marker);
+    const bool has_parallel =
+        std::any_of(segments.begin(), segments.end(), [&](const auto &segment)
+                    { return std::abs(segment.p1[2] - segment.p0[2]) > 0.5; });
+    const bool has_transverse =
+        std::any_of(segments.begin(), segments.end(),
+                    [&](const auto &segment)
+                    {
+                      return std::hypot(segment.p1[0] - segment.p0[0],
+                                        segment.p1[1] - segment.p0[1]) > 0.5;
+                    });
+    if (has_parallel && has_transverse)
+    {
+      attribute = candidate;
+      unfiltered = std::move(segments);
+      break;
+    }
+  }
+  REQUIRE(attribute > 0);
+
+  const auto tree = BuildEdgeDistanceTree(mesh, {attribute}, {}, process_normal);
+  REQUIRE(tree->Size() < unfiltered.size());
+  for (std::size_t i = 0; i < tree->Size(); i++)
+  {
+    const auto &segment = tree->GetSegment(i);
+    CHECK(std::hypot(segment.p1[0] - segment.p0[0], segment.p1[1] - segment.p0[1]) > 0.0);
+    CHECK_NOTHROW(BuildEdgeFrame(segment, process_normal, 3));
+  }
+}
+
 TEST_CASE("Boundary edge exclusion", "[geodata][Serial]")
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
@@ -731,9 +773,17 @@ TEST_CASE("Automatic metal edge extraction and classification",
   boundaries.postpro.dielectric.emplace(12, MakeDielectric(InterfaceDielectric::MS));
   boundaries.postpro.dielectric.emplace(13, MakeDielectric(InterfaceDielectric::MA));
 
-  auto geometry = ExtractMetalEdgeGeometry(mesh, boundaries);
+  MetalSurfaceExtraction surface;
+  surface.classify_components = true;
+  surface.retain_faces = true;
+  auto geometry = ExtractMetalEdgeGeometry(mesh, boundaries, surface);
   REQUIRE(geometry.components == 1);
   REQUIRE(geometry.physical_components == 1);
+  REQUIRE(geometry.metal_components == 1);
+  REQUIRE(!geometry.surface_faces.empty());
+  CHECK(std::all_of(geometry.surface_faces.begin(), geometry.surface_faces.end(),
+                    [](const auto &face)
+                    { return face.component == 0 && face.vertices.size() >= 3; }));
   REQUIRE(geometry.vertices.size() == 4);
   REQUIRE(geometry.segments.size() == 4);
   int truncated_vertices = 0;
@@ -752,6 +802,7 @@ TEST_CASE("Automatic metal edge extraction and classification",
   for (const auto &segment : geometry.segments)
   {
     CHECK(segment.component == 0);
+    CHECK(segment.metal_component == 0);
     CHECK(segment.metal_attributes == std::vector<int>{5});
     REQUIRE(segment.conditions.size() == 1);
     CHECK(segment.conditions[0].type == MetalBoundaryConditionType::PEC);
@@ -826,6 +877,13 @@ TEST_CASE("Automatic metal edge extraction and classification",
   {
     CHECK_THAT(normal[2], WithinAbs(-1.0, 1.0e-12));
   }
+
+  surface.retain_faces = false;
+  geometry = ExtractMetalEdgeGeometry(mesh, boundaries, surface);
+  CHECK(geometry.metal_components == 1);
+  CHECK(geometry.surface_faces.empty());
+  CHECK(std::all_of(geometry.segments.begin(), geometry.segments.end(),
+                    [](const auto &segment) { return segment.metal_component == 0; }));
 
   boundaries.pec.attributes.clear();
   config::ImpedanceData impedance;
@@ -983,10 +1041,7 @@ TEST_CASE("Automatic metal edge extraction on 3D CPW",
     const auto &segment = geometry.segments[sa_indices[i]];
     const double x = 0.5 * (geometry.vertices[segment.vertices[0]].coordinate[0] +
                             geometry.vertices[segment.vertices[1]].coordinate[0]);
-    const double expected_x =
-        (x < 46.0 || (x > 62.0 && x < 78.0))
-            ? 1.0
-            : -1.0;
+    const double expected_x = (x < 46.0 || (x > 62.0 && x < 78.0)) ? 1.0 : -1.0;
     CHECK_THAT(gap_directions[i][0], WithinAbs(expected_x, 1.0e-12));
     CHECK_THAT(gap_directions[i][1], WithinAbs(0.0, 1.0e-12));
     CHECK_THAT(gap_directions[i][2], WithinAbs(0.0, 1.0e-12));

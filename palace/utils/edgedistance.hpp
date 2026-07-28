@@ -7,6 +7,7 @@
 #include <array>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "utils/geodata.hpp"
@@ -109,9 +110,10 @@ std::array<double, 6> GetPolarizedEdgeEnergyDensity(
     const mfem::Vector &point, const mesh::BoundaryEdgeSegment &segment,
     const EdgeFrame &frame, const mfem::Vector &field, const mfem::Vector &displacement);
 
-std::shared_ptr<const EdgeDistanceTree>
-BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,
-                      const std::vector<int> &edge_exclude_attributes);
+std::shared_ptr<const EdgeDistanceTree> BuildEdgeDistanceTree(
+    const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,
+    const std::vector<int> &edge_exclude_attributes,
+    const std::optional<std::array<double, 3>> &process_normal = std::nullopt);
 
 std::vector<std::size_t>
 GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int interface_index,

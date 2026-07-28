@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <queue>
 #include <set>
 #include <tuple>
@@ -69,7 +70,8 @@ void SortAndUnique(std::vector<MetalBoundaryCondition> &conditions)
 }  // namespace
 
 MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
-                                           const config::BoundaryData &boundaries)
+                                           const config::BoundaryData &boundaries,
+                                           MetalSurfaceExtraction surface)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge extraction requires a three-dimensional mesh!");
@@ -221,6 +223,17 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   }
 
   using Point = std::array<double, 3>;
+  using PointKey = std::array<long long int, 3>;
+  const double coordinate_tolerance = std::sqrt(tolerance_squared);
+  auto GetPointKey = [&](const Point &point)
+  {
+    PointKey key;
+    for (int d = 0; d < 3; d++)
+    {
+      key[d] = std::llround((point[d] - bbmin[d]) / coordinate_tolerance);
+    }
+    return key;
+  };
   std::map<Point, std::size_t> vertex_indices;
   auto GetVertex = [&](const Point &point)
   {
@@ -291,6 +304,218 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     result.vertices[segment.vertices[0]].segments.push_back(index);
     result.vertices[segment.vertices[1]].segments.push_back(index);
     result.segments.push_back(std::move(segment));
+  }
+
+  if (surface.classify_components || surface.retain_faces)
+  {
+    std::vector<MetalSurfaceFace> local_faces;
+    mfem::Array<int> vertices;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attribute = mesh.GetBdrAttribute(be);
+      if (attribute <= 0 || attribute > metal_marker.Size() || !metal_marker[attribute - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementVertices(be, vertices);
+      MFEM_VERIFY(vertices.Size() >= 3 && vertices.Size() <= 4,
+                  "Automatic metal-surface extraction supports triangular and "
+                  "quadrilateral boundary elements!");
+      MetalSurfaceFace face;
+      face.vertices.resize(vertices.Size());
+      for (int i = 0; i < vertices.Size(); i++)
+      {
+        const double *point = mesh.GetVertex(vertices[i]);
+        std::copy_n(point, 3, face.vertices[i].begin());
+      }
+      local_faces.push_back(std::move(face));
+    }
+
+    std::vector<std::size_t> local_parent(local_faces.size());
+    std::iota(local_parent.begin(), local_parent.end(), 0);
+    auto FindLocal = [&](std::size_t item)
+    {
+      std::size_t root = item;
+      while (local_parent[root] != root)
+      {
+        root = local_parent[root];
+      }
+      while (local_parent[item] != item)
+      {
+        const std::size_t next = local_parent[item];
+        local_parent[item] = root;
+        item = next;
+      }
+      return root;
+    };
+    auto UnionLocal = [&](std::size_t first, std::size_t second)
+    {
+      first = FindLocal(first);
+      second = FindLocal(second);
+      if (first != second)
+      {
+        local_parent[std::max(first, second)] = std::min(first, second);
+      }
+    };
+    std::map<PointKey, std::size_t> face_by_vertex;
+    for (std::size_t face = 0; face < local_faces.size(); face++)
+    {
+      for (const auto &point : local_faces[face].vertices)
+      {
+        auto [vertex, inserted] = face_by_vertex.emplace(GetPointKey(point), face);
+        if (!inserted)
+        {
+          UnionLocal(face, vertex->second);
+        }
+      }
+    }
+
+    std::map<std::size_t, int> local_component_by_root;
+    std::vector<int> local_face_components(local_faces.size());
+    for (std::size_t face = 0; face < local_faces.size(); face++)
+    {
+      auto [component, inserted] =
+          local_component_by_root.emplace(FindLocal(face), local_component_by_root.size());
+      (void)inserted;
+      local_face_components[face] = component->second;
+    }
+
+    const int local_component_count = static_cast<int>(local_component_by_root.size());
+    std::vector<int> component_counts(Mpi::Size(mesh.GetComm()));
+    Mpi::Allgather(1, &local_component_count, component_counts.data(), mesh.GetComm());
+    std::vector<long long int> component_offsets(component_counts.size() + 1);
+    for (std::size_t rank = 0; rank < component_counts.size(); rank++)
+    {
+      component_offsets[rank + 1] = component_offsets[rank] + component_counts[rank];
+    }
+    const long long int component_offset = component_offsets[Mpi::Rank(mesh.GetComm())];
+
+    std::map<PointKey, long long int> local_component_by_vertex;
+    for (std::size_t face = 0; face < local_faces.size(); face++)
+    {
+      const long long int component = component_offset + local_face_components[face];
+      for (const auto &point : local_faces[face].vertices)
+      {
+        auto [vertex, inserted] =
+            local_component_by_vertex.emplace(GetPointKey(point), component);
+        MFEM_VERIFY(inserted || vertex->second == component,
+                    "A metal-surface vertex belongs to multiple local components!");
+      }
+    }
+
+    const int local_vertex_count = static_cast<int>(local_component_by_vertex.size());
+    std::vector<int> vertex_counts(component_counts.size());
+    Mpi::Allgather(1, &local_vertex_count, vertex_counts.data(), mesh.GetComm());
+    std::vector<int> vertex_offsets(vertex_counts.size()), key_counts(vertex_counts.size()),
+        key_offsets(vertex_counts.size());
+    int total_vertices = 0;
+    for (std::size_t rank = 0; rank < vertex_counts.size(); rank++)
+    {
+      vertex_offsets[rank] = total_vertices;
+      key_counts[rank] = 3 * vertex_counts[rank];
+      key_offsets[rank] = 3 * total_vertices;
+      total_vertices += vertex_counts[rank];
+    }
+    std::vector<long long int> local_keys;
+    std::vector<long long int> local_components;
+    local_keys.reserve(3 * local_vertex_count);
+    local_components.reserve(local_vertex_count);
+    for (const auto &[key, component] : local_component_by_vertex)
+    {
+      local_keys.insert(local_keys.end(), key.begin(), key.end());
+      local_components.push_back(component);
+    }
+    std::vector<long long int> global_keys(3 * total_vertices);
+    std::vector<long long int> global_components(total_vertices);
+    Mpi::Allgatherv(static_cast<int>(local_keys.size()), local_keys.data(),
+                    global_keys.data(), key_counts.data(), key_offsets.data(),
+                    mesh.GetComm());
+    Mpi::Allgatherv(local_vertex_count, local_components.data(), global_components.data(),
+                    vertex_counts.data(), vertex_offsets.data(), mesh.GetComm());
+
+    const long long int total_components = component_offsets.back();
+    std::vector<long long int> parent(total_components);
+    std::iota(parent.begin(), parent.end(), 0);
+    auto Find = [&](long long int item)
+    {
+      long long int root = item;
+      while (parent[root] != root)
+      {
+        root = parent[root];
+      }
+      while (parent[item] != item)
+      {
+        const long long int next = parent[item];
+        parent[item] = root;
+        item = next;
+      }
+      return root;
+    };
+    auto Union = [&](long long int first, long long int second)
+    {
+      first = Find(first);
+      second = Find(second);
+      if (first != second)
+      {
+        parent[std::max(first, second)] = std::min(first, second);
+      }
+    };
+
+    std::map<PointKey, long long int> provisional_component_by_vertex;
+    for (int vertex = 0; vertex < total_vertices; vertex++)
+    {
+      PointKey key;
+      std::copy_n(global_keys.data() + 3 * vertex, 3, key.begin());
+      auto [entry, inserted] =
+          provisional_component_by_vertex.emplace(key, global_components[vertex]);
+      if (!inserted)
+      {
+        Union(entry->second, global_components[vertex]);
+      }
+    }
+    std::map<long long int, int> component_by_root;
+    for (long long int component = 0; component < total_components; component++)
+    {
+      component_by_root.try_emplace(Find(component), component_by_root.size());
+    }
+    result.metal_components = static_cast<int>(component_by_root.size());
+
+    std::map<PointKey, int> component_by_vertex;
+    for (const auto &[key, provisional] : provisional_component_by_vertex)
+    {
+      component_by_vertex.emplace(key, component_by_root.at(Find(provisional)));
+    }
+    auto FindPointComponent = [&](const Point &point)
+    {
+      const auto component = component_by_vertex.find(GetPointKey(point));
+      return component == component_by_vertex.end() ? -1 : component->second;
+    };
+
+    for (auto &segment : result.segments)
+    {
+      const int first = FindPointComponent(result.vertices[segment.vertices[0]].coordinate);
+      const int second =
+          FindPointComponent(result.vertices[segment.vertices[1]].coordinate);
+      MFEM_VERIFY(first >= 0 && second >= 0 && first == second,
+                  "Unable to associate a metal perimeter edge with one supporting "
+                  "metal surface!");
+      segment.metal_component = first;
+    }
+
+    if (surface.retain_faces)
+    {
+      for (auto &face : local_faces)
+      {
+        face.component = FindPointComponent(face.vertices.front());
+        MFEM_VERIFY(
+            face.component >= 0 &&
+                std::all_of(face.vertices.begin(), face.vertices.end(),
+                            [&](const auto &point)
+                            { return FindPointComponent(point) == face.component; }),
+            "A metal boundary face belongs to multiple connected metal surfaces!");
+      }
+      result.surface_faces = std::move(local_faces);
+    }
   }
 
   auto LabelComponents = [&](bool physical)

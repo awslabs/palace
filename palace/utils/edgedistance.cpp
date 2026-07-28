@@ -362,7 +362,8 @@ ElementBounds GetElementBounds(const mfem::ParMesh &mesh, int element)
 
 std::shared_ptr<const EdgeDistanceTree>
 BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,
-                      const std::vector<int> &edge_exclude_attributes)
+                      const std::vector<int> &edge_exclude_attributes,
+                      const std::optional<std::array<double, 3>> &process_normal)
 {
   auto edge_marker = mesh::BdrAttrToMarker(mesh, edge_attributes, true);
   auto edge_segments = mesh::GetBoundaryEdgeSegments(mesh, edge_marker);
@@ -396,6 +397,34 @@ BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_at
                         edge_segments.end());
     MFEM_VERIFY(!edge_segments.empty(),
                 "Interface dielectric edge exclusion removed the entire perimeter!");
+  }
+  if (process_normal && mesh.SpaceDimension() == 3)
+  {
+    const double normal_squared = std::inner_product(
+        process_normal->begin(), process_normal->end(), process_normal->begin(), 0.0);
+    MFEM_VERIFY(normal_squared > 0.0,
+                "Interface dielectric \"EdgeFrameNormal\" must be nonzero!");
+    edge_segments.erase(std::remove_if(edge_segments.begin(), edge_segments.end(),
+                                       [&](const auto &segment)
+                                       {
+                                         std::array<double, 3> tangent{};
+                                         double tangent_squared = 0.0;
+                                         double normal_tangent = 0.0;
+                                         for (int d = 0; d < 3; d++)
+                                         {
+                                           tangent[d] = segment.p1[d] - segment.p0[d];
+                                           tangent_squared += tangent[d] * tangent[d];
+                                           normal_tangent +=
+                                               (*process_normal)[d] * tangent[d];
+                                         }
+                                         return normal_squared * tangent_squared -
+                                                    normal_tangent * normal_tangent <=
+                                                1.0e-12 * normal_squared * tangent_squared;
+                                       }),
+                        edge_segments.end());
+    MFEM_VERIFY(!edge_segments.empty(),
+                "Interface dielectric edge extraction retained no segments transverse "
+                "to \"EdgeFrameNormal\"!");
   }
   return std::make_shared<EdgeDistanceTree>(std::move(edge_segments));
 }
@@ -468,9 +497,9 @@ void ExcludeMetalEdgeSegmentIndices(const mfem::ParMesh &mesh,
                        const mesh::BoundaryEdgeSegment segment{
                            geometry.vertices[source.vertices[0]].coordinate,
                            geometry.vertices[source.vertices[1]].coordinate};
-                       return IsCoincidentWithExcludedBoundary(
-                           segment, excluded_tree, mesh.SpaceDimension(),
-                           tolerance_squared);
+                       return IsCoincidentWithExcludedBoundary(segment, excluded_tree,
+                                                               mesh.SpaceDimension(),
+                                                               tolerance_squared);
                      }),
       segment_indices.end());
   MFEM_VERIFY(!segment_indices.empty(),
@@ -591,8 +620,7 @@ BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
       }
       segment_indices =
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, index, dielectric.type);
-      ExcludeMetalEdgeSegmentIndices(mesh, metal_edges,
-                                     dielectric.edge_exclude_attributes,
+      ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, dielectric.edge_exclude_attributes,
                                      segment_indices);
     }
     const TreeKey tree_key{dielectric.automatic_edges, dielectric.edge_attributes,

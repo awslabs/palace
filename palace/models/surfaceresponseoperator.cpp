@@ -8,6 +8,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -592,6 +593,7 @@ struct LibraryModel
   std::vector<LibrarySpatialEdge> spatial_edges;
   double spatial_position_tolerance = 0.0;
   double spatial_angle_tolerance = 0.0;
+  std::optional<std::string> plan_view_boundary;
   std::vector<LibraryInterface> interfaces;
 };
 
@@ -639,6 +641,7 @@ struct EdgeSegment3D
   Point3D axis_v{};
   double length = 0.0;
   int conductor = std::numeric_limits<int>::min();
+  int metal_component = -1;
   std::map<InterfaceDielectric, int> targets;
   MetalBoundaryLaw boundary_condition;
 };
@@ -732,6 +735,7 @@ struct SpatialEdgeSite3D
   Point3D gap_direction{};
   Point3D process_normal{};
   int conductor = std::numeric_limits<int>::min();
+  int metal_component = -1;
   std::map<InterfaceDielectric, int> targets;
   MetalBoundaryLaw boundary_condition;
 };
@@ -1004,7 +1008,7 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
 }
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
-                                  bool nondimensionalize)
+                                  bool nondimensionalize, bool allow_empty_models = false)
 {
   std::ifstream input(path);
   MFEM_VERIFY(input,
@@ -1072,7 +1076,9 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                 "Fabrication-process response-library CouponDepth must be positive!");
   }
   const auto &models = data.at("Models");
-  MFEM_VERIFY(models.is_array() && !models.empty(),
+  MFEM_VERIFY(models.is_array(),
+              "Fabrication-process response-library Models must be an array!");
+  MFEM_VERIFY(allow_empty_models || !models.empty(),
               "Fabrication-process response library must contain at least one model!");
   std::set<std::string> names;
   std::set<InterfaceDielectric> mapped_interface_types;
@@ -1215,6 +1221,37 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           }
           model.spatial_edges.push_back(spatial_edge);
         }
+        if (auto boundary = entry.find("PlanViewBoundary"); boundary != entry.end())
+        {
+          MFEM_VERIFY(boundary->is_array() && !boundary->empty(),
+                      "SpatialEdgeCluster PlanViewBoundary must be a nonempty array!");
+          for (const auto &component : *boundary)
+          {
+            MFEM_VERIFY(component.is_object() && component.contains("Conductor") &&
+                            component["Conductor"].is_number_integer() &&
+                            component["Conductor"].get<int>() > 0 &&
+                            component.contains("Segments") &&
+                            component["Segments"].is_array() &&
+                            !component["Segments"].empty(),
+                        "Invalid SpatialEdgeCluster PlanViewBoundary component!");
+            for (const auto &segment : component["Segments"])
+            {
+              MFEM_VERIFY(
+                  segment.is_array() && segment.size() == 2 &&
+                      std::all_of(segment.begin(), segment.end(),
+                                  [](const auto &point)
+                                  {
+                                    return point.is_array() && point.size() == 3 &&
+                                           std::all_of(
+                                               point.begin(), point.end(),
+                                               [](const auto &coordinate)
+                                               { return coordinate.is_number_integer(); });
+                                  }),
+                  "Invalid SpatialEdgeCluster PlanViewBoundary segment!");
+            }
+          }
+          model.plan_view_boundary = boundary->dump();
+        }
       }
     }
     const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
@@ -1304,6 +1341,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     MFEM_VERIFY(spatial_cluster == !model.spatial_edges.empty(),
                 "SpatialEdgeCluster response models require spatial Edges, and other "
                 "topologies cannot specify them!");
+    MFEM_VERIFY(spatial_cluster || !model.plan_view_boundary,
+                "PlanViewBoundary is supported only by SpatialEdgeCluster models!");
     if (spatial_response)
     {
       model.response.spatial_basis = true;
@@ -1714,6 +1753,252 @@ double Distance(const Point2D &a, const Point2D &b)
 double Distance(const Point3D &a, const Point3D &b)
 {
   return Norm(Subtract(a, b));
+}
+
+struct PlanViewFacet
+{
+  int conductor = 0;
+  std::vector<Point3D> points;
+};
+
+using QuantizedPoint3D = std::array<long long int, 3>;
+using QuantizedSegment3D = std::pair<QuantizedPoint3D, QuantizedPoint3D>;
+
+bool IntegerCrossIsZero(const QuantizedPoint3D &a, const QuantizedPoint3D &b)
+{
+  using WideInteger = __int128;
+  return static_cast<WideInteger>(a[1]) * b[2] - static_cast<WideInteger>(a[2]) * b[1] ==
+             0 &&
+         static_cast<WideInteger>(a[2]) * b[0] - static_cast<WideInteger>(a[0]) * b[2] ==
+             0 &&
+         static_cast<WideInteger>(a[0]) * b[1] - static_cast<WideInteger>(a[1]) * b[0] == 0;
+}
+
+std::string CanonicalPlanViewBoundary(const std::vector<PlanViewFacet> &facets,
+                                      double matching_radius)
+{
+  MFEM_VERIFY(matching_radius > 0.0,
+              "Plan-view canonicalization requires a positive matching radius!");
+  const double tolerance = 1.0e-9 * matching_radius;
+  auto Quantize = [&](const Point3D &point)
+  {
+    QuantizedPoint3D key;
+    for (int d = 0; d < 3; d++)
+    {
+      key[d] = std::llround(point[d] / tolerance);
+    }
+    return key;
+  };
+  auto SubtractInteger = [](const QuantizedPoint3D &a, const QuantizedPoint3D &b)
+  { return QuantizedPoint3D{a[0] - b[0], a[1] - b[1], a[2] - b[2]}; };
+  auto OrderedSegment = [](QuantizedPoint3D first, QuantizedPoint3D second)
+  {
+    if (second < first)
+    {
+      std::swap(first, second);
+    }
+    return QuantizedSegment3D{first, second};
+  };
+
+  using GroupKey = std::pair<int, long long int>;
+  std::map<GroupKey, std::vector<std::vector<QuantizedPoint3D>>> polygons_by_group;
+  for (const auto &facet : facets)
+  {
+    MFEM_VERIFY(facet.conductor > 0 && facet.points.size() >= 3,
+                "Invalid plan-view facet!");
+    std::vector<QuantizedPoint3D> ring;
+    ring.reserve(facet.points.size());
+    for (const auto &point : facet.points)
+    {
+      const auto key = Quantize(point);
+      if (ring.empty() || ring.back() != key)
+      {
+        ring.push_back(key);
+      }
+    }
+    if (ring.size() > 1 && ring.front() == ring.back())
+    {
+      ring.pop_back();
+    }
+    if (ring.size() < 3)
+    {
+      continue;
+    }
+    const long long int plane = ring.front()[1];
+    MFEM_VERIFY(std::all_of(ring.begin(), ring.end(),
+                            [=](const auto &point) { return point[1] == plane; }),
+                "Plan-view facet is not on one process plane!");
+    polygons_by_group[{facet.conductor, plane}].push_back(std::move(ring));
+  }
+
+  nlohmann::json result = nlohmann::json::array();
+  for (auto &[group, polygons] : polygons_by_group)
+  {
+    std::set<std::vector<QuantizedPoint3D>> seen;
+    std::vector<std::vector<QuantizedPoint3D>> unique_polygons;
+    for (auto &polygon : polygons)
+    {
+      std::vector<QuantizedPoint3D> canonical;
+      for (std::size_t start = 0; start < polygon.size(); start++)
+      {
+        for (const bool reverse : {false, true})
+        {
+          std::vector<QuantizedPoint3D> candidate;
+          candidate.reserve(polygon.size());
+          for (std::size_t step = 0; step < polygon.size(); step++)
+          {
+            const std::size_t index = reverse
+                                          ? (start + polygon.size() - step) % polygon.size()
+                                          : (start + step) % polygon.size();
+            candidate.push_back(polygon[index]);
+          }
+          if (canonical.empty() || candidate < canonical)
+          {
+            canonical = std::move(candidate);
+          }
+        }
+      }
+      if (seen.insert(canonical).second)
+      {
+        unique_polygons.push_back(std::move(polygon));
+      }
+    }
+
+    std::vector<QuantizedPoint3D> vertices;
+    for (const auto &polygon : unique_polygons)
+    {
+      vertices.insert(vertices.end(), polygon.begin(), polygon.end());
+    }
+    std::sort(vertices.begin(), vertices.end());
+    vertices.erase(std::unique(vertices.begin(), vertices.end()), vertices.end());
+
+    std::map<QuantizedSegment3D, int> counts;
+    for (const auto &polygon : unique_polygons)
+    {
+      for (std::size_t i = 0; i < polygon.size(); i++)
+      {
+        const auto &begin = polygon[i];
+        const auto &end = polygon[(i + 1) % polygon.size()];
+        const auto direction = SubtractInteger(end, begin);
+        if (begin == end)
+        {
+          continue;
+        }
+        std::vector<QuantizedPoint3D> split{begin, end};
+        for (const auto &point : vertices)
+        {
+          if (point == begin || point == end)
+          {
+            continue;
+          }
+          const auto offset = SubtractInteger(point, begin);
+          if (!IntegerCrossIsZero(direction, offset))
+          {
+            continue;
+          }
+          const long double coordinate =
+              static_cast<long double>(offset[0]) * direction[0] +
+              static_cast<long double>(offset[1]) * direction[1] +
+              static_cast<long double>(offset[2]) * direction[2];
+          const long double length_squared =
+              static_cast<long double>(direction[0]) * direction[0] +
+              static_cast<long double>(direction[1]) * direction[1] +
+              static_cast<long double>(direction[2]) * direction[2];
+          if (coordinate > 0.0L && coordinate < length_squared)
+          {
+            split.push_back(point);
+          }
+        }
+        std::sort(split.begin(), split.end(),
+                  [&](const auto &first, const auto &second)
+                  {
+                    const auto a = SubtractInteger(first, begin);
+                    const auto b = SubtractInteger(second, begin);
+                    const long double a_coordinate =
+                        static_cast<long double>(a[0]) * direction[0] +
+                        static_cast<long double>(a[1]) * direction[1] +
+                        static_cast<long double>(a[2]) * direction[2];
+                    const long double b_coordinate =
+                        static_cast<long double>(b[0]) * direction[0] +
+                        static_cast<long double>(b[1]) * direction[1] +
+                        static_cast<long double>(b[2]) * direction[2];
+                    return a_coordinate < b_coordinate;
+                  });
+        split.erase(std::unique(split.begin(), split.end()), split.end());
+        for (std::size_t j = 1; j < split.size(); j++)
+        {
+          counts[OrderedSegment(split[j - 1], split[j])]++;
+        }
+      }
+    }
+
+    MFEM_VERIFY(std::none_of(counts.begin(), counts.end(),
+                             [](const auto &entry) { return entry.second > 2; }),
+                "Plan-view facets form a nonmanifold surface!");
+    std::set<QuantizedSegment3D> boundary;
+    for (const auto &[segment, count] : counts)
+    {
+      if (count % 2 == 1)
+      {
+        boundary.insert(segment);
+      }
+    }
+    std::map<QuantizedPoint3D, int> degree;
+    for (const auto &[first, second] : boundary)
+    {
+      degree[first]++;
+      degree[second]++;
+    }
+    MFEM_VERIFY(std::none_of(degree.begin(), degree.end(),
+                             [](const auto &entry) { return entry.second % 2 == 1; }),
+                "Plan-view facet union has an open boundary!");
+
+    while (true)
+    {
+      std::map<QuantizedPoint3D, std::set<QuantizedPoint3D>> adjacency;
+      for (const auto &[first, second] : boundary)
+      {
+        adjacency[first].insert(second);
+        adjacency[second].insert(first);
+      }
+      std::optional<std::tuple<QuantizedPoint3D, QuantizedPoint3D, QuantizedPoint3D>> merge;
+      for (const auto &[vertex, neighbors] : adjacency)
+      {
+        if (neighbors.size() != 2)
+        {
+          continue;
+        }
+        auto neighbor = neighbors.begin();
+        const auto first = *neighbor++;
+        const auto second = *neighbor;
+        if (IntegerCrossIsZero(SubtractInteger(first, vertex),
+                               SubtractInteger(second, vertex)))
+        {
+          merge = std::make_tuple(vertex, first, second);
+          break;
+        }
+      }
+      if (!merge)
+      {
+        break;
+      }
+      const auto &[vertex, first, second] = *merge;
+      boundary.erase(OrderedSegment(first, vertex));
+      boundary.erase(OrderedSegment(vertex, second));
+      boundary.insert(OrderedSegment(first, second));
+    }
+    MFEM_VERIFY(!boundary.empty(), "Plan-view facets have no union boundary!");
+
+    nlohmann::json segments = nlohmann::json::array();
+    for (const auto &[first, second] : boundary)
+    {
+      segments.push_back({first, second});
+    }
+    result.push_back({{"Conductor", group.first}, {"Segments", std::move(segments)}});
+  }
+  std::sort(result.begin(), result.end(), [](const auto &first, const auto &second)
+            { return first.dump() < second.dump(); });
+  return result.dump();
 }
 
 bool PointOnSegment(const Point2D &point, const Point2D &a, const Point2D &b, double tol)
@@ -3089,7 +3374,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
               "a two-dimensional mesh!");
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
-      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized());
+      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
+                         requirements != nullptr);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -3321,6 +3607,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
           requirements->Add(2, LibraryTopology::SPATIAL_EDGE_CLUSTER, group.targets,
                             boundary_condition, ClusterGeometry(), library, nullptr, 0.0,
                             "Nearby edges use different metal boundary conditions");
+          unmatched_clusters++;
+          continue;
         }
         unmatched_clusters++;
         break;
@@ -3371,6 +3659,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
             requirements->Add(2, LibraryTopology::SPATIAL_EDGE_CLUSTER, group.targets,
                               boundary_condition, ClusterGeometry(), library, nullptr, 0.0,
                               "No canonical paired-edge topology");
+            unmatched_clusters++;
+            continue;
           }
           unmatched_clusters++;
           break;
@@ -3408,6 +3698,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
             requirements->Add(2, LibraryTopology::PARALLEL_EDGE_CLUSTER, group.targets,
                               boundary_condition, ClusterGeometry(), library, nullptr, 0.0,
                               "No compatible parallel-edge cluster model");
+            unmatched_clusters++;
+            continue;
           }
           unmatched_clusters++;
           break;
@@ -3452,6 +3744,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
           requirements->Add(2, topology, group.targets, boundary_condition,
                             ClusterGeometry(), library, nullptr, 0.0,
                             "No compatible process-library model");
+          unmatched_clusters++;
+          continue;
         }
         unmatched_clusters++;
         break;
@@ -3684,7 +3978,8 @@ Point3D TransformLocalPoint(const Point3D &origin, const std::array<Point3D, 3> 
 
 std::optional<SpatialClusterSelection3D>
 FindSpatialClusterLibraryModel(const ProcessLibrary &library,
-                               const std::vector<SpatialEdgeSite3D> &sites)
+                               const std::vector<SpatialEdgeSite3D> &sites,
+                               const std::set<std::size_t> &excluded_models = {})
 {
   if (sites.size() < 2)
   {
@@ -3696,7 +3991,8 @@ FindSpatialClusterLibraryModel(const ProcessLibrary &library,
   for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
   {
     const auto &model = library.models[model_index];
-    if (model.topology != LibraryTopology::SPATIAL_EDGE_CLUSTER ||
+    if (excluded_models.find(model_index) != excluded_models.end() ||
+        model.topology != LibraryTopology::SPATIAL_EDGE_CLUSTER ||
         model.spatial_edges.size() != sites.size())
     {
       continue;
@@ -3912,7 +4208,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
               "requires a three-dimensional mesh!");
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
-      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized());
+      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
+                         requirements != nullptr);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -3932,7 +4229,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 "Unable to determine a positive wave speed for Maxwell surface-response "
                 "confidence diagnostics!");
   }
-  const auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries);
+  MetalSurfaceExtraction surface;
+  surface.classify_components =
+      requirements ||
+      std::any_of(library.models.begin(), library.models.end(), [](const auto &model)
+                  { return model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER; });
+  surface.retain_faces =
+      requirements ||
+      std::any_of(library.models.begin(), library.models.end(),
+                  [](const auto &model) { return model.plan_view_boundary.has_value(); });
+  const auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
 
@@ -4078,6 +4384,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       segment.axis_u = gap_directions[i];
       segment.axis_v = process_normals[i];
       segment.targets = group.targets;
+      segment.metal_component = source.metal_component;
       if (maxwell)
       {
         MFEM_VERIFY(!source.conditions.empty(),
@@ -4095,7 +4402,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                     "A Maxwell target edge cannot mix distinct metal boundary conditions!");
         MFEM_VERIFY(source.component >= 0,
                     "Unable to determine connected metal ownership for a Maxwell edge!");
-        segment.conductor = source.component;
+        segment.conductor =
+            source.metal_component >= 0 ? source.metal_component : source.component;
         segment.boundary_condition = boundary_condition;
       }
       else
@@ -4195,6 +4503,370 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                            [](double length, const auto &edge)
                            { return length + edge.interval[1] - edge.interval[0]; });
   };
+  auto ClipPlanViewPolygon =
+      [](std::vector<Point3D> polygon, int axis, double bound, bool keep_greater)
+  {
+    if (polygon.empty())
+    {
+      return polygon;
+    }
+    std::vector<Point3D> clipped;
+    clipped.reserve(polygon.size() + 2);
+    auto IsInside = [&](const Point3D &point)
+    { return keep_greater ? point[axis] >= bound : point[axis] <= bound; };
+    Point3D previous = polygon.back();
+    bool previous_inside = IsInside(previous);
+    for (const auto &current : polygon)
+    {
+      const bool current_inside = IsInside(current);
+      if (current_inside != previous_inside)
+      {
+        const double denominator = current[axis] - previous[axis];
+        MFEM_ASSERT(std::abs(denominator) > 0.0,
+                    "Invalid plan-view clipping intersection!");
+        const double fraction = (bound - previous[axis]) / denominator;
+        clipped.push_back(Add(previous, Scale(fraction, Subtract(current, previous))));
+      }
+      if (current_inside)
+      {
+        clipped.push_back(current);
+      }
+      previous = current;
+      previous_inside = current_inside;
+    }
+    return clipped;
+  };
+  auto GatherPlanViewFacets = [&](const std::vector<SpatialEdgeSite3D> &sites,
+                                  const Point3D &origin, const std::array<Point3D, 3> &axes,
+                                  const std::map<int, int> &conductor_by_metal_component)
+  {
+    std::array<double, 2> lower = {mfem::infinity(), mfem::infinity()};
+    std::array<double, 2> upper = {-mfem::infinity(), -mfem::infinity()};
+    std::map<int, std::vector<double>> planes_by_metal_component;
+    for (const auto &site : sites)
+    {
+      Point3D point{}, gap{}, normal{};
+      const Point3D relative = Subtract(site.point, origin);
+      for (int d = 0; d < 3; d++)
+      {
+        point[d] = Dot(relative, axes[d]);
+        gap[d] = Dot(site.gap_direction, axes[d]);
+        normal[d] = Dot(site.process_normal, axes[d]);
+      }
+      const Point3D tangent = Normalize(Cross(gap, normal));
+      double begin = site.interval[0];
+      double end = site.interval[1];
+      const double interval_tolerance = 1.0e-10 * library.matching_radius;
+      if (begin <= -library.matching_radius + interval_tolerance)
+      {
+        begin -= 2.0 * library.matching_radius;
+      }
+      if (end >= library.matching_radius - interval_tolerance)
+      {
+        end += 2.0 * library.matching_radius;
+      }
+      for (const double coordinate : {begin, end})
+      {
+        const Point3D boundary = Add(point, Scale(coordinate, tangent));
+        for (const double side : {-1.0, 1.0})
+        {
+          const Point3D sample = Add(boundary, Scale(side * library.matching_radius, gap));
+          lower[0] = std::min(lower[0], sample[0]);
+          lower[1] = std::min(lower[1], sample[2]);
+          upper[0] = std::max(upper[0], sample[0]);
+          upper[1] = std::max(upper[1], sample[2]);
+        }
+      }
+      if (site.metal_component >= 0)
+      {
+        auto &planes = planes_by_metal_component[site.metal_component];
+        if (std::none_of(
+                planes.begin(), planes.end(), [&](double plane)
+                { return std::abs(plane - point[1]) <= 1.0e-8 * library.matching_radius; }))
+        {
+          planes.push_back(point[1]);
+        }
+      }
+    }
+    for (int d = 0; d < 2; d++)
+    {
+      lower[d] -= library.matching_radius;
+      upper[d] += library.matching_radius;
+    }
+
+    std::vector<PlanViewFacet> local_facets;
+    const double tolerance = 1.0e-9 * library.matching_radius;
+    for (const auto &face : geometry.surface_faces)
+    {
+      const auto conductor = conductor_by_metal_component.find(face.component);
+      if (conductor == conductor_by_metal_component.end())
+      {
+        continue;
+      }
+      std::vector<Point3D> polygon;
+      polygon.reserve(face.vertices.size());
+      for (const auto &vertex : face.vertices)
+      {
+        const Point3D relative = Subtract(vertex, origin);
+        polygon.push_back(
+            {Dot(relative, axes[0]), Dot(relative, axes[1]), Dot(relative, axes[2])});
+      }
+      const auto &planes = planes_by_metal_component.at(face.component);
+      const auto plane = std::find_if(
+          planes.begin(), planes.end(),
+          [&](double candidate)
+          {
+            return std::all_of(polygon.begin(), polygon.end(), [&](const auto &point)
+                               { return std::abs(point[1] - candidate) <= tolerance; });
+          });
+      if (plane == planes.end())
+      {
+        continue;
+      }
+      polygon = ClipPlanViewPolygon(std::move(polygon), 0, lower[0], true);
+      polygon = ClipPlanViewPolygon(std::move(polygon), 0, upper[0], false);
+      polygon = ClipPlanViewPolygon(std::move(polygon), 2, lower[1], true);
+      polygon = ClipPlanViewPolygon(std::move(polygon), 2, upper[1], false);
+      if (polygon.size() < 3)
+      {
+        continue;
+      }
+      std::vector<Point3D> unique;
+      unique.reserve(polygon.size());
+      for (const auto &point : polygon)
+      {
+        if (unique.empty() || Distance(point, unique.back()) > tolerance)
+        {
+          unique.push_back(point);
+        }
+      }
+      if (unique.size() > 1 && Distance(unique.front(), unique.back()) <= tolerance)
+      {
+        unique.pop_back();
+      }
+      if (unique.size() >= 3)
+      {
+        local_facets.push_back({conductor->second, std::move(unique)});
+      }
+    }
+
+    constexpr int maximum_points = 8;
+    constexpr int record_size = 2 + 3 * maximum_points;
+    std::vector<double> local_records;
+    local_records.reserve(record_size * local_facets.size());
+    for (const auto &facet : local_facets)
+    {
+      MFEM_VERIFY(facet.points.size() <= maximum_points,
+                  "Clipped plan-view facet has too many vertices!");
+      local_records.push_back(static_cast<double>(facet.conductor));
+      local_records.push_back(static_cast<double>(facet.points.size()));
+      for (int i = 0; i < maximum_points; i++)
+      {
+        if (i < static_cast<int>(facet.points.size()))
+        {
+          local_records.insert(local_records.end(), facet.points[i].begin(),
+                               facet.points[i].end());
+        }
+        else
+        {
+          local_records.insert(local_records.end(), 3, 0.0);
+        }
+      }
+    }
+    const int local_count = static_cast<int>(local_facets.size());
+    std::vector<int> counts(Mpi::Size(mesh.GetComm()));
+    Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
+    std::vector<int> value_counts(counts.size()), value_offsets(counts.size());
+    int total = 0;
+    for (std::size_t rank = 0; rank < counts.size(); rank++)
+    {
+      value_counts[rank] = record_size * counts[rank];
+      value_offsets[rank] = record_size * total;
+      total += counts[rank];
+    }
+    std::vector<double> records(record_size * total);
+    Mpi::Allgatherv(static_cast<int>(local_records.size()), local_records.data(),
+                    records.data(), value_counts.data(), value_offsets.data(),
+                    mesh.GetComm());
+
+    std::vector<PlanViewFacet> facets;
+    facets.reserve(total);
+    for (int i = 0; i < total; i++)
+    {
+      const double *record = records.data() + record_size * i;
+      PlanViewFacet facet;
+      facet.conductor = static_cast<int>(std::llround(record[0]));
+      const int point_count = static_cast<int>(std::llround(record[1]));
+      MFEM_VERIFY(facet.conductor > 0 && point_count >= 3 && point_count <= maximum_points,
+                  "Invalid gathered plan-view facet!");
+      facet.points.resize(point_count);
+      for (int point = 0; point < point_count; point++)
+      {
+        std::copy_n(record + 2 + 3 * point, 3, facet.points[point].begin());
+      }
+      facets.push_back(std::move(facet));
+    }
+    return facets;
+  };
+  auto HasOverlappingConductorStrips = [&](const std::vector<SpatialEdgeSite3D> &sites)
+  {
+    const double tolerance = 1.0e-10 * library.matching_radius;
+    auto Polygon = [&](const SpatialEdgeSite3D &site)
+    {
+      const Point3D tangent = Normalize(Cross(site.gap_direction, site.process_normal));
+      double begin = site.interval[0];
+      double end = site.interval[1];
+      if (begin <= -library.matching_radius + tolerance)
+      {
+        begin -= 2.0 * library.matching_radius;
+      }
+      if (end >= library.matching_radius - tolerance)
+      {
+        end += 2.0 * library.matching_radius;
+      }
+      const Point3D p0 = Add(site.point, Scale(begin, tangent));
+      const Point3D p1 = Add(site.point, Scale(end, tangent));
+      return std::array<Point3D, 4>{
+          p0, p1, Add(p1, Scale(-3.0 * library.matching_radius, site.gap_direction)),
+          Add(p0, Scale(-3.0 * library.matching_radius, site.gap_direction))};
+    };
+    auto Overlap = [&](const std::array<Point3D, 4> &first,
+                       const std::array<Point3D, 4> &second, const Point3D &axis_x,
+                       const Point3D &axis_y)
+    {
+      std::array<Point2D, 4> first_2d{}, second_2d{};
+      for (int i = 0; i < 4; i++)
+      {
+        first_2d[i] = {Dot(first[i], axis_x), Dot(first[i], axis_y)};
+        second_2d[i] = {Dot(second[i], axis_x), Dot(second[i], axis_y)};
+      }
+      for (const auto *polygon : {&first_2d, &second_2d})
+      {
+        for (int i = 0; i < 4; i++)
+        {
+          const auto &start = (*polygon)[i];
+          const auto &end = (*polygon)[(i + 1) % 4];
+          Point2D axis = {start[1] - end[1], end[0] - start[0]};
+          const double length = Norm(axis);
+          if (length <= tolerance)
+          {
+            continue;
+          }
+          axis[0] /= length;
+          axis[1] /= length;
+          std::array<double, 4> first_projection{}, second_projection{};
+          for (int point = 0; point < 4; point++)
+          {
+            first_projection[point] = Dot(first_2d[point], axis);
+            second_projection[point] = Dot(second_2d[point], axis);
+          }
+          const auto [first_min, first_max] =
+              std::minmax_element(first_projection.begin(), first_projection.end());
+          const auto [second_min, second_max] =
+              std::minmax_element(second_projection.begin(), second_projection.end());
+          if (*first_max <= *second_min + tolerance ||
+              *second_max <= *first_min + tolerance)
+          {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+
+    for (std::size_t i = 0; i < sites.size(); i++)
+    {
+      const auto &first = sites[i];
+      const Point3D tangent = Normalize(Cross(first.gap_direction, first.process_normal));
+      const auto first_polygon = Polygon(first);
+      for (std::size_t j = i + 1; j < sites.size(); j++)
+      {
+        const auto &second = sites[j];
+        if (first.conductor == second.conductor ||
+            Dot(first.process_normal, second.process_normal) <= 1.0 - 1.0e-10 ||
+            std::abs(Dot(Subtract(second.point, first.point), first.process_normal)) >
+                tolerance)
+        {
+          continue;
+        }
+        if (Overlap(first_polygon, Polygon(second), tangent, first.gap_direction))
+        {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  auto FindMatchingSpatialModel = [&](const std::vector<SpatialEdgeSite3D> &sites)
+      -> std::optional<SpatialClusterSelection3D>
+  {
+    std::set<std::size_t> rejected;
+    while (true)
+    {
+      std::set<std::size_t> excluded = rejected;
+      for (std::size_t i = 0; i < library.models.size(); i++)
+      {
+        if (!library.models[i].plan_view_boundary)
+        {
+          excluded.insert(i);
+        }
+      }
+      auto selection = FindSpatialClusterLibraryModel(library, sites, excluded);
+      if (!selection)
+      {
+        break;
+      }
+      const std::size_t model_index = selection->response.models.front().index;
+      const auto &model = library.models[model_index];
+      std::map<int, int> conductor_by_metal_component;
+      for (std::size_t model_edge = 0; model_edge < model.spatial_edges.size();
+           model_edge++)
+      {
+        const auto &site = sites[selection->model_to_site[model_edge]];
+        if (site.metal_component < 0)
+        {
+          continue;
+        }
+        auto [component, inserted] = conductor_by_metal_component.emplace(
+            site.metal_component, model.spatial_edges[model_edge].conductor);
+        MFEM_VERIFY(inserted ||
+                        component->second == model.spatial_edges[model_edge].conductor,
+                    "A connected metal surface maps to multiple plan-view conductors!");
+      }
+      std::set<int> expected_conductors;
+      for (const auto &edge : model.spatial_edges)
+      {
+        expected_conductors.insert(edge.conductor);
+      }
+      const auto facets = GatherPlanViewFacets(sites, selection->origin, selection->axes,
+                                               conductor_by_metal_component);
+      std::set<int> found_conductors;
+      for (const auto &facet : facets)
+      {
+        found_conductors.insert(facet.conductor);
+      }
+      if (found_conductors == expected_conductors &&
+          CanonicalPlanViewBoundary(facets, library.matching_radius) ==
+              *model.plan_view_boundary)
+      {
+        return selection;
+      }
+      rejected.insert(model_index);
+    }
+
+    if (HasOverlappingConductorStrips(sites))
+    {
+      return std::nullopt;
+    }
+    for (std::size_t i = 0; i < library.models.size(); i++)
+    {
+      if (library.models[i].plan_view_boundary)
+      {
+        rejected.insert(i);
+      }
+    }
+    return FindSpatialClusterLibraryModel(library, sites, rejected);
+  };
   auto DescribeMissingSpatialGeometry = [&](const std::vector<SpatialEdgeSite3D> &sites)
       -> std::pair<nlohmann::json, std::map<int, std::map<InterfaceDielectric, int>>>
   {
@@ -4249,6 +4921,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 });
 
       std::map<int, int> conductor_ids;
+      std::map<int, int> conductor_by_metal_component;
       std::map<TargetSignature, int> slots;
       std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
       nlohmann::json edges = nlohmann::json::array();
@@ -4258,6 +4931,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         auto [conductor, conductor_inserted] =
             conductor_ids.emplace(site.conductor, conductor_ids.size() + 1);
         (void)conductor_inserted;
+        if (site.metal_component >= 0)
+        {
+          auto [metal_component, inserted] =
+              conductor_by_metal_component.emplace(site.metal_component, conductor->second);
+          MFEM_VERIFY(inserted || metal_component->second == conductor->second,
+                      "A connected metal surface maps to multiple spatial-coupon "
+                      "conductors!");
+        }
         const TargetSignature signature(site.targets.begin(), site.targets.end());
         auto [slot, slot_inserted] = slots.emplace(signature, slots.size());
         if (slot_inserted)
@@ -4275,11 +4956,78 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                          {"BoundaryCondition", requirements->DescribeBoundaryCondition(
                                                    site.boundary_condition)}});
       }
-      nlohmann::json geometry = {{"EdgeCount", edges.size()}, {"Edges", std::move(edges)}};
-      const std::string key = geometry.dump();
+      nlohmann::json spatial_geometry = {{"EdgeCount", edges.size()},
+                                         {"Edges", std::move(edges)}};
+      if (surface.retain_faces && !conductor_by_metal_component.empty())
+      {
+        const auto plan_view_facets =
+            GatherPlanViewFacets(sites, anchor.point, axes, conductor_by_metal_component);
+        std::vector<nlohmann::json> facets;
+        std::set<int> found_conductors;
+        for (const auto &facet : plan_view_facets)
+        {
+          std::vector<Point3D> scaled(facet.points.size());
+          for (std::size_t i = 0; i < facet.points.size(); i++)
+          {
+            for (int d = 0; d < 3; d++)
+            {
+              scaled[i][d] = requirements->ScaleLength(facet.points[i][d]);
+            }
+          }
+          auto Sequence = [&](std::size_t start, bool reverse)
+          {
+            nlohmann::json points = nlohmann::json::array();
+            for (std::size_t step = 0; step < scaled.size(); step++)
+            {
+              const std::size_t index = reverse
+                                            ? (start + scaled.size() - step) % scaled.size()
+                                            : (start + step) % scaled.size();
+              points.push_back(scaled[index]);
+            }
+            return points;
+          };
+          nlohmann::json canonical;
+          std::string canonical_key;
+          for (std::size_t start = 0; start < scaled.size(); start++)
+          {
+            for (const bool reverse : {false, true})
+            {
+              auto candidate = Sequence(start, reverse);
+              const std::string key = candidate.dump();
+              if (canonical.is_null() || key < canonical_key)
+              {
+                canonical = std::move(candidate);
+                canonical_key = key;
+              }
+            }
+          }
+          facets.push_back(
+              {{"Conductor", facet.conductor}, {"Points", std::move(canonical)}});
+          found_conductors.insert(facet.conductor);
+        }
+        std::set<int> expected_conductors;
+        for (const auto &[component, conductor] : conductor_by_metal_component)
+        {
+          (void)component;
+          expected_conductors.insert(conductor);
+        }
+        if (found_conductors == expected_conductors)
+        {
+          std::sort(facets.begin(), facets.end(), [](const auto &first, const auto &second)
+                    { return first.dump() < second.dump(); });
+          facets.erase(std::unique(facets.begin(), facets.end(),
+                                   [](const auto &first, const auto &second)
+                                   { return first == second; }),
+                       facets.end());
+          spatial_geometry["PlanViewFacets"] = std::move(facets);
+          spatial_geometry["PlanViewBoundary"] = nlohmann::json::parse(
+              CanonicalPlanViewBoundary(plan_view_facets, library.matching_radius));
+        }
+      }
+      const std::string key = spatial_geometry.dump();
       if (!best || key < best_key)
       {
-        best = std::make_pair(std::move(geometry), std::move(targets_by_slot));
+        best = std::make_pair(std::move(spatial_geometry), std::move(targets_by_slot));
         best_key = key;
       }
     }
@@ -4463,11 +5211,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                             best_segment_distance, library.matching_radius);
       sites.push_back({chain, segment.geometry_index, *best_segment, best_segment_distance,
                        interval, Interpolate(segment, best_segment_distance),
-                       segment.axis_u, segment.axis_v, segment.conductor, segment.targets,
+                       segment.axis_u, segment.axis_v, segment.conductor,
+                       segment.metal_component, segment.targets,
                        segment.boundary_condition});
     }
 
-    auto selection = FindSpatialClusterLibraryModel(library, sites);
+    auto selection = FindMatchingSpatialModel(sites);
     if (!selection || selection->targets_by_slot.size() < 2)
     {
       if (requirements)
@@ -4940,13 +5689,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         const auto &segment = segments[*best_segment];
         const auto interval = SpatialInterval(segments, *best_segment,
                                               best_segment_distance, group.matching_radius);
-        sites.push_back(
-            {chain, segment.geometry_index, *best_segment, best_segment_distance, interval,
-             Interpolate(segment, best_segment_distance), segment.axis_u, segment.axis_v,
-             segment.conductor, segment.targets, segment.boundary_condition});
+        sites.push_back({chain, segment.geometry_index, *best_segment,
+                         best_segment_distance, interval,
+                         Interpolate(segment, best_segment_distance), segment.axis_u,
+                         segment.axis_v, segment.conductor, segment.metal_component,
+                         segment.targets, segment.boundary_condition});
       }
 
-      auto selection = FindSpatialClusterLibraryModel(library, sites);
+      auto selection = FindMatchingSpatialModel(sites);
       if (!selection)
       {
         if (requirements)

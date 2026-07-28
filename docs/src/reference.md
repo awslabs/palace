@@ -1126,7 +1126,11 @@ uses a `SpatialEdgeCluster` entry:
 frame. The vectors must be orthonormal unit vectors. `Interval` gives the signed portion
 of the physical edge, along
 ``\bm{t}=\text{GapDirection}\mathbin{\times}\text{ProcessNormal}``, replaced by the
-spatial coupon. `BoundaryCondition` uses the same string or object form described below.
+spatial coupon. Automatically generated entries can also contain `PlanViewBoundary`, a
+canonical integer segment representation of the local conductor mask at resolution
+``10^{-9} R``. Palace compares that descriptor after rigidly aligning the edge frames;
+it is process-library metadata and is not a user-authored device-mesh input.
+`BoundaryCondition` uses the same string or object form described below.
 `EdgeAngleTolerance` is in degrees. `InterfaceSlot` is an optional nonnegative integer
 and defaults to zero. Edges belonging to one physical fabrication layer use the same
 slot.
@@ -1448,8 +1452,33 @@ clusters. An entry is merged only after its generated geometry passes the config
 probe-convergence and held-out gates. In particular, a sharp endpoint or junction does
 not encode a fabricated plan-view regularization and can remain nonconvergent; the
 planner preserves that failed qualification instead of treating the canonical coupon as
-universal. Automatic generation also rejects finite-impedance coupons and unsupported
-corner angles while preserving them as explicit coverage failures in the work plan.
+universal. An edge-only spatial-cluster signature can also leave the local conductor
+footprints underdetermined. The candidate generator rejects reconstructed half-strip
+geometry when two different conductors overlap instead of inventing a plan-view closure.
+For bootstrapping a new process, the configured version-3 library may contain complete
+`Fabrication` metadata, a positive `MatchingRadius`, and an empty `Models` array.
+Geometry preflight accepts this metadata-only seed and reports every required coupon;
+ordinary correction still requires at least one qualified model.
+For device preflights, Palace automatically exports clipped plan-view facets from each
+connected metal sheet in such a neighborhood. The spatial mesher intersects its inferred
+edge strips with this exact mask. Surface facets remain rank-local. During ordinary
+correction Palace exchanges compact canonical vertex keys to classify connected
+conductors and, for an exact-mask model, only the facets clipped to that interaction
+neighborhood. Cache keys use the canonical boundary of the facet union, so equivalent
+surface-mesh triangulations reuse the same qualified coupon. The generated
+`SpatialEdgeCluster` stores this `PlanViewBoundary` and matches only the same boundary.
+Older edge-only models remain valid for unambiguous neighborhoods, but are rejected when
+reconstructed half-strips from different conductors overlap. In the fabricated coupon,
+an active-edge strip receives the configured taper and rounding before it is clipped by
+the mask prism; a boundary supplied only by the mask is therefore a vertical clipping
+boundary rather than a separately tapered and rounded fabrication edge. The qualification
+gates remain mandatory for neighborhoods where that distinction is material.
+
+Automatic generation also rejects finite-impedance coupons and unsupported corner angles
+while preserving them as explicit coverage failures in the work plan. Coupon families
+are qualified independently: one failure does not prevent other signatures from being
+cached and merged into the partial output library. The planner exits unsuccessfully and
+sets `Execution.Complete` to false until every required signature qualifies.
 
 A multi-conductor coupon appends one ``V_i-V_1`` coefficient for every conductor after
 the first. Electrostatics uses H1 point values. Maxwell integrates the declared open

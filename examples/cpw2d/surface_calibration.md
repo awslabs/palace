@@ -249,6 +249,11 @@ python3 prepare_surface_response_coupons.py \
   --output /tmp/process-coupon-plan
 ```
 
+The input process library may be a metadata-only version-3 seed with an empty
+`Models` array. This bootstraps a new fabrication process without a hand-built
+coupon. Palace accepts an empty library only for geometry preflight; an ordinary
+correction run still requires at least one qualified model.
+
 The plan routes isolated and paired edges, parallel multi-edge clusters, 90
 degree convex and concave corners, endpoints, junctions, and exact spatial edge
 clusters to candidate canonical coupon builders. Unsupported corner angles
@@ -288,7 +293,32 @@ independent fabricated plan-view cap or junction-rounding model. If that sharp
 geometry leaves the interface response unconverged, the p-order probe fails and
 the entry is not merged. A process library must not promote such a canonical
 coupon merely because its response matrix and held-out trace are algebraically
-consistent.
+consistent. Exact spatial-cluster requirements currently describe local edge
+segments and their inward metal sides. If those half-strip descriptions overlap
+for different conductors, they do not uniquely reconstruct the device's local
+plan-view mask. Palace preflight therefore extracts the connected metal sheets,
+clips their surface facets to the interaction neighborhood, and attaches them to
+the spatial signature automatically. The mesher uses those facets as an exact
+plan-view mask; an older edge-only signature still fails closed when its inferred
+conductors overlap. The cache hashes a canonical boundary of the facet union, not
+the source triangulation, so equivalent mesh refinement does not create a new
+coupon family. The generated spatial model stores this `PlanViewBoundary`.
+During correction, Palace clips rank-local metal facets and exchanges only the
+small neighborhood polygons. A masked model must match the same canonical
+boundary; legacy edge-only models remain available only for unambiguous
+nonoverlapping conductor strips.
+
+The fabricated spatial mesher first applies the configured edge-strip taper and
+rounding and then intersects that result with vertical mask prisms. Boundaries
+introduced only by the mask do not yet receive an independent sidewall taper or
+corner-rounding construction. Probe convergence and held-out qualification must
+reject a coupon when that local approximation affects its response materially.
+
+Execution continues across independent requirements after a candidate fails.
+Qualified entries are cached and merged into a partial process library, while
+`coupon-plan.json` and `qualification-manifest.json` retain every failure. The
+command returns a nonzero status and `Execution.Complete` remains false until the
+entire preflight manifest is covered.
 
 Automatic finite-impedance coupon generation is not yet qualified. The planner
 preserves the complete boundary-law signature, but `--execute` currently

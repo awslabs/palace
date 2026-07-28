@@ -69,6 +69,7 @@ struct MetalEdgeSegment
   int component = -1;
   int physical_component = -1;
   int physical_chain = -1;
+  int metal_component = -1;
   MetalEdgeSegmentType type = MetalEdgeSegmentType::PHYSICAL;
 
   // Metal face attributes and boundary conditions which geometrically support this
@@ -88,15 +89,33 @@ struct MetalEdgeSegment
   std::vector<int> truncation_attributes;
 };
 
+struct MetalSurfaceFace
+{
+  std::vector<std::array<double, 3>> vertices;
+  int component = -1;
+};
+
 struct MetalEdgeGeometry
 {
   std::vector<MetalEdgeVertex> vertices;
   std::vector<MetalEdgeSegment> segments;
+  std::vector<MetalSurfaceFace> surface_faces;
   int components = 0;
   int physical_components = 0;
   int physical_chains = 0;
+  int metal_components = 0;
 
   bool Empty() const { return segments.empty(); }
+};
+
+struct MetalSurfaceExtraction
+{
+  // Classify connected metal sheets using globally canonicalized surface vertices.
+  bool classify_components = false;
+
+  // Retain rank-local surface facets for exact spatial-neighborhood matching. This
+  // implies component classification; callers should exchange only clipped facets.
+  bool retain_faces = false;
 };
 
 // Automatically extract the physical perimeter of all PEC-like, conductivity, and
@@ -104,7 +123,8 @@ struct MetalEdgeGeometry
 // classified using only existing boundary conditions and dielectric postprocessing
 // surfaces; InterfaceDielectricData::edge_attributes is intentionally not used.
 MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
-                                           const config::BoundaryData &boundaries);
+                                           const config::BoundaryData &boundaries,
+                                           MetalSurfaceExtraction surface = {});
 
 // Infer a process normal for selected physical metal-edge segments from their supporting
 // metal faces. The material score must increase from the process/substrate side toward
@@ -117,10 +137,10 @@ std::vector<std::array<double, 3>> BuildMetalEdgeProcessNormals(
 
 // Infer the in-plane direction from metal toward the adjacent gap for selected physical
 // edge segments. The process normals must correspond one-to-one with segment_indices.
-std::vector<std::array<double, 3>> BuildMetalEdgeGapDirections(
-    const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
-    const std::vector<std::size_t> &segment_indices,
-    const std::vector<std::array<double, 3>> &process_normals);
+std::vector<std::array<double, 3>>
+BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
+                            const std::vector<std::size_t> &segment_indices,
+                            const std::vector<std::array<double, 3>> &process_normals);
 
 }  // namespace palace
 

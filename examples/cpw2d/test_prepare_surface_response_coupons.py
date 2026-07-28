@@ -29,6 +29,16 @@ SPATIAL_SPEC = importlib.util.spec_from_file_location(
 SPATIAL = importlib.util.module_from_spec(SPATIAL_SPEC)
 SPATIAL_SPEC.loader.exec_module(SPATIAL)
 
+COMBINER_PATH = (
+    CPW2D.parent / "cpw3d_surface" / "corner_coupon"
+    / "combine_process_libraries.py"
+)
+COMBINER_SPEC = importlib.util.spec_from_file_location(
+    "combine_process_libraries", COMBINER_PATH
+)
+COMBINER = importlib.util.module_from_spec(COMBINER_SPEC)
+COMBINER_SPEC.loader.exec_module(COMBINER)
+
 
 def pec():
     return {"Type": "PEC"}
@@ -84,7 +94,70 @@ def process_parameters():
     }
 
 
+def overlapping_spatial_coupon(masked=False):
+    geometry = {
+        "Edges": [
+            {
+                "Point": [0.0, 0.0, -2.0],
+                "GapDirection": [0.0, 0.0, -1.0],
+                "ProcessNormal": [0.0, 1.0, 0.0],
+                "Interval": [-2.0, 2.0],
+                "Conductor": 1,
+                "InterfaceSlot": 0,
+                "BoundaryCondition": pec(),
+            },
+            {
+                "Point": [0.0, 0.0, 0.0],
+                "GapDirection": [1.0, 0.0, 0.0],
+                "ProcessNormal": [0.0, 1.0, 0.0],
+                "Interval": [0.0, 2.0],
+                "Conductor": 2,
+                "InterfaceSlot": 0,
+                "BoundaryCondition": pec(),
+            },
+        ]
+    }
+    if masked:
+        geometry["PlanViewFacets"] = [
+            {
+                "Conductor": 1,
+                "Points": [
+                    [-2.0, 0.0, -2.0],
+                    [2.0, 0.0, -2.0],
+                    [2.0, 0.0, -1.0],
+                    [-2.0, 0.0, -1.0],
+                ],
+            },
+            {
+                "Conductor": 2,
+                "Points": [
+                    [-1.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 2.0],
+                    [-1.0, 0.0, 2.0],
+                ],
+            },
+        ]
+    return {
+        "Topology": "SpatialEdgeCluster",
+        "Geometry": geometry,
+        "Interfaces": interfaces(),
+        "BoundaryCondition": pec(),
+    }
+
+
 class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
+    def test_combiner_accepts_metadata_only_seed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            seed = Path(directory) / "process-library.json"
+            seed.write_text(
+                '{"Version": 3, "MatchingRadius": 2.0, '
+                '"Fabrication": {"InterfaceLayers": {}}, "Models": []}\n'
+            )
+            path, library = COMBINER.load_library(seed)
+            self.assertEqual(path, seed.resolve())
+            self.assertEqual(library["Models"], [])
+
     def test_material_options_emit_one_value_per_flag(self):
         options = PREPARE.material_options(process_parameters())
         self.assertEqual(
@@ -214,7 +287,8 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
 
     def test_spatial_matching_surface_encloses_process_geometry(self):
         coupon = endpoint_coupon()
-        frame, edges = SPATIAL.normalize_geometry(coupon, 2.0)
+        frame, edges, facets = SPATIAL.normalize_geometry(coupon, 2.0)
+        self.assertEqual(facets, [])
         lower, upper = SPATIAL.coupon_bounds(edges, 2.0, 0.1, 0.05)
         self.assertAlmostEqual(lower[0], -4.0)
         self.assertAlmostEqual(upper[0], 4.0)
@@ -227,9 +301,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             2.0,
             0.1,
             80.0,
+            facets,
         )
         labels = SPATIAL.conductor_at_points(
-            points, edges, 2.0, 0.1, 80.0
+            points, edges, 2.0, 0.1, 80.0, facets
         )
         self.assertGreaterEqual(groups[0], 8)
         self.assertEqual(set(np.unique(labels)), {0, 1})
@@ -253,6 +328,109 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(SPATIAL.extended_interval(vertex_arm, 2.0), (0.0, 6.0))
         self.assertEqual(SPATIAL.extended_interval(continuing, 2.0), (-6.0, 6.0))
         self.assertEqual(SPATIAL.extended_interval(finite, 2.0), (-1.0, 1.0))
+
+    def test_spatial_coupon_rejects_overlapping_conductor_half_strips(self):
+        coupon = overlapping_spatial_coupon()
+        _, edges, facets = SPATIAL.normalize_geometry(coupon, 2.0)
+        with self.assertRaisesRegex(
+            ValueError, "overlapping plan-view metal"
+        ):
+            SPATIAL.validate_plan_view_geometry(edges, 2.0, facets)
+
+    def test_spatial_coupon_accepts_explicit_plan_view_mask(self):
+        coupon = overlapping_spatial_coupon(masked=True)
+        _, edges, facets = SPATIAL.normalize_geometry(coupon, 2.0)
+        SPATIAL.validate_plan_view_geometry(edges, 2.0, facets)
+        self.assertEqual({facet["Conductor"] for facet in facets}, {1, 2})
+
+    def test_spatial_planner_fails_closed_without_mask_and_passes_mask_to_mesher(self):
+        requirements = []
+        for masked in (False, True):
+            requirement = overlapping_spatial_coupon(masked)
+            requirement["Status"] = "Missing"
+            requirements.append(requirement)
+        plan = PREPARE.plan_from_manifest(
+            Path("requirements.json"),
+            {
+                "Library": {"MatchingRadius": 2.0},
+                "Requirements": requirements,
+            },
+            Path("library.json"),
+            {"Fabrication": {}},
+            False,
+        )
+        self.assertEqual(
+            [coupon["Preparation"]["Method"] for coupon in plan["Coupons"]],
+            ["SpatialCoupon", "SpatialCoupon"],
+        )
+        unmasked = next(
+            coupon
+            for coupon in plan["Coupons"]
+            if "PlanViewFacets" not in coupon["Geometry"]
+        )
+        masked = next(
+            coupon
+            for coupon in plan["Coupons"]
+            if "PlanViewFacets" in coupon["Geometry"]
+        )
+        args = SimpleNamespace(
+            matching_radius=2.0,
+            orders=[1],
+            spatial_lc_fine=0.02,
+            spatial_lc_far=0.3,
+            mesh_order=1,
+            spatial_ring_size=8,
+            min_process_feature_elements=2.0,
+            force=False,
+            palace=Path("palace"),
+            julia="julia",
+            julia_project=None,
+            ranks=1,
+            max_fabricated_matrix_change=5.0,
+            max_fabricated_energy_change=10.0,
+            max_domain_defect_change=5.0,
+            max_heldout_error=10.0,
+        )
+
+        class MeshingReached(Exception):
+            pass
+
+        real_run = PREPARE.run
+        meshing_commands = []
+
+        def run_through_signature(command, check=True):
+            if "--signature-only" in command:
+                return real_run(command, check)
+            meshing_commands.append([str(value) for value in command])
+            raise MeshingReached
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            with mock.patch.object(PREPARE, "run", side_effect=run_through_signature):
+                with self.assertRaisesRegex(
+                    RuntimeError, "overlapping plan-view metal"
+                ):
+                    PREPARE.build_spatial(
+                        unmasked, args, process_parameters(), cache
+                    )
+                with self.assertRaises(MeshingReached):
+                    PREPARE.build_spatial(
+                        masked, args, process_parameters(), cache
+                    )
+            self.assertEqual(len(meshing_commands), 1)
+            self.assertIn("--mask", meshing_commands[0])
+            mask = Path(meshing_commands[0][meshing_commands[0].index("--mask") + 1])
+            self.assertTrue(mask.is_file())
+            generated_coupon = PREPARE.load_json(mask.parent / "coupon.json")
+            self.assertIn(
+                "PlanViewBoundary", generated_coupon["Geometry"]
+            )
+            self.assertEqual(
+                generated_coupon["Geometry"]["PlanViewBoundary"],
+                PREPARE.canonical_plan_view_boundary(
+                    masked["Geometry"]["PlanViewFacets"], 2.0
+                ),
+            )
 
     def test_cross_layer_geometry_round_trips_through_canonical_frame(self):
         coupon = {
@@ -282,7 +460,8 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             "Interfaces": interfaces(0) + interfaces(1),
             "BoundaryCondition": pec(),
         }
-        frame, edges = SPATIAL.normalize_geometry(coupon, 2.0)
+        frame, edges, facets = SPATIAL.normalize_geometry(coupon, 2.0)
+        self.assertEqual(facets, [])
         original = np.asarray(
             [edge["Point"] for edge in coupon["Geometry"]["Edges"]]
         )
@@ -319,15 +498,27 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             )
         )
 
-    def test_fabricated_edge_localization_uses_metal_substrate_perimeters(self):
+    def test_spatial_attributes_separate_conductors_from_interface_slots(self):
         edges = [
             {"Conductor": 1, "InterfaceSlot": 0},
             {"Conductor": 2, "InterfaceSlot": 0},
             {"Conductor": 2, "InterfaceSlot": 1},
         ]
         self.assertEqual(SPATIAL.edge_attributes(edges, False, 0), [3000])
-        self.assertEqual(SPATIAL.edge_attributes(edges, True, 0), [5001, 5002])
-        self.assertEqual(SPATIAL.edge_attributes(edges, True, 1), [5102])
+        self.assertEqual(SPATIAL.edge_attributes(edges, True, 0), [3000, 3100])
+        self.assertEqual(SPATIAL.edge_attributes(edges, True, 1), [3001, 3101])
+        self.assertEqual(SPATIAL.conductor_attributes(edges, False, 2), [4002])
+        self.assertEqual(
+            SPATIAL.conductor_attributes(edges, True, 2), [5002, 6002]
+        )
+        self.assertEqual(
+            SPATIAL.interface_attributes(edges, False, 0, "MS"),
+            [4001, 4002],
+        )
+        self.assertEqual(
+            SPATIAL.interface_attributes(edges, True, 1, "MA"),
+            [6001, 6002],
+        )
 
     def test_spatial_cache_key_reuses_exact_coupon_and_invalidates_geometry(self):
         coupon = endpoint_coupon()
@@ -369,6 +560,152 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 )
             self.assertEqual(reused_library, library)
             self.assertEqual(reused_qualification, qualification)
+
+    def test_spatial_cache_key_uses_union_boundary_not_facet_triangulation(self):
+        args = SimpleNamespace(
+            matching_radius=2.0,
+            orders=[1, 2],
+            spatial_lc_fine=0.02,
+            spatial_lc_far=0.3,
+            mesh_order=1,
+            spatial_ring_size=8,
+            min_process_feature_elements=2.0,
+        )
+        corners = [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+        ]
+        coarse = endpoint_coupon()
+        coarse["Geometry"]["PlanViewFacets"] = [
+            {"Conductor": 1, "Points": [corners[0], corners[1], corners[2]]},
+            {"Conductor": 1, "Points": [corners[0], corners[2], corners[3]]},
+        ]
+        refined = endpoint_coupon()
+        center = [1.0, 0.0, 0.5]
+        midpoints = [
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.5],
+            [1.0, 0.0, 1.0],
+            [0.0, 0.0, 0.5],
+        ]
+        refined["Geometry"]["PlanViewFacets"] = [
+            {
+                "Conductor": 1,
+                "Points": [
+                    center,
+                    corners[index],
+                    midpoints[index],
+                ],
+            }
+            for index in range(4)
+        ] + [
+            {
+                "Conductor": 1,
+                "Points": [
+                    center,
+                    midpoints[index],
+                    corners[(index + 1) % 4],
+                ],
+            }
+            for index in range(4)
+        ]
+        coarse_spec = PREPARE.spatial_spec(
+            coarse, args, process_parameters()
+        )
+        refined_spec = PREPARE.spatial_spec(
+            refined, args, process_parameters()
+        )
+        self.assertEqual(
+            coarse_spec["Coupon"]["Geometry"]["PlanViewBoundary"],
+            refined_spec["Coupon"]["Geometry"]["PlanViewBoundary"],
+        )
+        self.assertEqual(
+            PREPARE.fingerprint(coarse_spec),
+            PREPARE.fingerprint(refined_spec),
+        )
+        self.assertNotIn(
+            "PlanViewFacets", coarse_spec["Coupon"]["Geometry"]
+        )
+
+    def test_spatial_cache_boundary_rejects_malformed_facets(self):
+        with self.assertRaisesRegex(ValueError, "not on one process plane"):
+            PREPARE.canonical_plan_view_boundary(
+                [
+                    {
+                        "Conductor": 1,
+                        "Points": [
+                            [0.0, 0.0, 0.0],
+                            [1.0, 0.0, 0.0],
+                            [1.0, 0.0, 1.0],
+                            [0.0, 0.1, 1.0],
+                        ],
+                    }
+                ],
+                2.0,
+            )
+
+        with self.assertRaisesRegex(ValueError, "nonmanifold"):
+            PREPARE.canonical_plan_view_boundary(
+                [
+                    {
+                        "Conductor": 1,
+                        "Points": [
+                            [0.0, 0.0, 0.0],
+                            [1.0, 0.0, 0.0],
+                            [0.0, 0.0, 1.0],
+                        ],
+                    },
+                    {
+                        "Conductor": 1,
+                        "Points": [
+                            [0.0, 0.0, 0.0],
+                            [1.0, 0.0, 0.0],
+                            [0.5, 0.0, -1.0],
+                        ],
+                    },
+                    {
+                        "Conductor": 1,
+                        "Points": [
+                            [0.0, 0.0, 0.0],
+                            [1.0, 0.0, 0.0],
+                            [1.0, 0.0, -1.0],
+                        ],
+                    },
+                ],
+                2.0,
+            )
+
+    def test_spatial_cache_boundary_uses_cpp_rounding_and_integer_topology(self):
+        boundary = PREPARE.canonical_plan_view_boundary(
+            [
+                {
+                    "Conductor": 1,
+                    "Points": [
+                        [-1.5, 0.0, 0.0],
+                        [0.5, 0.0, 0.0],
+                        [0.5, 0.0, 1.5],
+                        [-1.5, 0.0, 1.5],
+                    ],
+                }
+            ],
+            1.0e9,
+        )
+        self.assertEqual(
+            boundary,
+            [
+                {
+                    "Conductor": 1,
+                    "Segments": [
+                        [[-2, 0, 0], [-2, 0, 2]],
+                        [[-2, 0, 0], [1, 0, 0]],
+                        [[-2, 0, 2], [1, 0, 2]],
+                        [[1, 0, 0], [1, 0, 2]],
+                    ],
+                }
+            ],
+        )
 
     def test_spatial_probe_failure_prevents_full_response_solves(self):
         args = SimpleNamespace(
@@ -431,6 +768,51 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     for config in palace_configs
                 )
             )
+
+    def test_execute_preserves_successes_after_independent_coupon_failure(self):
+        failed = endpoint_coupon()
+        failed["Id"] = "failed"
+        failed["Preparation"] = {"Method": "SpatialCoupon"}
+        qualified = endpoint_coupon()
+        qualified["Id"] = "qualified"
+        qualified["Preparation"] = {"Method": "SpatialCoupon"}
+        plan = {
+            "SourceManifest": "requirements.json",
+            "Coupons": [failed, qualified],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(
+                cache=root / "cache",
+                output=root / "output",
+                name="test-library",
+            )
+
+            def build(coupon, args, parameters, cache):
+                if coupon["Id"] == "failed":
+                    raise RuntimeError("probe did not converge")
+                return root / "qualified.json", root / "qualification.json"
+
+            with (
+                mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                mock.patch.object(PREPARE, "build_spatial", side_effect=build),
+                mock.patch.object(PREPARE, "run", return_value=0),
+            ):
+                complete = PREPARE.execute(plan, source, args)
+
+            self.assertFalse(complete)
+            self.assertFalse(plan["Execution"]["Complete"])
+            self.assertEqual(len(plan["Execution"]["Failures"]), 1)
+            self.assertEqual(plan["Execution"]["Failures"][0]["Ids"], ["failed"])
+            manifest = PREPARE.load_json(
+                root / "output" / "library" / "qualification-manifest.json"
+            )
+            self.assertEqual(
+                manifest["GeneratedLibraries"], [str(root / "qualified.json")]
+            )
+            self.assertFalse(manifest["Passed"])
 
     def test_missing_probe_report_is_a_failed_result(self):
         args = SimpleNamespace(

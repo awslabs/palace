@@ -3,6 +3,7 @@
 """Plan, build, qualify, cache, and merge surface-response coupons."""
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -341,6 +342,153 @@ def process_resolution(parameters, fine_size, minimum_elements):
             f"at least {minimum_elements:g} are required"
         )
     return report
+
+
+def canonical_plan_view_boundary(facets, matching_radius):
+    if not facets:
+        return []
+    tolerance = 1.0e-9 * matching_radius
+
+    def subtract(first, second):
+        return tuple(a - b for a, b in zip(first, second))
+
+    def dot(first, second):
+        return sum(a * b for a, b in zip(first, second))
+
+    def cross(first, second):
+        return (
+            first[1] * second[2] - first[2] * second[1],
+            first[2] * second[0] - first[0] * second[2],
+            first[0] * second[1] - first[1] * second[0],
+        )
+
+    def quantize(point):
+        def llround(value):
+            scaled = value / tolerance
+            return (
+                math.floor(scaled + 0.5)
+                if scaled >= 0.0
+                else math.ceil(scaled - 0.5)
+            )
+
+        return tuple(llround(value) for value in point)
+
+    groups = {}
+    for facet in facets:
+        conductor = int(facet["Conductor"])
+        points = facet["Points"]
+        if conductor <= 0 or len(points) < 3:
+            raise ValueError("Plan-view facet is invalid")
+        ring = []
+        for point in points:
+            if len(point) != 3 or not all(
+                math.isfinite(float(value)) for value in point
+            ):
+                raise ValueError("Plan-view facet is invalid")
+            key = quantize(tuple(float(value) for value in point))
+            if not ring or ring[-1] != key:
+                ring.append(key)
+        if len(ring) > 1 and ring[0] == ring[-1]:
+            ring.pop()
+        if len(ring) < 3:
+            continue
+        plane = ring[0][1]
+        if any(point[1] != plane for point in ring):
+            raise ValueError("Plan-view facet is not on one process plane")
+        groups.setdefault((conductor, plane), []).append(ring)
+
+    result = []
+    for (conductor, _), group_polygons in sorted(groups.items()):
+        polygons = []
+        seen = set()
+        for ring in group_polygons:
+            sequences = []
+            for reverse in (False, True):
+                ordered = list(reversed(ring)) if reverse else ring
+                sequences.extend(
+                    tuple(ordered[index:] + ordered[:index])
+                    for index in range(len(ordered))
+                )
+            key = min(sequences)
+            if key not in seen:
+                seen.add(key)
+                polygons.append(ring)
+
+        vertices = [point for polygon in polygons for point in polygon]
+        counts = {}
+        for polygon in polygons:
+            for begin, end in zip(polygon, polygon[1:] + polygon[:1]):
+                direction = subtract(end, begin)
+                length_squared = dot(direction, direction)
+                if length_squared == 0:
+                    continue
+                split = [begin, end]
+                for point in vertices:
+                    if point == begin or point == end:
+                        continue
+                    offset = subtract(point, begin)
+                    if cross(direction, offset) != (0, 0, 0):
+                        continue
+                    coordinate = dot(offset, direction)
+                    if 0 < coordinate < length_squared:
+                        split.append(point)
+                split = sorted(
+                    set(split),
+                    key=lambda point: dot(subtract(point, begin), direction),
+                )
+                for first, second in zip(split, split[1:]):
+                    edge = tuple(sorted((first, second)))
+                    counts[edge] = counts.get(edge, 0) + 1
+
+        if any(count > 2 for count in counts.values()):
+            raise ValueError("Plan-view facets form a nonmanifold surface")
+        boundary = {edge for edge, count in counts.items() if count % 2 == 1}
+        boundary_degree = {}
+        for first, second in boundary:
+            boundary_degree[first] = boundary_degree.get(first, 0) + 1
+            boundary_degree[second] = boundary_degree.get(second, 0) + 1
+        if any(degree % 2 for degree in boundary_degree.values()):
+            raise ValueError("Plan-view facet union has an open boundary")
+        while True:
+            adjacency = {}
+            for first, second in boundary:
+                adjacency.setdefault(first, set()).add(second)
+                adjacency.setdefault(second, set()).add(first)
+            merge = None
+            for vertex, neighbors in adjacency.items():
+                if len(neighbors) != 2:
+                    continue
+                first, second = tuple(neighbors)
+                if (
+                    cross(
+                        subtract(first, vertex),
+                        subtract(second, vertex),
+                    )
+                    == (0, 0, 0)
+                ):
+                    merge = (vertex, first, second)
+                    break
+            if merge is None:
+                break
+            vertex, first, second = merge
+            boundary.remove(tuple(sorted((first, vertex))))
+            boundary.remove(tuple(sorted((vertex, second))))
+            boundary.add(tuple(sorted((first, second))))
+        boundary = sorted(boundary)
+        if not boundary:
+            raise ValueError("Plan-view facets have no union boundary")
+        result.append(
+            {
+                "Conductor": conductor,
+                "Segments": [[list(first), list(second)] for first, second in boundary],
+            }
+        )
+    result.sort(
+        key=lambda entry: json.dumps(
+            entry, sort_keys=True, separators=(",", ":")
+        )
+    )
+    return result
 
 
 def require_pec(coupon):
@@ -1060,12 +1208,26 @@ def spatial_spec(coupon, args, parameters):
     resolution = process_resolution(
         parameters, args.spatial_lc_fine, args.min_process_feature_elements
     )
+    geometry = copy.deepcopy(coupon["Geometry"])
+    facets = geometry.pop("PlanViewFacets", [])
+    if facets:
+        canonical_boundary = canonical_plan_view_boundary(
+            facets, args.matching_radius
+        )
+        if (
+            "PlanViewBoundary" in geometry
+            and geometry["PlanViewBoundary"] != canonical_boundary
+        ):
+            raise ValueError(
+                "Palace PlanViewBoundary does not match its exported facets"
+            )
+        geometry["PlanViewBoundary"] = canonical_boundary
     return {
         "Version": 1,
         "Family": "spatial",
         "Coupon": {
             "Topology": coupon["Topology"],
-            "Geometry": coupon["Geometry"],
+            "Geometry": geometry,
             "Interfaces": coupon["Interfaces"],
             "BoundaryCondition": coupon["BoundaryCondition"],
         },
@@ -1113,7 +1275,13 @@ def build_spatial(coupon, args, parameters, cache):
 
     root.mkdir(parents=True, exist_ok=True)
     coupon_path = root / "coupon.json"
-    write_json(coupon_path, coupon)
+    generated_coupon = copy.deepcopy(coupon)
+    canonical_geometry = spec["Coupon"]["Geometry"]
+    if "PlanViewBoundary" in canonical_geometry:
+        generated_coupon["Geometry"]["PlanViewBoundary"] = canonical_geometry[
+            "PlanViewBoundary"
+        ]
+    write_json(coupon_path, generated_coupon)
     write_json(root / "coupon-spec.json", spec)
     common_generator = [
         sys.executable,
@@ -1133,8 +1301,6 @@ def build_spatial(coupon, args, parameters, cache):
         parameters["top_radius"],
         "--trench-rounding",
         parameters["bottom_radius"],
-        "--substrate-permittivity",
-        parameters["substrate_permittivity"],
         "--ring-size",
         args.spatial_ring_size,
         "--order",
@@ -1143,8 +1309,16 @@ def build_spatial(coupon, args, parameters, cache):
         f"{coupon['Topology'].lower()}-{key[:12]}",
         *material_options(parameters),
     ]
-    run([*common_generator, "--signature-only"])
+    try:
+        run([*common_generator, "--signature-only"])
+    except subprocess.CalledProcessError:
+        failure_path = root / "generation-failure.json"
+        if failure_path.is_file():
+            failure = load_json(failure_path)
+            raise RuntimeError(failure.get("Reason", "Spatial geometry failed")) from None
+        raise
     signature = root / "mesh-signature.csv"
+    mask = root / "plan-view-mask.csv"
     meshes = {}
     for kind in ("thin", "fabricated"):
         mesh = root / f"spatial_{kind}.msh"
@@ -1158,6 +1332,7 @@ def build_spatial(coupon, args, parameters, cache):
                 signature,
                 kind,
                 mesh,
+                *(["--mask", mask] if mask.is_file() else []),
                 "--radius",
                 args.matching_radius,
                 "--metal-thickness",
@@ -1261,59 +1436,84 @@ def execute(plan, library_path, args):
         for coupon in missing
         if coupon["Preparation"]["Method"] == "Unsupported"
     ]
-    if unsupported:
-        plan["Execution"] = {
-            "Complete": False,
-            "Unsupported": [
-                {
-                    "Id": coupon["Id"],
-                    "Topology": coupon["Topology"],
-                    "Reason": coupon["Preparation"]["Reason"],
-                }
-                for coupon in unsupported
-            ],
-        }
-        raise RuntimeError(
-            "Preflight contains unsupported spatial signatures; see coupon-plan.json"
-        )
-
     libraries = [library_path]
     qualifications = []
+    failures = [
+        {
+            "Ids": [coupon["Id"]],
+            "Topologies": [coupon["Topology"]],
+            "Method": "Unsupported",
+            "Reason": coupon["Preparation"]["Reason"],
+        }
+        for coupon in unsupported
+    ]
+
+    def attempt(coupons, method, builder):
+        try:
+            generated, qualification = builder()
+        except Exception as error:
+            failure = {
+                "Ids": [coupon["Id"] for coupon in coupons],
+                "Topologies": sorted(
+                    {coupon["Topology"] for coupon in coupons}
+                ),
+                "Method": method,
+                "Reason": f"{type(error).__name__}: {error}",
+            }
+            failures.append(failure)
+            print(
+                "Coupon qualification failed for "
+                + ", ".join(failure["Ids"])
+                + ": "
+                + failure["Reason"],
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+        libraries.append(generated)
+        qualifications.append(qualification)
+
     straight = [
         coupon
         for coupon in missing
         if coupon["Preparation"]["Method"] == "StraightEdgeBuilder"
     ]
     if straight:
-        generated, qualification = build_straight(
-            straight, args, parameters, cache
+        attempt(
+            straight,
+            "StraightEdgeBuilder",
+            lambda: build_straight(straight, args, parameters, cache),
         )
-        libraries.append(generated)
-        qualifications.append(qualification)
     for coupon in missing:
         if coupon["Preparation"]["Method"] != "ParallelClusterCoupon":
             continue
-        generated, qualification = build_parallel_cluster(
-            coupon, args, parameters, cache
+        attempt(
+            [coupon],
+            "ParallelClusterCoupon",
+            lambda coupon=coupon: build_parallel_cluster(
+                coupon, args, parameters, cache
+            ),
         )
-        libraries.append(generated)
-        qualifications.append(qualification)
     for coupon in missing:
         if coupon["Preparation"]["Method"] != "CornerCoupon":
             continue
-        generated, qualification = build_corner(
-            coupon, args, parameters, cache
+        attempt(
+            [coupon],
+            "CornerCoupon",
+            lambda coupon=coupon: build_corner(
+                coupon, args, parameters, cache
+            ),
         )
-        libraries.append(generated)
-        qualifications.append(qualification)
     for coupon in missing:
         if coupon["Preparation"]["Method"] != "SpatialCoupon":
             continue
-        generated, qualification = build_spatial(
-            coupon, args, parameters, cache
+        attempt(
+            [coupon],
+            "SpatialCoupon",
+            lambda coupon=coupon: build_spatial(
+                coupon, args, parameters, cache
+            ),
         )
-        libraries.append(generated)
-        qualifications.append(qualification)
 
     destination = args.output / "library"
     run(
@@ -1333,15 +1533,18 @@ def execute(plan, library_path, args):
         "SourceLibrary": str(library_path),
         "GeneratedLibraries": [str(path) for path in libraries[1:]],
         "QualificationReports": [str(path) for path in qualifications],
-        "Passed": True,
+        "Failures": failures,
+        "Passed": not failures,
     }
     qualification_path = destination / "qualification-manifest.json"
     write_json(qualification_path, qualification_manifest)
     plan["Execution"] = {
-        "Complete": True,
+        "Complete": not failures,
         "Library": str(destination / "process-library.json"),
         "QualificationManifest": str(qualification_path),
+        "Failures": failures,
     }
+    return not failures
 
 
 def parse_args():
@@ -1435,11 +1638,19 @@ def main():
     write_json(destination, plan)
     print(destination)
     if args.execute:
+        complete = False
         try:
-            execute(plan, library_path, args)
+            complete = execute(plan, library_path, args)
         finally:
             write_json(destination, plan)
         print(plan["Execution"]["Library"])
+        if not complete:
+            print(
+                "One or more coupon requirements failed qualification; "
+                "see coupon-plan.json",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
     elif plan["Summary"]["Unsupported"]:
         print(
             f"Warning: {plan['Summary']['Unsupported']} coupon requirement(s) need "

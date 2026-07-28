@@ -8,6 +8,7 @@
 #include <fstream>
 #include <memory>
 #include <set>
+#include <string_view>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1180,6 +1181,37 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(requirements["Requirements"][0]["Status"] == "Exact");
   CHECK(requirements["Requirements"][0]["Count"] == 2);
   CHECK(requirements["Requirements"][0]["Interfaces"][0]["Target"] == 4);
+
+  std::ifstream empty_library_input(library_path);
+  REQUIRE(empty_library_input);
+  auto empty_library = json::parse(empty_library_input);
+  empty_library["Name"] = "unit-test-empty-process";
+  empty_library["Models"] = json::array();
+  const auto empty_library_path = temp.temp_dir / "surface-process-empty.json";
+  std::ofstream empty_library_output(empty_library_path);
+  empty_library_output << empty_library.dump(2) << "\n";
+  empty_library_output.close();
+  auto empty_library_config = automatic_config;
+  empty_library_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      empty_library_path.string();
+  IoData empty_library_iodata(empty_library_config, false);
+  empty_library_iodata.boundaries.cracked_attributes.insert(9);
+  empty_library_iodata.boundaries.cracked_attributes.insert(10);
+  const auto empty_requirements_path =
+      temp.temp_dir / "surface-response-requirements-empty.json";
+  WriteSurfaceResponseRequirements(empty_library_iodata, *automatic_meshes.back(),
+                                   empty_requirements_path.string());
+  std::ifstream empty_requirements_input(empty_requirements_path);
+  REQUIRE(empty_requirements_input);
+  const json empty_requirements = json::parse(empty_requirements_input);
+  CHECK_FALSE(empty_requirements["Complete"]);
+  CHECK(empty_requirements["Summary"]["Counts"]["Exact"] == 0);
+  CHECK(empty_requirements["Summary"]["Counts"]["Missing"] == 2);
+  REQUIRE(empty_requirements["Requirements"].size() == 1);
+  CHECK(empty_requirements["Requirements"][0]["Topology"] == "IsolatedEdge");
+  CHECK(empty_requirements["Requirements"][0]["Status"] == "Missing");
+  CHECK(empty_requirements["Requirements"][0]["Count"] == 2);
+  CHECK_THROWS(SurfaceResponseOperator(empty_library_iodata, automatic_laplace));
 
   auto boundary_mode_config = automatic_config;
   boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
@@ -3111,6 +3143,134 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     CHECK(edge["BoundaryCondition"]["Type"] == "PEC");
   }
   CHECK(*spatial_conductors.begin() == 1);
+  REQUIRE((*spatial_requirement)["Geometry"].contains("PlanViewFacets"));
+  const auto &spatial_facets = (*spatial_requirement)["Geometry"]["PlanViewFacets"];
+  REQUIRE(!spatial_facets.empty());
+  std::set<int> facet_conductors;
+  for (const auto &facet : spatial_facets)
+  {
+    facet_conductors.insert(facet["Conductor"].get<int>());
+    REQUIRE(facet["Points"].size() >= 3);
+    for (const auto &point : facet["Points"])
+    {
+      REQUIRE(point.size() == 3);
+      CHECK(std::isfinite(point[0].get<double>()));
+      CHECK(std::isfinite(point[1].get<double>()));
+      CHECK(std::isfinite(point[2].get<double>()));
+    }
+  }
+  CHECK(facet_conductors == spatial_conductors);
+  REQUIRE((*spatial_requirement)["Geometry"].contains("PlanViewBoundary"));
+  const auto &plan_view_boundary = (*spatial_requirement)["Geometry"]["PlanViewBoundary"];
+  REQUIRE(plan_view_boundary.is_array());
+  REQUIRE(!plan_view_boundary.empty());
+
+  std::ifstream empty_spatial_library_input(convex_library_3d_path);
+  REQUIRE(empty_spatial_library_input);
+  auto empty_spatial_library = json::parse(empty_spatial_library_input);
+  empty_spatial_library["Name"] = "unit-test-empty-spatial-process";
+  empty_spatial_library["Models"] = json::array();
+  const auto empty_spatial_library_path =
+      temp.temp_dir / "surface-process-empty-spatial-3d.json";
+  std::ofstream empty_spatial_library_output(empty_spatial_library_path);
+  empty_spatial_library_output << empty_spatial_library.dump(2) << "\n";
+  empty_spatial_library_output.close();
+  auto empty_spatial_config = missing_spatial_cluster_config;
+  empty_spatial_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      empty_spatial_library_path.string();
+  IoData empty_spatial_iodata(empty_spatial_config, false);
+  empty_spatial_iodata.boundaries.cracked_attributes.insert(9);
+  empty_spatial_iodata.boundaries.cracked_attributes.insert(10);
+  const auto empty_spatial_requirements_path =
+      temp.temp_dir / "surface-response-requirements-empty-spatial.json";
+  WriteSurfaceResponseRequirements(empty_spatial_iodata, *spatial_cluster_meshes.back(),
+                                   empty_spatial_requirements_path.string());
+  std::ifstream empty_spatial_requirements_input(empty_spatial_requirements_path);
+  REQUIRE(empty_spatial_requirements_input);
+  const json empty_spatial_requirements = json::parse(empty_spatial_requirements_input);
+  CHECK_FALSE(empty_spatial_requirements["Complete"]);
+  CHECK(empty_spatial_requirements["Summary"]["Counts"]["Exact"] == 0);
+  const auto empty_spatial_requirement =
+      std::find_if(empty_spatial_requirements["Requirements"].begin(),
+                   empty_spatial_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     return requirement["Topology"] == "SpatialEdgeCluster" &&
+                            requirement["Status"] == "Missing" &&
+                            requirement["Geometry"].contains("PlanViewBoundary");
+                   });
+  REQUIRE(empty_spatial_requirement != empty_spatial_requirements["Requirements"].end());
+  CHECK((*empty_spatial_requirement)["Geometry"].contains("PlanViewFacets"));
+
+  std::ifstream spatial_cluster_library_input(spatial_cluster_library_3d_path);
+  REQUIRE(spatial_cluster_library_input);
+  auto exact_mask_library = json::parse(spatial_cluster_library_input);
+  exact_mask_library["Name"] = "unit-test-process-spatial-cluster-exact-mask-3d";
+  auto &exact_mask_model = exact_mask_library["Models"].back();
+  exact_mask_model["Name"] = "offset-corner-pair-exact-mask";
+  exact_mask_model["Edges"] = spatial_edges;
+  for (auto &edge : exact_mask_model["Edges"])
+  {
+    edge["BoundaryCondition"] = "PEC";
+  }
+  exact_mask_model["PlanViewBoundary"] = plan_view_boundary;
+  const auto exact_mask_library_path =
+      temp.temp_dir / "surface-process-spatial-cluster-exact-mask-3d.json";
+  std::ofstream exact_mask_output(exact_mask_library_path);
+  exact_mask_output << exact_mask_library.dump(2) << "\n";
+  exact_mask_output.close();
+
+  auto exact_mask_config = spatial_cluster_config;
+  exact_mask_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      exact_mask_library_path.string();
+  IoData exact_mask_iodata(exact_mask_config, false);
+  exact_mask_iodata.boundaries.cracked_attributes.insert(9);
+  exact_mask_iodata.boundaries.cracked_attributes.insert(10);
+  SurfaceResponseOperator exact_mask_response(exact_mask_iodata, spatial_cluster_space);
+  CHECK(exact_mask_response.GetPatchCount() == spatial_cluster_response.GetPatchCount());
+  CHECK_THAT(exact_mask_response.GetPatchWeight(),
+             WithinRel(spatial_cluster_response.GetPatchWeight(), 1.0e-12));
+
+  auto CheckPlanViewMaskStatus = [&](const fs::path &library_path,
+                                     std::string_view expected_status,
+                                     std::string_view suffix)
+  {
+    auto config = spatial_cluster_config;
+    config["Solver"]["SurfaceResponseCorrection"]["Library"] = library_path.string();
+    config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    const auto path = temp.temp_dir / ("surface-response-requirements-mask-" +
+                                       std::string(suffix) + ".json");
+    WriteSurfaceResponseRequirements(iodata, *spatial_cluster_meshes.back(), path.string());
+    std::ifstream input(path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    const auto requirement =
+        std::find_if(manifest["Requirements"].begin(), manifest["Requirements"].end(),
+                     [&](const auto &entry)
+                     {
+                       return entry["Topology"] == "SpatialEdgeCluster" &&
+                              entry["Geometry"].contains("Edges") &&
+                              entry["Geometry"]["Edges"].size() == spatial_edges.size();
+                     });
+    REQUIRE(requirement != manifest["Requirements"].end());
+    CHECK((*requirement)["Status"] == expected_status);
+  };
+  CheckPlanViewMaskStatus(exact_mask_library_path, "Exact", "exact");
+
+  auto mismatched_mask_library = exact_mask_library;
+  mismatched_mask_library["Name"] = "unit-test-process-spatial-cluster-mismatched-mask-3d";
+  auto &mismatched_coordinate =
+      mismatched_mask_library["Models"].back()["PlanViewBoundary"][0]["Segments"][0][0][0];
+  mismatched_coordinate = mismatched_coordinate.get<long long int>() + 1;
+  const auto mismatched_mask_library_path =
+      temp.temp_dir / "surface-process-spatial-cluster-mismatched-mask-3d.json";
+  std::ofstream mismatched_mask_output(mismatched_mask_library_path);
+  mismatched_mask_output << mismatched_mask_library.dump(2) << "\n";
+  mismatched_mask_output.close();
+  CheckPlanViewMaskStatus(mismatched_mask_library_path, "Missing", "mismatched");
 
   // Spatial clusters match each physical edge's complete boundary law. The second
   // island is finite impedance while the first remains PEC; its straight edges,

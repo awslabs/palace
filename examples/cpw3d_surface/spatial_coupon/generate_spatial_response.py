@@ -135,7 +135,38 @@ def normalize_geometry(coupon, radius):
         raise ValueError("Endpoint and junction coupons require one conductor")
     if any(np.linalg.norm(edge["Point"]) > 8.0 * radius for edge in edges):
         raise ValueError("Spatial coupon geometry is too large for its matching radius")
-    return frame, edges
+
+    facets = []
+    for index, entry in enumerate(geometry.get("PlanViewFacets", [])):
+        conductor = int(entry.get("Conductor", 0))
+        points = np.asarray(entry.get("Points", []), dtype=float)
+        if (
+            conductor <= 0
+            or points.ndim != 2
+            or points.shape[0] < 3
+            or points.shape[1] != 3
+            or not np.all(np.isfinite(points))
+        ):
+            raise ValueError(f"plan-view facet {index + 1} is invalid")
+        local = (frame @ points.T).T
+        if np.ptp(local[:, 2]) > 1.0e-8 * radius:
+            raise ValueError(
+                f"plan-view facet {index + 1} is not on a process plane"
+            )
+        facets.append(
+            {
+                "Conductor": conductor,
+                "Plane": float(np.mean(local[:, 2])),
+                "Points": local[:, :2].tolist(),
+            }
+        )
+    expected = {edge["Conductor"] for edge in edges}
+    found = {facet["Conductor"] for facet in facets}
+    if facets and found != expected:
+        raise ValueError(
+            "Plan-view facets must cover every spatial-coupon conductor"
+        )
+    return frame, edges, facets
 
 
 def extended_interval(edge, radius):
@@ -153,6 +184,70 @@ def extended_interval(edge, radius):
         if end >= radius - tolerance:
             end += extension
     return begin, end
+
+
+def metal_polygon(edge, radius):
+    point = np.asarray(edge["Point"])[:2]
+    tangent = np.asarray(edge["Tangent"])[:2]
+    gap = np.asarray(edge["GapDirection"])[:2]
+    begin, end = extended_interval(edge, radius)
+    return np.asarray(
+        (
+            point + begin * tangent,
+            point + end * tangent,
+            point + end * tangent - 3.0 * radius * gap,
+            point + begin * tangent - 3.0 * radius * gap,
+        )
+    )
+
+
+def convex_polygons_overlap(first, second, tolerance):
+    for polygon in (first, second):
+        for start, end in zip(polygon, np.roll(polygon, -1, axis=0)):
+            delta = end - start
+            axis = np.asarray((-delta[1], delta[0]))
+            norm = np.linalg.norm(axis)
+            if norm <= tolerance:
+                continue
+            axis /= norm
+            first_projection = first @ axis
+            second_projection = second @ axis
+            if (
+                np.max(first_projection) <= np.min(second_projection) + tolerance
+                or np.max(second_projection)
+                <= np.min(first_projection) + tolerance
+            ):
+                return False
+    return True
+
+
+def validate_plan_view_geometry(edges, radius, facets):
+    if facets:
+        return
+    tolerance = 1.0e-10 * radius
+    polygons = [metal_polygon(edge, radius) for edge in edges]
+    for first in range(len(edges)):
+        for second in range(first + 1, len(edges)):
+            a = edges[first]
+            b = edges[second]
+            same_layer = (
+                abs(a["Point"][2] - b["Point"][2]) <= tolerance
+                and np.dot(a["ProcessNormal"], b["ProcessNormal"])
+                > 1.0 - 1.0e-10
+            )
+            if (
+                same_layer
+                and a["Conductor"] != b["Conductor"]
+                and convex_polygons_overlap(
+                    polygons[first], polygons[second], tolerance
+                )
+            ):
+                raise ValueError(
+                    "The edge-only spatial signature reconstructs overlapping "
+                    f"plan-view metal for conductors {a['Conductor']} and "
+                    f"{b['Conductor']}. Exact coupon generation requires additional "
+                    "plan-view conductor boundaries."
+                )
 
 
 def coupon_bounds(edges, radius, metal_thickness, overetch):
@@ -224,6 +319,7 @@ def matching_perimeter_coordinates(
     radius,
     metal_thickness,
     sidewall_angle,
+    facets,
 ):
     if ring_size < 8 or ring_size % 4:
         raise ValueError("ring size must be a multiple of four and at least eight")
@@ -237,6 +333,17 @@ def matching_perimeter_coordinates(
     )
     tolerance = 1.0e-10 * max(width, height)
     pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
+    for facet in facets:
+        for point in facet["Points"]:
+            if (
+                abs(point[0] - xmin) <= tolerance
+                or abs(point[0] - xmax) <= tolerance
+                or abs(point[1] - ymin) <= tolerance
+                or abs(point[1] - ymax) <= tolerance
+            ):
+                coordinates.append(
+                    rectangle_perimeter_coordinate(bounds, point, tolerance)
+                )
     for level in levels:
         for edge in edges:
             sign = 1.0 if edge["ProcessNormal"][2] > 0.0 else -1.0
@@ -342,6 +449,7 @@ def build_matching_surface(
     radius,
     metal_thickness,
     sidewall_angle,
+    facets,
 ):
     levels = sorted(set(float(value) for value in levels))
     coordinates = matching_perimeter_coordinates(
@@ -352,6 +460,7 @@ def build_matching_surface(
         radius,
         metal_thickness,
         sidewall_angle,
+        facets,
     )
     ring_size = len(coordinates)
     rings = [rectangle_ring(bounds, level, coordinates) for level in levels]
@@ -372,7 +481,54 @@ def build_matching_surface(
     return points, np.asarray(triangles, dtype=int), [ring_size] * len(rings)
 
 
-def conductor_at_points(points, edges, radius, metal_thickness, sidewall_angle):
+def points_in_polygon(points, polygon, tolerance):
+    polygon = np.asarray(polygon)
+    inside = np.zeros(len(points), dtype=bool)
+    boundary = np.zeros(len(points), dtype=bool)
+    previous = polygon[-1]
+    for current in polygon:
+        edge = current - previous
+        relative = points - previous
+        cross = edge[0] * relative[:, 1] - edge[1] * relative[:, 0]
+        projection = relative @ edge
+        edge_norm_squared = edge @ edge
+        boundary |= (
+            (np.abs(cross) <= tolerance * max(np.linalg.norm(edge), 1.0))
+            & (projection >= -tolerance)
+            & (projection <= edge_norm_squared + tolerance)
+        )
+        crossing = (previous[1] > points[:, 1]) != (
+            current[1] > points[:, 1]
+        )
+        denominator = current[1] - previous[1]
+        if abs(denominator) > tolerance:
+            intersection = previous[0] + (
+                (points[:, 1] - previous[1]) * edge[0] / denominator
+            )
+            inside ^= crossing & (intersection > points[:, 0])
+        previous = current
+    return inside | boundary
+
+
+def points_in_plan_view_mask(points, facets, conductor, plane, tolerance):
+    inside = np.zeros(len(points), dtype=bool)
+    for facet in facets:
+        if (
+            facet["Conductor"] == conductor
+            and abs(facet["Plane"] - plane) <= tolerance
+        ):
+            inside |= points_in_polygon(points, facet["Points"], tolerance)
+    return inside
+
+
+def conductor_at_points(
+    points,
+    edges,
+    radius,
+    metal_thickness,
+    sidewall_angle,
+    facets,
+):
     labels = np.zeros(len(points), dtype=int)
     pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
     width = 3.0 * radius
@@ -398,6 +554,14 @@ def conductor_at_points(points, edges, radius, metal_thickness, sidewall_angle):
             & (transverse <= -shift + tolerance)
             & (transverse >= -width - tolerance)
         )
+        if facets:
+            active &= points_in_plan_view_mask(
+                points[:, :2],
+                facets,
+                edge["Conductor"],
+                edge["Point"][2],
+                tolerance,
+            )
         conflict = active & (labels != 0) & (labels != edge["Conductor"])
         if np.any(conflict):
             raise ValueError("Different coupon conductors overlap on the matching surface")
@@ -515,49 +679,25 @@ def dielectric(
 
 
 def conductor_attributes(edges, fabricated, conductor):
-    slots = sorted(
-        {
-            edge["InterfaceSlot"]
-            for edge in edges
-            if edge["Conductor"] == conductor
-        }
-    )
     if fabricated:
-        return [
-            base + 100 * slot + conductor
-            for slot in slots
-            for base in (5000, 6000)
-        ]
-    return [4000 + 100 * slot + conductor for slot in slots]
+        return [5000 + conductor, 6000 + conductor]
+    return [4000 + conductor]
 
 
 def interface_attributes(edges, fabricated, slot, interface_type):
     conductors = sorted(
-        {
-            edge["Conductor"]
-            for edge in edges
-            if edge["InterfaceSlot"] == slot
-        }
+        {edge["Conductor"] for edge in edges}
     )
     if interface_type == "SA":
         return [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
     if fabricated:
         base = 5000 if interface_type == "MS" else 6000
-        return [base + 100 * slot + conductor for conductor in conductors]
-    return [4000 + 100 * slot + conductor for conductor in conductors]
+        return [base + conductor for conductor in conductors]
+    return [4000 + conductor for conductor in conductors]
 
 
 def edge_attributes(edges, fabricated, slot):
-    if not fabricated:
-        return [3000 + slot]
-    conductors = sorted(
-        {
-            edge["Conductor"]
-            for edge in edges
-            if edge["InterfaceSlot"] == slot
-        }
-    )
-    return [5000 + 100 * slot + conductor for conductor in conductors]
+    return [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
 
 
 def make_config(
@@ -728,7 +868,13 @@ def write_library(
         model["ArmAngles"] = geometry["ArmAnglesDegrees"]
         model["ArmAngleTolerance"] = 1.0e-6
     elif topology == "SpatialEdgeCluster":
-        model["Edges"] = geometry["Edges"]
+        model["Edges"] = []
+        for source in geometry["Edges"]:
+            edge = dict(source)
+            edge["BoundaryCondition"] = "PEC"
+            model["Edges"].append(edge)
+        if "PlanViewBoundary" in geometry:
+            model["PlanViewBoundary"] = geometry["PlanViewBoundary"]
         model["EdgePositionTolerance"] = 1.0e-6 * radius
         model["EdgeAngleTolerance"] = 1.0e-6
         model["ConductorReferences"] = references
@@ -740,7 +886,7 @@ def write_library(
         model["ContourGroups"] = contour_groups
         if zero_indices:
             model["ZeroTraceIndices"] = zero_indices
-        model["BoundaryCondition"] = coupon["BoundaryCondition"]
+        model["BoundaryCondition"] = "PEC"
     library = {
         "Version": 3,
         "Name": model_name,
@@ -786,6 +932,24 @@ def write_mesh_signature(path, edges):
     path.write_text("\n".join(lines) + "\n")
 
 
+def write_plan_view_mask(path, facets):
+    lines = ["Facet,Conductor,Plane,X,Y"]
+    for facet_index, facet in enumerate(facets, start=1):
+        for point in facet["Points"]:
+            lines.append(
+                ",".join(
+                    f"{value:.17g}"
+                    for value in (
+                        facet_index,
+                        facet["Conductor"],
+                        facet["Plane"],
+                        *point,
+                    )
+                )
+            )
+    path.write_text("\n".join(lines) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("coupon", type=Path)
@@ -828,11 +992,33 @@ def main():
 
     coupon_path = args.coupon.expanduser().resolve()
     coupon = load_json(coupon_path)
-    frame, edges = normalize_geometry(coupon, args.radius)
-    interfaces = model_interfaces(coupon)
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    failure_path = output / "generation-failure.json"
+    try:
+        frame, edges, facets = normalize_geometry(coupon, args.radius)
+        validate_plan_view_geometry(edges, args.radius, facets)
+        interfaces = model_interfaces(coupon)
+    except ValueError as error:
+        failure_path.write_text(
+            json.dumps(
+                {
+                    "Version": 1,
+                    "Stage": "SpatialGeometry",
+                    "Reason": str(error),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        parser.error(str(error))
+    failure_path.unlink(missing_ok=True)
     write_mesh_signature(output / "mesh-signature.csv", edges)
+    mask_path = output / "plan-view-mask.csv"
+    if facets:
+        write_plan_view_mask(mask_path, facets)
+    else:
+        mask_path.unlink(missing_ok=True)
     if args.signature_only:
         print(output / "mesh-signature.csv")
         return
@@ -862,6 +1048,7 @@ def main():
         args.radius,
         args.metal_thickness,
         args.sidewall_angle,
+        facets,
     )
     labels = conductor_at_points(
         points,
@@ -869,6 +1056,7 @@ def main():
         args.radius,
         args.metal_thickness,
         args.sidewall_angle,
+        facets,
     )
     conductor_count = max(edge["Conductor"] for edge in edges)
     if conductor_count == 1:

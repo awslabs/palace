@@ -43,8 +43,9 @@ def load_library(path):
             raise ValueError(
                 f"{path} is version 3 but has no Fabrication.InterfaceLayers metadata"
             )
-    if not data.get("Models"):
-        raise ValueError(f"{path} contains no response models")
+    models = data.get("Models")
+    if not isinstance(models, list):
+        raise ValueError(f"{path} has no Models array")
     radius = float(data["MatchingRadius"])
     if radius <= 0.0:
         raise ValueError(f"{path} has a nonpositive MatchingRadius")
@@ -156,6 +157,9 @@ def main():
                 shutil.copy2(source, target)
                 model[field] = str(relative_directory / target.name)
             result["Models"].append(model)
+
+    if not result["Models"]:
+        raise ValueError("Combined library contains no response models")
 
     output = destination / "process-library.json"
     output.write_text(json.dumps(result, indent=2) + "\n")
