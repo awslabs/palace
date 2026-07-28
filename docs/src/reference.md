@@ -206,12 +206,18 @@ The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is relat
 incident field at an excited port boundary by
 
 ```math
-\bm{U}^{inc} = -2\gamma(\bm{n}\times\bm{E}^{inc})\times\bm{n}
+\bm{U}^{inc} = -2\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
+\gamma_{exc} = \frac{i\omega}{R_{ref}}
 ```
 
 where ``(\bm{n}\times\bm{E}^{inc})\times\bm{n}`` is just the projection of the excitation
-field onto the port surface. The incident fields for lumped ports depend on the port
-shape:
+field onto the port surface, and ``R_{ref}`` is the real reference resistance of the
+excited port: the port resistance ``R`` when ``R > 0``, or the impedance of free space
+``Z_0`` for a purely reactive port with ``R = 0`` (see the discussion of reactive port
+excitation below). The excitation coefficient ``\gamma_{exc}`` is in general distinct from
+the termination coefficient ``\gamma = i\omega/Z_s`` appearing in the Robin boundary
+condition, and the two coincide for a purely resistive port. The incident fields for lumped
+ports depend on the port shape:
 
  1. *Rectangular ports*: ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``, where ``E_0`` is a uniform
     constant field strength and ``\hat{\bm{l}}`` a unit vector defining the direction of
@@ -225,7 +231,7 @@ shape:
 In the time domain formulation, the source term ``\bm{U}^{inc}`` appears as
 
 ```math
-\bm{U}^{inc} = -2 Z_s^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
+\bm{U}^{inc} = -2 R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
     \times\bm{n} \,.
 ```
 
@@ -248,14 +254,15 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
 ```
 
 For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
-power integrated over the port boundary is unity, referenced to the port resistance ``R``.
-A lumped port with nonzero inductance and/or capacitance may also be excited. In this case
-the *termination* and *excitation* coefficients differ: the port's full ``R``, ``L``, and
-``C`` enter the system matrix as a physical parallel termination through the Robin
-coefficient ``\gamma = i\omega/Z_s`` with the complex ``Z_s(\omega)``, while the source
-term ``\bm{U}^{inc}`` is assembled with the real drive coefficient ``i\omega/R_{ref}``,
-where ``R_{ref}`` is a real reference resistance: ``R`` when ``R > 0``, or the free-space
-impedance ``Z_0 \approx 376.7~\Omega`` when ``R = 0`` (and equivalently ``Z_s^{-1} \to R_{ref}^{-1}`` in the time-domain source term). The
+power integrated over the port boundary is unity, referenced to the port resistance
+``R = R_{ref}``, and the excitation and termination coefficients coincide. A lumped port
+with nonzero inductance and/or capacitance may also be excited. In that case the port's
+full ``R``, ``L``, and ``C`` still enter the system matrix as a physical parallel
+termination through ``\gamma = i\omega/Z_s`` with the complex ``Z_s(\omega)``, while the
+source term is assembled with the real ``\gamma_{exc} = i\omega/R_{ref}`` defined above
+(``R_{ref} = Z_0 \approx 376.7~\Omega`` for a purely reactive port with ``R = 0``); the
+port reactance therefore acts on the solution through the termination, not through the
+drive normalization. The
 scattering parameters at resistive ports (observation or drive) retain their standard power-wave
 interpretation. For a purely reactive drive port (``R = 0``), the reported ``S_{ii}`` is related
 to the loaded port impedance by
