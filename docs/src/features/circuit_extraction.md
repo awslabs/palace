@@ -49,9 +49,10 @@ of the driven solver as well as the following additional files:
     synthesized inverse inductance ``\mathrm{Re}~\widehat{\bm{L}}^{-1}``, inverse resistance
     ``\mathrm{Re}~\widehat{\bm{R}}^{-1}``, and capacitance ``\mathrm{Re}~\widehat{\bm{C}}`` matrices. Each
     matrix is printed whenever its synthesized content is non-zero. ``\mathrm{Re}~\widehat{\bm{R}}^{-1}``
-    is present whenever the system has any dissipative contribution — a resistive lumped port, a
-    `Conductivity` or `Absorbing` boundary, or the linear-in-``\omega`` term of a wave-port or
-    surface-conductivity dispersion fit (together with any auxiliary-state damping). A
+    is present whenever the system has any dissipative contribution — a resistive lumped port, an
+    `Impedance`, `Conductivity`, or `Absorbing` boundary, or the linear-in-``\omega`` term of a
+    wave-port, surface-conductivity, or rational-impedance dispersion realization (together with any
+    auxiliary-state damping). A
     wave-port-only system, with no `LumpedPort` at all, is permitted and can still produce a
     non-zero ``\widehat{\bm{R}}^{-1}``. The csv header describes the type of the node (port or
     synthesized). The matrices are in SI units.
@@ -84,13 +85,17 @@ of the driven solver as well as the following additional files:
     dispersion contribution (including any auxiliary states) of a wave port. Downstream cascade tools
     subtract a selected internal port's load from the total matrices to obtain the bare device, then
     add back only the external loads after connecting ports. Only the non-zero parts are written.
+  - (When synthesized eigenvalue estimates are found): `rom-eigenvalues.csv`,
+    `rom-eigenvectors-re.csv`, and `rom-eigenvectors-im.csv`. These contain estimates of the
+    synthesized system's eigenfrequencies, quality factors, and HDM errors, together with the real
+    and imaginary parts of the corresponding eigenvectors in the synthesized node space.
 
 There are several constraints and considerations for using this feature:
 
   - The synthesis does not require a purely quadratic frequency dependence. Frequency-dependent
-    boundary conditions — `WavePort`, `Conductivity` (surface conductivity), and second-order
-    `Absorbing` (farfield) — are now supported. *Palace* fits each such boundary's frequency
-    dependence and folds it into the synthesized matrices, as described in [Synthesizing
+    boundary conditions — `WavePort`, `Conductivity` (surface conductivity), `RationalImpedance`,
+    and second-order `Absorbing` (farfield) — are supported. *Palace* represents each such boundary's
+    frequency dependence in the synthesized matrices, as described in [Synthesizing
     Frequency-Dependent Boundary Conditions](#Synthesizing-Frequency-Dependent-Boundary-Conditions)
     below. The fit accuracy is governed by `"AdaptiveTol"`; *Palace* prints the per-boundary fit
     residual and warns if it cannot be met.
@@ -109,8 +114,10 @@ There are several constraints and considerations for using this feature:
     option controls how the non-port basis vectors are orthogonalized and therefore determines the
     voltage normalization of synthesized nodes. In general, a user should not need to switch from
     the default value of `"Energy"`.
-  - `"AdaptiveCircuitSynthesis": true` requires `"AdaptiveTol" > 0`; *Palace* reports an error
-    otherwise.
+  - `"AdaptiveCircuitSynthesis": true` requires `"AdaptiveTol" > 0` and at least one `LumpedPort`
+    or `WavePort`; *Palace* reports an error otherwise.
+  - `FloquetPort` boundaries are not yet supported with circuit synthesis. Their frequency-dependent
+    Robin contribution is included in the adaptive sweep but not in the synthesized circuit pencil.
   - All the guidance and caveats on using the adaptive solver discussed in [Adaptive Frequency Sweeps
     for Driven Simulations](adaptive_driven_solver.md) still apply.
 
@@ -223,7 +230,8 @@ the basis.
     when a frequency-dependent boundary enters the [Augmented
     regime](#Synthesizing-Frequency-Dependent-Boundary-Conditions), the matrices grow by
     auxiliary-state rows and columns appended at the end, labeled `<prefix>_p<k>d<j>`, where
-    `<prefix>` is `waveport_<idx>`, `farfield`, or `surfsigma_<g>`, `k` is the rational-fit pole
+    `<prefix>` is `waveport_<idx>`, `farfield`, `surfsigma_<g>`, or `rationalz_<b>`, `k` is the
+    rational-fit pole
     index, and `j` is the kept singular-direction index. These auxiliary states are internal
     realization nodes for the rational dispersion fit, not physical ports. The matrix dimension is
     therefore the number of basis nodes plus the number of auxiliary states.
@@ -339,8 +347,13 @@ dispersion differs per boundary type:
     skin-depth surface impedance ``Z(\omega)`` (and an optional finite-thickness correction). The
     leading ``i`` is carried by the (purely imaginary) projected boundary mass, so the scalar that is
     actually fit is ``f(\omega) = \omega / Z(\omega)``, in general complex.
+  - **Rational surface impedance.** For an impedance ``Z(s) = N(s)/D(s)``, the Robin coefficient is
+    ``g(s) = sD(s)/N(s)``. *Palace* separates the polynomial part of ``g(i\omega)/i`` by exact long
+    division and realizes its strictly proper remainder using the same rational auxiliary-state
+    construction described below.
 
-For each such boundary, *Palace* fits ``f(\omega)`` on the sweep band and chooses one of two regimes
+Except for the analytically injected farfield pole and the exact polynomial part of a rational
+surface impedance, *Palace* fits ``f(\omega)`` on the sweep band and chooses one of two regimes
 automatically, by comparing the residual of an order-2 polynomial fit against `"AdaptiveTol"`:
 
 **Polynomial regime.** When a quadratic ``f(\omega) \approx \alpha_0 + \alpha_1\omega + \alpha_2\omega^2`` already meets the tolerance, the fit is folded directly into the synthesized
@@ -497,10 +510,13 @@ plot has a similar interpretation to the `domain-E.csv` plot above.
 </p><br/>
 ```
 
-Let us now look at the `rom-*.csv` output. For this model, there are `5` output matrices of size
-``19 \times 19``: `rom-Linv-re.csv`, `rom-Rinv-re.csv`, `rom-C-re.csv`, `rom-C-im.csv`, and
-`rom-orthogonalization-matrix-R.csv`. The header of the `csv` files describes the origin of the
-nodes as described above (shortened for brevity):
+Let us now look at the `rom-*.csv` output. For this model, five matrix files describe the
+``19 \times 19`` synthesized circuit pencil and its orthogonalization:
+`rom-Linv-re.csv`, `rom-Rinv-re.csv`, `rom-C-re.csv`, `rom-C-im.csv`, and
+`rom-orthogonalization-matrix-R.csv`. *Palace* also writes the port-reference table, the non-zero
+per-port load matrices, and, when estimates are found, the synthesized-system eigenvalue and
+eigenvector files described above. The headers of the circuit matrix files describe the origin of
+the nodes (shortened for brevity):
 
 ```csv
 port_1_re,
