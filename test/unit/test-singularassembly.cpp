@@ -1301,6 +1301,89 @@ TEST_CASE("Quadratic affine simplices retain singular reference assembly",
              linear_tetrahedron_coupling.nd_curl_curl_standard_enrichment);
 }
 
+TEST_CASE("Numerically affine quadratic simplices retain singular reference assembly",
+          "[singularelements][singularassembly][curved][Serial]")
+{
+  auto triangle = AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
+  SetQuadraticGeometry(triangle, false);
+  mfem::VectorFunctionCoefficient triangle_map(
+      2,
+      [](const mfem::Vector &point, mfem::Vector &value)
+      {
+        value.SetSize(2);
+        value = point;
+        value[1] += 3.0e-9 * point[0] * point[1];
+      });
+  triangle.GetNodes()->ProjectCoefficient(triangle_map);
+  auto &triangle_transformation = *triangle.GetElementTransformation(0);
+  const double triangle_variation =
+      fem::singular::GetElementTransformationRelativeJacobianVariation(
+          triangle_transformation);
+  CAPTURE(triangle_variation);
+  CHECK(triangle_variation > 1.0e-9);
+  CHECK(triangle_variation < fem::singular::AffineElementRelativeJacobianTolerance);
+  CHECK_FALSE(
+      fem::singular::IsAffineElementTransformation(triangle_transformation, 1.0e-9));
+  CHECK(fem::singular::IsAffineElementTransformation(triangle_transformation));
+
+  auto tetrahedron = AffineTetrahedronMesh({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+                                           {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0});
+  SetQuadraticGeometry(tetrahedron, false);
+  mfem::VectorFunctionCoefficient tetrahedron_map(
+      3,
+      [](const mfem::Vector &point, mfem::Vector &value)
+      {
+        value.SetSize(3);
+        value = point;
+        value[2] += 3.0e-9 * point[0] * point[1];
+      });
+  tetrahedron.GetNodes()->ProjectCoefficient(tetrahedron_map);
+  auto &tetrahedron_transformation = *tetrahedron.GetElementTransformation(0);
+  const double tetrahedron_variation =
+      fem::singular::GetElementTransformationRelativeJacobianVariation(
+          tetrahedron_transformation);
+  CAPTURE(tetrahedron_variation);
+  CHECK(tetrahedron_variation > 1.0e-9);
+  CHECK(tetrahedron_variation < fem::singular::AffineElementRelativeJacobianTolerance);
+  CHECK_FALSE(
+      fem::singular::IsAffineElementTransformation(tetrahedron_transformation, 1.0e-9));
+  CHECK(fem::singular::IsAffineElementTransformation(tetrahedron_transformation));
+}
+
+TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
+          "[singularelements][singularassembly][curved][Serial]")
+{
+  constexpr double h = 1.0e-8;
+  auto triangle = AffineTriangleMesh({0.5, 0.25}, {0.5 + h, 0.25}, {0.5, 0.25 + h});
+  SetQuadraticGeometry(triangle, false);
+  auto &triangle_transformation = *triangle.GetElementTransformation(0);
+  const double triangle_variation =
+      fem::singular::GetElementTransformationRelativeJacobianVariation(
+          triangle_transformation);
+  const double triangle_allowance =
+      fem::singular::GetElementTransformationAffineRoundoffAllowance(
+          triangle_transformation);
+  CAPTURE(triangle_variation, triangle_allowance);
+  CHECK(std::isfinite(triangle_variation));
+  CHECK(triangle_allowance > 0.0);
+  CHECK(fem::singular::IsAffineElementTransformation(triangle_transformation));
+
+  auto tetrahedron = AffineTetrahedronMesh({0.5, 0.25, 0.125}, {0.5 + h, 0.25, 0.125},
+                                           {0.5, 0.25 + h, 0.125}, {0.5, 0.25, 0.125 + h});
+  SetQuadraticGeometry(tetrahedron, false);
+  auto &tetrahedron_transformation = *tetrahedron.GetElementTransformation(0);
+  const double tetrahedron_variation =
+      fem::singular::GetElementTransformationRelativeJacobianVariation(
+          tetrahedron_transformation);
+  const double tetrahedron_allowance =
+      fem::singular::GetElementTransformationAffineRoundoffAllowance(
+          tetrahedron_transformation);
+  CAPTURE(tetrahedron_variation, tetrahedron_allowance);
+  CHECK(std::isfinite(tetrahedron_variation));
+  CHECK(tetrahedron_allowance > 0.0);
+  CHECK(fem::singular::IsAffineElementTransformation(tetrahedron_transformation));
+}
+
 TEST_CASE("Singular geometry rejects inverted and folded simplex maps",
           "[singularelements][singularassembly][curved][Serial]")
 {

@@ -123,8 +123,70 @@ inline double GetElementTransformationRelativeJacobianVariation(
   return maximum_difference / jacobian_scale;
 }
 
-inline bool IsAffineElementTransformation(mfem::ElementTransformation &transformation,
-                                          double relative_tolerance = 1.0e-9)
+inline constexpr double AffineElementRelativeJacobianTolerance = 1.0e-8;
+
+// Evaluating an isoparametric Jacobian subtracts physical node coordinates. For a tiny
+// translated element, the unavoidable relative roundoff therefore scales like eps |x|/h,
+// not eps alone. Curvature below this floor cannot be distinguished reliably from an
+// exactly affine nodal map.
+inline double
+GetElementTransformationAffineRoundoffAllowance(mfem::ElementTransformation &transformation)
+{
+  if (transformation.OrderJ() == 0)
+  {
+    return 0.0;
+  }
+
+  const int order =
+      std::max(2, 2 * std::max(transformation.Order(), transformation.OrderJ()) + 2);
+  const auto &rule = mfem::IntRules.Get(transformation.GetGeometryType(), order);
+  if (rule.GetNPoints() < 1)
+  {
+    throw std::runtime_error(
+        "Singular element affine-geometry detection found an empty integration rule!");
+  }
+
+  double coordinate_scale = 0.0;
+  double jacobian_scale = 0.0;
+  mfem::Vector physical_point;
+  for (int q = 0; q < rule.GetNPoints(); q++)
+  {
+    const auto &point = rule.IntPoint(q);
+    transformation.SetIntPoint(&point);
+    const auto &jacobian = transformation.Jacobian();
+    transformation.Transform(point, physical_point);
+    for (int i = 0; i < physical_point.Size(); i++)
+    {
+      if (!std::isfinite(physical_point[i]))
+      {
+        return std::numeric_limits<double>::infinity();
+      }
+      coordinate_scale = std::max(coordinate_scale, std::abs(physical_point[i]));
+    }
+    for (int i = 0; i < jacobian.Height(); i++)
+    {
+      for (int j = 0; j < jacobian.Width(); j++)
+      {
+        if (!std::isfinite(jacobian(i, j)))
+        {
+          return std::numeric_limits<double>::infinity();
+        }
+        jacobian_scale = std::max(jacobian_scale, std::abs(jacobian(i, j)));
+      }
+    }
+  }
+  if (!(jacobian_scale > std::numeric_limits<double>::min()))
+  {
+    return std::numeric_limits<double>::infinity();
+  }
+  constexpr double evaluation_safety_factor = 128.0;
+  return evaluation_safety_factor * std::numeric_limits<double>::epsilon() *
+         std::max(coordinate_scale, jacobian_scale) / jacobian_scale;
+}
+
+inline bool IsAffineElementTransformation(
+    mfem::ElementTransformation &transformation,
+    double relative_tolerance = AffineElementRelativeJacobianTolerance)
 {
   if (!std::isfinite(relative_tolerance) || relative_tolerance < 0.0)
   {
@@ -132,8 +194,10 @@ inline bool IsAffineElementTransformation(mfem::ElementTransformation &transform
         "Singular element affine-geometry detection requires a finite nonnegative "
         "tolerance!");
   }
+  const double roundoff_allowance =
+      GetElementTransformationAffineRoundoffAllowance(transformation);
   return GetElementTransformationRelativeJacobianVariation(transformation) <=
-         relative_tolerance;
+         relative_tolerance + roundoff_allowance;
 }
 
 namespace detail
