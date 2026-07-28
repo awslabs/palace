@@ -68,9 +68,9 @@ of the driven solver as well as the following additional files:
     ``\widehat{\bm{L}}``, ``\widehat{\bm{R}}``, ``\widehat{\bm{C}}`` are real.
   - `rom-orthogonalization-matrix-R.csv`. The Gram–Schmidt ``R`` factor of the synthesized circuit
     modes. This is very useful in advanced circuit postprocessing, but can be ignored by most users.
-  - (When ports are frequency dependent): `rom-port-reference.csv`. The matched reference admittance
+  - `rom-port-reference.csv`. The matched reference admittance
     ``Y_{\mathrm{ref}}`` and impedance ``Z_{\mathrm{ref}} = Y_{\mathrm{ref}}^{-1}`` tabulated against
-    frequency for every included port. The header is `f (GHz)` followed, for each port label, by
+    frequency for every included port; written whenever at least one included port is present. The header is `f (GHz)` followed, for each port label, by
     `Re{Y_ref[label]} (S)`, `Im{Y_ref[label]} (S)`, `Re{Z_ref[label]} (Ohm)`, and
     `Im{Z_ref[label]} (Ohm)`. The labels are `port_<idx>_re` for lumped ports and `waveport_<idx>_re`
     for wave ports. For a lumped port ``Y_{\mathrm{ref}} = 1/Z(\omega)`` is the port's circuit
@@ -326,7 +326,7 @@ operator and ``f(\omega)`` is a scalar *dispersion* that may not be quadratic in
 dispersion differs per boundary type:
 
   - **Wave port.** The boundary term is ``i\,k_n(\omega)\,\bm{M}_b``, where ``k_n(\omega)`` is the
-    modal propagation constant; the port admittance is ``Y_p(\omega) = k_n(\omega) / (i\omega\mu)``.
+    modal propagation constant; the port admittance is ``Y_p(\omega) = k_n(\omega) / (\omega\mu)``.
     The fitted scalar is ``k_n(\omega)``, obtained by re-solving the small cross-section eigenproblem
     at a set of fit frequencies. For the synthesis (and the underlying driven sweep) only the real,
     propagating part of ``k_n`` is used; the imaginary part (line attenuation) is dropped, so a
@@ -349,7 +349,7 @@ in the imaginary slot (``\bm{M}_b^r = i\,\bm{M}_{\mathrm{proj}}``), the three co
 
 ```math
 \alpha_0 \;\to\; \mathrm{Im}~\widehat{\bm{L}}^{-1}, \qquad
--\alpha_1 \;\to\; \mathrm{Re}~\widehat{\bm{R}}^{-1}, \qquad
+\alpha_1 \;\to\; \mathrm{Re}~\widehat{\bm{R}}^{-1}, \qquad
 -\alpha_2 \;\to\; \mathrm{Im}~\widehat{\bm{C}} .
 ```
 
@@ -367,20 +367,22 @@ d + \sum_{k} \frac{r_k}{\omega - p_k} ,
 
 with poles ``p_k`` and residues ``r_k``. The constant ``d`` is folded back into ``\alpha_0``, and
 each pole becomes a small set of *auxiliary states* appended to the synthesized matrices. Writing the
-projected boundary-mass coupling as a rank factorization ``r_k\,\bm{M}_{\mathrm{proj}} = \sum_j \sigma_{k,j}\, \bm{u}_{k,j}\bm{u}_{k,j}^{*}`` (a truncated SVD, keeping the directions ``j`` with
-significant singular value ``\sigma_{k,j}``), each kept direction ``(k,j)`` adds one auxiliary node.
-For that node the augmented pencil is populated as
+projected boundary mass as a rank factorization ``\bm{M}_{\mathrm{proj}} = \sum_j \sigma_{j}\, \bm{u}_{j}\bm{u}_{j}^{\top}`` (a truncated SVD, keeping the directions ``j`` with
+significant singular value ``\sigma_{j}``), each pair of pole ``k`` and kept direction ``j`` adds one
+auxiliary node. For that node the augmented pencil is populated as
 
 ```math
 \widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} = -p_k, \qquad
 \widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}} = -i, \qquad
 \widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}} =
   \widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}}^{\top} =
-  \sqrt{-i\,\sigma_{k,j}}\;\bm{u}_{k,j} ,
+  \sqrt{-i\,r_k\,\sigma_{j}}\;\bm{u}_{j} ,
 ```
 
-so that the auxiliary block contributes ``\widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}} \big(\widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} + i\omega\, \widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}}\big)^{-1} \widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}} = \dfrac{\sigma_{k,j}\, \bm{u}_{k,j}\bm{u}_{k,j}^{*}}{\,\omega - p_k\,}``. Eliminating the auxiliary states by Schur
-complement therefore recovers the rational term ``r_k/(\omega - p_k)\,\bm{M}_{\mathrm{proj}}``
+where both couplings are the same unconjugated vector, so the augmented pencil stays
+complex-symmetric rather than Hermitian. Eliminating the auxiliary node by Schur complement
+contributes ``-\widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}} \big(\widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} + i\omega\, \widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}}\big)^{-1} \widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}} = i\,\dfrac{r_k\,\sigma_{j}\, \bm{u}_{j}\bm{u}_{j}^{\top}}{\,\omega - p_k\,}`` to the node block, and summing over the kept
+directions ``j`` recovers the rational term ``i\,r_k/(\omega - p_k)\,\bm{M}_{\mathrm{proj}} = r_k/(\omega - p_k)\,\bm{M}_b^r``
 exactly. These nodes carry the `<prefix>_p<k>d<j>` labels described above, and the
 orthogonalization-``R`` matrix is identity-padded over them. The net effect is that the synthesized
 ``\widehat{\bm{L}}^{-1}``, ``\widehat{\bm{R}}^{-1}``, ``\widehat{\bm{C}}`` stay quadratic in
@@ -542,8 +544,8 @@ correspond to the orthogonalized basis of samples. For the first sample shown ab
 this as the driven solve with the lumped port modes removed. Why does each HDM sample have a small
 diagonal dissipation? First, the model above has a first-order `Absorbing` boundary condition, which
 means there is dissipation beyond what happens at the resistive ports. (A second-order `Absorbing`
-boundary is now also synthesizable; its frequency-dependent ``0.5/\omega`` term is folded in as a
-single auxiliary state — see [Synthesizing Frequency-Dependent Boundary
+boundary is now also synthesizable; its frequency-dependent ``0.5/\omega`` term is injected exactly
+as a single pole at ``\omega = 0``, realized by auxiliary states — see [Synthesizing Frequency-Dependent Boundary
 Conditions](#Synthesizing-Frequency-Dependent-Boundary-Conditions).) Second, the electric field of a HDM
 sample at a given frequency $\omega$ may have a different shape at a lumped port than the port mode
 (i.e., mode shape is not enforced at port). This means that the HDM could pick up more or less than
