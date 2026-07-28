@@ -60,12 +60,9 @@ runs:
     # makes the `apt-get install` steps below die with exit code 100.
     #
     # We prevent that by:
-    #   1. `systemctl stop` on the *services* blocks until the unit's whole
-    #      cgroup (children included) has drained, so nothing is left orphaned.
-    #   2. `DPkg::Lock::Timeout` tells apt to *wait* for the lock rather than
-    #      failing. It uses the same lock apt/dpkg do, so it is reliable where
-    #      `flock`/`rm` are not, and it covers every apt call in the job -- here
-    #      and in downstream actions (e.g. build-container installing podman).
+    #   1. Stopping the periodic APT units and their timers.
+    #   2. Configuring later apt/apt-get package operations to wait for dpkg's
+    #      locks instead of deleting lock files or failing immediately.
     - name: Disable unattended upgrades
       shell: bash
       run: |
