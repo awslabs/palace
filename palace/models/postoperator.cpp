@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -32,6 +33,10 @@
 #include "utils/timer.hpp"
 
 #include <mfem/config/config.hpp>
+#if defined(MFEM_USE_CUDA)
+#include <cuda_profiler_api.h>
+#endif
+
 namespace palace
 {
 
@@ -66,6 +71,31 @@ void RequireCeedPointFieldEvaluator(const PointFieldEvaluator *eval,
 {
   MFEM_VERIFY(eval && eval->IsValid(), "libCEED postprocessing was expected for " + what +
                                            ", but PointFieldEvaluator could not assemble!");
+}
+
+bool UseCudaProfilerParaviewRange()
+{
+  return std::getenv("PALACE_PROFILE_PARAVIEW_RANGE") != nullptr;
+}
+
+void StartCudaProfilerParaviewRange()
+{
+#if defined(MFEM_USE_CUDA)
+  if (UseCudaProfilerParaviewRange())
+  {
+    cudaProfilerStart();
+  }
+#endif
+}
+
+void StopCudaProfilerParaviewRange()
+{
+#if defined(MFEM_USE_CUDA)
+  if (UseCudaProfilerParaviewRange())
+  {
+    cudaProfilerStop();
+  }
+#endif
 }
 
 std::string OutputFolderName(const ProblemType solver_t)
@@ -1025,8 +1055,10 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
+  StartCudaProfilerParaviewRange();
   paraview->Save();
   paraview_bdr->Save();
+  StopCudaProfilerParaviewRange();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
@@ -1100,7 +1132,9 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   {
     paraview->DeregisterDomainPointField(name);
   }
+  StartCudaProfilerParaviewRange();
   paraview->Save();
+  StopCudaProfilerParaviewRange();
   paraview->DeregisterDomainCellField("Rank");
   if (indicator)
   {
