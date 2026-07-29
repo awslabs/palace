@@ -65,14 +65,25 @@ jobs:
     # each release) run independently, and an unauthorized run — which never
     # reaches this job — can never enter the group.
     #
-    # NOT cancel-in-progress: cancelling a publisher partway through would leave
-    # a channel holding ECR tags and S3 objects from different commits. A queued
-    # publisher instead waits its turn; if it has gone stale in the meantime the
-    # re-verify step below fails it, and if it is still current it runs last and
-    # becomes final.
+    # NOT cancel-in-progress: cancelling a publisher partway through the
+    # per-leg copy loop would leave a channel holding ECR tags and S3 objects
+    # from different commits. A queued publisher instead waits its turn; if it
+    # has gone stale in the meantime the re-verify step below fails it, and if it
+    # is still current it runs last and becomes final.
+    #
+    # This narrows the torn-channel window but does not close it: the publish
+    # loop writes each leg in turn with no staging or rollback, so a mid-loop
+    # failure (skopeo/S3 error, timeout, runner death) still leaves earlier legs
+    # live at the new commit and later legs stale. Making a channel flip
+    # atomically needs content-addressed writes plus a single pointer update —
+    # tracked as the content-addressing follow-up, not solved here.
     concurrency:
       group: publish-containers-${{ needs.authorize.outputs.selector }}
       cancel-in-progress: false
+    # Bounds how long a stuck publisher can hold its channel's queue. Without
+    # cancel-in-progress there is nothing else to evict it, and the default job
+    # limit is 6 hours. Publishing moves ~0.5 GiB and takes a few minutes.
+    timeout-minutes: 45
     # The OIDC subject is scoped to this environment
     # (repo:awslabs/palace:environment:palace-container-publish), restricted to
     # `main` in repo settings; that restriction (plus workflow_run always running
