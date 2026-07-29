@@ -24,7 +24,6 @@ using CSV
 using CairoMakie
 using ColorSchemes
 using DataFrames
-using Printf
 
 const TRANSMON_DIR = @__DIR__
 const REPO_ROOT = abspath(joinpath(TRANSMON_DIR, "..", ".."))
@@ -32,7 +31,7 @@ const CIRCUIT_TOLS = [1e-1, 1e-3, 1e-5]
 const PORT_PAIRS = [(1, 1), (2, 1), (1, 2), (2, 2)]
 const EXCITATIONS = [1, 2]
 const FREQ_LIM = (3.3, 6.7)
-const FREQ_TICKS = collect(3.5:0.5:6.5)
+const FREQ_TICKS = collect(3.5:1.0:6.5)
 const EIGENMODE_FREQS_GHZ = [4.099115457610, 5.603265962190]
 const TOL_COLORS =
     [ColorSchemes.plasma[t] for t in range(0.1, 0.9; length=length(CIRCUIT_TOLS))]
@@ -43,44 +42,7 @@ const _RE_E_COL = r"E_(\w+)\[(\d+)\] \(J\)"
 default_data_root() = joinpath(TRANSMON_DIR, "postpro", "transmon_tutorial_circuit")
 default_outdir() = joinpath(REPO_ROOT, "docs", "src", "assets", "examples")
 tol_label(tol) = "1e$(round(Int, log10(tol)))"
-legend_tol(tol) = @sprintf("1e-%02d", -round(Int, log10(tol)))
 mean_sq(v) = sum(abs2, v) / length(v)
-
-function circuit_theme()
-    return Theme(
-        fontsize=13.333,
-        fonts=(
-            regular="Times",
-            italic="Times Italic",
-            bold="Times Bold",
-            bold_italic="Times Bold Italic"
-        ),
-        Axis=(
-            xgridvisible=false,
-            ygridvisible=false,
-            rightspinevisible=false,
-            topspinevisible=false,
-            xticksize=4.667,
-            yticksize=4.667,
-            xtickalign=1,
-            ytickalign=1,
-            xminorticksvisible=true,
-            yminorticksvisible=true,
-            xminortickalign=1,
-            yminortickalign=1,
-            xminorticksize=2.667,
-            yminorticksize=2.667,
-            spinewidth=1.067,
-            xtickwidth=1.067,
-            ytickwidth=1.067,
-            xticklabelsize=13.333,
-            yticklabelsize=13.333,
-            xlabelsize=13.333,
-            titlesize=16
-        ),
-        Legend=(framevisible=false, labelsize=13.333, patchsize=(18, 12), rowgap=2)
-    )
-end
 
 function load_port_s(postpro_dir::AbstractString)
     path = joinpath(postpro_dir, "port-S.csv")
@@ -212,197 +174,185 @@ function load_tutorial_data(data_root)
     return (; freq, uniform_s, uniform_e, adaptive_s, adaptive_e, circuit_s, circuit_e)
 end
 
-function add_frequency_guides!(ax)
-    xlims!(ax, FREQ_LIM...)
-    return vlines!(
-        ax,
-        EIGENMODE_FREQS_GHZ;
-        color=(:black, 0.25),
-        linewidth=0.8,
-        linestyle=:dot
+function tutorial_plot_theme()
+    return Theme(
+        fontsize=18,
+        fonts=(
+            regular="Times",
+            italic="Times Italic",
+            bold="Times Bold",
+            bold_italic="Times Bold Italic"
+        ),
+        Axis=(
+            xgridvisible=false,
+            ygridvisible=false,
+            rightspinevisible=false,
+            topspinevisible=false,
+            spinewidth=0.75,
+            spinecolor=(:black, 0.55),
+            xtickwidth=0.75,
+            ytickwidth=0.75,
+            xtickcolor=(:black, 0.55),
+            ytickcolor=(:black, 0.55),
+            xticksize=3,
+            yticksize=3,
+            xtickalign=0,
+            ytickalign=0,
+            xminorticksvisible=false,
+            yminorticksvisible=false,
+            xticklabelsize=19,
+            yticklabelsize=19,
+            xlabelsize=20,
+            xlabelcolor=(:black, 0.75)
+        )
     )
 end
 
-function comparison_axis(
-    fig,
-    row,
-    col;
-    bottom,
-    axis_width,
-    axis_height,
-    logscale=false,
-    yticks=nothing
-)
-    kwargs = (
-        xlabel=bottom ? "f (GHz)" : "",
+function comparison_axis(fig, row, col; bottom, logscale=false, yticks=nothing)
+    options = (
+        xlabel=bottom ? "Frequency (GHz)" : "",
         xticks=FREQ_TICKS,
-        xminorticks=IntervalsBetween(5),
         xticklabelsvisible=bottom,
+        xticksvisible=bottom,
+        bottomspinevisible=bottom,
         yticklabelsvisible=col != 3,
-        width=axis_width,
-        height=axis_height
+        backgroundcolor=:white
     )
     ax = if logscale
-        Axis(fig[row, col]; kwargs..., yscale=log10, yticks=yticks)
+        Axis(fig[row, col]; options..., yscale=log10, yticks)
     else
-        Axis(fig[row, col]; kwargs...)
+        Axis(fig[row, col]; options...)
     end
-    add_frequency_guides!(ax)
+    xlims!(ax, FREQ_LIM...)
+    vlines!(ax, EIGENMODE_FREQS_GHZ; color=(:black, 0.16), linewidth=0.65, linestyle=:dot)
     return ax
 end
 
-# Freeze the measured panel geometry from the committed figures. CairoMakie's
-# automatic layout otherwise drifts with font metrics and backend changes.
-function set_axis_bounds!(axis, x_bounds, y_bounds, figure_height)
-    x_min, x_max = x_bounds
-    svg_y_min, svg_y_max = y_bounds
-    axis.layoutobservables.block_updates[] = true
-    axis.layoutobservables.computedbbox[] =
-        BBox(x_min, x_max, figure_height - svg_y_max, figure_height - svg_y_min)
+function add_headers!(fig, reference_title)
+    style = (fontsize=22, font="Times Bold", color=(:black, 0.82), padding=(0, 0, 3, 3))
+    Label(fig[1, 1], reference_title; style...)
+    Label(fig[1, 2], "Error vs uniform"; style...)
+    Label(fig[1, 3], "Error vs adaptive"; style...)
     return
 end
 
-function translate_block!(block, dx, dy)
-    bbox = block.layoutobservables.computedbbox[]
-    x_min, y_min = bbox.origin
-    width, height = bbox.widths
-    block.layoutobservables.block_updates[] = true
-    block.layoutobservables.computedbbox[] =
-        BBox(x_min + dx, x_min + dx + width, y_min + dy, y_min + dy + height)
+function add_footer!(fig, row)
+    Label(
+        fig[row, 1:3],
+        "RMS-normalized errors  ·  values below the dotted floor are clipped";
+        fontsize=17,
+        color=(:black, 0.52),
+        padding=(0, 0, 2, 0)
+    )
+    return
+end
+
+function annotate_eigenfrequencies!(ax, y)
+    for (index, frequency) in enumerate(EIGENMODE_FREQS_GHZ)
+        text!(
+            ax,
+            frequency - 0.08,
+            y;
+            text=index == 1 ? "f₁" : "f₂",
+            align=(:right, :top),
+            color=(:black, 0.48),
+            fontsize=16
+        )
+    end
+    return
+end
+
+function add_error_guides!(uniform_axis, adaptive_axis, row, floor)
+    labels = ("10⁻¹", "10⁻³", "10⁻⁵")
+    for (tol, color, label) in zip(CIRCUIT_TOLS, TOL_COLORS, labels)
+        for ax in (uniform_axis, adaptive_axis)
+            hlines!(ax, [tol]; color=(color, 0.58), linewidth=0.8, linestyle=:dash)
+            if row == 1
+                text!(ax, 6.62, tol; text=label, align=(:right, :top), color, fontsize=18)
+            end
+        end
+    end
+    for ax in (uniform_axis, adaptive_axis)
+        hlines!(ax, [floor]; color=(:black, 0.36), linewidth=0.7, linestyle=:dot)
+    end
+    return
+end
+
+function plot_errors!(axes, freq, circuit, adaptive, reference, scale, color, floor)
+    error_vs_uniform = max.(abs.(circuit .- reference) ./ scale, floor)
+    error_vs_adaptive = max.(abs.(circuit .- adaptive) ./ scale, floor)
+    lines!(axes[1], freq, error_vs_uniform; color, linewidth=1.45)
+    lines!(axes[2], freq, error_vs_adaptive; color, linewidth=1.45)
     return
 end
 
 function plot_domain_energy(data, outdir)
-    axis_width, axis_height = 253.74, 156.82
-    fig = Figure(size=(864, 427), figure_padding=7)
-    title_label = Label(
-        fig[0, 1:3],
-        L"\text{Domain Energy } E_{\mathrm{elec}}";
-        fontsize=16,
-        padding=(0, 0, 3, 2)
-    )
-    column_labels = [
-        Label(
-            fig[1, 1],
-            L"\text{Uniform Driven Solver } E_{\mathrm{elec}}\;\text{(nJ)}";
-            fontsize=16
-        ),
-        Label(
-            fig[1, 2],
-            L"|E_{\mathrm{circuit}}-E_{\mathrm{uniform}}|/\Vert E_{\mathrm{uniform}}\Vert_{\mathrm{RMS}}";
-            fontsize=16
-        ),
-        Label(
-            fig[1, 3],
-            L"|E_{\mathrm{circuit}}-E_{\mathrm{adaptive}}|/\Vert E_{\mathrm{uniform}}\Vert_{\mathrm{RMS}}";
-            fontsize=16
-        )
-    ]
+    fig = Figure(size=(960, 560), figure_padding=(14, 14, 10, 10), backgroundcolor=:white)
+    add_headers!(fig, "Electric energy (nJ)")
 
-    uniform_axes = Axis[]
+    reference_axes = Axis[]
     error_axes = Axis[]
+    error_ticks =
+        ([1e-11, 1e-8, 1e-5, 1e-2], [L"10^{-11}", L"10^{-8}", L"10^{-5}", L"10^{-2}"])
+    floor = 1e-12
+
     for (row_index, excitation) in enumerate(EXCITATIONS)
         row = row_index + 1
         bottom = row_index == length(EXCITATIONS)
-        ax_uniform = comparison_axis(fig, row, 1; bottom, axis_width, axis_height)
-        ax_uniform.yticks = 0.0:0.5:1.5
-        ylims!(ax_uniform, -0.05, 1.6)
-        push!(uniform_axes, ax_uniform)
-
-        energy_ticks =
-            ([1e-11, 1e-8, 1e-5, 1e-2], [L"10^{-11}", L"10^{-8}", L"10^{-5}", L"10^{-2}"])
-        ax_uniform_error = comparison_axis(
-            fig,
-            row,
-            2;
-            bottom,
-            axis_width,
-            axis_height,
-            logscale=true,
-            yticks=energy_ticks
-        )
-        ax_adaptive_error = comparison_axis(
-            fig,
-            row,
-            3;
-            bottom,
-            axis_width,
-            axis_height,
-            logscale=true,
-            yticks=energy_ticks
-        )
-        ylims!(ax_uniform_error, 2e-13, 3e-1)
-        ylims!(ax_adaptive_error, 2e-13, 3e-1)
-        push!(error_axes, ax_uniform_error, ax_adaptive_error)
+        reference_axis = comparison_axis(fig, row, 1; bottom)
+        uniform_axis =
+            comparison_axis(fig, row, 2; bottom, logscale=true, yticks=error_ticks)
+        adaptive_axis =
+            comparison_axis(fig, row, 3; bottom, logscale=true, yticks=error_ticks)
+        ylims!(reference_axis, -0.05, 1.6)
+        ylims!(uniform_axis, 2e-13, 3e-1)
+        ylims!(adaptive_axis, 2e-13, 3e-1)
+        push!(reference_axes, reference_axis)
+        push!(error_axes, uniform_axis, adaptive_axis)
 
         key = ("elec", excitation)
         reference = data.uniform_e[key]
         scale = sqrt(mean_sq(reference))
-        scatterlines!(
-            ax_uniform,
+        lines!(
+            reference_axis,
             data.freq,
             reference .* 1e9;
-            color=:black,
-            linewidth=1.333,
-            markersize=2.667
+            color=colorant"#222222",
+            linewidth=1.8
         )
         text!(
-            ax_uniform,
+            reference_axis,
             0.97,
-            0.95;
-            text="Excitation $excitation",
+            0.68;
+            text="Exc. $excitation",
             space=:relative,
             align=(:right, :top),
-            fontsize=12
+            color=(:black, 0.72),
+            fontsize=19
         )
+        row_index == 1 && annotate_eigenfrequencies!(reference_axis, 1.55)
 
-        for (k, tol) in enumerate(CIRCUIT_TOLS)
-            circuit = data.circuit_e[tol][key]
-            adaptive = data.adaptive_e[tol][key]
-            error_uniform = abs.(circuit .- reference) ./ scale
-            error_adaptive = abs.(circuit .- adaptive) ./ scale
-            color = TOL_COLORS[k]
-            scatterlines!(
-                ax_uniform_error,
+        for (tol, color) in zip(CIRCUIT_TOLS, TOL_COLORS)
+            plot_errors!(
+                (uniform_axis, adaptive_axis),
                 data.freq,
-                error_uniform;
+                data.circuit_e[tol][key],
+                data.adaptive_e[tol][key],
+                reference,
+                scale,
                 color,
-                linewidth=0.533,
-                markersize=2.667,
-                label=legend_tol(tol)
+                floor
             )
-            scatterlines!(
-                ax_adaptive_error,
-                data.freq,
-                error_adaptive;
-                color,
-                linewidth=0.533,
-                markersize=2.667,
-                label=legend_tol(tol)
-            )
-            hlines!(ax_uniform_error, [tol]; color, linewidth=1.333, linestyle=:dash)
         end
-        for ax in (ax_uniform_error, ax_adaptive_error)
-            hlines!(ax, [1e-12]; color=:black, linewidth=1.333, linestyle=:dot)
-        end
+        add_error_guides!(uniform_axis, adaptive_axis, row_index, floor)
     end
-    linkxaxes!(uniform_axes..., error_axes...)
-    linkyaxes!(uniform_axes...)
+
+    linkxaxes!(reference_axes..., error_axes...)
+    linkyaxes!(reference_axes...)
     linkyaxes!(error_axes...)
-    axislegend(error_axes[2]; position=:rt, unique=true, padding=(2, 2, 2, 2))
-    rowgap!(fig.layout, 0)
-    rowgap!(fig.layout, 2, 9.6)
-    colgap!(fig.layout, 9.6)
-
-    translate_block!(title_label, -11, 11)
-    foreach(label -> translate_block!(label, 0, 6), column_labels)
-    x_bounds = [(36.29, 290.04), (337.32, 591.06), (600.66, 854.40)]
-    y_bounds = [(53.76, 210.58), (220.18, 377.00)]
-    for row in eachindex(EXCITATIONS)
-        set_axis_bounds!(uniform_axes[row], x_bounds[1], y_bounds[row], 427)
-        set_axis_bounds!(error_axes[2row - 1], x_bounds[2], y_bounds[row], 427)
-        set_axis_bounds!(error_axes[2row], x_bounds[3], y_bounds[row], 427)
-    end
+    rowgap!(fig.layout, 10)
+    colgap!(fig.layout, 20)
+    add_footer!(fig, 4)
 
     path = joinpath(outdir, "circuit_transmon_domain_e_comparison.svg")
     save(path, fig)
@@ -410,135 +360,74 @@ function plot_domain_energy(data, outdir)
 end
 
 function plot_s_parameters(data, outdir)
-    axis_width, axis_height = 252.35, 155.96
-    fig = Figure(size=(864, 783), figure_padding=7)
-    title_label = Label(fig[0, 1:3], "S-Parameters"; fontsize=16, padding=(0, 0, 3, 2))
-    column_labels = [
-        Label(
-            fig[1, 1],
-            L"\text{Uniform Driven Solver } |S_{ij}|\;\text{(dB)}";
-            fontsize=16
-        ),
-        Label(
-            fig[1, 2],
-            L"|S_{\mathrm{circuit}}-S_{\mathrm{uniform}}|/\Vert S_{\mathrm{uniform}}\Vert_{\mathrm{RMS}}";
-            fontsize=16
-        ),
-        Label(
-            fig[1, 3],
-            L"|S_{\mathrm{circuit}}-S_{\mathrm{adaptive}}|/\Vert S_{\mathrm{uniform}}\Vert_{\mathrm{RMS}}";
-            fontsize=16
-        )
-    ]
+    fig = Figure(size=(960, 1000), figure_padding=(14, 14, 10, 10), backgroundcolor=:white)
+    add_headers!(fig, "Scattering magnitude (dB)")
 
-    uniform_axes = Axis[]
+    reference_axes = Axis[]
     error_axes = Axis[]
+    error_ticks =
+        ([1e-10, 1e-7, 1e-4, 1e-1], [L"10^{-10}", L"10^{-7}", L"10^{-4}", L"10^{-1}"])
+    floor = 1e-11
+
     for (row_index, pair) in enumerate(PORT_PAIRS)
         i, j = pair
         row = row_index + 1
         bottom = row_index == length(PORT_PAIRS)
-        ax_uniform = comparison_axis(fig, row, 1; bottom, axis_width, axis_height)
-        ax_uniform.yticks = -20:5:0
-        ylims!(ax_uniform, -22, 1)
-        push!(uniform_axes, ax_uniform)
-
-        error_ticks =
-            ([1e-10, 1e-7, 1e-4, 1e-1], [L"10^{-10}", L"10^{-7}", L"10^{-4}", L"10^{-1}"])
-        ax_uniform_error = comparison_axis(
-            fig,
-            row,
-            2;
-            bottom,
-            axis_width,
-            axis_height,
-            logscale=true,
-            yticks=error_ticks
-        )
-        ax_adaptive_error = comparison_axis(
-            fig,
-            row,
-            3;
-            bottom,
-            axis_width,
-            axis_height,
-            logscale=true,
-            yticks=error_ticks
-        )
-        ylims!(ax_uniform_error, 3e-12, 4e-1)
-        ylims!(ax_adaptive_error, 3e-12, 4e-1)
-        push!(error_axes, ax_uniform_error, ax_adaptive_error)
+        reference_axis = comparison_axis(fig, row, 1; bottom)
+        uniform_axis =
+            comparison_axis(fig, row, 2; bottom, logscale=true, yticks=error_ticks)
+        adaptive_axis =
+            comparison_axis(fig, row, 3; bottom, logscale=true, yticks=error_ticks)
+        ylims!(reference_axis, -22, 1)
+        ylims!(uniform_axis, 5e-13, 4e-1)
+        ylims!(adaptive_axis, 5e-13, 4e-1)
+        push!(reference_axes, reference_axis)
+        push!(error_axes, uniform_axis, adaptive_axis)
 
         reference = data.uniform_s[pair]
         scale = sqrt(mean_sq(reference))
-        scatterlines!(
-            ax_uniform,
+        lines!(
+            reference_axis,
             data.freq,
             20 .* log10.(abs.(reference));
-            color=:black,
-            linewidth=1.333,
-            markersize=2.667
+            color=colorant"#222222",
+            linewidth=1.8
         )
-        for ax in (ax_uniform, ax_uniform_error, ax_adaptive_error)
+        for ax in (reference_axis, uniform_axis, adaptive_axis)
             text!(
                 ax,
                 0.03,
-                0.94;
+                0.93;
                 text=L"S_{%$i%$j}",
                 space=:relative,
                 align=(:left, :top),
-                fontsize=14.667
+                color=(:black, 0.68),
+                fontsize=19
             )
         end
+        row_index == 1 && annotate_eigenfrequencies!(reference_axis, 0.2)
 
-        for (k, tol) in enumerate(CIRCUIT_TOLS)
-            circuit = data.circuit_s[tol][pair]
-            adaptive = data.adaptive_s[tol][pair]
-            error_uniform = abs.(circuit .- reference) ./ scale
-            error_adaptive = abs.(circuit .- adaptive) ./ scale
-            color = TOL_COLORS[k]
-            scatterlines!(
-                ax_uniform_error,
+        for (tol, color) in zip(CIRCUIT_TOLS, TOL_COLORS)
+            plot_errors!(
+                (uniform_axis, adaptive_axis),
                 data.freq,
-                error_uniform;
+                data.circuit_s[tol][pair],
+                data.adaptive_s[tol][pair],
+                reference,
+                scale,
                 color,
-                linewidth=0.533,
-                markersize=2.667,
-                label=legend_tol(tol)
+                floor
             )
-            scatterlines!(
-                ax_adaptive_error,
-                data.freq,
-                error_adaptive;
-                color,
-                linewidth=0.533,
-                markersize=2.667,
-                label=legend_tol(tol)
-            )
-            hlines!(ax_uniform_error, [tol]; color, linewidth=1.333, linestyle=:dash)
         end
-        for ax in (ax_uniform_error, ax_adaptive_error)
-            hlines!(ax, [1e-12]; color=:black, linewidth=1.333, linestyle=:dot)
-        end
+        add_error_guides!(uniform_axis, adaptive_axis, row_index, floor)
     end
-    linkxaxes!(uniform_axes..., error_axes...)
-    linkyaxes!(uniform_axes...)
+
+    linkxaxes!(reference_axes..., error_axes...)
+    linkyaxes!(reference_axes...)
     linkyaxes!(error_axes...)
-    axislegend(error_axes[2]; position=:rt, unique=true, padding=(2, 2, 2, 2))
-    rowgap!(fig.layout, 0)
-    for gap = 2:4
-        rowgap!(fig.layout, gap, 19.2)
-    end
-    colgap!(fig.layout, 9.6)
-
-    translate_block!(title_label, -12, 3)
-    foreach(label -> translate_block!(label, 0, 6), column_labels)
-    x_bounds = [(40.48, 292.83), (340.11, 592.45), (602.05, 854.40)]
-    y_bounds = [(51.51, 207.47), (226.67, 382.63), (401.83, 557.79), (576.99, 732.95)]
-    for row in eachindex(PORT_PAIRS)
-        set_axis_bounds!(uniform_axes[row], x_bounds[1], y_bounds[row], 783)
-        set_axis_bounds!(error_axes[2row - 1], x_bounds[2], y_bounds[row], 783)
-        set_axis_bounds!(error_axes[2row], x_bounds[3], y_bounds[row], 783)
-    end
+    rowgap!(fig.layout, 10)
+    colgap!(fig.layout, 20)
+    add_footer!(fig, 6)
 
     path = joinpath(outdir, "circuit_transmon_port_s_comparison.svg")
     save(path, fig)
@@ -546,7 +435,7 @@ function plot_s_parameters(data, outdir)
 end
 
 function main(; data_root=default_data_root(), outdir=default_outdir())
-    set_theme!(circuit_theme())
+    set_theme!(tutorial_plot_theme())
     mkpath(outdir)
     data = load_tutorial_data(data_root)
     energy_path = plot_domain_energy(data, outdir)
