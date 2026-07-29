@@ -9,6 +9,7 @@ target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/ceed_group_operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gridfunction.cpp
@@ -30,6 +31,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/basis.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/ceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/coefficient.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/libceed/functional.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/restriction.cpp

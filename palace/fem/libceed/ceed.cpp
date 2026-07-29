@@ -81,7 +81,8 @@ std::string Print()
   return std::string(ceed_resource);
 }
 
-void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
+void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
+                    bool take_array)
 {
   CeedMemType mem;
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
@@ -94,7 +95,7 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
   {
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, v.Size(), cv));
   }
-  else
+  else if (take_array)
   {
     PalaceCeedCall(ceed, CeedVectorTakeArray(*cv, mem, nullptr));
   }
