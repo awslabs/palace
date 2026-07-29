@@ -138,6 +138,18 @@ runs:
         path: ${{ steps.name.outputs.image_name }}.sif
         retention-days: 1
 
+    - name: Upload config schema
+      # Bundle the exact config-schema.json this image was built from, so the
+      # trusted publish job can push it to the schema bucket alongside the SIF —
+      # matching the schema to the image's provenance (build-container has no AWS
+      # access; publish.py does the upload). Arch-independent, but uploaded per
+      # leg under a unique name so parallel matrix jobs don't collide.
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.name.outputs.image_name }}-schema
+        path: scripts/schema/config-schema.json
+        retention-days: 1
+
     - name: Timing information
       shell: bash
       run: |
