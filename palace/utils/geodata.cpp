@@ -1628,7 +1628,180 @@ public:
   }
 };
 
+using EdgePoint = std::array<double, 3>;
+
+std::vector<BoundaryEdgeSegment>
+SampleEdgeTransformation(mfem::ElementTransformation &transformation,
+                         const EdgePoint &endpoint0, const EdgePoint &endpoint1)
+{
+  if (transformation.Order() <= 1)
+  {
+    return {{endpoint0, endpoint1}};
+  }
+
+  struct Sample
+  {
+    double parameter;
+    EdgePoint point{};
+    EdgePoint tangent{};
+    bool has_tangent = false;
+  };
+  auto Evaluate = [&](double parameter)
+  {
+    Sample sample;
+    sample.parameter = parameter;
+    mfem::IntegrationPoint ip;
+    ip.x = parameter;
+    ip.y = ip.z = 0.0;
+    transformation.SetIntPoint(&ip);
+    mfem::Vector point;
+    transformation.Transform(ip, point);
+    for (int d = 0; d < 3; d++)
+    {
+      sample.point[d] = d < point.Size() ? point[d] : 0.0;
+    }
+
+    const auto &jacobian = transformation.Jacobian();
+    double tangent_norm_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      sample.tangent[d] = d < jacobian.Height() ? jacobian(d, 0) : 0.0;
+      tangent_norm_squared += sample.tangent[d] * sample.tangent[d];
+    }
+    if (tangent_norm_squared > 1.0e-28)
+    {
+      const double inverse_norm = 1.0 / std::sqrt(tangent_norm_squared);
+      for (double &value : sample.tangent)
+      {
+        value *= inverse_norm;
+      }
+      sample.has_tangent = true;
+    }
+    return sample;
+  };
+  auto DistanceSquared = [](const EdgePoint &a, const EdgePoint &b)
+  {
+    double distance_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      distance_squared += (a[d] - b[d]) * (a[d] - b[d]);
+    }
+    return distance_squared;
+  };
+  auto TangentAngle = [](const Sample &a, const Sample &b)
+  {
+    if (!a.has_tangent || !b.has_tangent)
+    {
+      return 0.0;
+    }
+    double dot = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      dot += a.tangent[d] * b.tangent[d];
+    }
+    return std::acos(std::clamp(dot, -1.0, 1.0));
+  };
+  auto ChordDistanceSquared =
+      [&](const EdgePoint &point, const EdgePoint &p0, const EdgePoint &p1)
+  {
+    EdgePoint direction{};
+    double length_squared = 0.0, projection = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      direction[d] = p1[d] - p0[d];
+      length_squared += direction[d] * direction[d];
+      projection += (point[d] - p0[d]) * direction[d];
+    }
+    if (length_squared <= 1.0e-28)
+    {
+      return DistanceSquared(point, p0);
+    }
+    const double parameter = std::clamp(projection / length_squared, 0.0, 1.0);
+    EdgePoint projected{};
+    for (int d = 0; d < 3; d++)
+    {
+      projected[d] = p0[d] + parameter * direction[d];
+    }
+    return DistanceSquared(point, projected);
+  };
+
+  Sample first = Evaluate(0.0);
+  Sample last = Evaluate(1.0);
+  const double direct_endpoint_error =
+      DistanceSquared(first.point, endpoint0) + DistanceSquared(last.point, endpoint1);
+  const double reverse_endpoint_error =
+      DistanceSquared(first.point, endpoint1) + DistanceSquared(last.point, endpoint0);
+  const bool reverse = reverse_endpoint_error < direct_endpoint_error;
+
+  const double edge_scale =
+      std::sqrt(std::max(DistanceSquared(endpoint0, endpoint1), 1.0e-28));
+  const double maximum_turn = 7.5 * std::acos(-1.0) / 180.0;
+  constexpr double relative_chord_tolerance = 1.0e-3;
+  constexpr int maximum_depth = 12;
+  const double chord_tolerance_squared =
+      relative_chord_tolerance * relative_chord_tolerance * edge_scale * edge_scale;
+
+  std::vector<EdgePoint> points;
+  points.reserve(16);
+  points.push_back(first.point);
+  auto Refine = [&](auto &&self, const Sample &left, const Sample &right, int depth) -> void
+  {
+    Sample middle = Evaluate(0.5 * (left.parameter + right.parameter));
+    const bool excessive_turn = TangentAngle(left, middle) > maximum_turn ||
+                                TangentAngle(middle, right) > maximum_turn;
+    const bool excessive_deviation =
+        ChordDistanceSquared(middle.point, left.point, right.point) >
+        chord_tolerance_squared;
+    if (depth < maximum_depth && (excessive_turn || excessive_deviation))
+    {
+      self(self, left, middle, depth + 1);
+      self(self, middle, right, depth + 1);
+    }
+    else
+    {
+      points.push_back(right.point);
+    }
+  };
+  Refine(Refine, first, last, 0);
+
+  if (reverse)
+  {
+    std::reverse(points.begin(), points.end());
+  }
+  points.front() = endpoint0;
+  points.back() = endpoint1;
+
+  std::vector<BoundaryEdgeSegment> segments;
+  segments.reserve(points.size() - 1);
+  for (std::size_t i = 1; i < points.size(); i++)
+  {
+    if (DistanceSquared(points[i - 1], points[i]) > 1.0e-28)
+    {
+      segments.push_back({points[i - 1], points[i]});
+    }
+  }
+  MFEM_VERIFY(!segments.empty(), "Degenerate high-order mesh edge geometry!");
+  return segments;
+}
+
 }  // namespace
+
+std::vector<BoundaryEdgeSegment> GetMeshEdgeSegments(const mfem::Mesh &mesh, int edge)
+{
+  mfem::Array<int> vertices;
+  mesh.GetEdgeVertices(edge, vertices);
+  MFEM_VERIFY(vertices.Size() == 2, "Unexpected mesh edge geometry!");
+
+  EdgePoint endpoint0{}, endpoint1{};
+  for (int d = 0; d < 3; d++)
+  {
+    endpoint0[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[0])[d] : 0.0;
+    endpoint1[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[1])[d] : 0.0;
+  }
+  mfem::IsoparametricTransformation transformation;
+  mesh.GetEdgeTransformation(edge, &transformation);
+  return SampleEdgeTransformation(transformation, endpoint0, endpoint1);
+}
 
 std::vector<BoundaryEdgeSegment>
 GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
@@ -1641,14 +1814,13 @@ GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int>
 
   std::vector<double> local_coordinates;
   mfem::Array<int> edges, orientations, vertices;
-  auto AddSegment = [&](int v0, int v1)
+  auto AddSegment = [&](const BoundaryEdgeSegment &segment)
   {
-    for (const int vertex : {v0, v1})
+    for (const auto &point : {segment.p0, segment.p1})
     {
-      const double *x = mesh.GetVertex(vertex);
       for (int d = 0; d < 3; d++)
       {
-        local_coordinates.push_back(d < mesh.SpaceDimension() ? x[d] : 0.0);
+        local_coordinates.push_back(point[d]);
       }
     }
   };
@@ -1672,16 +1844,29 @@ GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int>
       mesh.GetBdrElementVertices(be, vertices);
       MFEM_ASSERT(vertices.Size() == 2,
                   "Unexpected boundary element geometry in 2D edge extraction!");
-      AddSegment(vertices[0], vertices[1]);
+      EdgePoint endpoint0{}, endpoint1{};
+      for (int d = 0; d < 3; d++)
+      {
+        endpoint0[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[0])[d] : 0.0;
+        endpoint1[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[1])[d] : 0.0;
+      }
+      auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
+      auto *transformation = mutable_mesh.GetBdrElementTransformation(be);
+      for (const auto &segment :
+           SampleEdgeTransformation(*transformation, endpoint0, endpoint1))
+      {
+        AddSegment(segment);
+      }
     }
     else
     {
       mesh.GetBdrElementEdges(be, edges, orientations);
       for (int edge : edges)
       {
-        mesh.GetEdgeVertices(edge, vertices);
-        MFEM_ASSERT(vertices.Size() == 2, "Unexpected boundary face edge geometry!");
-        AddSegment(vertices[0], vertices[1]);
+        for (const auto &segment : GetMeshEdgeSegments(mesh, edge))
+        {
+          AddSegment(segment);
+        }
       }
     }
   }
@@ -1845,15 +2030,14 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
           std::swap(gv0, gv1);
           std::swap(vertices[0], vertices[1]);
         }
-        local_keys.push_back(gv0);
-        local_keys.push_back(gv1);
-        local_side_attributes.push_back(side_attribute);
-        for (int endpoint = 0; endpoint < 2; endpoint++)
+        for (const auto &segment : GetMeshEdgeSegments(mesh, edge))
         {
-          const double *x = mesh.GetVertex(vertices[endpoint]);
-          for (int d = 0; d < 3; d++)
+          local_keys.push_back(gv0);
+          local_keys.push_back(gv1);
+          local_side_attributes.push_back(side_attribute);
+          for (const auto &point : {segment.p0, segment.p1})
           {
-            local_coordinates.push_back(d < mesh.SpaceDimension() ? x[d] : 0.0);
+            local_coordinates.insert(local_coordinates.end(), point.begin(), point.end());
           }
         }
       }

@@ -746,7 +746,7 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
   std::vector<Candidate> candidates;
   auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
   mutable_mesh.ExchangeFaceNbrData();
-  mfem::Array<int> edges, orientations, vertices;
+  mfem::Array<int> edges, orientations;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
   mfem::Vector normal(3);
@@ -771,34 +771,33 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
     mesh.GetBdrElementEdges(be, edges, orientations);
     for (const int edge : edges)
     {
-      mesh.GetEdgeVertices(edge, vertices);
-      MFEM_ASSERT(vertices.Size() == 2, "Unexpected metal boundary edge geometry!");
-      Point p0, p1;
-      std::copy_n(mesh.GetVertex(vertices[0]), 3, p0.begin());
-      std::copy_n(mesh.GetVertex(vertices[1]), 3, p1.begin());
-      const auto selected = selected_segments.find(GetSegmentKey(p0, p1));
-      if (selected == selected_segments.end())
+      for (const auto &edge_segment : mesh::GetMeshEdgeSegments(mesh, edge))
       {
-        continue;
-      }
-      const auto &segment = geometry.segments[segment_indices[selected->second]];
-      if (std::find(segment.metal_attributes.begin(), segment.metal_attributes.end(),
-                    attribute) == segment.metal_attributes.end())
-      {
-        continue;
-      }
-
-      candidates.push_back(
-          {selected->second, material_score(FET.Elem1->Attribute), normal_into_element_1});
-      if (FET.Elem2)
-      {
-        auto normal_into_element_2 = normal_into_element_1;
-        for (double &value : normal_into_element_2)
+        const auto selected =
+            selected_segments.find(GetSegmentKey(edge_segment.p0, edge_segment.p1));
+        if (selected == selected_segments.end())
         {
-          value *= -1.0;
+          continue;
         }
-        candidates.push_back({selected->second, material_score(FET.Elem2->Attribute),
-                              normal_into_element_2});
+        const auto &segment = geometry.segments[segment_indices[selected->second]];
+        if (std::find(segment.metal_attributes.begin(), segment.metal_attributes.end(),
+                      attribute) == segment.metal_attributes.end())
+        {
+          continue;
+        }
+
+        candidates.push_back({selected->second, material_score(FET.Elem1->Attribute),
+                              normal_into_element_1});
+        if (FET.Elem2)
+        {
+          auto normal_into_element_2 = normal_into_element_1;
+          for (double &value : normal_into_element_2)
+          {
+            value *= -1.0;
+          }
+          candidates.push_back({selected->second, material_score(FET.Elem2->Attribute),
+                                normal_into_element_2});
+        }
       }
     }
   }
@@ -985,7 +984,7 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
 
   std::vector<double> inward_sum(3 * segment_indices.size(), 0.0);
   auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
-  mfem::Array<int> edges, orientations, vertices;
+  mfem::Array<int> edges, orientations;
   mfem::Vector center(3);
   for (int be = 0; be < mesh.GetNBE(); be++)
   {
@@ -1000,56 +999,56 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
     mesh.GetBdrElementEdges(be, edges, orientations);
     for (const int edge : edges)
     {
-      mesh.GetEdgeVertices(edge, vertices);
-      MFEM_ASSERT(vertices.Size() == 2, "Unexpected metal boundary edge geometry!");
-      Point p0, p1;
-      std::copy_n(mesh.GetVertex(vertices[0]), 3, p0.begin());
-      std::copy_n(mesh.GetVertex(vertices[1]), 3, p1.begin());
-      const auto selected = selected_segments.find(GetSegmentKey(p0, p1));
-      if (selected == selected_segments.end())
+      for (const auto &edge_segment : mesh::GetMeshEdgeSegments(mesh, edge))
       {
-        continue;
-      }
-      const std::size_t local_index = selected->second;
-      const auto &segment = geometry.segments[segment_indices[local_index]];
-      if (std::find(segment.metal_attributes.begin(), segment.metal_attributes.end(),
-                    attribute) == segment.metal_attributes.end())
-      {
-        continue;
-      }
+        const Point &p0 = edge_segment.p0;
+        const Point &p1 = edge_segment.p1;
+        const auto selected = selected_segments.find(GetSegmentKey(p0, p1));
+        if (selected == selected_segments.end())
+        {
+          continue;
+        }
+        const std::size_t local_index = selected->second;
+        const auto &segment = geometry.segments[segment_indices[local_index]];
+        if (std::find(segment.metal_attributes.begin(), segment.metal_attributes.end(),
+                      attribute) == segment.metal_attributes.end())
+        {
+          continue;
+        }
 
-      const auto &normal = process_normals[local_index];
-      Point tangent{}, inward{};
-      double tangent_norm_squared = 0.0;
-      for (int d = 0; d < 3; d++)
-      {
-        tangent[d] = p1[d] - p0[d];
-        tangent_norm_squared += tangent[d] * tangent[d];
-        inward[d] = center[d] - 0.5 * (p0[d] + p1[d]);
-      }
-      MFEM_VERIFY(tangent_norm_squared > 0.0,
-                  "Cannot infer a gap direction for a zero-length edge segment!");
-      double inward_tangent = 0.0, inward_normal = 0.0;
-      for (int d = 0; d < 3; d++)
-      {
-        inward_tangent += inward[d] * tangent[d];
-        inward_normal += inward[d] * normal[d];
-      }
-      double inward_norm_squared = 0.0;
-      for (int d = 0; d < 3; d++)
-      {
-        inward[d] -=
-            inward_tangent * tangent[d] / tangent_norm_squared + inward_normal * normal[d];
-        inward_norm_squared += inward[d] * inward[d];
-      }
-      if (inward_norm_squared <= coordinate_tolerance * coordinate_tolerance)
-      {
-        continue;
-      }
-      const double inverse_norm = 1.0 / std::sqrt(inward_norm_squared);
-      for (int d = 0; d < 3; d++)
-      {
-        inward_sum[3 * local_index + d] += inward[d] * inverse_norm;
+        const auto &normal = process_normals[local_index];
+        Point tangent{}, inward{};
+        double tangent_norm_squared = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          tangent[d] = p1[d] - p0[d];
+          tangent_norm_squared += tangent[d] * tangent[d];
+          inward[d] = center[d] - 0.5 * (p0[d] + p1[d]);
+        }
+        MFEM_VERIFY(tangent_norm_squared > 0.0,
+                    "Cannot infer a gap direction for a zero-length edge segment!");
+        double inward_tangent = 0.0, inward_normal = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          inward_tangent += inward[d] * tangent[d];
+          inward_normal += inward[d] * normal[d];
+        }
+        double inward_norm_squared = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          inward[d] -= inward_tangent * tangent[d] / tangent_norm_squared +
+                       inward_normal * normal[d];
+          inward_norm_squared += inward[d] * inward[d];
+        }
+        if (inward_norm_squared <= coordinate_tolerance * coordinate_tolerance)
+        {
+          continue;
+        }
+        const double inverse_norm = 1.0 / std::sqrt(inward_norm_squared);
+        for (int d = 0; d < 3; d++)
+        {
+          inward_sum[3 * local_index + d] += inward[d] * inverse_norm;
+        }
       }
     }
   }

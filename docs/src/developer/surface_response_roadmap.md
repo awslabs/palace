@@ -94,7 +94,7 @@ boundary-law parameters.
 | Sharp 90 degree convex/concave corner | Implemented | Implemented | Partial |
 | Rounded 90 degree convex/concave corner | Implemented | Implemented | Partial |
 | Arbitrary corner angle | Implemented | Implemented | Partial |
-| Smooth curved edge | Piecewise linear | Reuses edge/corner models | Missing |
+| Smooth curved edge | High-order-aware sampled chain | Reuses edge/corner models | Missing |
 | Manifold trace cap or T/cross mask | Corners, bends, and spatial clusters | Exact manifold mask | Incomplete |
 | Open-graph endpoint | Implemented matching | Requires an exact closed mask | Incomplete |
 | Nonmanifold junction | Implemented matching | Requires process regularization | Unsupported automatically |
@@ -123,6 +123,11 @@ The following infrastructure is present:
   - Circular chains in classified masks are reconstructed as smooth OCC arcs. Spatial
     trench geometry uses continuous offset-mask shells, automatic preparation requires
     at least quadratic geometry, and nonpositive curved-element Jacobians fail closed.
+  - High-order device-mesh edges are adaptively sampled from their MFEM transformations
+    for perimeter topology, interface coincidence, local frame inference, and rounded-run
+    recognition. Equivalent coarse quadratic and finer polygonal fillets select the same
+    rounded-corner models and response patch layout in focused tests. Intentional sharp
+    linear corners remain unchanged.
   - Spatial qualification separately gates FEM-order and local h-convergence. The h-study
     framework is also used for parallel-edge clusters and corners. It refines both thin
     and fabricated meshes at the final FEM order and reuses the finest completed p-study
@@ -205,8 +210,13 @@ alone.
      ownership. Automatic candidates now require p-order, fixed-p mesh-resolution, and
      held-out-response gates; the held-out geometry sweep remains to be run.
   5. Qualify nonparallel and cross-layer clusters over angle, offset, and layer spacing.
-  6. Replace piecewise-linear curved-edge classification with curvature-aware segmentation
-     and a discretization-independent signature.
+  6. Qualify smooth curved-edge matching over geometric order and tessellation. High-order
+     edge transformations are sampled with fixed turn and chord-error tolerances, and a
+     coarse quadratic versus finer polygonal rounded-island test has invariant topology,
+     radius-model selection, and response patch layout. A coarse linear kink remains
+     inherently ambiguous without CAD/high-order geometry or explicit metadata. Exact
+     spatial-mask facets also remain piecewise linear and need a matching high-order face
+     representation before curved close-edge clusters are qualified.
 
 **Exit gate:** The held-out local suite below passes at two matching radii and at least
 two fabrication processes without geometry-specific tuning.

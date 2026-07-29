@@ -329,6 +329,11 @@ struct BoundaryEdgeSegment
   std::array<double, 3> p1{};
 };
 
+// Return a piecewise-linear representation of one topological mesh edge. Linear edges
+// produce one segment. High-order edges are sampled to a fixed geometric tolerance while
+// retaining their exact topological endpoints.
+std::vector<BoundaryEdgeSegment> GetMeshEdgeSegments(const mfem::Mesh &mesh, int edge);
+
 // Extract all geometric edge segments belonging to boundary elements selected by marker.
 // In 2D, each selected boundary element contributes its line segment. In 3D, each
 // selected boundary face contributes its edge segments. The returned geometry is

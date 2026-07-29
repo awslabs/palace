@@ -2539,13 +2539,13 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
             {"UnmatchedPolicy", "Error"}}}}}}}};
   auto MakeIslandMesh = [](bool rounded = false, bool tetrahedral = false,
                            bool aperture = false, bool neighboring_island = false,
-                           bool second_layer = false)
+                           bool second_layer = false, bool high_order_rounded = false)
   {
     const double in_plane_extent = aperture || neighboring_island ? 2.0 : 1.0;
     const double center = 0.5 * in_plane_extent;
     const double half_width = 0.25;
-    const int in_plane_elements =
-        (rounded ? 16 : 8) * (aperture || neighboring_island ? 2 : 1);
+    const int in_plane_elements = (rounded && !high_order_rounded ? 16 : 8) *
+                                  (aperture || neighboring_island ? 2 : 1);
     mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(in_plane_elements, 4, in_plane_elements,
                                                     tetrahedral ? mfem::Element::TETRAHEDRON
                                                                 : mfem::Element::HEXAHEDRON,
@@ -2595,54 +2595,79 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                                         : (inside_neighbor ? 10 : 9));
       }
     }
-    if (rounded)
+    auto RoundPoint = [&](const mfem::Vector &input, mfem::Vector &output)
     {
+      output = input;
       constexpr double radius = 0.125;
       constexpr double tolerance = 1.0e-12;
+      if (std::abs(input[1] - 0.5) > tolerance)
+      {
+        return;
+      }
+      for (const double sign_x : {-1.0, 1.0})
+      {
+        for (const double sign_z : {-1.0, 1.0})
+        {
+          const double corner_x = center + sign_x * half_width;
+          const double corner_z = center + sign_z * half_width;
+          const double center_x = corner_x - sign_x * radius;
+          const double center_z = corner_z - sign_z * radius;
+          const double local_x = sign_x * (input[0] - center_x);
+          const double local_z = sign_z * (input[2] - center_z);
+          if (local_x < -tolerance || local_x > radius + tolerance ||
+              local_z < -tolerance || local_z > radius + tolerance)
+          {
+            continue;
+          }
+
+          double angle;
+          if (std::abs(input[2] - corner_z) <= tolerance)
+          {
+            angle = 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / radius;
+          }
+          else if (std::abs(input[0] - corner_x) <= tolerance)
+          {
+            angle = 0.25 * std::acos(-1.0) * local_z / radius;
+          }
+          else
+          {
+            continue;
+          }
+          output[0] = center_x + sign_x * radius * std::cos(angle);
+          output[2] = center_z + sign_z * radius * std::sin(angle);
+          return;
+        }
+      }
+    };
+    if (rounded && !high_order_rounded)
+    {
       for (int vertex = 0; vertex < serial.GetNV(); vertex++)
       {
-        double *point = serial.GetVertex(vertex);
-        if (std::abs(point[1] - 0.5) > tolerance)
+        mfem::Vector input(serial.GetVertex(vertex), 3);
+        mfem::Vector output(3);
+        RoundPoint(input, output);
+        for (int d = 0; d < 3; d++)
         {
-          continue;
-        }
-        for (const double sign_x : {-1.0, 1.0})
-        {
-          for (const double sign_z : {-1.0, 1.0})
-          {
-            const double corner_x = center + sign_x * half_width;
-            const double corner_z = center + sign_z * half_width;
-            const double center_x = corner_x - sign_x * radius;
-            const double center_z = corner_z - sign_z * radius;
-            const double local_x = sign_x * (point[0] - center_x);
-            const double local_z = sign_z * (point[2] - center_z);
-            if (local_x < -tolerance || local_x > radius + tolerance ||
-                local_z < -tolerance || local_z > radius + tolerance)
-            {
-              continue;
-            }
-
-            double angle = 0.0;
-            if (std::abs(point[2] - corner_z) <= tolerance)
-            {
-              angle = 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / radius;
-            }
-            else if (std::abs(point[0] - corner_x) <= tolerance)
-            {
-              angle = 0.25 * std::acos(-1.0) * local_z / radius;
-            }
-            else
-            {
-              continue;
-            }
-            point[0] = center_x + sign_x * radius * std::cos(angle);
-            point[2] = center_z + sign_z * radius * std::sin(angle);
-          }
+          serial.GetVertex(vertex)[d] = output[d];
         }
       }
     }
     serial.FinalizeTopology();
     serial.Finalize();
+    if (rounded && high_order_rounded)
+    {
+      serial.SetCurvature(2);
+      serial.Transform(RoundPoint);
+      for (int d = 0; d < serial.SpaceDimension(); d++)
+      {
+        mfem::Vector values;
+        serial.GetNodes()->GetNodalValues(values, d + 1);
+        for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+        {
+          serial.GetVertex(vertex)[d] = values[vertex];
+        }
+      }
+    }
     return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
   };
   auto MakeTouchingIslandMesh = []()
@@ -2877,6 +2902,22 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         4 * remaining_straight_intervals * island_line_rule.GetNPoints() +
             12 * rounded_corner_count);
   CHECK_THAT(rounded_island_response.GetPatchWeight(), WithinRel(6.0, 1.0e-12));
+
+  // The same fillet represented by coarse quadratic edges must select the same four
+  // rounded-corner coupons and leave the same straight response intervals.
+  std::vector<std::unique_ptr<Mesh>> high_order_rounded_island_meshes;
+  high_order_rounded_island_meshes.push_back(
+      std::make_unique<Mesh>(MakeIslandMesh(true, false, false, false, false, true)));
+  LaplaceOperator high_order_rounded_island_laplace(rounded_island_iodata,
+                                                    high_order_rounded_island_meshes);
+  SurfaceResponseOperator high_order_rounded_island_response(
+      rounded_island_iodata, high_order_rounded_island_laplace);
+  CHECK(high_order_rounded_island_response.GetPatchCount() ==
+        rounded_island_response.GetPatchCount());
+  CHECK(high_order_rounded_island_response.GetBasisSize() ==
+        rounded_island_response.GetBasisSize());
+  CHECK_THAT(high_order_rounded_island_response.GetPatchWeight(),
+             WithinRel(rounded_island_response.GetPatchWeight(), 1.0e-12));
 
   auto rounded_concave_island_config = island_config;
   rounded_concave_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]

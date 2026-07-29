@@ -92,6 +92,113 @@ std::unique_ptr<mfem::Mesh> CrackedSquareSheetTetMesh(bool add_truncation = fals
   return mesh;
 }
 
+std::unique_ptr<mfem::ParMesh> RoundedIslandSheetHexMesh(int in_plane_elements,
+                                                         bool high_order, bool rounded)
+{
+  constexpr double center = 0.5;
+  constexpr double half_width = 0.25;
+  constexpr double radius = 0.125;
+  constexpr double tolerance = 1.0e-12;
+
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(in_plane_elements, 2, in_plane_elements,
+                                                  mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = 1.0, xmax = 0.0, zmin = 1.0, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - center) < tolerance;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    if (on_plane && xmin >= center - half_width - tolerance &&
+        xmax <= center + half_width + tolerance &&
+        zmin >= center - half_width - tolerance && zmax <= center + half_width + tolerance)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+
+  if (high_order)
+  {
+    serial.SetCurvature(2);
+  }
+  if (rounded)
+  {
+    serial.Transform(
+        [&](const mfem::Vector &input, mfem::Vector &output)
+        {
+          output = input;
+          if (std::abs(input[1] - center) > tolerance)
+          {
+            return;
+          }
+          for (const double sign_x : {-1.0, 1.0})
+          {
+            for (const double sign_z : {-1.0, 1.0})
+            {
+              const double corner_x = center + sign_x * half_width;
+              const double corner_z = center + sign_z * half_width;
+              const double circle_x = corner_x - sign_x * radius;
+              const double circle_z = corner_z - sign_z * radius;
+              const double local_x = sign_x * (input[0] - circle_x);
+              const double local_z = sign_z * (input[2] - circle_z);
+              if (local_x < -tolerance || local_x > radius + tolerance ||
+                  local_z < -tolerance || local_z > radius + tolerance)
+              {
+                continue;
+              }
+
+              double angle;
+              if (std::abs(input[2] - corner_z) <= tolerance)
+              {
+                angle = 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / radius;
+              }
+              else if (std::abs(input[0] - corner_x) <= tolerance)
+              {
+                angle = 0.25 * std::acos(-1.0) * local_z / radius;
+              }
+              else
+              {
+                continue;
+              }
+              output[0] = circle_x + sign_x * radius * std::cos(angle);
+              output[2] = circle_z + sign_z * radius * std::sin(angle);
+              return;
+            }
+          }
+        });
+    if (high_order)
+    {
+      for (int d = 0; d < serial.SpaceDimension(); d++)
+      {
+        mfem::Vector values;
+        serial.GetNodes()->GetNodalValues(values, d + 1);
+        for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+        {
+          serial.GetVertex(vertex)[d] = values[vertex];
+        }
+      }
+    }
+  }
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 bool ElementContainsEdge(const mfem::Element &el, int v0, int v1)
 {
   bool has_v0 = false, has_v1 = false;
@@ -903,6 +1010,95 @@ TEST_CASE("Automatic metal edge extraction and classification",
       mesh, geometry, impedance_segments,
       [](int material_attribute) { return material_attribute == 2 ? 1.0 : 0.0; });
   CHECK(impedance_normals == process_normals);
+}
+
+TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  config::BoundaryData boundaries;
+  boundaries.pec.attributes = {9};
+  config::InterfaceDielectricData dielectric;
+  dielectric.type = InterfaceDielectric::SA;
+  dielectric.attributes = {9};
+  boundaries.postpro.dielectric.emplace(1, std::move(dielectric));
+
+  auto Extract = [&](int elements, bool high_order, bool rounded)
+  {
+    auto mesh = RoundedIslandSheetHexMesh(elements, high_order, rounded);
+    auto geometry = ExtractMetalEdgeGeometry(*mesh, boundaries);
+    return std::pair{std::move(mesh), std::move(geometry)};
+  };
+  auto [coarse_mesh, coarse] = Extract(8, true, true);
+  auto [fine_mesh, fine] = Extract(16, false, true);
+  auto [sharp_mesh, sharp] = Extract(8, false, false);
+
+  auto CountPhysicalVertexTypes =
+      [](const MetalEdgeGeometry &geometry, MetalEdgeVertexType type)
+  {
+    return std::count_if(geometry.vertices.begin(), geometry.vertices.end(),
+                         [&](const auto &vertex)
+                         { return vertex.physical_type == std::optional{type}; });
+  };
+  auto PhysicalLength = [](const MetalEdgeGeometry &geometry)
+  {
+    double length = 0.0;
+    for (const auto &segment : geometry.segments)
+    {
+      if (segment.type != MetalEdgeSegmentType::PHYSICAL)
+      {
+        continue;
+      }
+      const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+      const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length_squared += (p1[d] - p0[d]) * (p1[d] - p0[d]);
+      }
+      length += std::sqrt(length_squared);
+    }
+    return length;
+  };
+
+  CHECK(coarse.physical_components == 1);
+  CHECK(fine.physical_components == 1);
+  CHECK(coarse.physical_chains == 1);
+  CHECK(fine.physical_chains == 1);
+  CHECK(CountPhysicalVertexTypes(coarse, MetalEdgeVertexType::CORNER) == 0);
+  CHECK(CountPhysicalVertexTypes(fine, MetalEdgeVertexType::CORNER) == 0);
+  CHECK(coarse.segments.size() > fine.segments.size());
+
+  const double exact_perimeter =
+      4.0 * (2.0 * 0.25 - 2.0 * 0.125) + 2.0 * std::acos(-1.0) * 0.125;
+  CHECK_THAT(PhysicalLength(coarse), WithinAbs(exact_perimeter, 2.0e-3));
+  CHECK_THAT(PhysicalLength(fine), WithinAbs(exact_perimeter, 6.0e-3));
+  CHECK_THAT(PhysicalLength(coarse), WithinAbs(PhysicalLength(fine), 6.0e-3));
+
+  CHECK(sharp.physical_components == 1);
+  CHECK(sharp.physical_chains == 4);
+  CHECK(CountPhysicalVertexTypes(sharp, MetalEdgeVertexType::CORNER) == 4);
+
+  const auto coarse_segments =
+      GetInterfaceMetalEdgeSegmentIndices(coarse, 1, InterfaceDielectric::SA);
+  REQUIRE(coarse_segments.size() == coarse.segments.size());
+  const auto process_normals = BuildMetalEdgeProcessNormals(
+      *coarse_mesh, coarse, coarse_segments, [](int) { return 1.0; },
+      std::array<double, 3>{0.0, 1.0, 0.0});
+  REQUIRE(process_normals.size() == coarse_segments.size());
+  for (const auto &normal : process_normals)
+  {
+    CHECK_THAT(normal[0], WithinAbs(0.0, 1.0e-10));
+    CHECK_THAT(normal[1], WithinAbs(1.0, 1.0e-10));
+    CHECK_THAT(normal[2], WithinAbs(0.0, 1.0e-10));
+  }
+  const auto gap_directions =
+      BuildMetalEdgeGapDirections(*coarse_mesh, coarse, coarse_segments, process_normals);
+  REQUIRE(gap_directions.size() == coarse_segments.size());
+  for (const auto &gap : gap_directions)
+  {
+    CHECK_THAT(gap[1], WithinAbs(0.0, 1.0e-10));
+    CHECK_THAT(std::hypot(gap[0], gap[2]), WithinAbs(1.0, 1.0e-10));
+  }
 }
 
 TEST_CASE("Automatic edge distance to nonregular vertex crosses mesh segments",
