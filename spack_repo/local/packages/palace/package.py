@@ -245,7 +245,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     with when("@0.14:"):
-        depends_on("libceed@0.13:")
+        depends_on("libceed@0.13:", when="@:0.17")
+        depends_on(
+            "libceed@0.13:",
+            patches=["libceed_nontensor_atpoints_cuda.diff"],
+            when="@0.18:",
+        )
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
