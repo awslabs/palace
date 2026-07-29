@@ -61,6 +61,42 @@ bool SameRowColumnPartition(const mfem::HypreParMatrix &matrix)
          LocalPartition(matrix, true) == LocalPartition(matrix, false);
 }
 
+std::vector<HYPRE_BigInt> BuildPartition(MPI_Comm comm, HYPRE_BigInt local_offset,
+                                         HYPRE_BigInt local_size, HYPRE_BigInt global_size)
+{
+  const int ranks = Mpi::Size(comm);
+  std::vector<HYPRE_BigInt> offsets(ranks), sizes(ranks), global_sizes(ranks);
+  Mpi::Allgather(1, &local_offset, offsets.data(), comm);
+  Mpi::Allgather(1, &local_size, sizes.data(), comm);
+  Mpi::Allgather(1, &global_size, global_sizes.data(), comm);
+  HYPRE_BigInt expected_offset = 0;
+  bool valid = global_size > 0 && std::all_of(global_sizes.begin(), global_sizes.end(),
+                                              [global_size](HYPRE_BigInt size)
+                                              { return size == global_size; });
+  for (int rank = 0; rank < ranks; rank++)
+  {
+    if (offsets[rank] != expected_offset || sizes[rank] < 0 ||
+        sizes[rank] > std::numeric_limits<HYPRE_BigInt>::max() - expected_offset)
+    {
+      valid = false;
+      break;
+    }
+    expected_offset += sizes[rank];
+  }
+  if (!valid || expected_offset != global_size)
+  {
+    throw std::invalid_argument("Parallel singular true-DOF partition is inconsistent!");
+  }
+  if (HYPRE_AssumedPartitionCheck())
+  {
+    return {local_offset, local_offset + local_size};
+  }
+  std::vector<HYPRE_BigInt> partition(ranks + 1);
+  std::copy(offsets.begin(), offsets.end(), partition.begin());
+  partition.back() = global_size;
+  return partition;
+}
+
 void ValidateEnrichedOperatorBlocks(const mfem::HypreParMatrix &standard,
                                     const ParallelSparseOperatorBlocks &enrichment)
 {
@@ -537,6 +573,52 @@ BuildParallelEnrichedGradient(const mfem::HypreParMatrix &standard_gradient,
   blocks = nullptr;
   blocks(0, 0) = &standard_gradient;
   blocks(1, 1) = &enrichment_gradient;
+  return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
+}
+
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelEnrichedProlongation(const mfem::HypreParMatrix &standard_prolongation,
+                                  const TrueDofMap &enrichment_numbering)
+{
+  const MPI_Comm comm = standard_prolongation.GetComm();
+  bool valid = standard_prolongation.GetGlobalNumRows() > 0 &&
+               standard_prolongation.GetGlobalNumCols() > 0 &&
+               enrichment_numbering.global_size > 0 &&
+               enrichment_numbering.owned_offset >= 0 &&
+               enrichment_numbering.owned_size >= 0 &&
+               enrichment_numbering.owned_offset <= enrichment_numbering.global_size &&
+               enrichment_numbering.owned_size <=
+                   enrichment_numbering.global_size - enrichment_numbering.owned_offset &&
+               enrichment_numbering.owned_size <= std::numeric_limits<int>::max();
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Parallel singular prolongation received inconsistent standard or enrichment "
+        "dimensions!");
+  }
+
+  const int local_size = static_cast<int>(enrichment_numbering.owned_size);
+  std::vector<int> rows(local_size + 1);
+  std::vector<HYPRE_BigInt> columns(local_size);
+  std::vector<double> values(local_size, 1.0);
+  for (int i = 0; i < local_size; i++)
+  {
+    rows[i] = i;
+    columns[i] = enrichment_numbering.owned_offset + i;
+  }
+  rows[local_size] = local_size;
+  const auto partition =
+      BuildPartition(comm, enrichment_numbering.owned_offset,
+                     enrichment_numbering.owned_size, enrichment_numbering.global_size);
+  auto identity = std::make_unique<mfem::HypreParMatrix>(
+      comm, local_size, enrichment_numbering.global_size, enrichment_numbering.global_size,
+      rows.data(), columns.data(), values.data(), partition.data(), partition.data());
+
+  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+  blocks = nullptr;
+  blocks(0, 0) = &standard_prolongation;
+  blocks(1, 1) = identity.get();
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
 }
 

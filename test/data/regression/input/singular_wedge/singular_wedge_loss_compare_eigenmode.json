@@ -49,7 +49,9 @@
       "KSPType": "GMRES",
       "Tol": 1.0e-10,
       "MaxIts": 100,
-      "MGMaxLevels": 1,
+      "MGMaxLevels": 2,
+      "MGSmoothIts": 2,
+      "PCMatReal": true,
       "DivFreeMaxIts": 10
     }
   }

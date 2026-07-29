@@ -60,7 +60,8 @@ public:
                "DistRelaxationSmoother, use the two argument signature instead!");
   }
 
-  void SetOperators(const OperType &op, const OperType &op_G);
+  void SetOperators(const OperType &op, const OperType &op_G,
+                    const mfem::Array<int> *essential_tdofs_G = nullptr);
 
   void Mult(const VecType &x, VecType &y) const override
   {

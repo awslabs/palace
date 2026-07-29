@@ -17,10 +17,11 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
-    bool cheby_4th_kind)
+    bool cheby_4th_kind, const std::vector<const mfem::Array<int> *> *essential_tdofs,
+    const std::vector<const mfem::Array<int> *> *auxiliary_essential_tdofs)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
-    dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false)
+    dbc_tdof_lists(P.size() + 1, nullptr), aux_dbc_tdof_lists(P.size() + 1, nullptr),
+    B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1), R(P.size() + 1), use_timer(false)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -30,7 +31,18 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   MFEM_VERIFY(!G || G->size() == n_levels,
               "Invalid input for distributive relaxation smoother auxiliary space transfer "
               "operators (mismatch in number of levels)!");
-
+  MFEM_VERIFY(!essential_tdofs || essential_tdofs->size() == n_levels,
+              "Invalid primary essential-DOF lists for multigrid solver setup!");
+  MFEM_VERIFY(!auxiliary_essential_tdofs || auxiliary_essential_tdofs->size() == n_levels,
+              "Invalid auxiliary essential-DOF lists for multigrid solver setup!");
+  if (essential_tdofs)
+  {
+    dbc_tdof_lists = *essential_tdofs;
+  }
+  if (auxiliary_essential_tdofs)
+  {
+    aux_dbc_tdof_lists = *auxiliary_essential_tdofs;
+  }
   // Use the supplied level 0 (coarse) solver.
   B[0] = std::move(coarse_solver);
 
@@ -62,6 +74,22 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   }
 }
 
+namespace
+{
+
+bool IsAssembledParallelOperator(const Operator &op)
+{
+  return dynamic_cast<const mfem::HypreParMatrix *>(&op) != nullptr;
+}
+
+bool IsAssembledParallelOperator(const ComplexOperator &op)
+{
+  return (!op.Real() || dynamic_cast<const mfem::HypreParMatrix *>(op.Real())) &&
+         (!op.Imag() || dynamic_cast<const mfem::HypreParMatrix *>(op.Imag()));
+}
+
+}  // namespace
+
 template <typename OperType>
 void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 {
@@ -87,11 +115,12 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
              (A[l]->Height() == ((l < n_levels - 1) ? P[l]->Width() : P[l - 1]->Height()))),
         "Invalid operator sizes for GeometricMultigridSolver!");
 
-    const auto *PtAP_l = dynamic_cast<const ParOperType *>(&mg_op->GetOperatorAtLevel(l));
-    MFEM_VERIFY(
-        PtAP_l,
-        "GeometricMultigridSolver requires ParOperator or ComplexParOperator operators!");
-    if (l < n_levels - 1)
+    const auto &op_l = mg_op->GetOperatorAtLevel(l);
+    const auto *PtAP_l = dynamic_cast<const ParOperType *>(&op_l);
+    MFEM_VERIFY(PtAP_l || IsAssembledParallelOperator(op_l),
+                "GeometricMultigridSolver requires finite-element ParOperator or "
+                "assembled parallel level operators!");
+    if (!dbc_tdof_lists[l] && PtAP_l)
     {
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();
     }
@@ -103,7 +132,8 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
                   "Distributive relaxation smoother relies on both primary space and "
                   "auxiliary space operators for multigrid smoothing!");
       dist_smoother->SetOperators(mg_op->GetOperatorAtLevel(l),
-                                  mg_op->GetAuxiliaryOperatorAtLevel(l));
+                                  mg_op->GetAuxiliaryOperatorAtLevel(l),
+                                  aux_dbc_tdof_lists[l]);
     }
     else
     {

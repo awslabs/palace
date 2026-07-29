@@ -12,10 +12,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fem/singularassembly.hpp"
 #include "fem/singularsystem.hpp"
 #include "linalg/blockprecond.hpp"
 #include "linalg/iterative.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -3776,6 +3781,138 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
         parallel_nd_space.GetTrueVSize() + numbering.nd.owned_size);
   CHECK(combined_gradient->Height() == combined_nd_mass->Height());
   CHECK(combined_gradient->Width() == combined_h1->Width());
+  const auto check_eigen_close =
+      [](const Eigen::MatrixXd &value, const Eigen::MatrixXd &reference)
+  {
+    REQUIRE(value.rows() == reference.rows());
+    REQUIRE(value.cols() == reference.cols());
+    for (Eigen::Index i = 0; i < value.rows(); i++)
+    {
+      for (Eigen::Index j = 0; j < value.cols(); j++)
+      {
+        CAPTURE(i, j);
+        CheckClose(value(i, j), reference(i, j));
+      }
+    }
+  };
+
+  auto transfer_parallel_mesh =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, partition.data());
+  Mesh transfer_mesh(std::move(transfer_parallel_mesh));
+  fem::DefaultIntegrationOrder::p_trial = 2;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  mfem::H1_FECollection transfer_coarse_h1_collection(1, 3),
+      transfer_fine_h1_collection(2, 3);
+  mfem::ND_FECollection transfer_coarse_nd_collection(1, 3),
+      transfer_fine_nd_collection(2, 3);
+  FiniteElementSpace transfer_coarse_h1_space(transfer_mesh,
+                                              &transfer_coarse_h1_collection);
+  FiniteElementSpace transfer_fine_h1_space(transfer_mesh, &transfer_fine_h1_collection);
+  FiniteElementSpace transfer_coarse_nd_space(transfer_mesh,
+                                              &transfer_coarse_nd_collection);
+  FiniteElementSpace transfer_fine_nd_space(transfer_mesh, &transfer_fine_nd_collection);
+
+  mfem::ParDiscreteLinearOperator coarse_standard_gradient(&transfer_coarse_h1_space.Get(),
+                                                           &transfer_coarse_nd_space.Get());
+  coarse_standard_gradient.AddDomainInterpolator(new mfem::GradientInterpolator);
+  coarse_standard_gradient.Assemble();
+  coarse_standard_gradient.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> coarse_standard_gradient_matrix(
+      coarse_standard_gradient.ParallelAssemble());
+  REQUIRE(coarse_standard_gradient_matrix);
+  const auto coarse_combined_gradient = fem::singular::BuildParallelEnrichedGradient(
+      *coarse_standard_gradient_matrix, *enrichment_gradient);
+  REQUIRE(coarse_combined_gradient);
+
+  DiscreteLinearOperator standard_h1_prolongation(transfer_coarse_h1_space,
+                                                  transfer_fine_h1_space);
+  standard_h1_prolongation.AddDomainInterpolator<IdentityInterpolator>();
+  ParOperator standard_h1_prolongation_operator(standard_h1_prolongation.PartialAssemble(),
+                                                transfer_coarse_h1_space,
+                                                transfer_fine_h1_space, true);
+  auto standard_h1_prolongation_matrix =
+      standard_h1_prolongation_operator.StealParallelAssemble();
+  DiscreteLinearOperator standard_nd_prolongation(transfer_coarse_nd_space,
+                                                  transfer_fine_nd_space);
+  standard_nd_prolongation.AddDomainInterpolator<IdentityInterpolator>();
+  ParOperator standard_nd_prolongation_operator(standard_nd_prolongation.PartialAssemble(),
+                                                transfer_coarse_nd_space,
+                                                transfer_fine_nd_space, true);
+  auto standard_nd_prolongation_matrix =
+      standard_nd_prolongation_operator.StealParallelAssemble();
+  REQUIRE(standard_h1_prolongation_matrix);
+  REQUIRE(standard_nd_prolongation_matrix);
+  const auto combined_h1_prolongation = fem::singular::BuildParallelEnrichedProlongation(
+      *standard_h1_prolongation_matrix, numbering.h1);
+  const auto combined_nd_prolongation = fem::singular::BuildParallelEnrichedProlongation(
+      *standard_nd_prolongation_matrix, numbering.nd);
+  REQUIRE(combined_h1_prolongation);
+  REQUIRE(combined_nd_prolongation);
+
+  const int coarse_standard_nd = standard_nd_prolongation_matrix->Width();
+  const int fine_standard_nd = standard_nd_prolongation_matrix->Height();
+  const int local_enrichment_nd = static_cast<int>(numbering.nd.owned_size);
+  REQUIRE(combined_nd_prolongation->Width() == coarse_standard_nd + local_enrichment_nd);
+  REQUIRE(combined_nd_prolongation->Height() == fine_standard_nd + local_enrichment_nd);
+
+  Vector standard_input(combined_nd_prolongation->Width()),
+      standard_output(combined_nd_prolongation->Height()),
+      standard_reference(fine_standard_nd);
+  standard_input = 0.0;
+  for (int i = 0; i < coarse_standard_nd; i++)
+  {
+    standard_input[i] = std::sin(0.29 * (i + 1) + Mpi::Rank(Mpi::World()));
+  }
+  standard_nd_prolongation_matrix->Mult(
+      Vector(standard_input.GetData(), coarse_standard_nd), standard_reference);
+  combined_nd_prolongation->Mult(standard_input, standard_output);
+  for (int i = 0; i < fine_standard_nd; i++)
+  {
+    CheckClose(standard_output[i], standard_reference[i]);
+  }
+  for (int i = 0; i < local_enrichment_nd; i++)
+  {
+    CHECK(standard_output[fine_standard_nd + i] == 0.0);
+  }
+
+  Vector enrichment_input(combined_nd_prolongation->Width()),
+      enrichment_output(combined_nd_prolongation->Height());
+  enrichment_input = 0.0;
+  for (int i = 0; i < local_enrichment_nd; i++)
+  {
+    enrichment_input[coarse_standard_nd + i] = 0.17 * (numbering.nd.owned_offset + i + 1);
+  }
+  combined_nd_prolongation->Mult(enrichment_input, enrichment_output);
+  for (int i = 0; i < fine_standard_nd; i++)
+  {
+    CHECK(enrichment_output[i] == 0.0);
+  }
+  for (int i = 0; i < local_enrichment_nd; i++)
+  {
+    CHECK(enrichment_output[fine_standard_nd + i] ==
+          enrichment_input[coarse_standard_nd + i]);
+  }
+
+  Vector coarse_h1(combined_h1_prolongation->Width()),
+      fine_h1(combined_h1_prolongation->Height()),
+      fine_gradient(combined_gradient->Height()),
+      coarse_gradient(coarse_combined_gradient->Height()),
+      prolonged_gradient(combined_nd_prolongation->Height());
+  for (int i = 0; i < coarse_h1.Size(); i++)
+  {
+    coarse_h1[i] = std::sin(0.37 * (i + 1) + Mpi::Rank(Mpi::World()));
+  }
+  combined_h1_prolongation->Mult(coarse_h1, fine_h1);
+  combined_gradient->Mult(fine_h1, fine_gradient);
+  coarse_combined_gradient->Mult(coarse_h1, coarse_gradient);
+  combined_nd_prolongation->Mult(coarse_gradient, prolonged_gradient);
+  fine_gradient -= prolonged_gradient;
+  const double commuting_error =
+      linalg::Norml2(Mpi::World(), fine_gradient) /
+      std::max(1.0, linalg::Norml2(Mpi::World(), prolonged_gradient));
+  CAPTURE(commuting_error);
+  CHECK(commuting_error < 2.0e-11);
 
   const Eigen::MatrixXd gradient_enrichment =
       ToEigen(GatherParallelMatrix(*enrichment_gradient));
@@ -3798,20 +3935,6 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
       ToEigen(GatherParallelMatrix(*parallel.nd_curl_curl.enrichment_enrichment));
   const Eigen::MatrixXd nd_curl_se =
       ToEigen(GatherParallelMatrix(*parallel.nd_curl_curl.standard_enrichment));
-  const auto check_eigen_close =
-      [](const Eigen::MatrixXd &value, const Eigen::MatrixXd &reference)
-  {
-    REQUIRE(value.rows() == reference.rows());
-    REQUIRE(value.cols() == reference.cols());
-    for (Eigen::Index i = 0; i < value.rows(); i++)
-    {
-      for (Eigen::Index j = 0; j < value.cols(); j++)
-      {
-        CAPTURE(i, j);
-        CheckClose(value(i, j), reference(i, j));
-      }
-    }
-  };
   check_eigen_close(h1_ee,
                     gradient_enrichment.transpose() * nd_mass_ee * gradient_enrichment);
   check_eigen_close(h1_se,

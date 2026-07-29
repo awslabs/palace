@@ -333,10 +333,6 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
     {
-#if !defined(MFEM_USE_SUPERLU)
-      MFEM_ABORT("Full-wave singular elements currently require a Palace build with "
-                 "SuperLU_DIST!");
-#endif
       constexpr std::array<double, 3> zero_wave_vector{0.0, 0.0, 0.0};
       MFEM_VERIFY(boundaries.impedance.empty() && boundaries.conductivity.empty() &&
                       boundaries.rational_impedance.empty() &&
@@ -622,10 +618,13 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.mg_max_levels < 0)
   {
-    if (problem.type == ProblemType::BOUNDARYMODE || solver.singular_elements.Enabled())
+    if (problem.type == ProblemType::BOUNDARYMODE ||
+        (solver.singular_elements.Enabled() &&
+         (problem.type == ProblemType::ELECTROSTATIC || !solver.linear.pc_mat_real)))
     {
-      // Default off for 2D boundary mode analysis and singular enrichment. The latter
-      // has no prolongation operators for enrichment DOFs.
+      // Boundary mode, singular electrostatics, and singular Maxwell with a complex
+      // preconditioner retain single-level defaults. Singular driven and eigenmode
+      // simulations use the complete polynomial hierarchy when PCMatReal is enabled.
       solver.linear.mg_max_levels = 1;
     }
     else
@@ -633,9 +632,21 @@ void IoData::CheckConfiguration()
       solver.linear.mg_max_levels = 100;
     }
   }
-  MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1,
-              "Singular elements do not yet support geometric multigrid; set "
-              "Solver.Linear.MGMaxLevels = 1!");
+  MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
+                  problem.type == ProblemType::DRIVEN ||
+                  problem.type == ProblemType::EIGENMODE,
+              "Singular geometric multigrid is currently available for driven and "
+              "eigenmode Maxwell simulations!");
+  MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
+                  solver.linear.pc_mat_real,
+              "Singular Maxwell polynomial multigrid currently requires "
+              "Solver.Linear.PCMatReal = true!");
+  MFEM_VERIFY(
+      !solver.singular_elements.Enabled() ||
+          (problem.type != ProblemType::DRIVEN && problem.type != ProblemType::EIGENMODE) ||
+          solver.linear.type != LinearSolver::AMS || !solver.linear.complex_coarse_solve,
+      "Singular Maxwell with AMS does not support "
+      "Solver.Linear.ComplexCoarseSolve = true!");
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)

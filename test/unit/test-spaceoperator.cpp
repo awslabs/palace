@@ -114,7 +114,7 @@ void SetQuadraticGeometry(mfem::Mesh &mesh, bool curved)
   mesh.GetNodes()->ProjectCoefficient(geometry);
 }
 
-IoData SingularSpaceData(int dimension)
+IoData SingularSpaceData(int dimension, int order = 1, int mg_max_levels = 1)
 {
   config::json config = {
       {"Problem",
@@ -137,6 +137,8 @@ IoData SingularSpaceData(int dimension)
         {"Linear", {{"MGMaxLevels", 1}, {"Tol", 1.0e-12}, {"MaxIts", 20}}}}}};
   IoData iodata(config, false);
   iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.solver.order = order;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
   return iodata;
 }
 
@@ -168,7 +170,8 @@ void CheckSymmetricPositive(const mfem::HypreParMatrix &matrix)
   CHECK(linalg::Dot(Mpi::World(), x, Ax) > 0.0);
 }
 
-void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent = 0.0)
+void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent = 0.0,
+                        int order = 1, int mg_max_levels = 1)
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   const int dimension = serial_mesh.Dimension();
@@ -199,7 +202,7 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
-  auto iodata = SingularSpaceData(dimension);
+  auto iodata = SingularSpaceData(dimension, order, mg_max_levels);
   iodata.domains.materials[0].tandelta.s = {loss_tangent, loss_tangent, loss_tangent};
   SpaceOperator space_op(iodata, meshes, tetrahedral ? &local_sheet_features : nullptr,
                          tetrahedral ? nullptr : &local_line_features, &source_vertex_ids);
@@ -233,6 +236,187 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   CHECK(space_op.GlobalTrueVSize() == hypre_K->GetGlobalNumRows());
   CheckSymmetricPositive(*hypre_K);
   CheckSymmetricPositive(*hypre_M);
+
+  const auto nd_prolongations = space_op.GetCombinedNDProlongationOperators();
+  const auto h1_prolongations = space_op.GetCombinedH1ProlongationOperators();
+  const auto gradients = space_op.GetCombinedGradientOperators();
+  const auto &nd_spaces = space_op.GetNDSpaces();
+  const auto &h1_spaces = space_op.GetH1Spaces();
+  const auto &nd_essential = space_op.GetCombinedNDDbcTDofLists();
+  const auto &h1_essential = space_op.GetCombinedH1DbcTDofLists();
+  REQUIRE(nd_spaces.GetNumLevels() == static_cast<std::size_t>(mg_max_levels));
+  REQUIRE(h1_spaces.GetNumLevels() == nd_spaces.GetNumLevels());
+  REQUIRE(nd_prolongations.size() + 1 == nd_spaces.GetNumLevels());
+  REQUIRE(h1_prolongations.size() == nd_prolongations.size());
+  REQUIRE(gradients.size() == nd_spaces.GetNumLevels());
+  REQUIRE(nd_essential.size() == nd_spaces.GetNumLevels());
+  REQUIRE(h1_essential.size() == h1_spaces.GetNumLevels());
+
+  for (std::size_t level = 0; level < gradients.size(); level++)
+  {
+    const int standard_nd_size = nd_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    const int standard_h1_size = h1_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    CHECK(gradients[level]->Height() - standard_nd_size ==
+          hypre_G->Height() - space_op.GetNDSpace().GetTrueVSize());
+    CHECK(gradients[level]->Width() - standard_h1_size ==
+          hypre_G->Width() - space_op.GetH1Space().GetTrueVSize());
+    CHECK(std::is_sorted(nd_essential[level].begin(), nd_essential[level].end()));
+    CHECK(std::is_sorted(h1_essential[level].begin(), h1_essential[level].end()));
+    for (const int dof : nd_essential[level])
+    {
+      CHECK(dof >= 0);
+      CHECK(dof < gradients[level]->Height());
+    }
+    for (const int dof : h1_essential[level])
+    {
+      CHECK(dof >= 0);
+      CHECK(dof < gradients[level]->Width());
+    }
+  }
+
+  for (std::size_t level = 0; level < nd_prolongations.size(); level++)
+  {
+    const auto *nd_prolongation =
+        dynamic_cast<const mfem::HypreParMatrix *>(nd_prolongations[level]);
+    const auto *h1_prolongation =
+        dynamic_cast<const mfem::HypreParMatrix *>(h1_prolongations[level]);
+    REQUIRE(nd_prolongation);
+    REQUIRE(h1_prolongation);
+    CHECK(nd_prolongation->Width() == gradients[level]->Height());
+    CHECK(nd_prolongation->Height() == gradients[level + 1]->Height());
+    CHECK(h1_prolongation->Width() == gradients[level]->Width());
+    CHECK(h1_prolongation->Height() == gradients[level + 1]->Width());
+
+    const int coarse_standard_nd = nd_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    const int fine_standard_nd = nd_spaces.GetFESpaceAtLevel(level + 1).GetTrueVSize();
+    Vector coarse_enrichment(nd_prolongation->Width()),
+        fine_enrichment(nd_prolongation->Height());
+    coarse_enrichment = 0.0;
+    for (int i = coarse_standard_nd; i < coarse_enrichment.Size(); i++)
+    {
+      coarse_enrichment[i] = 0.13 * (i - coarse_standard_nd + 1);
+    }
+    nd_prolongation->Mult(coarse_enrichment, fine_enrichment);
+    for (int i = 0; i < fine_standard_nd; i++)
+    {
+      CHECK(fine_enrichment[i] == 0.0);
+    }
+    for (int i = fine_standard_nd; i < fine_enrichment.Size(); i++)
+    {
+      CHECK(fine_enrichment[i] ==
+            coarse_enrichment[coarse_standard_nd + i - fine_standard_nd]);
+    }
+
+    Vector coarse_h1(gradients[level]->Width()),
+        prolonged_h1(gradients[level + 1]->Width()),
+        gradient_after_prolongation(gradients[level + 1]->Height()),
+        coarse_gradient(gradients[level]->Height()),
+        prolonged_gradient(gradients[level + 1]->Height());
+    FillVector(coarse_h1, 0.83);
+    h1_prolongation->Mult(coarse_h1, prolonged_h1);
+    gradients[level + 1]->Mult(prolonged_h1, gradient_after_prolongation);
+    gradients[level]->Mult(coarse_h1, coarse_gradient);
+    nd_prolongation->Mult(coarse_gradient, prolonged_gradient);
+    gradient_after_prolongation -= prolonged_gradient;
+    CHECK(RelativeNorm(gradient_after_prolongation, prolonged_gradient) < 2.0e-12);
+  }
+
+  if (mg_max_levels > 1)
+  {
+    auto preconditioner = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        std::complex<double>(1.0), std::complex<double>(0.0), std::complex<double>(-0.04),
+        0.2);
+    const auto *hierarchy =
+        dynamic_cast<const BaseMultigridOperator<ComplexOperator> *>(preconditioner.get());
+    REQUIRE(hierarchy);
+    REQUIRE(hierarchy->GetNumLevels() == gradients.size());
+    REQUIRE(hierarchy->GetNumAuxiliaryLevels() == gradients.size());
+    auto exact_stiffness =
+        space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto exact_mass = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto exact_system = space_op.GetSystemMatrix(
+        std::complex<double>(1.0), std::complex<double>(0.0), std::complex<double>(-0.04),
+        exact_stiffness.get(), static_cast<const ComplexOperator *>(nullptr),
+        exact_mass.get());
+    ComplexVector probe(exact_system->Width()), exact_action(exact_system->Height()),
+        preconditioner_action(exact_system->Height());
+    FillVector(probe.Real(), 0.37);
+    FillVector(probe.Imag(), 0.79);
+    linalg::SetSubVector(probe, nd_essential.back(), 0.0);
+    exact_system->Mult(probe, exact_action);
+    hierarchy->GetOperatorAtLevel(hierarchy->GetNumLevels() - 1)
+        .Mult(probe, preconditioner_action);
+    linalg::AXPY(-1.0, exact_action, preconditioner_action);
+    CHECK(linalg::Norml2(Mpi::World(), preconditioner_action) <
+          2.0e-11 * std::max(1.0, linalg::Norml2(Mpi::World(), exact_action)));
+    for (std::size_t level = 0; level < gradients.size(); level++)
+    {
+      CHECK(hierarchy->GetOperatorAtLevel(level).Height() == gradients[level]->Height());
+      CHECK(hierarchy->GetAuxiliaryOperatorAtLevel(level).Height() ==
+            gradients[level]->Width());
+      CHECK((hierarchy->GetOperatorAtLevel(level).Imag() != nullptr) ==
+            (loss_tangent > 0.0));
+      CHECK((hierarchy->GetAuxiliaryOperatorAtLevel(level).Imag() != nullptr) ==
+            (loss_tangent > 0.0));
+    }
+    for (std::size_t level = 0; level + 1 < gradients.size(); level++)
+    {
+      const auto *coarse = dynamic_cast<const mfem::HypreParMatrix *>(
+          hierarchy->GetOperatorAtLevel(level).Real());
+      const auto *fine = dynamic_cast<const mfem::HypreParMatrix *>(
+          hierarchy->GetOperatorAtLevel(level + 1).Real());
+      const auto *coarse_imaginary = dynamic_cast<const mfem::HypreParMatrix *>(
+          hierarchy->GetOperatorAtLevel(level).Imag());
+      const auto *fine_imaginary = dynamic_cast<const mfem::HypreParMatrix *>(
+          hierarchy->GetOperatorAtLevel(level + 1).Imag());
+      const auto *prolongation =
+          dynamic_cast<const mfem::HypreParMatrix *>(nd_prolongations[level]);
+      REQUIRE(coarse);
+      REQUIRE(fine);
+      REQUIRE(prolongation);
+      REQUIRE((coarse_imaginary != nullptr) == (loss_tangent > 0.0));
+      REQUIRE((fine_imaginary != nullptr) == (loss_tangent > 0.0));
+
+      const int standard_size = nd_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
+      const auto galerkin_error = [&](const mfem::HypreParMatrix &coarse_operator,
+                                      const mfem::HypreParMatrix &fine_operator,
+                                      bool include_standard, bool include_enrichment)
+      {
+        Vector coarse_x(coarse_operator.Width()), coarse_action(coarse_operator.Height()),
+            fine_x(fine_operator.Width()), fine_action(fine_operator.Height()),
+            restricted_action(coarse_operator.Height());
+        FillVector(coarse_x, 0.41 + level);
+        for (int i = 0; i < coarse_x.Size(); i++)
+        {
+          if ((i < standard_size && !include_standard) ||
+              (i >= standard_size && !include_enrichment))
+          {
+            coarse_x[i] = 0.0;
+          }
+        }
+        linalg::SetSubVector(coarse_x, nd_essential[level], 0.0);
+        coarse_operator.Mult(coarse_x, coarse_action);
+        prolongation->Mult(coarse_x, fine_x);
+        fine_operator.Mult(fine_x, fine_action);
+        prolongation->MultTranspose(fine_action, restricted_action);
+        // The recursively projected level is re-eliminated after P^T A P. The
+        // V-cycle likewise zeros coarse essential residuals before correction,
+        // so compare the Galerkin identity only on the free subspace.
+        linalg::SetSubVector(restricted_action, nd_essential[level], 0.0);
+        restricted_action -= coarse_action;
+        return RelativeNorm(restricted_action, coarse_action);
+      };
+      const double standard_error = galerkin_error(*coarse, *fine, true, false);
+      const double enrichment_error = galerkin_error(*coarse, *fine, false, true);
+      const double combined_error = galerkin_error(*coarse, *fine, true, true);
+      const double imaginary_error =
+          coarse_imaginary ? galerkin_error(*coarse_imaginary, *fine_imaginary, true, true)
+                           : 0.0;
+      CAPTURE(level, standard_error, enrichment_error, combined_error, imaginary_error);
+      CHECK(combined_error < 2.0e-8);
+      CHECK(imaginary_error < 2.0e-8);
+    }
+  }
 
   auto complex_mass =
       space_op.GetMassMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ZERO);
@@ -344,6 +528,14 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   SECTION("3D isotropic dielectric loss")
   {
     CheckSpaceOperator(InternalSheetMesh(), false, 0.017);
+  }
+  SECTION("2D p = 2 combined hierarchy")
+  {
+    CheckSpaceOperator(InternalLineTipMesh(), false, 0.017, 2, 2);
+  }
+  SECTION("3D p = 2 combined hierarchy")
+  {
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.017, 2, 2);
   }
 }
 

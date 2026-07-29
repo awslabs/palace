@@ -42,6 +42,7 @@ private:
   // System matrices at each multigrid level (not owned).
   std::vector<const OperType *> A;
   std::vector<const mfem::Array<int> *> dbc_tdof_lists;
+  std::vector<const mfem::Array<int> *> aux_dbc_tdof_lists;
 
   // Smoothers for each level. Coarse-level solver is B[0].
   mutable std::vector<std::unique_ptr<Solver<OperType>>> B;
@@ -57,11 +58,13 @@ private:
   void VCycle(int l, bool initial_guess) const;
 
 public:
-  GeometricMultigridSolver(MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
-                           const std::vector<const Operator *> &P,
-                           const std::vector<const Operator *> *G, int cycle_it,
-                           int smooth_it, int cheby_order, double cheby_sf_max,
-                           double cheby_sf_min, bool cheby_4th_kind);
+  GeometricMultigridSolver(
+      MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
+      const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
+      int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max,
+      double cheby_sf_min, bool cheby_4th_kind,
+      const std::vector<const mfem::Array<int> *> *essential_tdofs = nullptr,
+      const std::vector<const mfem::Array<int> *> *auxiliary_essential_tdofs = nullptr);
   GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            const std::vector<const Operator *> &P,

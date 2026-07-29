@@ -143,11 +143,11 @@ follow it normally.
 
 The electrostatic solve reports capacitance, combined-field domain energy, canonical
 singular coefficients, fitted tip slopes, and combined-field dielectric surface
-participation. The singular `BoundaryMode` solve supports isotropic lossless materials
-with PEC or natural PMC boundaries and reports propagation constants, combined-field
-energies, canonical ND/H1 coefficients, fitted transverse field slopes, and dielectric
-surface participation. Voltage, impedance, and the standard error estimator remain
-disabled on the enriched `BoundaryMode` path.
+participation. The singular `BoundaryMode` solve supports isotropic materials, including
+bulk dielectric loss, with PEC or natural PMC boundaries. It reports propagation
+constants, combined-field energies, canonical ND/H1 coefficients, fitted transverse field
+slopes, and dielectric surface participation. Voltage, impedance, and the standard error
+estimator remain disabled on the enriched `BoundaryMode` path.
 
 The thin-sheet examples specify an explicit cutoff on each dielectric interface:
 
@@ -169,11 +169,28 @@ The paired thick `BoundaryMode` configurations therefore leave `EdgeCutoff` at z
 the singular case computes the untruncated combined-field MS and MA participation.
 
 The driven configuration is a restricted full-wave validation case with a surface-current
-source. Singular driven and eigenmode simulations currently require CPU execution,
-single-level meshes, isotropic lossless materials, assembled operators, and a Palace build
-with SuperLU_DIST. Ports, periodic boundaries, impedance or absorbing boundaries, saved
-grid fields, configured field/surface postprocessing, adaptive frequency sweeps, and PROM
-are not yet supported on this path.
+source. Singular driven and eigenmode simulations currently require CPU execution, a
+fixed simplex mesh, and isotropic materials without bulk conductivity or London
+penetration depth. Bulk dielectric loss, lumped-port `R/L/C` terms, and combined-field
+dielectric surface postprocessing are supported.
+
+Reported electric and magnetic field energies exclude reactive lumped-boundary matrix
+terms, matching standard Palace domain postprocessing. Eigenmode balance still uses the
+complete augmented matrices, while surface participation and lumped EPR use bulk electric
+plus measured capacitor energy for normalization.
+
+For polynomial order greater than one, the outer Krylov method remains the configured
+solver and may use polynomial multigrid. The transfer at every level is
+`diag(P_standard, I_enrichment)`, the paired H1-to-ND gradient is retained at every level,
+and the coarse operator contains the complete standard-plus-singular coupling. Sparse
+direct solver types such as SuperLU_DIST or STRUMPACK therefore factor only the combined
+`p = 1` coarse matrix, not the finest system. AMS uses AMS on the standard ND principal
+block and an enrichment correction; this path is validated for driven solves but is not
+yet certified for eigenmode shift-and-invert.
+
+Mesh refinement, wave and Floquet ports, periodic boundaries, impedance or absorbing
+boundaries, saved standard-grid fields, general field or probe postprocessing, adaptive
+frequency sweeps, and PROM are not yet supported on the singular full-wave path.
 
 The zero-thickness surface integral of ``|E|^2`` still diverges logarithmically at a sheet
 edge. A fabricated-device participation requires resolved finite-thickness interface

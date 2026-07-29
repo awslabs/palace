@@ -402,7 +402,7 @@
         "SingularElements": {
           "$ref": "#/$defs/SingularElements",
           "title": "Singular Elements",
-          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC lines or one-sided finite-metal PEC boundaries in two dimensions, and internal zero-thickness PEC sheets in three dimensions. Supported on CPU, single-level simplex meshes for electrostatic, BoundaryMode, driven, and eigenmode simulations. BoundaryMode and full-wave paths currently require isotropic lossless materials; driven/eigenmode additionally require assembled operators and SuperLU_DIST and exclude ports, periodic/absorbing/impedance boundaries, configured field or surface postprocessing, and saved grid fields."
+          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC lines or one-sided finite-metal PEC boundaries in two dimensions, and internal zero-thickness PEC sheets or finite-metal wedge edges in three dimensions. Supported on CPU simplex meshes for electrostatic, BoundaryMode, driven, and eigenmode simulations with isotropic materials, including bulk dielectric loss. Driven and eigenmode simulations support polynomial multigrid and lumped ports, but not mesh refinement, wave or Floquet ports, periodic, absorbing, impedance, conductivity, or London terms, adaptive driven sweeps, PROM, or saved standard-grid fields. Combined-field dielectric surface postprocessing is supported. Polynomial multigrid requires `Solver.Linear.PCMatReal` to be `true`; with the AMS coarse solver, `Solver.Linear.ComplexCoarseSolve` must be `false`."
         },
         "Linear": {
           "$ref": "#/$defs/Linear",
@@ -2797,7 +2797,7 @@
       "properties": {
         "Attributes": {
           "type": "array",
-          "description": "Nonempty set of PEC boundary attributes to inspect for singular features. In two dimensions, selected straight internal line chains are enriched at interior endpoints with `nu = 1/2`, while corners of selected one-sided finite-metal boundaries receive an automatically inferred isotropic material-wedge exponent. Both PEC faces meeting at a finite-metal corner must be selected. In three dimensions, selected attributes must be internal zero-thickness sheets whose topological perimeter is enriched with `nu = 1/2`.",
+          "description": "Nonempty set of PEC boundary attributes to inspect for singular features. In two dimensions, selected straight internal line chains are enriched at interior endpoints with `nu = 1/2`, while corners of selected one-sided finite-metal boundaries receive an automatically inferred isotropic material-wedge exponent. Both PEC faces meeting at a finite-metal corner must be selected. In three dimensions, selected internal zero-thickness sheets have their topological perimeter enriched with `nu = 1/2`; straight exterior finite-metal wedge edges formed by two selected PEC faces receive an automatically inferred isotropic material-wedge exponent.",
           "additionalItems": false,
           "uniqueItems": true,
           "minItems": 1,

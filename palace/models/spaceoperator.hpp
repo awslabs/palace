@@ -94,17 +94,22 @@ private:
   std::unique_ptr<fem::singular::DofTopology> singular_dofs;
   std::unique_ptr<fem::singular::TriangleDofTopology> triangle_singular_dofs;
   std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
-  fem::singular::ParallelSparseEnrichmentMatrices singular_domain_matrices;
-  fem::singular::ParallelSparseEnrichmentMatrices singular_domain_imag_matrices;
-  fem::singular::ParallelSparseOperatorBlocks singular_lumped_stiffness_matrices;
-  fem::singular::ParallelSparseOperatorBlocks singular_lumped_damping_matrices;
-  fem::singular::ParallelSparseOperatorBlocks singular_lumped_mass_matrices;
+  std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_domain_matrices;
+  std::vector<fem::singular::ParallelSparseEnrichmentMatrices>
+      singular_domain_imag_matrices;
+  std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_domain_abs_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_lumped_stiffness_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_lumped_damping_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_lumped_mass_matrices;
   fem::singular::AdaptiveAssemblyOptions singular_assembly_options{};
-  std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_gradients;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_prolongations;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_h1_prolongations;
   mfem::Array<int> singular_nd_essential_true_dofs;
   mfem::Array<int> singular_h1_essential_true_dofs;
-  mfem::Array<int> combined_nd_dbc_tdof_list;
-  mfem::Array<int> combined_h1_dbc_tdof_list;
+  std::vector<mfem::Array<int>> combined_nd_dbc_tdof_lists;
+  std::vector<mfem::Array<int>> combined_h1_dbc_tdof_lists;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -190,12 +195,23 @@ public:
   }
   const mfem::Array<int> &GetCombinedNDDbcTDofList() const
   {
-    return combined_nd_dbc_tdof_list;
+    return combined_nd_dbc_tdof_lists.back();
   }
   const mfem::Array<int> &GetCombinedH1DbcTDofList() const
   {
-    return combined_h1_dbc_tdof_list;
+    return combined_h1_dbc_tdof_lists.back();
   }
+  const std::vector<mfem::Array<int>> &GetCombinedNDDbcTDofLists() const
+  {
+    return combined_nd_dbc_tdof_lists;
+  }
+  const std::vector<mfem::Array<int>> &GetCombinedH1DbcTDofLists() const
+  {
+    return combined_h1_dbc_tdof_lists;
+  }
+  std::vector<const Operator *> GetCombinedNDProlongationOperators() const;
+  std::vector<const Operator *> GetCombinedH1ProlongationOperators() const;
+  std::vector<const Operator *> GetCombinedGradientOperators() const;
 
   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary
   // H1 space hierarchy. These are all boundaries which affect the stiffness and damping
@@ -280,7 +296,7 @@ public:
   const fem::singular::ParallelSparseEnrichmentMatrices &GetSingularDomainMatrices() const
   {
     MFEM_VERIFY(HasSingularEnrichment(), "Space operator has no singular domain matrices!");
-    return singular_domain_matrices;
+    return singular_domain_matrices.back();
   }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
@@ -294,9 +310,10 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
 
-  // Construct the real bulk-permittivity mass matrix without capacitive boundary terms.
-  // The singular Maxwell divergence projector uses this operator to match the standard
-  // Palace Gauss-law metric while the complete mass matrix remains in the eigenproblem.
+  // Construct real bulk-only matrices without reactive boundary terms. These operators
+  // match Palace's domain-field postprocessing, while the complete matrices remain in the
+  // full-wave system and eigenvector normalization.
+  std::unique_ptr<Operator> GetBulkStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
   std::unique_ptr<Operator> GetBulkMassMatrix(Operator::DiagonalPolicy diag_policy);
 
   template <typename OperType>

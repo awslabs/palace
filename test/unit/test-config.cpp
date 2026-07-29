@@ -1812,14 +1812,66 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_THROWS(IoData(config, false));
   }
 
-  SECTION("GPU execution and geometric multigrid are rejected")
+  SECTION("GPU execution is rejected and full-wave polynomial multigrid is accepted")
   {
     auto config = MakeConfig();
     config["Solver"]["Device"] = "GPU";
     CHECK_THROWS(IoData(config, false));
 
     config = MakeConfig();
-    config["Solver"]["Linear"] = {{"MGMaxLevels", 2}};
+    config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", true}};
+    CHECK_THROWS(IoData(config, false));
+
+    config["Problem"]["Type"] = "Driven";
+    config["Boundaries"]["SurfaceCurrent"] = {
+        {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
+    config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Boundaries"].erase("SurfaceCurrent");
+    config["Solver"].erase("Driven");
+    config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Full-wave polynomial multigrid requires a real preconditioner")
+  {
+    auto config = MakeConfig();
+    config["Problem"]["Type"] = "Driven";
+    config["Boundaries"]["SurfaceCurrent"] = {
+        {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
+    config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
+    config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", false}};
+    CHECK_THROWS(IoData(config, false));
+
+    config["Solver"]["Linear"]["PCMatReal"] = true;
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Singular AMS uses a real coarse correction")
+  {
+    auto config = MakeConfig();
+    config["Problem"]["Type"] = "Driven";
+    config["Boundaries"]["SurfaceCurrent"] = {
+        {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
+    config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
+    config["Solver"]["Linear"] = {{"Type", "AMS"},
+                                  {"MGMaxLevels", 2},
+                                  {"PCMatReal", true},
+                                  {"ComplexCoarseSolve", false}};
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Solver"]["Linear"]["ComplexCoarseSolve"] = true;
+    CHECK_THROWS(IoData(config, false));
+
+    config = MakeConfig();
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
+    config["Solver"]["Linear"] = {{"Type", "AMS"},
+                                  {"MGMaxLevels", 2},
+                                  {"PCMatReal", true},
+                                  {"ComplexCoarseSolve", true}};
     CHECK_THROWS(IoData(config, false));
   }
 

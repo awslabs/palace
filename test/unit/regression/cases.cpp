@@ -379,6 +379,10 @@ TEST_CASE("singular_wedge_loss_eigenmode_agreement", "[Serial][Parallel][Regress
         LoadRegressionOutputTable("singular_wedge", "loss_compare_eigenmode", "eig.csv");
     auto standard =
         LoadRegressionOutputTable("singular_wedge", "loss_standard_eigenmode", "eig.csv");
+    auto singular_energy = LoadRegressionOutputTable(
+        "singular_wedge", "loss_compare_eigenmode", "singular-eigenmode.csv");
+    auto standard_energy = LoadRegressionOutputTable(
+        "singular_wedge", "loss_standard_eigenmode", "domain-E.csv");
 
     const double singular_frequency_real = GetTableValue(singular, "Re{f} (GHz)");
     const double standard_frequency_real = GetTableValue(standard, "Re{f} (GHz)");
@@ -391,6 +395,16 @@ TEST_CASE("singular_wedge_loss_eigenmode_agreement", "[Serial][Parallel][Regress
     CHECK(RelativeDifference(singular_frequency_real, standard_frequency_real) < 5.0e-4);
     CHECK(RelativeDifference(singular_frequency_imag, standard_frequency_imag) < 5.0e-4);
     CHECK(RelativeDifference(singular_q, standard_q) < 1.0e-8);
+
+    const double singular_electric =
+        GetTableValue(singular_energy, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    const double singular_magnetic =
+        GetTableValue(singular_energy, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard_energy, "E_mag (J)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 1.0e-8);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 1.0e-8);
   }
 }
 
@@ -422,7 +436,10 @@ TEST_CASE("singular_wedge_driven", "[Serial][Parallel][Regression]")
     const double standard_electric = GetTableValue(standard, "E_elec (J)");
     const double singular_magnetic = GetTableValue(singular, "Magnetic field energy (J)");
     const double standard_magnetic = GetTableValue(standard, "E_mag (J)");
-    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    const double singular_residual = GetTableValue(singular, "Relative residual");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic,
+            singular_residual);
+    CHECK(singular_residual < 1.0e-7);
     CHECK(RelativeDifference(singular_electric, standard_electric) < 5.0e-3);
     CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 1.5e-2);
     CHECK(RelativeDifference(singular_electric + singular_magnetic,
@@ -445,6 +462,15 @@ TEST_CASE("singular_wedge_loss_driven", "[Serial][Parallel][Regression]")
   opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_loss_driven.json",
                                   "loss_driven", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular =
+        LoadRegressionOutputTable("singular_wedge", "loss_driven", "singular-driven.csv");
+    const double singular_residual = GetTableValue(singular, "Relative residual");
+    CAPTURE(singular_residual);
+    CHECK(singular_residual < 1.0e-7);
+  }
 }
 
 TEST_CASE("singular_wedge_lumped_driven", "[Serial][Parallel][Regression]")
@@ -471,6 +497,8 @@ TEST_CASE("singular_wedge_lumped_driven", "[Serial][Parallel][Regression]")
                                               "domain-E.csv");
     auto standard_voltage =
         LoadRegressionOutputTable("singular_wedge", "lumped_standard_driven", "port-V.csv");
+    auto standard_current =
+        LoadRegressionOutputTable("singular_wedge", "lumped_standard_driven", "port-I.csv");
     auto standard_scattering =
         LoadRegressionOutputTable("singular_wedge", "lumped_standard_driven", "port-S.csv");
     auto singular_surface =
@@ -482,7 +510,10 @@ TEST_CASE("singular_wedge_lumped_driven", "[Serial][Parallel][Regression]")
     const double standard_electric = GetTableValue(standard, "E_elec (J)");
     const double singular_magnetic = GetTableValue(singular, "Magnetic field energy (J)");
     const double standard_magnetic = GetTableValue(standard, "E_mag (J)");
-    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    const double singular_residual = GetTableValue(singular, "Relative residual");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic,
+            singular_residual);
+    CHECK(singular_residual < 1.0e-7);
     CHECK(RelativeDifference(singular_electric, standard_electric) < 3.0e-3);
     CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 5.0e-4);
     CHECK(RelativeDifference(singular_electric + singular_magnetic,
@@ -496,6 +527,15 @@ TEST_CASE("singular_wedge_lumped_driven", "[Serial][Parallel][Regression]")
             standard_voltage_imag);
     CHECK(RelativeComplexDifference(singular_voltage_real, singular_voltage_imag,
                                     standard_voltage_real, standard_voltage_imag) < 2.0e-4);
+
+    const double singular_current_real = GetTableValue(singular, "Re{I[1]} (A)");
+    const double singular_current_imag = GetTableValue(singular, "Im{I[1]} (A)");
+    const double standard_current_real = GetTableValue(standard_current, "Re{I[1]} (A)");
+    const double standard_current_imag = GetTableValue(standard_current, "Im{I[1]} (A)");
+    CAPTURE(singular_current_real, singular_current_imag, standard_current_real,
+            standard_current_imag);
+    CHECK(RelativeComplexDifference(singular_current_real, singular_current_imag,
+                                    standard_current_real, standard_current_imag) < 2.0e-4);
 
     const double standard_scattering_db =
         GetTableValue(standard_scattering, "|S[1][1]| (dB)");
@@ -527,7 +567,12 @@ TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 5.0e-7;
   opts.atol = 1.0e-15;
-  opts.excluded_columns = {"Error (", "Relative weak divergence", "Im{V[1]}", "p_ind[1]"};
+  opts.excluded_columns = {"Error (",
+                           "Relative energy mismatch",
+                           "Relative weak divergence",
+                           "Im{V[1]}",
+                           "Re{I[1]}",
+                           "p_ind[1]"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_lumped_eigenmode.json",
@@ -549,6 +594,8 @@ TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
         LoadRegressionOutputTable("singular_wedge", "lumped_standard_eigenmode", "eig.csv");
     auto singular_diagnostics = LoadRegressionOutputTable(
         "singular_wedge", "lumped_eigenmode", "singular-eigenmode.csv");
+    auto standard_energy = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_standard_eigenmode", "domain-E.csv");
     auto standard_voltage = LoadRegressionOutputTable(
         "singular_wedge", "lumped_standard_eigenmode", "port-V.csv");
     auto standard_current = LoadRegressionOutputTable(
@@ -578,6 +625,16 @@ TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
     CHECK(singular_absolute_error < 1.0e-9);
     CHECK(singular_energy_mismatch < 1.0e-10);
 
+    const double singular_electric =
+        GetTableValue(singular_diagnostics, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    const double singular_magnetic =
+        GetTableValue(singular_diagnostics, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard_energy, "E_mag (J)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 2.0e-3);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 2.0e-3);
+
     const double singular_voltage =
         std::hypot(GetTableValue(singular_diagnostics, "Re{V[1]} (V)"),
                    GetTableValue(singular_diagnostics, "Im{V[1]} (V)"));
@@ -598,12 +655,12 @@ TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
     const double singular_epr = std::abs(GetTableValue(singular_diagnostics, "p_ind[1]"));
     const double standard_epr_magnitude = std::abs(GetTableValue(standard_epr, "p[1]"));
     CAPTURE(singular_epr, standard_epr_magnitude);
-    CHECK(RelativeDifference(singular_epr, standard_epr_magnitude) < 2.0e-1);
+    CHECK(RelativeDifference(singular_epr, standard_epr_magnitude) < 3.0e-2);
 
     const double singular_participation = GetTableValue(singular_surface, "p_surf[1]");
     const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
     CAPTURE(singular_participation, standard_participation);
-    CHECK(RelativeDifference(singular_participation, standard_participation) > 2.0e-2);
+    CHECK(RelativeDifference(singular_participation, standard_participation) > 5.0e-2);
   }
 }
 
@@ -1120,6 +1177,10 @@ TEST_CASE("singular_line_boundarymode_loss", "[Serial][Parallel][Regression]")
         LoadRegressionOutputTable("singular_line_boundarymode", "loss", "mode-kn.csv");
     auto standard = LoadRegressionOutputTable("singular_line_boundarymode", "standard_loss",
                                               "mode-kn.csv");
+    auto singular_diagnostics = LoadRegressionOutputTable(
+        "singular_line_boundarymode", "loss", "singular-mode-diagnostics.csv");
+    auto standard_energy = LoadRegressionOutputTable("singular_line_boundarymode",
+                                                     "standard_loss", "domain-E.csv");
 
     const double singular_kn_real = GetTableValue(singular, "Re{kn} (1/m)");
     const double standard_kn_real = GetTableValue(standard, "Re{kn} (1/m)");
@@ -1135,6 +1196,12 @@ TEST_CASE("singular_line_boundarymode_loss", "[Serial][Parallel][Regression]")
     CHECK(RelativeDifference(singular_kn_imag, standard_kn_imag) < 5.0e-4);
     CHECK(RelativeDifference(singular_neff_real, standard_neff_real) < 5.0e-4);
     CHECK(RelativeDifference(singular_neff_imag, standard_neff_imag) < 5.0e-4);
+
+    const double singular_electric =
+        GetTableValue(singular_diagnostics, "Total electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    CAPTURE(singular_electric, standard_electric);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 5.0e-4);
   }
 }
 
@@ -1180,8 +1247,15 @@ TEST_CASE("singular_line_eigenmode", "[Serial][Parallel][Regression]")
     const double singular_electric =
         GetTableValue(singular_energy, "Electric field energy (J)");
     const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
-    CAPTURE(singular_electric, standard_electric);
+    const double singular_magnetic =
+        GetTableValue(singular_energy, "Magnetic field energy (J)");
+    const double singular_energy_mismatch =
+        GetTableValue(singular_energy, "Relative energy mismatch");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic,
+            singular_energy_mismatch);
     CHECK(RelativeDifference(singular_electric, standard_electric) < 1.0e-10);
+    CHECK(RelativeDifference(singular_electric, singular_magnetic) < 1.0e-10);
+    CHECK(singular_energy_mismatch < 1.0e-10);
   }
 }
 

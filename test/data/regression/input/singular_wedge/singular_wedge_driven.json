@@ -64,11 +64,12 @@
       "MaxSubdivisions": 6
     },
     "Linear": {
-      "Type": "SuperLU",
+      "Type": "AMS",
       "KSPType": "GMRES",
       "Tol": 1.0e-10,
       "MaxIts": 100,
-      "MGMaxLevels": 1
+      "MGMaxLevels": 2,
+      "PCMatReal": true
     }
   }
 }

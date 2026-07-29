@@ -266,15 +266,20 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
+  auto K_bulk_energy = space_op.GetBulkStiffnessMatrix(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M_bulk_energy = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K->Real() && !K->Imag() && (!C || (C->Real() && !C->Imag())) && M->Real(),
               "Driven singular simulations require real stiffness and damping with a "
               "complex electric mass operator!");
 
-  auto ksp = MakeSingularComplexKspSolver(iodata, space_op.GetComm());
+  const auto combined_prolongations = space_op.GetCombinedNDProlongationOperators();
+  const auto combined_gradients = space_op.GetCombinedGradientOperators();
+  auto ksp = MakeSingularComplexKspSolver(
+      iodata, space_op.GetNDSpaces(), space_op.GetH1Spaces(), combined_prolongations,
+      combined_gradients, space_op.GetCombinedNDDbcTDofLists(),
+      space_op.GetCombinedH1DbcTDofLists());
   ComplexVector rhs(space_op.GetNDTrueVSize()), electric_field(space_op.GetNDTrueVSize()),
       residual(space_op.GetNDTrueVSize());
   rhs.UseDevice(true);
@@ -398,7 +403,9 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
                   "Driven singular simulations do not support extra boundary operators!");
       auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
                                         K.get(), C.get(), M.get());
-      ksp->SetOperators(*A, *A);
+      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+          1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+      ksp->SetOperators(*A, *P);
 
       Mpi::Print("\nIt {:d}/{:d}: omega/2pi = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
                  frequency_index + 1, omega_sample.size(),
@@ -413,29 +420,8 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
       const double relative_residual = linalg::Norml2(space_op.GetComm(), residual) /
                                        std::max(linalg::Norml2(space_op.GetComm(), rhs),
                                                 std::numeric_limits<double>::min());
-      const auto energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_energy,
-                                                        *K_energy, electric_field, omega);
-      std::vector<TriangleSingularSurfacePostOperator::Measurement> surface_measurements;
-      if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
-      {
-        tetrahedral_real_evaluator->SetFromTrueDofs(electric_field.Real());
-        tetrahedral_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
-        surface_measurements = tetrahedral_surface_postoperator->Measure(
-            *tetrahedral_real_evaluator, *tetrahedral_imaginary_evaluator, energy.electric,
-            surface_options);
-      }
-      else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
-      {
-        triangular_real_evaluator->SetFromTrueDofs(electric_field.Real());
-        triangular_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
-        surface_measurements = triangular_surface_postoperator->Measure(
-            *triangular_real_evaluator, *triangular_imaginary_evaluator, energy.electric,
-            surface_options);
-      }
-      const double electric_energy =
-          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.electric);
-      const double magnetic_energy =
-          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.magnetic);
+      const auto field_energy = MeasureSingularFullWaveEnergy(
+          space_op.GetComm(), *M_bulk_energy, *K_bulk_energy, electric_field, omega);
       struct LumpedPortMeasurement
       {
         int index;
@@ -444,6 +430,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
         std::complex<double> scattering;
       };
       std::vector<LumpedPortMeasurement> lumped_port_measurements;
+      double capacitor_energy = 0.0;
       const auto [drive_is_simple, drive_port_type, drive_port_index] =
           excitation_spec.IsSimple();
       for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
@@ -458,12 +445,39 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
         {
           scattering.real(scattering.real() - 1.0);
         }
+        capacitor_energy +=
+            0.5 * std::abs(port.C) * std::real(voltage * std::conj(voltage));
         lumped_port_measurements.push_back({port_index, voltage, current, scattering});
         Mpi::Print(" Port {:d}: V = {:.6e}{:+.6e}i, I = {:.6e}{:+.6e}i, "
                    "S = {:.6e}{:+.6e}i\n",
                    port_index, voltage.real(), voltage.imag(), current.real(),
                    current.imag(), scattering.real(), scattering.imag());
       }
+      const double participation_energy = field_energy.electric + capacitor_energy;
+      MFEM_VERIFY(participation_energy > 0.0 && std::isfinite(participation_energy),
+                  "Driven singular surface participation requires positive finite bulk "
+                  "electric plus lumped-capacitor energy!");
+      std::vector<TriangleSingularSurfacePostOperator::Measurement> surface_measurements;
+      if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
+      {
+        tetrahedral_real_evaluator->SetFromTrueDofs(electric_field.Real());
+        tetrahedral_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+        surface_measurements = tetrahedral_surface_postoperator->Measure(
+            *tetrahedral_real_evaluator, *tetrahedral_imaginary_evaluator,
+            participation_energy, surface_options);
+      }
+      else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
+      {
+        triangular_real_evaluator->SetFromTrueDofs(electric_field.Real());
+        triangular_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+        surface_measurements = triangular_surface_postoperator->Measure(
+            *triangular_real_evaluator, *triangular_imaginary_evaluator,
+            participation_energy, surface_options);
+      }
+      const double electric_energy =
+          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(field_energy.electric);
+      const double magnetic_energy =
+          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(field_energy.magnetic);
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e}, rel. residual = {:.3e})\n"
                  " Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
                  linalg::Norml2(space_op.GetComm(), electric_field),
@@ -521,8 +535,9 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           {"Enabled", true},
           {"Dimension", space_op.GetMesh().Dimension()},
           {"Output", "singular-driven.csv"},
-          {"ElectricEnergy", "0.5 E^H M_epsilon E"},
-          {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+          {"ElectricEnergy", "0.5 E^H M_bulk E"},
+          {"MagneticEnergy", "0.5 E^H K_bulk E / |omega|^2"},
+          {"SurfaceParticipationDenominator", "E_electric_bulk + E_capacitor"},
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"FieldGridOutput", false},

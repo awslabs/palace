@@ -37,6 +37,13 @@ std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichedGradient(const mfem::HypreParMatrix &standard_gradient,
                               const mfem::HypreParMatrix &enrichment_gradient);
 
+// Form diag(P_standard, I_enrichment), the true-DOF prolongation between two
+// polynomial levels of a combined standard-plus-enriched space. The singular
+// basis and its canonical true DOFs are identical on every p-level.
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelEnrichedProlongation(const mfem::HypreParMatrix &standard_prolongation,
+                                  const TrueDofMap &enrichment_numbering);
+
 // Independently constrain the four blocks of an enriched SPD operator. The
 // resulting blocks have the same action as symmetric row/column elimination
 // applied after monolithic block assembly.

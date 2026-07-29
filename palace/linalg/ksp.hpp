@@ -6,6 +6,8 @@
 
 #include <memory>
 #include <type_traits>
+#include <vector>
+#include <mfem.hpp>
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
@@ -108,6 +110,18 @@ bool UsesSingularPatchKspSolver(const IoData &iodata);
 std::unique_ptr<KspSolver> MakeSingularDirectKspSolver(const IoData &iodata, MPI_Comm comm);
 std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(const IoData &iodata,
                                                                MPI_Comm comm);
+
+// Configure the combined standard-plus-singular Maxwell solve. The outer Krylov
+// method remains user-configured. For multiple polynomial levels, the
+// preconditioner is geometric multigrid with combined transfer
+// diag(P_standard, I_enrichment) and a complete p=1 coarse operator.
+std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(
+    const IoData &iodata, FiniteElementSpaceHierarchy &nd_fespaces,
+    FiniteElementSpaceHierarchy &h1_fespaces,
+    const std::vector<const Operator *> &combined_prolongations,
+    const std::vector<const Operator *> &combined_gradients,
+    const std::vector<mfem::Array<int>> &combined_nd_essential_tdofs,
+    const std::vector<mfem::Array<int>> &combined_h1_essential_tdofs);
 
 }  // namespace palace
 

@@ -541,6 +541,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
               "Eigenmode singular simulations require real stiffness and a complex "
               "electric mass operator!");
   auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
+  auto K_bulk = space_op.GetBulkStiffnessMatrix(Operator::DIAG_ZERO);
   auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
   auto M_bulk = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
   const double target = iodata.solver.eigenmode.target;
@@ -632,8 +633,15 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   auto shifted =
       space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -target * target + 0.0i, K.get(),
                                static_cast<const ComplexOperator *>(nullptr), M.get());
-  auto ksp = MakeSingularComplexKspSolver(iodata, space_op.GetComm());
-  ksp->SetOperators(*shifted, *shifted);
+  const auto combined_prolongations = space_op.GetCombinedNDProlongationOperators();
+  const auto combined_gradients = space_op.GetCombinedGradientOperators();
+  auto ksp = MakeSingularComplexKspSolver(
+      iodata, space_op.GetNDSpaces(), space_op.GetH1Spaces(), combined_prolongations,
+      combined_gradients, space_op.GetCombinedNDDbcTDofLists(),
+      space_op.GetCombinedH1DbcTDofLists());
+  auto preconditioner = space_op.GetPreconditionerMatrix<ComplexOperator>(
+      1.0 + 0.0i, 0.0 + 0.0i, -target * target + 0.0i, target);
+  ksp->SetOperators(*shifted, *preconditioner);
   eigen->SetLinearSolver(*ksp);
 
   {
@@ -644,6 +652,10 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   BlockTimer bt(Timer::EPS);
   Mpi::Print("\n");
   const int num_converged = eigen->Solve();
+  MFEM_VERIFY(ksp->NumFailedMult() == 0,
+              "Singular eigenmode shift-and-invert failed to converge "
+                  << ksp->NumFailedMult() << " of " << ksp->NumTotalMult()
+                  << " inner linear solves!");
   Mpi::Print(" Found {:d} converged enriched eigenvalue{}\n", num_converged,
              num_converged == 1 ? "" : "s");
   if (!iodata.solver.eigenmode.mass_orthog)
@@ -771,32 +783,14 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     eigen->GetEigenvector(mode, electric_field);
     linalg::NormalizePhase(space_op.GetComm(), electric_field);
 
-    const auto energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_energy,
-                                                      *K_energy, electric_field, omega);
-    std::vector<TriangleSingularSurfacePostOperator::Measurement> surface_measurements;
-    if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
-    {
-      tetrahedral_real_evaluator->SetFromTrueDofs(electric_field.Real());
-      tetrahedral_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
-      surface_measurements = tetrahedral_surface_postoperator->Measure(
-          *tetrahedral_real_evaluator, *tetrahedral_imaginary_evaluator, energy.electric,
-          surface_options);
-    }
-    else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
-    {
-      triangular_real_evaluator->SetFromTrueDofs(electric_field.Real());
-      triangular_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
-      surface_measurements = triangular_surface_postoperator->Measure(
-          *triangular_real_evaluator, *triangular_imaginary_evaluator, energy.electric,
-          surface_options);
-    }
-    const double electric_energy =
-        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.electric);
-    const double magnetic_energy =
-        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.magnetic);
+    const auto augmented_energy = MeasureSingularFullWaveEnergy(
+        space_op.GetComm(), *M_energy, *K_energy, electric_field, omega);
+    const auto field_energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_bulk,
+                                                            *K_bulk, electric_field, omega);
     const double energy_mismatch =
-        std::abs(energy.electric - energy.magnetic) /
-        std::max({energy.electric, energy.magnetic, std::numeric_limits<double>::min()});
+        std::abs(augmented_energy.electric - augmented_energy.magnetic) /
+        std::max({augmented_energy.electric, augmented_energy.magnetic,
+                  std::numeric_limits<double>::min()});
     struct LumpedPortMeasurement
     {
       int index;
@@ -805,6 +799,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       double inductive_participation;
     };
     std::vector<LumpedPortMeasurement> lumped_port_measurements;
+    double capacitor_energy = 0.0;
     for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
     {
       const auto voltage =
@@ -818,11 +813,41 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       const double inductive_energy =
           0.5 * std::abs(port.L) *
           std::real(inductive_current * std::conj(inductive_current));
-      const double inductive_participation =
-          std::copysign(inductive_energy / energy.electric, inductive_current.real());
+      capacitor_energy += 0.5 * std::abs(port.C) * std::real(voltage * std::conj(voltage));
       lumped_port_measurements.push_back(
-          {port_index, voltage, current, inductive_participation});
+          {port_index, voltage, current,
+           std::copysign(inductive_energy, inductive_current.real())});
     }
+    const double participation_energy = field_energy.electric + capacitor_energy;
+    MFEM_VERIFY(participation_energy > 0.0 && std::isfinite(participation_energy),
+                "Eigenmode singular participation requires positive finite bulk electric "
+                "plus lumped-capacitor energy!");
+    for (auto &measurement : lumped_port_measurements)
+    {
+      measurement.inductive_participation /= participation_energy;
+    }
+
+    std::vector<TriangleSingularSurfacePostOperator::Measurement> surface_measurements;
+    if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
+    {
+      tetrahedral_real_evaluator->SetFromTrueDofs(electric_field.Real());
+      tetrahedral_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+      surface_measurements = tetrahedral_surface_postoperator->Measure(
+          *tetrahedral_real_evaluator, *tetrahedral_imaginary_evaluator,
+          participation_energy, surface_options);
+    }
+    else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
+    {
+      triangular_real_evaluator->SetFromTrueDofs(electric_field.Real());
+      triangular_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+      surface_measurements = triangular_surface_postoperator->Measure(
+          *triangular_real_evaluator, *triangular_imaginary_evaluator, participation_energy,
+          surface_options);
+    }
+    const double electric_energy =
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(field_energy.electric);
+    const double magnetic_energy =
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(field_energy.magnetic);
 
     M_bulk->Mult(electric_field.Real(), mass_electric.Real());
     M_bulk->Mult(electric_field.Imag(), mass_electric.Imag());
@@ -897,8 +922,10 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"Dimension", space_op.GetMesh().Dimension()},
           {"EigenvalueOutput", "eig.csv"},
           {"EnergyOutput", "singular-eigenmode.csv"},
-          {"ElectricEnergy", "0.5 E^H M_epsilon E"},
-          {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+          {"ElectricEnergy", "0.5 E^H M_bulk E"},
+          {"MagneticEnergy", "0.5 E^H K_bulk E / |omega|^2"},
+          {"EnergyMismatch", "complete reactive-boundary-augmented eigenproblem"},
+          {"SurfaceParticipationDenominator", "E_electric_bulk + E_capacitor"},
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"DivergenceProjection", divfree != nullptr},

@@ -36,8 +36,8 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
 }
 
 template <typename OperType>
-void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
-                                                    const OperType &op_G)
+void DistRelaxationSmoother<OperType>::SetOperators(
+    const OperType &op, const OperType &op_G, const mfem::Array<int> *essential_tdofs_G)
 {
   using ParOperType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
@@ -55,10 +55,18 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   y_G.UseDevice(true);
   r_G.UseDevice(true);
 
-  const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
-  MFEM_VERIFY(PtAP_G,
-              "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
-  dbc_tdof_list_G = PtAP_G->GetEssentialTrueDofs();
+  if (essential_tdofs_G)
+  {
+    dbc_tdof_list_G = essential_tdofs_G->Size() ? essential_tdofs_G : nullptr;
+  }
+  else
+  {
+    const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
+    MFEM_VERIFY(PtAP_G,
+                "Distributive relaxation requires an explicit auxiliary essential-DOF list "
+                "for assembled combined operators!");
+    dbc_tdof_list_G = PtAP_G->GetEssentialTrueDofs();
+  }
 
   // Set up smoothers for A and A_G.
   B->SetOperator(op);

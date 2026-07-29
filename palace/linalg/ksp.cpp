@@ -368,6 +368,311 @@ std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(const IoData &iod
   return MakeSingularDirectKspSolverImpl<ComplexOperator>(iodata, comm);
 }
 
+namespace
+{
+
+class SingularAmsCoarseSolver : public Solver<ComplexOperator>
+{
+private:
+  int standard_size;
+  std::unique_ptr<Solver<ComplexOperator>> standard_solver, enrichment_solver;
+  const ComplexOperator *full_operator = nullptr;
+  std::unique_ptr<ComplexOperator> approximate_operator, standard_operator,
+      enrichment_operator;
+  mutable ComplexVector action, residual, standard_rhs, standard_correction, enrichment_rhs,
+      enrichment_correction, full_enrichment_correction;
+
+  static void ExtractSubVector(const ComplexVector &source, ComplexVector &destination,
+                               int offset, int size)
+  {
+    destination.SetSize(size);
+    const auto *source_real = source.Real().HostRead() + offset;
+    const auto *source_imaginary = source.Imag().HostRead() + offset;
+    auto *destination_real = destination.Real().HostWrite();
+    auto *destination_imaginary = destination.Imag().HostWrite();
+    for (int i = 0; i < size; i++)
+    {
+      destination_real[i] = source_real[i];
+      destination_imaginary[i] = source_imaginary[i];
+    }
+  }
+
+  static void AddSubVector(const ComplexVector &source, ComplexVector &destination,
+                           int offset, std::complex<double> coefficient)
+  {
+    MFEM_VERIFY(offset >= 0 && offset + source.Size() <= destination.Size(),
+                "Singular AMS correction received an inconsistent subvector!");
+    const auto *source_real = source.Real().HostRead();
+    const auto *source_imaginary = source.Imag().HostRead();
+    auto *destination_real = destination.Real().HostReadWrite() + offset;
+    auto *destination_imaginary = destination.Imag().HostReadWrite() + offset;
+    const double coefficient_real = coefficient.real();
+    const double coefficient_imaginary = coefficient.imag();
+    for (int i = 0; i < source.Size(); i++)
+    {
+      const double value_real =
+          coefficient_real * source_real[i] - coefficient_imaginary * source_imaginary[i];
+      const double value_imaginary =
+          coefficient_imaginary * source_real[i] + coefficient_real * source_imaginary[i];
+      destination_real[i] += value_real;
+      destination_imaginary[i] += value_imaginary;
+    }
+  }
+
+  void AddStandardCorrection(const ComplexVector &source, ComplexVector &destination,
+                             std::complex<double> coefficient = 1.0) const
+  {
+    ExtractSubVector(source, standard_rhs, 0, standard_size);
+    standard_correction.SetSize(standard_size);
+    standard_solver->Mult(standard_rhs, standard_correction);
+    AddSubVector(standard_correction, destination, 0, coefficient);
+  }
+
+  void AddEnrichmentCorrection(const ComplexVector &source,
+                               ComplexVector &destination) const
+  {
+    const int enrichment_size = source.Size() - standard_size;
+    ExtractSubVector(source, enrichment_rhs, standard_size, enrichment_size);
+    enrichment_correction.SetSize(enrichment_size);
+    enrichment_solver->Mult(enrichment_rhs, enrichment_correction);
+    AddSubVector(enrichment_correction, destination, standard_size, 1.0);
+  }
+
+public:
+  SingularAmsCoarseSolver(int standard_size,
+                          std::unique_ptr<Solver<ComplexOperator>> &&standard_solver,
+                          std::unique_ptr<Solver<ComplexOperator>> &&enrichment_solver)
+    : standard_size(standard_size), standard_solver(std::move(standard_solver)),
+      enrichment_solver(std::move(enrichment_solver))
+  {
+    MFEM_VERIFY(this->standard_size > 0 && this->standard_solver && this->enrichment_solver,
+                "Singular AMS coarse solver requires two nonempty subspace solvers!");
+  }
+
+  void SetOperator(const ComplexOperator &op) override
+  {
+    const auto *real_matrix = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
+    const auto *imaginary_matrix = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
+    MFEM_VERIFY(real_matrix && (!op.Imag() || imaginary_matrix),
+                "Singular AMS coarse solver requires compatible assembled real and "
+                "imaginary operator parts!");
+    approximate_operator.reset();
+    if (imaginary_matrix)
+    {
+      auto approximate_matrix = std::unique_ptr<mfem::HypreParMatrix>(
+          mfem::Add(1.0, *real_matrix, 1.0, *imaginary_matrix));
+      approximate_operator =
+          std::make_unique<ComplexWrapperOperator>(std::move(approximate_matrix), nullptr);
+      full_operator = approximate_operator.get();
+    }
+    else
+    {
+      full_operator = &op;
+    }
+    const auto *matrix = dynamic_cast<const mfem::HypreParMatrix *>(full_operator->Real());
+    MFEM_VERIFY(matrix && !full_operator->Imag() && standard_size < matrix->Height(),
+                "Singular AMS coarse approximation is inconsistent!");
+
+    mfem::Array<int> standard_indices(standard_size);
+    for (int i = 0; i < standard_indices.Size(); i++)
+    {
+      standard_indices[i] = i;
+    }
+    const int enrichment_size = matrix->Height() - standard_size;
+    mfem::Array<int> enrichment_indices(enrichment_size);
+    for (int i = 0; i < enrichment_indices.Size(); i++)
+    {
+      enrichment_indices[i] = standard_size + i;
+    }
+
+#if MFEM_HYPRE_VERSION >= 21800
+    auto standard_matrix =
+        std::unique_ptr<Operator>(matrix->ExtractSubmatrix(standard_indices));
+    auto enrichment_matrix =
+        std::unique_ptr<Operator>(matrix->ExtractSubmatrix(enrichment_indices));
+#else
+    std::unique_ptr<Operator> standard_matrix, enrichment_matrix;
+#endif
+    MFEM_VERIFY(standard_matrix && enrichment_matrix,
+                "Failed to extract singular AMS coarse diagonal blocks!");
+    standard_operator =
+        std::make_unique<ComplexWrapperOperator>(std::move(standard_matrix), nullptr);
+    enrichment_operator =
+        std::make_unique<ComplexWrapperOperator>(std::move(enrichment_matrix), nullptr);
+    standard_solver->SetOperator(*standard_operator);
+    enrichment_solver->SetOperator(*enrichment_operator);
+    this->height = op.Height();
+    this->width = op.Width();
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    MFEM_VERIFY(full_operator && x.Size() == this->width,
+                "Singular AMS coarse solver is not configured for this vector!");
+    y.SetSize(this->height);
+    y = 0.0;
+
+    // Symmetric multiplicative correction:
+    // B_s + (I - B_s A) B_e (I - A B_s).
+    AddStandardCorrection(x, y);
+    action.SetSize(this->height);
+    residual.SetSize(this->height);
+    full_operator->Mult(y, action);
+    linalg::AXPBY(1.0, x, -1.0, action);
+    residual = action;
+
+    AddEnrichmentCorrection(residual, y);
+    full_enrichment_correction.SetSize(this->height);
+    full_enrichment_correction.UseDevice(y.UseDevice());
+    full_enrichment_correction = 0.0;
+    AddSubVector(enrichment_correction, full_enrichment_correction, standard_size, 1.0);
+    full_operator->Mult(full_enrichment_correction, action);
+    AddStandardCorrection(action, y, -1.0);
+  }
+};
+
+}  // namespace
+
+std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(
+    const IoData &iodata, FiniteElementSpaceHierarchy &nd_fespaces,
+    FiniteElementSpaceHierarchy &h1_fespaces,
+    const std::vector<const Operator *> &combined_prolongations,
+    const std::vector<const Operator *> &combined_gradients,
+    const std::vector<mfem::Array<int>> &combined_nd_essential_tdofs,
+    const std::vector<mfem::Array<int>> &combined_h1_essential_tdofs)
+{
+  const auto &linear = iodata.solver.linear;
+  const auto number_levels = nd_fespaces.GetNumLevels();
+  MFEM_VERIFY(number_levels > 0 && h1_fespaces.GetNumLevels() == number_levels &&
+                  combined_prolongations.size() + 1 == number_levels &&
+                  combined_gradients.size() == number_levels &&
+                  combined_nd_essential_tdofs.size() == number_levels &&
+                  combined_h1_essential_tdofs.size() == number_levels,
+              "Combined singular Maxwell solver received an inconsistent hierarchy!");
+  const MPI_Comm comm = nd_fespaces.GetFinestFESpace().GetComm();
+  const int print = iodata.problem.verbose - 1;
+  MFEM_VERIFY(linear.type != LinearSolver::AMS || !linear.complex_coarse_solve,
+              "Singular Maxwell with AMS does not support ComplexCoarseSolve = true!");
+
+  auto coarse_solver = [&]() -> std::unique_ptr<Solver<ComplexOperator>>
+  {
+    switch (linear.type)
+    {
+      case LinearSolver::AMS:
+        {
+          auto standard_solver = MakeWrapperSolver<ComplexOperator, HypreAmsSolver>(
+              linear, nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0),
+              linear.ams_max_it, linear.mg_smooth_it, linear.ams_vector_interp,
+              linear.ams_singular_op, linear.amg_agg_coarsen, print);
+          auto enrichment_solver = MakeWrapperSolver<ComplexOperator, BoomerAmgSolver>(
+              linear, linear.ams_max_it, linear.mg_smooth_it, linear.amg_agg_coarsen,
+              print);
+          return std::make_unique<SingularAmsCoarseSolver>(
+              nd_fespaces.GetFESpaceAtLevel(0).GetTrueVSize(), std::move(standard_solver),
+              std::move(enrichment_solver));
+        }
+      case LinearSolver::BOOMER_AMG:
+        return MakeWrapperSolver<ComplexOperator, BoomerAmgSolver>(
+            linear, linear.ams_max_it, linear.mg_smooth_it, linear.amg_agg_coarsen, print);
+      case LinearSolver::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+        {
+          auto coarse_linear = linear;
+          if (coarse_linear.sym_factorization == SymbolicFactorization::DEFAULT &&
+              Mpi::Size(comm) > 1)
+          {
+            coarse_linear.sym_factorization = SymbolicFactorization::PARMETIS;
+          }
+          return MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
+              coarse_linear, comm, coarse_linear.sym_factorization,
+              coarse_linear.superlu_3d, coarse_linear.reorder_reuse, print);
+        }
+#else
+        MFEM_ABORT("Solver was not built with SuperLU_DIST support!");
+        return {};
+#endif
+      case LinearSolver::STRUMPACK:
+#if defined(MFEM_USE_STRUMPACK)
+        return MakeWrapperSolver<ComplexOperator, StrumpackSolver>(
+            linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+            linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+            linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#else
+        MFEM_ABORT("Solver was not built with STRUMPACK support!");
+        return {};
+#endif
+      case LinearSolver::STRUMPACK_MP:
+#if defined(MFEM_USE_STRUMPACK)
+        return MakeWrapperSolver<ComplexOperator, StrumpackMixedPrecisionSolver>(
+            linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+            linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+            linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#else
+        MFEM_ABORT("Solver was not built with STRUMPACK support!");
+        return {};
+#endif
+      case LinearSolver::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+        return MakeWrapperSolver<ComplexOperator, MumpsSolver>(
+            linear, comm, GetPreconditionerMatrixSymmetry(iodata), linear.sym_factorization,
+            (linear.strumpack_compression_type == SparseCompression::BLR)
+                ? linear.strumpack_lr_tol
+                : 0.0,
+            linear.reorder_reuse, print);
+#else
+        MFEM_ABORT("Solver was not built with MUMPS support!");
+        return {};
+#endif
+      case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+        return MakeWrapperSolver<ComplexOperator, CuDSSSolver>(
+            linear, comm, GetPreconditionerMatrixSymmetry(iodata), linear.sym_factorization,
+            linear.reorder_reuse, print);
+#else
+        MFEM_ABORT("Solver was not built with cuDSS support!");
+        return {};
+#endif
+      case LinearSolver::JACOBI:
+        return std::make_unique<JacobiSmoother<ComplexOperator>>(comm);
+      case LinearSolver::DEFAULT:
+        MFEM_ABORT("Unexpected unresolved coarse solver type for singular Maxwell!");
+        return {};
+    }
+    MFEM_ABORT("Unsupported coarse solver type for singular Maxwell!");
+    return {};
+  }();
+
+  std::unique_ptr<Solver<ComplexOperator>> preconditioner;
+  if (number_levels == 1)
+  {
+    preconditioner = std::move(coarse_solver);
+  }
+  else
+  {
+    std::vector<const mfem::Array<int> *> primary_essential(number_levels),
+        auxiliary_essential(number_levels);
+    for (std::size_t level = 0; level < number_levels; level++)
+    {
+      primary_essential[level] = &combined_nd_essential_tdofs[level];
+      auxiliary_essential[level] = &combined_h1_essential_tdofs[level];
+    }
+    const auto *gradients = linear.mg_smooth_aux ? &combined_gradients : nullptr;
+    const auto *gradient_essential = linear.mg_smooth_aux ? &auxiliary_essential : nullptr;
+    auto multigrid = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
+        comm, std::move(coarse_solver), combined_prolongations, gradients,
+        linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
+        linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+        &primary_essential, gradient_essential);
+    multigrid->EnableTimer();
+    preconditioner = std::move(multigrid);
+  }
+  auto result = std::make_unique<ComplexKspSolver>(
+      ConfigureKrylovSolver<ComplexOperator>(linear, iodata.problem.verbose, comm),
+      std::move(preconditioner));
+  result->EnableTimer();
+  return result;
+}
+
 template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,
