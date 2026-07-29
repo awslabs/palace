@@ -11,10 +11,10 @@
 #include "drivers/drivensolver.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
+#include "linalg/eps.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
-#include "linalg/eps.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -1185,8 +1185,8 @@ TEST_CASE("RomOperator-Synthesis-EigenWithoutTargetRejected", "[romoperator][Ser
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
   setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
   setup_json["Domains"] = {
-      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                               {"Permittivity", 1.0}})})}};
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
   setup_json["Boundaries"] = {
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"R", 50.0},
@@ -1213,8 +1213,8 @@ TEST_CASE("RomOperator-Synthesis-ElectrostaticWithoutTerminalRejected",
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
   setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
   setup_json["Domains"] = {
-      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                               {"Permittivity", 1.0}})})}};
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
   setup_json["Boundaries"] = {
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"R", 50.0},
@@ -1241,8 +1241,8 @@ TEST_CASE("RomOperator-Synthesis-EnrichmentRequiresSynthesisRejected",
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
   setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
   setup_json["Domains"] = {
-      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                               {"Permittivity", 1.0}})})}};
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
   setup_json["Boundaries"] = {
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"R", 50.0},
@@ -1270,7 +1270,8 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Eigenmodes
                  "[romoperator][Serial]")
 {
   MPI_Comm world_comm = Mpi::World();
-  auto mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
 
   json setup_json;
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
@@ -1287,18 +1288,19 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Eigenmodes
                                                 {"Excitation", uint(1)},
                                                 {"Attributes", json::array({100})},
                                                 {"Direction", "+X"}})})}};
-  setup_json["Solver"] = {{"Order", 1UL},
-                          {"Device", "CPU"},
-                          {"Eigenmode", {{"Target", 50.0}, {"N", 2}}},
-                          {"Driven",
-                           {{"AdaptiveTol", 1e-3},
-                            {"AdaptiveCircuitSynthesis", true},
-                            {"AdaptiveCircuitSynthesisEigenmodes", true},
-                            {"MinFreq", 2.0},
-                            {"MaxFreq", 100.0},
-                            {"FreqStep", 5.0}}},
-                          {"Linear", {{"Type", "Default"}, {"KSPType", "GMRES"},
-                                      {"MaxIts", 200}, {"Tol", 1e-8}}}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Eigenmode", {{"Target", 50.0}, {"N", 2}}},
+      {"Driven",
+       {{"AdaptiveTol", 1e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"AdaptiveCircuitSynthesisEigenmodes", true},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 100.0},
+        {"FreqStep", 5.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1e-8}}}};
 
   IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);

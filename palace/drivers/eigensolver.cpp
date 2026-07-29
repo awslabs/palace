@@ -143,10 +143,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const EigenSolverBackend type = iodata.solver.eigenmode.type;
   const bool quadratic = (C || has_A2);
   const bool nonlinear_slp = (nonlinear_type == NonlinearEigenSolver::SLP);
-  std::unique_ptr<EigenvalueSolver> eigen =
-      BuildEigenvalueSolver(space_op.GetComm(), iodata.solver.eigenmode,
-                            iodata.solver.linear.gs_orthog, iodata.problem.verbose,
-                            quadratic, nonlinear_slp);
+  std::unique_ptr<EigenvalueSolver> eigen = BuildEigenvalueSolver(
+      space_op.GetComm(), iodata.solver.eigenmode, iodata.solver.linear.gs_orthog,
+      iodata.problem.verbose, quadratic, nonlinear_slp);
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
