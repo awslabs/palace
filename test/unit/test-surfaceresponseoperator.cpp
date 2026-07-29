@@ -128,6 +128,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "fabrication-process-rounded-concave-3d.json";
   const auto interpolated_rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-interpolated-3d.json";
+  const auto unqualified_interpolated_rounded_library_3d_path =
+      temp.temp_dir / "fabrication-process-rounded-interpolated-unqualified-3d.json";
   const auto endpoint_library_3d_path =
       temp.temp_dir / "fabrication-process-endpoint-3d.json";
   const auto junction_library_3d_path =
@@ -875,6 +877,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     upper_corner_model["CornerRadius"] = 0.15;
     upper_corner_model["Reference"] = {0.15, 0.15, 0.0};
     interpolated_rounded_library_3d["Models"].push_back(std::move(upper_corner_model));
+    std::ofstream unqualified_interpolated_rounded_output_3d(
+        unqualified_interpolated_rounded_library_3d_path);
+    unqualified_interpolated_rounded_output_3d << interpolated_rounded_library_3d.dump(2)
+                                               << "\n";
+    interpolated_rounded_library_3d["CornerRadiusInterpolation"] = {
+        {{"LowerModel", "convex-corner-90-r0.1"},
+         {"UpperModel", "convex-corner-90-r0.15"},
+         {"Qualification",
+          {{"Method", "HeldOutCoupon"}, {"Passed", true}, {"HeldoutRadius", 0.125}}}}};
     std::ofstream interpolated_rounded_output_3d(interpolated_rounded_library_3d_path);
     interpolated_rounded_output_3d << interpolated_rounded_library_3d.dump(2) << "\n";
 
@@ -2912,6 +2923,24 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
             2 * 12 * rounded_corner_count);
   CHECK_THAT(interpolated_rounded_island_response.GetPatchWeight(),
              WithinRel(6.0, 1.0e-12));
+  auto unqualified_interpolated_rounded_island_config = rounded_island_config;
+  unqualified_interpolated_rounded_island_config
+      ["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+          unqualified_interpolated_rounded_library_3d_path.string();
+  IoData unqualified_interpolated_rounded_island_iodata(
+      unqualified_interpolated_rounded_island_config, false);
+  unqualified_interpolated_rounded_island_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> unqualified_interpolated_rounded_island_meshes;
+  unqualified_interpolated_rounded_island_meshes.push_back(
+      std::make_unique<Mesh>(MakeIslandMesh(true)));
+  LaplaceOperator unqualified_interpolated_rounded_island_laplace(
+      unqualified_interpolated_rounded_island_iodata,
+      unqualified_interpolated_rounded_island_meshes);
+  CHECK_THROWS_WITH(
+      SurfaceResponseOperator(unqualified_interpolated_rounded_island_iodata,
+                              unqualified_interpolated_rounded_island_laplace),
+      Catch::Matchers::ContainsSubstring(
+          "Automatic fabrication-process response matching failed"));
   Vector interpolation_probe(rounded_island_response.Height());
   auto *interpolation_probe_data = interpolation_probe.HostWrite();
   for (int i = 0; i < interpolation_probe.Size(); i++)

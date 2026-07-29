@@ -83,6 +83,13 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--name", default="combined-fabrication-process")
     parser.add_argument(
+        "--corner-interpolation-qualification",
+        action="append",
+        type=Path,
+        default=[],
+        help="Passed held-out corner-radius interpolation report to embed",
+    )
+    parser.add_argument(
         "--allow-empty",
         action="store_true",
         help="Write a metadata-only version-3 library when no model qualified",
@@ -129,6 +136,7 @@ def main():
         result["Fabrication"] = merged_fabrication
     names = set()
     index = 0
+    interpolation = []
     for source_path, library in loaded:
         source_root = source_path.parent
         default_depth = library.get("CouponDepth")
@@ -162,6 +170,51 @@ def main():
                 shutil.copy2(source, target)
                 model[field] = str(relative_directory / target.name)
             result["Models"].append(model)
+        interpolation.extend(library.get("CornerRadiusInterpolation", []))
+
+    for report_path in args.corner_interpolation_qualification:
+        report_path = report_path.expanduser().resolve()
+        report = json.loads(report_path.read_text())
+        if (
+            report.get("Study") != "CornerRadiusInterpolation"
+            or not report.get("Passed", False)
+            or not isinstance(report.get("LibraryRecord"), dict)
+        ):
+            raise ValueError(
+                f"{report_path} is not a passed corner-radius interpolation report"
+            )
+        interpolation.append(report["LibraryRecord"])
+
+    seen_spans = set()
+    if interpolation and version < 3:
+        raise ValueError(
+            "CornerRadiusInterpolation requires only version-3 input libraries"
+        )
+    for span in interpolation:
+        if not isinstance(span, dict):
+            raise ValueError("CornerRadiusInterpolation entries must be objects")
+        lower = span.get("LowerModel")
+        upper = span.get("UpperModel")
+        qualification = span.get("Qualification")
+        if (
+            lower not in names
+            or upper not in names
+            or lower == upper
+            or not isinstance(qualification, dict)
+            or qualification.get("Method") != "HeldOutCoupon"
+            or not qualification.get("Passed", False)
+        ):
+            raise ValueError(
+                "CornerRadiusInterpolation requires distinct included models and "
+                "a passed held-out qualification"
+            )
+        if (lower, upper) in seen_spans:
+            raise ValueError(
+                f"Duplicate corner-radius interpolation span {lower} -> {upper}"
+            )
+        seen_spans.add((lower, upper))
+    if interpolation:
+        result["CornerRadiusInterpolation"] = interpolation
 
     if not result["Models"] and not (
         args.allow_empty and version >= 3 and merged_fabrication is not None

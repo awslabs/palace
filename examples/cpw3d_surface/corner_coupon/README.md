@@ -103,14 +103,17 @@ insensitive to the number and chord lengths of the facets used to mesh a
 circular fillet. A matched corner replaces the fillet and the remaining
 distance `R - rho` along both straight arms.
 
-When no model matches within its declared radius tolerance, Palace interpolates
-between the nearest lower- and upper-radius models with the same topology and a
-compatible angle. Both radii must be positive; the sharp coupon is not used as
-a rounded-radius endpoint, and Palace never extrapolates. The response and
-conductor reference use convex interpolation weights. The bracket width divided
-by `R` contributes to the reported maximum library distance. If a sub-`R`
-fillet has neither an exact model nor a complete positive-radius bracket, Palace
-retains straight-edge response through that neighborhood and prints a warning.
+When no model matches within its declared radius tolerance, Palace searches the
+library's `CornerRadiusInterpolation` records for a held-out-qualified span with
+the same topology and a compatible angle. Merely including lower- and
+upper-radius models does not enable interpolation. Both radii must be positive;
+the sharp coupon is not used as a rounded-radius endpoint, and Palace never
+extrapolates. The response and conductor reference use convex interpolation
+weights. The bracket width divided by `R` contributes to the reported maximum
+library distance. If a sub-`R` fillet has neither an exact model nor a qualified
+span, `UnmatchedPolicy: "Error"` terminates matching. With `Warn`, Palace retains
+straight-edge response through that neighborhood and reports the unsupported
+corner.
 
 ## Calibration cost and checks
 
@@ -237,7 +240,26 @@ fabricated-minus-thin domain defect differed by `+16.5%` for this trace because
 it subtracts two substantially larger domain responses. This cancellation
 makes normalization-energy interpolation less robust than direct surface-energy
 interpolation and remains visible through the fixed-trace/fixed-flux closure
-diagnostic.
+diagnostic. Consequently this historical bracket does not pass the current
+default 10% energy gate and must not be embedded as a qualified interpolation
+span.
+
+For three independently completed calibration directories, create the
+held-out qualification report with:
+
+```text
+python3 corner_coupon/qualify_corner_interpolation.py \
+  --lower corner_coupon/radius-0.25 \
+  --heldout corner_coupon/radius-0.5 \
+  --upper corner_coupon/radius-0.75 \
+  --output corner_coupon/radius-interpolation.json
+```
+
+The qualifier checks thin and fabricated domain matrices, fabricated SA/MS/MA
+matrices, the fabricated-minus-thin domain defect, and fixed-trace and
+per-endpoint fixed-flux energies. Its default limits are 5% for matrix errors
+and 10% for energy errors. It exits unsuccessfully and records `Passed: false`
+when any checked quantity fails.
 
 ## Rectangular-island validation
 
@@ -464,4 +486,17 @@ h, full-matrix, and held-out studies.
 
 Each generated `process-library.json` contains only the selected corner
 topology and radius. Combine the required entries before using the result as a
-practical process library.
+practical process library. A passed held-out report can be attached while
+combining:
+
+```text
+python3 corner_coupon/combine_process_libraries.py \
+  --output corner_coupon/process-library \
+  --corner-interpolation-qualification \
+    corner_coupon/radius-interpolation.json \
+  corner_coupon/radius-0.25/process-library.json \
+  corner_coupon/radius-0.75/process-library.json
+```
+
+The combiner rejects failed reports, missing endpoint models, duplicate spans,
+and interpolation metadata in pre-version-3 libraries.

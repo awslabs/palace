@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -69,6 +70,18 @@ CORNER_CONVERGENCE_SPEC = importlib.util.spec_from_file_location(
 )
 CORNER_CONVERGENCE = importlib.util.module_from_spec(CORNER_CONVERGENCE_SPEC)
 CORNER_CONVERGENCE_SPEC.loader.exec_module(CORNER_CONVERGENCE)
+
+CORNER_INTERPOLATION_PATH = (
+    CPW2D.parent / "cpw3d_surface" / "corner_coupon"
+    / "qualify_corner_interpolation.py"
+)
+CORNER_INTERPOLATION_SPEC = importlib.util.spec_from_file_location(
+    "qualify_corner_interpolation", CORNER_INTERPOLATION_PATH
+)
+CORNER_INTERPOLATION = importlib.util.module_from_spec(
+    CORNER_INTERPOLATION_SPEC
+)
+CORNER_INTERPOLATION_SPEC.loader.exec_module(CORNER_INTERPOLATION)
 
 
 def pec():
@@ -214,6 +227,169 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(combined["Version"], 3)
             self.assertEqual(combined["Models"], [])
             self.assertEqual(combined["Fabrication"], {"InterfaceLayers": {}})
+
+    def test_corner_radius_interpolation_qualification(self):
+        metadata = {
+            "MatchingRadius": 2.0,
+            "Fabrication": {"MetalThickness": 0.1},
+            "Topology": "ConvexCorner",
+            "Angle": 90.0,
+            "ContourGroups": [3],
+            "Interfaces": [{"Type": "SA", "Coupon": 1}],
+            "BoundaryCondition": "PEC",
+        }
+        thin_domain = np.diag([2.0, 3.0])
+        fabricated_domain = np.diag([3.0, 4.0])
+
+        def case(name, radius, surface):
+            return {
+                "Name": name,
+                "Root": Path(name),
+                "ModelName": f"corner-r{radius:g}",
+                "Radius": radius,
+                "Metadata": metadata,
+                "Basis": np.array([[0.0, 0.0], [1.0, 0.0]]),
+                "Coefficients": np.array([1.0, 0.5]),
+                "Active": np.array([0, 1]),
+                "Responses": {
+                    "thin": {
+                        "domain": thin_domain,
+                        "surfaces": {1: surface},
+                    },
+                    "fabricated": {
+                        "domain": fabricated_domain,
+                        "surfaces": {1: surface},
+                    },
+                },
+                "InterfaceNames": {1: "SA"},
+            }
+
+        lower_surface = np.diag([1.0, 2.0])
+        upper_surface = np.diag([3.0, 4.0])
+        report = CORNER_INTERPOLATION.qualify_cases(
+            case("lower", 0.25, lower_surface),
+            case("heldout", 0.5, 0.5 * (lower_surface + upper_surface)),
+            case("upper", 0.75, upper_surface),
+            5.0,
+            10.0,
+        )
+
+        self.assertTrue(report["Passed"])
+        self.assertEqual(report["Weights"], {"Lower": 0.5, "Upper": 0.5})
+        self.assertEqual(
+            report["LibraryRecord"]["Qualification"]["Method"],
+            "HeldOutCoupon",
+        )
+
+    def test_corner_interpolation_fixed_flux_uses_active_subspace(self):
+        case = {
+            "Basis": np.zeros((2, 2)),
+            "Coefficients": np.array([1.0, 7.0]),
+            "Active": np.array([0]),
+            "Responses": {
+                "thin": {"domain": np.array([[4.0, 20.0], [20.0, 6.0]])},
+                "fabricated": {
+                    "domain": np.array([[2.0, 10.0], [10.0, 3.0]])
+                },
+            },
+        }
+        np.testing.assert_allclose(
+            CORNER_INTERPOLATION.fixed_flux(case),
+            np.array([2.0, 0.0]),
+        )
+        np.testing.assert_allclose(
+            CORNER_INTERPOLATION.fixed_flux(case, np.array([2.0, 9.0])),
+            np.array([4.0, 0.0]),
+        )
+
+    def test_combiner_embeds_only_passed_corner_interpolation_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fabrication = {"InterfaceLayers": {}}
+
+            def library(path, model):
+                path.write_text(
+                    json.dumps(
+                        {
+                            "Version": 3,
+                            "MatchingRadius": 2.0,
+                            "Fabrication": fabrication,
+                            "Models": [{"Name": model}],
+                        }
+                    )
+                    + "\n"
+                )
+
+            lower = root / "lower.json"
+            upper = root / "upper.json"
+            library(lower, "corner-r0.25")
+            library(upper, "corner-r0.75")
+            report = root / "interpolation.json"
+            record = {
+                "LowerModel": "corner-r0.25",
+                "UpperModel": "corner-r0.75",
+                "Qualification": {
+                    "Method": "HeldOutCoupon",
+                    "Passed": True,
+                    "HeldoutRadius": 0.5,
+                },
+            }
+            report.write_text(
+                json.dumps(
+                    {
+                        "Study": "CornerRadiusInterpolation",
+                        "Passed": True,
+                        "LibraryRecord": record,
+                    }
+                )
+                + "\n"
+            )
+            output = root / "combined"
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "combine_process_libraries.py",
+                    "--output",
+                    str(output),
+                    "--corner-interpolation-qualification",
+                    str(report),
+                    str(lower),
+                    str(upper),
+                ],
+            ):
+                COMBINER.main()
+            combined = PREPARE.load_json(output / "process-library.json")
+            self.assertEqual(combined["CornerRadiusInterpolation"], [record])
+
+            failed = root / "failed-interpolation.json"
+            failed.write_text(
+                json.dumps(
+                    {
+                        "Study": "CornerRadiusInterpolation",
+                        "Passed": False,
+                        "LibraryRecord": record,
+                    }
+                )
+                + "\n"
+            )
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "combine_process_libraries.py",
+                    "--output",
+                    str(root / "rejected"),
+                    "--corner-interpolation-qualification",
+                    str(failed),
+                    str(lower),
+                    str(upper),
+                ],
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "not a passed corner-radius interpolation report"
+                ):
+                    COMBINER.main()
 
     def test_material_options_emit_one_value_per_flag(self):
         options = PREPARE.material_options(process_parameters())

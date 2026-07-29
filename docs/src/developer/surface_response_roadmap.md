@@ -126,8 +126,9 @@ The following infrastructure is present:
   - Spatial qualification separately gates FEM-order and local h-convergence. The h-study
     refines both thin and fabricated meshes at the final FEM order and reuses the finest
     completed p-study response.
-  - Radius and separation interpolation where the model family supports it, without
-    extrapolation.
+  - Separation interpolation and held-out-qualification-gated rounded-corner radius
+    interpolation, without extrapolation. Adjacent corner models alone do not authorize
+    a runtime interpolation span.
   - Geometry-only preflight and a metadata-only version-3 process-library seed.
   - PEC coupon planning, generation, probe convergence, held-out qualification,
     content-addressed caching, partial merging, and explicit failure manifests.
@@ -193,7 +194,10 @@ alone.
 
   1. Complete the 45-degree concave p3-to-p4 and h-refinement checks, then run
      full-matrix and held-out qualification for the passing acute and obtuse families.
-  2. Add radius interpolation studies for rounded corners and smooth bends.
+  2. Run and qualify radius interpolation studies for rounded corners and smooth bends.
+     The qualifier, version-3 metadata, fail-closed runtime selection, and combiner path
+     are implemented. The historical 0.25/0.75-to-0.5 micron rounded-corner study fails
+     the current strict defect-energy gate and is not a qualified span.
   3. Qualify manifold trace caps and T/cross masks over cap radius, branch angle, and
      branch width using corner, curved-edge, and exact spatial-cluster models.
   4. Qualify parallel clusters with three or more edges over separation and conductor

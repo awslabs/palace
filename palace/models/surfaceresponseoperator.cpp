@@ -605,6 +605,7 @@ struct ProcessLibrary
   double matching_radius = 0.0;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
+  std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
 };
 
 struct EdgeGroup2D
@@ -1599,6 +1600,62 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           "Version-3 fabrication-process response library \""
               << library.name << "\" has a " << ToString(type)
               << " surface response but no matching Fabrication.InterfaceLayers entry!");
+    }
+  }
+  if (auto spans = data.find("CornerRadiusInterpolation"); spans != data.end())
+  {
+    MFEM_VERIFY(version >= 3 && spans->is_array(),
+                "CornerRadiusInterpolation requires a version-3 process library and "
+                "must be an array!");
+    std::map<std::string, std::size_t> model_indices;
+    for (std::size_t i = 0; i < library.models.size(); i++)
+    {
+      model_indices.emplace(library.models[i].name, i);
+    }
+    for (const auto &span : *spans)
+    {
+      MFEM_VERIFY(span.is_object() && span.contains("LowerModel") &&
+                      span.at("LowerModel").is_string() && span.contains("UpperModel") &&
+                      span.at("UpperModel").is_string() && span.contains("Qualification") &&
+                      span.at("Qualification").is_object(),
+                  "Every CornerRadiusInterpolation entry requires string LowerModel and "
+                  "UpperModel fields and a Qualification object!");
+      const auto lower_name = span.at("LowerModel").get<std::string>();
+      const auto upper_name = span.at("UpperModel").get<std::string>();
+      const auto lower_index = model_indices.find(lower_name);
+      const auto upper_index = model_indices.find(upper_name);
+      MFEM_VERIFY(lower_index != model_indices.end() &&
+                      upper_index != model_indices.end() &&
+                      lower_index->second != upper_index->second,
+                  "CornerRadiusInterpolation model names must refer to two distinct "
+                  "models in the same process library!");
+      const auto &lower = library.models[lower_index->second];
+      const auto &upper = library.models[upper_index->second];
+      const auto &qualification = span.at("Qualification");
+      MFEM_VERIFY(qualification.value("Method", std::string{}) == "HeldOutCoupon" &&
+                      qualification.value("Passed", false) &&
+                      qualification.contains("HeldoutRadius") &&
+                      qualification.at("HeldoutRadius").is_number(),
+                  "CornerRadiusInterpolation Qualification requires Method=HeldOutCoupon, "
+                  "Passed=true, and a numeric HeldoutRadius!");
+      const double heldout_radius =
+          qualification.at("HeldoutRadius").get<double>() / coordinate_scale;
+      const bool corner = lower.topology == LibraryTopology::CONVEX_CORNER ||
+                          lower.topology == LibraryTopology::CONCAVE_CORNER;
+      MFEM_VERIFY(
+          corner && upper.topology == lower.topology && lower.corner_radius > 0.0 &&
+              lower.corner_radius < heldout_radius &&
+              heldout_radius < upper.corner_radius &&
+              std::abs(lower.angle - upper.angle) <=
+                  1.0e-12 * std::max({lower.angle, upper.angle, 1.0}) &&
+              CompatibleBoundaryLaw(lower.boundary_condition, upper.boundary_condition) &&
+              CompatibleBoundaryLaw(upper.boundary_condition, lower.boundary_condition),
+          "CornerRadiusInterpolation requires compatible same-angle corner models "
+          "with positive radii bracketing the held-out radius!");
+      MFEM_VERIFY(library.corner_radius_interpolation
+                      .emplace(lower_index->second, upper_index->second)
+                      .second,
+                  "CornerRadiusInterpolation contains a duplicate model span!");
     }
   }
   return library;
@@ -2596,14 +2653,7 @@ FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
                        double angle, double radius,
                        const MetalBoundaryLaw &boundary_condition)
 {
-  struct Candidate
-  {
-    std::size_t index;
-    double angle_distance;
-  };
-
-  std::vector<Candidate> candidates;
-  std::optional<Candidate> best;
+  std::optional<std::size_t> best;
   double best_error = mfem::infinity();
   for (std::size_t i = 0; i < library.models.size(); i++)
   {
@@ -2621,7 +2671,6 @@ FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
       continue;
     }
     const double angle_distance = error / angle_tolerance;
-    candidates.push_back({i, angle_distance});
     const double radius_error = std::abs(model.corner_radius - radius);
     const double radius_tolerance = std::max(
         model.corner_radius_tolerance, 1.0e-10 * std::max(library.matching_radius, radius));
@@ -2631,7 +2680,7 @@ FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
           std::max(angle_distance, radius_error / radius_tolerance);
       if (normalized_error < best_error)
       {
-        best = Candidate{i, angle_distance};
+        best = i;
         best_error = normalized_error;
       }
     }
@@ -2639,8 +2688,8 @@ FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
   if (best)
   {
     LibrarySelection selection;
-    selection.models.push_back({best->index, 1.0});
-    selection.conductor_references = library.models[best->index].conductor_references;
+    selection.models.push_back({*best, 1.0});
+    selection.conductor_references = library.models[*best].conductor_references;
     selection.normalized_distance = best_error;
     return selection;
   }
@@ -2653,42 +2702,53 @@ FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
   {
     return std::nullopt;
   }
-  std::optional<Candidate> lower, upper;
-  for (const auto &candidate : candidates)
+  std::optional<std::pair<std::size_t, std::size_t>> bracket;
+  double bracket_distance = mfem::infinity();
+  for (const auto &[lower_index, upper_index] : library.corner_radius_interpolation)
   {
-    const double candidate_radius = library.models[candidate.index].corner_radius;
-    if (candidate_radius <= positive_radius_tolerance)
+    const auto &lower_model = library.models[lower_index];
+    const auto &upper_model = library.models[upper_index];
+    if (lower_model.topology != topology ||
+        !CompatibleBoundaryLaw(lower_model.boundary_condition, boundary_condition) ||
+        !CompatibleBoundaryLaw(upper_model.boundary_condition, boundary_condition) ||
+        !(lower_model.corner_radius < radius && radius < upper_model.corner_radius))
     {
       continue;
     }
-    if (candidate_radius < radius &&
-        (!lower || candidate_radius > library.models[lower->index].corner_radius ||
-         (candidate_radius == library.models[lower->index].corner_radius &&
-          candidate.angle_distance < lower->angle_distance)))
+    const double lower_angle_tolerance =
+        std::max(lower_model.angle_tolerance, 1.0e-10 * std::max(lower_model.angle, angle));
+    const double upper_angle_tolerance =
+        std::max(upper_model.angle_tolerance, 1.0e-10 * std::max(upper_model.angle, angle));
+    const double lower_angle_error = std::abs(lower_model.angle - angle);
+    const double upper_angle_error = std::abs(upper_model.angle - angle);
+    if (lower_angle_error > lower_angle_tolerance ||
+        upper_angle_error > upper_angle_tolerance)
     {
-      lower = candidate;
+      continue;
     }
-    if (candidate_radius > radius &&
-        (!upper || candidate_radius < library.models[upper->index].corner_radius ||
-         (candidate_radius == library.models[upper->index].corner_radius &&
-          candidate.angle_distance < upper->angle_distance)))
+    const double span = upper_model.corner_radius - lower_model.corner_radius;
+    const double normalized_distance = std::max({lower_angle_error / lower_angle_tolerance,
+                                                 upper_angle_error / upper_angle_tolerance,
+                                                 span / library.matching_radius});
+    if (normalized_distance < bracket_distance)
     {
-      upper = candidate;
+      bracket = std::make_pair(lower_index, upper_index);
+      bracket_distance = normalized_distance;
     }
   }
-  if (!lower || !upper)
+  if (!bracket)
   {
     return std::nullopt;
   }
 
-  const auto &lower_model = library.models[lower->index];
-  const auto &upper_model = library.models[upper->index];
+  const auto &lower_model = library.models[bracket->first];
+  const auto &upper_model = library.models[bracket->second];
   const double span = upper_model.corner_radius - lower_model.corner_radius;
   MFEM_ASSERT(span > 0.0, "Invalid corner-radius interpolation bracket!");
   const double upper_weight = (radius - lower_model.corner_radius) / span;
   const double lower_weight = 1.0 - upper_weight;
   LibrarySelection selection;
-  selection.models = {{lower->index, lower_weight}, {upper->index, upper_weight}};
+  selection.models = {{bracket->first, lower_weight}, {bracket->second, upper_weight}};
   MFEM_VERIFY(lower_model.conductor_references.size() ==
                   upper_model.conductor_references.size(),
               "Corner-radius interpolation requires compatible conductor references!");
@@ -2702,8 +2762,7 @@ FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
           upper_weight * upper_model.conductor_references[i][d];
     }
   }
-  selection.normalized_distance = std::max(
-      {lower->angle_distance, upper->angle_distance, span / library.matching_radius});
+  selection.normalized_distance = bracket_distance;
   return selection;
 }
 
@@ -6232,6 +6291,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     std::vector<PendingPatch> pending;
     std::vector<std::vector<std::pair<double, double>>> vertex_excluded_intervals(
         segments.size());
+    bool group_has_unmatched_rounded_corner = false;
     std::set<std::size_t> spatially_excluded_vertices;
     std::vector<SpatialClusterSelection3D::InteractionNeighborhood>
         active_spatial_interactions;
@@ -6714,6 +6774,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 "No compatible rounded-corner model or interpolation bracket");
           }
           unmatched_rounded_corners++;
+          group_has_unmatched_rounded_corner = true;
           return;
         }
         if (requirements)
@@ -7343,6 +7404,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
     }
     bool group_matched = true;
+    if (group_has_unmatched_rounded_corner && !requirements &&
+        request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+    {
+      group_matched = false;
+    }
 
     std::vector<EdgePair3D> pairs;
     std::vector<std::vector<std::pair<double, double>>> paired_intervals(segments.size());
