@@ -63,7 +63,7 @@ The feature is complete for production when all of the following hold:
 | 3D electrostatic | Implemented | Implemented | Implemented | Practical-device validation |
 | 2D boundary mode | Implemented | Implemented | Not planned initially | Validate quasi-TEM scope |
 | 3D uniform driven | Implemented | Implemented | Implemented | High-order/AMR validation |
-| 3D adaptive PROM driven | Implemented | Implemented | Missing | Corrected reduced model |
+| 3D adaptive PROM driven | Implemented | Implemented | Implemented | High-order/AMR validation |
 | 3D linear undamped eigenmode | Implemented | Implemented | Implemented | High-order/AMR validation |
 | 3D damped or frequency-dependent eigenmode | Implemented | Implemented | Missing | Nonlinear corrected EVP |
 
@@ -248,12 +248,20 @@ and boundary-law range, and held-out Maxwell coupon tests pass the accuracy gate
 
 ### P3: Solver completeness
 
-  1. Add self-consistent correction to adaptive PROM driven sweeps.
+  1. Validate self-consistent correction for adaptive PROM driven sweeps at high order and
+     through AMR.
   2. Add the corrected nonlinear operator required by damped and frequency-dependent
      eigenmodes.
   3. Add optional corrected-field and corrected-flux GridFunction export.
   4. Determine whether raw-field AMR resolves every response contour. If not, add a
      correction-trace indicator without changing raw output semantics.
+
+**Implementation status:** Adaptive driven correction constructs an independent corrected
+PROM for ``M + R``. It uses corrected HDM snapshots, projects the response mass into that
+basis, and runs its own greedy convergence loop instead of assuming that the raw PROM basis
+resolves shifted corrected resonances. Online corrected fields and recovered flux feed the
+same self-consistent participation postprocessor as uniform driven solves. Raw fields remain
+the ordinary output and the source of the AMR error indicator.
 
 **Exit gate:** Corrected results agree between direct and reduced driven solves, mode
 pairing is robust near crossings, corrected fields reproduce reported energies, and AMR

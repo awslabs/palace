@@ -1546,7 +1546,7 @@ For a PEC coupon with `ZeroTraceIndices`, the fixed-flux equation is solved only
 free trace subspace and the constrained coefficients remain exactly zero. Matrix rows
 associated with those constrained calibration traces do not enter the physical closure.
 
-For a uniform driven sweep, Palace also solves
+For uniform and adaptive driven sweeps, Palace also solves
 
 ```math
 A_{corr}(\omega)
@@ -1554,10 +1554,14 @@ A_{corr}(\omega)
 - \omega^2 P^T(S_{fabricated}-S_{thin})P
 ```
 
-with the raw thin operator as the preconditioner and the raw field as the initial guess.
 The trace action ``P`` and its exact transpose use the same Nedelec line-integral
-representation as postprocessing. Adaptive PROM sweeps do not currently provide a
-self-consistent corrected field.
+representation as postprocessing. A uniform sweep uses the raw thin operator as the
+preconditioner and the raw field as the initial guess. An adaptive sweep constructs a
+second, independent corrected PROM: corrected HDM snapshots define its basis, the response
+mass is projected into that basis, and a separate greedy loop checks corrected HDM-to-PROM
+error. This avoids assuming that the raw basis resolves resonances shifted by the
+fabrication response. The raw PROM field remains the ordinary output and supplies the AMR
+error indicator.
 
 For a linear eigenmode problem without damping or frequency-dependent operators, Palace
 also solves

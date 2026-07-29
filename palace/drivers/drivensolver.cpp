@@ -55,13 +55,6 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  iodata.solver.driven.prom_indices.size());
     adaptive = false;
   }
-  if (adaptive && iodata.solver.surface_response_correction)
-  {
-    Mpi::Warning(
-        "Self-consistent Maxwell surface-response correction is not yet applied to the "
-        "adaptive PROM sweep. Raw, fixed-trace, and fixed-flux results remain available; "
-        "use a uniform sweep for the self-consistent corrected field.\n");
-  }
   SaveMetadata(space_op.GetNDSpaces());
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
              port_excitations.FmtLog());
@@ -329,6 +322,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
                                             &surface_post_geometry);
+  SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -342,8 +336,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
   const auto &Curl = space_op.GetCurlMatrix();
-  ComplexVector E(Curl.Width()), Eh(Curl.Width()), B(Curl.Height()),
-      D(space_op.GetRTSpace().GetTrueVSize());
+  ComplexVector E(Curl.Width()), Eh(Curl.Width()), E_corrected, Eh_corrected,
+      B(Curl.Height()), D(space_op.GetRTSpace().GetTrueVSize()), D_corrected;
   E.UseDevice(true);
   Eh.UseDevice(true);
   B.UseDevice(true);
@@ -351,6 +345,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   E = 0.0;
   Eh = 0.0;
   B = 0.0;
+  if (response_correction)
+  {
+    E_corrected.SetSize(Curl.Width());
+    Eh_corrected.SetSize(Curl.Width());
+    E_corrected.UseDevice(true);
+    Eh_corrected.UseDevice(true);
+    E_corrected = 0.0;
+    Eh_corrected = 0.0;
+    if (post_op.NeedsRecoveredElectricFlux())
+    {
+      D_corrected.SetSize(space_op.GetRTSpace().GetTrueVSize());
+      D_corrected.UseDevice(true);
+    }
+  }
 
   // Initialize structures for storing and reducing the results of error estimation.
   const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
@@ -417,18 +425,33 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
              omega_sample.size(), omega_sample.front() * unit_GHz,
              omega_sample.back() * unit_GHz);
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
+  std::unique_ptr<RomOperator> corrected_prom_op;
+  if (response_correction)
+  {
+    corrected_prom_op = std::make_unique<RomOperator>(
+        iodata, space_op, max_size_per_excitation,
+        std::make_unique<ComplexWrapperOperator>(response_correction, nullptr));
+  }
   space_op.GetWavePortOp().SetSuppressOutput(true);
 
   // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
+    if (corrected_prom_op)
+    {
+      corrected_prom_op->AddLumpedPortModesForSynthesis();
+    }
     if (space_op.GetWavePortOp().Size() > 0)
     {
       // Use the band center as the reference frequency for seeding wave-port modes.
       // The choice rescales the basis vector but does not change correctness.
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
+      if (corrected_prom_op)
+      {
+        corrected_prom_op->AddWavePortModesForSynthesis(omega_ref);
+      }
     }
   }
 
@@ -436,102 +459,123 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  auto UpdatePROM = [&](int excitation_idx, double omega, std::size_t sample_idx)
+  auto UpdatePROM = [&](RomOperator &op, ComplexVector &field, int excitation_idx,
+                        double omega, std::size_t sample_idx, bool update_indicator)
   {
     // Add the HDM solution to the PROM reduced basis.
-    prom_op.UpdatePROM(E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
-    prom_op.UpdateMRI(excitation_idx, omega, E);
+    op.UpdatePROM(field, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
+    op.UpdateMRI(excitation_idx, omega, field);
+
+    if (!update_indicator)
+    {
+      return;
+    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for energy postprocessing and error estimation.
     BlockTimer bt0(Timer::POSTPRO);
-    Curl.Mult(E.Real(), B.Real());
-    Curl.Mult(E.Imag(), B.Imag());
+    Curl.Mult(field.Real(), B.Real());
+    Curl.Mult(field.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
     if (space_op.GetMaterialOp().HasWaveVector())
     {
       // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
       // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k₀, so scale = 1.
       floquet_corr->AddMult(
-          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+          field, B,
+          space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
-    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    AddEstimate(E, B, nullptr, total_domain_energy, indicator);
+    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(field, B);
+    AddEstimate(field, B, nullptr, total_domain_energy, indicator);
   };
 
-  // Loop excitations to add to PROM.
-  //
-  // Restart should not really be used for adaptive sweeps, but must work. Construct PROM in
-  // the same way same regardless of restart for consistency. Don't shift excitation start.
-  int excitation_counter = 0;
-  for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+  auto BuildPROM = [&](RomOperator &op, ComplexVector &field, ComplexVector &residual,
+                       std::string_view description, bool update_indicator)
   {
-    if (port_excitations.Size() > 1)
+    // Restart should not really be used for adaptive sweeps, but must work. Construct each
+    // PROM in the same way regardless of restart for consistency.
+    int excitation_counter = 0;
+    for (const auto &[excitation_idx, excitation_spec] : port_excitations)
     {
-      Mpi::Print("\nAdding excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
-                 ++excitation_counter, port_excitations.Size());
+      if (port_excitations.Size() > 1)
+      {
+        Mpi::Print("\nAdding {}excitation index {:d} ({:d}/{:d}):\n", description,
+                   excitation_idx, ++excitation_counter, port_excitations.Size());
+      }
+      op.SetExcitationIndex(excitation_idx);  // Pre-compute RHS1
+
+      // Initialize PROM with explicit HDM samples, record the estimate but do not act on
+      // it.
+      std::vector<double> max_errors;
+      std::size_t counter_rom_sample = 0;
+      for (auto i : iodata.solver.driven.prom_indices)
+      {
+        auto omega = omega_sample[i];
+        op.SolveHDM(excitation_idx, omega, field);
+        op.SolvePROM(excitation_idx, omega, residual);
+        linalg::AXPY(-1.0, field, residual);
+        max_errors.push_back(linalg::Norml2(space_op.GetComm(), residual) /
+                             linalg::Norml2(space_op.GetComm(), field));
+        UpdatePROM(op, field, excitation_idx, omega, counter_rom_sample, update_indicator);
+        counter_rom_sample++;
+      }
+      // The estimates associated to the end points are assumed inaccurate.
+      max_errors[0] = std::numeric_limits<double>::infinity();
+      max_errors[1] = std::numeric_limits<double>::infinity();
+      auto memory = std::distance(max_errors.rbegin(),
+                                  std::find_if(max_errors.rbegin(), max_errors.rend(),
+                                               [=](auto x) { return x > offline_tol; }));
+      memory = std::max(0L, memory);  // Ensure memory >= 0 as it should be.
+
+      // Greedy procedure for basis construction (offline phase). Basis is initialized with
+      // solutions at frequency sweep endpoints and explicit sample frequencies.
+      std::size_t it = max_errors.size();
+      for (std::size_t it0 = it;
+           it < max_size_per_excitation && memory < convergence_memory; it++)
+      {
+        // Compute the location of the maximum error in parameter domain (bounded by the
+        // previous samples).
+        double omega_star = op.FindMaxError(excitation_idx)[0];
+
+        // Sample HDM and add solution to basis.
+        op.SolveHDM(excitation_idx, omega_star, field);
+        op.SolvePROM(excitation_idx, omega_star, residual);
+        linalg::AXPY(-1.0, field, residual);
+
+        max_errors.push_back(linalg::Norml2(space_op.GetComm(), residual) /
+                             linalg::Norml2(space_op.GetComm(), field));
+        memory = max_errors.back() < offline_tol ? memory + 1 : 0;
+
+        Mpi::Print(
+            "\n{}Greedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
+            "{:.3e}, memory = {:d}/{:d}\n",
+            description, it - it0 + 1, op.GetReducedDimension(), omega_star * unit_GHz,
+            omega_star, max_errors.back(), memory, convergence_memory);
+        UpdatePROM(op, field, excitation_idx, omega_star, counter_rom_sample,
+                   update_indicator);
+        counter_rom_sample++;
+      }
+      Mpi::Print("\nAdaptive {}sampling{} {:d} frequency samples:\n"
+                 " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
+                 description,
+                 (it == max_size_per_excitation) ? " reached maximum" : " converged with",
+                 it, op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
+                 convergence_memory);
+      utils::PrettyPrint(op.GetSamplePoints(excitation_idx), unit_GHz,
+                         fmt::format(" {}sampled frequencies (GHz):", description));
+      utils::PrettyPrint(max_errors, 1.0, fmt::format(" {}sample errors:", description));
     }
-    prom_op.SetExcitationIndex(excitation_idx);  // Pre-compute RHS1
+  };
 
-    // Initialize PROM with explicit HDM samples, record the estimate but do not act on it.
-    std::vector<double> max_errors;
-    std::size_t counter_rom_sample = 0;
-    for (auto i : iodata.solver.driven.prom_indices)
-    {
-      auto omega = omega_sample[i];
-      prom_op.SolveHDM(excitation_idx, omega, E);
-      prom_op.SolvePROM(excitation_idx, omega, Eh);
-      linalg::AXPY(-1.0, E, Eh);
-      max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
-                           linalg::Norml2(space_op.GetComm(), E));
-      UpdatePROM(excitation_idx, omega, counter_rom_sample);
-      counter_rom_sample++;
-    }
-    // The estimates associated to the end points are assumed inaccurate.
-    max_errors[0] = std::numeric_limits<double>::infinity();
-    max_errors[1] = std::numeric_limits<double>::infinity();
-    auto memory = std::distance(max_errors.rbegin(),
-                                std::find_if(max_errors.rbegin(), max_errors.rend(),
-                                             [=](auto x) { return x > offline_tol; }));
-    memory = std::max(0L, memory);  // Ensure memory >= 0 as it should be.
-
-    // Greedy procedure for basis construction (offline phase). Basis is initialized with
-    // solutions at frequency sweep endpoints and explicit sample frequencies.
-    std::size_t it = max_errors.size();
-    for (std::size_t it0 = it; it < max_size_per_excitation && memory < convergence_memory;
-         it++)
-    {
-      // Compute the location of the maximum error in parameter domain (bounded by the
-      // previous samples).
-      double omega_star = prom_op.FindMaxError(excitation_idx)[0];
-
-      // Sample HDM and add solution to basis.
-      prom_op.SolveHDM(excitation_idx, omega_star, E);
-      prom_op.SolvePROM(excitation_idx, omega_star, Eh);
-      linalg::AXPY(-1.0, E, Eh);
-
-      max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
-                           linalg::Norml2(space_op.GetComm(), E));
-      memory = max_errors.back() < offline_tol ? memory + 1 : 0;
-
-      Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
-                 "{:.3e}, memory = {:d}/{:d}\n",
-                 it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
-                 omega_star, max_errors.back(), memory, convergence_memory);
-      UpdatePROM(excitation_idx, omega_star, counter_rom_sample);
-      counter_rom_sample++;
-    }
-    Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
-               " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
-               (it == max_size_per_excitation) ? " reached maximum" : " converged with", it,
-               prom_op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
-               convergence_memory);
-    utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
-                       " Sampled frequencies (GHz):");
-    utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
+  BuildPROM(prom_op, E, Eh, "", true);
+  if (corrected_prom_op)
+  {
+    Mpi::Print("\nConstructing independent fabrication-response corrected PROM\n");
+    BuildPROM(*corrected_prom_op, E_corrected, Eh_corrected,
+              "fabrication-response corrected ", false);
   }
 
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
@@ -545,7 +589,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  excitation_counter = 0;
+  int excitation_counter = 0;
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
     if (port_excitations.Size() > 1)
@@ -568,11 +612,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
       // Assemble and solve the PROM linear system.
       prom_op.SolvePROM(excitation_idx, omega, E);
+      if (corrected_prom_op)
+      {
+        corrected_prom_op->SolvePROM(excitation_idx, omega, E_corrected);
+      }
       Mpi::Print("\n");
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
       Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
+      if (corrected_prom_op)
+      {
+        Mpi::Print(" Corrected sol. ||E|| = {:.6e}\n",
+                   linalg::Norml2(space_op.GetComm(), E_corrected));
+      }
 
       // Compute B = -1/(iω) ∇ x E on the true dofs.
       Curl.Mult(E.Real(), B.Real());
@@ -591,6 +644,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         Mpi::Print(" Recovering electric flux for interface postprocessing\n");
         RecoverElectricFlux(E, D);
         post_op.SetRecoveredElectricFlux(D);
+      }
+      if (corrected_prom_op)
+      {
+        const ComplexVector *corrected_flux = nullptr;
+        if (post_op.NeedsRecoveredElectricFlux())
+        {
+          Mpi::Print(" Recovering electric flux for corrected interface postprocessing\n");
+          RecoverElectricFlux(E_corrected, D_corrected);
+          corrected_flux = &D_corrected;
+        }
+        post_op.SetSurfaceResponseCorrectedField(E_corrected, corrected_flux);
       }
       post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
     }

@@ -11,6 +11,7 @@
 #include "drivers/drivensolver.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
+#include "linalg/operator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
@@ -797,6 +798,81 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
 
   prom_op.UpdatePROM(u, "vec_0");
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass",
+                 "[romoperator][Serial][Parallel]")
+{
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", 1.0e-6},
+                         {"Refinement", json::object()},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0},
+                                               {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"Samples", json::array({json::object({{"Type", "Linear"},
+                                               {"MinFreq", 2.0},
+                                               {"MaxFreq", 4.0},
+                                               {"FreqStep", 2.0}})})},
+        {"AdaptiveTol", 1.0e-3},
+        {"AdaptiveMaxSamples", 4}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"SolveTol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh);
+
+  RomOperator raw(iodata, space_op, 4);
+  auto response_mass = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(response_mass);
+  RomOperator corrected(iodata, space_op, 4, std::move(response_mass));
+
+  const int excitation = 1;
+  const double omega = iodata.solver.driven.sample_f.back();
+  ComplexVector raw_hdm(space_op.GetNDSpace().GetTrueVSize());
+  ComplexVector corrected_hdm(space_op.GetNDSpace().GetTrueVSize());
+  ComplexVector corrected_prom(space_op.GetNDSpace().GetTrueVSize());
+  raw_hdm.UseDevice(true);
+  corrected_hdm.UseDevice(true);
+  corrected_prom.UseDevice(true);
+  raw_hdm = 0.0;
+  corrected_hdm = 0.0;
+  corrected_prom = 0.0;
+
+  raw.SolveHDM(excitation, omega, raw_hdm);
+  corrected.SolveHDM(excitation, omega, corrected_hdm);
+  ComplexVector difference(corrected_hdm);
+  linalg::AXPY(-1.0, raw_hdm, difference);
+  const double corrected_norm = linalg::Norml2(space_op.GetComm(), corrected_hdm);
+  REQUIRE(corrected_norm > 0.0);
+  CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm > 1.0e-6);
+
+  corrected.UpdatePROM(corrected_hdm, "corrected_sample");
+  corrected.SolvePROM(excitation, omega, corrected_prom);
+  difference = corrected_prom;
+  linalg::AXPY(-1.0, corrected_hdm, difference);
+  CHECK(linalg::Norml2(space_op.GetComm(), difference) / corrected_norm < 1.0e-8);
 }
 
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection

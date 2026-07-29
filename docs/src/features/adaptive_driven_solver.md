@@ -102,6 +102,13 @@ not a strict relative-error bound on every derived output. For example, a scatte
 parameter that is nearly zero can have a large pointwise relative error even when the
 absolute error is small. Validate the derived quantities that matter for your analysis.
 
+When surface-response correction is enabled, Palace constructs an independent corrected
+PROM in addition to the raw PROM. The corrected model has its own HDM snapshots, reduced
+basis, response-mass projection, and greedy convergence history. Consequently,
+`"AdaptiveMaxSamples"` applies separately to the raw and corrected model, and the offline
+phase can require up to twice as many HDM solves. The independent basis is necessary
+because fabrication response can shift resonances that the raw basis does not resolve.
+
 ## Coplanar waveguide example
 
 The files for the CPW part of this guide are in

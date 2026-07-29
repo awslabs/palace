@@ -528,8 +528,10 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
 }
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
-                         std::size_t max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
+                         std::size_t max_size_per_excitation,
+                         std::unique_ptr<ComplexOperator> response_mass)
+  : space_op(space_op), response_mass(std::move(response_mass)),
+    orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are
   // handled simply by setting diagonal entries of the system matrix for the corresponding
@@ -539,6 +541,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
+  MFEM_VERIFY(!this->response_mass || (this->response_mass->Height() == M->Height() &&
+                                       this->response_mass->Width() == M->Width()),
+              "Invalid fabrication-response mass dimensions when constructing PROM!");
 
   // Per-port boundary masses for wave ports (ω-independent). The wave-port contribution
   // to A(ω) is then assembled at each ω as Σ_p k_{n,p}(ω)·M_{μ⁻¹,r,p}, where M_{r,p} is
@@ -649,6 +654,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(
       iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
       space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  if (this->response_mass)
+  {
+    MFEM_VERIFY(iodata.solver.surface_response_correction,
+                "A response-corrected PROM requires SurfaceResponseCorrection solver "
+                "configuration!");
+    ksp->SetInitialGuess(true);
+    ksp->SetRelTol(iodata.solver.surface_response_correction->solve_tol);
+  }
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
@@ -732,9 +745,16 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                     std::complex<double>(-omega * omega, 0.0), K.get(),
                                     C.get(), M.get(), A2_full.get());
+  std::unique_ptr<SumComplexOperator> corrected_A;
+  if (response_mass)
+  {
+    corrected_A = std::make_unique<SumComplexOperator>(*A);
+    corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
+  }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
-  ksp->SetOperators(*A, *P);
+  ksp->SetOperators(corrected_A ? static_cast<const ComplexOperator &>(*corrected_A) : *A,
+                    *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
@@ -966,6 +986,11 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
   ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old, true);
+  if (response_mass)
+  {
+    response_mass_r.conservativeResize(dim_V_new, dim_V_new);
+    ProjectMatInternal(comm, V, *response_mass, response_mass_r, r, dim_V_old, true);
+  }
   // Per-port wave-port masses. M_{r,p} is initialized lazily so the map only contains
   // entries when the per-port HDM operator was non-null on this rank.
   for (auto &[port_idx, Mp_hdm] : Mwp_p)
@@ -1078,9 +1103,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
-  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
-  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
-  // only nonzero on boundaries, will be empty if not needed.
+  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² (Mᵣ + Rᵣ) + Vᴴ A2 V(ω) and source vector
+  // RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2(ω). The optional Rᵣ is the projected
+  // fabrication-response mass. A2(ω) and RHS2(ω) are constructed only if required and
+  // are only nonzero on boundaries, will be empty if not needed.
 
   // No basis states ill-defined: return zero vector to match current behaviour.
   if (V.empty())
@@ -1264,6 +1290,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
+  if (response_mass)
+  {
+    Ar += (-omega * omega) * response_mass_r;
+  }
   // Wave-port contribution: A_wp(ω) = i·Σ_p k_{n,p}(ω)·M_{μ⁻¹,p}. GetWavePortKn re-solves
   // the per-port cross-section EVP at this ω and refreshes the modal post-processing state
   // used by MeasureWavePorts for S-parameters and power.

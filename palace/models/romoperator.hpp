@@ -164,7 +164,8 @@ protected:
   int excitation_idx_cache = 0;
 
   // HDM system matrices and excitation:
-  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω) + F(ω).
+  // - System matrix is: A(ω) = K + iω C - ω² (M + R) + A2(ω) + F(ω),
+  //   where the optional R is a fabrication-response mass correction.
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
@@ -172,6 +173,7 @@ protected:
   //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
   // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
+  std::unique_ptr<ComplexOperator> response_mass;
   ComplexVector RHS1, RHS2, r;
 
   // Per-port wave-port boundary mass operators M_{μ⁻¹,p} (ω-independent). The
@@ -249,8 +251,8 @@ protected:
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
-  Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
-  Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
+  Eigen::MatrixXcd Kr, Mr, Cr, response_mass_r;  // Extended as modes are added
+  Eigen::VectorXcd RHS1r;  // Need to recompute drive vector on excitation change.
 
   // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
   // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
@@ -476,7 +478,8 @@ public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
   RomOperator(const IoData &iodata, SpaceOperator &space_op,
-              std::size_t max_size_per_excitation);
+              std::size_t max_size_per_excitation,
+              std::unique_ptr<ComplexOperator> response_mass = nullptr);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
