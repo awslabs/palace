@@ -295,11 +295,15 @@ small rounding radius does not force that size throughout the volume.
 Each cache key includes the complete coupon geometry, fabrication process,
 mesh and FEM settings, and generator source fingerprints. A six-field
 thin/fabricated probe must pass the p-order convergence limits before the full
-trace response matrices are computed. The full matrices must then pass
-definiteness and independent held-out trace tests. Only qualified entries are
-merged into `library/process-library.json`; `qualification-manifest.json`
-records every source report. `--force` invalidates completed solves as well as
-the qualification result.
+trace response matrices are computed. Parallel-edge clusters, corners, and
+spatial coupons must also pass a fixed-final-order mesh-resolution study. Their
+default coarse-to-fine factors are `2 1`; use `--cluster-h-factors`,
+`--corner-h-factors`, or `--spatial-h-factors` to add levels. Curved fabrication
+details in these generated coupons use at least quadratic mesh geometry. The
+full matrices must then pass definiteness and independent held-out trace tests.
+Only qualified entries are merged into `library/process-library.json`;
+`qualification-manifest.json` records every source report. `--force`
+invalidates completed solves as well as the qualification result.
 
 Candidate spatial coupons are deliberately fail-closed. For a manifold planar
 metal sheet, the perimeter has degree two everywhere: a trace cap or T/cross

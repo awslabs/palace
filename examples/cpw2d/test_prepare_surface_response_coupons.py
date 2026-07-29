@@ -667,6 +667,92 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual([edge["Conductor"] for edge in edges], [1, 1, 2])
         self.assertEqual([edge["Offset"] for edge in edges], [0.0, 1.0, 2.0])
 
+    def test_parallel_cluster_mesh_failure_prevents_full_response_solves(self):
+        coupon = {
+            "Id": "cluster",
+            "Topology": "ParallelEdgeCluster",
+            "Geometry": {
+                "Edges": [
+                    {"Offset": 0.0, "GapDirection": 1, "Conductor": 1},
+                    {"Offset": 1.0, "GapDirection": -1, "Conductor": 1},
+                    {"Offset": 2.0, "GapDirection": 1, "Conductor": 2},
+                ]
+            },
+            "BoundaryCondition": pec(),
+        }
+        args = SimpleNamespace(
+            matching_radius=2.0,
+            orders=[2, 3],
+            cluster_lc_fine=0.002,
+            cluster_lc_far=0.05,
+            cluster_h_factors=[2.0, 1.0],
+            mesh_order=1,
+            basis_size=16,
+            samples=32,
+            coupon_depth=10.0,
+            edge_offset_tolerance=1.0e-3,
+            min_process_feature_elements=2.0,
+            force=True,
+            name="test",
+            palace=Path("palace"),
+            julia="julia",
+            julia_project=None,
+            ranks=1,
+            max_fabricated_matrix_change=5.0,
+            max_fabricated_energy_change=10.0,
+            max_domain_defect_change=5.0,
+            max_heldout_error=10.0,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            p_report = cache / "p-convergence.json"
+            h_report = cache / "h-convergence.json"
+            calls = []
+
+            def record(command, check=True):
+                calls.append([str(value) for value in command])
+                return 0
+
+            with (
+                mock.patch.object(PREPARE, "run", side_effect=record),
+                mock.patch.object(
+                    PREPARE,
+                    "run_probe_convergence",
+                    return_value=(0, p_report, {"Passed": True}),
+                ),
+                mock.patch.object(
+                    PREPARE,
+                    "prepare_probe_mesh_calibration",
+                    return_value=cache / "coarse-calibration",
+                ),
+                mock.patch.object(
+                    PREPARE,
+                    "run_mesh_convergence",
+                    return_value=(1, h_report, {"Passed": False}),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Parallel-cluster mesh convergence failed"
+                ):
+                    PREPARE.build_parallel_cluster(
+                        coupon, args, process_parameters(), cache
+                    )
+
+            self.assertTrue(
+                any(
+                    "--mesh-order" in command
+                    and command[command.index("--mesh-order") + 1] == "2"
+                    for command in calls
+                )
+            )
+            self.assertFalse(any(command[0] == "palace" for command in calls))
+            qualification = next(
+                cache.glob("parallel-cluster-*/qualification.json")
+            )
+            result = PREPARE.load_json(qualification)
+            self.assertEqual(result["MeshConvergenceReport"], str(h_report))
+            self.assertFalse(result["Passed"])
+
     def test_spatial_matching_surface_encloses_process_geometry(self):
         coupon = endpoint_coupon()
         frame, edges, facets = SPATIAL.normalize_geometry(coupon, 2.0)

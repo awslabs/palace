@@ -124,8 +124,9 @@ The following infrastructure is present:
     trench geometry uses continuous offset-mask shells, automatic preparation requires
     at least quadratic geometry, and nonpositive curved-element Jacobians fail closed.
   - Spatial qualification separately gates FEM-order and local h-convergence. The h-study
-    refines both thin and fabricated meshes at the final FEM order and reuses the finest
-    completed p-study response.
+    framework is also used for parallel-edge clusters and corners. It refines both thin
+    and fabricated meshes at the final FEM order and reuses the finest completed p-study
+    response.
   - Separation interpolation and held-out-qualification-gated rounded-corner radius
     interpolation, without extrapolation. Adjacent corner models alone do not authorize
     a runtime interpolation span.
@@ -201,7 +202,8 @@ alone.
   3. Qualify manifold trace caps and T/cross masks over cap radius, branch angle, and
      branch width using corner, curved-edge, and exact spatial-cluster models.
   4. Qualify parallel clusters with three or more edges over separation and conductor
-     ownership.
+     ownership. Automatic candidates now require p-order, fixed-p mesh-resolution, and
+     held-out-response gates; the held-out geometry sweep remains to be run.
   5. Qualify nonparallel and cross-layer clusters over angle, offset, and layer spacing.
   6. Replace piecewise-linear curved-edge classification with curvature-aware segmentation
      and a discretization-independent signature.

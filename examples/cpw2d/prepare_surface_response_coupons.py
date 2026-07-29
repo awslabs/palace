@@ -918,6 +918,51 @@ def run_mesh_convergence(calibrations, output, args):
     return code, report, result
 
 
+def generate_parallel_cluster_meshes(
+    root, csv_signature, args, parameters, spec, factor
+):
+    mesh_root = (
+        root
+        if math.isclose(factor, 1.0)
+        else root / "mesh-calibrations" / f"h-{slug(factor)}"
+    )
+    mesh_root.mkdir(parents=True, exist_ok=True)
+    meshes = {}
+    for kind in ("thin", "fabricated"):
+        mesh = mesh_root / f"cluster_{kind}.msh"
+        meshes[kind] = mesh
+        if mesh.is_file() and not args.force:
+            continue
+        run(
+            [
+                *julia_command(args),
+                CLUSTER_MESH,
+                csv_signature,
+                kind,
+                mesh,
+                "--radius",
+                args.matching_radius,
+                "--metal-thickness",
+                parameters["metal_thickness"],
+                "--overetch",
+                parameters["overetch"],
+                "--sidewall-angle",
+                parameters["sidewall_angle"],
+                "--top-radius",
+                parameters["top_radius"],
+                "--bottom-radius",
+                parameters["bottom_radius"],
+                "--lc-fine",
+                factor * args.cluster_lc_fine,
+                "--lc-far",
+                args.cluster_lc_far,
+                "--mesh-order",
+                spec["Mesh"]["Order"],
+            ]
+        )
+    return mesh_root, meshes
+
+
 def build_parallel_cluster(coupon, args, parameters, cache):
     require_pec(coupon)
     resolution = process_resolution(
@@ -934,7 +979,11 @@ def build_parallel_cluster(coupon, args, parameters, cache):
         "Mesh": {
             "FineSize": args.cluster_lc_fine,
             "FarSize": args.cluster_lc_far,
-            "Order": args.mesh_order,
+            "Order": max(2, args.mesh_order),
+            "HRefinementFactors": sorted(
+                set(getattr(args, "cluster_h_factors", (2.0, 1.0))),
+                reverse=True,
+            ),
         },
         "ProcessResolution": resolution,
         "Response": {
@@ -972,39 +1021,9 @@ def build_parallel_cluster(coupon, args, parameters, cache):
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
     json_signature, csv_signature = write_cluster_signature(root, edges)
-    meshes = {}
-    for kind in ("thin", "fabricated"):
-        mesh = root / f"cluster_{kind}.msh"
-        meshes[kind] = mesh
-        if mesh.is_file() and not args.force:
-            continue
-        run(
-            [
-                *julia_command(args),
-                CLUSTER_MESH,
-                csv_signature,
-                kind,
-                mesh,
-                "--radius",
-                args.matching_radius,
-                "--metal-thickness",
-                parameters["metal_thickness"],
-                "--overetch",
-                parameters["overetch"],
-                "--sidewall-angle",
-                parameters["sidewall_angle"],
-                "--top-radius",
-                parameters["top_radius"],
-                "--bottom-radius",
-                parameters["bottom_radius"],
-                "--lc-fine",
-                args.cluster_lc_fine,
-                "--lc-far",
-                args.cluster_lc_far,
-                "--mesh-order",
-                args.mesh_order,
-            ]
-        )
+    _, meshes = generate_parallel_cluster_meshes(
+        root, csv_signature, args, parameters, spec, 1.0
+    )
 
     final_order = max(args.orders)
     final_root = root / f"p{final_order}"
@@ -1068,6 +1087,43 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             f"Parallel-cluster probe convergence failed: {qualification_path}"
         )
 
+    mesh_calibrations = []
+    for factor in spec["Mesh"]["HRefinementFactors"]:
+        if math.isclose(factor, 1.0):
+            calibration = convergence_root / f"p{final_order}"
+        else:
+            mesh_root, factor_meshes = generate_parallel_cluster_meshes(
+                root, csv_signature, args, parameters, spec, factor
+            )
+            calibration = prepare_probe_mesh_calibration(
+                final_root, mesh_root / "calibration", factor_meshes
+            )
+        mesh_calibrations.append((f"h-{slug(factor)}", calibration))
+    mesh_convergence_root = root / "mesh-convergence"
+    (
+        mesh_convergence_code,
+        mesh_convergence_report,
+        mesh_convergence,
+    ) = run_mesh_convergence(mesh_calibrations, mesh_convergence_root, args)
+    if (
+        mesh_convergence_code != 0
+        or not mesh_convergence.get("Passed", False)
+    ):
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "parallel-edge-cluster",
+            "Library": str(final_library),
+            "ResponseReport": None,
+            "ConvergenceReport": str(convergence_report),
+            "MeshConvergenceReport": str(mesh_convergence_report),
+            "Passed": False,
+        }
+        write_json(qualification_path, qualification)
+        raise RuntimeError(
+            f"Parallel-cluster mesh convergence failed: {qualification_path}"
+        )
+
     if cluster_complete(final_root) and not args.force:
         print(f"Reusing completed p{final_order} parallel-cluster responses")
     else:
@@ -1105,6 +1161,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
         "Library": str(final_library),
         "ResponseReport": str(response_report),
         "ConvergenceReport": str(convergence_report),
+        "MeshConvergenceReport": str(mesh_convergence_report),
         "Passed": passed,
     }
     write_json(qualification_path, qualification)
@@ -1870,6 +1927,16 @@ def parse_args():
     parser.add_argument("--straight-lc-far", type=float, default=0.05)
     parser.add_argument("--cluster-lc-fine", type=float, default=0.002)
     parser.add_argument("--cluster-lc-far", type=float, default=0.05)
+    parser.add_argument(
+        "--cluster-h-factors",
+        type=float,
+        nargs="+",
+        default=[2.0, 1.0],
+        help=(
+            "Coarse-to-fine multipliers on --cluster-lc-fine used for the "
+            "mesh-resolution convergence gate"
+        ),
+    )
     parser.add_argument("--corner-lc-fine", type=float, default=0.02)
     parser.add_argument("--corner-lc-far", type=float, default=0.3)
     parser.add_argument(
@@ -1934,6 +2001,17 @@ def parse_args():
         parser.error("--edge-offset-tolerance must be nonnegative")
     if args.min_process_feature_elements <= 0.0:
         parser.error("--min-process-feature-elements must be positive")
+    args.cluster_h_factors = sorted(
+        set(args.cluster_h_factors), reverse=True
+    )
+    if (
+        len(args.cluster_h_factors) < 2
+        or any(factor < 1.0 for factor in args.cluster_h_factors)
+        or not math.isclose(args.cluster_h_factors[-1], 1.0)
+    ):
+        parser.error(
+            "--cluster-h-factors requires at least two values >= 1 ending at 1"
+        )
     args.corner_h_factors = sorted(
         set(args.corner_h_factors), reverse=True
     )

@@ -1479,12 +1479,13 @@ The generated library is written under `library/process-library.json`.
 Content-addressed cache entries include the complete local geometry, fabrication
 metadata, discretization settings, and generator sources. Cheap thin/fabricated probe
 FEM-order convergence is required before a full response matrix is assembled. Corner
-and spatial candidates also compare the highest requested FEM order across independent
-mesh resolutions. Matrix and held-out trace qualification is required before an entry
-is merged. The current automatic builders can construct candidate isolated and paired
-edges, parallel edge clusters, convex and concave corners with angles strictly between
-zero and 180 degrees, and exact spatial edge clusters. Corner candidates use at least
-quadratic mesh geometry and reject nonpositive high-order Jacobians. A manifold trace
+parallel-cluster, and spatial candidates also compare the highest requested FEM order
+across independent mesh resolutions. Matrix and held-out trace qualification is required
+before an entry is merged. The current automatic builders can construct candidate
+isolated and paired edges, parallel edge clusters, convex and concave corners with
+angles strictly between zero and 180 degrees, and exact spatial edge clusters. Cluster
+and corner candidates use at least quadratic mesh geometry; corner and spatial
+candidates additionally reject nonpositive high-order Jacobians. A manifold trace
 cap or T/cross branch has a degree-two perimeter and is represented by corners, smooth
 chains, and exact spatial clusters rather than a graph endpoint or junction. Such graph
 vertices do not arise from an ordinary manifold sheet. Automatic generation never
