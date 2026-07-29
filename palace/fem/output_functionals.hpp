@@ -21,6 +21,7 @@ namespace palace
 class GridFunction;
 class MaterialOperator;
 class Mesh;
+class PointFieldEvaluator;
 class FaceNbrFieldExchange;
 
 // Description of a real vector-valued mode coefficient on a marked boundary surface.
@@ -44,18 +45,19 @@ struct SurfaceModeCoefficient
 //
 // Class to compute reducing output functionals (integrals of functions of solution
 // fields) over boundary element sets using libCEED, supporting full (non-trace)
-// evaluation of volume fields at boundary element quadrature points. This enables
-// postprocessing measurements (interface dielectric energy participation, surface
-// fluxes, port powers, etc.) to execute on the device, in contrast to the legacy
-// mfem::Coefficient-based paths which are host-only.
+// evaluation of volume fields at boundary element quadrature points. Non-reducing
+// visualization point fields are exposed through PointFieldEvaluator, which uses private
+// boundary point-field assembly hooks here. This enables postprocessing measurements
+// (interface dielectric energy participation, surface fluxes, port powers, etc.) to
+// execute on the device instead of using host-only mfem::Coefficient evaluation for
+// supported paths.
 //
 // The key construction: for each boundary element, the field is evaluated from an
 // attached volume element (or both, with averaging or differencing, for interior
 // boundaries, following the conventions of BdrGridFunctionCoefficient and its derived
-// coefficients). AtPoints-capable groups keep mapped reference points as runtime data;
-// mapped-integration-rule groups use per-assembly registry identities plus finite
-// MFEM/NCMesh topology keys rather than rounded point-cloud keys. Processor-boundary
-// ghost values are requested through
+// coefficient semantics). AtPoints-capable groups keep mapped reference points as runtime
+// data; mapped-integration-rule groups use per-assembly integer identities rather than
+// rounded coordinate keys. Processor-boundary ghost values are requested through
 // FaceNbrFieldExchange with integer/topological reference-face orientation keys so point
 // identity never depends on fuzzy coordinate matching.
 //
@@ -72,6 +74,11 @@ public:
   };
 
 private:
+  friend class PointFieldEvaluator;
+
+  // Internal backend selector. Public SurfaceFunctional::Kind is reduction-only;
+  // non-reducing boundary visualization entries are reachable only through
+  // PointFieldEvaluator's private backend hooks.
   enum class KernelKind
   {
     AREA,
@@ -79,11 +86,46 @@ private:
     INTERFACE_EPR,
     SURFACE_FLUX,
     FARFIELD,
-    MODE_OVERLAP
+    MODE_OVERLAP,
+    BDR_FIELD_E,
+    BDR_FIELD_B,
+    BDR_FIELD_H1,
+    BDR_FLUX_Q,
+    BDR_CURRENT_J,
+    BDR_ENERGY_E,
+    BDR_ENERGY_M,
+    BDR_POYNTING
   };
 
   static KernelKind ToKernelKind(Kind kind);
+  static KernelKind ToKernelKind(PointFieldKind kind);
   static const char *KindName(KernelKind kind);
+
+  // Whether the backend kind fills a per-point visualization buffer (vs. computing
+  // reductions).
+  static bool IsBufferKind(KernelKind kind)
+  {
+    return kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
+           kind == KernelKind::BDR_FIELD_H1 || kind == KernelKind::BDR_FLUX_Q ||
+           kind == KernelKind::BDR_CURRENT_J || kind == KernelKind::BDR_ENERGY_E ||
+           kind == KernelKind::BDR_ENERGY_M || kind == KernelKind::BDR_POYNTING;
+  }
+
+  // Number of components per visualization point for buffer kinds.
+  static int BufferNumComp(KernelKind kind, int sdim)
+  {
+    return (kind == KernelKind::BDR_FIELD_H1 || kind == KernelKind::BDR_FLUX_Q ||
+            kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M)
+               ? 1
+               : sdim;
+  }
+
+  // Total buffer size (all boundary elements, lattice points, components) and
+  // per-element point-base offsets for the boundary visualization field kinds. Vector
+  // buffers are component-major: x[points], y[points], (z[points] in 3D).
+  int BufferSize() const { return buffer_size; }
+  int BufferNumComp() const { return buffer_num_comp; }
+  const std::vector<int> &BufferBases() const { return buffer_bases; }
 
   // Computation kind and integrand parameters.
   KernelKind kind;
@@ -96,18 +138,26 @@ private:
   std::complex<double> farfield_omega = 0.0;
   std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
 
-  // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
-  // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending
-  // on the functional kind. Material operator (not owned) for material property lookups
-  // and side selection.
+  // Boundary visualization field kinds: lattice refinement level, output scaling,
+  // total output buffer size, and per-boundary-element point-base offsets into the
+  // component-major buffer.
+  int viz_lod = 0;
+  double viz_scaling = 1.0;
+  int buffer_size = 0;
+  int buffer_num_comp = 0;
+  std::vector<int> buffer_bases;
+
+  // Field finite element spaces (not owned): nd_fespace for H(curl)/H1 fields (source
+  // index 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr
+  // depending on the functional kind. Material operator (not owned) for material property
+  // lookups and side selection.
   const mfem::ParFiniteElementSpace *nd_fespace;
   const mfem::ParFiniteElementSpace *rt_fespace;
   const MaterialOperator *mat_op;
 
   // Whether the functional could be assembled. False means the configuration is outside
-  // the current support matrix; model-level callers may explicitly use legacy code for
-  // those cases, but supported cases should treat invalid assembly as an error rather
-  // than silently falling back.
+  // the current support matrix; supported model-level paths treat invalid assembly as an
+  // error rather than silently selecting a different implementation.
   bool valid = true;
 
   // MPI communicator from the mesh.
@@ -138,6 +188,7 @@ private:
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
+  void WarmUpBufferOperators() const;
 
   // Apply all group operators with the field inputs pointed at the given source
   // vectors, accumulating into the local output vector.
@@ -149,6 +200,28 @@ private:
   // Add the current local_out element slots into per-attribute bins.
   void BinLocalOutByAttribute(const mfem::Array<int> &attr_to_bin, int num_bins,
                               std::vector<double> &bins, double scale) const;
+
+  // Construct boundary point-field evaluators. These are intentionally private to keep
+  // SurfaceFunctional reduction-oriented at call sites; PointFieldEvaluator owns the
+  // non-reducing visualization API.
+  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace, int lod);
+  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
+  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &nd_fespace,
+                    const mfem::ParFiniteElementSpace &rt_fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
+
+  // Fill boundary visualization buffers. Friend-only; non-reducing callers use
+  // PointFieldEvaluator.
+  void EvalBuffer(const Vector &u, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
 
 public:
   // Construct a functional over the boundary elements with marked attributes (marker
@@ -193,9 +266,8 @@ public:
   SurfaceFunctional &operator=(const SurfaceFunctional &) = delete;
 
   // Whether the functional was successfully assembled. When false, evaluation is not
-  // possible. Supported model-level paths should error rather than silently falling back;
-  // explicit legacy/oracle paths remain available for unsupported configurations and
-  // validation.
+  // possible; supported model-level paths should error rather than silently selecting a
+  // different implementation.
   bool IsValid() const { return valid; }
 
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a
