@@ -4,7 +4,7 @@
 
 """Unit tests for the container-publish plan (pure logic; no I/O).
 
-Run: python3 -m unittest discover -s .github/publish -p 'test_*.py'
+Run: python3 -m unittest discover -s .github/publish_containers -p 'test_*.py'
 """
 
 from __future__ import annotations

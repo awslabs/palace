@@ -2,21 +2,25 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the REAL GitHubApi methods (ref_sha / pr_for_head / pr_has_label).
+"""Tests for the REAL GitHubApi methods (_get / ref_sha / pr_for_head /
+pr_has_label).
 
 test_authorize.py exercises decide() against a FakeApi, which necessarily
 *pre-bakes* the sha+ref filtering these methods implement. So these tests cover
 the actual logic — annotated-tag peeling, the head.sha+head.ref filter over the
 "PRs containing this commit" list, and malformed-response handling — by mocking
-only the subprocess boundary (GitHubApi._get) with canned API responses keyed on
-the request path.
+only the subprocess boundary with canned API responses keyed on the request
+path: StubApi replaces ``_get`` for the method tests, while ``gh_response``
+replaces ``subprocess.run`` to cover ``_get`` itself.
 
-Run: python3 -m unittest discover -s .github/publish -p 'test_*.py'
+Run: python3 -m unittest discover -s .github/publish_containers -p 'test_*.py'
 """
 
 from __future__ import annotations
 
+import subprocess
 import unittest
+from unittest import mock
 
 from authorize import GitHubApi
 
@@ -29,7 +33,7 @@ class StubApi(GitHubApi):
     """GitHubApi with the subprocess boundary (_get) replaced by canned data.
 
     ``responses`` maps an API path to the object _get would have returned (a
-    dict/list on success, or None to simulate a 404 / non-JSON / non-zero exit).
+    dict/list on success, or None to simulate a 404).
     """
 
     def __init__(self, responses):
@@ -38,6 +42,63 @@ class StubApi(GitHubApi):
 
     def _get(self, path):
         return self._responses.get(path)
+
+
+def gh_response(status, body, *, returncode=None, stderr=""):
+    """A `gh api --include` result: status line, headers, blank line, body.
+
+    Headers use CRLF and the status line LF, matching real `gh` output. gh exits
+    non-zero for any non-2xx, so returncode defaults to match ``status``.
+    """
+    if returncode is None:
+        returncode = 0 if 200 <= status < 300 else 1
+    stdout = (
+        f"HTTP/2.0 {status} Reason\n"
+        "Content-Type: application/json; charset=utf-8\r\n"
+        "\r\n"
+        f"{body}"
+    )
+    return subprocess.CompletedProcess(
+        args=["gh"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
+
+
+class Get(unittest.TestCase):
+    """_get: only an explicit 404 is "absent"; every other failure raises."""
+
+    def _get(self, completed):
+        with mock.patch("subprocess.run", return_value=completed):
+            return GitHubApi(REPO)._get("repos/x/y")
+
+    def test_success_returns_decoded_body(self):
+        self.assertEqual(self._get(gh_response(200, '{"ok": true}')), {"ok": True})
+
+    def test_not_found_returns_none(self):
+        self.assertIsNone(self._get(gh_response(404, '{"message": "Not Found"}')))
+
+    def test_forbidden_raises(self):
+        # A rate limit or a revoked token must fail the job, not read as absent:
+        # otherwise a release publishes nothing and still exits green.
+        for status in (401, 403, 429, 500, 502):
+            with self.subTest(status=status):
+                with self.assertRaises(RuntimeError):
+                    self._get(gh_response(status, '{"message": "nope"}'))
+
+    def test_transport_failure_raises(self):
+        # gh could not reach the API, so it printed no status line at all.
+        no_status = subprocess.CompletedProcess(
+            args=["gh"], returncode=1, stdout="", stderr="dial tcp: i/o timeout"
+        )
+        with self.assertRaises(RuntimeError):
+            self._get(no_status)
+
+    def test_non_json_success_raises(self):
+        with self.assertRaises(RuntimeError):
+            self._get(gh_response(200, "<html>gateway</html>"))
+
+    def test_success_status_but_nonzero_exit_raises(self):
+        with self.assertRaises(RuntimeError):
+            self._get(gh_response(200, '{"ok": true}', returncode=1))
 
 
 class RefSha(unittest.TestCase):

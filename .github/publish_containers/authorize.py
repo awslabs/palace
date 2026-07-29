@@ -110,17 +110,35 @@ class GitHubApi:
         self.repo = repo
 
     def _get(self, path: str) -> object | None:
+        """Decoded JSON body, or None if the resource does not exist (404).
+
+        Only an explicit 404 means "absent". Every other failure — auth, rate
+        limit, 5xx, transport, non-JSON body — raises, because silently reading
+        it as "absent" would turn an outage into an unauthorized publish: a
+        release could then finish green having published nothing.
+        """
+        # --include prints the status line and headers before the body, which is
+        # the only way to tell 404 apart from the rest (gh exits 1 for all of
+        # them).
         proc = subprocess.run(
-            ["gh", "api", path],
+            ["gh", "api", "--include", path],
             capture_output=True,
             text=True,
         )
-        if proc.returncode != 0:
-            return None  # 404 / not found → treat as absent, never as an error blob
-        try:
-            return json.loads(proc.stdout)
-        except json.JSONDecodeError:
+        headers, _, body = proc.stdout.replace("\r\n", "\n").partition("\n\n")
+        match = re.match(r"^HTTP/\S+ ([0-9]{3})(?:\s|\Z)", headers)
+        if match is None:
+            detail = proc.stderr.strip() or "missing HTTP status"
+            raise RuntimeError(f"GitHub API request failed for {path}: {detail}")
+        status = int(match.group(1))
+        if status == 404:
             return None
+        if proc.returncode != 0 or not 200 <= status < 300:
+            raise RuntimeError(f"GitHub API request failed for {path}: HTTP {status}")
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"GitHub API returned invalid JSON for {path}") from exc
 
     def ref_sha(self, kind: str, name: str) -> str | None:
         """Commit sha a ref points at, or None. Peels annotated tags.

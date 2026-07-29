@@ -60,13 +60,19 @@ jobs:
     needs: authorize
     if: needs.authorize.outputs.authorized == 'true'
     runs-on: ubuntu-latest
-    # Concurrency is keyed on the authorized selector (only known now), so a
-    # newer publish for the same channel cancels an older in-flight one, while an
-    # unauthorized run — which never reaches this job — can never enter the
-    # group. Releases use distinct selectors, so they never cancel each other.
+    # Concurrency is keyed on the authorized selector (only known now), so
+    # publishes to one channel serialize while different channels (including
+    # each release) run independently, and an unauthorized run — which never
+    # reaches this job — can never enter the group.
+    #
+    # NOT cancel-in-progress: cancelling a publisher partway through would leave
+    # a channel holding ECR tags and S3 objects from different commits. A queued
+    # publisher instead waits its turn; if it has gone stale in the meantime the
+    # re-verify step below fails it, and if it is still current it runs last and
+    # becomes final.
     concurrency:
       group: publish-containers-${{ needs.authorize.outputs.selector }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     # The OIDC subject is scoped to this environment
     # (repo:awslabs/palace:environment:palace-container-publish), restricted to
     # `main` in repo settings; that restriction (plus workflow_run always running
@@ -104,9 +110,10 @@ jobs:
           #
           # Ask the API how many artifacts the build run has BEFORE downloading,
           # so we can tell "legitimately zero" apart from "download dropped some".
-          #   - zero  -> clean skip (e.g. a docs-only push to main where the
-          #     paths-filter skipped the build; the run still succeeds and is
-          #     authorized, but there is nothing to publish);
+          #   - zero  -> clean skip (e.g. a labeled PR whose push touched no
+          #     container-relevant path, so the paths-filter skipped the build;
+          #     the run still succeeds and is authorized, but there is nothing to
+          #     publish). Pushes to main always build, so main never lands here;
           #   - >0    -> the download MUST succeed and yield that exact count, or
           #     we fail. A partial download must never publish a subset (which
           #     would update some architectures and leave the others stale).

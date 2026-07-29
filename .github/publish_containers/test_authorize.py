@@ -4,7 +4,7 @@
 
 """Unit tests for the container-publish authorization decision.
 
-Run: python3 -m unittest discover -s .github/publish -p 'test_*.py'
+Run: python3 -m unittest discover -s .github/publish_containers -p 'test_*.py'
 
 The decision logic is exercised with a FakeApi returning canned responses, so
 these run offline and deterministically. Cases mirror the real GitHub API

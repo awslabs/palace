@@ -76,13 +76,26 @@ jobs:
         arch: [arm64, x64]
     runs-on: [self-hosted, '${{ matrix.arch }}']
     steps:
-      # A manual dispatch bypasses the paths-filter: dispatching is an explicit
-      # publish request, so it must build regardless of what changed. (Release
-      # tags are handled by build-containers-release, which has no filter.)
+      # Two events bypass the paths-filter:
+      #
+      # - workflow_dispatch: dispatching is an explicit publish request, so it
+      #   must build regardless of what changed.
+      # - push to main: every commit on main must produce artifacts, because the
+      #   `main` channel publishes at an exact SHA. If a docs-only push skipped
+      #   the build, its `Containers` run would still succeed and trigger a
+      #   publisher with nothing to publish — and worse, it would move `main` off
+      #   the SHA a real container build is still publishing, so that build's
+      #   re-verify would fail and the rolling channel would stay stale until the
+      #   next container change landed. The cost is two cached builds on
+      #   docs-only pushes; the benefit is that a genuine build failure on main
+      #   also shows up as a red `Containers` run.
+      #
+      # (Release tags are handled by build-containers-release, which has no
+      # filter.)
       - uses: actions/checkout@v6
-        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch'
+        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
       - uses: ./.github/actions/build-container
-        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch'
+        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
 
   # Release tags (vX.Y.Z): build the full microarchitecture matrix. No paths-
   # filter — a tag is usually cut on a commit already on main, so the diff is

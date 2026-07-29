@@ -523,7 +523,14 @@ a release publishes a tuned image for each target:
 
 ### Publishing a `dev-<branch>` prototype from a branch
 
-To publish a `dev-<branch>` container, just trigger the `Containers` workflow.
+To publish a `dev-<branch>` container, trigger the `Containers` workflow. The
+branch must be named `prefix/name`, with exactly one `/`: the prefix may contain
+only letters, numbers, `_`, or `.`, and the name must start with a letter or
+number and may also contain `_`, `.`, or `-` (for example,
+`yourname/my-feature`). Other names build fine but are refused at publication,
+because the `dev-<branch>` selector has to stay collision-free once the name is
+sanitized for ECR. `main` and release-tag publishing are unaffected.
+
 Using the [GitHub CLI](https://cli.github.com/):
 
 ```bash
