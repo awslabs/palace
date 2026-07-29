@@ -3,6 +3,7 @@
 
 #include "operator.hpp"
 
+#include <algorithm>
 #include <mfem/general/forall.hpp>
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
@@ -53,6 +54,33 @@ void ComplexOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexV
                                                 const std::complex<double> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMultHermitianTranspose!");
+}
+
+std::unique_ptr<ComplexOperator> BuildComplexSumOperator(
+    std::initializer_list<std::pair<std::complex<double>, const ComplexOperator *>> terms)
+{
+  auto first = std::find_if(terms.begin(), terms.end(),
+                            [](const auto &term) { return term.second != nullptr; });
+  MFEM_VERIFY(first != terms.end(), "Cannot construct an empty complex operator sum!");
+  MFEM_VERIFY(std::all_of(terms.begin(), terms.end(),
+                          [&](const auto &term)
+                          {
+                            return !term.second ||
+                                   (term.second->Height() == first->second->Height() &&
+                                    term.second->Width() == first->second->Width());
+                          }),
+              "Mismatched dimensions in complex operator sum!");
+
+  auto sum =
+      std::make_unique<SumComplexOperator>(first->second->Height(), first->second->Width());
+  for (const auto &[coefficient, op] : terms)
+  {
+    if (op && coefficient != 0.0)
+    {
+      sum->AddOperator(*op, coefficient);
+    }
+  }
+  return sum;
 }
 
 ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr,

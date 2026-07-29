@@ -496,8 +496,8 @@ int QuasiNewtonSolver::Solve()
 
     // Set the linear solver operators.
     opA2 = (*funcA2)(eig);
-    opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                              {opK, opC, opM, opA2.get()}, true);
+    opA = BuildComplexSumOperator(
+        {{1.0 + 0.0i, opK}, {eig, opC}, {eig * eig, opM}, {1.0 + 0.0i, opA2.get()}}, *opK);
     opP = (*funcP)(1.0 + 0.0i, eig, eig * eig,
                    eig / std::complex<double>(0.0, 1.0));  // ω = λ/i
     opInv->SetOperators(*opA, *opP);
@@ -556,8 +556,9 @@ int QuasiNewtonSolver::Solve()
                                  std::unique_ptr<ComplexOperator> &A2_out) -> double
     {
       A2_out = (*funcA2)(lam);
-      auto A = BuildParSumOperator({1.0 + 0.0i, lam, lam * lam, 1.0 + 0.0i},
-                                   {opK, opC, opM, A2_out.get()}, true);
+      auto A = BuildComplexSumOperator(
+          {{1.0 + 0.0i, opK}, {lam, opC}, {lam * lam, opM}, {1.0 + 0.0i, A2_out.get()}},
+          *opK);
       A->Mult(vv, rr);
       if (k > 0)
       {
@@ -652,16 +653,17 @@ int QuasiNewtonSolver::Solve()
       auto opA2p = (*funcA2)(eig * (1.0 + delta));
       const std::complex<double> denom = delta * eig;
       std::unique_ptr<ComplexOperator> opAJ =
-          BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true);
-      auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
-                                     {opK, opC, opM, opAJ.get()}, true);
+          BuildComplexSumOperator({{1.0 / denom, opA2p.get()}, {-1.0 / denom, A2n.get()}});
+      auto opJ = BuildComplexSumOperator(
+          {{1.0 + 0.0i, opC}, {2.0 * eig, opM}, {1.0 + 0.0i, opAJ.get()}}, *opK);
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
         // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2. Scoping T(l)
         // here lets the line search overwrite A2n freely; with no deflation we skip it.
-        auto A = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                                     {opK, opC, opM, A2n.get()}, true);
+        auto A = BuildComplexSumOperator(
+            {{1.0 + 0.0i, opK}, {eig, opC}, {eig * eig, opM}, {1.0 + 0.0i, A2n.get()}},
+            *opK);
         const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
         const Eigen::VectorXcd Sv2 = S.fullPivLu().solve(v2);
         const ComplexVector XSv2 = MatVecMult(X, Sv2);
@@ -726,9 +728,11 @@ int QuasiNewtonSolver::Solve()
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(eig_opInv);
-        opA =
-            BuildParSumOperator({1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, 1.0 + 0.0i},
-                                {opK, opC, opM, opA2.get()}, true);
+        opA = BuildComplexSumOperator({{1.0 + 0.0i, opK},
+                                       {eig_opInv, opC},
+                                       {eig_opInv * eig_opInv, opM},
+                                       {1.0 + 0.0i, opA2.get()}},
+                                      *opK);
         opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv,
                        eig_opInv / std::complex<double>(0.0, 1.0));
         opInv->SetOperators(*opA, *opP);
@@ -756,6 +760,14 @@ int QuasiNewtonSolver::Solve()
     }
   }
   nev = k;  // in case some guesses did not converge
+
+  if (nev == 0)
+  {
+    eigenvalues.clear();
+    eigenvectors.clear();
+    perm.reset();
+    return 0;
+  }
 
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
@@ -818,7 +830,11 @@ double QuasiNewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexV
   }
   opM->AddMult(x, r, l * l);
   auto A2 = (*funcA2)(l);
-  A2->AddMult(x, r, 1.0);
+  if (A2)
+  {
+    A2->AddMult(x, r, 1.0);
+  }
+  SetEssentialDiagonal(*opK, x, r);
   return linalg::Norml2(comm, r);
 }
 

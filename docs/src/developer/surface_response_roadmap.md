@@ -65,7 +65,7 @@ The feature is complete for production when all of the following hold:
 | 3D uniform driven | Implemented | Implemented | Implemented | High-order/AMR validation |
 | 3D adaptive PROM driven | Implemented | Implemented | Implemented | High-order/AMR validation |
 | 3D linear undamped eigenmode | Implemented | Implemented | Implemented | High-order/AMR validation |
-| 3D damped or frequency-dependent eigenmode | Implemented | Implemented | Implemented | SLP and high-order/AMR validation |
+| 3D damped or frequency-dependent eigenmode | Implemented | Implemented | Implemented | HYBRID and high-order/AMR validation |
 
 Standard GridFunction and ParaView ``E`` output remains the raw thin-metal field.
 Self-consistent Maxwell solves additionally export corrected electric field and recovered
@@ -268,9 +268,15 @@ frequency-dependent nonlinear eigenproblems construct a separate corrected probl
 ``M + R``. Hybrid solves refine an independent corrected interpolated-PEP seed with the
 full nonlinear operator; SLP solves use the corrected mass directly. Both retain the raw
 preconditioner callback and pair final corrected modes to raw modes by raw-``M`` overlap.
-Local corrected damped-PEP and hybrid smoke tests pass. SLP plumbing is implemented, but
-target-branch selection and convergence do not yet have a successful corrected solver-level
-test. High-order and AMR validation of all nonlinear paths remains open.
+Matrix-free nonlinear sums preserve the response term and PEC essential rows, and the
+corrected solve uses a response-aware divergence-free projector. Local corrected damped-PEP
+and SLP smoke tests pass. The SLP CPW case converges both raw and corrected branches in
+three iterations with raw-``M`` overlap ``0.999987``. HYBRID remains unvalidated: the
+available absorbing-boundary interpolation selects highly damped spurious seeds, while a
+wave-port case reached corrected quasi-Newton refinement but converged zero corrected
+modes. That zero-mode path now exits cleanly and the driver fails closed instead of
+diagonalizing an empty invariant pair. High-order and AMR validation of all nonlinear
+paths remains open.
 
 **Exit gate:** Corrected results agree between direct and reduced driven solves, mode
 pairing is robust near crossings, corrected fields reproduce reported energies, and AMR

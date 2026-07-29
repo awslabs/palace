@@ -40,6 +40,9 @@ private:
   // Operators for the divergence-free projection.
   std::unique_ptr<OperType> M;
   std::unique_ptr<Operator> WeakDiv;
+  std::unique_ptr<Operator> ResponseWeakDiv, ResponseMass, CorrectedWeakDiv;
+  std::unique_ptr<OperType> ResponseMassWrapper;
+  std::unique_ptr<BaseSumOperator<OperType>> CorrectedM;
   const Operator *Grad;
   const mfem::Array<int> *bdr_tdof_list_M;
 
@@ -58,7 +61,7 @@ public:
   DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                 FiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
-                int max_it, int print);
+                int max_it, int print, const Operator *response = nullptr);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy

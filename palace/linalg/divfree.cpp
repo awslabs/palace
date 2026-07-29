@@ -21,6 +21,64 @@ namespace palace
 namespace
 {
 
+class ResponseWeakDivergenceOperator : public Operator
+{
+private:
+  const Operator &response, &grad;
+  mutable Vector z;
+
+public:
+  ResponseWeakDivergenceOperator(const Operator &response, const Operator &grad)
+    : Operator(grad.Width(), response.Width()), response(response), grad(grad),
+      z(response.Height())
+  {
+    z.UseDevice(true);
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    response.Mult(x, z);
+    grad.MultTranspose(z, y);
+    y *= -1.0;
+  }
+};
+
+class ResponseGradientMassOperator : public Operator
+{
+private:
+  const Operator &response, &grad;
+  const mfem::Array<int> *essential_tdofs;
+  mutable Vector x_free, z1, z2;
+
+public:
+  ResponseGradientMassOperator(const Operator &response, const Operator &grad,
+                               const mfem::Array<int> *essential_tdofs)
+    : Operator(grad.Width()), response(response), grad(grad),
+      essential_tdofs(essential_tdofs), x_free(grad.Width()), z1(grad.Height()),
+      z2(response.Height())
+  {
+    x_free.UseDevice(true);
+    z1.UseDevice(true);
+    z2.UseDevice(true);
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    x_free = x;
+    if (essential_tdofs)
+    {
+      linalg::SetSubVector(x_free, *essential_tdofs, 0.0);
+    }
+    grad.Mult(x_free, z1);
+    response.Mult(z1, z2);
+    grad.MultTranspose(z2, y);
+    if (essential_tdofs)
+    {
+      linalg::SetSubVector(y, *essential_tdofs, 0.0);
+    }
+  }
+};
+
 template <typename OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
                            const FiniteElementSpace &fespace);
@@ -46,7 +104,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
-    int print)
+    int print, const Operator *response)
 {
   BlockTimer bt(Timer::DIV_FREE);
 
@@ -116,6 +174,27 @@ DivFreeSolver<VecType>::DivFreeSolver(
   }
   Grad = &nd_fespace.GetDiscreteInterpolator(h1_fespaces.GetFinestFESpace());
 
+  if (response)
+  {
+    MFEM_VERIFY(response->Height() == Grad->Height() && response->Width() == Grad->Height(),
+                "Invalid response operator dimensions for divergence-free projection!");
+    ResponseWeakDiv = std::make_unique<ResponseWeakDivergenceOperator>(*response, *Grad);
+    CorrectedWeakDiv = std::make_unique<SumOperator>(*WeakDiv, *ResponseWeakDiv);
+    ResponseMass =
+        std::make_unique<ResponseGradientMassOperator>(*response, *Grad, bdr_tdof_list_M);
+    if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    {
+      ResponseMassWrapper =
+          std::make_unique<ComplexWrapperOperator>(ResponseMass.get(), nullptr);
+    }
+    else
+    {
+      ResponseMassWrapper = std::make_unique<SumOperator>(*ResponseMass);
+    }
+    CorrectedM = std::make_unique<BaseSumOperator<OperType>>(*M);
+    CorrectedM->AddOperator(*ResponseMassWrapper);
+  }
+
   // The system matrix for the projection is real and SPD.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
       std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
@@ -143,7 +222,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
   pcg->SetMaxIter(max_it);
 
   ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
-  ksp->SetOperators(*M, *M);
+  ksp->SetOperators(CorrectedM ? static_cast<const OperType &>(*CorrectedM) : *M, *M);
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
   rhs.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
@@ -159,12 +238,13 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   // Compute the divergence of y.
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
-    WeakDiv->Mult(y.Real(), rhs.Real());
-    WeakDiv->Mult(y.Imag(), rhs.Imag());
+    const Operator &weak_div = CorrectedWeakDiv ? *CorrectedWeakDiv : *WeakDiv;
+    weak_div.Mult(y.Real(), rhs.Real());
+    weak_div.Mult(y.Imag(), rhs.Imag());
   }
   else
   {
-    WeakDiv->Mult(y, rhs);
+    (CorrectedWeakDiv ? *CorrectedWeakDiv : *WeakDiv).Mult(y, rhs);
   }
 
   // Apply essential BC and solve the linear system.

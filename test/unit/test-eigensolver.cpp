@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "drivers/eigensolver.hpp"
 
+using palace::BuildComplexSumOperator;
 using palace::ComplexWrapperOperator;
 using palace::EigenSolverBackend;
 using palace::EigenvalueSolver;
@@ -39,6 +40,16 @@ TEST_CASE("Eigenmode response-corrected mass", "[eigensolver][surface-response][
   corrected.op->Real()->Mult(x, y);
   CHECK(y[0] == Catch::Approx(3.5));
   CHECK(y[1] == Catch::Approx(-3.75));
+
+  auto sum = BuildComplexSumOperator({{2.0, corrected.op.get()}});
+  palace::ComplexVector xc(2), yc(2);
+  xc.Real() = x;
+  xc.Imag() = 0.0;
+  sum->Mult(xc, yc);
+  CHECK(yc.Real()[0] == Catch::Approx(7.0));
+  CHECK(yc.Real()[1] == Catch::Approx(-7.5));
+  CHECK(yc.Imag()[0] == Catch::Approx(-1.0));
+  CHECK(yc.Imag()[1] == Catch::Approx(2.0));
 }
 
 TEST_CASE("Eigenmode spectral conventions", "[eigensolver][surface-response][Serial]")

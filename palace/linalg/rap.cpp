@@ -759,6 +759,209 @@ bool ReferencesSameMemory(const C &c1, const C &c2)
          (m1.DeviceIsValid() && m2.DeviceIsValid() && c1.Read() == c2.Read());
 }
 
+void SetEssentialDiagonal(const Operator &reference, const Vector &x, Vector &y)
+{
+  const auto *par = dynamic_cast<const ParOperator *>(&reference);
+  const auto *essential_tdofs = par ? par->GetEssentialTrueDofs() : nullptr;
+  if (!essential_tdofs)
+  {
+    return;
+  }
+  if (par->GetDiagonalPolicy() == Operator::DiagonalPolicy::DIAG_ONE)
+  {
+    linalg::SetSubVector(y, *essential_tdofs, x);
+  }
+  else
+  {
+    linalg::SetSubVector(y, *essential_tdofs, 0.0);
+  }
+}
+
+void SetEssentialDiagonal(const ComplexOperator &reference, const ComplexVector &x,
+                          ComplexVector &y)
+{
+  const auto *par = dynamic_cast<const ComplexParOperator *>(&reference);
+  const auto *essential_tdofs = par ? par->GetEssentialTrueDofs() : nullptr;
+  if (!essential_tdofs)
+  {
+    return;
+  }
+  if (par->GetDiagonalPolicy() == Operator::DiagonalPolicy::DIAG_ONE)
+  {
+    linalg::SetSubVector(y, *essential_tdofs, x);
+  }
+  else
+  {
+    linalg::SetSubVector(y, *essential_tdofs, 0.0);
+  }
+}
+
+namespace
+{
+
+class EssentialDiagonalOperator : public Operator
+{
+private:
+  std::unique_ptr<Operator> op;
+  const Operator &reference;
+  mutable Vector z;
+
+  template <typename Apply>
+  void ApplyWithEssentialDiagonal(const Vector &x, Vector &y, Apply &&apply) const
+  {
+    apply(*op, x, y);
+    SetEssentialDiagonal(reference, x, y);
+  }
+
+public:
+  EssentialDiagonalOperator(std::unique_ptr<Operator> &&op, const Operator &reference)
+    : Operator(op->Height(), op->Width()), op(std::move(op)), reference(reference),
+      z(height)
+  {
+    z.UseDevice(true);
+  }
+
+  void AssembleDiagonal(Vector &diag) const override
+  {
+    op->AssembleDiagonal(diag);
+    z = 1.0;
+    SetEssentialDiagonal(reference, z, diag);
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    ApplyWithEssentialDiagonal(x, y, [](const auto &op, const auto &x, auto &y)
+                               { op.Mult(x, y); });
+  }
+
+  void MultTranspose(const Vector &x, Vector &y) const override
+  {
+    ApplyWithEssentialDiagonal(x, y, [](const auto &op, const auto &x, auto &y)
+                               { op.MultTranspose(x, y); });
+  }
+
+  void AddMult(const Vector &x, Vector &y, const double a) const override
+  {
+    Mult(x, z);
+    y.Add(a, z);
+  }
+
+  void AddMultTranspose(const Vector &x, Vector &y, const double a) const override
+  {
+    MultTranspose(x, z);
+    y.Add(a, z);
+  }
+};
+
+class EssentialDiagonalComplexOperator : public ComplexOperator
+{
+private:
+  std::unique_ptr<ComplexOperator> op;
+  const ComplexOperator &reference;
+  mutable ComplexVector z;
+
+  template <typename Apply>
+  void ApplyWithEssentialDiagonal(const ComplexVector &x, ComplexVector &y,
+                                  Apply &&apply) const
+  {
+    apply(*op, x, y);
+    SetEssentialDiagonal(reference, x, y);
+  }
+
+public:
+  EssentialDiagonalComplexOperator(std::unique_ptr<ComplexOperator> &&op,
+                                   const ComplexOperator &reference)
+    : ComplexOperator(op->Height(), op->Width()), op(std::move(op)), reference(reference),
+      z(height)
+  {
+    z.UseDevice(true);
+  }
+
+  void AssembleDiagonal(ComplexVector &diag) const override
+  {
+    op->AssembleDiagonal(diag);
+    z = 1.0;
+    SetEssentialDiagonal(reference, z, diag);
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    ApplyWithEssentialDiagonal(x, y, [](const auto &op, const auto &x, auto &y)
+                               { op.Mult(x, y); });
+  }
+
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    ApplyWithEssentialDiagonal(x, y, [](const auto &op, const auto &x, auto &y)
+                               { op.MultTranspose(x, y); });
+  }
+
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    ApplyWithEssentialDiagonal(x, y, [](const auto &op, const auto &x, auto &y)
+                               { op.MultHermitianTranspose(x, y); });
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a) const override
+  {
+    Mult(x, z);
+    y.Add(a, z);
+  }
+
+  void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                        const std::complex<double> a) const override
+  {
+    MultTranspose(x, z);
+    y.Add(a, z);
+  }
+
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a) const override
+  {
+    MultHermitianTranspose(x, z);
+    y.Add(a, z);
+  }
+};
+
+}  // namespace
+
+std::unique_ptr<Operator> ApplyEssentialDiagonal(std::unique_ptr<Operator> &&op,
+                                                 const Operator &reference)
+{
+  MFEM_VERIFY(op, "Cannot apply essential diagonal policy to an empty operator!");
+  MFEM_VERIFY(op->Height() == reference.Height() && op->Width() == reference.Width(),
+              "Mismatched dimensions for essential diagonal operator!");
+  const auto *par = dynamic_cast<const ParOperator *>(&reference);
+  if (!par || !par->GetEssentialTrueDofs())
+  {
+    return std::move(op);
+  }
+  return std::make_unique<EssentialDiagonalOperator>(std::move(op), reference);
+}
+
+std::unique_ptr<ComplexOperator>
+ApplyEssentialDiagonal(std::unique_ptr<ComplexOperator> &&op,
+                       const ComplexOperator &reference)
+{
+  MFEM_VERIFY(op, "Cannot apply essential diagonal policy to an empty operator!");
+  MFEM_VERIFY(op->Height() == reference.Height() && op->Width() == reference.Width(),
+              "Mismatched dimensions for essential diagonal operator!");
+  const auto *par = dynamic_cast<const ComplexParOperator *>(&reference);
+  if (!par || !par->GetEssentialTrueDofs())
+  {
+    return std::move(op);
+  }
+  return std::make_unique<EssentialDiagonalComplexOperator>(std::move(op), reference);
+}
+
+std::unique_ptr<ComplexOperator> BuildComplexSumOperator(
+    std::initializer_list<std::pair<std::complex<double>, const ComplexOperator *>> terms,
+    const ComplexOperator &reference)
+{
+  return ApplyEssentialDiagonal(BuildComplexSumOperator(terms), reference);
+}
+
 // Combine a collection of ParOperator into a weighted summation. If set_essential is true,
 // extract the essential dofs from the operator array, and apply to the summed operator.
 template <std::size_t N>
@@ -969,6 +1172,10 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
   std::array<const ParOperType *, N> par_ops;
   std::transform(ops_in, ops_in + N, par_ops.begin(),
                  [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
+  MFEM_VERIFY(std::equal(ops_in, ops_in + N, par_ops.begin(),
+                         [](const OperType *op, const ParOperType *par_op)
+                         { return op == nullptr || par_op != nullptr; }),
+              "BuildParSumOperator requires parallel operator inputs!");
 
   return BuildParSumOperator(palace::to_array<ScalarType>(std::move(coeff_in)),
                              std::move(par_ops), set_essential);

@@ -39,8 +39,9 @@ internal::BuildResponseCorrectedMass(const ComplexOperator &mass, const Operator
 {
   MFEM_VERIFY(mass.Real(), "Response-corrected eigenmode mass requires a real part!");
   ResponseCorrectedMass corrected;
-  corrected.real = std::make_unique<SumOperator>(*mass.Real());
-  corrected.real->AddOperator(response);
+  auto corrected_real = std::make_unique<SumOperator>(*mass.Real());
+  corrected_real->AddOperator(response);
+  corrected.real = ApplyEssentialDiagonal(std::move(corrected_real), *mass.Real());
   corrected.op =
       std::make_unique<ComplexWrapperOperator>(corrected.real.get(), mass.Imag());
   return corrected;
@@ -494,7 +495,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
-  std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
+  std::unique_ptr<DivFreeSolver<ComplexVector>> divfree, corrected_divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
       !space_op.GetMaterialOp().HasLondonDepth())
@@ -508,7 +509,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetDivFreeProjector(*divfree);
     if (corrected_eigen)
     {
-      corrected_eigen->SetDivFreeProjector(*divfree);
+      Mpi::Print(" Configuring response-corrected divergence-free projection\n");
+      corrected_divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
+          space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
+          space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
+          iodata.solver.linear.divfree_max_it, divfree_verbose, response_correction);
+      corrected_eigen->SetDivFreeProjector(*corrected_divfree);
     }
   }
 
@@ -536,6 +542,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print(" Using random starting vector\n");
       space_op.GetRandomInitialVector(v0);
     }
+    ComplexVector corrected_v0;
+    if (corrected_divfree)
+    {
+      corrected_v0 = v0;
+      corrected_divfree->Mult(corrected_v0);
+    }
     if (divfree)
     {
       divfree->Mult(v0);
@@ -543,7 +555,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetInitialSpace(v0);  // Copies the vector
     if (corrected_eigen)
     {
-      corrected_eigen->SetInitialSpace(v0);
+      corrected_eigen->SetInitialSpace(corrected_divfree ? corrected_v0 : v0);
     }
 
     // Debug
@@ -589,12 +601,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
-  std::unique_ptr<SumComplexOperator> corrected_A;
+  std::unique_ptr<ComplexOperator> corrected_A;
   std::unique_ptr<ComplexKspSolver> corrected_ksp;
   if (corrected_eigen)
   {
-    corrected_A = std::make_unique<SumComplexOperator>(*A);
-    corrected_A->AddOperator(*response_mass, -target * target + 0.0i);
+    corrected_A = BuildComplexSumOperator(
+        {{1.0 + 0.0i, A.get()}, {-target * target + 0.0i, response_mass.get()}}, *K);
     corrected_ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                        &space_op.GetH1Spaces());
     corrected_ksp->SetOperators(*corrected_A, *P);

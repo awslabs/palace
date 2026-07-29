@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <vector>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 
@@ -130,6 +131,36 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
     double constexpr tol = 1e-12;
     CHECK(x1.Real().Max() < tol);
     CHECK(x1.Imag().Max() < tol);
+  }
+
+  SECTION("Essential diagonal wrapper")
+  {
+    BilinearForm ar(nd_fes), ai(nd_fes);
+    ar.AddDomainIntegrator<VectorFEMassIntegrator>(df);
+    ai.AddDomainIntegrator<CurlCurlIntegrator>(f);
+
+    constexpr bool skip_zeros = false;
+    ComplexParOperator A(ar.Assemble(skip_zeros), ai.Assemble(skip_zeros), nd_fes);
+    mfem::Array<int> essential_tdofs(1);
+    essential_tdofs[0] = 0;
+    A.SetEssentialTrueDofs(essential_tdofs, Operator::DiagonalPolicy::DIAG_ONE);
+
+    auto real_sum = std::make_unique<SumOperator>(*A.Real(), *A.Real());
+    auto corrected_real = ApplyEssentialDiagonal(std::move(real_sum), *A.Real());
+    ComplexWrapperOperator corrected(corrected_real.get(), A.Imag());
+
+    ComplexVector x(A.Width()), y(A.Height());
+    x.Real() = 1.5;
+    x.Imag() = 0.6;
+    corrected.Mult(x, y);
+    CHECK(y.Real()[0] == Catch::Approx(x.Real()[0]));
+    CHECK(y.Imag()[0] == Catch::Approx(x.Imag()[0]));
+
+    Vector yr(A.Height()), yi(A.Height());
+    corrected.Real()->Mult(x.Real(), yr);
+    corrected.Imag()->Mult(x.Real(), yi);
+    CHECK(yr[0] == Catch::Approx(x.Real()[0]));
+    CHECK(yi[0] == Catch::Approx(0.0));
   }
 }
 

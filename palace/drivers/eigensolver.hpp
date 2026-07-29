@@ -25,8 +25,8 @@ namespace internal
 
 struct ResponseCorrectedMass
 {
-  std::unique_ptr<SumOperator> real;
-  std::unique_ptr<ComplexWrapperOperator> op;
+  std::unique_ptr<Operator> real;
+  std::unique_ptr<ComplexOperator> op;
 };
 
 struct EigenvalueTarget

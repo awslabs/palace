@@ -221,6 +221,25 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
+// Apply the essential-dof diagonal policy from a parallel reference operator to y.
+void SetEssentialDiagonal(const Operator &reference, const Vector &x, Vector &y);
+void SetEssentialDiagonal(const ComplexOperator &reference, const ComplexVector &x,
+                          ComplexVector &y);
+
+// Wrap an arbitrary complex operator so its essential rows follow the policy of a
+// parallel reference operator.
+std::unique_ptr<Operator> ApplyEssentialDiagonal(std::unique_ptr<Operator> &&op,
+                                                 const Operator &reference);
+std::unique_ptr<ComplexOperator>
+ApplyEssentialDiagonal(std::unique_ptr<ComplexOperator> &&op,
+                       const ComplexOperator &reference);
+
+// Construct a non-owning sum of arbitrary complex operators whose essential rows follow
+// the policy of a parallel reference operator.
+std::unique_ptr<ComplexOperator> BuildComplexSumOperator(
+    std::initializer_list<std::pair<std::complex<double>, const ComplexOperator *>> terms,
+    const ComplexOperator &reference);
+
 // Combine a collection of ParOperator into a weighted summation. If set_essential is true,
 // extract the essential dofs from the operator array, and apply to the summed operator.
 // Requires explicit instantiation.

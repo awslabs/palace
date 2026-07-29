@@ -5,6 +5,7 @@
 #define PALACE_LINALG_OPERATOR_HPP
 
 #include <complex>
+#include <initializer_list>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -260,6 +261,11 @@ public:
 
 using SumOperator = BaseSumOperator<Operator>;
 using SumComplexOperator = BaseSumOperator<ComplexOperator>;
+
+// Construct a non-owning sum of arbitrary complex operators. The caller must ensure the
+// referenced operators outlive the returned sum.
+std::unique_ptr<ComplexOperator> BuildComplexSumOperator(
+    std::initializer_list<std::pair<std::complex<double>, const ComplexOperator *>> terms);
 
 // Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
 // Hermitian transpose operation is (AB)ᴴ = BᴴAᴴ.
