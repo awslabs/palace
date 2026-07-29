@@ -1890,6 +1890,34 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_THROWS(IoData(config, false));
   }
 
+  SECTION("Singular iterative eigenmode defaults preserve the physical residual")
+  {
+    auto config = MakeConfig();
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
+    config["Solver"]["Linear"] = {
+        {"Type", "AMS"}, {"KSPType", "GMRES"}, {"MGMaxLevels", 2}, {"PCMatReal", true}};
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.pc_mat_shifted == 1);
+    CHECK(iodata.solver.linear.pc_side == PreconditionerSide::RIGHT);
+
+    auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Solver"]["Linear"]["PCMatShifted"].get<bool>());
+    CHECK(resolved["Solver"]["Linear"]["PCSide"].get<std::string>() == "Right");
+
+    config["Solver"]["Linear"]["KSPType"] = "FGMRES";
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Solver"]["Linear"]["PCSide"] = "Left";
+    CHECK_THROWS(IoData(config, false));
+
+    config["Solver"]["Linear"]["PCSide"] = "Right";
+    config["Solver"]["Linear"]["PCMatShifted"] = false;
+    IoData unshifted(config, false);
+    CHECK(unshifted.solver.linear.pc_mat_shifted == 0);
+    CHECK(unshifted.solver.linear.pc_side == PreconditionerSide::RIGHT);
+  }
+
   SECTION("Restricted full-wave features are rejected")
   {
     auto config = MakeConfig();

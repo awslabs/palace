@@ -112,14 +112,11 @@ int ExactDuffyOrder(SingularFeature feature, int singular_order, double nu,
   // Duffy Jacobian gives q*(2*s + 2*nu + 3) - 1 at a node and
   // q*(2*s + 2*nu + 7) - 1 at an edge. Angular degrees are lower. MFEM's
   // segment rule parameter is its polynomial exactness order.
-  const double degree =
-      radial_power *
-          (2 * singular_order + 2 * nu +
-           (feature == SingularFeature::NODE ? 3.0 : 7.0)) -
-      1.0;
+  const double degree = radial_power * (2 * singular_order + 2 * nu +
+                                        (feature == SingularFeature::NODE ? 3.0 : 7.0)) -
+                        1.0;
   REQUIRE(std::abs(degree - std::round(degree)) <=
-          16.0 * std::numeric_limits<double>::epsilon() *
-              std::max(1.0, std::abs(degree)));
+          16.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::abs(degree)));
   return static_cast<int>(std::lround(degree));
 }
 
@@ -152,8 +149,7 @@ void CertifyHigherOrderTensors(SingularFeature feature, int singular_order)
   for (const double nu : {0.5, 2.0 / 3.0})
   {
     const double radial_power = CertificationRadialPower(nu);
-    const int reference_order =
-        ExactDuffyOrder(feature, singular_order, nu, radial_power);
+    const int reference_order = ExactDuffyOrder(feature, singular_order, nu, radial_power);
     const int comparison_order = reference_order - OrderSeparation;
     const int audit_order = reference_order + AuditOrderIncrement;
     minimum_comparison_order = std::min(minimum_comparison_order, comparison_order);

@@ -30,8 +30,9 @@ the input file with a `_resolved.json` suffix (for example, `cavity.json` produc
 concrete value *Palace* actually used, so the file is a complete, self-contained record of
 the run. It passes schema validation and can be supplied directly to *Palace* to reproduce
 the same simulation deterministically. A small number of options whose default is delegated
-to an external library (for example the sparse direct solver `"ColumnOrdering"` and the GMRES
-`"PCSide"`) remain `"Default"`, since *Palace* does not select a concrete value for them. The
+to an external library (for example the sparse direct solver `"ColumnOrdering"` and, outside
+the singular eigenmode iterative-solver path, GMRES `"PCSide"`) remain `"Default"`, since
+*Palace* does not select a concrete value for them. The
 same resolved configuration can be printed without running a simulation by passing
 `--dry-run`.
 

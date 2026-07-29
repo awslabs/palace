@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "drivers/singularsolver.hpp"
 #include "fem/singularfeatures.hpp"
 #include "linalg/vector.hpp"
 #include "utils/configfile.hpp"
@@ -45,6 +46,7 @@ private:
   mutable fem::singular::TriangleFeatureTopology local_triangle_singular_features;
   mutable std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
   mutable std::vector<fem::singular::GlobalVertexId> source_element_ids;
+  mutable NonconformingVertexIdentity vertex_identity;
 
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,

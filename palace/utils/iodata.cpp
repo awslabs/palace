@@ -585,6 +585,25 @@ void IoData::CheckConfiguration()
       solver.linear.krylov_solver = KrylovSolver::GMRES;
     }
   }
+  const bool singular_iterative_eigenmode =
+      solver.singular_elements.Enabled() && problem.type == ProblemType::EIGENMODE &&
+      (solver.linear.type == LinearSolver::AMS ||
+       solver.linear.type == LinearSolver::BOOMER_AMG ||
+       solver.linear.type == LinearSolver::JACOBI);
+  const bool singular_eigenmode_gmres =
+      singular_iterative_eigenmode && (solver.linear.krylov_solver == KrylovSolver::GMRES ||
+                                       solver.linear.krylov_solver == KrylovSolver::FGMRES);
+  if (singular_eigenmode_gmres && solver.linear.pc_side == PreconditionerSide::DEFAULT)
+  {
+    // Shift-and-invert requires convergence in the physical residual. Left
+    // preconditioning can make the preconditioned residual small while an
+    // approximate iterative coarse correction remains inaccurate.
+    solver.linear.pc_side = PreconditionerSide::RIGHT;
+  }
+  MFEM_VERIFY(!singular_eigenmode_gmres ||
+                  solver.linear.pc_side != PreconditionerSide::LEFT,
+              "Singular eigenmode shift-and-invert with an iterative coarse solver "
+              "requires right-preconditioned GMRES or FGMRES!");
   if (solver.linear.max_size < 0)
   {
     solver.linear.max_size = solver.linear.max_it;
@@ -640,9 +659,11 @@ void IoData::CheckConfiguration()
       "Solver.Linear.ComplexCoarseSolve = true!");
   if (solver.linear.pc_mat_shifted < 0)
   {
-    if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
+    if ((problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS) ||
+        singular_iterative_eigenmode)
     {
-      // Default true for driven simulations using AMS.
+      // Iterative H(curl) coarse corrections require a positive shifted
+      // approximation for frequency-domain and shift-and-invert systems.
       solver.linear.pc_mat_shifted = 1;
     }
     else if (problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels > 1)

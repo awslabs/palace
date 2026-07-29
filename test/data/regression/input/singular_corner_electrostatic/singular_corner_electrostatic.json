@@ -2,7 +2,7 @@
   "Problem": {
     "Type": "Electrostatic",
     "Verbose": 1,
-    "Output": "postpro"
+    "Output": "postpro/baseline"
   },
   "Model": {
     "Mesh": "singular_corner_electrostatic.mesh",

@@ -1235,12 +1235,30 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
       CAPTURE(standard, enrichment_index,
               coupling.h1_mass_standard_enrichment(standard, enrichment_index), direct,
               coupling.h1_mass_estimated_absolute_error(standard, enrichment_index));
-      CHECK(std::abs(coupling.h1_mass_standard_enrichment(standard, enrichment_index) -
+  CHECK(std::abs(coupling.h1_mass_standard_enrichment(standard, enrichment_index) -
                      direct) <=
             coupling.h1_mass_estimated_absolute_error(standard, enrichment_index) +
                 2.0e-13);
     }
   }
+
+  fem::singular::TriangleDofTopology topology;
+  topology.h1_dofs.resize(2);
+  topology.nd_dofs.resize(3);
+  topology.nd_dofs[0] = topology.h1_dofs[0];
+  topology.nd_dofs[1] = topology.h1_dofs[1];
+  topology.h1_to_nd = {0, 1};
+  topology.elements = {element_dofs};
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> materials{
+      {1.7, 0.8}};
+  const auto full_sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+      topology, h1_space, nd_space, materials, options);
+  const auto h1_sparse = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+      topology, h1_space, materials, options);
+  CheckClose(DenseMatrix(*h1_sparse.diffusion.enrichment_enrichment),
+             DenseMatrix(*full_sparse.h1_diffusion.enrichment_enrichment));
+  CheckClose(DenseMatrix(*h1_sparse.diffusion.standard_enrichment),
+             DenseMatrix(*full_sparse.h1_diffusion.standard_enrichment));
 
   auto missing_gradient = element_dofs;
   missing_gradient.nd.erase(missing_gradient.nd.begin());
@@ -2024,8 +2042,8 @@ TEST_CASE("Numerically affine quadratic simplices retain singular reference asse
 TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
           "[singularelements][singularassembly][curved][Serial]")
 {
-  constexpr double h = 1.0e-8;
-  auto triangle = AffineTriangleMesh({0.5, 0.25}, {0.5 + h, 0.25}, {0.5, 0.25 + h});
+  constexpr double h = 4.0e-8;
+  auto triangle = AffineTriangleMesh({0.5, 0.25}, {h, 0.0}, {0.0, h});
   SetQuadraticGeometry(triangle, false);
   auto &triangle_transformation = *triangle.GetElementTransformation(0);
   const double triangle_variation =
@@ -2039,8 +2057,74 @@ TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
   CHECK(triangle_allowance > 0.0);
   CHECK(fem::singular::IsAffineElementTransformation(triangle_transformation));
 
-  auto tetrahedron = AffineTetrahedronMesh({0.5, 0.25, 0.125}, {0.5 + h, 0.25, 0.125},
-                                           {0.5, 0.25 + h, 0.125}, {0.5, 0.25, 0.125 + h});
+  auto reference_triangle =
+      AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
+  SetQuadraticGeometry(reference_triangle, false);
+  auto &reference_triangle_transformation =
+      *reference_triangle.GetElementTransformation(0);
+  const fem::singular::TriangleBasis triangle_gradient{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, 2.0 / 3.0};
+  const fem::singular::TriangleBasis triangle_rotation{
+      fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL, {0, 1, 2}, 1, 2.0 / 3.0};
+  fem::singular::TriangleElementDofMap triangle_dofs;
+  triangle_dofs.h1 = {{0, triangle_gradient}};
+  triangle_dofs.nd = {{0, triangle_gradient}, {1, triangle_rotation}};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-4, 2.0e-6, 10};
+  const auto reference_enrichment =
+      fem::singular::AssembleTriangleElementEnrichmentMatrices(
+          triangle_dofs, reference_triangle_transformation, options);
+  const auto tiny_enrichment = fem::singular::AssembleTriangleElementEnrichmentMatrices(
+      triangle_dofs, triangle_transformation, options);
+
+  mfem::H1_FECollection h1_collection(3, 2);
+  mfem::ND_FECollection nd_collection(3, 2);
+  mfem::FiniteElementSpace reference_h1_space(&reference_triangle, &h1_collection);
+  mfem::FiniteElementSpace reference_nd_space(&reference_triangle, &nd_collection);
+  mfem::FiniteElementSpace tiny_h1_space(&triangle, &h1_collection);
+  mfem::FiniteElementSpace tiny_nd_space(&triangle, &nd_collection);
+  const auto reference_coupling =
+      fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+          triangle_dofs, *reference_h1_space.GetFE(0), *reference_nd_space.GetFE(0),
+          reference_triangle_transformation, options);
+  const auto tiny_coupling =
+      fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+          triangle_dofs, *tiny_h1_space.GetFE(0), *tiny_nd_space.GetFE(0),
+          triangle_transformation, options);
+  const auto check_scaled = [](const mfem::DenseMatrix &actual,
+                               const mfem::DenseMatrix &reference, double scale)
+  {
+    REQUIRE(actual.Height() == reference.Height());
+    REQUIRE(actual.Width() == reference.Width());
+    for (int i = 0; i < actual.Height(); i++)
+    {
+      for (int j = 0; j < actual.Width(); j++)
+      {
+        const double normalized_actual = actual(i, j) / scale;
+        const double expected = reference(i, j);
+        CAPTURE(i, j, normalized_actual, expected);
+        CHECK(std::abs(normalized_actual - expected) <=
+              2.0e-7 *
+                  std::max({1.0, std::abs(normalized_actual), std::abs(expected)}));
+      }
+    }
+  };
+  check_scaled(tiny_enrichment.h1_diffusion, reference_enrichment.h1_diffusion, 1.0);
+  check_scaled(tiny_enrichment.h1_mass, reference_enrichment.h1_mass, h * h);
+  check_scaled(tiny_enrichment.nd_mass, reference_enrichment.nd_mass, 1.0);
+  check_scaled(tiny_enrichment.nd_curl_curl, reference_enrichment.nd_curl_curl,
+               1.0 / (h * h));
+  check_scaled(tiny_coupling.h1_standard_enrichment,
+               reference_coupling.h1_standard_enrichment, 1.0);
+  check_scaled(tiny_coupling.h1_mass_standard_enrichment,
+               reference_coupling.h1_mass_standard_enrichment, h * h);
+  check_scaled(tiny_coupling.nd_mass_standard_enrichment,
+               reference_coupling.nd_mass_standard_enrichment, 1.0);
+  check_scaled(tiny_coupling.nd_curl_curl_standard_enrichment,
+               reference_coupling.nd_curl_curl_standard_enrichment, 1.0 / (h * h));
+
+  auto tetrahedron =
+      AffineTetrahedronMesh({0.5, 0.25, 0.125}, {h, 0.0, 0.0}, {0.0, h, 0.0},
+                            {0.0, 0.0, h});
   SetQuadraticGeometry(tetrahedron, false);
   auto &tetrahedron_transformation = *tetrahedron.GetElementTransformation(0);
   const double tetrahedron_variation =

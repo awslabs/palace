@@ -9,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -72,6 +73,12 @@ struct FaceCutoffRay
 {
   double radius;
   int active_edge;
+};
+
+struct PhysicalSingularTip
+{
+  std::array<double, 2> position{};
+  double nu = 1.0;
 };
 
 std::array<double, 3> GetTriangleBarycentricCoordinates(const mfem::IntegrationPoint &point)
@@ -149,51 +156,287 @@ int GetTetrahedronVertex(const mfem::IntegrationPoint &point)
   return vertex;
 }
 
-double GetBoundaryCutoffCoordinate(mfem::ElementTransformation &transformation,
-                                   int endpoint, double cutoff)
+mfem::DenseMatrix
+GetBoundaryBernsteinControlPoints(mfem::ElementTransformation &transformation)
 {
-  if (!(cutoff > 0.0) || (endpoint != 0 && endpoint != 1))
+  if (transformation.GetGeometryType() != mfem::Geometry::SEGMENT ||
+      transformation.GetDimension() != 1 || transformation.GetSpaceDim() != 2)
   {
-    throw std::invalid_argument("Singular surface cutoff mapping received invalid input!");
-  }
-  mfem::IntegrationPoint endpoint_point;
-  endpoint_point.x = static_cast<double>(endpoint);
-  mfem::Vector endpoint_position(transformation.GetSpaceDim());
-  transformation.Transform(endpoint_point, endpoint_position);
-  const auto distance = [&](double coordinate)
-  {
-    mfem::IntegrationPoint point;
-    point.x = coordinate;
-    mfem::Vector position(transformation.GetSpaceDim());
-    transformation.Transform(point, position);
-    position -= endpoint_position;
-    return position.Norml2();
-  };
-  const double segment_length = distance(static_cast<double>(1 - endpoint));
-  if (!std::isfinite(segment_length) || !(segment_length > cutoff))
-  {
-    throw std::domain_error(
-        "Singular surface EdgeCutoff must be smaller than every incident boundary "
-        "segment!");
+    throw std::invalid_argument(
+        "Singular surface cutoff clipping requires a physical planar segment!");
   }
 
-  double lower = 0.0;
-  double upper = 1.0;
-  for (int iteration = 0; iteration < 64; iteration++)
+  const int map_order = std::max(1, transformation.Order());
+  const int coefficient_count = map_order + 1;
+  mfem::DenseMatrix bernstein_values(coefficient_count);
+  mfem::DenseMatrix physical_values(coefficient_count, 2);
+  mfem::Vector bernstein_shape(coefficient_count);
+  mfem::Vector physical_point(2);
+  mfem::IntegrationPoint point;
+  double coordinate_scale = 1.0;
+  for (int q = 0; q < coefficient_count; q++)
   {
-    const double midpoint = 0.5 * (lower + upper);
-    const double coordinate = endpoint == 0 ? midpoint : 1.0 - midpoint;
-    if (distance(coordinate) < cutoff)
+    point.x = static_cast<double>(q) / map_order;
+    mfem::Poly_1D::CalcBernstein(map_order, point.x, bernstein_shape);
+    bernstein_values.SetRow(q, bernstein_shape);
+    transformation.Transform(point, physical_point);
+    for (int d = 0; d < 2; d++)
     {
-      lower = midpoint;
+      if (!std::isfinite(physical_point[d]))
+      {
+        throw std::domain_error(
+            "Singular surface cutoff clipping found a nonfinite boundary map!");
+      }
+      physical_values(q, d) = physical_point[d];
+      coordinate_scale = std::max(coordinate_scale, std::abs(physical_point[d]));
+    }
+  }
+
+  mfem::DenseMatrix control_points;
+  mfem::DenseMatrixInverse(bernstein_values).Mult(physical_values, control_points);
+  if (control_points.Height() != coefficient_count || control_points.Width() != 2)
+  {
+    throw std::runtime_error(
+        "Singular surface cutoff clipping produced invalid Bernstein dimensions!");
+  }
+
+  const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * map_order + 2);
+  mfem::Vector reconstructed(2);
+  for (int q = -2; q < rule.GetNPoints(); q++)
+  {
+    point.x = q < 0 ? (q == -2 ? 0.0 : 1.0) : rule.IntPoint(q).x;
+    transformation.Transform(point, physical_point);
+    mfem::Poly_1D::CalcBernstein(map_order, point.x, bernstein_shape);
+    reconstructed = 0.0;
+    for (int i = 0; i < coefficient_count; i++)
+    {
+      for (int d = 0; d < 2; d++)
+      {
+        reconstructed[d] += bernstein_shape[i] * control_points(i, d);
+      }
+    }
+    reconstructed -= physical_point;
+    const double tolerance =
+        1.0e-11 * std::max(1.0, physical_point.Norml2()) +
+        4096.0 * std::numeric_limits<double>::epsilon() * coordinate_scale;
+    if (!std::isfinite(reconstructed.Norml2()) ||
+        reconstructed.Norml2() > tolerance)
+    {
+      throw std::domain_error(
+          "Singular surface cutoff clipping could not certify the high-order "
+          "boundary map!");
+    }
+  }
+  return control_points;
+}
+
+long double BinomialCoefficient(int n, int k)
+{
+  if (n < 0 || k < 0 || k > n)
+  {
+    throw std::invalid_argument(
+        "Singular surface Bernstein product received invalid polynomial degrees!");
+  }
+  k = std::min(k, n - k);
+  long double value = 1.0L;
+  for (int i = 1; i <= k; i++)
+  {
+    value *= static_cast<long double>(n - k + i) / i;
+  }
+  return value;
+}
+
+std::vector<double>
+BuildSquaredDistanceBernstein(const mfem::DenseMatrix &control_points,
+                              const PhysicalSingularTip &tip, double cutoff)
+{
+  const int order = control_points.Height() - 1;
+  if (order < 1 || control_points.Width() != 2 || !(cutoff > 0.0))
+  {
+    throw std::invalid_argument(
+        "Singular surface cutoff distance received invalid input!");
+  }
+
+  std::vector<double> coefficients(2 * order + 1, -cutoff * cutoff);
+  for (int d = 0; d < 2; d++)
+  {
+    for (int k = 0; k <= 2 * order; k++)
+    {
+      long double product = 0.0L;
+      const int begin = std::max(0, k - order);
+      const int end = std::min(order, k);
+      for (int i = begin; i <= end; i++)
+      {
+        const int j = k - i;
+        product += BinomialCoefficient(order, i) * BinomialCoefficient(order, j) *
+                   (control_points(i, d) - tip.position[d]) *
+                   (control_points(j, d) - tip.position[d]);
+      }
+      coefficients[k] +=
+          static_cast<double>(product / BinomialCoefficient(2 * order, k));
+    }
+  }
+  if (!std::all_of(coefficients.begin(), coefficients.end(),
+                   [](double value) { return std::isfinite(value); }))
+  {
+    throw std::domain_error(
+        "Singular surface cutoff distance produced nonfinite Bernstein coefficients!");
+  }
+  return coefficients;
+}
+
+void SplitBernsteinCoefficients(const std::vector<double> &coefficients,
+                                std::vector<double> &left, std::vector<double> &right)
+{
+  if (coefficients.size() < 2)
+  {
+    throw std::invalid_argument(
+        "Singular surface cutoff subdivision requires a nonconstant polynomial!");
+  }
+  const int order = static_cast<int>(coefficients.size()) - 1;
+  left.resize(coefficients.size());
+  right.resize(coefficients.size());
+  auto work = coefficients;
+  left[0] = work[0];
+  right[order] = work[order];
+  for (int level = 1; level <= order; level++)
+  {
+    for (int i = 0; i <= order - level; i++)
+    {
+      work[i] = 0.5 * (work[i] + work[i + 1]);
+    }
+    left[level] = work[0];
+    right[order - level] = work[order - level];
+  }
+}
+
+void AppendCutoffIntervals(const std::vector<double> &distance_squared, double lower,
+                           double upper, double tolerance, int depth,
+                           std::vector<std::pair<double, double>> &excluded)
+{
+  const auto [minimum, maximum] =
+      std::minmax_element(distance_squared.begin(), distance_squared.end());
+  if (*minimum > tolerance)
+  {
+    return;
+  }
+  if (*maximum < -tolerance)
+  {
+    excluded.emplace_back(lower, upper);
+    return;
+  }
+  if (*minimum >= -tolerance && *maximum <= tolerance)
+  {
+    // The complete subinterval is inside the arithmetic uncertainty band
+    // around the cutoff circle. Excluding it is conservative and prevents a
+    // nearly tangent root from causing exponential subdivision.
+    excluded.emplace_back(lower, upper);
+    return;
+  }
+
+  constexpr int maximum_depth = 42;
+  if (depth == maximum_depth)
+  {
+    // Conservatively remove the final roundoff-sized root enclosure. This
+    // guarantees that no retained quadrature point lies inside the cutoff.
+    excluded.emplace_back(lower, upper);
+    return;
+  }
+
+  std::vector<double> left, right;
+  SplitBernsteinCoefficients(distance_squared, left, right);
+  const double midpoint = 0.5 * (lower + upper);
+  AppendCutoffIntervals(left, lower, midpoint, tolerance, depth + 1, excluded);
+  AppendCutoffIntervals(right, midpoint, upper, tolerance, depth + 1, excluded);
+}
+
+std::vector<std::pair<double, double>>
+GetBoundaryRetainedIntervals(mfem::ElementTransformation &transformation,
+                             const std::vector<PhysicalSingularTip> &tips, double cutoff)
+{
+  if (!(cutoff > 0.0))
+  {
+    throw std::invalid_argument(
+        "Singular surface cutoff clipping requires a positive physical cutoff!");
+  }
+  if (tips.empty())
+  {
+    return {{0.0, 1.0}};
+  }
+
+  const auto control_points = GetBoundaryBernsteinControlPoints(transformation);
+  std::vector<std::pair<double, double>> excluded;
+  for (const auto &tip : tips)
+  {
+    const auto distance_squared =
+        BuildSquaredDistanceBernstein(control_points, tip, cutoff);
+    double scale = cutoff * cutoff;
+    double coordinate_scale = cutoff;
+    double distance_scale = cutoff;
+    for (int i = 0; i < control_points.Height(); i++)
+    {
+      coordinate_scale =
+          std::max({coordinate_scale, std::abs(control_points(i, 0)),
+                    std::abs(control_points(i, 1)), std::abs(tip.position[0]),
+                    std::abs(tip.position[1])});
+      distance_scale =
+          std::max(distance_scale,
+                   std::hypot(control_points(i, 0) - tip.position[0],
+                              control_points(i, 1) - tip.position[1]));
+    }
+    for (double coefficient : distance_squared)
+    {
+      scale = std::max(scale, std::abs(coefficient));
+    }
+    const double tolerance =
+        8192.0 * std::numeric_limits<double>::epsilon() *
+        std::max({scale, coordinate_scale * distance_scale,
+                  std::numeric_limits<double>::min()});
+    if (std::all_of(distance_squared.begin(), distance_squared.end(),
+                    [=](double value) { return std::abs(value) <= tolerance; }))
+    {
+      throw std::domain_error(
+          "A curved boundary segment follows a singular EdgeCutoff circle; the "
+          "retained interval cannot be certified!");
+    }
+    AppendCutoffIntervals(distance_squared, 0.0, 1.0, tolerance, 0, excluded);
+  }
+  if (excluded.empty())
+  {
+    return {{0.0, 1.0}};
+  }
+
+  std::sort(excluded.begin(), excluded.end());
+  std::vector<std::pair<double, double>> merged;
+  constexpr double coordinate_tolerance =
+      64.0 * std::numeric_limits<double>::epsilon();
+  for (const auto &[lower, upper] : excluded)
+  {
+    if (merged.empty() || lower > merged.back().second + coordinate_tolerance)
+    {
+      merged.emplace_back(std::max(0.0, lower), std::min(1.0, upper));
     }
     else
     {
-      upper = midpoint;
+      merged.back().second = std::max(merged.back().second, std::min(1.0, upper));
     }
   }
-  const double radial_coordinate = 0.5 * (lower + upper);
-  return endpoint == 0 ? radial_coordinate : 1.0 - radial_coordinate;
+
+  std::vector<std::pair<double, double>> retained;
+  double coordinate = 0.0;
+  for (const auto &[lower, upper] : merged)
+  {
+    if (lower > coordinate + coordinate_tolerance)
+    {
+      retained.emplace_back(coordinate, lower);
+    }
+    coordinate = std::max(coordinate, upper);
+  }
+  if (coordinate < 1.0 - coordinate_tolerance)
+  {
+    retained.emplace_back(coordinate, 1.0);
+  }
+  return retained;
 }
 
 double GetFaceEdgeCutoffCoordinate(mfem::ElementTransformation &transformation,
@@ -891,6 +1134,125 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
   auto &mesh = *fespace.GetParMesh();
   mfem::FaceElementTransformations face;
   mfem::IsoparametricTransformation element1, element2;
+  const auto node_exponent = [&](int element, int node)
+  {
+    return real_evaluator
+               ? real_evaluator->GetElementNodeSingularExponent(element, node)
+               : real_gradient_evaluator->GetElementNodeSingularExponent(element, node);
+  };
+
+  // A physical cutoff belongs to a singular point, not to one mesh boundary
+  // segment. Gather the complete tip set so refinement and repartitioning can
+  // place arbitrarily many local segments inside one cutoff neighborhood.
+  std::vector<double> local_tip_data;
+  if (interface.edge_cutoff > 0.0)
+  {
+    for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+    {
+      const int attribute = mesh.GetBdrAttribute(boundary);
+      if (attribute <= 0 || attribute > interface.attribute_marker.Size() ||
+          !interface.attribute_marker[attribute - 1])
+      {
+        continue;
+      }
+      auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
+      if (!boundary_transformation ||
+          boundary_transformation->GetGeometryType() != mfem::Geometry::SEGMENT)
+      {
+        throw std::runtime_error(
+            "Triangular singular surface postprocessing requires segment boundaries!");
+      }
+      for (int endpoint = 0; endpoint < 2; endpoint++)
+      {
+        mfem::IntegrationPoint point;
+        point.x = static_cast<double>(endpoint);
+        BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+            boundary, mesh, face, element1, element2, &point);
+        const auto sides = GetSelectedSides(material, face, interface.type);
+        double exponent = 1.0;
+        for (const auto &side : sides)
+        {
+          const int node = FindTriangleVertex(side.point);
+          if (node >= 0)
+          {
+            exponent = std::min(exponent, node_exponent(side.element, node));
+          }
+        }
+        if (exponent < 1.0)
+        {
+          mfem::Vector position(2);
+          boundary_transformation->Transform(point, position);
+          if (!std::isfinite(position[0]) || !std::isfinite(position[1]) ||
+              !std::isfinite(exponent) || !(exponent > 0.0))
+          {
+            throw std::domain_error(
+                "Singular surface cutoff found invalid physical tip data!");
+          }
+          local_tip_data.insert(local_tip_data.end(),
+                                {position[0], position[1], exponent});
+        }
+      }
+    }
+  }
+
+  std::vector<int> tip_counts(Mpi::Size(mesh.GetComm()));
+  const int local_tip_count = static_cast<int>(local_tip_data.size());
+  Mpi::Allgather(1, &local_tip_count, tip_counts.data(), mesh.GetComm());
+  std::vector<int> tip_offsets(tip_counts.size());
+  std::partial_sum(tip_counts.begin(), tip_counts.end() - 1, tip_offsets.begin() + 1);
+  const int global_tip_count =
+      std::accumulate(tip_counts.begin(), tip_counts.end(), 0);
+  if (local_tip_count % 3 != 0 || global_tip_count % 3 != 0)
+  {
+    throw std::runtime_error(
+        "Singular surface cutoff MPI tip records have invalid dimensions!");
+  }
+  std::vector<double> global_tip_data(global_tip_count);
+  Mpi::Allgatherv(local_tip_count, local_tip_data.data(), global_tip_data.data(),
+                  tip_counts.data(), tip_offsets.data(), mesh.GetComm());
+
+  std::vector<PhysicalSingularTip> singular_tips;
+  double tip_coordinate_scale = std::max(1.0, interface.edge_cutoff);
+  for (int record = 0; record < global_tip_count; record += 3)
+  {
+    PhysicalSingularTip tip{{global_tip_data[record], global_tip_data[record + 1]},
+                            global_tip_data[record + 2]};
+    if (!std::isfinite(tip.position[0]) || !std::isfinite(tip.position[1]) ||
+        !std::isfinite(tip.nu) || !(tip.nu > 0.0) || !(tip.nu < 1.0))
+    {
+      throw std::domain_error(
+          "Singular surface cutoff received invalid gathered tip data!");
+    }
+    tip_coordinate_scale =
+        std::max({tip_coordinate_scale, std::abs(tip.position[0]),
+                  std::abs(tip.position[1])});
+    singular_tips.push_back(tip);
+  }
+  std::sort(singular_tips.begin(), singular_tips.end(),
+            [](const auto &left, const auto &right)
+            {
+              return left.position < right.position ||
+                     (left.position == right.position && left.nu < right.nu);
+            });
+  const double duplicate_tolerance =
+      4096.0 * std::numeric_limits<double>::epsilon() * tip_coordinate_scale;
+  std::vector<PhysicalSingularTip> unique_singular_tips;
+  for (const auto &tip : singular_tips)
+  {
+    if (!unique_singular_tips.empty())
+    {
+      const double dx = tip.position[0] - unique_singular_tips.back().position[0];
+      const double dy = tip.position[1] - unique_singular_tips.back().position[1];
+      if (std::hypot(dx, dy) <= duplicate_tolerance)
+      {
+        unique_singular_tips.back().nu =
+            std::min(unique_singular_tips.back().nu, tip.nu);
+        continue;
+      }
+    }
+    unique_singular_tips.push_back(tip);
+  }
+
   long double local_energy = 0.0L;
   for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
   {
@@ -943,11 +1305,7 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
         if (node >= 0)
         {
           endpoint_exponents[endpoint] = std::min(
-              endpoint_exponents[endpoint],
-              real_evaluator
-                  ? real_evaluator->GetElementNodeSingularExponent(side.element, node)
-                  : real_gradient_evaluator->GetElementNodeSingularExponent(side.element,
-                                                                            node));
+              endpoint_exponents[endpoint], node_exponent(side.element, node));
         }
       }
     }
@@ -976,23 +1334,11 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
       }
       endpoint_nodes.emplace(element, GetTriangleEdgeNodes(points));
     }
-    double lower = 0.0;
-    double upper = 1.0;
-    if (interface.edge_cutoff > 0.0 && endpoint_exponents[0] < 1.0)
-    {
-      lower =
-          GetBoundaryCutoffCoordinate(*boundary_transformation, 0, interface.edge_cutoff);
-    }
-    if (interface.edge_cutoff > 0.0 && endpoint_exponents[1] < 1.0)
-    {
-      upper =
-          GetBoundaryCutoffCoordinate(*boundary_transformation, 1, interface.edge_cutoff);
-    }
-    if (!(lower < upper))
-    {
-      throw std::domain_error(
-          "Singular surface EdgeCutoff neighborhoods overlap on a boundary segment!");
-    }
+    const auto retained_intervals =
+        interface.edge_cutoff > 0.0
+            ? GetBoundaryRetainedIntervals(*boundary_transformation,
+                                           unique_singular_tips, interface.edge_cutoff)
+            : std::vector<std::pair<double, double>>{{0.0, 1.0}};
 
     const auto coefficient_expansion = [&](double coordinate)
     {
@@ -1122,7 +1468,11 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
       }
       return density_terms;
     };
-    local_energy += IntegratePowerExpansion(coefficient_expansion, lower, upper, options);
+    for (const auto &[lower, upper] : retained_intervals)
+    {
+      local_energy +=
+          IntegratePowerExpansion(coefficient_expansion, lower, upper, options);
+    }
   }
   double energy = static_cast<double>(local_energy);
   Mpi::GlobalSum(1, &energy, mesh.GetComm());

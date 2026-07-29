@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -441,9 +442,16 @@ double TriangleDuffyPartitionWeight(const TriangleBarycentricPoint &lambda,
 
 template <typename Integrand>
 TriangleQuadratureResult IntegrateTriangleDuffy(int row_node, int column_node,
+                                                const char *quantity, int matrix_row,
+                                                int matrix_column,
                                                 const AdaptiveAssemblyOptions &options,
                                                 Integrand &&integrand)
 {
+  if (!quantity)
+  {
+    throw std::invalid_argument(
+        "Triangle Duffy quadrature requires a matrix quantity description!");
+  }
   const int initial_high_order =
       std::max(H1DuffyReferenceOrder, 2 * options.quadrature_order + 15);
   constexpr int order_increment = 8;
@@ -507,8 +515,10 @@ TriangleQuadratureResult IntegrateTriangleDuffy(int row_node, int column_node,
   throw std::runtime_error(fmt::format(
       "Triangular singular Duffy integral did not meet tolerance: value = {:.17g}, "
       "comparison = {:.17g}, estimated absolute error = {:.17g}, tolerance = "
-      "{:.17g}, orders = {}/{}, order refinements = {}!",
-      value, comparison, error, tolerance, high_order, comparison_order,
+      "{:.17g}, quantity = {}, row/column = {}/{}, singular nodes = {}/{}, partitioned "
+      "= {}, orders = {}/{}, order refinements = {}!",
+      value, comparison, error, tolerance, quantity, matrix_row, matrix_column, row_node,
+      column_node, partitioned, high_order, comparison_order,
       options.maximum_subdivisions));
 }
 
@@ -1163,6 +1173,68 @@ Vector2 DenseMatrixRow2(const mfem::DenseMatrix &matrix, int row)
   return {matrix(row, 0), matrix(row, 1)};
 }
 
+double NormalizeTriangleBarycentricGradients(
+    const TriangleBarycentricGradients &grad_lambda,
+    TriangleBarycentricGradients &normalized_grad_lambda)
+{
+  double scale = 1.0;
+  for (const auto &gradient : grad_lambda)
+  {
+    for (double value : gradient)
+    {
+      scale = std::max(scale, std::abs(value));
+    }
+  }
+  if (!std::isfinite(scale))
+  {
+    throw std::invalid_argument(
+        "Triangular singular affine normalization requires finite gradients!");
+  }
+  normalized_grad_lambda = grad_lambda;
+  for (auto &gradient : normalized_grad_lambda)
+  {
+    for (double &value : gradient)
+    {
+      value /= scale;
+    }
+  }
+  return scale;
+}
+
+double ScaleTriangleJacobianDeterminant(double jacobian_determinant,
+                                        double gradient_scale, int gradient_power)
+{
+  long double scaled = jacobian_determinant;
+  for (int i = 0; i < gradient_power; i++)
+  {
+    scaled *= gradient_scale;
+  }
+  const double result = static_cast<double>(scaled);
+  if (!std::isfinite(result) || !(result > 0.0))
+  {
+    throw std::overflow_error(
+        "Triangular singular affine geometry scaling produced an invalid prefactor!");
+  }
+  return result;
+}
+
+TriangleVectorBasisValue EvaluateAffineNormalizedTriangleBasis(
+    const TriangleBarycentricPoint &lambda,
+    const TriangleBarycentricGradients &normalized_grad_lambda,
+    double normalized_jacobian_determinant, const TriangleBasis &basis)
+{
+  const auto reference =
+      EvaluateTriangleBasis(lambda, ReferenceTriangleBarycentricGradients(), basis);
+  TriangleVectorBasisValue result{{0.0, 0.0},
+                                  reference.curl / normalized_jacobian_determinant};
+  for (int d = 0; d < 2; d++)
+  {
+    result.value[d] = reference.value[0] * normalized_grad_lambda[1][d] +
+                      reference.value[1] * normalized_grad_lambda[2][d];
+  }
+  return result;
+}
+
 void CalcAffinePhysVShape(const mfem::FiniteElement &finite_element,
                           const mfem::IntegrationPoint &point,
                           const mfem::DenseMatrix &inverse_jacobian,
@@ -1585,6 +1657,13 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
 {
   ValidateTriangleInputs(element_dofs, grad_lambda, jacobian_determinant, options);
   const auto h1_to_nd = BuildTriangleH1ToNDMap(element_dofs);
+  TriangleBarycentricGradients normalized_grad_lambda;
+  const double gradient_scale =
+      NormalizeTriangleBarycentricGradients(grad_lambda, normalized_grad_lambda);
+  const double mass_prefactor =
+      ScaleTriangleJacobianDeterminant(jacobian_determinant, gradient_scale, 2);
+  const double curl_curl_prefactor =
+      ScaleTriangleJacobianDeterminant(jacobian_determinant, gradient_scale, 4);
 
   ElementEnrichmentMatrices result;
   const int h1_size = static_cast<int>(element_dofs.h1.size());
@@ -1607,13 +1686,14 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
       const int row_node = TriangleSingularNode(row_basis);
       const int column_node = TriangleSingularNode(column_basis);
       const auto mass = IntegrateTriangleDuffy(
-          row_node, column_node, options,
+          row_node, column_node, "enrichment ND mass", row, column, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
-            const auto row_value = EvaluateTriangleBasis(lambda, grad_lambda, row_basis);
-            const auto column_value =
-                EvaluateTriangleBasis(lambda, grad_lambda, column_basis);
-            return jacobian_determinant * Dot(row_value.value, column_value.value);
+            const auto row_value = EvaluateAffineNormalizedTriangleBasis(
+                lambda, normalized_grad_lambda, mass_prefactor, row_basis);
+            const auto column_value = EvaluateAffineNormalizedTriangleBasis(
+                lambda, normalized_grad_lambda, mass_prefactor, column_basis);
+            return mass_prefactor * Dot(row_value.value, column_value.value);
           });
       result.nd_mass(row, column) = result.nd_mass(column, row) = mass.value;
       result.nd_mass_estimated_absolute_error(row, column) =
@@ -1631,13 +1711,14 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
         continue;
       }
       const auto curl_curl = IntegrateTriangleDuffy(
-          row_node, column_node, options,
+          row_node, column_node, "enrichment ND curl-curl", row, column, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
-            const auto row_value = EvaluateTriangleBasis(lambda, grad_lambda, row_basis);
-            const auto column_value =
-                EvaluateTriangleBasis(lambda, grad_lambda, column_basis);
-            return jacobian_determinant * row_value.curl * column_value.curl;
+            const auto row_value = EvaluateAffineNormalizedTriangleBasis(
+                lambda, normalized_grad_lambda, mass_prefactor, row_basis);
+            const auto column_value = EvaluateAffineNormalizedTriangleBasis(
+                lambda, normalized_grad_lambda, mass_prefactor, column_basis);
+            return curl_curl_prefactor * row_value.curl * column_value.curl;
           });
       result.nd_curl_curl(row, column) = result.nd_curl_curl(column, row) = curl_curl.value;
       result.nd_curl_curl_estimated_absolute_error(row, column) =
@@ -1663,7 +1744,8 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
       const auto &row_basis = element_dofs.h1[row].basis;
       const auto &column_basis = element_dofs.h1[column].basis;
       const auto mass = IntegrateTriangleDuffy(
-          TriangleSingularNode(row_basis), TriangleSingularNode(column_basis), options,
+          TriangleSingularNode(row_basis), TriangleSingularNode(column_basis),
+          "enrichment H1 mass", row, column, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             return jacobian_determinant *
@@ -1728,7 +1810,7 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
       const int row_node = TriangleSingularNode(row_basis);
       const int column_node = TriangleSingularNode(column_basis);
       const auto mass = IntegrateTriangleDuffy(
-          row_node, column_node, options,
+          row_node, column_node, "curved enrichment ND mass", row, column, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -1756,7 +1838,7 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
         continue;
       }
       const auto curl_curl = IntegrateTriangleDuffy(
-          row_node, column_node, options,
+          row_node, column_node, "curved enrichment ND curl-curl", row, column, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -1792,7 +1874,8 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
       const auto &row_basis = element_dofs.h1[row].basis;
       const auto &column_basis = element_dofs.h1[column].basis;
       const auto mass = IntegrateTriangleDuffy(
-          TriangleSingularNode(row_basis), TriangleSingularNode(column_basis), options,
+          TriangleSingularNode(row_basis), TriangleSingularNode(column_basis),
+          "curved enrichment H1 mass", row, column, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -2019,6 +2102,21 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
   ValidateTriangleInputs(element_dofs, center_grad_lambda, center_jacobian_determinant,
                          options);
   const auto h1_to_nd = BuildTriangleH1ToNDMap(element_dofs);
+  TriangleBarycentricGradients normalized_center_grad_lambda;
+  const double gradient_scale = affine_geometry
+                                    ? NormalizeTriangleBarycentricGradients(
+                                          center_grad_lambda, normalized_center_grad_lambda)
+                                    : 1.0;
+  if (!affine_geometry)
+  {
+    normalized_center_grad_lambda = center_grad_lambda;
+  }
+  const double affine_mass_prefactor =
+      ScaleTriangleJacobianDeterminant(center_jacobian_determinant, gradient_scale, 2);
+  const double affine_curl_curl_prefactor =
+      ScaleTriangleJacobianDeterminant(center_jacobian_determinant, gradient_scale, 4);
+  mfem::DenseMatrix normalized_center_inverse_jacobian(center_inverse_jacobian);
+  normalized_center_inverse_jacobian *= 1.0 / gradient_scale;
 
   ElementStandardEnrichmentMatrices result;
   const int standard_h1_size = h1_fe.GetDof();
@@ -2051,25 +2149,32 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
       const auto &basis = element_dofs.nd[enrichment].basis;
       const int singular_node = TriangleSingularNode(basis);
       const auto mass = IntegrateTriangleDuffy(
-          singular_node, singular_node, options,
+          singular_node, singular_node, "standard-enrichment ND mass", standard,
+          enrichment, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
-            double jacobian_determinant = center_jacobian_determinant;
-            auto grad_lambda = center_grad_lambda;
+            double integration_prefactor = center_jacobian_determinant;
+            auto grad_lambda = normalized_center_grad_lambda;
             if (affine_geometry)
             {
-              CalcAffinePhysVShape(nd_fe, point, center_inverse_jacobian,
+              integration_prefactor = affine_mass_prefactor;
+              CalcAffinePhysVShape(nd_fe, point, normalized_center_inverse_jacobian,
                                    reference_standard_value, standard_value);
             }
             else
             {
-              grad_lambda = GetTriangleBarycentricGradients(transformation, point,
-                                                            jacobian_determinant);
+              grad_lambda = GetTriangleBarycentricGradients(
+                  transformation, point, integration_prefactor);
               nd_fe.CalcPhysVShape(transformation, standard_value);
             }
-            const auto singular = EvaluateTriangleBasis(lambda, grad_lambda, basis);
-            return jacobian_determinant *
+            const auto singular =
+                affine_geometry
+                    ? EvaluateAffineNormalizedTriangleBasis(
+                          lambda, normalized_center_grad_lambda, affine_mass_prefactor,
+                          basis)
+                    : EvaluateTriangleBasis(lambda, grad_lambda, basis);
+            return integration_prefactor *
                    Dot(DenseMatrixRow2(standard_value, standard), singular.value);
           });
       result.nd_mass_standard_enrichment(standard, enrichment) = mass.value;
@@ -2086,26 +2191,33 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
         continue;
       }
       const auto curl_curl = IntegrateTriangleDuffy(
-          singular_node, singular_node, options,
+          singular_node, singular_node, "standard-enrichment ND curl-curl", standard,
+          enrichment, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
-            double jacobian_determinant = center_jacobian_determinant;
-            auto grad_lambda = center_grad_lambda;
+            double integration_prefactor = center_jacobian_determinant;
+            auto grad_lambda = normalized_center_grad_lambda;
             if (affine_geometry)
             {
+              integration_prefactor = affine_curl_curl_prefactor;
               CalcAffinePhysCurlShape(nd_fe, point, center_jacobian,
-                                      center_jacobian_determinant, reference_standard_curl,
+                                      affine_mass_prefactor, reference_standard_curl,
                                       standard_curl);
             }
             else
             {
-              grad_lambda = GetTriangleBarycentricGradients(transformation, point,
-                                                            jacobian_determinant);
+              grad_lambda = GetTriangleBarycentricGradients(
+                  transformation, point, integration_prefactor);
               nd_fe.CalcPhysCurlShape(transformation, standard_curl);
             }
-            const auto singular = EvaluateTriangleBasis(lambda, grad_lambda, basis);
-            return jacobian_determinant * standard_curl(standard, 0) * singular.curl;
+            const auto singular =
+                affine_geometry
+                    ? EvaluateAffineNormalizedTriangleBasis(
+                          lambda, normalized_center_grad_lambda, affine_mass_prefactor,
+                          basis)
+                    : EvaluateTriangleBasis(lambda, grad_lambda, basis);
+            return integration_prefactor * standard_curl(standard, 0) * singular.curl;
           });
       result.nd_curl_curl_standard_enrichment(standard, enrichment) = curl_curl.value;
       result.nd_curl_curl_enrichment_standard(enrichment, standard) = curl_curl.value;
@@ -2158,7 +2270,8 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
       const auto &basis = element_dofs.h1[enrichment_h1].basis;
       const int singular_node = TriangleSingularNode(basis);
       const auto mass = IntegrateTriangleDuffy(
-          singular_node, singular_node, options,
+          singular_node, singular_node, "standard-enrichment H1 mass", standard_h1,
+          enrichment_h1, options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -4128,10 +4241,29 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
   {
     throw std::invalid_argument("Triangular singular H1 sparse assembly requires a mesh!");
   }
+
+  // The full triangular topology also contains rotational ND functions. H1 diffusion
+  // needs only the gradient ND functions paired one-to-one with the H1 enrichment.
+  TriangleDofTopology gradient_topology;
+  gradient_topology.h1_dofs = topology.h1_dofs;
+  gradient_topology.nd_dofs = topology.h1_dofs;
+  gradient_topology.h1_to_nd.resize(topology.h1_dofs.size());
+  std::iota(gradient_topology.h1_to_nd.begin(), gradient_topology.h1_to_nd.end(), 0);
+  gradient_topology.elements.resize(topology.elements.size());
+  for (std::size_t element = 0; element < topology.elements.size(); element++)
+  {
+    gradient_topology.elements[element].h1 = topology.elements[element].h1;
+    gradient_topology.elements[element].nd.reserve(topology.elements[element].h1.size());
+    for (const auto &dof : topology.elements[element].h1)
+    {
+      gradient_topology.elements[element].nd.push_back({dof.dof, dof.basis});
+    }
+  }
+
   mfem::ND_FECollection nd_collection(h1_fespace.GetMaxElementOrder(), mesh->Dimension());
   mfem::FiniteElementSpace nd_fespace(mesh, &nd_collection);
-  auto full = AssembleLocalSparseEnrichmentMatrices(topology, h1_fespace, nd_fespace,
-                                                    materials, options);
+  auto full = AssembleLocalSparseEnrichmentMatrices(
+      gradient_topology, h1_fespace, nd_fespace, materials, options);
   LocalSparseH1EnrichmentMatrices result;
   result.diffusion = std::move(full.h1_diffusion);
   result.total_quadrature_leaf_count = full.total_quadrature_leaf_count;

@@ -591,6 +591,39 @@ TEST_CASE("singular_wedge_loss_eigenmode", "[Serial][Parallel][Regression]")
                                   "loss_eigenmode", opts);
 }
 
+TEST_CASE("singular_wedge_loss_eigenmode_ams", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-7;
+  opts.atol = 1.0e-12;
+  opts.excluded_columns = {"Error (", "Relative energy mismatch",
+                           "Relative weak divergence"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_loss_eigenmode_ams.json",
+                                  "loss_eigenmode_ams", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto eigenvalues =
+        LoadRegressionOutputTable("singular_wedge", "loss_eigenmode_ams", "eig.csv");
+    auto diagnostics = LoadRegressionOutputTable("singular_wedge", "loss_eigenmode_ams",
+                                                 "singular-eigenmode.csv");
+    const double backward_error = GetTableValue(eigenvalues, "Error (Bkwd.)");
+    const double absolute_error = GetTableValue(eigenvalues, "Error (Abs.)");
+    const double mismatch = GetTableValue(diagnostics, "Relative energy mismatch");
+    const double divergence = GetTableValue(diagnostics, "Relative weak divergence");
+    CAPTURE(backward_error, absolute_error, mismatch, divergence);
+    CHECK(backward_error < 1.0e-9);
+    CHECK(absolute_error < 1.0e-8);
+    CHECK(mismatch < 5.0e-4);
+    CHECK(divergence < 1.0e-10);
+  }
+}
+
 TEST_CASE("singular_wedge_loss_eigenmode_agreement", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1336,7 +1369,7 @@ TEST_CASE("singular_corner_electrostatic", "[Serial][Parallel][Regression]")
   opts.custom_checks["singular-tip-slopes.csv"] =
       CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
   palace::test::RunRegressionCase("singular_corner_electrostatic",
-                                  "singular_corner_electrostatic.json", "", opts);
+                                  "singular_corner_electrostatic.json", "baseline", opts);
 }
 
 TEST_CASE("singular_corner_electrostatic_amr", "[Serial][Parallel][Regression]")

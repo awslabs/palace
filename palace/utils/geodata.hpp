@@ -34,6 +34,10 @@ struct PartitionMetadata
   std::vector<std::int64_t> source_element_ids;
 };
 
+// Recover the rank-local NCMesh node associated with every local ParMesh vertex.
+// These are refinement-tree storage indices, not globally persistent vertex IDs.
+std::vector<int> GetNonconformingVertexNodeIds(const mfem::ParMesh &mesh);
+
 // Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
 // checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a

@@ -2360,7 +2360,6 @@ void ForEachReferenceTriangleNodeDuffyQuadraturePoint(
   }
 
   const auto &rule = GetDuffyQuadratureRule(order, radial_power);
-  ValidateNodeDuffyQuadratureRule(rule, radial_power);
   for (int q_r = 0; q_r < rule.GetNPoints(); q_r++)
   {
     const auto &point_r = rule.IntPoint(q_r);

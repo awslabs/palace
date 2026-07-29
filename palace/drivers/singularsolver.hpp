@@ -42,17 +42,40 @@ GetSingularSurfaceIntegrabilityMetadata(const fem::singular::FeatureTopology &fe
 nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
     const fem::singular::TriangleFeatureTopology &features);
 
+// Exact decomposition-independent identities for vertices of a nonconforming
+// refinement tree. The root rank retains a descriptor-to-ID dictionary so existing
+// vertices keep their identities while newly refined vertices receive fresh IDs.
+class NonconformingVertexIdentity
+{
+private:
+  class Impl;
+  std::unique_ptr<Impl> impl;
+
+public:
+  NonconformingVertexIdentity();
+  ~NonconformingVertexIdentity();
+  NonconformingVertexIdentity(const NonconformingVertexIdentity &) = delete;
+  NonconformingVertexIdentity &operator=(const NonconformingVertexIdentity &) = delete;
+
+  void Clear();
+  void Observe(const mfem::ParMesh &mesh,
+               const std::vector<fem::singular::GlobalVertexId> &vertex_ids);
+  void Update(const mfem::ParMesh &mesh,
+              std::vector<fem::singular::GlobalVertexId> &vertex_ids);
+};
+
 // Rebuild exact rank-local source identities after in-place refinement. Conforming
 // refinement preserves existing vertex indices and assigns decomposition-independent IDs
 // to appended vertices in canonical physical-coordinate order. Distinct coincident new
 // vertices are rejected because they require explicit refinement ancestry. Nonconforming
-// refinement uses persistent NCMesh node IDs directly. Element IDs are refreshed for
-// diagnostics; singular incidence is reconstructed from vertex and edge identities rather
-// than element numbering.
+// refinement uses exact refinement-tree descriptors managed by vertex_identity. Element
+// IDs are refreshed for diagnostics; singular incidence is reconstructed from vertex and
+// edge identities rather than element numbering.
 void UpdateSingularSourceEntityIds(
     const mfem::ParMesh &mesh,
     std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
-    std::vector<fem::singular::GlobalVertexId> &source_element_ids);
+    std::vector<fem::singular::GlobalVertexId> &source_element_ids,
+    NonconformingVertexIdentity &vertex_identity);
 
 // Rebuild the immutable global feature blueprint after h-refinement. Existing physical
 // singular features retain their exponent and straight-feature identity; selected
@@ -92,6 +115,7 @@ private:
   fem::singular::TriangleFeatureTopology local_line_features;
   std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
   std::vector<fem::singular::GlobalVertexId> source_element_ids;
+  NonconformingVertexIdentity vertex_identity;
   int dimension = 0;
 
 public:

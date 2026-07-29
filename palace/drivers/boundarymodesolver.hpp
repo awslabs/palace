@@ -7,6 +7,7 @@
 #include <memory>
 #include <mfem.hpp>
 #include "drivers/basesolver.hpp"
+#include "drivers/singularsolver.hpp"
 #include "fem/singularfeatures.hpp"
 
 namespace palace
@@ -20,6 +21,7 @@ private:
   mutable fem::singular::TriangleFeatureTopology local_singular_features;
   mutable std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
   mutable std::vector<fem::singular::GlobalVertexId> source_element_ids;
+  mutable NonconformingVertexIdentity vertex_identity;
 
 public:
   BoundaryModeSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,

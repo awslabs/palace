@@ -242,28 +242,333 @@ nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
   return MakeSingularSurfaceIntegrabilityMetadata(std::move(exponents));
 }
 
+class NonconformingVertexIdentity::Impl
+{
+private:
+  using GlobalVertexId = fem::singular::GlobalVertexId;
+  using VertexKey = std::array<GlobalVertexId, 3>;
+
+  struct GatheredKeys
+  {
+    std::vector<int> counts;
+    std::vector<int> offsets;
+    std::vector<VertexKey> keys;
+  };
+
+  std::map<VertexKey, GlobalVertexId> key_ids;
+  std::map<GlobalVertexId, VertexKey> id_keys;
+  std::map<int, GlobalVertexId> local_node_ids;
+  GlobalVertexId next_id = 0;
+
+  static VertexKey LeafKey(int node)
+  {
+    return {0, static_cast<GlobalVertexId>(node), 0};
+  }
+
+  static VertexKey ParentKey(GlobalVertexId first, GlobalVertexId second)
+  {
+    if (second < first)
+    {
+      std::swap(first, second);
+    }
+    return {1, first, second};
+  }
+
+  static GatheredKeys Gather(MPI_Comm comm, const std::vector<VertexKey> &local_keys)
+  {
+    MFEM_VERIFY(local_keys.size() <
+                    static_cast<std::size_t>(std::numeric_limits<int>::max() / 3),
+                "Nonconforming vertex key count exceeds MPI integer counts!");
+    GatheredKeys gathered;
+    gathered.counts.resize(Mpi::Size(comm));
+    const int local_count = static_cast<int>(local_keys.size());
+    Mpi::Allgather(1, &local_count, gathered.counts.data(), comm);
+    gathered.offsets.resize(gathered.counts.size());
+    std::partial_sum(gathered.counts.begin(), gathered.counts.end() - 1,
+                     gathered.offsets.begin() + 1);
+
+    std::vector<int> value_counts(gathered.counts), value_offsets(gathered.offsets);
+    for (int &count : value_counts)
+    {
+      count *= 3;
+    }
+    for (int &offset : value_offsets)
+    {
+      offset *= 3;
+    }
+    const int total = gathered.offsets.back() + gathered.counts.back();
+    std::vector<GlobalVertexId> values(Mpi::Root(comm) ? 3 * total : 0);
+    MPI_Gatherv(local_keys.data(), 3 * local_count, MPI_INT64_T, values.data(),
+                value_counts.data(), value_offsets.data(), MPI_INT64_T, 0, comm);
+    if (Mpi::Root(comm))
+    {
+      gathered.keys.resize(total);
+      for (int i = 0; i < total; i++)
+      {
+        gathered.keys[i] = {values[3 * i], values[3 * i + 1], values[3 * i + 2]};
+      }
+    }
+    return gathered;
+  }
+
+  void RegisterKeys(MPI_Comm comm, const std::vector<VertexKey> &local_keys,
+                    const std::vector<GlobalVertexId> &local_ids)
+  {
+    MFEM_VERIFY(local_keys.size() == local_ids.size(),
+                "Observed nonconforming vertex key and ID counts differ!");
+    const auto gathered = Gather(comm, local_keys);
+    const int total = gathered.offsets.back() + gathered.counts.back();
+    std::vector<GlobalVertexId> ids(Mpi::Root(comm) ? total : 0);
+    MPI_Gatherv(local_ids.data(), static_cast<int>(local_ids.size()), MPI_INT64_T,
+                ids.data(), gathered.counts.data(), gathered.offsets.data(), MPI_INT64_T, 0,
+                comm);
+    if (Mpi::Root(comm))
+    {
+      for (int i = 0; i < total; i++)
+      {
+        const auto [key, inserted_key] = key_ids.emplace(gathered.keys[i], ids[i]);
+        MFEM_VERIFY(inserted_key || key->second == ids[i],
+                    "One refined vertex key has inconsistent persistent IDs!");
+        const auto [id, inserted_id] = id_keys.emplace(ids[i], gathered.keys[i]);
+        MFEM_VERIFY(inserted_id || id->second == gathered.keys[i],
+                    "Distinct refined vertex keys share one persistent ID!");
+      }
+    }
+  }
+
+  std::vector<GlobalVertexId> AssignKeys(MPI_Comm comm,
+                                        const std::vector<VertexKey> &local_keys)
+  {
+    const auto gathered = Gather(comm, local_keys);
+    const int total = gathered.offsets.back() + gathered.counts.back();
+    std::vector<GlobalVertexId> ids(Mpi::Root(comm) ? total : 0);
+    if (Mpi::Root(comm))
+    {
+      std::set<VertexKey> missing;
+      for (const auto &key : gathered.keys)
+      {
+        if (key_ids.find(key) == key_ids.end())
+        {
+          missing.insert(key);
+        }
+      }
+      for (const auto &key : missing)
+      {
+        MFEM_VERIFY(next_id < std::numeric_limits<GlobalVertexId>::max(),
+                    "Persistent nonconforming vertex identity range is exhausted!");
+        const GlobalVertexId id = next_id++;
+        key_ids.emplace(key, id);
+        const auto [record, inserted] = id_keys.emplace(id, key);
+        MFEM_VERIFY(inserted && record->second == key,
+                    "Failed to assign a unique nonconforming vertex identity!");
+      }
+      for (int i = 0; i < total; i++)
+      {
+        ids[i] = key_ids.at(gathered.keys[i]);
+      }
+    }
+    std::vector<GlobalVertexId> local_ids(local_keys.size());
+    MPI_Scatterv(ids.data(), gathered.counts.data(), gathered.offsets.data(), MPI_INT64_T,
+                 local_ids.data(), static_cast<int>(local_ids.size()), MPI_INT64_T, 0,
+                 comm);
+    return local_ids;
+  }
+
+public:
+  void Clear()
+  {
+    key_ids.clear();
+    id_keys.clear();
+    local_node_ids.clear();
+    next_id = 0;
+  }
+
+  void Observe(const mfem::ParMesh &mesh,
+               const std::vector<GlobalVertexId> &vertex_ids)
+  {
+    MPI_Comm comm = mesh.GetComm();
+    bool valid = vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV());
+    Mpi::GlobalAnd(1, &valid, comm);
+    MFEM_VERIFY(valid,
+                "Observed nonconforming vertex identities have an invalid local size!");
+
+    local_node_ids.clear();
+    const auto vertex_nodes = mesh::GetNonconformingVertexNodeIds(mesh);
+    std::map<GlobalVertexId, int> local_ids;
+    for (int vertex = 0; vertex < mesh.GetNV(); vertex++)
+    {
+      const auto id = vertex_ids[vertex];
+      MFEM_VERIFY(id >= 0, "Observed a negative nonconforming vertex identity!");
+      const auto [node, inserted_node] = local_node_ids.emplace(vertex_nodes[vertex], id);
+      MFEM_VERIFY(inserted_node || node->second == id,
+                  "One local NCMesh node has inconsistent persistent IDs!");
+      const auto [identity, inserted_identity] =
+          local_ids.emplace(id, vertex_nodes[vertex]);
+      MFEM_VERIFY(inserted_identity || identity->second == vertex_nodes[vertex],
+                  "Distinct local NCMesh vertices share one persistent ID!");
+    }
+    GlobalVertexId maximum_id = -1;
+    for (const auto &[node, id] : local_node_ids)
+    {
+      MFEM_CONTRACT_VAR(node);
+      maximum_id = std::max(maximum_id, id);
+    }
+    Mpi::GlobalMax(1, &maximum_id, comm);
+    MFEM_VERIFY(maximum_id < std::numeric_limits<GlobalVertexId>::max(),
+                "Persistent nonconforming vertex identity range is exhausted!");
+    if (Mpi::Root(comm))
+    {
+      next_id = std::max(next_id, maximum_id + 1);
+    }
+
+    std::vector<VertexKey> local_keys;
+    std::vector<GlobalVertexId> local_key_ids;
+    const auto &ncmesh = *mesh.ncmesh;
+    for (const auto &[node, id] : local_node_ids)
+    {
+      const auto &record = ncmesh.GetNode(node);
+      if (record.p1 == record.p2 && record.p1 == node)
+      {
+        local_keys.push_back(LeafKey(node));
+        local_key_ids.push_back(id);
+      }
+      else
+      {
+        const auto first = local_node_ids.find(record.p1);
+        const auto second = local_node_ids.find(record.p2);
+        if (first != local_node_ids.end() && second != local_node_ids.end())
+        {
+          local_keys.push_back(ParentKey(first->second, second->second));
+          local_key_ids.push_back(id);
+        }
+      }
+    }
+    RegisterKeys(comm, local_keys, local_key_ids);
+  }
+
+  void Update(const mfem::ParMesh &mesh, std::vector<GlobalVertexId> &vertex_ids)
+  {
+    MPI_Comm comm = mesh.GetComm();
+    MFEM_VERIFY(mesh.Nonconforming() && mesh.ncmesh,
+                "Nonconforming vertex identity update requires an NCMesh!");
+    const auto vertex_nodes = mesh::GetNonconformingVertexNodeIds(mesh);
+    std::set<int> unresolved;
+    const auto &ncmesh = *mesh.ncmesh;
+    const auto Collect = [&](const auto &self, int node) -> void
+    {
+      if (local_node_ids.find(node) != local_node_ids.end() ||
+          unresolved.find(node) != unresolved.end())
+      {
+        return;
+      }
+      MFEM_VERIFY(node >= 0 && node < ncmesh.GetNumNodes(),
+                  "A newly refined NCMesh vertex has an unavailable parent node!");
+      unresolved.insert(node);
+      const auto &record = ncmesh.GetNode(node);
+      if (record.p1 != record.p2)
+      {
+        self(self, record.p1);
+        self(self, record.p2);
+      }
+      else
+      {
+        MFEM_VERIFY(record.p1 == node,
+                    "An NCMesh top-level vertex has an invalid parent relation!");
+      }
+    };
+    for (int node : vertex_nodes)
+    {
+      Collect(Collect, node);
+    }
+
+    int global_unresolved = unresolved.size();
+    Mpi::GlobalSum(1, &global_unresolved, comm);
+    while (global_unresolved > 0)
+    {
+      std::vector<int> ready_nodes;
+      std::vector<VertexKey> ready_keys;
+      for (int node : unresolved)
+      {
+        const auto &record = ncmesh.GetNode(node);
+        if (record.p1 == record.p2)
+        {
+          ready_nodes.push_back(node);
+          ready_keys.push_back(LeafKey(node));
+          continue;
+        }
+        const auto first = local_node_ids.find(record.p1);
+        const auto second = local_node_ids.find(record.p2);
+        if (first != local_node_ids.end() && second != local_node_ids.end())
+        {
+          ready_nodes.push_back(node);
+          ready_keys.push_back(ParentKey(first->second, second->second));
+        }
+      }
+      int global_ready = ready_nodes.size();
+      Mpi::GlobalSum(1, &global_ready, comm);
+      MFEM_VERIFY(global_ready > 0,
+                  "Unable to resolve newly refined NCMesh vertex parent identities!");
+      const auto ready_ids = AssignKeys(comm, ready_keys);
+      for (std::size_t i = 0; i < ready_nodes.size(); i++)
+      {
+        const auto [record, inserted] =
+            local_node_ids.emplace(ready_nodes[i], ready_ids[i]);
+        MFEM_VERIFY(inserted || record->second == ready_ids[i],
+                    "A newly refined NCMesh node received inconsistent identities!");
+        unresolved.erase(ready_nodes[i]);
+      }
+      global_unresolved = unresolved.size();
+      Mpi::GlobalSum(1, &global_unresolved, comm);
+    }
+
+    vertex_ids.resize(mesh.GetNV());
+    std::set<GlobalVertexId> unique_ids;
+    for (int vertex = 0; vertex < mesh.GetNV(); vertex++)
+    {
+      vertex_ids[vertex] = local_node_ids.at(vertex_nodes[vertex]);
+      unique_ids.insert(vertex_ids[vertex]);
+    }
+    MFEM_VERIFY(unique_ids.size() == vertex_ids.size(),
+                "Distinct local refined vertices share one persistent identity!");
+  }
+};
+
+NonconformingVertexIdentity::NonconformingVertexIdentity()
+  : impl(std::make_unique<Impl>())
+{
+}
+
+NonconformingVertexIdentity::~NonconformingVertexIdentity() = default;
+
+void NonconformingVertexIdentity::Clear()
+{
+  impl->Clear();
+}
+
+void NonconformingVertexIdentity::Observe(
+    const mfem::ParMesh &mesh,
+    const std::vector<fem::singular::GlobalVertexId> &vertex_ids)
+{
+  impl->Observe(mesh, vertex_ids);
+}
+
+void NonconformingVertexIdentity::Update(
+    const mfem::ParMesh &mesh,
+    std::vector<fem::singular::GlobalVertexId> &vertex_ids)
+{
+  impl->Update(mesh, vertex_ids);
+}
+
 void UpdateSingularSourceEntityIds(
     const mfem::ParMesh &mesh,
     std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
-    std::vector<fem::singular::GlobalVertexId> &source_element_ids)
+    std::vector<fem::singular::GlobalVertexId> &source_element_ids,
+    NonconformingVertexIdentity &vertex_identity)
 {
   using GlobalVertexId = fem::singular::GlobalVertexId;
   if (mesh.Nonconforming())
   {
-    source_vertex_ids.assign(mesh.GetNV(), -1);
-    const auto &ncmesh = *mesh.ncmesh;
-    for (int node = 0; node < ncmesh.GetNumNodes(); node++)
-    {
-      const auto &record = ncmesh.GetNode(node);
-      if (record.HasVertex() && record.vert_index >= 0 && record.vert_index < mesh.GetNV())
-      {
-        source_vertex_ids[record.vert_index] = node;
-      }
-    }
-    MFEM_VERIFY(std::find(source_vertex_ids.begin(), source_vertex_ids.end(),
-                          GlobalVertexId{-1}) == source_vertex_ids.end(),
-                "Nonconforming singular mesh contains a vertex without a persistent "
-                "NCMesh node ID!");
+    vertex_identity.Update(mesh, source_vertex_ids);
   }
   else
   {
@@ -731,8 +1036,18 @@ mfem::Array<int> BuildSingularRefinementProtectionImpl(
     bool touches_enrichment = false;
     for (int element : elements)
     {
+      if (element < 0)
+      {
+        // Parallel nonconforming face tables use -1 when a face has no local
+        // element on this rank.
+        continue;
+      }
       MFEM_VERIFY(element >= 0 && element < static_cast<int>(all_enriched.size()),
-                  "Singular refinement face topology has an invalid element!");
+                  "Singular refinement face topology has invalid element "
+                      << element << " on face " << face << " (local elements = "
+                      << mesh.GetNE() << ", face-neighbor elements = "
+                      << parallel_mesh.GetNFaceNeighborElements()
+                      << ", metadata size = " << all_enriched.size() << ")!");
       if (element < mesh.GetNE())
       {
         has_local = true;
@@ -768,7 +1083,7 @@ mfem::Array<int> BuildSingularRefinementProtectionImpl(
     }
     for (int element : elements)
     {
-      if (element < mesh.GetNE())
+      if (element >= 0 && element < mesh.GetNE())
       {
         marker[element] = 1;
       }
@@ -1061,6 +1376,7 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
   local_line_features = {};
   source_vertex_ids.clear();
   source_element_ids.clear();
+  vertex_identity.Clear();
   dimension = 0;
   if (!iodata.solver.singular_elements.Enabled())
   {
@@ -1130,6 +1446,10 @@ void FullWaveSingularFeatures::ProcessPartitionedMesh(
   }
   source_vertex_ids = metadata.source_vertex_ids;
   source_element_ids = metadata.source_element_ids;
+  if (parallel_mesh.Nonconforming())
+  {
+    vertex_identity.Observe(parallel_mesh, source_vertex_ids);
+  }
   MFEM_VERIFY(source_vertex_ids.size() == static_cast<std::size_t>(parallel_mesh.GetNV()) &&
                   source_element_ids.size() ==
                       static_cast<std::size_t>(parallel_mesh.GetNE()),
@@ -1142,7 +1462,8 @@ void FullWaveSingularFeatures::ProcessRefinedMesh(const IoData &iodata,
   MFEM_VERIFY(iodata.solver.singular_elements.Enabled() &&
                   parallel_mesh.Dimension() == dimension,
               "Unexpected or inconsistent refined full-wave singular mesh!");
-  UpdateSingularSourceEntityIds(parallel_mesh, source_vertex_ids, source_element_ids);
+  UpdateSingularSourceEntityIds(parallel_mesh, source_vertex_ids, source_element_ids,
+                                vertex_identity);
   if (dimension == 2)
   {
     RebuildRefinedSingularFeatures(parallel_mesh,

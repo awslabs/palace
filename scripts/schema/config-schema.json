@@ -2964,7 +2964,7 @@
         },
         "PCMatShifted": {
           "type": "boolean",
-          "description": "When `true`, builds the preconditioner using a positive-definite approximation by flipping the sign of the mass matrix contribution. Can improve performance at high frequencies relative to the lowest nonzero eigenfrequencies of the model. If omitted, Palace enables this for driven simulations using AMS and for boundary mode simulations with multigrid enabled, and disables it otherwise."
+          "description": "When `true`, builds the preconditioner using a positive-definite approximation by flipping the sign of the mass matrix contribution. Can improve performance at high frequencies relative to the lowest nonzero eigenfrequencies of the model. If omitted, Palace enables this for driven simulations using AMS, boundary mode simulations with multigrid enabled, and singular-element eigenmode simulations using an iterative coarse solver; it disables it otherwise."
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
@@ -2984,7 +2984,7 @@
         },
         "PCSide": {
           "$ref": "#/$defs/PreconditionerSide",
-          "description": "Preconditioning side. If omitted, Palace uses the chosen iterative solver's preconditioning side. Not all options are available for all iterative solver choices."
+          "description": "Preconditioning side. If omitted, Palace uses the chosen iterative solver's preconditioning side, except that singular-element eigenmode simulations using an iterative coarse solver select right-preconditioned GMRES or FGMRES so shift-and-invert convergence is measured in the physical residual. Not all options are available for all iterative solver choices."
         },
         "ColumnOrdering": {
           "$ref": "#/$defs/SymbolicFactorization",

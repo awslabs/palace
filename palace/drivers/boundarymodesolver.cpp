@@ -1155,6 +1155,7 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
   local_singular_features = {};
   source_vertex_ids.clear();
   source_element_ids.clear();
+  vertex_identity.Clear();
   if (Mpi::Root(comm))
   {
     MFEM_VERIFY(smesh && smesh->Dimension() == 2 && smesh->SpaceDimension() == 2,
@@ -1192,6 +1193,10 @@ void BoundaryModeSolver::ProcessPartitionedMesh(
       metadata.source_element_ids);
   source_vertex_ids = metadata.source_vertex_ids;
   source_element_ids = metadata.source_element_ids;
+  if (parallel_mesh.Nonconforming())
+  {
+    vertex_identity.Observe(parallel_mesh, source_vertex_ids);
+  }
 }
 
 mfem::Array<int> BoundaryModeSolver::GetRefinementProtection(const mfem::ParMesh &mesh,
@@ -1220,7 +1225,8 @@ void BoundaryModeSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
   {
     return;
   }
-  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
+                                vertex_identity);
   RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,
                                  source_vertex_ids, serial_singular_features);
   ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});

@@ -65,7 +65,8 @@ ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_C
   ksp->SetMaxIter(linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
-  if (linear.pc_side != PreconditionerSide::DEFAULT && type != KrylovSolver::GMRES)
+  if (linear.pc_side != PreconditionerSide::DEFAULT && type != KrylovSolver::GMRES &&
+      type != KrylovSolver::FGMRES)
   {
     Mpi::Warning(comm,
                  "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");

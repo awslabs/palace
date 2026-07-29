@@ -1096,6 +1096,7 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
   local_triangle_singular_features = {};
   source_vertex_ids.clear();
   source_element_ids.clear();
+  vertex_identity.Clear();
   int mesh_dimension = 0;
   if (Mpi::Root(comm))
   {
@@ -1163,6 +1164,10 @@ void ElectrostaticSolver::ProcessPartitionedMesh(
   }
   source_vertex_ids = metadata.source_vertex_ids;
   source_element_ids = metadata.source_element_ids;
+  if (parallel_mesh.Nonconforming())
+  {
+    vertex_identity.Observe(parallel_mesh, source_vertex_ids);
+  }
 }
 
 mfem::Array<int>
@@ -1194,7 +1199,8 @@ void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
   {
     return;
   }
-  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
+                                vertex_identity);
   if (mesh.Dimension() == 2)
   {
     RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,

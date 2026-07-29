@@ -65,6 +65,47 @@ std::unique_ptr<mfem::Mesh> MakePartitionedSurfaceTestMesh()
   return mesh;
 }
 
+std::unique_ptr<mfem::Mesh>
+MakeSplitCutoffSurfaceTestMesh(const std::vector<double> &breakpoints)
+{
+  if (breakpoints.size() < 2 || breakpoints.front() != 0.0 ||
+      breakpoints.back() != 1.0 ||
+      !std::is_sorted(breakpoints.begin(), breakpoints.end()) ||
+      std::adjacent_find(breakpoints.begin(), breakpoints.end()) != breakpoints.end())
+  {
+    throw std::invalid_argument("Invalid split surface test mesh breakpoints!");
+  }
+  const int intervals = static_cast<int>(breakpoints.size()) - 1;
+  auto mesh =
+      std::make_unique<mfem::Mesh>(2, 2 * (intervals + 1), 2 * intervals,
+                                   2 * intervals + 2, 2);
+  for (double x : breakpoints)
+  {
+    mesh->AddVertex(x, 0.0);
+  }
+  for (double x : breakpoints)
+  {
+    mesh->AddVertex(x, 1.0);
+  }
+  const int top_offset = intervals + 1;
+  for (int interval = 0; interval < intervals; interval++)
+  {
+    const int bottom_left = interval;
+    const int bottom_right = interval + 1;
+    const int top_left = top_offset + interval;
+    const int top_right = top_offset + interval + 1;
+    mesh->AddTriangle(bottom_left, bottom_right, top_right, 1);
+    mesh->AddTriangle(bottom_left, top_right, top_left, 1);
+    mesh->AddBdrSegment(bottom_left, bottom_right, 1);
+    mesh->AddBdrSegment(top_right, top_left, 2);
+  }
+  mesh->AddBdrSegment(top_offset, 0, 2);
+  mesh->AddBdrSegment(intervals, top_offset + intervals, 2);
+  mesh->FinalizeTopology();
+  mesh->Finalize(false, false);
+  return mesh;
+}
+
 std::unique_ptr<mfem::Mesh> MakeTetrahedronSurfaceTestMesh()
 {
   auto mesh = std::make_unique<mfem::Mesh>(3, 4, 1, 4, 3);
@@ -572,6 +613,125 @@ TEST_CASE("Singular surface postprocessor uses integrable corner weight",
   CHECK(cutoff_small > cutoff_large);
   CHECK_THAT(cutoff_large_order4, WithinRel(cutoff_large, 5.0e-9));
   CHECK_THAT(cutoff_small_order4, WithinRel(cutoff_small, 5.0e-9));
+}
+
+TEST_CASE("Singular surface cutoff spans refined boundary segments",
+          "[singularsurface][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  constexpr double cutoff = 0.05;
+  const auto measure = [=](const std::vector<double> &breakpoints)
+  {
+    auto serial_mesh = MakeSplitCutoffSurfaceTestMesh(breakpoints);
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    Mesh mesh(std::move(par_mesh));
+    auto material = MakeSubstrateMaterial(mesh);
+
+    mfem::H1_FECollection h1_collection(1, 2);
+    mfem::ND_FECollection nd_collection(1, 2);
+    mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_collection);
+    mfem::ParFiniteElementSpace nd_fespace(&mesh.Get(), &nd_collection);
+    mfem::FunctionCoefficient potential_coefficient([](const mfem::Vector &point)
+                                                    { return 2.0 * point[1]; });
+    mfem::VectorFunctionCoefficient field_coefficient(
+        2,
+        [](const mfem::Vector &, mfem::Vector &value)
+        {
+          value.SetSize(2);
+          value = 0.0;
+          value[1] = 2.0;
+        });
+    mfem::ParGridFunction potential(&h1_fespace);
+    mfem::ParGridFunction field(&nd_fespace);
+    potential.ProjectCoefficient(potential_coefficient);
+    field.ProjectCoefficient(field_coefficient);
+    mfem::Vector h1_standard(h1_fespace.GetTrueVSize());
+    mfem::Vector nd_standard(nd_fespace.GetTrueVSize());
+    potential.ParallelProject(h1_standard);
+    field.ParallelProject(nd_standard);
+
+    mfem::Array<int> element_vertices;
+    mesh.Get().GetElementVertices(0, element_vertices);
+    REQUIRE(element_vertices.Size() == 3);
+    const int *tip_location =
+        std::find(element_vertices.begin(), element_vertices.end(), 0);
+    REQUIRE(tip_location != element_vertices.end());
+    const int tip_node = static_cast<int>(tip_location - element_vertices.begin());
+    std::array<int, 3> basis_nodes{tip_node, -1, -1};
+    int basis_node = 1;
+    for (int node = 0; node < 3; node++)
+    {
+      if (node != tip_node)
+      {
+        basis_nodes[basis_node++] = node;
+      }
+    }
+    const fem::singular::TriangleBasis basis{
+        fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, basis_nodes, 1, 0.5};
+    fem::singular::TriangleDofTopology topology;
+    topology.h1_dofs.resize(1);
+    topology.h1_dofs[0].family = basis.family;
+    topology.h1_dofs[0].order = basis.order;
+    topology.nd_dofs.resize(1);
+    topology.nd_dofs[0].family = basis.family;
+    topology.nd_dofs[0].order = basis.order;
+    topology.h1_to_nd = {0};
+    topology.elements.resize(h1_fespace.GetNE());
+    topology.elements[0].h1 = {{0, basis}};
+    topology.elements[0].nd = {{0, basis}};
+
+    const auto h1_numbering = MakeH1Numbering(1);
+    const auto nd_numbering = MakeNumbering(true);
+    mfem::Vector h1_combined(h1_standard.Size() + 1);
+    mfem::Vector nd_combined(nd_standard.Size() + 1);
+    h1_combined = 0.0;
+    nd_combined = 0.0;
+    for (int dof = 0; dof < h1_standard.Size(); dof++)
+    {
+      h1_combined[dof] = h1_standard[dof];
+    }
+    for (int dof = 0; dof < nd_standard.Size(); dof++)
+    {
+      nd_combined[dof] = nd_standard[dof];
+    }
+    mfem::Vector h1_zero(h1_combined.Size());
+    mfem::Vector nd_zero(nd_combined.Size());
+    h1_zero = 0.0;
+    nd_zero = 0.0;
+    fem::singular::TriangleEnrichedH1FieldEvaluator h1_real(topology, h1_numbering,
+                                                            h1_fespace);
+    fem::singular::TriangleEnrichedH1FieldEvaluator h1_imaginary(
+        topology, h1_numbering, h1_fespace);
+    fem::singular::TriangleEnrichedNDFieldEvaluator nd_real(topology, nd_numbering,
+                                                            nd_fespace);
+    fem::singular::TriangleEnrichedNDFieldEvaluator nd_imaginary(
+        topology, nd_numbering, nd_fespace);
+    h1_real.SetFromTrueDofs(h1_combined);
+    h1_imaginary.SetFromTrueDofs(h1_zero);
+    nd_real.SetFromTrueDofs(nd_combined);
+    nd_imaginary.SetFromTrueDofs(nd_zero);
+
+    TriangleSingularSurfacePostOperator h1_postoperator(
+        MakeMSPostprocessing(cutoff), material, h1_fespace);
+    TriangleSingularSurfacePostOperator nd_postoperator(
+        MakeMSPostprocessing(cutoff), material, nd_fespace);
+    const fem::singular::AdaptiveAssemblyOptions options{8, 1.0e-12, 2.0e-9, 12};
+    const double h1_energy =
+        h1_postoperator.MeasureElectrostatic(h1_real, h1_imaginary, 1.0, options)
+            .front()
+            .energy;
+    const double nd_energy =
+        nd_postoperator.Measure(nd_real, nd_imaginary, 1.0, options).front().energy;
+    return std::pair{h1_energy, nd_energy};
+  };
+
+  const auto coarse = measure({0.0, 1.0});
+  const auto refined = measure({0.0, 0.02, 0.04, 0.10, 1.0});
+  constexpr double exact = 0.16 * (1.0 - cutoff);
+  CHECK_THAT(coarse.first, WithinAbs(exact, 3.0e-11));
+  CHECK_THAT(coarse.second, WithinAbs(exact, 3.0e-11));
+  CHECK_THAT(refined.first, WithinAbs(exact, 3.0e-11));
+  CHECK_THAT(refined.second, WithinAbs(exact, 3.0e-11));
 }
 
 TEST_CASE("Singular electrostatic surface postprocessor uses combined H1 gradient",

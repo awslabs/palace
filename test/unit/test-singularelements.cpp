@@ -2564,7 +2564,7 @@ TEST_CASE("Partitioned Duffy tensors resolve distinct singular features",
   constexpr double adaptive_tolerance = 2.0e-6;
   constexpr int adaptive_max_subdivisions = 9;
 
-  for (double nu : {0.5, 2.0 / 3.0})
+  for (double nu : {0.5, 2.0 / 3.0, 0.87165534177406845})
   {
     CAPTURE(nu);
     const std::array pairs{
@@ -3333,8 +3333,10 @@ TEST_CASE("Singular triangle node Duffy quadrature", "[singularelements][triangl
         for (double value : lambda)
         {
           CHECK(value > 0.0);
-          CHECK(value < 1.0);
+          CHECK(value <= 1.0);
         }
+        CHECK(fem::singular::TriangleNodeRadialCoordinate(lambda, 0) > 0.0);
+        CHECK(fem::singular::TriangleNodeRadialCoordinate(lambda, 0) < 1.0);
         CHECK(weight > 0.0);
         weight_sum += weight;
         point_count++;
@@ -3390,22 +3392,26 @@ TEST_CASE("Singular triangle node Duffy quadrature", "[singularelements][triangl
   CHECK_THAT(transmission_value, WithinAbs(1.0 / (transmission_exponent + 2.0), 2.0e-13));
 
   const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
-  const auto gradient_mass = [&grad_lambda](int quadrature_order)
+  const auto gradient_mass = [&grad_lambda](int quadrature_order, double nu)
   {
     return fem::singular::IntegrateReferenceTriangleNodeDuffy(
-        quadrature_order, 0, 6.0,
-        [&grad_lambda](const TriangleBarycentricPoint &lambda)
+        quadrature_order, 0, fem::singular::TriangleDuffyRadialPower,
+        [&grad_lambda, nu](const TriangleBarycentricPoint &lambda)
         {
           const auto basis =
-              fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 1, 0.5);
+              fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 1, nu);
           return Dot(basis.value, basis.value);
         });
   };
-  const double mass_23 = gradient_mass(23);
-  const double mass_31 = gradient_mass(31);
-  CHECK(std::isfinite(mass_31));
-  CHECK(mass_31 > 0.0);
-  CHECK_THAT(mass_23, WithinAbs(mass_31, 2.0e-13));
+  for (double nu : {0.5, 2.0 / 3.0})
+  {
+    const double mass_23 = gradient_mass(23, nu);
+    const double mass_31 = gradient_mass(31, nu);
+    CAPTURE(nu, mass_23, mass_31);
+    CHECK(std::isfinite(mass_31));
+    CHECK(mass_31 > 0.0);
+    CHECK_THAT(mass_23, WithinAbs(mass_31, 2.0e-13));
+  }
 }
 
 TEST_CASE("Singular triangle rejects invalid inputs",

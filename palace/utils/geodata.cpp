@@ -81,7 +81,6 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Me
 // mesh onto the root rank before scattering the partitioned mesh.
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &,
                             mesh::PartitionMetadata * = nullptr);
-void RebuildNonconformingSourceMetadata(const mfem::ParMesh &, mesh::PartitionMetadata &);
 
 // Apply box/sphere region-based refinement to a serial mesh in-place. For tensor-element
 // meshes the refinement is non-conforming and the mesh must already be nonconforming.
@@ -93,6 +92,34 @@ void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh);
 
 namespace mesh
 {
+
+std::vector<int> GetNonconformingVertexNodeIds(const mfem::ParMesh &pmesh)
+{
+  MFEM_VERIFY(pmesh.Nonconforming() && pmesh.ncmesh,
+              "Nonconforming vertex-node lookup requires an NCMesh!");
+  std::vector<int> vertex_nodes(pmesh.GetNV(), -1);
+  auto &ncmesh = *pmesh.ncmesh;
+  const auto &vertices = ncmesh.GetVertexList();
+  for (const auto &vertex : vertices.conforming)
+  {
+    if (vertex.index < 0 || vertex.index >= pmesh.GetNV())
+    {
+      continue;
+    }
+    const auto &element = ncmesh.GetElement(vertex.element);
+    MFEM_VERIFY(vertex.local >= 0 &&
+                    vertex.local < mfem::Geometry::NumVerts[element.Geom()],
+                "NCMesh vertex list contains an invalid element-local vertex!");
+    const int node = element.node[vertex.local];
+    auto &record = vertex_nodes[vertex.index];
+    MFEM_VERIFY(record < 0 || record == node,
+                "NCMesh vertex list contains inconsistent node identities!");
+    record = node;
+  }
+  MFEM_VERIFY(std::find(vertex_nodes.begin(), vertex_nodes.end(), -1) == vertex_nodes.end(),
+              "Nonconforming mesh contains a vertex without an NCMesh node identity!");
+  return vertex_nodes;
+}
 
 namespace
 {
@@ -2054,10 +2081,58 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   {
     if (mesh->Nonconforming())
     {
+      std::unique_ptr<mfem::H1_FECollection> identity_collection;
+      std::unique_ptr<mfem::ParFiniteElementSpace> identity_space;
+      std::unique_ptr<mfem::ParGridFunction> vertex_identity;
+      if (metadata)
+      {
+        MFEM_VERIFY(
+            metadata->source_vertex_ids.size() == static_cast<std::size_t>(mesh->GetNV()),
+            "Nonconforming mesh rebalancing received incomplete vertex identities!");
+        identity_collection = std::make_unique<mfem::H1_FECollection>(1, mesh->Dimension());
+        identity_space = std::make_unique<mfem::ParFiniteElementSpace>(
+            mesh.get(), identity_collection.get());
+        vertex_identity = std::make_unique<mfem::ParGridFunction>(identity_space.get());
+        *vertex_identity = 0.0;
+        mfem::Array<int> dofs;
+        constexpr std::int64_t max_exact_double_integer = std::int64_t{1} << 53;
+        for (int vertex = 0; vertex < mesh->GetNV(); vertex++)
+        {
+          const auto id = metadata->source_vertex_ids[vertex];
+          MFEM_VERIFY(id >= 0 && id <= max_exact_double_integer,
+                      "Persistent vertex identity cannot be represented exactly for "
+                      "nonconforming rebalancing!");
+          identity_space->GetVertexDofs(vertex, dofs);
+          MFEM_VERIFY(dofs.Size() == 1 && dofs[0] >= 0,
+                      "Linear H1 vertex identity space has an invalid vertex DOF!");
+          (*vertex_identity)[dofs[0]] = static_cast<double>(id);
+        }
+      }
       mesh->Rebalance();
       if (metadata)
       {
-        RebuildNonconformingSourceMetadata(*mesh, *metadata);
+        identity_space->Update();
+        vertex_identity->Update();
+        metadata->source_vertex_ids.resize(mesh->GetNV());
+        mfem::Array<int> dofs;
+        for (int vertex = 0; vertex < mesh->GetNV(); vertex++)
+        {
+          identity_space->GetVertexDofs(vertex, dofs);
+          MFEM_VERIFY(dofs.Size() == 1 && dofs[0] >= 0,
+                      "Rebalanced H1 vertex identity space has an invalid vertex DOF!");
+          const double value = (*vertex_identity)[dofs[0]];
+          const auto id = static_cast<std::int64_t>(std::llround(value));
+          MFEM_VERIFY(std::isfinite(value) && value == static_cast<double>(id) && id >= 0,
+                      "Nonconforming rebalancing did not preserve an exact vertex "
+                      "identity!");
+          metadata->source_vertex_ids[vertex] = id;
+        }
+        identity_space->UpdatesFinished();
+        metadata->source_element_ids.resize(mesh->GetNE());
+        for (int element = 0; element < mesh->GetNE(); element++)
+        {
+          metadata->source_element_ids[element] = mesh->GetGlobalElementNum(element);
+        }
       }
     }
     else
@@ -3926,37 +4001,6 @@ GatherConformingSourceMetadata(const mfem::ParMesh &pmesh,
                 "Conforming mesh contains duplicate persistent vertex identities!");
   }
   return serial_metadata;
-}
-
-void RebuildNonconformingSourceMetadata(const mfem::ParMesh &pmesh,
-                                        mesh::PartitionMetadata &metadata)
-{
-  MFEM_VERIFY(pmesh.Nonconforming() && pmesh.ncmesh,
-              "Persistent nonconforming metadata requires an NCMesh!");
-  metadata.source_vertex_ids.assign(pmesh.GetNV(), -1);
-  const auto &ncmesh = *pmesh.ncmesh;
-  for (int node = 0; node < ncmesh.GetNumNodes(); node++)
-  {
-    const auto &record = ncmesh.GetNode(node);
-    if (record.HasVertex() && record.vert_index >= 0 && record.vert_index < pmesh.GetNV())
-    {
-      metadata.source_vertex_ids[record.vert_index] = node;
-    }
-  }
-  MFEM_VERIFY(
-      std::find(metadata.source_vertex_ids.begin(), metadata.source_vertex_ids.end(),
-                std::int64_t{-1}) == metadata.source_vertex_ids.end(),
-      "Rebalanced nonconforming mesh contains a vertex without a persistent NCMesh ID!");
-  std::set<std::int64_t> unique_vertices(metadata.source_vertex_ids.begin(),
-                                         metadata.source_vertex_ids.end());
-  MFEM_VERIFY(unique_vertices.size() == metadata.source_vertex_ids.size(),
-              "Rebalanced nonconforming mesh contains duplicate local vertex IDs!");
-
-  metadata.source_element_ids.resize(pmesh.GetNE());
-  for (int element = 0; element < pmesh.GetNE(); element++)
-  {
-    metadata.source_element_ids[element] = pmesh.GetGlobalElementNum(element);
-  }
 }
 
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh,
