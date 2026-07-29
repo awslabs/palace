@@ -9,6 +9,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/output_functionals.hpp"
 
 namespace palace
 {
@@ -93,6 +94,13 @@ private:
   double GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                  const mfem::Array<int> &attr_marker) const;
 
+  // libCEED surface functionals for flux and interface dielectric postprocessing,
+  // constructed lazily per surface index to replace per-call coefficient evaluation and
+  // boundary LinearForm assembly in the legacy paths when supported.
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
+  mutable std::unique_ptr<SurfaceFunctional> farfield_func;
+  mutable std::vector<std::array<double, 3>> farfield_func_dirs;
+
 public:
   // Data structures for postprocessing the surface with the given type.
   std::map<int, SurfaceFluxData> flux_surfs;
@@ -114,8 +122,8 @@ public:
   // Batch version for multiple theta/phi pairs
   std::vector<std::array<std::complex<double>, 3>>
   GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
-                const GridFunction &E, const GridFunction &B, double omega_re,
-                double omega_im) const;
+                const GridFunction &E, const GridFunction &B,
+                std::complex<double> omega) const;
 
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;
