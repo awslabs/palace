@@ -95,20 +95,44 @@ jobs:
           }
           EOF
 
-      # gcc (with g++/gfortran) is the compiler used for the whole build; see
-      # the packages: block in "Prepare spack.yaml" for why. openmpi/openblas
-      # are built by Spack from the spec/cache for reproducibility (the same way
-      # palace-ci builds them on Linux instead of apt-installing).
-      - name: Install GNU compilers
+      # Install the toolchain from Homebrew rather than relying on whatever the
+      # runner image preinstalls, so this job matches what a developer starting
+      # from a stock macOS box would have. The runner ships cmake, python, and
+      # other build tools; a developer generally does not, so depending on them
+      # would test a machine configuration nobody actually has.
+      #
+      # gcc (with g++/gfortran) compiles the whole build; see the packages:
+      # block in "Prepare spack.yaml" for why. openmpi/openblas are built by
+      # Spack from the spec/cache for reproducibility (the same way palace-ci
+      # builds them on Linux instead of apt-installing).
+      - name: Install build tools from Homebrew
         env:
           GCC_MAJOR: '15'
         run: |
           source /tmp/timing_functions.sh
           start_timer
-          brew install "gcc@${GCC_MAJOR}"
+          # `make` is GNU make, installed as `gmake` to avoid shadowing the
+          # system one; the shim below gives Spack the layout it expects.
+          brew install "gcc@${GCC_MAJOR}" cmake python make
           echo "GCC_MAJOR=${GCC_MAJOR}" >> "${GITHUB_ENV}"
           echo "Pinning Spack compilers to gcc@${GCC_MAJOR}"
-          end_timer "Install GNU compilers"
+          end_timer "Install build tools from Homebrew"
+
+      # Spack detects gmake by scanning for an executable matching `^make$` and
+      # then resolves it as <prefix>/bin/make. Homebrew's `make` formula
+      # installs only `bin/gmake` (its `make` lives in libexec/gnubin, whose
+      # prefix has no bin/ at all), so pointing Spack at either directory fails:
+      # the first has no name that matches, the second yields a prefix where
+      # <prefix>/bin/make does not exist. Build a small prefix with a proper
+      # bin/ so detection and resolution both succeed.
+      - name: Create Homebrew gmake shim prefix
+        run: |
+          BREW_GMAKE_PREFIX="${RUNNER_TEMP}/brew-gmake"
+          mkdir -p "${BREW_GMAKE_PREFIX}/bin"
+          ln -sf "$(brew --prefix make)/bin/gmake" "${BREW_GMAKE_PREFIX}/bin/make"
+          ln -sf "$(brew --prefix make)/bin/gmake" "${BREW_GMAKE_PREFIX}/bin/gmake"
+          echo "BREW_GMAKE_PREFIX=${BREW_GMAKE_PREFIX}" >> "${GITHUB_ENV}"
+          "${BREW_GMAKE_PREFIX}/bin/make" --version | head -1
 
       - name: Install Spack
         uses: actions/checkout@v6
@@ -144,6 +168,10 @@ jobs:
           ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
 
       - name: Prepare spack.yaml
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           source /tmp/timing_functions.sh
           start_timer
@@ -157,8 +185,8 @@ jobs:
 
           # Only same-repo runs can reach the repo's GITHUB_TOKEN with
           # packages:write. Fork PRs must never attempt the push.
-          if [[ "${{ github.event_name }}" != "pull_request" || \
-                "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
+          if [[ "${EVENT_NAME}" != "pull_request" || \
+                "${HEAD_REPOSITORY}" == "${REPOSITORY}" ]]; then
             echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
             echo "GHCR buildcache access: read/write"
           else
@@ -191,8 +219,9 @@ jobs:
               # built package shares one C++ ABI (libstdc++) and one Fortran
               # runtime. Build tools that cannot (or should not) be built with
               # gcc on macOS -- python, cmake, gmake -- are taken as externals
-              # instead (see the "external find" step); they are not compiled
-              # here, so the requirement below applies only to real libraries.
+              # from Homebrew instead (see the "Configure Compilers" step); they
+              # are not compiled here, so the requirement below applies only to
+              # real libraries.
               #
               # The version is pinned (gcc@${GCC_MAJOR}, installed above)
               # because macOS runners ship several gcc versions; an unpinned gcc
@@ -253,10 +282,31 @@ jobs:
           #     petsc/libxsmm.
           #   - cmake: its macOS source uses __builtin_available, an
           #     apple-clang-only builtin that gcc cannot compile.
-          #   - gmake: the runner's /usr/bin/make; avoids compiling gmake with
-          #     gcc@15's C23 default, which breaks its bundled fnmatch.c.
-          # Using the runner's copies keeps the compiled DAG entirely gcc.
-          spack -e . external find python cmake gmake
+          #   - gmake: avoids compiling gmake with gcc@15's C23 default, which
+          #     breaks its bundled fnmatch.c.
+          # Taking them as externals keeps the compiled DAG entirely gcc.
+          #
+          # Search only the Homebrew prefixes, never the whole PATH: `--path`
+          # replaces the default PATH scan rather than adding to it, so this
+          # pins each external to the brew copy installed above instead of
+          # silently picking up a runner-preinstalled tool a developer would not
+          # have. gmake comes from the shim prefix (see its step for why).
+          spack -e . external find \
+            --path "$(brew --prefix cmake)/bin" \
+            --path "$(brew --prefix python)/bin" \
+            --path "${BREW_GMAKE_PREFIX}/bin" \
+            python cmake gmake
+
+          # `external find` reports nothing and exits 0 when a package is not
+          # found, which would silently fall back to building the tool with gcc
+          # (or, for python, hitting its %gcc conflict) much later in the run.
+          # Fail here instead, where the cause is obvious.
+          for tool in python cmake gmake; do
+            if ! spack -e . config get packages | grep -q "^  ${tool}:"; then
+              echo "::error::Expected external '${tool}' was not detected in the Homebrew prefixes"
+              exit 1
+            fi
+          done
           end_timer "Configure Compilers"
 
       - name: Display spack.yaml
