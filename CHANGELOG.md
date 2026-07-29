@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added reusable libCEED point-evaluation infrastructure and device-backed
+    probe interpolation.
   - Added non-tensor libCEED AtPoints dependency support for CPU and GPU
     postprocessing and forwarded CUDA host compiler selection through superbuilds.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
