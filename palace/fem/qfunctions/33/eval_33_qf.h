@@ -6,10 +6,8 @@
 
 #include "utils_33_qf.h"
 
-// Pointwise probes at arbitrary reference points of 3D volume elements. No quadrature
-// weighting is applied.
+// QFunctions for pointwise evaluation at arbitrary points of 3D volume elements.
 
-// Pointwise H(curl) field value: v = adj(J)ᵀ/detJ u. Inputs: grad_x, u.
 CEED_QFUNCTION(f_eval_probe_hcurl_33)(void *, CeedInt Q, const CeedScalar *const *in,
                                       CeedScalar *const *out)
 {
@@ -26,6 +24,21 @@ CEED_QFUNCTION(f_eval_probe_hcurl_33)(void *, CeedInt Q, const CeedScalar *const
     v[i + Q * 0] = E[0] / detJ;
     v[i + Q * 1] = E[1] / detJ;
     v[i + Q * 2] = E[2] / detJ;
+  }
+  return 0;
+}
+
+// Pointwise scalar H1/L2 field value. Inputs: grad_x, u. The geometry input is unused
+// but kept so this probe has the same field list as the vector-valued probes.
+CEED_QFUNCTION(f_eval_probe_l2_33)(void *, CeedInt Q, const CeedScalar *const *in,
+                                   CeedScalar *const *out)
+{
+  const CeedScalar *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = u[i];
   }
   return 0;
 }

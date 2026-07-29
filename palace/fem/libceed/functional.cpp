@@ -135,4 +135,28 @@ void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
   PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
 }
 
+void AssembleCeedPointEvaluatorAtPoints(const CeedQFunctionInfo &info, void *ctx,
+                                        std::size_t ctx_size, Ceed ceed,
+                                        const std::vector<CeedFunctionalFieldInput> &inputs,
+                                        CeedElemRestriction points_restr,
+                                        CeedVector points_vec, CeedInt num_out_comp,
+                                        CeedElemRestriction out_restr, CeedOperator *op)
+{
+  CeedQFunction apply_qf;
+  CreatePointEvaluatorQFunction(info, ctx, ctx_size, ceed, inputs, num_out_comp, &apply_qf);
+
+  PalaceCeedCall(ceed, CeedOperatorCreateAtPoints(ceed, apply_qf, nullptr, nullptr, op));
+  PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
+
+  for (const auto &input : inputs)
+  {
+    AddOperatorFieldInput(input, ceed, *op);
+  }
+  PalaceCeedCall(
+      ceed, CeedOperatorSetField(*op, "v", out_restr, CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
+  PalaceCeedCall(ceed, CeedOperatorAtPointsSetPoints(*op, points_restr, points_vec));
+
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
+}
+
 }  // namespace palace::ceed
