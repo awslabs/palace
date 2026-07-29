@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added libCEED surface reduction functionals for energy, flux, power,
+    mode-overlap, and far-field calculations with device-friendly element reductions.
   - Added distributed sampled face-neighbor field exchange for parallel device
     postprocessing.
   - Added reusable libCEED point-evaluation infrastructure and device-backed
