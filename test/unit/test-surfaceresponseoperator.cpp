@@ -2604,38 +2604,44 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       {
         return;
       }
-      for (const double sign_x : {-1.0, 1.0})
+      const std::vector<double> island_centers = neighboring_island
+                                                     ? std::vector<double>{0.625, 1.375}
+                                                     : std::vector<double>{center};
+      for (const double island_center_x : island_centers)
       {
-        for (const double sign_z : {-1.0, 1.0})
+        for (const double sign_x : {-1.0, 1.0})
         {
-          const double corner_x = center + sign_x * half_width;
-          const double corner_z = center + sign_z * half_width;
-          const double center_x = corner_x - sign_x * radius;
-          const double center_z = corner_z - sign_z * radius;
-          const double local_x = sign_x * (input[0] - center_x);
-          const double local_z = sign_z * (input[2] - center_z);
-          if (local_x < -tolerance || local_x > radius + tolerance ||
-              local_z < -tolerance || local_z > radius + tolerance)
+          for (const double sign_z : {-1.0, 1.0})
           {
-            continue;
-          }
+            const double corner_x = island_center_x + sign_x * half_width;
+            const double corner_z = center + sign_z * half_width;
+            const double center_x = corner_x - sign_x * radius;
+            const double center_z = corner_z - sign_z * radius;
+            const double local_x = sign_x * (input[0] - center_x);
+            const double local_z = sign_z * (input[2] - center_z);
+            if (local_x < -tolerance || local_x > radius + tolerance ||
+                local_z < -tolerance || local_z > radius + tolerance)
+            {
+              continue;
+            }
 
-          double angle;
-          if (std::abs(input[2] - corner_z) <= tolerance)
-          {
-            angle = 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / radius;
+            double angle;
+            if (std::abs(input[2] - corner_z) <= tolerance)
+            {
+              angle = 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / radius;
+            }
+            else if (std::abs(input[0] - corner_x) <= tolerance)
+            {
+              angle = 0.25 * std::acos(-1.0) * local_z / radius;
+            }
+            else
+            {
+              continue;
+            }
+            output[0] = center_x + sign_x * radius * std::cos(angle);
+            output[2] = center_z + sign_z * radius * std::sin(angle);
+            return;
           }
-          else if (std::abs(input[0] - corner_x) <= tolerance)
-          {
-            angle = 0.25 * std::acos(-1.0) * local_z / radius;
-          }
-          else
-          {
-            continue;
-          }
-          output[0] = center_x + sign_x * radius * std::cos(angle);
-          output[2] = center_z + sign_z * radius * std::sin(angle);
-          return;
         }
       }
     };
@@ -2918,6 +2924,96 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         rounded_island_response.GetBasisSize());
   CHECK_THAT(high_order_rounded_island_response.GetPatchWeight(),
              WithinRel(rounded_island_response.GetPatchWeight(), 1.0e-12));
+
+  // Nearby curved conductors require a spatial cluster rather than independent corner
+  // responses. Preflight must retain sampled face loops without an eight-vertex cap, and
+  // its exact mask must round-trip through the process library on the same geometry.
+  auto high_order_spatial_config = island_config;
+  high_order_spatial_config["Boundaries"]["Terminal"] = {
+      {{"Index", 1}, {"Attributes", {9}}}, {{"Index", 2}, {"Attributes", {10}}}};
+  high_order_spatial_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] =
+      {9, 10};
+  high_order_spatial_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      spatial_cluster_library_3d_path.string();
+  high_order_spatial_config["Solver"]["Electrostatic"]["ResponseCorrection"]
+                           ["UnmatchedPolicy"] = "Warn";
+  IoData high_order_spatial_iodata(high_order_spatial_config, false);
+  high_order_spatial_iodata.boundaries.cracked_attributes.insert(9);
+  high_order_spatial_iodata.boundaries.cracked_attributes.insert(10);
+  auto high_order_spatial_mesh = MakeIslandMesh(true, false, false, true, false, true);
+  const auto high_order_spatial_requirements_path =
+      temp.temp_dir / "surface-response-requirements-high-order-spatial.json";
+  WriteSurfaceResponseRequirements(high_order_spatial_iodata, *high_order_spatial_mesh,
+                                   high_order_spatial_requirements_path.string());
+  std::ifstream high_order_spatial_requirements_input(high_order_spatial_requirements_path);
+  REQUIRE(high_order_spatial_requirements_input);
+  const auto high_order_spatial_requirements =
+      json::parse(high_order_spatial_requirements_input);
+  const auto high_order_spatial_requirement =
+      std::find_if(high_order_spatial_requirements["Requirements"].begin(),
+                   high_order_spatial_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     return requirement["Topology"] == "SpatialEdgeCluster" &&
+                            requirement["Geometry"].contains("PlanViewFacets") &&
+                            requirement["Geometry"].contains("PlanViewBoundary");
+                   });
+  REQUIRE(high_order_spatial_requirement !=
+          high_order_spatial_requirements["Requirements"].end());
+  const auto &high_order_spatial_facets =
+      (*high_order_spatial_requirement)["Geometry"]["PlanViewFacets"];
+  CHECK(std::any_of(high_order_spatial_facets.begin(), high_order_spatial_facets.end(),
+                    [](const auto &facet) { return facet["Points"].size() > 8; }));
+
+  std::ifstream exact_high_order_spatial_library_input(spatial_cluster_library_3d_path);
+  REQUIRE(exact_high_order_spatial_library_input);
+  auto exact_high_order_spatial_library =
+      json::parse(exact_high_order_spatial_library_input);
+  auto &exact_high_order_spatial_model = exact_high_order_spatial_library["Models"].back();
+  exact_high_order_spatial_model["Name"] = "high-order-curved-spatial-exact-mask";
+  exact_high_order_spatial_model["Edges"] =
+      (*high_order_spatial_requirement)["Geometry"]["Edges"];
+  for (auto &edge : exact_high_order_spatial_model["Edges"])
+  {
+    edge["BoundaryCondition"] = "PEC";
+  }
+  exact_high_order_spatial_model["PlanViewBoundary"] =
+      (*high_order_spatial_requirement)["Geometry"]["PlanViewBoundary"];
+  const auto exact_high_order_spatial_library_path =
+      temp.temp_dir / "fabrication-process-high-order-spatial-exact-mask-3d.json";
+  std::ofstream exact_high_order_spatial_library_output(
+      exact_high_order_spatial_library_path);
+  exact_high_order_spatial_library_output << exact_high_order_spatial_library.dump(2)
+                                          << "\n";
+  exact_high_order_spatial_library_output.close();
+
+  high_order_spatial_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      exact_high_order_spatial_library_path.string();
+  IoData exact_high_order_spatial_iodata(high_order_spatial_config, false);
+  exact_high_order_spatial_iodata.boundaries.cracked_attributes.insert(9);
+  exact_high_order_spatial_iodata.boundaries.cracked_attributes.insert(10);
+  const auto exact_high_order_spatial_requirements_path =
+      temp.temp_dir / "surface-response-requirements-high-order-spatial-exact.json";
+  WriteSurfaceResponseRequirements(exact_high_order_spatial_iodata,
+                                   *high_order_spatial_mesh,
+                                   exact_high_order_spatial_requirements_path.string());
+  std::ifstream exact_high_order_spatial_requirements_input(
+      exact_high_order_spatial_requirements_path);
+  REQUIRE(exact_high_order_spatial_requirements_input);
+  const auto exact_high_order_spatial_requirements =
+      json::parse(exact_high_order_spatial_requirements_input);
+  const auto matched_high_order_spatial =
+      std::find_if(exact_high_order_spatial_requirements["Requirements"].begin(),
+                   exact_high_order_spatial_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     return requirement["Topology"] == "SpatialEdgeCluster" &&
+                            requirement["Status"] == "Exact" &&
+                            requirement["SelectedModels"][0]["Name"] ==
+                                "high-order-curved-spatial-exact-mask";
+                   });
+  CHECK(matched_high_order_spatial !=
+        exact_high_order_spatial_requirements["Requirements"].end());
 
   auto rounded_concave_island_config = island_config;
   rounded_concave_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]

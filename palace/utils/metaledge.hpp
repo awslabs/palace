@@ -91,6 +91,8 @@ struct MetalEdgeSegment
 
 struct MetalSurfaceFace
 {
+  // Ordered polygonal boundary of this surface facet. High-order boundary edges are
+  // sampled consistently with the extracted metal perimeter.
   std::vector<std::array<double, 3>> vertices;
   int component = -1;
 };

@@ -128,6 +128,9 @@ The following infrastructure is present:
     recognition. Equivalent coarse quadratic and finer polygonal fillets select the same
     rounded-corner models and response patch layout in focused tests. Intentional sharp
     linear corners remain unchanged.
+  - Exact plan-view masks retain the same sampled high-order edge geometry on each metal
+    surface facet. Variable-length MPI facet exchange removes the former eight-point
+    limit; focused preflight tests round-trip a curved mask through exact library matching.
   - Spatial qualification separately gates FEM-order and local h-convergence. The h-study
     framework is also used for parallel-edge clusters and corners. It refines both thin
     and fabricated meshes at the final FEM order and reuses the finest completed p-study
@@ -215,8 +218,9 @@ alone.
      coarse quadratic versus finer polygonal rounded-island test has invariant topology,
      radius-model selection, and response patch layout. A coarse linear kink remains
      inherently ambiguous without CAD/high-order geometry or explicit metadata. Exact
-     spatial-mask facets also remain piecewise linear and need a matching high-order face
-     representation before curved close-edge clusters are qualified.
+     spatial masks now retain the matching sampled high-order face representation, but
+     held-out curved close-edge clusters still need qualification across geometric order
+     and tessellation.
 
 **Exit gate:** The held-out local suite below passes at two matching radii and at least
 two fabrication processes without geometry-specific tuning.

@@ -3418,6 +3418,8 @@ public:
     return snapped == 0.0 ? 0.0 : snapped;
   }
 
+  double UnscaleLength(double value) const { return value / coordinate_scale; }
+
   double SnapDirection(double value) const
   {
     const double snapped = std::round(value * 1.0e12) * 1.0e-12;
@@ -4133,6 +4135,25 @@ Point3D TransformLocalPoint(const Point3D &origin, const std::array<Point3D, 3> 
   return Add(origin, TransformLocalVector(axes, local));
 }
 
+std::pair<Point3D, std::array<Point3D, 3>> AlignSpatialFrame(const Point3D &model_point,
+                                                             const Point3D &model_gap,
+                                                             const Point3D &model_normal,
+                                                             const SpatialEdgeSite3D &site)
+{
+  const Point3D model_tangent = Normalize(Cross(model_gap, model_normal));
+  const Point3D site_tangent = Normalize(Cross(site.gap_direction, site.process_normal));
+  std::array<Point3D, 3> axes{};
+  for (int d = 0; d < 3; d++)
+  {
+    Point3D local_axis{};
+    local_axis[d] = 1.0;
+    axes[d] = Add(Scale(Dot(model_gap, local_axis), site.gap_direction),
+                  Add(Scale(Dot(model_normal, local_axis), site.process_normal),
+                      Scale(Dot(model_tangent, local_axis), site_tangent)));
+  }
+  return {Subtract(site.point, TransformLocalVector(axes, model_point)), axes};
+}
+
 std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
     const ProcessLibrary &library, const std::vector<SpatialEdgeSite3D> &sites,
     const std::set<std::size_t> &excluded_models = {},
@@ -4160,8 +4181,6 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
     const double angle_tolerance =
         std::max(model.spatial_angle_tolerance, 1.0e-10 * std::acos(-1.0));
     const auto &model_anchor = model.spatial_edges.front();
-    const Point3D model_tangent =
-        Normalize(Cross(model_anchor.gap_direction, model_anchor.process_normal));
 
     for (std::size_t site_anchor_index = 0; site_anchor_index < sites.size();
          site_anchor_index++)
@@ -4172,21 +4191,11 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
       {
         continue;
       }
-      const Point3D site_tangent =
-          Normalize(Cross(site_anchor.gap_direction, site_anchor.process_normal));
-      std::array<Point3D, 3> axes{};
-      for (int d = 0; d < 3; d++)
-      {
-        Point3D local_axis{};
-        local_axis[d] = 1.0;
-        axes[d] = Add(
-            Scale(Dot(model_anchor.gap_direction, local_axis), site_anchor.gap_direction),
-            Add(Scale(Dot(model_anchor.process_normal, local_axis),
-                      site_anchor.process_normal),
-                Scale(Dot(model_tangent, local_axis), site_tangent)));
-      }
-      const Point3D origin =
-          Subtract(site_anchor.point, TransformLocalVector(axes, model_anchor.point));
+      const auto aligned_frame =
+          AlignSpatialFrame(model_anchor.point, model_anchor.gap_direction,
+                            model_anchor.process_normal, site_anchor);
+      const Point3D origin = aligned_frame.first;
+      const std::array<Point3D, 3> axes = aligned_frame.second;
 
       struct Candidate
       {
@@ -4823,64 +4832,61 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
     }
 
-    constexpr int maximum_points = 8;
-    constexpr int record_size = 2 + 3 * maximum_points;
     std::vector<double> local_records;
-    local_records.reserve(record_size * local_facets.size());
     for (const auto &facet : local_facets)
     {
-      MFEM_VERIFY(facet.points.size() <= maximum_points,
-                  "Clipped plan-view facet has too many vertices!");
       local_records.push_back(static_cast<double>(facet.conductor));
       local_records.push_back(static_cast<double>(facet.points.size()));
-      for (int i = 0; i < maximum_points; i++)
+      for (const auto &point : facet.points)
       {
-        if (i < static_cast<int>(facet.points.size()))
-        {
-          local_records.insert(local_records.end(), facet.points[i].begin(),
-                               facet.points[i].end());
-        }
-        else
-        {
-          local_records.insert(local_records.end(), 3, 0.0);
-        }
+        local_records.insert(local_records.end(), point.begin(), point.end());
       }
     }
-    const int local_count = static_cast<int>(local_facets.size());
-    std::vector<int> counts(Mpi::Size(mesh.GetComm()));
-    Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
-    std::vector<int> value_counts(counts.size()), value_offsets(counts.size());
-    int total = 0;
-    for (std::size_t rank = 0; rank < counts.size(); rank++)
+    MFEM_VERIFY(local_records.size() <=
+                    static_cast<std::size_t>(std::numeric_limits<int>::max()),
+                "Local plan-view facet data exceeds the MPI count limit!");
+    const int local_value_count = static_cast<int>(local_records.size());
+    std::vector<int> value_counts(Mpi::Size(mesh.GetComm()));
+    Mpi::Allgather(1, &local_value_count, value_counts.data(), mesh.GetComm());
+    std::vector<int> value_offsets(value_counts.size());
+    int total_values = 0;
+    for (std::size_t rank = 0; rank < value_counts.size(); rank++)
     {
-      value_counts[rank] = record_size * counts[rank];
-      value_offsets[rank] = record_size * total;
-      total += counts[rank];
+      value_offsets[rank] = total_values;
+      MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
+                  "Global plan-view facet data exceeds the MPI count limit!");
+      total_values += value_counts[rank];
     }
-    std::vector<double> records(record_size * total);
-    Mpi::Allgatherv(static_cast<int>(local_records.size()), local_records.data(),
-                    records.data(), value_counts.data(), value_offsets.data(),
-                    mesh.GetComm());
+    std::vector<double> records(total_values);
+    Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
+                    value_counts.data(), value_offsets.data(), mesh.GetComm());
 
     PlanViewGeometry result;
     result.lower = lower;
     result.upper = upper;
     result.process_axis = process_axis;
-    result.facets.reserve(total);
-    for (int i = 0; i < total; i++)
+    for (std::size_t rank = 0; rank < value_counts.size(); rank++)
     {
-      const double *record = records.data() + record_size * i;
-      PlanViewFacet facet;
-      facet.conductor = static_cast<int>(std::llround(record[0]));
-      const int point_count = static_cast<int>(std::llround(record[1]));
-      MFEM_VERIFY(facet.conductor > 0 && point_count >= 3 && point_count <= maximum_points,
-                  "Invalid gathered plan-view facet!");
-      facet.points.resize(point_count);
-      for (int point = 0; point < point_count; point++)
+      std::size_t offset = value_offsets[rank];
+      const std::size_t end = offset + value_counts[rank];
+      while (offset < end)
       {
-        std::copy_n(record + 2 + 3 * point, 3, facet.points[point].begin());
+        MFEM_VERIFY(end - offset >= 2, "Truncated gathered plan-view facet record!");
+        PlanViewFacet facet;
+        facet.conductor = static_cast<int>(std::llround(records[offset++]));
+        const auto point_count = static_cast<std::size_t>(std::llround(records[offset++]));
+        MFEM_VERIFY(facet.conductor > 0 && point_count >= 3 &&
+                        point_count <= (end - offset) / 3,
+                    "Invalid gathered plan-view facet!");
+        facet.points.resize(point_count);
+        for (auto &point : facet.points)
+        {
+          std::copy_n(records.data() + offset, 3, point.begin());
+          offset += 3;
+        }
+        result.facets.push_back(std::move(facet));
       }
-      result.facets.push_back(std::move(facet));
+      MFEM_VERIFY(offset == end, "Invalid gathered plan-view facet data!");
     }
     return result;
   };
@@ -5137,8 +5143,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                          {"Edges", std::move(edges)}};
       if (surface.retain_faces && !conductor_by_metal_component.empty())
       {
-        const auto plan_view =
-            GatherPlanViewFacets(sites, anchor.point, axes, conductor_by_metal_component);
+        const auto &model_anchor = descriptions.front();
+        Point3D model_point{};
+        for (int d = 0; d < 3; d++)
+        {
+          model_point[d] = requirements->UnscaleLength(model_anchor.point[d]);
+        }
+        const auto [model_origin, model_axes] = AlignSpatialFrame(
+            model_point, model_anchor.gap, model_anchor.normal, *model_anchor.site);
+        const auto plan_view = GatherPlanViewFacets(sites, model_origin, model_axes,
+                                                    conductor_by_metal_component);
         std::vector<nlohmann::json> facets;
         std::set<int> found_conductors;
         for (const auto &facet : plan_view.facets)

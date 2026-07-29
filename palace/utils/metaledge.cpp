@@ -309,7 +309,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   if (surface.classify_components || surface.retain_faces)
   {
     std::vector<MetalSurfaceFace> local_faces;
-    mfem::Array<int> vertices;
+    mfem::Array<int> vertices, edges, orientations;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
       const int attribute = mesh.GetBdrAttribute(be);
@@ -322,11 +322,68 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
                   "Automatic metal-surface extraction supports triangular and "
                   "quadrilateral boundary elements!");
       MetalSurfaceFace face;
-      face.vertices.resize(vertices.Size());
+      std::vector<Point> corner_vertices(vertices.Size());
       for (int i = 0; i < vertices.Size(); i++)
       {
         const double *point = mesh.GetVertex(vertices[i]);
-        std::copy_n(point, 3, face.vertices[i].begin());
+        std::copy_n(point, 3, corner_vertices[i].begin());
+      }
+
+      if (surface.retain_faces)
+      {
+        mesh.GetBdrElementEdges(be, edges, orientations);
+        MFEM_VERIFY(edges.Size() == vertices.Size() && orientations.Size() == edges.Size(),
+                    "Unexpected metal boundary face topology!");
+        for (int i = 0; i < edges.Size(); i++)
+        {
+          auto edge_segments = mesh::GetMeshEdgeSegments(mesh, edges[i]);
+          if (orientations[i] < 0)
+          {
+            std::reverse(edge_segments.begin(), edge_segments.end());
+            for (auto &segment : edge_segments)
+            {
+              std::swap(segment.p0, segment.p1);
+            }
+          }
+          for (const auto &segment : edge_segments)
+          {
+            if (face.vertices.empty())
+            {
+              face.vertices.push_back(segment.p0);
+            }
+            else
+            {
+              double distance_squared = 0.0;
+              for (int d = 0; d < 3; d++)
+              {
+                const double delta = face.vertices.back()[d] - segment.p0[d];
+                distance_squared += delta * delta;
+              }
+              MFEM_VERIFY(distance_squared <= tolerance_squared,
+                          "Metal boundary face edges do not form an ordered loop!");
+            }
+            face.vertices.push_back(segment.p1);
+          }
+        }
+        double closure_distance_squared = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          const double delta = face.vertices.front()[d] - face.vertices.back()[d];
+          closure_distance_squared += delta * delta;
+        }
+        MFEM_VERIFY(closure_distance_squared <= tolerance_squared,
+                    "Metal boundary face edges do not form a closed loop!");
+        face.vertices.pop_back();
+
+        // Preserve the original representation for a geometrically linear face.
+        if (face.vertices.size() == corner_vertices.size())
+        {
+          face.vertices = std::move(corner_vertices);
+        }
+      }
+      else
+      {
+        face.vertices = std::move(corner_vertices);
       }
       local_faces.push_back(std::move(face));
     }

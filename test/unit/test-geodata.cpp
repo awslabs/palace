@@ -1025,7 +1025,9 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
   auto Extract = [&](int elements, bool high_order, bool rounded)
   {
     auto mesh = RoundedIslandSheetHexMesh(elements, high_order, rounded);
-    auto geometry = ExtractMetalEdgeGeometry(*mesh, boundaries);
+    MetalSurfaceExtraction surface;
+    surface.retain_faces = true;
+    auto geometry = ExtractMetalEdgeGeometry(*mesh, boundaries, surface);
     return std::pair{std::move(mesh), std::move(geometry)};
   };
   auto [coarse_mesh, coarse] = Extract(8, true, true);
@@ -1073,6 +1075,16 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
   CHECK_THAT(PhysicalLength(coarse), WithinAbs(exact_perimeter, 2.0e-3));
   CHECK_THAT(PhysicalLength(fine), WithinAbs(exact_perimeter, 6.0e-3));
   CHECK_THAT(PhysicalLength(coarse), WithinAbs(PhysicalLength(fine), 6.0e-3));
+
+  REQUIRE(!coarse.surface_faces.empty());
+  REQUIRE(!fine.surface_faces.empty());
+  CHECK(std::all_of(coarse.surface_faces.begin(), coarse.surface_faces.end(),
+                    [](const auto &face) { return face.component == 0; }));
+  CHECK(std::all_of(fine.surface_faces.begin(), fine.surface_faces.end(),
+                    [](const auto &face)
+                    { return face.component == 0 && face.vertices.size() == 4; }));
+  CHECK(std::any_of(coarse.surface_faces.begin(), coarse.surface_faces.end(),
+                    [](const auto &face) { return face.vertices.size() > 8; }));
 
   CHECK(sharp.physical_components == 1);
   CHECK(sharp.physical_chains == 4);
