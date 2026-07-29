@@ -67,6 +67,7 @@ public:
   virtual bool RequiresSourceSerialMeshMetadata() const { return false; }
   virtual void ProcessPartitionedMesh(const mfem::ParMesh &mesh,
                                       const mesh::PartitionMetadata &metadata) const;
+  virtual mesh::PartitionMetadata GetSourceEntityMetadata() const;
 
   // Optional AMR hooks for discretizations with mesh-dependent auxiliary topology.
   // A nonempty protection marker excludes local elements from refinement. The post-refine

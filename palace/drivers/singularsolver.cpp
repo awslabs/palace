@@ -595,6 +595,11 @@ FullWaveSingularFeatures::GetSourceVertexIds() const
   return source_vertex_ids.empty() ? nullptr : &source_vertex_ids;
 }
 
+mesh::PartitionMetadata FullWaveSingularFeatures::GetSourceEntityMetadata() const
+{
+  return {source_vertex_ids, source_element_ids};
+}
+
 mfem::Array<int>
 FullWaveSingularFeatures::GetRefinementProtection(const mfem::ParMesh &mesh) const
 {

@@ -3,18 +3,21 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <map>
 #include <numeric>
 #include <set>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "drivers/singularsolver.hpp"
 #include "fem/singulardofs.hpp"
 #include "fem/singularfeatures.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
@@ -401,6 +404,86 @@ TEST_CASE("Nonconforming refinement gives shared vertices rank-consistent identi
     }
   }
   CHECK(repeated_coordinates >= 3);
+}
+
+TEST_CASE("Rebalancing preserves singular feature incidence and global DOFs",
+          "[singularsolver][singularelements][Parallel]")
+{
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    SUCCEED("Singular feature migration is exercised by the parallel suite.");
+    return;
+  }
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  const bool nonconforming = GENERATE(false, true);
+  CAPTURE(nonconforming);
+  auto serial_mesh = LongInternalLineMesh();
+  const auto serial_features =
+      fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
+  const auto serial_dofs =
+      fem::singular::BuildSerialTriangleDofTopology(serial_mesh, serial_features, 1);
+  if (nonconforming)
+  {
+    serial_mesh.EnsureNCMesh(true);
+  }
+
+  std::vector<int> partition(serial_mesh.GetNE(), 0);
+  auto parallel_mesh =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, partition.data());
+  mesh::PartitionMetadata metadata;
+  if (nonconforming)
+  {
+    UpdateSingularSourceEntityIds(*parallel_mesh, metadata.source_vertex_ids,
+                                  metadata.source_element_ids);
+  }
+  else
+  {
+    metadata.source_vertex_ids = fem::singular::MapPartitionedSerialVertexIds(
+        serial_mesh, *parallel_mesh, partition.data());
+    metadata.source_element_ids.resize(parallel_mesh->GetNE());
+    std::iota(metadata.source_element_ids.begin(), metadata.source_element_ids.end(), 0);
+  }
+
+  const auto CheckTopology =
+      [&](const mfem::ParMesh &mesh, const mesh::PartitionMetadata &source)
+  {
+    const auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+        serial_features, mesh, source.source_vertex_ids, source.source_element_ids);
+    const auto local_dofs = fem::singular::BuildLocalTriangleDofTopology(
+        mesh, local_features, source.source_vertex_ids, 1);
+    const auto numbering =
+        fem::singular::BuildParallelDofNumbering(Mpi::World(), local_dofs);
+    CHECK(numbering.h1.global_size ==
+          static_cast<HYPRE_BigInt>(serial_dofs.h1_dofs.size()));
+    CHECK(numbering.nd.global_size ==
+          static_cast<HYPRE_BigInt>(serial_dofs.nd_dofs.size()));
+    CHECK_NOTHROW(
+        BuildSingularRefinementProtection(mesh, local_features, source.source_vertex_ids));
+    int enriched_elements = 0;
+    for (const auto &element : local_features.elements)
+    {
+      enriched_elements += !element.nodes.empty();
+    }
+    Mpi::GlobalSum(1, &enriched_elements, Mpi::World());
+    return enriched_elements;
+  };
+
+  const auto initial_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, *parallel_mesh, metadata.source_vertex_ids,
+      metadata.source_element_ids);
+  int initial_enriched_elements = 0;
+  for (const auto &element : initial_features.elements)
+  {
+    initial_enriched_elements += !element.nodes.empty();
+  }
+  Mpi::GlobalSum(1, &initial_enriched_elements, Mpi::World());
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.refinement.maximum_imbalance = 1.01;
+  const double initial_imbalance = mesh::RebalanceMesh(iodata, parallel_mesh, &metadata);
+  CHECK(std::isinf(initial_imbalance));
+  CHECK(parallel_mesh->GetNE() > 0);
+  CHECK(CheckTopology(*parallel_mesh, metadata) == initial_enriched_elements);
 }
 
 }  // namespace palace

@@ -1189,9 +1189,9 @@ void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
   ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});
 }
 
-bool ElectrostaticSolver::RebalanceRefinedMesh() const
+mesh::PartitionMetadata ElectrostaticSolver::GetSourceEntityMetadata() const
 {
-  return !iodata.solver.singular_elements.Enabled();
+  return {source_vertex_ids, source_element_ids};
 }
 
 std::pair<ErrorIndicator, long long int>

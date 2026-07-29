@@ -169,6 +169,11 @@ void BaseSolver::ProcessPartitionedMesh(const mfem::ParMesh &,
 {
 }
 
+mesh::PartitionMetadata BaseSolver::GetSourceEntityMetadata() const
+{
+  return {};
+}
+
 mfem::Array<int> BaseSolver::GetRefinementProtection(const mfem::ParMesh &) const
 {
   return {};
@@ -317,9 +322,28 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Optionally rebalance and write the adapted mesh to file.
     if (RebalanceRefinedMesh())
     {
-      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
+      mesh::PartitionMetadata source_metadata;
+      auto *metadata = [&]() -> mesh::PartitionMetadata *
+      {
+        if (!RequiresSourceSerialMeshMetadata())
+        {
+          return nullptr;
+        }
+        source_metadata = GetSourceEntityMetadata();
+        MFEM_VERIFY(source_metadata.source_vertex_ids.size() ==
+                            static_cast<std::size_t>(mesh.back()->Get().GetNV()) &&
+                        source_metadata.source_element_ids.size() ==
+                            static_cast<std::size_t>(mesh.back()->Get().GetNE()),
+                    "AMR rebalancing received incomplete source-entity metadata!");
+        return &source_metadata;
+      }();
+      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), metadata);
       if (ratio_pre > refinement.maximum_imbalance)
       {
+        if (metadata)
+        {
+          ProcessPartitionedMesh(mesh.back()->Get(), *metadata);
+        }
         int min_elem, max_elem;
         min_elem = max_elem = mesh.back()->GetNE();
         Mpi::GlobalMin(1, &min_elem, comm);

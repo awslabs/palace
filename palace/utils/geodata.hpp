@@ -25,9 +25,9 @@ namespace mesh
 // Functions for mesh related functionality.
 //
 
-// Exact source-serial entity IDs for one rank-local partition. These maps are
-// valid only for the ParMesh returned by the same Partition call and are
-// invalidated by refinement or rebalancing.
+// Exact persistent entity IDs for one rank-local partition. These maps are
+// valid only for the ParMesh returned by the same partition/refinement/rebalancing
+// operation.
 struct PartitionMetadata
 {
   std::vector<std::int64_t> source_vertex_ids;
@@ -357,8 +357,10 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
                                                     std::unique_ptr<mfem::Mesh> &smesh);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
-// the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
+// the intermediate stages to disk. When metadata is supplied, it is transported to the
+// rebalanced local partition. Returns the imbalance ratio before rebalancing.
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     PartitionMetadata *metadata = nullptr);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);

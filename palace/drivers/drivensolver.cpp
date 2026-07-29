@@ -56,6 +56,11 @@ void DrivenSolver::ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
   singular_features.ProcessPartitionedMesh(iodata, parallel_mesh, metadata);
 }
 
+mesh::PartitionMetadata DrivenSolver::GetSourceEntityMetadata() const
+{
+  return singular_features.GetSourceEntityMetadata();
+}
+
 mfem::Array<int> DrivenSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
 {
   return iodata.solver.singular_elements.Enabled()
@@ -69,11 +74,6 @@ void DrivenSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
   {
     singular_features.ProcessRefinedMesh(iodata, mesh);
   }
-}
-
-bool DrivenSolver::RebalanceRefinedMesh() const
-{
-  return !iodata.solver.singular_elements.Enabled();
 }
 
 std::pair<ErrorIndicator, long long int>

@@ -3,9 +3,12 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -21,6 +24,7 @@
 #include "utils/iodata.hpp"
 
 #include "fem/interpolator.hpp"
+#include "fem/singulardofs.hpp"
 #include "fem/singularfeatures.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -670,6 +674,140 @@ TEST_CASE("Nonconforming mesh partition retains source vertex identities",
   {
     CHECK(count > 0);
   }
+}
+
+TEST_CASE("Mesh rebalancing transports persistent source identities",
+          "[geodata][singularelements][Parallel]")
+{
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    SUCCEED("Rebalancing identity transport is exercised by the parallel test run.");
+    return;
+  }
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  const bool nonconforming = GENERATE(false, true);
+  CAPTURE(nonconforming);
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::TRIANGLE, true, 2.0, 1.0);
+  if (nonconforming)
+  {
+    serial_mesh.EnsureNCMesh(true);
+  }
+  const int serial_vertices = serial_mesh.GetNV();
+  const int serial_elements = serial_mesh.GetNE();
+  std::vector<std::array<double, 2>> serial_coordinates(serial_vertices);
+  for (int vertex = 0; vertex < serial_vertices; vertex++)
+  {
+    const auto *coordinate = serial_mesh.GetVertex(vertex);
+    serial_coordinates[vertex] = {coordinate[0], coordinate[1]};
+  }
+
+  std::vector<int> initial_partition(serial_elements, 0);
+  auto parallel_mesh =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, initial_partition.data());
+  REQUIRE(parallel_mesh->GetNE() == (Mpi::Root(Mpi::World()) ? serial_elements : 0));
+
+  mesh::PartitionMetadata metadata;
+  if (nonconforming)
+  {
+    metadata.source_vertex_ids.assign(parallel_mesh->GetNV(), -1);
+    const auto &ncmesh = *parallel_mesh->ncmesh;
+    for (int node = 0; node < ncmesh.GetNumNodes(); node++)
+    {
+      const auto &record = ncmesh.GetNode(node);
+      if (record.HasVertex() && record.vert_index >= 0 &&
+          record.vert_index < parallel_mesh->GetNV())
+      {
+        metadata.source_vertex_ids[record.vert_index] = node;
+      }
+    }
+  }
+  else
+  {
+    metadata.source_vertex_ids = fem::singular::MapPartitionedSerialVertexIds(
+        serial_mesh, *parallel_mesh, initial_partition.data());
+  }
+  metadata.source_element_ids.resize(parallel_mesh->GetNE());
+  std::iota(metadata.source_element_ids.begin(), metadata.source_element_ids.end(), 0);
+
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.refinement.maximum_imbalance = 1.01;
+  const double initial_imbalance = mesh::RebalanceMesh(iodata, parallel_mesh, &metadata);
+  CHECK(std::isinf(initial_imbalance));
+  REQUIRE(parallel_mesh->GetNE() > 0);
+  REQUIRE(metadata.source_vertex_ids.size() ==
+          static_cast<std::size_t>(parallel_mesh->GetNV()));
+  REQUIRE(metadata.source_element_ids.size() ==
+          static_cast<std::size_t>(parallel_mesh->GetNE()));
+
+  int min_elements = parallel_mesh->GetNE();
+  int max_elements = parallel_mesh->GetNE();
+  Mpi::GlobalMin(1, &min_elements, Mpi::World());
+  Mpi::GlobalMax(1, &max_elements, Mpi::World());
+  CHECK(min_elements > 0);
+  CHECK(double(max_elements) / min_elements <= 1.01);
+
+  std::map<std::array<double, 2>, std::int64_t> local_id_by_coordinate;
+  for (int vertex = 0; vertex < parallel_mesh->GetNV(); vertex++)
+  {
+    const auto *coordinate = parallel_mesh->GetVertex(vertex);
+    const std::array<double, 2> point{coordinate[0], coordinate[1]};
+    const auto source = metadata.source_vertex_ids[vertex];
+    REQUIRE(source >= 0);
+    CHECK(local_id_by_coordinate.emplace(point, source).second);
+    if (!nonconforming)
+    {
+      REQUIRE(source < serial_vertices);
+      CHECK(point == serial_coordinates[source]);
+    }
+  }
+
+  const int local_vertices = parallel_mesh->GetNV();
+  std::vector<int> counts(Mpi::Size(Mpi::World()));
+  Mpi::Allgather(1, &local_vertices, counts.data(), Mpi::World());
+  std::vector<int> offsets(counts.size());
+  std::partial_sum(counts.begin(), counts.end() - 1, offsets.begin() + 1);
+  const int total_vertices = offsets.back() + counts.back();
+  std::vector<double> local_coordinates(2 * local_vertices);
+  for (int vertex = 0; vertex < local_vertices; vertex++)
+  {
+    const auto *coordinate = parallel_mesh->GetVertex(vertex);
+    local_coordinates[2 * vertex] = coordinate[0];
+    local_coordinates[2 * vertex + 1] = coordinate[1];
+  }
+  std::vector<int> coordinate_counts(counts), coordinate_offsets(offsets);
+  for (int &count : coordinate_counts)
+  {
+    count *= 2;
+  }
+  for (int &offset : coordinate_offsets)
+  {
+    offset *= 2;
+  }
+  std::vector<double> global_coordinates(2 * total_vertices);
+  std::vector<std::int64_t> global_ids(total_vertices);
+  Mpi::Allgatherv(2 * local_vertices, local_coordinates.data(), global_coordinates.data(),
+                  coordinate_counts.data(), coordinate_offsets.data(), Mpi::World());
+  Mpi::Allgatherv(local_vertices, metadata.source_vertex_ids.data(), global_ids.data(),
+                  counts.data(), offsets.data(), Mpi::World());
+
+  std::map<std::array<double, 2>, std::int64_t> global_id_by_coordinate;
+  int shared_vertices = 0;
+  for (int vertex = 0; vertex < total_vertices; vertex++)
+  {
+    const std::array<double, 2> point{global_coordinates[2 * vertex],
+                                      global_coordinates[2 * vertex + 1]};
+    const auto [record, inserted] =
+        global_id_by_coordinate.emplace(point, global_ids[vertex]);
+    if (!inserted)
+    {
+      shared_vertices++;
+      CHECK(record->second == global_ids[vertex]);
+    }
+  }
+  CHECK(shared_vertices > 0);
+  CHECK(global_id_by_coordinate.size() == static_cast<std::size_t>(serial_vertices));
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

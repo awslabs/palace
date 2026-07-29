@@ -85,6 +85,7 @@ public:
   const fem::singular::FeatureTopology *GetSheetFeatures() const;
   const fem::singular::TriangleFeatureTopology *GetLineFeatures() const;
   const std::vector<fem::singular::GlobalVertexId> *GetSourceVertexIds() const;
+  mesh::PartitionMetadata GetSourceEntityMetadata() const;
   mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh) const;
 };
 

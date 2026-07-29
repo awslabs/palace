@@ -74,11 +74,14 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
 // mesh over the given communicator. The serial mesh is destroyed when no longer needed.
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
                                               const int *, const std::string & = "",
-                                              mesh::PartitionMetadata * = nullptr);
+                                              mesh::PartitionMetadata * = nullptr,
+                                              const mesh::PartitionMetadata * = nullptr);
 
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &,
+                            mesh::PartitionMetadata * = nullptr);
+void RebuildNonconformingSourceMetadata(const mfem::ParMesh &, mesh::PartitionMetadata &);
 
 // Apply box/sphere region-based refinement to a serial mesh in-place. For tensor-element
 // meshes the refinement is non-conforming and the mesh must already be nonconforming.
@@ -1988,7 +1991,8 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
   return DistributeMesh(comm, smesh, partitioning.get());
 }
 
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     PartitionMetadata *metadata)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
@@ -2051,12 +2055,16 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
     if (mesh->Nonconforming())
     {
       mesh->Rebalance();
+      if (metadata)
+      {
+        RebuildNonconformingSourceMetadata(*mesh, *metadata);
+      }
     }
     else
     {
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
-      RebalanceConformalMesh(mesh);
+      RebalanceConformalMesh(mesh, metadata);
     }
   }
   return ratio;
@@ -3680,7 +3688,8 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
 
 std::unique_ptr<mfem::ParMesh>
 DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *partitioning,
-               const std::string &output_dir, mesh::PartitionMetadata *metadata)
+               const std::string &output_dir, mesh::PartitionMetadata *metadata,
+               const mesh::PartitionMetadata *serial_metadata)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
   // parallel mesh. For now, prefer the MPI-based version to the file IO one. When
@@ -3691,6 +3700,11 @@ DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *par
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (Mpi::Root(comm))
   {
+    MFEM_VERIFY(!serial_metadata || (serial_metadata->source_vertex_ids.size() ==
+                                         static_cast<std::size_t>(smesh->GetNV()) &&
+                                     serial_metadata->source_element_ids.size() ==
+                                         static_cast<std::size_t>(smesh->GetNE())),
+                "Serial mesh source-entity metadata is inconsistent!");
     mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm),
                                       const_cast<int *>(partitioning));
     const int requests_per_rank = metadata ? 2 : 1;
@@ -3720,7 +3734,8 @@ DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *par
           {
             continue;
           }
-          elements.push_back(element);
+          elements.push_back(serial_metadata ? serial_metadata->source_element_ids[element]
+                                             : static_cast<std::int64_t>(element));
           const auto &source = *smesh->GetElement(element);
           vertices.insert(source.GetVertices(),
                           source.GetVertices() + source.GetNVertices());
@@ -3731,7 +3746,11 @@ DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *par
         ids.reserve(2 + vertices.size() + elements.size());
         ids.push_back(static_cast<std::int64_t>(vertices.size()));
         ids.push_back(static_cast<std::int64_t>(elements.size()));
-        ids.insert(ids.end(), vertices.begin(), vertices.end());
+        for (std::int64_t vertex : vertices)
+        {
+          ids.push_back(serial_metadata ? serial_metadata->source_vertex_ids[vertex]
+                                        : vertex);
+        }
         ids.insert(ids.end(), elements.begin(), elements.end());
       }
       std::ostringstream fo(std::stringstream::out);
@@ -3815,13 +3834,144 @@ DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *par
   return pmesh;
 }
 
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
+mesh::PartitionMetadata
+GatherConformingSourceMetadata(const mfem::ParMesh &pmesh,
+                               const mesh::PartitionMetadata &local_metadata)
+{
+  MPI_Comm comm = pmesh.GetComm();
+  bool valid =
+      local_metadata.source_vertex_ids.size() == static_cast<std::size_t>(pmesh.GetNV()) &&
+      local_metadata.source_element_ids.size() == static_cast<std::size_t>(pmesh.GetNE());
+  Mpi::GlobalAnd(1, &valid, comm);
+  MFEM_VERIFY(valid, "Conforming mesh rebalancing received incomplete source metadata!");
+
+  const auto GatherCounts = [comm](int local_size)
+  {
+    std::vector<int> counts(Mpi::Size(comm));
+    Mpi::Allgather(1, &local_size, counts.data(), comm);
+    std::vector<int> offsets(counts.size());
+    std::partial_sum(counts.begin(), counts.end() - 1, offsets.begin() + 1);
+    const std::size_t total = std::accumulate(counts.begin(), counts.end(), std::size_t{0});
+    MFEM_VERIFY(total <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+                "Conforming mesh metadata exceeds MPI integer counts!");
+    return std::make_pair(std::move(counts), std::move(offsets));
+  };
+
+  mfem::Array<HYPRE_BigInt> global_vertices;
+  pmesh.GetGlobalVertexIndices(global_vertices);
+  MFEM_VERIFY(global_vertices.Size() == pmesh.GetNV(),
+              "Conforming mesh has incomplete global vertex numbering!");
+  std::vector<std::int64_t> local_vertex_numbers(pmesh.GetNV());
+  for (int vertex = 0; vertex < pmesh.GetNV(); vertex++)
+  {
+    MFEM_VERIFY(
+        global_vertices[vertex] >= 0 &&
+            static_cast<unsigned long long>(global_vertices[vertex]) <=
+                static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max()),
+        "Conforming mesh global vertex number exceeds the supported range!");
+    local_vertex_numbers[vertex] = static_cast<std::int64_t>(global_vertices[vertex]);
+  }
+
+  const auto [vertex_counts, vertex_offsets] = GatherCounts(pmesh.GetNV());
+  const int gathered_vertex_count = vertex_offsets.back() + vertex_counts.back();
+  std::vector<std::int64_t> gathered_vertex_numbers(Mpi::Root(comm) ? gathered_vertex_count
+                                                                    : 0);
+  std::vector<std::int64_t> gathered_vertex_ids(Mpi::Root(comm) ? gathered_vertex_count
+                                                                : 0);
+  MPI_Gatherv(local_vertex_numbers.data(), pmesh.GetNV(), MPI_INT64_T,
+              gathered_vertex_numbers.data(), vertex_counts.data(), vertex_offsets.data(),
+              MPI_INT64_T, 0, comm);
+  MPI_Gatherv(local_metadata.source_vertex_ids.data(), pmesh.GetNV(), MPI_INT64_T,
+              gathered_vertex_ids.data(), vertex_counts.data(), vertex_offsets.data(),
+              MPI_INT64_T, 0, comm);
+
+  const auto [element_counts, element_offsets] = GatherCounts(pmesh.GetNE());
+  const int gathered_element_count = element_offsets.back() + element_counts.back();
+  mesh::PartitionMetadata serial_metadata;
+  if (Mpi::Root(comm))
+  {
+    serial_metadata.source_element_ids.resize(gathered_element_count);
+  }
+  MPI_Gatherv(local_metadata.source_element_ids.data(), pmesh.GetNE(), MPI_INT64_T,
+              serial_metadata.source_element_ids.data(), element_counts.data(),
+              element_offsets.data(), MPI_INT64_T, 0, comm);
+
+  if (Mpi::Root(comm))
+  {
+    std::int64_t maximum_vertex = -1;
+    for (std::int64_t vertex : gathered_vertex_numbers)
+    {
+      maximum_vertex = std::max(maximum_vertex, vertex);
+    }
+    MFEM_VERIFY(maximum_vertex >= 0 && maximum_vertex < std::numeric_limits<int>::max(),
+                "Conforming mesh global vertex count exceeds the supported range!");
+    serial_metadata.source_vertex_ids.assign(maximum_vertex + 1, -1);
+    for (int i = 0; i < gathered_vertex_count; i++)
+    {
+      const auto vertex = gathered_vertex_numbers[i];
+      const auto source = gathered_vertex_ids[i];
+      MFEM_VERIFY(source >= 0, "Conforming mesh contains an invalid source vertex ID!");
+      auto &record = serial_metadata.source_vertex_ids[vertex];
+      MFEM_VERIFY(record < 0 || record == source,
+                  "Shared conforming vertex has inconsistent persistent identities!");
+      record = source;
+    }
+    MFEM_VERIFY(std::find(serial_metadata.source_vertex_ids.begin(),
+                          serial_metadata.source_vertex_ids.end(),
+                          std::int64_t{-1}) == serial_metadata.source_vertex_ids.end(),
+                "Conforming mesh global vertex numbering is incomplete!");
+    std::set<std::int64_t> unique_vertices(serial_metadata.source_vertex_ids.begin(),
+                                           serial_metadata.source_vertex_ids.end());
+    MFEM_VERIFY(unique_vertices.size() == serial_metadata.source_vertex_ids.size(),
+                "Conforming mesh contains duplicate persistent vertex identities!");
+  }
+  return serial_metadata;
+}
+
+void RebuildNonconformingSourceMetadata(const mfem::ParMesh &pmesh,
+                                        mesh::PartitionMetadata &metadata)
+{
+  MFEM_VERIFY(pmesh.Nonconforming() && pmesh.ncmesh,
+              "Persistent nonconforming metadata requires an NCMesh!");
+  metadata.source_vertex_ids.assign(pmesh.GetNV(), -1);
+  const auto &ncmesh = *pmesh.ncmesh;
+  for (int node = 0; node < ncmesh.GetNumNodes(); node++)
+  {
+    const auto &record = ncmesh.GetNode(node);
+    if (record.HasVertex() && record.vert_index >= 0 && record.vert_index < pmesh.GetNV())
+    {
+      metadata.source_vertex_ids[record.vert_index] = node;
+    }
+  }
+  MFEM_VERIFY(
+      std::find(metadata.source_vertex_ids.begin(), metadata.source_vertex_ids.end(),
+                std::int64_t{-1}) == metadata.source_vertex_ids.end(),
+      "Rebalanced nonconforming mesh contains a vertex without a persistent NCMesh ID!");
+  std::set<std::int64_t> unique_vertices(metadata.source_vertex_ids.begin(),
+                                         metadata.source_vertex_ids.end());
+  MFEM_VERIFY(unique_vertices.size() == metadata.source_vertex_ids.size(),
+              "Rebalanced nonconforming mesh contains duplicate local vertex IDs!");
+
+  metadata.source_element_ids.resize(pmesh.GetNE());
+  for (int element = 0; element < pmesh.GetNE(); element++)
+  {
+    metadata.source_element_ids[element] = pmesh.GetGlobalElementNum(element);
+  }
+}
+
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh,
+                            mesh::PartitionMetadata *metadata)
 {
   // Write the parallel mesh to a stream as a serial mesh, then read back in and partition
   // using METIS.
   MPI_Comm comm = pmesh->GetComm();
   constexpr bool generate_edges = false, generate_bdr = false, refine = true,
                  fix_orientation = false;
+  mesh::PartitionMetadata serial_metadata;
+  if (metadata)
+  {
+    serial_metadata = GatherConformingSourceMetadata(*pmesh, *metadata);
+  }
   std::unique_ptr<mfem::Mesh> smesh;
   if constexpr (false)
   {
@@ -3842,6 +3992,11 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
     smesh = std::make_unique<mfem::Mesh>(pmesh->GetSerialMesh(0));
     if (Mpi::Root(comm))
     {
+      MFEM_VERIFY(!metadata || (serial_metadata.source_vertex_ids.size() ==
+                                    static_cast<std::size_t>(smesh->GetNV()) &&
+                                serial_metadata.source_element_ids.size() ==
+                                    static_cast<std::size_t>(smesh->GetNE())),
+                  "Gathered conforming mesh metadata does not match the serial mesh!");
       smesh->FinalizeTopology(generate_bdr);
       smesh->Finalize(refine, fix_orientation);
     }
@@ -3857,7 +4012,14 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
   {
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
   }
-  pmesh = DistributeMesh(comm, smesh, partitioning.get());
+  mesh::PartitionMetadata rebalanced_metadata;
+  pmesh = DistributeMesh(comm, smesh, partitioning.get(), "",
+                         metadata ? &rebalanced_metadata : nullptr,
+                         metadata ? &serial_metadata : nullptr);
+  if (metadata)
+  {
+    *metadata = std::move(rebalanced_metadata);
+  }
 }
 
 void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh)
