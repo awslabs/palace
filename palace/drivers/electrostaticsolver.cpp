@@ -1165,6 +1165,35 @@ void ElectrostaticSolver::ProcessPartitionedMesh(
   source_element_ids = metadata.source_element_ids;
 }
 
+mfem::Array<int>
+ElectrostaticSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+{
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    return {};
+  }
+  return mesh.Dimension() == 2
+             ? BuildSingularRefinementProtection(mesh, local_triangle_singular_features,
+                                                 source_vertex_ids)
+             : BuildSingularRefinementProtection(mesh, local_singular_features,
+                                                 source_vertex_ids);
+}
+
+void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
+{
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    return;
+  }
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+  ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});
+}
+
+bool ElectrostaticSolver::RebalanceRefinedMesh() const
+{
+  return !iodata.solver.singular_elements.Enabled();
+}
+
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -1218,6 +1247,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::vector<SingularEdgeSlopeMeasurement> edge_slope_measurements;
     std::vector<SingularTipSlopeMeasurement> tip_slope_measurements;
     std::vector<SingularSurfaceMeasurement> surface_measurements;
+    GradFluxErrorEstimator estimator(
+        laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+        iodata.solver.linear.estimator_mg);
+    ErrorIndicator indicator;
     const fem::singular::EdgeSlopeOptions edge_slope_options;
     domain_energy.reserve(n_step);
     const auto &singular_diagnostics = laplace_op.GetSingularDiagnostics();
@@ -1317,6 +1351,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {"CombinedDiscreteGradient", true},
           {"CombinedFieldEvaluation", true},
           {"DomainEnergy", true},
+          {"SmoothRemainderErrorEstimator", true},
+          {"ProtectedSingularPatch", true},
           {"SurfaceMeasurements", true},
           {"SurfaceQuadrature", "basis-aware Gauss-Jacobi power expansion"},
           {"CoefficientDiagnostics", true},
@@ -1342,6 +1378,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {"CombinedDiscreteGradient", true},
           {"CombinedFieldEvaluation", true},
           {"DomainEnergy", true},
+          {"SmoothRemainderErrorEstimator", true},
+          {"ProtectedSingularPatch", true},
           {"SurfaceMeasurements", true},
           {"SurfaceQuadrature",
            "edge-aligned graded Gauss-Jacobi with logarithmic cutoff map"},
@@ -1402,9 +1440,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "ParaView sampling. Integrable two-dimensional dielectric surface measurements "
         "use the combined H1 gradient and basis-aware Gauss-Jacobi quadrature. "
         "Three-dimensional dielectric surface measurements use combined-field "
-        "edge-aligned singular quadrature. MFEM grid-function output and error estimation "
-        "remain disabled. Ideal zero-thickness line-tip or sheet-edge traces with nu <= "
-        "1/2 require explicit physical regularization.\n");
+        "edge-aligned singular quadrature. AMR estimates the standard-space smooth "
+        "remainder only and masks every enriched element plus one face layer. MFEM "
+        "grid-function output remains disabled. Ideal zero-thickness line-tip or "
+        "sheet-edge traces with nu <= 1/2 require explicit physical regularization.\n");
 
     Mpi::Print("\nComputing singular electrostatic fields for {:d} terminal {}\n", n_step,
                (n_step > 1) ? "boundaries" : "boundary");
@@ -1513,6 +1552,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                          iodata.solver.singular_elements.max_subdivisions})});
         }
       }
+      Vector standard_e;
+      standard_e.MakeRef(E, 0, laplace_op.GetNDSpace().GetTrueVSize());
+      estimator.AddErrorIndicator(standard_e, domain_energy.back().total_energy, indicator);
       if (field_output && step < iodata.solver.electrostatic.n_post)
       {
         if (triangle_singular)
@@ -1564,8 +1606,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       WriteSingularEdgeSlopeMeasurements(post_dir, iodata, edge_slope_measurements, root);
     }
+    indicator.ZeroElements(GetRefinementProtection(laplace_op.GetMesh().Get()));
     PostprocessSingularTerminals(laplace_op, laplace_op.GetSources(), V);
-    return {ErrorIndicator(), laplace_op.GlobalTrueVSize()};
+    return {std::move(indicator), laplace_op.GlobalTrueVSize()};
   }
 
   // Terminal indices are the set of boundaries over which to compute the capacitance

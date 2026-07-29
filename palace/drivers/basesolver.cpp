@@ -169,6 +169,13 @@ void BaseSolver::ProcessPartitionedMesh(const mfem::ParMesh &,
 {
 }
 
+mfem::Array<int> BaseSolver::GetRefinementProtection(const mfem::ParMesh &) const
+{
+  return {};
+}
+
+void BaseSolver::ProcessRefinedMesh(const mfem::ParMesh &) const {}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
@@ -237,11 +244,39 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    const auto protection = GetRefinementProtection(mesh.back()->Get());
+    MFEM_VERIFY(protection.Size() == 0 || protection.Size() == mesh.back()->GetNE(),
+                "AMR refinement-protection marker has an invalid size!");
+    if (protection.Size() > 0)
+    {
+      int protected_elements = 0;
+      for (int element = 0; element < protection.Size(); element++)
+      {
+        protected_elements += protection[element] != 0;
+      }
+      Mpi::GlobalSum(1, &protected_elements, comm);
+      Mpi::Print(" Protecting {:d} singular-patch elements from refinement\n",
+                 protected_elements);
+    }
+
+    const auto marked_elements = [&comm, &refinement, &protection](const auto &indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
           comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+      auto marked_elements = MarkedElements(indicators.Local(), threshold);
+      if (protection.Size() > 0)
+      {
+        mfem::Array<int> filtered;
+        filtered.Reserve(marked_elements.Size());
+        for (int element : marked_elements)
+        {
+          if (!protection[element])
+          {
+            filtered.Append(element);
+          }
+        }
+        marked_elements = std::move(filtered);
+      }
       const auto [glob_marked_elements, glob_elements] =
           linalg::GlobalSize2(comm, marked_elements, indicators.Local());
       Mpi::Print(
@@ -250,6 +285,17 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
           refinement.update_fraction);
       return marked_elements;
     }(indicators);
+    int global_marked_elements = marked_elements.Size();
+    Mpi::GlobalSum(1, &global_marked_elements, comm);
+    if (global_marked_elements == 0)
+    {
+      Mpi::Warning(
+          comm,
+          "AMR stopped because every marked element belongs to a protected "
+          "singular-enrichment patch. Refinement through that patch requires certified "
+          "parent/child enrichment constraints.\n");
+      break;
+    }
 
     // Refine.
     {
@@ -262,8 +308,14 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                  final_elem_count - initial_elem_count, initial_elem_count,
                  final_elem_count);
     }
+    ProcessRefinedMesh(mesh.back()->Get());
+    const auto refined_protection = GetRefinementProtection(mesh.back()->Get());
+    MFEM_VERIFY(refined_protection.Size() == 0 ||
+                    refined_protection.Size() == mesh.back()->GetNE(),
+                "Refined AMR protection marker has an invalid size!");
 
     // Optionally rebalance and write the adapted mesh to file.
+    if (RebalanceRefinedMesh())
     {
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
       if (ratio_pre > refinement.maximum_imbalance)
@@ -277,8 +329,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                    "(new ratio = {:.3f})\n",
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
       }
-      mesh.back()->Update();
     }
+    else
+    {
+      Mpi::Print(" Skipping mesh rebalancing to preserve singular-feature identities\n");
+    }
+    mesh.back()->Update();
 
     // Print statistics (element counts, size h, and shape regularity kappa) for the
     // newly-refined mesh so the evolution of mesh quality under AMR is visible.

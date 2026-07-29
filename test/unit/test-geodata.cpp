@@ -609,6 +609,69 @@ TEST_CASE("Mesh partition transports exact source serial entity IDs", "[geodata]
   }
 }
 
+TEST_CASE("Nonconforming mesh partition retains source vertex identities",
+          "[geodata][singularelements][Parallel]")
+{
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    SUCCEED("Nonconforming source identities are exercised by the parallel test run.");
+    return;
+  }
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  const std::array<std::array<double, 3>, 6> source_coordinates{
+      std::array<double, 3>{0.0, 0.0, 0.0},
+      {1.0, 0.0, 0.0},
+      {0.0, 1.0, 0.0},
+      {1.0, 1.0, 0.0},
+      {0.5, 0.5, 1.0},
+      {0.5, 0.5, -1.0}};
+  std::unique_ptr<mfem::Mesh> serial_mesh;
+  if (Mpi::Root(Mpi::World()))
+  {
+    serial_mesh = std::make_unique<mfem::Mesh>(3, 6, 4, 0, 3);
+    for (const auto &coordinate : source_coordinates)
+    {
+      serial_mesh->AddVertex(coordinate.data());
+    }
+    serial_mesh->AddTet(0, 1, 2, 4, 1);
+    serial_mesh->AddTet(0, 2, 1, 5, 1);
+    serial_mesh->AddTet(1, 3, 2, 4, 1);
+    serial_mesh->AddTet(1, 2, 3, 5, 1);
+    serial_mesh->FinalizeTopology();
+    serial_mesh->Finalize(true, false);
+  }
+
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.refinement.max_it = 1;
+  iodata.model.refinement.nonconformal = true;
+  mesh::PartitionMetadata metadata;
+  auto parallel_mesh =
+      mesh::Partition(iodata, std::move(serial_mesh), Mpi::World(), &metadata);
+  REQUIRE(parallel_mesh->Nonconforming());
+  REQUIRE(metadata.source_vertex_ids.size() ==
+          static_cast<std::size_t>(parallel_mesh->GetNV()));
+
+  std::array<int, source_coordinates.size()> found{};
+  for (int vertex = 0; vertex < parallel_mesh->GetNV(); vertex++)
+  {
+    const auto source = metadata.source_vertex_ids[vertex];
+    REQUIRE(source >= 0);
+    REQUIRE(source < static_cast<std::int64_t>(source_coordinates.size()));
+    found[source]++;
+    const auto *coordinate = parallel_mesh->GetVertex(vertex);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK(coordinate[d] == source_coordinates[source][d]);
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(found.size()), found.data(), Mpi::World());
+  for (int count : found)
+  {
+    CHECK(count > 0);
+  }
+}
+
 TEST_CASE("Default IOData", "[iodata][Serial]")
 {
   config::MaterialData material;

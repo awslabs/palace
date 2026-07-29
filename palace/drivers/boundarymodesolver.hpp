@@ -32,6 +32,9 @@ public:
   bool RequiresSourceSerialMeshMetadata() const override;
   void ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
                               const mesh::PartitionMetadata &metadata) const override;
+  mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh) const override;
+  void ProcessRefinedMesh(const mfem::ParMesh &mesh) const override;
+  bool RebalanceRefinedMesh() const override;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

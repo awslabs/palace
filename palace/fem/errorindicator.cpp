@@ -46,4 +46,19 @@ void ErrorIndicator::AddIndicator(const Vector &indicator)
   n += 1;
 }
 
+void ErrorIndicator::ZeroElements(const mfem::Array<int> &marker)
+{
+  MFEM_VERIFY(marker.Size() == local.Size(),
+              "Error-indicator mask has an unexpected element count!");
+  const auto *mask = marker.HostRead();
+  auto *values = local.HostReadWrite();
+  for (int element = 0; element < local.Size(); element++)
+  {
+    if (mask[element])
+    {
+      values[element] = 0.0;
+    }
+  }
+}
+
 }  // namespace palace

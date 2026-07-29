@@ -2542,13 +2542,21 @@ DistributeSerialSheetFeatures(const FeatureTopology &serial_features,
                               const std::vector<GlobalVertexId> &serial_vertex_ids,
                               const std::vector<GlobalVertexId> &source_element_ids)
 {
-  ValidateMesh(parallel_mesh, true);
   ValidateFeatureBlueprintStructure(serial_features);
-  if (serial_vertex_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNV()) ||
+  if (parallel_mesh.Dimension() != 3 || parallel_mesh.SpaceDimension() != 3 ||
+      serial_vertex_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNV()) ||
       source_element_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNE()))
   {
     throw std::invalid_argument(
         "Serial feature blueprint and rank-local source maps are incompatible!");
+  }
+  for (int element = 0; element < parallel_mesh.GetNE(); element++)
+  {
+    if (parallel_mesh.GetElementGeometry(element) != mfem::Geometry::TETRAHEDRON)
+    {
+      throw std::invalid_argument(
+          "Singular-feature distribution requires tetrahedral elements!");
+    }
   }
 
   std::map<GlobalVertexId, int> local_vertices;
@@ -2572,58 +2580,100 @@ DistributeSerialSheetFeatures(const FeatureTopology &serial_features,
     }
   }
 
+  std::map<GlobalVertexId, std::size_t> feature_vertices;
+  for (std::size_t vertex = 0; vertex < serial_features.vertices.size(); vertex++)
+  {
+    if (!feature_vertices
+             .emplace(
+                 static_cast<GlobalVertexId>(serial_features.vertices[vertex].mesh_vertex),
+                 vertex)
+             .second)
+    {
+      throw std::invalid_argument(
+          "Serial feature blueprint contains duplicate feature vertices!");
+    }
+  }
+  std::map<StableEdgeKey, std::size_t> feature_segments;
+  for (std::size_t segment = 0; segment < serial_features.segments.size(); segment++)
+  {
+    StableEdgeKey edge{
+        static_cast<GlobalVertexId>(serial_features.segments[segment].mesh_vertices[0]),
+        static_cast<GlobalVertexId>(serial_features.segments[segment].mesh_vertices[1])};
+    std::sort(edge.begin(), edge.end());
+    if (!feature_segments.emplace(edge, segment).second)
+    {
+      throw std::invalid_argument(
+          "Serial feature blueprint contains duplicate feature segments!");
+    }
+  }
+
   FeatureTopology result = serial_features;
   result.elements.assign(parallel_mesh.GetNE(), {});
-  std::set<GlobalVertexId> matched_serial_elements;
   const auto local_vertex_id = [&serial_vertex_ids](int vertex)
   { return serial_vertex_ids[vertex]; };
   for (int local_element = 0; local_element < parallel_mesh.GetNE(); local_element++)
   {
-    const GlobalVertexId serial_element = source_element_ids[local_element];
-    if (serial_element < 0 ||
-        serial_element >= static_cast<GlobalVertexId>(serial_features.elements.size()) ||
-        !matched_serial_elements.insert(serial_element).second)
+    const auto &tetrahedron = *parallel_mesh.GetElement(local_element);
+    auto &incidence = result.elements[local_element];
+    const int *vertices = tetrahedron.GetVertices();
+    for (int local_vertex = 0; local_vertex < 4; local_vertex++)
     {
-      throw std::invalid_argument(
-          "Rank-local tetrahedron has an invalid source serial element ID!");
+      const int mesh_vertex = vertices[local_vertex];
+      const auto feature_vertex = feature_vertices.find(serial_vertex_ids[mesh_vertex]);
+      if (feature_vertex != feature_vertices.end())
+      {
+        incidence.nodes.push_back(
+            {feature_vertex->second, mesh_vertex,
+             CanonicalNodeTuple(tetrahedron, mesh_vertex, local_vertex_id)});
+      }
     }
 
-    const auto &tetrahedron = *parallel_mesh.GetElement(local_element);
-    const auto &source = serial_features.elements[serial_element];
-    auto &incidence = result.elements[local_element];
-    for (const auto &node : source.nodes)
+    mfem::Array<int> element_edges, orientations;
+    parallel_mesh.GetElementEdges(local_element, element_edges, orientations);
+    for (int mesh_edge : element_edges)
     {
-      const GlobalVertexId source_vertex = node.mesh_vertex;
-      const auto local_vertex = local_vertices.find(source_vertex);
-      if (local_vertex == local_vertices.end())
+      const auto source_edge =
+          StableMeshEdgeKey(parallel_mesh, mesh_edge, serial_vertex_ids);
+      const auto segment = feature_segments.find(source_edge);
+      if (segment == feature_segments.end())
       {
-        throw std::invalid_argument(
-            "Rank-local tetrahedron is missing an incident singular node!");
+        continue;
       }
-      incidence.nodes.push_back(
-          {node.vertex, local_vertex->second,
-           CanonicalNodeTuple(tetrahedron, local_vertex->second, local_vertex_id)});
-    }
-    for (const auto &edge : source.edges)
-    {
-      const auto &segment = serial_features.segments[edge.segment];
-      const StableEdgeKey source_edge{
-          static_cast<GlobalVertexId>(segment.mesh_vertices[0]),
-          static_cast<GlobalVertexId>(segment.mesh_vertices[1])};
-      const auto local_edge = local_edges.find(source_edge);
+      const auto &segment_record = serial_features.segments[segment->second];
       const auto first = local_vertices.find(source_edge[0]);
       const auto second = local_vertices.find(source_edge[1]);
-      if (local_edge == local_edges.end() || first == local_vertices.end() ||
-          second == local_vertices.end())
+      if (first == local_vertices.end() || second == local_vertices.end())
       {
-        throw std::invalid_argument(
-            "Rank-local tetrahedron is missing an incident singular edge!");
+        throw std::invalid_argument("Rank-local singular edge has missing vertices!");
       }
       const std::array<int, 2> local_edge_vertices{first->second, second->second};
       incidence.edges.push_back(
-          {edge.feature, edge.segment, local_edge->second,
+          {segment_record.feature, segment->second, mesh_edge,
            CanonicalEdgeTuple(tetrahedron, local_edge_vertices, local_vertex_id)});
     }
+  }
+
+  std::vector<int> found_vertices(serial_features.vertices.size(), 0);
+  std::vector<int> found_segments(serial_features.segments.size(), 0);
+  for (const auto &[source_vertex, vertex] : feature_vertices)
+  {
+    found_vertices[vertex] = local_vertices.count(source_vertex) > 0;
+  }
+  for (const auto &[source_edge, segment] : feature_segments)
+  {
+    found_segments[segment] = local_edges.count(source_edge) > 0;
+  }
+  Mpi::GlobalSum(static_cast<int>(found_vertices.size()), found_vertices.data(),
+                 parallel_mesh.GetComm());
+  Mpi::GlobalSum(static_cast<int>(found_segments.size()), found_segments.data(),
+                 parallel_mesh.GetComm());
+  if (std::find(found_vertices.begin(), found_vertices.end(), 0) != found_vertices.end() ||
+      std::find(found_segments.begin(), found_segments.end(), 0) != found_segments.end())
+  {
+    throw std::invalid_argument(
+        "Adaptive refinement changed a protected three-dimensional singular feature. "
+        "Refinement through enriched feature edges requires parent/child enrichment "
+        "constraints and is not yet supported!");
   }
   return result;
 }
@@ -2636,7 +2686,6 @@ DistributeSerialLineTipFeatures(const TriangleFeatureTopology &serial_features,
 {
   ValidateTriangleFeatureBlueprintStructure(serial_features);
   if (parallel_mesh.Dimension() != 2 || parallel_mesh.SpaceDimension() != 2 ||
-      parallel_mesh.Nonconforming() ||
       serial_vertex_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNV()) ||
       source_element_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNE()))
   {
@@ -2654,9 +2703,22 @@ DistributeSerialLineTipFeatures(const TriangleFeatureTopology &serial_features,
     }
   }
 
+  std::map<GlobalVertexId, std::size_t> feature_vertices;
+  for (std::size_t vertex = 0; vertex < serial_features.vertices.size(); vertex++)
+  {
+    if (!feature_vertices
+             .emplace(
+                 static_cast<GlobalVertexId>(serial_features.vertices[vertex].mesh_vertex),
+                 vertex)
+             .second)
+    {
+      throw std::invalid_argument(
+          "Singular line-tip blueprint contains duplicate feature vertices!");
+    }
+  }
+
   TriangleFeatureTopology result = serial_features;
   result.elements.assign(parallel_mesh.GetNE(), {});
-  std::set<GlobalVertexId> matched_serial_elements;
   const auto local_vertex_id = [&serial_vertex_ids](int vertex)
   { return serial_vertex_ids[vertex]; };
   for (int local_element = 0; local_element < parallel_mesh.GetNE(); local_element++)
@@ -2666,36 +2728,34 @@ DistributeSerialLineTipFeatures(const TriangleFeatureTopology &serial_features,
       throw std::invalid_argument(
           "Singular line-tip distribution requires triangular elements!");
     }
-    const GlobalVertexId serial_element = source_element_ids[local_element];
-    if (serial_element < 0 ||
-        serial_element >= static_cast<GlobalVertexId>(serial_features.elements.size()) ||
-        !matched_serial_elements.insert(serial_element).second)
-    {
-      throw std::invalid_argument(
-          "Rank-local triangle has an invalid source serial element ID!");
-    }
 
     const auto &triangle = *parallel_mesh.GetElement(local_element);
-    const auto &source = serial_features.elements[serial_element];
     auto &incidence = result.elements[local_element];
-    for (const auto &node : source.nodes)
+    const int *vertices = triangle.GetVertices();
+    for (int local_vertex = 0; local_vertex < 3; local_vertex++)
     {
-      if (node.vertex >= serial_features.vertices.size())
+      const int mesh_vertex = vertices[local_vertex];
+      const auto feature_vertex = feature_vertices.find(serial_vertex_ids[mesh_vertex]);
+      if (feature_vertex != feature_vertices.end())
       {
-        throw std::invalid_argument(
-            "Source singular line-tip incidence references an invalid tip!");
+        incidence.nodes.push_back(
+            {feature_vertex->second, mesh_vertex,
+             CanonicalTriangleNodeTuple(triangle, mesh_vertex, local_vertex_id)});
       }
-      const GlobalVertexId source_vertex = node.mesh_vertex;
-      const auto local_vertex = local_vertices.find(source_vertex);
-      if (local_vertex == local_vertices.end())
-      {
-        throw std::invalid_argument(
-            "Rank-local triangle is missing an incident singular tip!");
-      }
-      incidence.nodes.push_back(
-          {node.vertex, local_vertex->second,
-           CanonicalTriangleNodeTuple(triangle, local_vertex->second, local_vertex_id)});
     }
+  }
+
+  std::vector<int> found_vertices(serial_features.vertices.size(), 0);
+  for (const auto &[source_vertex, vertex] : feature_vertices)
+  {
+    found_vertices[vertex] = local_vertices.count(source_vertex) > 0;
+  }
+  Mpi::GlobalSum(static_cast<int>(found_vertices.size()), found_vertices.data(),
+                 parallel_mesh.GetComm());
+  if (std::find(found_vertices.begin(), found_vertices.end(), 0) != found_vertices.end())
+  {
+    throw std::invalid_argument(
+        "Adaptive refinement removed a protected two-dimensional singular vertex!");
   }
   return result;
 }

@@ -52,6 +52,26 @@ void EigenSolver::ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
   singular_features.ProcessPartitionedMesh(iodata, parallel_mesh, metadata);
 }
 
+mfem::Array<int> EigenSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+{
+  return iodata.solver.singular_elements.Enabled()
+             ? singular_features.GetRefinementProtection(mesh)
+             : mfem::Array<int>{};
+}
+
+void EigenSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
+{
+  if (iodata.solver.singular_elements.Enabled())
+  {
+    singular_features.ProcessRefinedMesh(iodata, mesh);
+  }
+}
+
+bool EigenSolver::RebalanceRefinedMesh() const
+{
+  return !iodata.solver.singular_elements.Enabled();
+}
+
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -772,6 +792,24 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   electric_field.UseDevice(true);
   mass_electric.UseDevice(true);
   weak_divergence.UseDevice(true);
+  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
+  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
+  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
+  if (is_2d)
+  {
+    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
+        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
+        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+  }
+  else
+  {
+    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+        iodata.solver.linear.estimator_mg);
+  }
+  ErrorIndicator indicator;
   const auto &gradient = space_op.GetGradMatrix();
   for (int mode = 0; mode < num_converged; mode++)
   {
@@ -867,6 +905,30 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
                "energy mismatch = {:.3e}, weak divergence = {:.3e}\n",
                mode + 1, frequency.real(), frequency.imag(), quality, energy_mismatch,
                relative_weak_divergence);
+
+    if (mode < iodata.solver.eigenmode.n)
+    {
+      const int standard_nd_size = space_op.GetNDSpace().GetTrueVSize();
+      Vector electric_real, electric_imaginary;
+      electric_real.MakeRef(electric_field.Real(), 0, standard_nd_size);
+      electric_imaginary.MakeRef(electric_field.Imag(), 0, standard_nd_size);
+      ComplexVector standard_electric(electric_real, electric_imaginary);
+      ComplexVector standard_magnetic(space_op.GetCurlMatrix().Height());
+      space_op.GetCurlMatrix().Mult(standard_electric.Real(), standard_magnetic.Real());
+      space_op.GetCurlMatrix().Mult(standard_electric.Imag(), standard_magnetic.Imag());
+      standard_magnetic *= std::complex<double>(0.0, 1.0) / omega;
+      const double total_field_energy = field_energy.electric + field_energy.magnetic;
+      if (is_2d)
+      {
+        estimator_2d->AddErrorIndicator(standard_electric, standard_magnetic,
+                                        total_field_energy, indicator);
+      }
+      else
+      {
+        estimator_3d->AddErrorIndicator(standard_electric, standard_magnetic,
+                                        total_field_energy, indicator);
+      }
+    }
     if (root)
     {
       eig_output.table["idx"] << mode + 1;
@@ -930,7 +992,8 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"DivergenceProjection", divfree != nullptr},
           {"FieldGridOutput", false},
-          {"ErrorEstimator", false},
+          {"ErrorEstimator",
+           "standard-space smooth remainder outside protected singular patch"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
                                        ? GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetSheetFeatures())
@@ -941,7 +1004,9 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
               "Singular eigenmode solve found " << num_converged << " modes when "
                                                 << iodata.solver.eigenmode.n
                                                 << " were requested!");
-  return {{}, space_op.GlobalTrueVSize()};
+  indicator.ZeroElements(
+      singular_features.GetRefinementProtection(space_op.GetMesh().Get()));
+  return {std::move(indicator), space_op.GlobalTrueVSize()};
 }
 
 }  // namespace palace

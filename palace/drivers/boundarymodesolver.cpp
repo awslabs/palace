@@ -1194,6 +1194,30 @@ void BoundaryModeSolver::ProcessPartitionedMesh(
   source_element_ids = metadata.source_element_ids;
 }
 
+mfem::Array<int>
+BoundaryModeSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+{
+  return iodata.solver.singular_elements.Enabled()
+             ? BuildSingularRefinementProtection(mesh, local_singular_features,
+                                                 source_vertex_ids)
+             : mfem::Array<int>{};
+}
+
+void BoundaryModeSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
+{
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    return;
+  }
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+  ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});
+}
+
+bool BoundaryModeSolver::RebalanceRefinedMesh() const
+{
+  return !iodata.solver.singular_elements.Enabled();
+}
+
 std::pair<ErrorIndicator, long long int>
 BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -1237,13 +1261,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator;
   std::unique_ptr<PostOperator<ProblemType::BOUNDARYMODE>> post_op;
+  estimator = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
+      mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(), mode_op.GetRTSpaceHierarchy(),
+      mode_op.GetCurlSpace(), mode_op.GetH1SpaceHierarchy(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
   if (!singular)
   {
-    estimator = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(),
-        mode_op.GetRTSpaceHierarchy(), mode_op.GetCurlSpace(),
-        mode_op.GetH1SpaceHierarchy(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
     post_op = std::make_unique<PostOperator<ProblemType::BOUNDARYMODE>>(iodata, mode_op);
   }
 
@@ -1369,7 +1393,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               {"VoltageAndImpedance", false},
               {"SurfaceMeasurements", !singular_surface_postoperator->Empty()},
               {"SurfaceQuadrature", "endpoint-weighted Gauss-Jacobi"}}},
-            {"ErrorEstimator", false},
+            {"ErrorEstimator",
+             "standard-space smooth remainder outside protected singular patch"},
             {"SurfaceIntegrability",
              GetSingularSurfaceIntegrabilityMetadata(local_singular_features)},
             {"SurfaceParticipation", GetSingularSurfaceParticipationMetadata(iodata)}});
@@ -1378,9 +1403,10 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "Singular BoundaryMode reconstructs combined ND/H1 fields and reports exact "
         "transverse/normal electric and magnetic energies. Integrable dielectric surface "
         "measurements use the combined field and endpoint-weighted quadrature. Voltage, "
-        "impedance, MFEM grid-function output, and the standard flux error estimator "
-        "remain disabled. Ideal-sheet surface traces with nu <= 1/2 require an explicit "
-        "physical cutoff or response model.\n");
+        "impedance, and MFEM grid-function output remain disabled. AMR estimates the "
+        "standard-space smooth remainder and masks every enriched element plus one face "
+        "layer. Ideal-sheet surface traces with nu <= 1/2 require an explicit physical "
+        "cutoff or response model.\n");
   }
 
   const int n_print = std::min(num_conv, num_modes);
@@ -1465,6 +1491,33 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       singular_measurements.push_back({i + 1, kn, kn / omega, error_bkwd, error_abs,
                                        P_normalized, coefficient_norms, field_energies});
+      if (i < num_modes && ModeEigenSolver::IsPropagating(kn))
+      {
+        const int standard_nd_size = mode_op.GetNDSpace().GetTrueVSize();
+        Vector et_real, et_imaginary;
+        et_real.MakeRef(et.Real(), 0, standard_nd_size);
+        et_imaginary.MakeRef(et.Imag(), 0, standard_nd_size);
+        ComplexVector standard_et(et_real, et_imaginary);
+
+        const int l2_size = mode_op.GetCurlSpace().GetTrueVSize();
+        ComplexVector bz(l2_size);
+        bz.UseDevice(true);
+        const auto &curl =
+            mode_op.GetCurlSpace().GetDiscreteInterpolator(mode_op.GetNDSpace());
+        Vector curl_real(l2_size), curl_imaginary(l2_size);
+        curl_real.UseDevice(true);
+        curl_imaginary.UseDevice(true);
+        curl.Mult(standard_et.Real(), curl_real);
+        curl.Mult(standard_et.Imag(), curl_imaginary);
+        bz.Real() = curl_imaginary;
+        bz.Real() *= 1.0 / omega;
+        bz.Imag() = curl_real;
+        bz.Imag() *= -1.0 / omega;
+        const double total_energy =
+            field_energies.electric_transverse + field_energies.electric_normal +
+            field_energies.magnetic_transverse + field_energies.magnetic_normal;
+        estimator->AddErrorIndicator(standard_et, bz, total_energy, indicator);
+      }
       continue;
     }
 
@@ -1495,6 +1548,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   if (singular)
   {
+    indicator.ZeroElements(GetRefinementProtection(mode_op.GetMesh().Get()));
     WriteSingularModeMeasurements(post_dir, iodata, singular_measurements, root);
     WriteSingularModeCoefficientMeasurements(post_dir, iodata,
                                              singular_coefficient_measurements, root);

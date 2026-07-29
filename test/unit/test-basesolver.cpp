@@ -4,6 +4,7 @@
 #include <fstream>
 #include <catch2/catch_test_macros.hpp>
 #include "drivers/basesolver.hpp"
+#include "fem/errorindicator.hpp"
 #include "fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
@@ -28,6 +29,28 @@ std::string ReadFile(const fs::path &path)
 }
 
 }  // namespace
+
+TEST_CASE("ErrorIndicator masks protected elements", "[basesolver][Serial]")
+{
+  Vector values(4);
+  values[0] = 1.0;
+  values[1] = 2.0;
+  values[2] = 3.0;
+  values[3] = 4.0;
+  ErrorIndicator indicator(std::move(values));
+
+  mfem::Array<int> marker(4);
+  marker[0] = 0;
+  marker[1] = 1;
+  marker[2] = 0;
+  marker[3] = 1;
+  indicator.ZeroElements(marker);
+
+  CHECK(indicator.Local()[0] == 1.0);
+  CHECK(indicator.Local()[1] == 0.0);
+  CHECK(indicator.Local()[2] == 3.0);
+  CHECK(indicator.Local()[3] == 0.0);
+}
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SaveIteration moves files and leaves symlinks", "[basesolver][Serial]")

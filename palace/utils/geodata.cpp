@@ -326,9 +326,6 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   }
   else
   {
-    MFEM_VERIFY(!metadata,
-                "Source-serial partition metadata is not supported for nonconforming "
-                "mesh distribution!");
     // Send the preprocessed serial mesh and partitioning as a byte string. The
     // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit
     // length and a chunked broadcast.
@@ -375,6 +372,36 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     MPI_Comm_free(&node_comm);
     pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
     smesh.reset();
+  }
+  if (metadata && pmesh->Nonconforming())
+  {
+    // NCMesh node IDs are exact, rank-consistent topological identities. Original
+    // vertices retain their source-serial ordering when a conforming mesh is converted
+    // to NCMesh, while subsequently-created vertices receive persistent node IDs.
+    metadata->source_vertex_ids.assign(pmesh->GetNV(), -1);
+    const auto &ncmesh = *pmesh->ncmesh;
+    for (int node = 0; node < ncmesh.GetNumNodes(); node++)
+    {
+      const auto &record = ncmesh.GetNode(node);
+      if (record.HasVertex() && record.vert_index >= 0 &&
+          record.vert_index < pmesh->GetNV())
+      {
+        metadata->source_vertex_ids[record.vert_index] = node;
+      }
+    }
+    MFEM_VERIFY(std::find(metadata->source_vertex_ids.begin(),
+                          metadata->source_vertex_ids.end(),
+                          std::int64_t{-1}) == metadata->source_vertex_ids.end(),
+                "Nonconforming mesh has a vertex without a persistent NCMesh node ID!");
+
+    // Element IDs are diagnostics only for singular enrichment; incidence is rebuilt
+    // from exact vertex/edge identities. MFEM's current global element numbering is
+    // sufficient and is refreshed after every refinement.
+    metadata->source_element_ids.resize(pmesh->GetNE());
+    for (int element = 0; element < pmesh->GetNE(); element++)
+    {
+      metadata->source_element_ids[element] = pmesh->GetGlobalElementNum(element);
+    }
   }
 
   // Debug: optionally write the partitioned and final meshes to tmp/ for inspection.

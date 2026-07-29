@@ -1793,7 +1793,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Parallel and adaptive refinement are rejected")
+  SECTION("Uniform refinement is rejected while restricted adaptive refinement is allowed")
   {
     auto config = MakeConfig();
     config["Model"]["Refinement"] = {{"UniformLevels", 1}};
@@ -1803,13 +1803,19 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Model"]["Refinement"] = {{"MaxIts", 1}};
     CHECK_THROWS(IoData(config, false));
 
+    config["Model"]["Refinement"]["MaxNCLevels"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+
     config = MakeConfig();
-    config["Model"]["Refinement"] = {
-        {"Boxes",
-         {{{"Levels", 1},
-           {"Limits",
-            json::array({json::array({0.0, 0.0, 0.0}), json::array({1.0, 1.0, 1.0})})}}}}};
-    CHECK_THROWS(IoData(config, false));
+    config["Model"]["Refinement"] = {{"MaxIts", 1}, {"Nonconformal", false}};
+    CHECK_NOTHROW(IoData(config, false));
+
+    config = MakeConfig();
+    config["Model"]["Refinement"] = {{"Boxes",
+                                      {{{"Levels", 1},
+                                        {"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                                        {"BoundingBoxMax", {1.0, 1.0, 1.0}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
   }
 
   SECTION("GPU execution is rejected and full-wave polynomial multigrid is accepted")

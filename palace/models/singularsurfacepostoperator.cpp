@@ -74,17 +74,65 @@ struct FaceCutoffRay
   int active_edge;
 };
 
-int GetTriangleVertex(const mfem::IntegrationPoint &point)
+std::array<double, 3> GetTriangleBarycentricCoordinates(const mfem::IntegrationPoint &point)
 {
-  const std::array<double, 3> lambda{1.0 - point.x - point.y, point.x, point.y};
+  return {1.0 - point.x - point.y, point.x, point.y};
+}
+
+int FindTriangleVertex(const mfem::IntegrationPoint &point)
+{
+  const auto lambda = GetTriangleBarycentricCoordinates(point);
   const auto maximum = std::max_element(lambda.begin(), lambda.end());
-  const int vertex = static_cast<int>(std::distance(lambda.begin(), maximum));
   if (*maximum < 1.0 - 256.0 * std::numeric_limits<double>::epsilon())
   {
-    throw std::runtime_error(
-        "Singular surface quadrature could not identify a boundary endpoint vertex!");
+    return -1;
   }
-  return vertex;
+  return static_cast<int>(std::distance(lambda.begin(), maximum));
+}
+
+std::array<int, 2> GetTriangleEdgeNodes(const std::array<mfem::IntegrationPoint, 2> &points)
+{
+  const auto first = GetTriangleBarycentricCoordinates(points[0]);
+  const auto second = GetTriangleBarycentricCoordinates(points[1]);
+  constexpr double tolerance = 1024.0 * std::numeric_limits<double>::epsilon();
+  int opposite = -1;
+  for (int node = 0; node < 3; node++)
+  {
+    if (std::abs(first[node]) <= tolerance && std::abs(second[node]) <= tolerance)
+    {
+      if (opposite >= 0)
+      {
+        throw std::runtime_error(
+            "Singular surface quadrature mapped a degenerate boundary segment!");
+      }
+      opposite = node;
+    }
+  }
+  if (opposite < 0)
+  {
+    throw std::runtime_error(
+        "Singular surface quadrature could not identify the containing triangle edge!");
+  }
+  std::array<int, 2> nodes;
+  int index = 0;
+  for (int node = 0; node < 3; node++)
+  {
+    if (node != opposite)
+    {
+      nodes[index++] = node;
+    }
+  }
+  const double direction = second[nodes[1]] - first[nodes[1]];
+  if (std::abs(direction) <= tolerance)
+  {
+    throw std::runtime_error(
+        "Singular surface quadrature mapped a zero-length boundary segment!");
+  }
+  if (direction < 0.0)
+  {
+    std::swap(nodes[0], nodes[1]);
+  }
+  return nodes;
 }
 
 int GetTetrahedronVertex(const mfem::IntegrationPoint &point)
@@ -860,7 +908,8 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
           "Triangular singular surface postprocessing requires segment boundaries!");
     }
 
-    std::map<int, std::array<int, 2>> endpoint_nodes;
+    std::map<int, std::array<mfem::IntegrationPoint, 2>> endpoint_points;
+    std::map<int, std::array<bool, 2>> endpoint_seen;
     std::array<double, 2> endpoint_exponents{1.0, 1.0};
     bool has_selected_side = false;
     for (int endpoint = 0; endpoint < 2; endpoint++)
@@ -873,22 +922,33 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
       has_selected_side = has_selected_side || !sides.empty();
       for (const auto &side : sides)
       {
-        auto [entry, inserted] =
-            endpoint_nodes.emplace(side.element, std::array<int, 2>{-1, -1});
-        const int node = GetTriangleVertex(side.point);
-        if (entry->second[endpoint] >= 0 && entry->second[endpoint] != node)
+        auto [points, inserted] =
+            endpoint_points.emplace(side.element, std::array<mfem::IntegrationPoint, 2>{});
+        auto [seen, seen_inserted] =
+            endpoint_seen.emplace(side.element, std::array<bool, 2>{false, false});
+        MFEM_VERIFY(inserted == seen_inserted,
+                    "Singular surface endpoint bookkeeping is inconsistent!");
+        if (seen->second[endpoint] && (std::abs(points->second[endpoint].x - side.point.x) >
+                                           256.0 * std::numeric_limits<double>::epsilon() ||
+                                       std::abs(points->second[endpoint].y - side.point.y) >
+                                           256.0 * std::numeric_limits<double>::epsilon()))
         {
           throw std::runtime_error(
               "Singular surface postprocessing found inconsistent boundary endpoint "
               "orientation!");
         }
-        entry->second[endpoint] = node;
-        endpoint_exponents[endpoint] = std::min(
-            endpoint_exponents[endpoint],
-            real_evaluator
-                ? real_evaluator->GetElementNodeSingularExponent(side.element, node)
-                : real_gradient_evaluator->GetElementNodeSingularExponent(side.element,
-                                                                          node));
+        points->second[endpoint] = side.point;
+        seen->second[endpoint] = true;
+        const int node = FindTriangleVertex(side.point);
+        if (node >= 0)
+        {
+          endpoint_exponents[endpoint] = std::min(
+              endpoint_exponents[endpoint],
+              real_evaluator
+                  ? real_evaluator->GetElementNodeSingularExponent(side.element, node)
+                  : real_gradient_evaluator->GetElementNodeSingularExponent(side.element,
+                                                                            node));
+        }
       }
     }
     if (!has_selected_side)
@@ -904,14 +964,17 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
           "model!");
     }
 
-    for (const auto &[element, nodes] : endpoint_nodes)
+    std::map<int, std::array<int, 2>> endpoint_nodes;
+    for (const auto &[element, points] : endpoint_points)
     {
-      if (nodes[0] < 0 || nodes[1] < 0 || nodes[0] == nodes[1])
+      const auto seen = endpoint_seen.find(element);
+      if (seen == endpoint_seen.end() || !seen->second[0] || !seen->second[1])
       {
         throw std::runtime_error(
             "Singular surface postprocessing could not map both boundary endpoints into "
             "an adjacent triangle!");
       }
+      endpoint_nodes.emplace(element, GetTriangleEdgeNodes(points));
     }
     double lower = 0.0;
     double upper = 1.0;

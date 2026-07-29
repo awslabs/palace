@@ -36,6 +36,11 @@ public:
   // Add an indicator to the running total.
   void AddIndicator(const Vector &indicator);
 
+  // Set selected local element indicators to zero. This is used when an estimator is
+  // mathematically valid only on a subset of the mesh, such as the smooth remainder away
+  // from a protected singular-enrichment patch.
+  void ZeroElements(const mfem::Array<int> &marker);
+
   // Return the local error indicator.
   const auto &Local() const { return local; }
 

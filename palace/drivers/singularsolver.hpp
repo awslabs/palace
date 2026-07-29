@@ -42,6 +42,26 @@ GetSingularSurfaceIntegrabilityMetadata(const fem::singular::FeatureTopology &fe
 nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
     const fem::singular::TriangleFeatureTopology &features);
 
+// Rebuild exact rank-local source identities after in-place refinement. Conforming
+// refinement preserves existing vertex indices and assigns globally consistent IDs to
+// appended vertices. Nonconforming refinement uses persistent NCMesh node IDs directly.
+// Element IDs are refreshed for diagnostics; singular incidence is reconstructed from
+// vertex and edge identities rather than element numbering.
+void UpdateSingularSourceEntityIds(
+    const mfem::ParMesh &mesh,
+    std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    std::vector<fem::singular::GlobalVertexId> &source_element_ids);
+
+// Return a marker for every enriched element and its complete face-neighbor layer. The
+// protected layer keeps custom enrichment away from hanging interfaces until a certified
+// parent/child enrichment constraint operator is available.
+mfem::Array<int> BuildSingularRefinementProtection(
+    const mfem::ParMesh &mesh, const fem::singular::FeatureTopology &features,
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids);
+mfem::Array<int> BuildSingularRefinementProtection(
+    const mfem::ParMesh &mesh, const fem::singular::TriangleFeatureTopology &features,
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids);
+
 // Immutable-source feature extraction and partition transport shared by the
 // driven and eigenmode singular-element drivers.
 class FullWaveSingularFeatures
@@ -60,10 +80,12 @@ public:
                   MPI_Comm comm);
   void ProcessPartitionedMesh(const IoData &iodata, const mfem::ParMesh &parallel_mesh,
                               const mesh::PartitionMetadata &metadata);
+  void ProcessRefinedMesh(const IoData &iodata, const mfem::ParMesh &parallel_mesh);
 
   const fem::singular::FeatureTopology *GetSheetFeatures() const;
   const fem::singular::TriangleFeatureTopology *GetLineFeatures() const;
   const std::vector<fem::singular::GlobalVertexId> *GetSourceVertexIds() const;
+  mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh) const;
 };
 
 struct SingularFullWaveEnergy

@@ -56,6 +56,26 @@ void DrivenSolver::ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
   singular_features.ProcessPartitionedMesh(iodata, parallel_mesh, metadata);
 }
 
+mfem::Array<int> DrivenSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+{
+  return iodata.solver.singular_elements.Enabled()
+             ? singular_features.GetRefinementProtection(mesh)
+             : mfem::Array<int>{};
+}
+
+void DrivenSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
+{
+  if (iodata.solver.singular_elements.Enabled())
+  {
+    singular_features.ProcessRefinedMesh(iodata, mesh);
+  }
+}
+
+bool DrivenSolver::RebalanceRefinedMesh() const
+{
+  return !iodata.solver.singular_elements.Enabled();
+}
+
 std::pair<ErrorIndicator, long long int>
 DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -287,6 +307,25 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
   residual.UseDevice(true);
   electric_field = 0.0;
 
+  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
+  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
+  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
+  if (is_2d)
+  {
+    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
+        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
+        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+  }
+  else
+  {
+    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+        iodata.solver.linear.estimator_mg);
+  }
+  ErrorIndicator indicator;
+
   const fem::singular::AdaptiveAssemblyOptions surface_options{
       iodata.solver.singular_elements.quadrature_order,
       iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
@@ -484,6 +523,27 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
                  linalg::Norml2(space_op.GetComm(), rhs), relative_residual,
                  electric_energy, magnetic_energy, electric_energy + magnetic_energy);
 
+      const int standard_nd_size = space_op.GetNDSpace().GetTrueVSize();
+      Vector electric_real, electric_imaginary;
+      electric_real.MakeRef(electric_field.Real(), 0, standard_nd_size);
+      electric_imaginary.MakeRef(electric_field.Imag(), 0, standard_nd_size);
+      ComplexVector standard_electric(electric_real, electric_imaginary);
+      ComplexVector standard_magnetic(space_op.GetCurlMatrix().Height());
+      space_op.GetCurlMatrix().Mult(standard_electric.Real(), standard_magnetic.Real());
+      space_op.GetCurlMatrix().Mult(standard_electric.Imag(), standard_magnetic.Imag());
+      standard_magnetic *= std::complex<double>(0.0, 1.0 / omega);
+      const double total_field_energy = field_energy.electric + field_energy.magnetic;
+      if (is_2d)
+      {
+        estimator_2d->AddErrorIndicator(standard_electric, standard_magnetic,
+                                        total_field_energy, indicator);
+      }
+      else
+      {
+        estimator_3d->AddErrorIndicator(standard_electric, standard_magnetic,
+                                        total_field_energy, indicator);
+      }
+
       if (root)
       {
         output.table["excitation"] << excitation_index;
@@ -541,14 +601,17 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"FieldGridOutput", false},
-          {"ErrorEstimator", false},
+          {"ErrorEstimator",
+           "standard-space smooth remainder outside protected singular patch"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
                                        ? GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetSheetFeatures())
                                        : GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetLineFeatures())},
           {"SurfaceParticipation", GetSingularSurfaceParticipationMetadata(iodata)}});
-  return {};
+  indicator.ZeroElements(
+      singular_features.GetRefinementProtection(space_op.GetMesh().Get()));
+  return indicator;
 }
 
 ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const

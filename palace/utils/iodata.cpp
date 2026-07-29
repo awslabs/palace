@@ -387,20 +387,16 @@ void IoData::CheckConfiguration()
                     "standard-grid fields; set Solver.Eigenmode.Save = 0!");
       }
     }
-    const auto &refinement = model.refinement;
-    bool has_region_refinement = false;
-    for (const auto &box : refinement.GetBoxes())
-    {
-      has_region_refinement |= box.ref_levels > 0;
-    }
-    for (const auto &sphere : refinement.GetSpheres())
-    {
-      has_region_refinement |= sphere.ref_levels > 0;
-    }
-    MFEM_VERIFY(refinement.max_it == 0 && refinement.uniform_ref_levels == 0 &&
-                    !has_region_refinement,
-                "Singular elements do not yet support parallel uniform, region-based, "
-                "or adaptive mesh refinement!");
+    MFEM_VERIFY(model.refinement.uniform_ref_levels == 0,
+                "Singular elements do not yet support parallel uniform refinement. Use "
+                "region-based preprocessing or adaptive refinement, which protect the "
+                "enriched patch until parent/child enrichment constraints are available!");
+    MFEM_VERIFY(model.refinement.max_it == 0 || !model.refinement.nonconformal ||
+                    model.refinement.max_nc_levels == 0,
+                "Nonconforming singular AMR requires "
+                "Model.Refinement.MaxNCLevels = 0. A positive limit lets MFEM's "
+                "nonconformity closure refine protected singular-patch elements; "
+                "unlimited hanging depth keeps refinement outside the protected patch!");
   }
 
   // Check that the provided domain and boundary objects are all supported by the requested

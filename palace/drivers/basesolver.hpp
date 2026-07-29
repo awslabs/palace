@@ -68,6 +68,13 @@ public:
   virtual void ProcessPartitionedMesh(const mfem::ParMesh &mesh,
                                       const mesh::PartitionMetadata &metadata) const;
 
+  // Optional AMR hooks for discretizations with mesh-dependent auxiliary topology.
+  // A nonempty protection marker excludes local elements from refinement. The post-refine
+  // hook runs before optional rebalancing and before the next operator reconstruction.
+  virtual mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh) const;
+  virtual void ProcessRefinedMesh(const mfem::ParMesh &mesh) const;
+  virtual bool RebalanceRefinedMesh() const { return true; }
+
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.
   void SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const;
