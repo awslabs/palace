@@ -81,9 +81,30 @@ def compare_cases(previous, current, args, enforce):
         (kind, quantity): matrix
         for kind, quantity, matrix in comparison.matrix_rows(previous)
     }
+    current_matrices = {
+        (kind, quantity): matrix
+        for kind, quantity, matrix in comparison.matrix_rows(current)
+    }
     passed = True
-    for kind, quantity, matrix in comparison.matrix_rows(current):
+    for (kind, quantity), matrix in current_matrices.items():
         values = metric(matrix, previous_matrices[(kind, quantity)])
+        if kind == "defect":
+            fabricated = current_matrices[("fabricated", quantity)]
+            fabricated_norm = max(
+                np.linalg.norm(fabricated), np.finfo(float).tiny
+            )
+            values.update(
+                {
+                    "NormRelativeToFabricatedPercent":
+                        100.0 * np.linalg.norm(matrix) / fabricated_norm,
+                    "ChangeRelativeToFabricatedPercent":
+                        100.0
+                        * np.linalg.norm(
+                            matrix - previous_matrices[(kind, quantity)]
+                        )
+                        / fabricated_norm,
+                }
+            )
         convergence_quantity = (
             kind == "fabricated" or (kind == "defect" and quantity == "domain")
         )
@@ -311,10 +332,19 @@ def main():
         print(f"{step['From']} -> {step['To']}: {status}")
         for row in step["Metrics"]:
             if row["ConvergenceQuantity"]:
+                scale = ""
+                if row["Kind"] == "defect":
+                    scale = (
+                        ", norm/fabricated="
+                        f"{row['NormRelativeToFabricatedPercent']:.3f}%"
+                        ", change/fabricated="
+                        f"{row['ChangeRelativeToFabricatedPercent']:.3f}%"
+                    )
                 print(
                     f"  {row['Kind']}/{row['Quantity']}: "
                     f"matrix={row['MatrixChangePercent']:.3f}%, "
                     f"worst-energy={row['WorstEnergyChangePercent']:.3f}%"
+                    f"{scale}"
                 )
     if not passed:
         raise SystemExit(1)

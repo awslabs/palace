@@ -49,6 +49,27 @@ COMBINER_SPEC = importlib.util.spec_from_file_location(
 COMBINER = importlib.util.module_from_spec(COMBINER_SPEC)
 COMBINER_SPEC.loader.exec_module(COMBINER)
 
+CORNER_COMPARE_PATH = (
+    CPW2D.parent / "cpw3d_surface" / "corner_coupon"
+    / "compare_probe_convergence.py"
+)
+CORNER_COMPARE_SPEC = importlib.util.spec_from_file_location(
+    "compare_probe_convergence", CORNER_COMPARE_PATH
+)
+CORNER_COMPARE = importlib.util.module_from_spec(CORNER_COMPARE_SPEC)
+CORNER_COMPARE_SPEC.loader.exec_module(CORNER_COMPARE)
+sys.modules["compare_probe_convergence"] = CORNER_COMPARE
+
+CORNER_CONVERGENCE_PATH = (
+    CPW2D.parent / "cpw3d_surface" / "corner_coupon"
+    / "run_probe_convergence.py"
+)
+CORNER_CONVERGENCE_SPEC = importlib.util.spec_from_file_location(
+    "run_probe_convergence", CORNER_CONVERGENCE_PATH
+)
+CORNER_CONVERGENCE = importlib.util.module_from_spec(CORNER_CONVERGENCE_SPEC)
+CORNER_CONVERGENCE_SPEC.loader.exec_module(CORNER_CONVERGENCE)
+
 
 def pec():
     return {"Type": "PEC"}
@@ -1281,6 +1302,44 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(report, output / "probe-convergence.json")
             self.assertFalse(result["Passed"])
             self.assertEqual(result["Study"], "MeshResolution")
+
+    def test_domain_defect_reports_full_response_scale(self):
+        def response(thin, fabricated):
+            return {
+                "responses": {
+                    "thin": {
+                        "domain": np.array([[thin]]),
+                        "surfaces": {},
+                    },
+                    "fabricated": {
+                        "domain": np.array([[fabricated]]),
+                        "surfaces": {},
+                    },
+                },
+                "interface_names": {},
+            }
+
+        args = SimpleNamespace(
+            max_fabricated_matrix_change=5.0,
+            max_fabricated_energy_change=10.0,
+            max_domain_defect_change=6.0,
+        )
+        passed, results = CORNER_CONVERGENCE.compare_cases(
+            response(8.85, 9.8),
+            response(9.0, 10.0),
+            args,
+            True,
+        )
+        defect = next(row for row in results if row["Kind"] == "defect")
+
+        self.assertTrue(passed)
+        self.assertAlmostEqual(defect["MatrixChangePercent"], 5.0)
+        self.assertAlmostEqual(
+            defect["NormRelativeToFabricatedPercent"], 10.0
+        )
+        self.assertAlmostEqual(
+            defect["ChangeRelativeToFabricatedPercent"], 0.5
+        )
 
     def test_process_resolution_rejects_underresolved_fabrication(self):
         parameters = {

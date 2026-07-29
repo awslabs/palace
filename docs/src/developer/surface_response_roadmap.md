@@ -93,7 +93,7 @@ boundary-law parameters.
 | Three or more parallel edges | Implemented | Implemented | Incomplete |
 | Sharp 90 degree convex/concave corner | Implemented | Implemented | Partial |
 | Rounded 90 degree convex/concave corner | Implemented | Implemented | Partial |
-| Arbitrary corner angle | Implemented | Implemented | Missing |
+| Arbitrary corner angle | Implemented | Implemented | Partial |
 | Smooth curved edge | Piecewise linear | Reuses edge/corner models | Missing |
 | Manifold trace cap or T/cross mask | Corners, bends, and spatial clusters | Exact manifold mask | Incomplete |
 | Open-graph endpoint | Implemented matching | Requires an exact closed mask | Incomplete |
@@ -177,16 +177,22 @@ manifold-mask families and arbitrary convex/concave corner angles, but physical
 qualification is incomplete. Arbitrary-angle corner candidates use exact wedge and
 circular-fillet geometry, quadratic mesh geometry, and a positive-Jacobian gate. Only
 the recorded 90-degree rounded families have full-matrix and held-out qualification.
-Rounded 45-degree convex and 135-degree concave candidates pass the p2-to-p3 and
-fixed-p3 h-refinement probe gates, but their full 72-trace and held-out studies remain
-open. Corner and spatial candidates must pass both p-order and independent fixed-p
-h-refinement gates. A rounded endpoint has valid quadratic geometry, yet its p=3
-response from `lc_fine=0.025 um` to `0.0125 um` still changes by `13.14%` for MA,
-`2.39%` for MS (`16.01%` worst probe energy), and `8.23%` for SA. Automatic
-qualification records this as an h-convergence failure instead of accepting the coupon
-on p-convergence alone.
+Rounded 45-degree convex, 135-degree convex, and 135-degree concave candidates pass
+the p2-to-p3 and fixed-p3 h-refinement probe gates, but their full 72-trace and
+held-out studies remain open. The rounded 45-degree concave candidate narrowly fails
+the domain-defect p2-to-p3 gate (`5.09%` versus `5%`), despite a `0.05%` fabricated
+domain change and sub-`1%` fabricated interface changes. Its defect is `0.666%` of
+the fabricated matrix and changes by `0.034%` of that full response, but the
+correction-specific gate remains fail-closed pending a p3-to-p4 study. Corner and
+spatial candidates must pass both p-order and independent fixed-p h-refinement gates.
+A rounded endpoint has valid quadratic geometry, yet its p=3 response from
+`lc_fine=0.025 um` to `0.0125 um` still changes by `13.14%` for MA, `2.39%` for MS
+(`16.01%` worst probe energy), and `8.23%` for SA. Automatic qualification records
+this as an h-convergence failure instead of accepting the coupon on p-convergence
+alone.
 
-  1. Qualify acute and obtuse convex and concave corner angles.
+  1. Complete the 45-degree concave p3-to-p4 and h-refinement checks, then run
+     full-matrix and held-out qualification for the passing acute and obtuse families.
   2. Add radius interpolation studies for rounded corners and smooth bends.
   3. Qualify manifold trace caps and T/cross masks over cap radius, branch angle, and
      branch width using corner, curved-edge, and exact spatial-cluster models.

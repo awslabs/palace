@@ -419,23 +419,30 @@ still listed below.
 
 ### Acute and obtuse probe convergence
 
-Rounded `45` degree convex and `135` degree concave coupons with
-`R = 2 um`, `rho = 0.5 um`, and the default process pass both the p2-to-p3
-gate at `lc_fine = 0.02 um` and the fixed-p3 h-refinement gate from
-`lc_fine = 0.04 um` to `0.02 um`:
+Rounded corner coupons with `R = 2 um`, `rho = 0.5 um`, and the default
+process were tested at `lc_fine = 0.02 um`. Passing p2-to-p3 cases were also
+tested at fixed p3 from `lc_fine = 0.04 um` to `0.02 um`:
 
-| Topology | Study | Domain defect | Fabricated domain | SA | MS | MA | Max. worst energy |
-|----------|-------|--------------:|------------------:|---:|---:|---:|------------------:|
-| 45 degree convex | p2 to p3 | `0.66%` | `0.07%` | `0.52%` | `0.26%` | `2.41%` | `5.16%` |
-| 45 degree convex | h2 to h1 | `0.90%` | `0.03%` | `0.38%` | `0.71%` | `2.01%` | `5.70%` |
-| 135 degree concave | p2 to p3 | `3.35%` | `0.07%` | `0.60%` | `0.15%` | `1.17%` | `2.79%` |
-| 135 degree concave | h2 to h1 | `1.95%` | `0.01%` | `0.47%` | `0.34%` | `0.92%` | `2.90%` |
+| Topology | Study | Result | Domain defect | Fabricated domain | SA | MS | MA | Max. worst energy |
+|----------|-------|:------:|--------------:|------------------:|---:|---:|---:|------------------:|
+| 45 degree convex | p2 to p3 | Pass | `0.66%` | `0.07%` | `0.52%` | `0.26%` | `2.41%` | `5.16%` |
+| 45 degree convex | h2 to h1 | Pass | `0.90%` | `0.03%` | `0.38%` | `0.71%` | `2.01%` | `5.70%` |
+| 45 degree concave | p2 to p3 | **Fail** | `5.09%` | `0.05%` | `0.68%` | `0.17%` | `0.82%` | `3.45%` |
+| 135 degree convex | p2 to p3 | Pass | `1.67%` | `0.09%` | `0.58%` | `0.15%` | `1.56%` | `3.97%` |
+| 135 degree convex | h2 to h1 | Pass | `1.25%` | `0.02%` | `0.40%` | `0.50%` | `1.00%` | `3.22%` |
+| 135 degree concave | p2 to p3 | Pass | `3.35%` | `0.07%` | `0.60%` | `0.15%` | `1.17%` | `2.79%` |
+| 135 degree concave | h2 to h1 | Pass | `1.95%` | `0.01%` | `0.47%` | `0.34%` | `0.92%` | `2.90%` |
 
 The matrix columns report relative Frobenius changes; the last column is the
 largest fabricated worst-probe energy change across domain, SA, MS, and MA.
-These studies validate the geometry and six-probe response convergence. Full
-72-trace matrices and independent held-out excitations have not yet been run,
-so these angle families are not yet qualified process-library entries.
+For the 45 degree concave case, the defect norm is only `0.666%` of the full
+fabricated domain matrix. Its p2-to-p3 change is `0.034%` of that full matrix,
+but remains `5.09%` of the correction itself and therefore correctly fails the
+5% defect gate. A p3-to-p4 check and subsequent h-study remain required.
+
+The passing studies validate the geometry and six-probe response convergence.
+Full 72-trace matrices and independent held-out excitations have not yet been
+run, so these angle families are not yet qualified process-library entries.
 
 ## Remaining validation
 
@@ -448,7 +455,8 @@ Before adding these matrices to a production process library:
 4. Converge the fabrication-resolved concave-corner device reference.
 5. Combine the convex- and concave-corner entries with the process's isolated-
    and paired-edge entries.
-6. Converge acute and obtuse corner responses and nearby-edge configurations.
+6. Resolve the 45 degree concave p-order failure and converge additional corner
+   angles and nearby-edge configurations.
 
 The generic geometry and trace-mask paths also have valid high-order meshes for
 sharp acute and obtuse coupons. Those sharp families still require the same p,
