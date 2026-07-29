@@ -75,14 +75,15 @@ of the self-consistent corrected field is missing.
 | Boundary law | Runtime matching | Automatic coupon generation | Physical qualification |
 |:--|:--:|:--:|:--:|
 | PEC | Implemented | Implemented | Partial |
-| Conductivity | Implemented | Missing | Missing |
-| Impedance | Implemented | Missing | Missing |
-| Rational impedance | Implemented | Missing | Missing |
+| Conductivity | Implemented | Implemented candidate | Missing |
+| Impedance | Implemented | Implemented candidate | Missing |
+| Rational impedance | Implemented | Implemented candidate | Missing |
 
-Non-PEC libraries match numerical boundary parameters exactly. It remains to establish
-whether a quasi-electrostatic coupon is independent of frequency and surface impedance.
-If not, process libraries must index or interpolate response matrices in frequency and
-boundary-law parameters.
+Preflight exports dimensional named non-PEC parameters, and automatic preparation carries
+them through cache identities into generated model metadata. The response matrices remain
+quasi-electrostatic candidates. It remains to establish whether they are independent of
+frequency and surface impedance. If not, process libraries must index or interpolate
+response matrices in frequency and boundary-law parameters.
 
 ### Local geometry support
 
@@ -139,8 +140,9 @@ The following infrastructure is present:
     interpolation, without extrapolation. Adjacent corner models alone do not authorize
     a runtime interpolation span.
   - Geometry-only preflight and a metadata-only version-3 process-library seed.
-  - PEC coupon planning, generation, probe convergence, held-out qualification,
-    content-addressed caching, partial merging, and explicit failure manifests.
+  - PEC and exact-parameter non-PEC coupon planning, generation, probe convergence,
+    held-out qualification, content-addressed caching, partial merging, and explicit
+    failure manifests. Non-PEC physical qualification is not complete.
   - Separate raw, fixed-trace, fixed-flux, and supported self-consistent output.
   - Correction at every AMR iteration, with cached geometry and distributed compact
     response traces.
@@ -227,11 +229,19 @@ two fabrication processes without geometry-specific tuning.
 
 ### P2: Non-PEC process response
 
-  1. Generate conductivity, impedance, and rational-impedance coupon pairs.
+  1. Generate conductivity, impedance, and rational-impedance coupon candidates.
   2. Sweep frequency and boundary-law parameters against fabrication-resolved Maxwell
      coupons.
   3. Decide whether matrices are universal, indexed, or interpolated in those parameters.
   4. Encode the result in process-library compatibility and cache keys.
+
+**Implementation status:** Candidate generation is complete. Runtime preflight exports
+parser-valid dimensional laws, including degree-aware rational-impedance coefficients.
+The planner rejects legacy class-only and normalized diagnostic metadata, and stamps exact
+verified laws into generated model records and cache fingerprints. Steps 2-4 remain the
+physical qualification gate; generated non-PEC matrices must not yet be treated as
+frequency-universal. Candidate records carry an explicit unqualified boundary-law status,
+which prevents Palace from reporting the corrected result as confident.
 
 **Exit gate:** Runtime matching cannot select a coupon outside its qualified frequency
 and boundary-law range, and held-out Maxwell coupon tests pass the accuracy gates.

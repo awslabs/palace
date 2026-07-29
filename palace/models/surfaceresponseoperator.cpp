@@ -593,6 +593,7 @@ struct LibraryModel
   std::vector<LibrarySpatialEdge> spatial_edges;
   double spatial_position_tolerance = 0.0;
   double spatial_angle_tolerance = 0.0;
+  bool boundary_law_physics_qualified = true;
   std::optional<std::string> plan_view_boundary;
   std::optional<std::string> mask_regularization;
   std::vector<LibraryInterface> interfaces;
@@ -1000,6 +1001,10 @@ bool SameBoundaryLaw(const MetalBoundaryLaw &first, const MetalBoundaryLaw &seco
 
 bool IsBoundaryLawVerified(const LibraryModel &model)
 {
+  if (!model.boundary_law_physics_qualified)
+  {
+    return false;
+  }
   if (model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER)
   {
     return std::all_of(model.spatial_edges.begin(), model.spatial_edges.end(),
@@ -1304,6 +1309,19 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       model.boundary_condition = ParseLibraryBoundaryCondition(
           entry.value("BoundaryCondition", nlohmann::json("PEC")), units,
           nondimensionalize);
+    }
+    if (auto qualification = entry.find("BoundaryLawQualification");
+        qualification != entry.end())
+    {
+      MFEM_VERIFY(
+          qualification->is_object() && qualification->value("Version", 0) == 1 &&
+              qualification->contains("Status") &&
+              qualification->at("Status").is_string() &&
+              (qualification->at("Status") == "Qualified" ||
+               qualification->at("Status") == "Unqualified"),
+          "BoundaryLawQualification must be a version-1 object with Status equal to "
+          "Qualified or Unqualified!");
+      model.boundary_law_physics_qualified = qualification->at("Status") == "Qualified";
     }
     if (model.topology == LibraryTopology::ISOLATED_EDGE || spatial_response ||
         parallel_cluster)
@@ -3375,26 +3393,86 @@ private:
   std::string library_name;
   double matching_radius = 0.0;
   double coordinate_scale = 1.0;
+  const Units &units;
+  bool nondimensionalized = false;
 
-  static nlohmann::json BoundaryCondition(const MetalBoundaryLaw &law)
+  std::vector<double>
+  DimensionalizeRationalCoefficients(const std::vector<double> &coefficients,
+                                     bool numerator) const
   {
-    nlohmann::json result = {
-        {"Class", law.type == MetalBoundaryConditionType::PEC ? "PEC" : "FiniteImpedance"},
-        {"Type", BoundaryConditionName(law.type)},
-        {"ParametersVerified", law.parameters_verified}};
-    if (!law.parameters.empty())
+    if (!nondimensionalized)
     {
-      result["Parameters"] = law.parameters;
+      return coefficients;
     }
-    if (!law.numerator.empty())
+    auto result = coefficients;
+    const double impedance_scale =
+        numerator ? units.GetScaleFactor<Units::ValueType::IMPEDANCE>() : 1.0;
+    const double time_scale = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
+    for (std::size_t i = 0; i < result.size(); i++)
     {
-      result["Numerator"] = law.numerator;
-      result["Denominator"] = law.denominator;
+      const int degree = static_cast<int>(result.size() - 1 - i);
+      result[i] *= impedance_scale * std::pow(time_scale, degree);
+    }
+    return result;
+  }
+
+  nlohmann::json BoundaryCondition(const MetalBoundaryLaw &law) const
+  {
+    MFEM_VERIFY(law.parameters_verified,
+                "Surface-response preflight cannot export an unverified metal boundary "
+                "law!");
+    nlohmann::json result = {{"Type", BoundaryConditionName(law.type)}};
+    switch (law.type)
+    {
+      case MetalBoundaryConditionType::PEC:
+        break;
+      case MetalBoundaryConditionType::CONDUCTIVITY:
+        MFEM_VERIFY(law.parameters.size() == 3,
+                    "Invalid conductivity boundary-law parameter count!");
+        result["Conductivity"] =
+            nondimensionalized
+                ? units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(law.parameters[0])
+                : law.parameters[0];
+        result["Permeability"] = law.parameters[1];
+        result["Thickness"] = nondimensionalized
+                                  ? law.parameters[2] * units.GetMeshLengthRelativeScale()
+                                  : law.parameters[2];
+        // The matcher stores only effective thickness, including the external-surface
+        // factor. Export its canonical equivalent instead of inventing lost provenance.
+        result["External"] = false;
+        break;
+      case MetalBoundaryConditionType::IMPEDANCE:
+        MFEM_VERIFY(law.parameters.size() == 3,
+                    "Invalid impedance boundary-law parameter count!");
+        result["Rs"] =
+            nondimensionalized
+                ? units.Dimensionalize<Units::ValueType::IMPEDANCE>(law.parameters[0])
+                : law.parameters[0];
+        result["Ls"] =
+            nondimensionalized
+                ? units.Dimensionalize<Units::ValueType::INDUCTANCE>(law.parameters[1])
+                : law.parameters[1];
+        result["Cs"] =
+            nondimensionalized
+                ? units.Dimensionalize<Units::ValueType::CAPACITANCE>(law.parameters[2])
+                : law.parameters[2];
+        break;
+      case MetalBoundaryConditionType::RATIONAL_IMPEDANCE:
+        MFEM_VERIFY(!law.numerator.empty() && !law.denominator.empty(),
+                    "Invalid rational-impedance boundary-law coefficients!");
+        result["Numerator"] = DimensionalizeRationalCoefficients(law.numerator, true);
+        result["Denominator"] = DimensionalizeRationalCoefficients(law.denominator, false);
+        break;
     }
     return result;
   }
 
 public:
+  AutomaticResponseRequirements(const Units &units, bool nondimensionalized)
+    : units(units), nondimensionalized(nondimensionalized)
+  {
+  }
+
   nlohmann::json DescribeBoundaryCondition(const MetalBoundaryLaw &law) const
   {
     return BoundaryCondition(law);
@@ -8612,7 +8690,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   auto request = *configured_request;
   request.unmatched_policy = ResponseCorrectionData::UnmatchedPolicy::WARN;
   MaterialOperator mat_op(iodata, mesh);
-  AutomaticResponseRequirements requirements;
+  AutomaticResponseRequirements requirements(iodata.units,
+                                             iodata.InputsNondimensionalized());
   const auto &parallel_mesh = mesh.Get();
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)

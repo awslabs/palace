@@ -1192,6 +1192,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(requirements["Requirements"][0]["Status"] == "Exact");
   CHECK(requirements["Requirements"][0]["Count"] == 2);
   CHECK(requirements["Requirements"][0]["Interfaces"][0]["Target"] == 4);
+  CHECK(requirements["Requirements"][0]["BoundaryCondition"] == json({{"Type", "PEC"}}));
 
   std::ifstream empty_library_input(library_path);
   REQUIRE(empty_library_input);
@@ -1338,6 +1339,60 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(nondimensionalized_impedance_result.boundary_law_verified);
   CHECK(nondimensionalized_impedance_result.loop_residual < 1.0e-10);
 
+  const auto impedance_requirements_path =
+      temp.temp_dir / "surface-response-requirements-impedance.json";
+  WriteSurfaceResponseRequirements(nondimensionalized_impedance_iodata,
+                                   *nondimensionalized_meshes.back(),
+                                   impedance_requirements_path.string());
+  std::ifstream impedance_requirements_input(impedance_requirements_path);
+  REQUIRE(impedance_requirements_input);
+  const json impedance_requirements = json::parse(impedance_requirements_input);
+  REQUIRE(impedance_requirements["Requirements"].size() == 1);
+  const auto impedance_requirement_law =
+      impedance_requirements["Requirements"][0]["BoundaryCondition"];
+  CHECK(impedance_requirement_law["Type"] == "Impedance");
+  CHECK(impedance_requirement_law["Rs"] == 0.0);
+  CHECK_THAT(impedance_requirement_law["Ls"].get<double>(), WithinRel(1.0e-13, 1.0e-12));
+  CHECK(impedance_requirement_law["Cs"] == 0.0);
+  CHECK_FALSE(impedance_requirement_law.contains("Parameters"));
+  CHECK_FALSE(impedance_requirement_law.contains("ParametersVerified"));
+
+  const auto preflight_impedance_library_path =
+      temp.temp_dir / "fabrication-process-impedance-preflight.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(library_path);
+    REQUIRE(input);
+    auto preflight_library = json::parse(input);
+    for (auto &model : preflight_library["Models"])
+    {
+      model["BoundaryCondition"] = impedance_requirement_law;
+      model["BoundaryLawQualification"] = {{"Version", 1},
+                                           {"Status", "Unqualified"},
+                                           {"Calibration", "QuasiElectrostatic"},
+                                           {"FrequencyUniversal", false}};
+    }
+    std::ofstream output(preflight_impedance_library_path);
+    output << preflight_library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  auto preflight_impedance_config = nondimensionalized_impedance_config;
+  preflight_impedance_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      preflight_impedance_library_path.string();
+  IoData preflight_impedance_iodata(preflight_impedance_config, false);
+  preflight_impedance_iodata.boundaries.cracked_attributes.insert(9);
+  preflight_impedance_iodata.boundaries.cracked_attributes.insert(10);
+  std::unique_ptr<mfem::Mesh> no_impedance_mesh;
+  preflight_impedance_iodata.NondimensionalizeInputs(no_impedance_mesh);
+  SurfaceResponseOperator preflight_impedance_response(preflight_impedance_iodata,
+                                                       nondimensionalized_impedance_op);
+  CHECK(preflight_impedance_response.GetPatchCount() ==
+        nondimensionalized_impedance_response.GetPatchCount());
+  const auto preflight_impedance_result = preflight_impedance_response.GetMaxwellResponse(
+      nondimensionalized_impedance_field, 0.0);
+  CHECK_FALSE(preflight_impedance_result.boundary_law_verified);
+  CHECK_FALSE(preflight_impedance_result.confident);
+
   auto impedance_mismatch_config = impedance_boundary_mode_config;
   impedance_mismatch_config["Boundaries"]["Impedance"][0]["Ls"] = 2.0e-13;
   IoData impedance_mismatch_iodata(impedance_mismatch_config, false);
@@ -1406,6 +1461,52 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(conductivity_boundary_mode_result.boundary_law_verified);
   CHECK(conductivity_boundary_mode_result.loop_residual < 1.0e-10);
 
+  const auto conductivity_requirements_path =
+      temp.temp_dir / "surface-response-requirements-conductivity.json";
+  WriteSurfaceResponseRequirements(conductivity_boundary_mode_iodata,
+                                   *automatic_meshes.back(),
+                                   conductivity_requirements_path.string());
+  std::ifstream conductivity_requirements_input(conductivity_requirements_path);
+  REQUIRE(conductivity_requirements_input);
+  const json conductivity_requirements = json::parse(conductivity_requirements_input);
+  REQUIRE(conductivity_requirements["Requirements"].size() == 1);
+  const auto conductivity_requirement_law =
+      conductivity_requirements["Requirements"][0]["BoundaryCondition"];
+  CHECK(conductivity_requirement_law["Type"] == "Conductivity");
+  CHECK_THAT(conductivity_requirement_law["Conductivity"].get<double>(),
+             WithinRel(5.8e7, 1.0e-12));
+  CHECK_THAT(conductivity_requirement_law["Permeability"].get<double>(),
+             WithinRel(1.2, 1.0e-12));
+  CHECK_THAT(conductivity_requirement_law["Thickness"].get<double>(),
+             WithinRel(2.0e-7, 1.0e-12));
+  CHECK_FALSE(conductivity_requirement_law["External"].get<bool>());
+
+  const auto preflight_conductivity_library_path =
+      temp.temp_dir / "fabrication-process-conductivity-preflight.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(library_path);
+    REQUIRE(input);
+    auto preflight_library = json::parse(input);
+    for (auto &model : preflight_library["Models"])
+    {
+      model["BoundaryCondition"] = conductivity_requirement_law;
+    }
+    std::ofstream output(preflight_conductivity_library_path);
+    output << preflight_library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  auto preflight_conductivity_config = conductivity_boundary_mode_config;
+  preflight_conductivity_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      preflight_conductivity_library_path.string();
+  IoData preflight_conductivity_iodata(preflight_conductivity_config, false);
+  preflight_conductivity_iodata.boundaries.cracked_attributes.insert(9);
+  preflight_conductivity_iodata.boundaries.cracked_attributes.insert(10);
+  SurfaceResponseOperator preflight_conductivity_response(preflight_conductivity_iodata,
+                                                          conductivity_boundary_mode_op);
+  CHECK(preflight_conductivity_response.GetPatchCount() ==
+        conductivity_boundary_mode_response.GetPatchCount());
+
   auto rational_boundary_mode_config = boundary_mode_config;
   rational_boundary_mode_config["Boundaries"].erase("PEC");
   rational_boundary_mode_config["Boundaries"]["RationalImpedance"] = {
@@ -1430,6 +1531,72 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       rational_boundary_mode_response.GetMaxwellResponse(rational_boundary_mode_field, 0.0);
   CHECK(rational_boundary_mode_result.boundary_law_verified);
   CHECK(rational_boundary_mode_result.loop_residual < 1.0e-10);
+
+  auto nondimensionalized_rational_config = rational_boundary_mode_config;
+  nondimensionalized_rational_config["Model"]["L0"] = 1.0e-6;
+  nondimensionalized_rational_config["Model"]["Lc"] = 1.0;
+  IoData nondimensionalized_rational_iodata(nondimensionalized_rational_config, false);
+  nondimensionalized_rational_iodata.boundaries.cracked_attributes.insert(9);
+  nondimensionalized_rational_iodata.boundaries.cracked_attributes.insert(10);
+  auto nondimensionalized_rational_serial = std::make_unique<mfem::Mesh>(automatic_serial);
+  nondimensionalized_rational_iodata.NondimensionalizeInputs(
+      nondimensionalized_rational_serial);
+  auto nondimensionalized_rational_parallel =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), *nondimensionalized_rational_serial);
+  std::vector<std::unique_ptr<Mesh>> nondimensionalized_rational_meshes;
+  nondimensionalized_rational_meshes.push_back(
+      std::make_unique<Mesh>(std::move(nondimensionalized_rational_parallel)));
+  MaterialOperator nondimensionalized_rational_material(
+      nondimensionalized_rational_iodata, *nondimensionalized_rational_meshes.back());
+  BoundaryModeOperator nondimensionalized_rational_op(nondimensionalized_rational_iodata,
+                                                      nondimensionalized_rational_meshes,
+                                                      nondimensionalized_rational_material);
+  SurfaceResponseOperator nondimensionalized_rational_response(
+      nondimensionalized_rational_iodata, nondimensionalized_rational_op);
+
+  const auto rational_requirements_path =
+      temp.temp_dir / "surface-response-requirements-rational-impedance.json";
+  WriteSurfaceResponseRequirements(nondimensionalized_rational_iodata,
+                                   *nondimensionalized_rational_meshes.back(),
+                                   rational_requirements_path.string());
+  std::ifstream rational_requirements_input(rational_requirements_path);
+  REQUIRE(rational_requirements_input);
+  const json rational_requirements = json::parse(rational_requirements_input);
+  REQUIRE(rational_requirements["Requirements"].size() == 1);
+  const auto rational_requirement_law =
+      rational_requirements["Requirements"][0]["BoundaryCondition"];
+  CHECK(rational_requirement_law["Type"] == "RationalImpedance");
+  REQUIRE(rational_requirement_law["Numerator"].size() == 2);
+  REQUIRE(rational_requirement_law["Denominator"].size() == 3);
+  CHECK_FALSE(rational_requirement_law.contains("ParametersVerified"));
+
+  const auto preflight_rational_library_path =
+      temp.temp_dir / "fabrication-process-rational-impedance-preflight.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(library_path);
+    REQUIRE(input);
+    auto preflight_library = json::parse(input);
+    for (auto &model : preflight_library["Models"])
+    {
+      model["BoundaryCondition"] = rational_requirement_law;
+    }
+    std::ofstream output(preflight_rational_library_path);
+    output << preflight_library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  auto preflight_rational_config = nondimensionalized_rational_config;
+  preflight_rational_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      preflight_rational_library_path.string();
+  IoData preflight_rational_iodata(preflight_rational_config, false);
+  preflight_rational_iodata.boundaries.cracked_attributes.insert(9);
+  preflight_rational_iodata.boundaries.cracked_attributes.insert(10);
+  std::unique_ptr<mfem::Mesh> no_rational_mesh;
+  preflight_rational_iodata.NondimensionalizeInputs(no_rational_mesh);
+  SurfaceResponseOperator preflight_rational_response(preflight_rational_iodata,
+                                                      nondimensionalized_rational_op);
+  CHECK(preflight_rational_response.GetPatchCount() ==
+        nondimensionalized_rational_response.GetPatchCount());
 
   auto different_pair_config = boundary_mode_config;
   different_pair_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeAttributes"] =

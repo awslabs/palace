@@ -610,7 +610,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(command[command.index("--lc-far") + 1], "0.3")
             self.assertEqual(command[command.index("--mesh-order") + 1], "2")
 
-    def test_plan_reports_finite_impedance_as_unsupported(self):
+    def test_plan_accepts_verified_finite_impedance(self):
         requirements = [
             {
                 "Topology": "IsolatedEdge",
@@ -637,10 +637,105 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             {"Fabrication": {}},
             False,
         )
-        self.assertEqual(plan["Summary"]["Unsupported"], 2)
+        self.assertEqual(plan["Summary"]["Unsupported"], 0)
+        methods = {
+            coupon["Topology"]: coupon["Preparation"]["Method"]
+            for coupon in plan["Coupons"]
+        }
+        self.assertEqual(methods["IsolatedEdge"], "StraightEdgeBuilder")
+        self.assertEqual(methods["Endpoint"], "SpatialCoupon")
         for coupon in plan["Coupons"]:
-            self.assertEqual(coupon["Preparation"]["Method"], "Unsupported")
-            self.assertIn("Impedance", coupon["Preparation"]["Reason"])
+            self.assertEqual(
+                coupon["Preparation"]["BoundaryLawQualification"], "Missing"
+            )
+
+    def test_plan_rejects_unverified_finite_impedance(self):
+        for condition in (
+            "Impedance",
+            {
+                "Type": "Impedance",
+                "Parameters": [0.0, 1.0e-12, 0.0],
+                "ParametersVerified": True,
+            },
+            {"Type": "Impedance"},
+        ):
+            requirement = {
+                "Topology": "IsolatedEdge",
+                "Geometry": {},
+                "Interfaces": interfaces(),
+                "BoundaryCondition": condition,
+                "Status": "Missing",
+            }
+            preparation = PREPARE.preparation(requirement)
+            self.assertEqual(preparation["Method"], "Unsupported")
+            self.assertIn("boundary-law", preparation["Reason"])
+
+    def test_stamp_library_preserves_finite_impedance_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "process-library.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "Version": 3,
+                        "Models": [
+                            {
+                                "Name": "isolated",
+                                "Topology": "IsolatedEdge",
+                            },
+                            {
+                                "Name": "spatial",
+                                "Topology": "SpatialEdgeCluster",
+                                "Edges": [{}, {}],
+                            },
+                        ],
+                    }
+                )
+                + "\n"
+            )
+            isolated = {
+                "Id": "isolated",
+                "Topology": "IsolatedEdge",
+                "Geometry": {},
+                "BoundaryCondition": {
+                    "Type": "Conductivity",
+                    "Conductivity": 5.8e7,
+                    "Permeability": 1.2,
+                    "Thickness": 2.0e-7,
+                    "External": False,
+                },
+            }
+            spatial = overlapping_spatial_coupon()
+            spatial["Id"] = "spatial"
+            spatial["BoundaryCondition"] = {"Type": "PEC"}
+            spatial["Geometry"]["Edges"][1]["BoundaryCondition"] = {
+                "Type": "RationalImpedance",
+                "Numerator": [1.0e-7, 0.0],
+                "Denominator": [1.0e-19, 2.0e-9, 100.0],
+            }
+            PREPARE.stamp_library_boundary_conditions(
+                path, [isolated, spatial]
+            )
+            models = PREPARE.load_json(path)["Models"]
+            self.assertEqual(
+                models[0]["BoundaryCondition"],
+                isolated["BoundaryCondition"],
+            )
+            self.assertEqual(
+                models[0]["BoundaryLawQualification"]["Status"],
+                "Unqualified",
+            )
+            self.assertFalse(
+                models[0]["BoundaryLawQualification"]["FrequencyUniversal"]
+            )
+            self.assertNotIn("BoundaryCondition", models[1])
+            self.assertEqual(
+                models[1]["Edges"][1]["BoundaryCondition"],
+                spatial["Geometry"]["Edges"][1]["BoundaryCondition"],
+            )
+            self.assertEqual(
+                models[1]["BoundaryLawQualification"]["Calibration"],
+                "QuasiElectrostatic",
+            )
 
     def test_content_ids_include_complete_geometry(self):
         first = endpoint_coupon()
@@ -810,6 +905,14 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         _, edges, facets = SPATIAL.normalize_geometry(coupon, 2.0)
         SPATIAL.validate_plan_view_geometry(edges, 2.0, facets)
         self.assertEqual({facet["Conductor"] for facet in facets}, {1, 2})
+
+    def test_spatial_coupon_preserves_finite_impedance_law(self):
+        coupon = endpoint_coupon()
+        condition = {"Type": "Impedance", "Rs": 0.01, "Ls": 1.0e-12}
+        coupon["BoundaryCondition"] = condition
+        coupon["Geometry"]["Arms"][0]["BoundaryCondition"] = condition
+        _, edges, _ = SPATIAL.normalize_geometry(coupon, 2.0)
+        self.assertEqual(edges[0]["BoundaryCondition"], condition)
 
     def test_spatial_planner_fails_closed_without_mask_and_passes_mask_to_mesher(self):
         requirements = []
@@ -1514,6 +1617,62 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 manifest["GeneratedLibraries"], [str(root / "qualified.json")]
             )
             self.assertFalse(manifest["Passed"])
+
+    def test_execute_reports_unqualified_boundary_law_physics(self):
+        coupon = endpoint_coupon()
+        coupon["Id"] = "impedance-endpoint"
+        coupon["BoundaryCondition"] = {
+            "Type": "Impedance",
+            "Rs": 0.01,
+            "Ls": 1.0e-12,
+        }
+        coupon["Geometry"]["Arms"][0]["BoundaryCondition"] = coupon[
+            "BoundaryCondition"
+        ]
+        coupon["Preparation"] = {
+            "Method": "SpatialCoupon",
+            "BoundaryLawQualification": "Missing",
+        }
+        plan = {
+            "SourceManifest": "requirements.json",
+            "Coupons": [coupon],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(
+                cache=root / "cache",
+                output=root / "output",
+                name="test-library",
+            )
+
+            with (
+                mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                mock.patch.object(
+                    PREPARE,
+                    "build_spatial",
+                    return_value=(
+                        root / "qualified.json",
+                        root / "qualification.json",
+                    ),
+                ),
+                mock.patch.object(PREPARE, "run", return_value=0),
+            ):
+                complete = PREPARE.execute(plan, source, args)
+
+            self.assertTrue(complete)
+            manifest = PREPARE.load_json(
+                root / "output" / "library" / "qualification-manifest.json"
+            )
+            self.assertTrue(manifest["Passed"])
+            self.assertEqual(
+                manifest["BoundaryLawPhysics"],
+                {
+                    "Complete": False,
+                    "UnqualifiedCoupons": ["impedance-endpoint"],
+                },
+            )
 
     def test_missing_probe_report_is_a_failed_result(self):
         args = SimpleNamespace(

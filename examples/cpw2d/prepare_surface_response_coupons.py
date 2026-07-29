@@ -103,31 +103,115 @@ def coupon_id(requirement):
     return "_".join(parts + [digest])
 
 
-def preparation(requirement):
-    topology = requirement["Topology"]
-    geometry = requirement.get("Geometry", {})
-    boundary_conditions = [requirement.get("BoundaryCondition", {})]
+def verified_boundary_condition(condition):
+    if not isinstance(condition, dict):
+        raise ValueError(
+            "boundary-law metadata must be an object with dimensional named parameters"
+        )
+    boundary_type = condition.get("Type")
+    allowed = {
+        "PEC": {"Type"},
+        "Conductivity": {
+            "Type",
+            "Conductivity",
+            "Permeability",
+            "Thickness",
+            "External",
+        },
+        "Impedance": {"Type", "Rs", "Ls", "Cs"},
+        "RationalImpedance": {"Type", "Numerator", "Denominator"},
+    }
+    if boundary_type not in allowed:
+        raise ValueError(f"unknown boundary-law type {boundary_type!r}")
+    unknown = set(condition) - allowed[boundary_type]
+    if unknown:
+        raise ValueError(
+            f"{boundary_type} boundary law has unsupported metadata "
+            + ", ".join(sorted(unknown))
+        )
+
+    def finite(name, default=None):
+        if name not in condition:
+            if default is None:
+                raise ValueError(f"{boundary_type} boundary law is missing {name}")
+            return default
+        value = condition[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{boundary_type} boundary-law {name} is not numeric")
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f"{boundary_type} boundary-law {name} is not finite")
+        return value
+
+    if boundary_type == "Conductivity":
+        if finite("Conductivity") <= 0.0:
+            raise ValueError("Conductivity boundary law must have positive Conductivity")
+        if finite("Permeability", 1.0) <= 0.0:
+            raise ValueError("Conductivity boundary law must have positive Permeability")
+        if finite("Thickness", 0.0) < 0.0:
+            raise ValueError("Conductivity boundary law cannot have negative Thickness")
+        if "External" in condition and not isinstance(condition["External"], bool):
+            raise ValueError("Conductivity boundary-law External must be boolean")
+    elif boundary_type == "Impedance":
+        values = [finite(name, 0.0) for name in ("Rs", "Ls", "Cs")]
+        if not any(value != 0.0 for value in values):
+            raise ValueError("Impedance boundary law must have a nonzero Rs, Ls, or Cs")
+    elif boundary_type == "RationalImpedance":
+        for name in ("Numerator", "Denominator"):
+            coefficients = condition.get(name)
+            if not isinstance(coefficients, list) or not coefficients:
+                raise ValueError(
+                    f"RationalImpedance boundary-law {name} must be a nonempty array"
+                )
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in coefficients
+            ):
+                raise ValueError(
+                    f"RationalImpedance boundary-law {name} must be finite and numeric"
+                )
+            if not any(float(value) != 0.0 for value in coefficients):
+                raise ValueError(
+                    f"RationalImpedance boundary-law {name} must be nonzero"
+                )
+    return copy.deepcopy(condition)
+
+
+def coupon_boundary_conditions(coupon):
+    conditions = [coupon.get("BoundaryCondition")]
+    geometry = coupon.get("Geometry", {})
     for entries in (geometry.get("Edges", []), geometry.get("Arms", [])):
-        boundary_conditions.extend(
-            entry.get("BoundaryCondition", {})
+        conditions.extend(
+            entry.get("BoundaryCondition", coupon.get("BoundaryCondition"))
             for entry in entries
             if isinstance(entry, dict)
         )
-    finite_impedance = next(
-        (
-            condition.get("Type", "unknown")
-            for condition in boundary_conditions
-            if condition and condition.get("Type") != "PEC"
-        ),
-        None,
+    return conditions
+
+
+def require_verified_boundary_conditions(coupon):
+    for condition in coupon_boundary_conditions(coupon):
+        verified_boundary_condition(condition)
+
+
+def uses_finite_impedance(coupon):
+    return any(
+        isinstance(condition, dict) and condition.get("Type") != "PEC"
+        for condition in coupon_boundary_conditions(coupon)
     )
-    if finite_impedance:
+
+
+def preparation(requirement):
+    topology = requirement["Topology"]
+    geometry = requirement.get("Geometry", {})
+    try:
+        require_verified_boundary_conditions(requirement)
+    except ValueError as error:
         return {
             "Method": "Unsupported",
-            "Reason": (
-                "Automatic coupon generation is not qualified for "
-                f"{finite_impedance} metal"
-            ),
+            "Reason": f"Unverified boundary-law metadata: {error}",
         }
     if topology == "IsolatedEdge" or topology in PAIRED_TOPOLOGIES:
         return {
@@ -203,6 +287,8 @@ def plan_from_manifest(manifest_path, manifest, library_path, library, include_m
             "CoverageStatus": requirement.get("Status"),
             "Preparation": preparation(requirement),
         }
+        if uses_finite_impedance(coupon):
+            coupon["Preparation"]["BoundaryLawQualification"] = "Missing"
         if "SelectedModels" in requirement:
             coupon["SelectedModels"] = requirement["SelectedModels"]
         if "Reason" in requirement:
@@ -551,25 +637,79 @@ def unclassified_plan_view_boundary(boundary):
     ]
 
 
-def require_pec(coupon):
-    condition = coupon.get("BoundaryCondition", {})
-    if condition.get("Type") != "PEC":
-        raise ValueError(
-            f"{coupon['Id']} uses {condition.get('Type', 'unknown')} metal; "
-            "preflight currently lacks the dimensional boundary-law metadata needed "
-            "to stamp a generated coupon safely"
+def model_matches_coupon(model, coupon):
+    if model.get("Topology") != coupon["Topology"]:
+        return False
+    if coupon["Topology"] in PAIRED_TOPOLOGIES:
+        return math.isclose(
+            float(model.get("Separation", math.nan)),
+            float(coupon["Geometry"]["Separation"]),
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-12,
         )
+    return True
 
 
-def require_spatial_pec(coupon):
-    require_pec(coupon)
-    for edge in coupon.get("Geometry", {}).get("Edges", []):
-        condition = edge.get("BoundaryCondition", coupon["BoundaryCondition"])
-        if condition.get("Type") != "PEC":
-            raise ValueError(
-                f"{coupon['Id']} contains a non-PEC spatial edge; automatic "
-                "finite-impedance coupon calibration is not yet qualified"
+def stamp_library_boundary_conditions(path, coupons):
+    library = load_json(path)
+    models = []
+    for model in library.get("Models", []):
+        matches = [
+            coupon for coupon in coupons if model_matches_coupon(model, coupon)
+        ]
+        if not matches:
+            models.append(model)
+            continue
+        unique = {}
+        for coupon in matches:
+            require_verified_boundary_conditions(coupon)
+            signature = json.dumps(
+                coupon_boundary_conditions(coupon),
+                sort_keys=True,
+                separators=(",", ":"),
             )
+            unique.setdefault(signature, coupon)
+        for coupon in unique.values():
+            stamped = copy.deepcopy(model)
+            if coupon["Topology"] == "SpatialEdgeCluster":
+                source_edges = coupon["Geometry"].get("Edges", [])
+                target_edges = stamped.get("Edges", [])
+                if len(source_edges) != len(target_edges):
+                    raise ValueError(
+                        f"{coupon['Id']} does not match its generated spatial model"
+                    )
+                for source, target in zip(source_edges, target_edges):
+                    target["BoundaryCondition"] = verified_boundary_condition(
+                        source.get(
+                            "BoundaryCondition", coupon["BoundaryCondition"]
+                        )
+                    )
+                stamped.pop("BoundaryCondition", None)
+            else:
+                stamped["BoundaryCondition"] = verified_boundary_condition(
+                    coupon["BoundaryCondition"]
+                )
+            if uses_finite_impedance(coupon):
+                stamped["BoundaryLawQualification"] = {
+                    "Version": 1,
+                    "Status": "Unqualified",
+                    "Calibration": "QuasiElectrostatic",
+                    "FrequencyUniversal": False,
+                }
+            else:
+                stamped.pop("BoundaryLawQualification", None)
+            if len(unique) > 1:
+                digest = hashlib.sha256(
+                    json.dumps(
+                        coupon_boundary_conditions(coupon),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()[:8]
+                stamped["Name"] = f"{stamped['Name']}-bc-{digest}"
+            models.append(stamped)
+    library["Models"] = models
+    write_json(path, library)
 
 
 def normalize_parallel_edges(coupon, matching_radius):
@@ -662,7 +802,7 @@ def straight_coupon_directory(root, coupon):
 
 def build_straight(coupons, args, parameters, cache):
     for coupon in coupons:
-        require_pec(coupon)
+        require_verified_boundary_conditions(coupon)
     resolution = process_resolution(
         parameters, args.straight_lc_fine, args.min_process_feature_elements
     )
@@ -827,6 +967,7 @@ def build_straight(coupons, args, parameters, cache):
     write_json(qualification_path, qualification)
     if not passed:
         raise RuntimeError(f"Straight-edge qualification failed: {qualification_path}")
+    stamp_library_boundary_conditions(final_library, coupons)
     return final_library, qualification_path
 
 
@@ -964,7 +1105,7 @@ def generate_parallel_cluster_meshes(
 
 
 def build_parallel_cluster(coupon, args, parameters, cache):
-    require_pec(coupon)
+    require_verified_boundary_conditions(coupon)
     resolution = process_resolution(
         parameters, args.cluster_lc_fine, args.min_process_feature_elements
     )
@@ -973,6 +1114,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
         "Version": 1,
         "Family": "parallel-edge-cluster",
         "Edges": edges,
+        "BoundaryCondition": coupon["BoundaryCondition"],
         "Fabrication": parameters,
         "MatchingRadius": args.matching_radius,
         "Orders": args.orders,
@@ -1169,6 +1311,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
         raise RuntimeError(
             f"Parallel-cluster qualification failed: {qualification_path}"
         )
+    stamp_library_boundary_conditions(final_library, [coupon])
     return final_library, qualification_path
 
 
@@ -1221,7 +1364,7 @@ def generate_corner_meshes(
 
 
 def build_corner(coupon, args, parameters, cache):
-    require_pec(coupon)
+    require_verified_boundary_conditions(coupon)
     resolution = process_resolution(
         parameters, args.corner_lc_fine, args.min_process_feature_elements
     )
@@ -1253,6 +1396,7 @@ def build_corner(coupon, args, parameters, cache):
         "Topology": topology,
         "AngleDegrees": angle,
         "CornerRadius": corner_radius,
+        "BoundaryCondition": coupon["BoundaryCondition"],
         "Fabrication": parameters,
         "MatchingRadius": args.matching_radius,
         "Orders": args.orders,
@@ -1436,6 +1580,7 @@ def build_corner(coupon, args, parameters, cache):
     write_json(qualification_path, qualification)
     if not passed:
         raise RuntimeError(f"Corner qualification failed: {qualification_path}")
+    stamp_library_boundary_conditions(library_path, [coupon])
     return library_path, qualification_path
 
 
@@ -1585,7 +1730,7 @@ def prepare_probe_mesh_calibration(source, destination, meshes):
 
 
 def build_spatial(coupon, args, parameters, cache):
-    require_spatial_pec(coupon)
+    require_verified_boundary_conditions(coupon)
     spec = spatial_spec(coupon, args, parameters)
     key = fingerprint(spec)
     root = cache / f"spatial-{key}"
@@ -1778,6 +1923,7 @@ def build_spatial(coupon, args, parameters, cache):
     write_json(qualification_path, qualification)
     if not passed:
         raise RuntimeError(f"Spatial qualification failed: {qualification_path}")
+    stamp_library_boundary_conditions(library_path, [coupon])
     return library_path, qualification_path
 
 
@@ -1892,6 +2038,12 @@ def execute(plan, library_path, args):
         "GeneratedLibraries": [str(path) for path in libraries[1:]],
         "QualificationReports": [str(path) for path in qualifications],
         "Failures": failures,
+        "BoundaryLawPhysics": {
+            "Complete": not any(uses_finite_impedance(coupon) for coupon in missing),
+            "UnqualifiedCoupons": [
+                coupon["Id"] for coupon in missing if uses_finite_impedance(coupon)
+            ],
+        },
         "Passed": not failures,
     }
     qualification_path = destination / "qualification-manifest.json"

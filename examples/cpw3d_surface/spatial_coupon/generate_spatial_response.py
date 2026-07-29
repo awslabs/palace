@@ -35,6 +35,80 @@ def unit(values, name):
     return vector / norm
 
 
+def verified_boundary_condition(condition):
+    if not isinstance(condition, dict) or "Type" not in condition:
+        raise ValueError(
+            "BoundaryCondition must contain dimensional named boundary-law metadata"
+        )
+    boundary_type = condition["Type"]
+    allowed = {
+        "PEC": {"Type"},
+        "Conductivity": {
+            "Type",
+            "Conductivity",
+            "Permeability",
+            "Thickness",
+            "External",
+        },
+        "Impedance": {"Type", "Rs", "Ls", "Cs"},
+        "RationalImpedance": {"Type", "Numerator", "Denominator"},
+    }
+    if boundary_type not in allowed or set(condition) - allowed[boundary_type]:
+        raise ValueError(f"Invalid {boundary_type!r} BoundaryCondition metadata")
+    if boundary_type == "Conductivity":
+        values = (
+            condition.get("Conductivity"),
+            condition.get("Permeability", 1.0),
+            condition.get("Thickness", 0.0),
+        )
+        if (
+            any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in values
+            )
+            or float(values[0]) <= 0.0
+            or float(values[1]) <= 0.0
+            or float(values[2]) < 0.0
+            or (
+                "External" in condition
+                and not isinstance(condition["External"], bool)
+            )
+        ):
+            raise ValueError("Invalid Conductivity BoundaryCondition parameters")
+    elif boundary_type == "Impedance":
+        values = [condition.get(name, 0.0) for name in ("Rs", "Ls", "Cs")]
+        if (
+            any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in values
+            )
+            or not any(float(value) != 0.0 for value in values)
+        ):
+            raise ValueError("Invalid Impedance BoundaryCondition parameters")
+    elif boundary_type == "RationalImpedance":
+        for name in ("Numerator", "Denominator"):
+            coefficients = condition.get(name)
+            if (
+                not isinstance(coefficients, list)
+                or not coefficients
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    for value in coefficients
+                )
+                or not any(float(value) != 0.0 for value in coefficients)
+            ):
+                raise ValueError(
+                    f"Invalid RationalImpedance BoundaryCondition {name}"
+                )
+    return dict(condition)
+
+
 def frame_from_geometry(topology, geometry):
     entries = (
         geometry.get("Edges", [])
@@ -106,10 +180,7 @@ def normalize_geometry(coupon, radius):
         boundary = entry.get(
             "BoundaryCondition", coupon.get("BoundaryCondition", {"Type": "PEC"})
         )
-        if boundary.get("Type") != "PEC":
-            raise ValueError(
-                "Automatic spatial coupon calibration currently supports PEC only"
-            )
+        boundary = verified_boundary_condition(boundary)
         edges.append(
             {
                 "Point": local_point.tolist(),
@@ -915,15 +986,25 @@ def write_library(
     }
     if topology == "Endpoint":
         model["Reference"] = references[0]
+        model["BoundaryCondition"] = verified_boundary_condition(
+            coupon["BoundaryCondition"]
+        )
     elif topology == "Junction":
         model["Reference"] = references[0]
         model["ArmAngles"] = geometry["ArmAnglesDegrees"]
         model["ArmAngleTolerance"] = 1.0e-6
+        model["BoundaryCondition"] = verified_boundary_condition(
+            coupon["BoundaryCondition"]
+        )
     elif topology == "SpatialEdgeCluster":
         model["Edges"] = []
         for source in geometry["Edges"]:
             edge = dict(source)
-            edge["BoundaryCondition"] = "PEC"
+            edge["BoundaryCondition"] = verified_boundary_condition(
+                source.get(
+                    "BoundaryCondition", coupon["BoundaryCondition"]
+                )
+            )
             model["Edges"].append(edge)
         model["EdgePositionTolerance"] = 1.0e-6 * radius
         model["EdgeAngleTolerance"] = 1.0e-6
@@ -946,7 +1027,6 @@ def write_library(
         model["ContourGroups"] = contour_groups
         if zero_indices:
             model["ZeroTraceIndices"] = zero_indices
-        model["BoundaryCondition"] = "PEC"
     library = {
         "Version": 3,
         "Name": model_name,
