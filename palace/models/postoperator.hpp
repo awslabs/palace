@@ -132,6 +132,7 @@ protected:
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
+  bool field_coefficients_initialized = false;
 
   // How many / which fields to output.
   int output_delta_post = 0;                          // printing rate (TRANSIENT)
@@ -226,9 +227,11 @@ protected:
   // Construction-only FE staging is detached and freed immediately; assembled libCEED
   // operators remain cached for later writes in a frequency or mode sweep.
   void SetupFieldCoefficients();
+  void EnsureFieldCoefficientsSetup();
 
   // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
+  void EnsureParaviewDataCollection();
 
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
