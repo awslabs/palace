@@ -1,0 +1,391 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Spack (macOS)
+
+# Builds Palace on macOS (Apple Silicon) *through Spack* and runs its unit
+# tests. This is the Spack analogue of build-and-test-macos.yml (which uses the
+# Homebrew + raw CMake path) and doubles as a build test for the Spack recipe on
+# macOS (awslabs/palace#766).
+#
+# palace-ci / setup-runner are Linux-only (apt, sudo, LLVM/Intel PPAs, lscpu),
+# so this workflow inlines everything, the same way build-and-test-macos.yml
+# does. It borrows the shape of palace-ci's spack.yaml generation, adapted for
+# macOS: GNU (gcc/g++/gfortran) is preferred for C/C++/Fortran, with apple-clang
+# left available as a fallback for packages that cannot build with GNU (e.g.
+# python).
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
+    runs-on: macos-15
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/unit/**'
+              - 'test/data/**'
+              - 'spack_repo/**'
+              - '.github/workflows/spack-macos.yml'
+
+  build-test-macos-spack:
+    needs: filter
+    # A manual dispatch always builds: dorny/paths-filter has no reliable base
+    # to diff against on workflow_dispatch, so don't let it skip an explicit
+    # manual run.
+    if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15-xlarge
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'recursive'
+
+      # Timing helpers (setup-runner provides these on Linux; recreate them here
+      # since this workflow does not use that composite action). Each `run` is a
+      # fresh shell, so every step that times a substep sources this file.
+      - name: Initialize timing functions
+        run: |
+          echo "=== TIMING LOG ===" > /tmp/timing.log
+          cat << 'EOF' > /tmp/timing_functions.sh
+          start_timer() { export STEP_START=$(date +%s); }
+          end_timer() {
+            local duration=$(($(date +%s) - STEP_START))
+            local formatted_time
+            if [ $duration -lt 60 ]; then
+              formatted_time="${duration}s"
+            elif [ $duration -lt 3600 ]; then
+              local minutes=$((duration / 60))
+              local seconds=$((duration % 60))
+              formatted_time="${minutes}m ${seconds}s"
+            else
+              local hours=$((duration / 3600))
+              local minutes=$(((duration % 3600) / 60))
+              local seconds=$((duration % 60))
+              formatted_time="${hours}h ${minutes}m ${seconds}s"
+            fi
+            echo "$1: $formatted_time" >> /tmp/timing.log
+          }
+          EOF
+
+      # gcc (with g++/gfortran) is the compiler used for the whole build; see
+      # the packages: block in "Prepare spack.yaml" for why. openmpi/openblas
+      # are built by Spack from the spec/cache for reproducibility (the same way
+      # palace-ci builds them on Linux instead of apt-installing).
+      - name: Install GNU compilers
+        env:
+          GCC_MAJOR: '15'
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          brew install "gcc@${GCC_MAJOR}"
+          echo "GCC_MAJOR=${GCC_MAJOR}" >> "${GITHUB_ENV}"
+          echo "Pinning Spack compilers to gcc@${GCC_MAJOR}"
+          end_timer "Install GNU compilers"
+
+      - name: Install Spack
+        uses: actions/checkout@v6
+        with:
+          # Pin to the Spack 1.2 release series for reproducible CI (instead of
+          # the moving `develop` branch), matching setup-runner.
+          repository: spack/spack
+          path: spack
+          ref: releases/v1.2
+
+      - name: Setup Spack environment
+        run: |
+          realpath spack/bin >> "$GITHUB_PATH"
+          echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
+          echo "SPACK_COLOR=always" >> "$GITHUB_ENV"
+
+      - name: Patch Spack package.py files for known problems
+        run: |
+          PALACE_DIR=$PWD
+          cd "$(spack location --repo builtin)"
+          for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+            if [ -f "$patch" ]; then
+              if ! git apply --check "$patch" 2>/dev/null; then
+                echo "Cannot apply $patch (PR may have already been merged)"
+                echo "Please remove $patch from the Palace repo if the PR was merged"
+              else
+                echo "Applying patch: $patch"
+                git apply "$patch"
+              fi
+            fi
+          done
+          # Workaround for https://github.com/spack/spack/issues/51505
+          ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
+
+      - name: Prepare spack.yaml
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+
+          # Isolate GHCR buildcaches by Spack version (see palace-ci). Darwin
+          # binaries carry platform=darwin + the microarch in their DAG hash, so
+          # they never collide with the Linux OCI tags in the same cache.
+          PALACE_BUILD_CACHE_NAME="palace-1.2"
+          echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
+          echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
+
+          # Only same-repo runs can reach the repo's GITHUB_TOKEN with
+          # packages:write. Fork PRs must never attempt the push.
+          if [[ "${{ github.event_name }}" != "pull_request" || \
+                "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
+            echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
+            echo "GHCR buildcache access: read/write"
+          else
+            echo "PALACE_BUILD_CACHE_WRITE=false" >> "${GITHUB_ENV}"
+            echo "GHCR buildcache access: read-only (fork PR)"
+          fi
+
+          # +gslib is on by default in the recipe, but request it explicitly:
+          # under the constrained macOS DAG the concretizer would otherwise
+          # silently drop the optional variant, which makes the WavePort
+          # voltage-path unit test abort ("requires MFEM_USE_GSLIB").
+          PALACE_SPEC="local.palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+gslib"
+
+          cat << EOF > spack.yaml
+          spack:
+            specs:
+              - ${PALACE_SPEC}
+            view: false
+            config:
+              install_tree:
+                root: ${HOME}/opt/spack
+                # Padding supports better buildcache relocation.
+                # https://spack.readthedocs.io/en/latest/binary_caches.html#relocation
+                padded_length: 256
+            concretizer:
+              reuse: false
+              unify: true
+            packages:
+              # GNU (gcc/g++/gfortran) compiles the whole library DAG, so every
+              # built package shares one C++ ABI (libstdc++) and one Fortran
+              # runtime. Build tools that cannot (or should not) be built with
+              # gcc on macOS -- python, cmake, gmake -- are taken as externals
+              # instead (see the "external find" step); they are not compiled
+              # here, so the requirement below applies only to real libraries.
+              #
+              # The version is pinned (gcc@${GCC_MAJOR}, installed above)
+              # because macOS runners ship several gcc versions; an unpinned gcc
+              # requirement lets the solver explore every one across the DAG
+              # under unify:true, which makes concretization hang for minutes.
+              # Pinning one version collapses that search.
+              c:
+                require: ["gcc@${GCC_MAJOR}"]
+              cxx:
+                require: ["gcc@${GCC_MAJOR}"]
+              fortran:
+                require: ["gcc@${GCC_MAJOR}"]
+              petsc:
+                require: ~hdf5
+              mpi:
+                require: openmpi
+              # Pin a modern OpenMPI: under the gcc requirement the concretizer
+              # otherwise drifts to an ancient release (2.1.6) whose bundled
+              # assembly the current macOS assembler rejects ("expected first
+              # even register of a consecutive same-size even/odd register
+              # pair"). 5.x builds cleanly.
+              openmpi:
+                require: "@5:"
+              blas:
+                require: openblas
+              lapack:
+                require: openblas
+              # metis always compiles some shared objects, so it needs -fPIC.
+              metis:
+                require: cflags=-fPIC cppflags=-fPIC
+              mfem:
+                require: "+exceptions"
+            repos:
+            - spack_repo/local
+            mirrors:
+              spack:
+                binary: true
+                url: https://binaries.spack.io/develop
+              local-buildcache:
+                binary: true
+                url: oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
+          end_timer "Prepare spack.yaml"
+
+      - name: Configure Compilers
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          spack -e . compiler find && spack -e . compiler list
+          # Register build tools as externals so Spack never rebuilds them with
+          # gcc, which the global gcc requirement would otherwise force:
+          #   - python: CPython has a hard "platform=darwin %gcc" conflict (it
+          #     does not build with gcc on macOS) and is a build dep of
+          #     petsc/libxsmm.
+          #   - cmake: its macOS source uses __builtin_available, an
+          #     apple-clang-only builtin that gcc cannot compile.
+          #   - gmake: the runner's /usr/bin/make; avoids compiling gmake with
+          #     gcc@15's C23 default, which breaks its bundled fnmatch.c.
+          # Using the runner's copies keeps the compiled DAG entirely gcc.
+          spack -e . external find python cmake gmake
+          end_timer "Configure Compilers"
+
+      - name: Display spack.yaml
+        run: |
+          echo "=== Generated spack.yaml ==="
+          cat spack.yaml
+          echo "=== End spack.yaml ==="
+
+      - name: Configure Binary Mirror Keys
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          # The local GHCR buildcache is unsigned and may not exist yet. Only
+          # trust keys from Spack's public mirror; GHCR binaries are still used
+          # opportunistically with a source-build fallback on cache misses.
+          spack -e . buildcache keys -y --install --trust spack
+          end_timer "Configure Binary Mirror Keys"
+
+      - name: Bootstrap
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          spack -e . bootstrap now
+          end_timer "Bootstrap"
+
+      - name: Concretize
+        env:
+          PALACE_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          PALACE_REF="${PALACE_REF//\//-}"
+          spack -e . develop --path="$(pwd)" local.palace@git."${PALACE_REF}"=develop
+          spack -e . concretize -f --test root
+          end_timer "Concretize"
+
+      - name: Build Dependencies
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          NPROC=$(sysctl -n hw.ncpu)
+          # Bank built deps even if a later install fails. The CLI push skips
+          # non-redistributable specs; skip --update-index since installs probe
+          # OCI tags directly.
+          bank_progress() {
+            if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
+              spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+            else
+              echo "Skipping buildcache publish (fork PR / read-only cache)."
+            fi
+          }
+          # No --fail-fast: build (and bank) everything possible; retry to ride
+          # out transient source-fetch failures.
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            if spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j "$NPROC"; then
+              bank_progress
+              break
+            fi
+            bank_progress
+            if [ "$attempt" -eq "$attempts" ]; then
+              echo "Dependency installation failed after ${attempts} attempts."
+              exit 1
+            fi
+            echo "Dependency installation attempt ${attempt} failed; retrying."
+          done
+          end_timer "Build Dependencies"
+
+      - name: Build Palace
+        env:
+          # Palace's CMake enumerates its test cases at build time with
+          # `catch_discover_tests`, which launches the test binary under mpirun
+          # -- including the regression group at 8 ranks. macOS runners have
+          # fewer physical cores, so OpenMPI 5.x aborts discovery with "not
+          # enough slots available". Allow oversubscription for the discovery
+          # launches (PRRTE for 5.x + the legacy OMPI MCA name for robustness);
+          # actual test execution still uses a core-appropriate rank count.
+          PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
+          OMPI_MCA_rmaps_base_oversubscribe: "1"
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          NPROC=$(sysctl -n hw.ncpu)
+          # palace@develop is pinned to a branch, so every branch shares a spec
+          # hash with different source. Build Palace --no-cache and push only
+          # deps (below).
+          spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j "$NPROC"
+          end_timer "Build Palace"
+
+      - name: Run Unit Tests
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          eval "$(spack -e . load --sh palace)"
+
+          # Apple Silicon has no SMT, so physical == logical cores.
+          NUM_PROC_TEST=$(sysctl -n hw.physicalcpu)
+          export OMP_NUM_THREADS=1
+
+          cd "$(spack -e . location -b palace)"
+
+          # Disable OpenMPI 5.x default CPU binding so ranks don't oversubscribe
+          # during parallel test execution (PRRTE + legacy OMPI MCA vars).
+          export PRTE_MCA_hwloc_default_binding_policy=none
+          export OMPI_MCA_hwloc_base_binding_policy=none
+          # Allow more ranks than physical cores (macOS runners are small).
+          export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
+          export OMPI_MCA_rmaps_base_oversubscribe=1
+
+          # [Regression] and [Long] cases run elsewhere; skip them here.
+          ctest -j "$NUM_PROC_TEST" --output-on-failure -LE "^(regression|long)$"
+          end_timer "Run Unit Tests"
+
+      - name: Push to GHCR cache
+        if: always()
+        run: |
+          source /tmp/timing_functions.sh
+          start_timer
+          # Push deps only; Palace itself is branch-specific (see Build Palace).
+          # Do not force-overwrite existing spec tags: OCI installs probe tags
+          # directly and replacing a tag can invalidate consumers.
+          if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
+            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+          else
+            echo "Skipping buildcache publish (fork PR / read-only cache)."
+          fi
+          end_timer "Push to GHCR cache"
+
+      - name: Timing information
+        if: always()
+        run: |
+          cat /tmp/timing.log
