@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added lazy ParaView VTU serialization for device-evaluated point and cell
+    fields.
   - Added device-backed boundary point-field evaluators for field traces,
     charge, current, energy, and Poynting quantities.
   - Added device-backed domain point-field evaluators for primary and derived
