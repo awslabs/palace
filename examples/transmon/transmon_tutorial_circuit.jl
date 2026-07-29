@@ -20,8 +20,7 @@ julia --project=examples -e 'include("examples/transmon/transmon_tutorial_circui
 ```
 
 This requires `palace` to be a runnable command. Pass `palace_exec` explicitly when it
-is not on `PATH`. The uniform reference is a multi-hour run; after an interruption,
-resume at its next one-based solve index with `uniform_restart=<index>`.
+is not on `PATH`. The uniform reference is a multi-hour run.
 =#
 
 using JSON
@@ -34,7 +33,6 @@ circuit_tol_label(tol) = "1e$(round(Int, log10(tol)))"
     generate_transmon_circuit_data(;
         palace_exec="palace",
         num_processors=1,
-        uniform_restart=1,
     )
 
 Run the uniform, adaptive, and circuit-synthesis simulations used by the transmon
@@ -44,16 +42,9 @@ circuit-synthesis feature guide.
 
   - `palace_exec`: Path or name of the Palace executable.
   - `num_processors`: Number of MPI ranks passed to Palace's `-np` option.
-  - `uniform_restart`: One-based solve index at which to resume an interrupted uniform
-    sweep. The default `1` starts a new uniform sweep.
 """
-function generate_transmon_circuit_data(;
-    palace_exec="palace",
-    num_processors::Integer=1,
-    uniform_restart::Integer=1
-)
+function generate_transmon_circuit_data(; palace_exec="palace", num_processors::Integer=1)
     num_processors > 0 || throw(ArgumentError("num_processors must be positive"))
-    uniform_restart > 0 || throw(ArgumentError("uniform_restart must be positive"))
 
     palace_exec_is_path = occursin(Base.Filesystem.path_separator, palace_exec)
     if palace_exec_is_path
@@ -68,7 +59,7 @@ function generate_transmon_circuit_data(;
         return JSON.parse(replace(read(f, String), r"//[^\n]*" => ""))
     end
 
-    function run_palace(config, run_name; append_log=false)
+    function run_palace(config, run_name)
         outdir = joinpath(output_root, run_name)
         config["Problem"]["Output"] =
             joinpath("postpro", "transmon_tutorial_circuit", run_name)
@@ -77,16 +68,6 @@ function generate_transmon_circuit_data(;
         tmp_path = joinpath(transmon_dir, tmp_name)
         log_path = joinpath(transmon_dir, "transmon_tutorial_circuit_$(run_name).log")
         output_log = joinpath(outdir, "palace.log")
-
-        # A force-killed Julia process cannot execute the `finally` block below. Preserve
-        # the standalone tee log it leaves behind before starting a resumed run.
-        if append_log && isfile(log_path) && isdir(outdir)
-            open(output_log, isfile(output_log) ? "a" : "w") do f
-                println(f, "\n=== Output captured before uniform-sweep resume ===")
-                return write(f, read(log_path, String))
-            end
-            rm(log_path)
-        end
 
         open(tmp_path, "w") do f
             return JSON.print(f, config, 4)
@@ -97,20 +78,7 @@ function generate_transmon_circuit_data(;
             run(pipeline(palace_cmd, `tee $log_path`))
         finally
             isfile(tmp_path) && rm(tmp_path)
-            if isfile(log_path) && isdir(outdir)
-                if append_log && isfile(output_log)
-                    open(output_log, "a") do f
-                        println(
-                            f,
-                            "\n=== Resumed uniform sweep at solve $uniform_restart ==="
-                        )
-                        return write(f, read(log_path, String))
-                    end
-                    rm(log_path)
-                else
-                    mv(log_path, output_log; force=true)
-                end
-            end
+            isfile(log_path) && isdir(outdir) && mv(log_path, output_log; force=true)
         end
         return outdir
     end
@@ -119,8 +87,8 @@ function generate_transmon_circuit_data(;
     uniform = deepcopy(base_config)
     uniform["Solver"]["Driven"]["AdaptiveTol"] = 0.0
     uniform["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = false
-    uniform["Solver"]["Driven"]["Restart"] = uniform_restart
-    run_palace(uniform, "driven_uniform_reference"; append_log=uniform_restart > 1)
+    uniform["Solver"]["Driven"]["Restart"] = 1
+    run_palace(uniform, "driven_uniform_reference")
 
     for tol in CIRCUIT_TUTORIAL_TOLS
         label = circuit_tol_label(tol)
