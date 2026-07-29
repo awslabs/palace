@@ -1,11 +1,12 @@
 # Three-dimensional corner response coupon
 
-This directory generates local electrostatic response models for 90 degree
-convex and concave corners. The coupon frame is the frame used by Palace's
-automatic corner placement:
+This directory generates local electrostatic response models for convex and
+concave corner angles strictly between zero and 180 degrees. The coupon frame
+is the frame used by Palace's automatic corner placement:
 
 - the corner is at the origin;
-- the two incident metal-edge arms point along positive `x` and `y`; and
+- the first incident metal-edge arm points along positive `x`;
+- the second arm is counterclockwise at the requested corner angle; and
 - positive `z` points from the substrate into vacuum.
 
 The fabricated prototype uses 100 nm metal, 50 nm substrate overetch, and 80
@@ -51,7 +52,13 @@ containing that package. Omit the final mesh-generator argument and
 `--corner-radius` to generate a sharp corner. Replace `convex-thin` and
 `convex-fabricated` with `concave-thin` and `concave-fabricated`, and pass
 `--topology concave` to `generate_corner_response.py`, to generate the
-corresponding reentrant-corner entry.
+corresponding reentrant-corner entry. Pass the same `--angle ANGLE_DEGREES` to
+both the mesh generator and response generator for a non-default angle. The
+automatic coupon planner does this from Palace's `AngleDegrees` requirement
+and uses at least quadratic mesh geometry so circular fillets remain curved.
+A rounded coupon also requires `rho cot(theta / 2) < R`, so both fillet
+tangency points lie inside the matching box, as required by runtime corner
+recognition.
 
 For the default process, the matching surface has nine closed square contours with
 eight trace knots per contour. The resulting 72 coefficients include every corner
@@ -76,15 +83,17 @@ physical-edge sum before storing `surface-response-matrix.csv`. The finalizer st
 the radius-`R` core columns into the compact library format, but no longer needs a
 hundreds-of-megabytes intermediate per-edge CSV.
 
-For a rounded convex corner, the generated library uses `(rho, rho, 0)` as the
-local PEC reference. The virtual sharp corner at the origin is outside the
-rounded conductor and must not be used to gauge the coupon trace. For a rounded
-concave corner, the origin remains on the conductor side of the fillet and is
-the reference. The generator derives `ZeroTraceIndices` from the swept envelope
-of the thin-plane and fabricated conductor cuts for sharp and rounded corners
-of both topologies, so Maxwell contour knots on either PEC cut are fixed to the
-reference-conductor potential. This conservative envelope keeps a tapered cut
-compatible even when its sub-mesh-scale pullback lies between trace knots.
+For a rounded convex corner with angle `theta`, the generated library uses the
+fillet center `(rho cot(theta / 2), rho, 0)` as the local PEC reference. This
+reduces to `(rho, rho, 0)` at 90 degrees. The virtual sharp corner at the origin
+is outside the rounded conductor and must not be used to gauge the coupon trace.
+For a rounded concave corner, the origin remains on the conductor side of the
+fillet and is the reference. The generator derives `ZeroTraceIndices` from the
+swept envelope of the thin-plane and fabricated conductor cuts for sharp and
+rounded corners of both topologies, so Maxwell contour knots on either PEC cut
+are fixed to the reference-conductor potential. This conservative envelope
+keeps a tapered cut compatible even when its sub-mesh-scale pullback lies
+between trace knots.
 
 At runtime Palace joins connected curved perimeter facets and estimates the
 radius from the two tangent-arm setbacks and the corner angle,
@@ -108,6 +117,12 @@ retains straight-edge response through that neighborhood and prints a warning.
 There are no AMR iterations, and BoomerAMG is used for the electrostatic
 solves. The error-estimator tolerance is intentionally relaxed because its
 result is not used without AMR.
+
+The automatic planner requires both FEM-order and mesh-resolution convergence
+before merging a corner model. By default it compares p2 to p3 on the requested
+mesh, then compares p3 responses at `2 * corner_lc_fine` and
+`corner_lc_fine`. `--corner-h-factors` can add intermediate coarse-to-fine
+levels but must contain at least two factors ending at one.
 
 For `R = 2 um` and `rho = 0.5 um`, the refined convex thin/fabricated meshes
 contain 331,606/397,672 tetrahedra; the corresponding concave meshes contain
@@ -402,6 +417,26 @@ numerical tolerance used by the qualifier. These tests qualify the rounded
 description; they do not replace the radius, angle, and nearby-edge coverage
 still listed below.
 
+### Acute and obtuse probe convergence
+
+Rounded `45` degree convex and `135` degree concave coupons with
+`R = 2 um`, `rho = 0.5 um`, and the default process pass both the p2-to-p3
+gate at `lc_fine = 0.02 um` and the fixed-p3 h-refinement gate from
+`lc_fine = 0.04 um` to `0.02 um`:
+
+| Topology | Study | Domain defect | Fabricated domain | SA | MS | MA | Max. worst energy |
+|----------|-------|--------------:|------------------:|---:|---:|---:|------------------:|
+| 45 degree convex | p2 to p3 | `0.66%` | `0.07%` | `0.52%` | `0.26%` | `2.41%` | `5.16%` |
+| 45 degree convex | h2 to h1 | `0.90%` | `0.03%` | `0.38%` | `0.71%` | `2.01%` | `5.70%` |
+| 135 degree concave | p2 to p3 | `3.35%` | `0.07%` | `0.60%` | `0.15%` | `1.17%` | `2.79%` |
+| 135 degree concave | h2 to h1 | `1.95%` | `0.01%` | `0.47%` | `0.34%` | `0.92%` | `2.90%` |
+
+The matrix columns report relative Frobenius changes; the last column is the
+largest fabricated worst-probe energy change across domain, SA, MS, and MA.
+These studies validate the geometry and six-probe response convergence. Full
+72-trace matrices and independent held-out excitations have not yet been run,
+so these angle families are not yet qualified process-library entries.
+
 ## Remaining validation
 
 Before adding these matrices to a production process library:
@@ -413,7 +448,11 @@ Before adding these matrices to a production process library:
 4. Converge the fabrication-resolved concave-corner device reference.
 5. Combine the convex- and concave-corner entries with the process's isolated-
    and paired-edge entries.
-6. Validate additional corner angles and nearby-edge configurations.
+6. Converge acute and obtuse corner responses and nearby-edge configurations.
+
+The generic geometry and trace-mask paths also have valid high-order meshes for
+sharp acute and obtuse coupons. Those sharp families still require the same p,
+h, full-matrix, and held-out studies.
 
 Each generated `process-library.json` contains only the selected corner
 topology and radius. Combine the required entries before using the result as a

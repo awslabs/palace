@@ -1,10 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Local three-dimensional coupon for a convex 90 degree metal corner.
+# Local three-dimensional coupon for a convex or concave metal corner.
 #
-# Coordinates are in microns. The corner is at the origin, the two metal-edge
-# arms point along +x and +y, and +z points from the substrate into vacuum.
+# Coordinates are in microns. The corner is at the origin, the first metal-edge
+# arm points along +x, the second is counterclockwise at the requested angle,
+# and +z points from the substrate into vacuum.
 
 import Gmsh: gmsh
 
@@ -17,193 +18,189 @@ function polygon_surface(occ, points)
     return occ.addPlaneSurface([occ.addCurveLoop(lines)])
 end
 
-function extruded_polygon(occ, points, direction)
-    surface = polygon_surface(occ, points)
-    entities = occ.extrude([(2, surface)], direction...)
-    return only(tag for (dim, tag) in entities if dim == 3)
+function corner_frame(angle_degrees)
+    angle = deg2rad(angle_degrees)
+    0.0 < angle < pi ||
+        error("Corner angle must lie strictly between zero and 180 degrees")
+    first = (1.0, 0.0)
+    second = (cos(angle), sin(angle))
+    first_normal = (0.0, 1.0)
+    second_normal = (sin(angle), -cos(angle))
+    bisector = (cos(0.5angle), sin(0.5angle))
+    return (angle, first, second, first_normal, second_normal, bisector)
 end
 
-function rounded_rectangle_wire(occ, half_x, half_y, radius, z)
-    0.0 <= radius < min(half_x, half_y) ||
-        error("Rounded-rectangle radius must lie in [0, min(half_x, half_y))")
-    if radius == 0.0
-        points = [
-            occ.addPoint(-half_x, -half_y, z),
-            occ.addPoint(half_x, -half_y, z),
-            occ.addPoint(half_x, half_y, z),
-            occ.addPoint(-half_x, half_y, z),
-        ]
+function rounded_wedge_wire(
+    occ,
+    extent,
+    angle_degrees,
+    corner_radius,
+    offset,
+    z,
+)
+    angle, first, second, first_normal, second_normal, bisector =
+        corner_frame(angle_degrees)
+    apex_distance = offset / sin(0.5angle)
+    apex = (
+        apex_distance * bisector[1],
+        apex_distance * bisector[2],
+    )
+    outer_radius = 4.0extent + abs(apex_distance)
+    outer_first = (
+        apex[1] + outer_radius * first[1],
+        apex[2] + outer_radius * first[2],
+    )
+    outer_second = (
+        apex[1] + outer_radius * second[1],
+        apex[2] + outer_radius * second[2],
+    )
+    apex_tag = occ.addPoint(apex[1], apex[2], z)
+    outer_first_tag = occ.addPoint(outer_first[1], outer_first[2], z)
+    outer_second_tag = occ.addPoint(outer_second[1], outer_second[2], z)
+    outer_arc =
+        occ.addCircleArc(outer_first_tag, apex_tag, outer_second_tag)
+
+    if corner_radius == 0.0
         curves = [
-            occ.addLine(points[i], points[mod1(i + 1, length(points))])
-            for i in eachindex(points)
+            occ.addLine(apex_tag, outer_first_tag),
+            outer_arc,
+            occ.addLine(outer_second_tag, apex_tag),
         ]
         return occ.addWire(curves)
     end
 
-    points = [
-        occ.addPoint(half_x - radius, -half_y, z),
-        occ.addPoint(half_x, -half_y + radius, z),
-        occ.addPoint(half_x, half_y - radius, z),
-        occ.addPoint(half_x - radius, half_y, z),
-        occ.addPoint(-half_x + radius, half_y, z),
-        occ.addPoint(-half_x, half_y - radius, z),
-        occ.addPoint(-half_x, -half_y + radius, z),
-        occ.addPoint(-half_x + radius, -half_y, z),
-    ]
-    centers = [
-        occ.addPoint(half_x - radius, -half_y + radius, z),
-        occ.addPoint(half_x - radius, half_y - radius, z),
-        occ.addPoint(-half_x + radius, half_y - radius, z),
-        occ.addPoint(-half_x + radius, -half_y + radius, z),
-    ]
+    arc_radius = corner_radius - offset
+    arc_radius > 0.0 ||
+        error("Corner offset must be smaller than the plan-view corner radius")
+    center_distance = corner_radius / sin(0.5angle)
+    center = (
+        center_distance * bisector[1],
+        center_distance * bisector[2],
+    )
+    first_tangent = (
+        center[1] - arc_radius * first_normal[1],
+        center[2] - arc_radius * first_normal[2],
+    )
+    second_tangent = (
+        center[1] - arc_radius * second_normal[1],
+        center[2] - arc_radius * second_normal[2],
+    )
+    first_tangent_tag =
+        occ.addPoint(first_tangent[1], first_tangent[2], z)
+    second_tangent_tag =
+        occ.addPoint(second_tangent[1], second_tangent[2], z)
+    center_tag = occ.addPoint(center[1], center[2], z)
     curves = [
-        occ.addCircleArc(points[1], centers[1], points[2]),
-        occ.addLine(points[2], points[3]),
-        occ.addCircleArc(points[3], centers[2], points[4]),
-        occ.addLine(points[4], points[5]),
-        occ.addCircleArc(points[5], centers[3], points[6]),
-        occ.addLine(points[6], points[7]),
-        occ.addCircleArc(points[7], centers[4], points[8]),
-        occ.addLine(points[8], points[1]),
+        occ.addLine(first_tangent_tag, outer_first_tag),
+        outer_arc,
+        occ.addLine(outer_second_tag, second_tangent_tag),
+        occ.addCircleArc(second_tangent_tag, center_tag, first_tangent_tag),
     ]
     return occ.addWire(curves)
 end
 
-function rounded_rectangle_surface(occ, half_x, half_y, radius, z)
-    return occ.addPlaneSurface([
-        rounded_rectangle_wire(occ, half_x, half_y, radius, z),
-    ])
-end
-
-function tapered_rounded_rectangle(
-    occ, half_x, half_y, radius, z0, height, pullback_bottom, pullback_top)
-    bottom_half_x = half_x - pullback_bottom
-    bottom_half_y = half_y - pullback_bottom
-    top_half_x = half_x - pullback_top
-    top_half_y = half_y - pullback_top
-    bottom_radius = radius - pullback_bottom
-    top_radius = radius - pullback_top
-    minimum_radius = min(bottom_radius, top_radius)
-    minimum_radius >= 0.0 ||
-        error("Sidewall pullback exceeds the plan-view corner radius")
-
-    bottom = rounded_rectangle_wire(
-        occ, bottom_half_x, bottom_half_y, bottom_radius, z0)
-    top = rounded_rectangle_wire(
-        occ, top_half_x, top_half_y, top_radius, z0 + height)
+function tapered_rounded_wedge(
+    occ,
+    extent,
+    angle_degrees,
+    corner_radius,
+    z0,
+    height,
+    offset_bottom,
+    offset_top,
+)
+    bottom = rounded_wedge_wire(
+        occ,
+        extent,
+        angle_degrees,
+        corner_radius,
+        offset_bottom,
+        z0,
+    )
+    top = rounded_wedge_wire(
+        occ,
+        extent,
+        angle_degrees,
+        corner_radius,
+        offset_top,
+        z0 + height,
+    )
     volumes = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
     result = [(dim, tag) for (dim, tag) in volumes if dim == 3]
-    isempty(result) && error("Rounded-rectangle loft did not create a volume")
+    isempty(result) && error("Rounded-corner wedge loft did not create a volume")
     return result
 end
 
-function rounded_convex_corner_wire(occ, extent, radius, offset, z)
-    offset < extent ||
-        error("Rounded-corner offset must be smaller than the extent")
-    radius >= offset ||
-        error("Sidewall pullback exceeds the plan-view corner radius")
-    if radius == offset
-        points = [
-            occ.addPoint(offset, offset, z),
-            occ.addPoint(extent, offset, z),
-            occ.addPoint(extent, extent, z),
-            occ.addPoint(offset, extent, z),
-        ]
-        curves = [
-            occ.addLine(points[i], points[mod1(i + 1, length(points))])
-            for i in eachindex(points)
-        ]
-        return occ.addWire(curves)
+function corner_coordinates(point, angle_degrees)
+    _, _, _, first_normal, second_normal, _ =
+        corner_frame(angle_degrees)
+    return (
+        first_normal[1] * point[1] + first_normal[2] * point[2],
+        second_normal[1] * point[1] + second_normal[2] * point[2],
+    )
+end
+
+function in_rounded_wedge(
+    point,
+    angle_degrees,
+    corner_radius,
+    offset,
+    tolerance,
+)
+    first_distance, second_distance =
+        corner_coordinates(point, angle_degrees)
+    first_distance >= offset - tolerance &&
+        second_distance >= offset - tolerance || return false
+    corner_radius == 0.0 && return true
+
+    angle, _, _, _, _, bisector = corner_frame(angle_degrees)
+    center_distance = corner_radius / sin(0.5angle)
+    center = (
+        center_distance * bisector[1],
+        center_distance * bisector[2],
+    )
+    arc_radius = corner_radius - offset
+    return first_distance >= corner_radius - tolerance ||
+           second_distance >= corner_radius - tolerance ||
+           (point[1] - center[1])^2 + (point[2] - center[2])^2 <=
+               arc_radius^2 + tolerance^2
+end
+
+function on_rounded_wedge_curve(
+    point,
+    angle_degrees,
+    corner_radius,
+    offset,
+    tolerance,
+)
+    first_distance, second_distance =
+        corner_coordinates(point, angle_degrees)
+    if corner_radius == 0.0
+        return (
+            abs(first_distance - offset) <= tolerance ||
+            abs(second_distance - offset) <= tolerance
+        )
     end
 
-    points = [
-        occ.addPoint(radius, offset, z),
-        occ.addPoint(extent, offset, z),
-        occ.addPoint(extent, extent, z),
-        occ.addPoint(offset, extent, z),
-        occ.addPoint(offset, radius, z),
-    ]
-    center = occ.addPoint(radius, radius, z)
-    curves = [
-        occ.addLine(points[1], points[2]),
-        occ.addLine(points[2], points[3]),
-        occ.addLine(points[3], points[4]),
-        occ.addLine(points[4], points[5]),
-        occ.addCircleArc(points[5], center, points[1]),
-    ]
-    return occ.addWire(curves)
-end
-
-function tapered_rounded_convex_corner(
-    occ, extent, radius, z0, height, offset_bottom, offset_top)
-    bottom = rounded_convex_corner_wire(
-        occ, extent, radius, offset_bottom, z0)
-    top = rounded_convex_corner_wire(
-        occ, extent, radius, offset_top, z0 + height)
-    volumes = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
-    result = [(dim, tag) for (dim, tag) in volumes if dim == 3]
-    isempty(result) && error("Rounded-corner loft did not create a volume")
-    return result
-end
-
-function rounded_concave_corner_wire(occ, extent, radius, offset, z)
-    radius < extent ||
-        error("Rounded-corner radius must be smaller than the extent")
-    -extent < offset < radius ||
-        error("Rounded concave-corner offset must lie between -extent and radius")
-
-    points = [
-        occ.addPoint(-extent, -extent, z),
-        occ.addPoint(extent, -extent, z),
-        occ.addPoint(extent, offset, z),
-        occ.addPoint(radius, offset, z),
-        occ.addPoint(offset, radius, z),
-        occ.addPoint(offset, extent, z),
-        occ.addPoint(-extent, extent, z),
-    ]
-    center = occ.addPoint(radius, radius, z)
-    curves = [
-        occ.addLine(points[1], points[2]),
-        occ.addLine(points[2], points[3]),
-        occ.addLine(points[3], points[4]),
-        occ.addCircleArc(points[4], center, points[5]),
-        occ.addLine(points[5], points[6]),
-        occ.addLine(points[6], points[7]),
-        occ.addLine(points[7], points[1]),
-    ]
-    return occ.addWire(curves)
-end
-
-function tapered_rounded_concave_corner(
-    occ, extent, radius, z0, height, offset_bottom, offset_top)
-    bottom = rounded_concave_corner_wire(
-        occ, extent, radius, offset_bottom, z0)
-    top = rounded_concave_corner_wire(
-        occ, extent, radius, offset_top, z0 + height)
-    volumes = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
-    result = [(dim, tag) for (dim, tag) in volumes if dim == 3]
-    isempty(result) && error("Rounded concave-corner loft did not create a volume")
-    return result
-end
-
-function on_rounded_corner_curve(bounds, radius, offset, tolerance)
-    xmin, ymin, _, xmax, ymax, _ = bounds
-    lower = min(radius, offset)
-    upper = max(radius, offset)
-    horizontal_arm =
-        abs(ymin - offset) < tolerance &&
-        abs(ymax - offset) < tolerance &&
-        xmax >= radius - tolerance
-    vertical_arm =
-        abs(xmin - offset) < tolerance &&
-        abs(xmax - offset) < tolerance &&
-        ymax >= radius - tolerance
-    corner_arc =
-        abs(xmin - lower) < tolerance &&
-        abs(ymin - lower) < tolerance &&
-        abs(xmax - upper) < tolerance &&
-        abs(ymax - upper) < tolerance
-    return horizontal_arm || vertical_arm || corner_arc
+    on_first =
+        abs(first_distance - offset) <= tolerance &&
+        second_distance >= corner_radius - tolerance
+    on_second =
+        abs(second_distance - offset) <= tolerance &&
+        first_distance >= corner_radius - tolerance
+    angle, _, _, _, _, bisector = corner_frame(angle_degrees)
+    center_distance = corner_radius / sin(0.5angle)
+    center = (
+        center_distance * bisector[1],
+        center_distance * bisector[2],
+    )
+    arc_radius = corner_radius - offset
+    on_arc =
+        abs(hypot(point[1] - center[1], point[2] - center[2]) - arc_radius) <=
+            tolerance &&
+        first_distance <= corner_radius + tolerance &&
+        second_distance <= corner_radius + tolerance
+    return on_first || on_second || on_arc
 end
 
 function boundary_curves(volumes)
@@ -216,12 +213,21 @@ function boundary_curves(volumes)
                   gmsh.model.getBoundary(surfaces, false, false, false) if dim == 1)
 end
 
+function point_on_curve(curve)
+    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    length(lower) == 1 && length(upper) == 1 ||
+        error("Unexpected curve parametrization for curve $curve")
+    value = gmsh.model.getValue(1, curve, [(lower[1] + upper[1]) / 2])
+    return (value[1], value[2], value[3])
+end
+
 function fillet_volume_edges(occ, volumes, radius, selector, name)
     radius <= 0.0 && return volumes
-    curves = [
-        curve for curve in boundary_curves(volumes)
-        if selector(gmsh.model.getBoundingBox(1, curve))
-    ]
+    curves = Int32[]
+    for curve in boundary_curves(volumes)
+        bounds = gmsh.model.getBoundingBox(1, curve)
+        selector(curve, bounds) && push!(curves, curve)
+    end
     isempty(curves) && error("No $name curves were found for radius $radius")
     rounded = occ.fillet(
         Int32[tag for (dim, tag) in volumes if dim == 3],
@@ -233,119 +239,38 @@ function fillet_volume_edges(occ, volumes, radius, selector, name)
     return result
 end
 
-function add_tapered_corner_metal(
-    occ, radius, thickness, sidewall_angle, convex)
-    extension = 0.1 * radius
-    pullback = thickness / tan(deg2rad(sidewall_angle))
-
-    x_profile = if convex
-        [
-            (0.0, -extension, 0.0),
-            (radius + extension, -extension, 0.0),
-            (radius + extension, -extension, thickness),
-            (pullback, -extension, thickness),
-        ]
-    else
-        [
-            (-radius - extension, -extension, 0.0),
-            (0.0, -extension, 0.0),
-            (-pullback, -extension, thickness),
-            (-radius - extension, -extension, thickness),
-        ]
-    end
-    x_prism =
-        extruded_polygon(occ, x_profile, (0.0, radius + 2extension, 0.0))
-
-    y_profile = if convex
-        [
-            (-extension, 0.0, 0.0),
-            (-extension, radius + extension, 0.0),
-            (-extension, radius + extension, thickness),
-            (-extension, pullback, thickness),
-        ]
-    else
-        [
-            (-extension, -radius - extension, 0.0),
-            (-extension, 0.0, 0.0),
-            (-extension, -pullback, thickness),
-            (-extension, -radius - extension, thickness),
-        ]
-    end
-    y_prism =
-        extruded_polygon(occ, y_profile, (radius + 2extension, 0.0, 0.0))
-
-    metal, _ = convex ?
-        occ.intersect([(3, x_prism)], [(3, y_prism)]) :
-        occ.fuse([(3, x_prism)], [(3, y_prism)])
-    return metal
-end
-
-function add_overetch_notch(occ, radius, depth, sidewall_angle, convex)
-    extension = 0.1 * radius
-    pullback = depth / tan(deg2rad(sidewall_angle))
-
-    x_profile = if convex
-        [
-            (-radius - extension, -radius - extension, 0.0),
-            (0.0, -radius - extension, 0.0),
-            (-pullback, -radius - extension, -depth),
-            (-radius - extension, -radius - extension, -depth),
-        ]
-    else
-        [
-            (0.0, -radius - extension, 0.0),
-            (radius + extension, -radius - extension, 0.0),
-            (radius + extension, -radius - extension, -depth),
-            (pullback, -radius - extension, -depth),
-        ]
-    end
-    x_notch =
-        extruded_polygon(occ, x_profile, (0.0, 2radius + 2extension, 0.0))
-
-    y_profile = if convex
-        [
-            (-radius - extension, -radius - extension, 0.0),
-            (-radius - extension, 0.0, 0.0),
-            (-radius - extension, -pullback, -depth),
-            (-radius - extension, -radius - extension, -depth),
-        ]
-    else
-        [
-            (-radius - extension, 0.0, 0.0),
-            (-radius - extension, radius + extension, 0.0),
-            (-radius - extension, radius + extension, -depth),
-            (-radius - extension, pullback, -depth),
-        ]
-    end
-    y_notch =
-        extruded_polygon(occ, y_profile, (2radius + 2extension, 0.0, 0.0))
-
-    notch, _ = convex ?
-        occ.fuse([(3, x_notch)], [(3, y_notch)]) :
-        occ.intersect([(3, x_notch)], [(3, y_notch)])
-    return notch
-end
-
-function on_outer_box(bounds, radius, tolerance)
+function on_outer_box(bounds, center, radius, tolerance)
     xmin, ymin, zmin, xmax, ymax, zmax = bounds
-    return (abs(xmin + radius) < tolerance &&
-            abs(xmax + radius) < tolerance) ||
-           (abs(xmin - radius) < tolerance &&
-            abs(xmax - radius) < tolerance) ||
-           (abs(ymin + radius) < tolerance &&
-            abs(ymax + radius) < tolerance) ||
-           (abs(ymin - radius) < tolerance &&
-            abs(ymax - radius) < tolerance) ||
-           (abs(zmin + radius) < tolerance &&
-            abs(zmax + radius) < tolerance) ||
-           (abs(zmin - radius) < tolerance &&
-            abs(zmax - radius) < tolerance)
+    bounds_on_box =
+        (abs(xmin + radius) < tolerance &&
+         abs(xmax + radius) < tolerance) ||
+        (abs(xmin - radius) < tolerance &&
+         abs(xmax - radius) < tolerance) ||
+        (abs(ymin + radius) < tolerance &&
+         abs(ymax + radius) < tolerance) ||
+        (abs(ymin - radius) < tolerance &&
+         abs(ymax - radius) < tolerance) ||
+        (abs(zmin + radius) < tolerance &&
+         abs(zmax + radius) < tolerance) ||
+        (abs(zmin - radius) < tolerance &&
+         abs(zmax - radius) < tolerance)
+    bounds_on_box && return true
+
+    # OCC Boolean operations involving circular wedge closures can enlarge the
+    # pre-mesh bounding box of an otherwise planar box face. Its centroid still
+    # lies exactly on the matching box and is a more stable secondary test.
+    spans = (xmax - xmin, ymax - ymin, zmax - zmin)
+    return any(
+        abs(abs(center[axis]) - radius) < tolerance &&
+        spans[axis] < 1.0e-3radius for axis in 1:3
+    )
 end
 
 function generate_corner_coupon(;
     topology::Symbol = :convex,
     fabricated::Bool = false,
     radius::Float64 = 2.0,
+    angle_degrees::Float64 = 90.0,
     corner_radius::Float64 = 0.0,
     metal_thickness::Float64 = 0.1,
     overetch_depth::Float64 = 0.05,
@@ -361,8 +286,16 @@ function generate_corner_coupon(;
     topology in (:convex, :concave) ||
         error("topology must be :convex or :concave")
     convex = topology == :convex
+    0.0 < angle_degrees < 180.0 ||
+        error("angle_degrees must lie strictly between zero and 180")
     0.0 <= corner_radius < radius ||
         error("corner_radius must lie in [0, radius)")
+    if corner_radius > 0.0
+        tangent_distance =
+            corner_radius / tan(0.5deg2rad(angle_degrees))
+        tangent_distance < radius ||
+            error("Rounded-corner tangency points must lie inside the matching box")
+    end
     0.0 < sidewall_angle <= 90.0 ||
         error("sidewall_angle must be in (0, 90] degrees")
     if fabricated
@@ -388,90 +321,109 @@ function generate_corner_coupon(;
         if overetch_depth > 0.0
             trench_pullback =
                 overetch_depth / tan(deg2rad(sidewall_angle))
-            notch = if corner_radius > 0.0
-                extension = 0.1 * radius
-                if convex
-                    trench_slab = [(
-                        3,
-                        occ.addBox(
-                            -radius, -radius, -overetch_depth,
-                            2radius, 2radius, overetch_depth),
-                    )]
-                    pedestal = tapered_rounded_convex_corner(
-                        occ, radius + extension, corner_radius,
-                        -overetch_depth, overetch_depth, -trench_pullback, 0.0)
-                    result, _ = occ.cut(trench_slab, pedestal)
-                    result
-                else
-                    corner_radius >= trench_pullback ||
-                        error("Trench pullback exceeds the concave corner radius")
-                    tapered_rounded_convex_corner(
-                        occ, radius + extension, corner_radius,
-                        -overetch_depth, overetch_depth, trench_pullback, 0.0)
-                end
+            corner_radius > 0.0 && !convex &&
+                corner_radius <= trench_pullback &&
+                error("Trench pullback exceeds the concave corner radius")
+            trench_slab = [(
+                3,
+                occ.addBox(
+                    -radius,
+                    -radius,
+                    -overetch_depth,
+                    2radius,
+                    2radius,
+                    overetch_depth,
+                ),
+            )]
+            trench_wedge = tapered_rounded_wedge(
+                occ,
+                radius,
+                angle_degrees,
+                corner_radius,
+                -overetch_depth,
+                overetch_depth,
+                convex ? -trench_pullback : trench_pullback,
+                0.0,
+            )
+            notch = if convex
+                result, _ = occ.cut(trench_slab, trench_wedge)
+                result
             else
-                add_overetch_notch(
-                    occ, radius, overetch_depth, sidewall_angle, convex)
+                result, _ = occ.intersect(trench_slab, trench_wedge)
+                result
             end
             substrate, _ = occ.cut(substrate, notch)
-            trench_location =
-                (convex ? -1.0 : 1.0) *
-                trench_pullback
+            trench_offset = convex ? -trench_pullback : trench_pullback
             tolerance = 1.0e-6 * radius
             substrate = fillet_volume_edges(
                 occ, substrate, trench_rounding,
-                bounds -> begin
+                (curve, bounds) -> begin
                     xmin, ymin, zmin, xmax, ymax, zmax = bounds
                     on_floor = abs(zmin + overetch_depth) < tolerance &&
                                abs(zmax + overetch_depth) < tolerance
-                    on_trench = if corner_radius > 0.0
-                        on_rounded_corner_curve(
-                            bounds, corner_radius, trench_location, tolerance)
-                    else
-                        (abs(xmin - trench_location) < tolerance &&
-                         abs(xmax - trench_location) < tolerance) ||
-                        (abs(ymin - trench_location) < tolerance &&
-                         abs(ymax - trench_location) < tolerance)
-                    end
+                    point = point_on_curve(curve)
+                    on_trench = on_rounded_wedge_curve(
+                        point,
+                        angle_degrees,
+                        corner_radius,
+                        trench_offset,
+                        tolerance,
+                    )
                     on_floor && on_trench
                 end,
                 "trench-bottom",
             )
         end
 
-        metal = if corner_radius > 0.0
-            metal_pullback =
-                metal_thickness / tan(deg2rad(sidewall_angle))
-            convex ?
-                tapered_rounded_convex_corner(
-                    occ, 1.1radius, corner_radius,
-                    0.0, metal_thickness, 0.0, metal_pullback) :
-                tapered_rounded_concave_corner(
-                    occ, 1.1radius, corner_radius,
-                    0.0, metal_thickness, 0.0, -metal_pullback)
-        else
-            add_tapered_corner_metal(
-                occ, radius, metal_thickness, sidewall_angle, convex)
-        end
-        top_location =
-            (convex ? 1.0 : -1.0) *
+        metal_pullback =
             metal_thickness / tan(deg2rad(sidewall_angle))
+        corner_radius > 0.0 && convex &&
+            corner_radius <= metal_pullback &&
+            error("Sidewall pullback exceeds the convex corner radius")
+        metal_slab = [(
+            3,
+            occ.addBox(
+                -1.1radius,
+                -1.1radius,
+                0.0,
+                2.2radius,
+                2.2radius,
+                metal_thickness,
+            ),
+        )]
+        metal_offset = convex ? metal_pullback : -metal_pullback
+        metal_wedge = tapered_rounded_wedge(
+            occ,
+            1.1radius,
+            angle_degrees,
+            corner_radius,
+            0.0,
+            metal_thickness,
+            0.0,
+            metal_offset,
+        )
+        metal = if convex
+            result, _ = occ.intersect(metal_slab, metal_wedge)
+            result
+        else
+            result, _ = occ.cut(metal_slab, metal_wedge)
+            result
+        end
         tolerance = 1.0e-6 * radius
         metal = fillet_volume_edges(
             occ, metal, top_rounding,
-            bounds -> begin
+            (curve, bounds) -> begin
                 xmin, ymin, zmin, xmax, ymax, zmax = bounds
                 on_top = abs(zmin - metal_thickness) < tolerance &&
                          abs(zmax - metal_thickness) < tolerance
-                on_side = if corner_radius > 0.0
-                    on_rounded_corner_curve(
-                        bounds, corner_radius, top_location, tolerance)
-                else
-                    (abs(xmin - top_location) < tolerance &&
-                         abs(xmax - top_location) < tolerance) ||
-                        (abs(ymin - top_location) < tolerance &&
-                         abs(ymax - top_location) < tolerance)
-                end
+                point = point_on_curve(curve)
+                on_side = on_rounded_wedge_curve(
+                    point,
+                    angle_degrees,
+                    corner_radius,
+                    metal_offset,
+                    tolerance,
+                )
                 on_top && on_side
             end,
             "top-metal",
@@ -489,30 +441,48 @@ function generate_corner_coupon(;
             -radius, -radius, -radius, 2radius, 2radius, radius))
         vacuum_box = (3, occ.addBox(
             -radius, -radius, 0.0, 2radius, 2radius, radius))
-        footprint = if corner_radius > 0.0
-            wire = convex ?
-                rounded_convex_corner_wire(
-                    occ, radius, corner_radius, 0.0, 0.0) :
-                rounded_concave_corner_wire(
-                    occ, radius, corner_radius, 0.0, 0.0)
-            occ.addPlaneSurface([wire])
-        else
-            polygon_surface(
+        square = polygon_surface(
+            occ,
+            [
+                (-radius, -radius, 0.0),
+                (radius, -radius, 0.0),
+                (radius, radius, 0.0),
+                (-radius, radius, 0.0),
+            ],
+        )
+        wedge = occ.addPlaneSurface([
+            rounded_wedge_wire(
                 occ,
-                convex ?
-                    [(0.0, 0.0, 0.0), (radius, 0.0, 0.0),
-                     (radius, radius, 0.0), (0.0, radius, 0.0)] :
-                    [(-radius, -radius, 0.0), (radius, -radius, 0.0),
-                     (radius, 0.0, 0.0), (0.0, 0.0, 0.0),
-                     (0.0, radius, 0.0), (-radius, radius, 0.0)],
+                radius,
+                angle_degrees,
+                corner_radius,
+                0.0,
+                0.0,
+            ),
+        ])
+        footprints = if convex
+            result, _ = occ.intersect([(2, square)], [(2, wedge)])
+            result
+        else
+            result, _ = occ.cut([(2, square)], [(2, wedge)])
+            result
+        end
+        footprint_surfaces =
+            [(dim, tag) for (dim, tag) in footprints if dim == 2]
+        isempty(footprint_surfaces) &&
+            error("Corner footprint does not intersect the matching box")
+        tools = Tuple{Int32,Int32}[]
+        for footprint in footprint_surfaces
+            lower = occ.extrude([footprint], 0.0, 0.0, -radius)
+            upper = occ.extrude([footprint], 0.0, 0.0, radius)
+            append!(
+                tools,
+                [
+                    entity for entity in vcat(lower, upper)
+                    if entity[1] == 3
+                ],
             )
         end
-        lower = occ.extrude([(2, footprint)], 0.0, 0.0, -radius)
-        upper = occ.extrude([(2, footprint)], 0.0, 0.0, radius)
-        tools = [
-            entity for entity in vcat(lower, upper)
-            if entity[1] == 3
-        ]
         domains, domain_map =
             occ.fragment([substrate_box, vacuum_box], tools)
         append!(substrate_seed, domain_map[1])
@@ -546,7 +516,8 @@ function generate_corner_coupon(;
         isempty(adjacent_substrate) && isempty(adjacent_vacuum) && continue
 
         bounds = gmsh.model.getBoundingBox(dim, tag)
-        if on_outer_box(bounds, radius, tolerance)
+        center = gmsh.model.occ.getCenterOfMass(dim, tag)
+        if on_outer_box(bounds, center, radius, tolerance)
             push!(matching, tag)
             continue
         end
@@ -562,17 +533,17 @@ function generate_corner_coupon(;
         else
             xmin, ymin, zmin, xmax, ymax, zmax = bounds
             on_interface = abs(zmin) < tolerance && abs(zmax) < tolerance
-            center = gmsh.model.occ.getCenterOfMass(dim, tag)
             x, y = center[1], center[2]
-            in_quadrant = x >= -tolerance && y >= -tolerance
-            rounded_convex_metal =
-                x >= corner_radius - tolerance ||
-                y >= corner_radius - tolerance ||
-                (x - corner_radius)^2 + (y - corner_radius)^2 <=
-                    corner_radius^2 + tolerance^2
+            in_wedge = in_rounded_wedge(
+                (x, y),
+                angle_degrees,
+                corner_radius,
+                0.0,
+                tolerance,
+            )
             on_metal = convex ?
-                in_quadrant && rounded_convex_metal :
-                !(in_quadrant && rounded_convex_metal)
+                in_wedge :
+                !in_wedge
             if on_interface && on_metal
                 push!(thin_metal, tag)
             elseif on_interface &&
@@ -642,12 +613,25 @@ function generate_corner_coupon(;
     end
 
     gmsh.model.mesh.generate(3)
+    gmsh.model.mesh.optimize("Netgen")
     gmsh.model.mesh.setOrder(mesh_order)
-    mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
+    if mesh_order > 1
+        gmsh.model.mesh.optimize("HighOrderElastic", true, 20)
+        gmsh.model.mesh.optimize("HighOrder", true, 20)
+        _, element_tags, _ = gmsh.model.mesh.getElements(3)
+        tags = reduce(vcat, element_tags; init = UInt64[])
+        scaled_jacobians =
+            gmsh.model.mesh.getElementQualities(tags, "minSJ")
+        minimum_jacobian = minimum(scaled_jacobians)
+        minimum_jacobian > 0.0 ||
+            error("High-order corner coupon contains a nonpositive Jacobian")
+        println("High-order mesh minimum scaled Jacobian: $minimum_jacobian")
+    end
     gmsh.write(filename)
 
     println("Corner coupon: topology=$(topology), fabricated=$(fabricated), " *
-            "R=$(radius) um, corner radius=$(corner_radius) um")
+            "angle=$(angle_degrees) deg, R=$(radius) um, " *
+            "corner radius=$(corner_radius) um")
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -678,10 +662,12 @@ function parse_command_line(args)
         "topology" => topology,
         "fabricated" => fabricated,
         "filename" => abspath(args[2]),
+        "angle_degrees" => 90.0,
         "corner_radius" => 0.0,
     )
     names = Dict(
         "--radius" => ("radius", Float64),
+        "--angle" => ("angle_degrees", Float64),
         "--corner-radius" => ("corner_radius", Float64),
         "--metal-thickness" => ("metal_thickness", Float64),
         "--overetch" => ("overetch_depth", Float64),
@@ -715,6 +701,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         fabricated = options["fabricated"],
         filename = options["filename"],
         radius = get(options, "radius", 2.0),
+        angle_degrees = options["angle_degrees"],
         corner_radius = options["corner_radius"],
         metal_thickness = get(options, "metal_thickness", 0.1),
         overetch_depth = get(options, "overetch_depth", 0.05),

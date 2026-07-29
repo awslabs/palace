@@ -29,6 +29,16 @@ SPATIAL_SPEC = importlib.util.spec_from_file_location(
 SPATIAL = importlib.util.module_from_spec(SPATIAL_SPEC)
 SPATIAL_SPEC.loader.exec_module(SPATIAL)
 
+CORNER_PATH = (
+    CPW2D.parent / "cpw3d_surface" / "corner_coupon"
+    / "generate_corner_response.py"
+)
+CORNER_SPEC = importlib.util.spec_from_file_location(
+    "generate_corner_response", CORNER_PATH
+)
+CORNER = importlib.util.module_from_spec(CORNER_SPEC)
+CORNER_SPEC.loader.exec_module(CORNER)
+
 COMBINER_PATH = (
     CPW2D.parent / "cpw3d_surface" / "corner_coupon"
     / "combine_process_libraries.py"
@@ -221,7 +231,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     ],
                 },
             ),
-            ("ConvexCorner", {"AngleDegrees": 90.0, "CornerRadius": 0.2}),
+            ("ConvexCorner", {"AngleDegrees": 45.0, "CornerRadius": 0.2}),
             ("Endpoint", endpoint_coupon()["Geometry"]),
         ):
             requirements.append(
@@ -253,6 +263,155 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(methods["ConvexCorner"], "CornerCoupon")
         self.assertEqual(methods["Endpoint"], "SpatialCoupon")
         self.assertEqual(plan["Summary"]["Unsupported"], 0)
+
+    def test_corner_planner_rejects_only_invalid_angles(self):
+        for angle in (30.0, 90.0, 150.0):
+            requirement = {
+                "Topology": "ConcaveCorner",
+                "Geometry": {"AngleDegrees": angle, "CornerRadius": 0.2},
+                "BoundaryCondition": pec(),
+            }
+            self.assertEqual(
+                PREPARE.preparation(requirement)["Method"], "CornerCoupon"
+            )
+        for angle in (0.0, 180.0, float("nan")):
+            requirement = {
+                "Topology": "ConvexCorner",
+                "Geometry": {"AngleDegrees": angle, "CornerRadius": 0.0},
+                "BoundaryCondition": pec(),
+            }
+            self.assertEqual(
+                PREPARE.preparation(requirement)["Method"], "Unsupported"
+            )
+
+    def test_corner_trace_mask_and_reference_follow_requested_angle(self):
+        center = CORNER.corner_center(60.0, 0.5)
+        np.testing.assert_allclose(
+            center, [0.5 / np.tan(np.deg2rad(30.0)), 0.5]
+        )
+        points = np.asarray(
+            [
+                [1.0, 0.2, 0.0],
+                [0.2, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [*center, 0.0],
+            ]
+        )
+        convex = CORNER.metal_footprint_mask(
+            points, 2.0, 60.0, 0.5, 0.0, "convex"
+        )
+        concave = CORNER.metal_footprint_mask(
+            points, 2.0, 60.0, 0.5, 0.0, "concave"
+        )
+        np.testing.assert_array_equal(convex, [True, False, False, True])
+        np.testing.assert_array_equal(concave, [False, True, True, False])
+
+        with tempfile.TemporaryDirectory() as directory:
+            library_path = CORNER.write_library(
+                Path(directory),
+                2.0,
+                60.0,
+                0.5,
+                [8],
+                [],
+                "convex",
+                0.1,
+                0.05,
+                80.0,
+                0.01,
+                0.01,
+                11.47,
+                {
+                    "SA": (0.002, 4.0),
+                    "MS": (0.0003, 11.47),
+                    "MA": (0.03, 10.0),
+                },
+            )
+            model = PREPARE.load_json(library_path)["Models"][0]
+            self.assertEqual(model["Angle"], 60.0)
+            np.testing.assert_allclose(model["Reference"], [*center, 0.0])
+
+    def test_corner_builder_rejects_fillet_outside_matching_box(self):
+        coupon = {
+            "Id": "acute-rounded-corner",
+            "Topology": "ConvexCorner",
+            "Geometry": {"AngleDegrees": 10.0, "CornerRadius": 0.5},
+            "BoundaryCondition": pec(),
+        }
+        args = SimpleNamespace(
+            matching_radius=2.0,
+            corner_lc_fine=0.02,
+            min_process_feature_elements=2.0,
+        )
+        with self.assertRaisesRegex(
+            ValueError, "tangency distance .* must be smaller"
+        ):
+            PREPARE.build_corner(
+                coupon, args, process_parameters(), Path("unused")
+            )
+
+    def test_corner_builder_rejects_nonfinite_radius(self):
+        coupon = {
+            "Id": "invalid-rounded-corner",
+            "Topology": "ConvexCorner",
+            "Geometry": {
+                "AngleDegrees": 90.0,
+                "CornerRadius": float("nan"),
+            },
+            "BoundaryCondition": pec(),
+        }
+        args = SimpleNamespace(
+            matching_radius=2.0,
+            corner_lc_fine=0.02,
+            min_process_feature_elements=2.0,
+        )
+        with self.assertRaisesRegex(
+            ValueError, "corner radius must be finite"
+        ):
+            PREPARE.build_corner(
+                coupon, args, process_parameters(), Path("unused")
+            )
+
+    def test_corner_mesh_refinement_scales_only_fine_size(self):
+        args = SimpleNamespace(
+            force=True,
+            julia="julia",
+            julia_project=None,
+            matching_radius=2.0,
+            corner_lc_fine=0.02,
+            corner_lc_far=0.3,
+        )
+        spec = {"Mesh": {"Order": 2}}
+        commands = []
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(
+                PREPARE,
+                "run",
+                side_effect=lambda command: commands.append(
+                    [str(value) for value in command]
+                ),
+            ),
+        ):
+            mesh_root, meshes = PREPARE.generate_corner_meshes(
+                Path(directory),
+                "convex",
+                45.0,
+                0.5,
+                args,
+                process_parameters(),
+                spec,
+                2.0,
+            )
+
+        self.assertEqual(mesh_root.name, "h-2")
+        self.assertEqual(set(meshes), {"thin", "fabricated"})
+        self.assertEqual(len(commands), 2)
+        for command in commands:
+            self.assertEqual(command[command.index("--angle") + 1], "45.0")
+            self.assertEqual(command[command.index("--lc-fine") + 1], "0.04")
+            self.assertEqual(command[command.index("--lc-far") + 1], "0.3")
+            self.assertEqual(command[command.index("--mesh-order") + 1], "2")
 
     def test_plan_reports_finite_impedance_as_unsupported(self):
         requirements = [
@@ -960,6 +1119,73 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     for config in palace_configs
                 )
             )
+
+    def test_corner_mesh_failure_prevents_full_response_solves(self):
+        coupon = {
+            "Id": "convex-45",
+            "Topology": "ConvexCorner",
+            "Geometry": {"AngleDegrees": 45.0, "CornerRadius": 0.5},
+            "BoundaryCondition": pec(),
+        }
+        args = SimpleNamespace(
+            matching_radius=2.0,
+            orders=[2, 3],
+            corner_lc_fine=0.02,
+            corner_lc_far=0.3,
+            corner_h_factors=[2.0, 1.0],
+            mesh_order=1,
+            ring_size=8,
+            min_process_feature_elements=2.0,
+            force=True,
+            palace=Path("palace"),
+            julia="julia",
+            julia_project=None,
+            ranks=1,
+            max_fabricated_matrix_change=5.0,
+            max_fabricated_energy_change=10.0,
+            max_domain_defect_change=5.0,
+            max_heldout_error=10.0,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            p_report = cache / "p-convergence.json"
+            h_report = cache / "h-convergence.json"
+            calls = []
+
+            def record(command, check=True):
+                calls.append([str(value) for value in command])
+                return 0
+
+            with (
+                mock.patch.object(PREPARE, "run", side_effect=record),
+                mock.patch.object(
+                    PREPARE,
+                    "run_probe_convergence",
+                    return_value=(0, p_report, {"Passed": True}),
+                ),
+                mock.patch.object(
+                    PREPARE,
+                    "prepare_probe_mesh_calibration",
+                    return_value=cache / "coarse-calibration",
+                ),
+                mock.patch.object(
+                    PREPARE,
+                    "run_mesh_convergence",
+                    return_value=(1, h_report, {"Passed": False}),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Corner mesh convergence failed"
+                ):
+                    PREPARE.build_corner(
+                        coupon, args, process_parameters(), cache
+                    )
+
+            self.assertFalse(any(command[0] == "palace" for command in calls))
+            qualification = next(cache.glob("corner-*/qualification.json"))
+            result = PREPARE.load_json(qualification)
+            self.assertEqual(result["MeshConvergenceReport"], str(h_report))
+            self.assertFalse(result["Passed"])
 
     def test_execute_preserves_successes_after_independent_coupon_failure(self):
         failed = endpoint_coupon()

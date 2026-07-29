@@ -217,47 +217,73 @@ def convergence_probe_potentials(points, radius, metal_thickness):
     ]
 
 
+def corner_frame(angle_degrees):
+    angle = np.deg2rad(angle_degrees)
+    if not 0.0 < angle < np.pi:
+        raise ValueError("corner angle must lie strictly between zero and 180 degrees")
+    first_normal = np.array([0.0, 1.0])
+    second_normal = np.array([np.sin(angle), -np.cos(angle)])
+    bisector = np.array([np.cos(0.5 * angle), np.sin(0.5 * angle)])
+    return angle, first_normal, second_normal, bisector
+
+
+def corner_center(angle_degrees, corner_radius):
+    angle, _, _, bisector = corner_frame(angle_degrees)
+    return corner_radius * bisector / np.sin(0.5 * angle)
+
+
 def metal_footprint_mask(
     points,
     radius,
+    angle_degrees,
     corner_radius,
     offset,
     topology,
 ):
     tolerance = 1.0e-12 * radius
-    x = points[:, 0]
-    y = points[:, 1]
-    in_positive_quadrant = (x >= offset - tolerance) & (
-        y >= offset - tolerance
+    _, first_normal, second_normal, _ = corner_frame(angle_degrees)
+    coordinates = points[:, :2]
+    first_distance = coordinates @ first_normal
+    second_distance = coordinates @ second_normal
+    in_wedge = (first_distance >= offset - tolerance) & (
+        second_distance >= offset - tolerance
     )
-    arc_radius = corner_radius - offset
-    rounded_quadrant = (
-        (x >= corner_radius - tolerance)
-        | (y >= corner_radius - tolerance)
-        | (
-            (x - corner_radius) ** 2 + (y - corner_radius) ** 2
-            <= arc_radius**2 + tolerance**2
+    if corner_radius > 0.0:
+        arc_radius = corner_radius - offset
+        if arc_radius <= 0.0:
+            raise ValueError(
+                "corner offset must be smaller than the plan-view corner radius"
+            )
+        center = corner_center(angle_degrees, corner_radius)
+        rounded_wedge = (
+            (first_distance >= corner_radius - tolerance)
+            | (second_distance >= corner_radius - tolerance)
+            | (
+                np.sum((coordinates - center) ** 2, axis=1)
+                <= arc_radius**2 + tolerance**2
+            )
         )
-    )
+        in_wedge &= rounded_wedge
     if topology == "convex":
-        in_metal = in_positive_quadrant & rounded_quadrant
+        in_metal = in_wedge
     else:
         on_corner_boundary = (
-            (np.abs(y - offset) <= tolerance)
-            & (x >= corner_radius - tolerance)
+            (np.abs(first_distance - offset) <= tolerance)
+            & (second_distance >= corner_radius - tolerance)
         ) | (
-            (np.abs(x - offset) <= tolerance)
-            & (y >= corner_radius - tolerance)
+            (np.abs(second_distance - offset) <= tolerance)
+            & (first_distance >= corner_radius - tolerance)
         )
-        in_metal = ~(in_positive_quadrant & rounded_quadrant) | on_corner_boundary
+        in_metal = ~in_wedge | on_corner_boundary
     return in_metal
 
 
-def thin_metal_mask(points, radius, corner_radius, topology):
+def thin_metal_mask(points, radius, angle_degrees, corner_radius, topology):
     tolerance = 1.0e-12 * radius
     return (np.abs(points[:, 2]) <= tolerance) & metal_footprint_mask(
         points,
         radius,
+        angle_degrees,
         corner_radius,
         0.0,
         topology,
@@ -267,6 +293,7 @@ def thin_metal_mask(points, radius, corner_radius, topology):
 def pec_trace_mask(
     points,
     radius,
+    angle_degrees,
     corner_radius,
     metal_thickness,
     sidewall_angle,
@@ -276,6 +303,7 @@ def pec_trace_mask(
     bottom = (np.abs(points[:, 2]) <= tolerance) & metal_footprint_mask(
         points,
         radius,
+        angle_degrees,
         corner_radius,
         0.0,
         topology,
@@ -285,6 +313,7 @@ def pec_trace_mask(
     top_footprint = metal_footprint_mask(
         points,
         radius,
+        angle_degrees,
         corner_radius,
         top_offset,
         topology,
@@ -292,6 +321,7 @@ def pec_trace_mask(
     swept_footprint = top_footprint | metal_footprint_mask(
         points,
         radius,
+        angle_degrees,
         corner_radius,
         0.0,
         topology,
@@ -405,6 +435,7 @@ def make_config(
 def write_library(
     output,
     radius,
+    angle_degrees,
     corner_radius,
     contour_groups,
     zero_trace_indices,
@@ -418,11 +449,11 @@ def write_library(
     interface_layers,
 ):
     topology_name = f"{topology.capitalize()}Corner"
-    model_name = f"{topology}-corner-90deg"
+    model_name = f"{topology}-corner-{angle_degrees:g}deg"
     if corner_radius > 0.0:
         model_name += f"-r{corner_radius:g}um"
     reference = (
-        [corner_radius, corner_radius, 0.0]
+        [*corner_center(angle_degrees, corner_radius), 0.0]
         if topology == "convex" and corner_radius > 0.0
         else [0.0, 0.0, 0.0]
     )
@@ -433,7 +464,7 @@ def write_library(
     model = {
         "Name": model_name,
         "Topology": topology_name,
-        "Angle": 90.0,
+        "Angle": angle_degrees,
         "AngleTolerance": 2.0,
         "CornerRadius": corner_radius,
         "CornerRadiusTolerance": corner_radius_tolerance,
@@ -490,6 +521,7 @@ def main():
     parser.add_argument("--thin-mesh", type=Path, required=True)
     parser.add_argument("--fabricated-mesh", type=Path, required=True)
     parser.add_argument("--radius", type=float, default=2.0)
+    parser.add_argument("--angle", type=float, default=90.0)
     parser.add_argument("--corner-radius", type=float, default=0.0)
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument("--order", type=int, default=1)
@@ -511,8 +543,17 @@ def main():
     args = parser.parse_args()
     if args.radius <= 0.0:
         parser.error("--radius must be positive")
+    if not 0.0 < args.angle < 180.0:
+        parser.error("--angle must lie strictly between zero and 180 degrees")
     if not 0.0 <= args.corner_radius < args.radius:
         parser.error("--corner-radius must lie in [0, radius)")
+    tangent_distance = args.corner_radius / np.tan(
+        0.5 * np.deg2rad(args.angle)
+    )
+    if args.corner_radius > 0.0 and tangent_distance >= args.radius:
+        parser.error(
+            "rounded-corner tangency points must lie inside the matching box"
+        )
     if args.order < 1:
         parser.error("--order must be positive")
     if not 0.0 < args.metal_thickness < args.radius:
@@ -532,9 +573,24 @@ def main():
     pullback = args.metal_thickness / np.tan(
         np.deg2rad(args.sidewall_angle)
     )
-    if args.corner_radius > 0.0 and pullback > args.corner_radius:
+    if (
+        args.corner_radius > 0.0
+        and args.topology == "convex"
+        and pullback >= args.corner_radius
+    ):
         parser.error(
             "--sidewall-angle gives a pullback larger than the corner radius"
+        )
+    trench_pullback = args.overetch_depth / np.tan(
+        np.deg2rad(args.sidewall_angle)
+    )
+    if (
+        args.corner_radius > 0.0
+        and args.topology == "concave"
+        and trench_pullback >= args.corner_radius
+    ):
+        parser.error(
+            "--sidewall-angle gives a trench pullback larger than the corner radius"
         )
     material_values = (
         args.substrate_permittivity,
@@ -573,6 +629,7 @@ def main():
             pec_trace_mask(
                 points,
                 args.radius,
+                args.angle,
                 args.corner_radius,
                 args.metal_thickness,
                 args.sidewall_angle,
@@ -602,6 +659,7 @@ def main():
     library = write_library(
         output,
         args.radius,
+        args.angle,
         args.corner_radius,
         contour_groups,
         zero_trace_indices,

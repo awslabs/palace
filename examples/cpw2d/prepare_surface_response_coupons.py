@@ -144,7 +144,7 @@ def preparation(requirement):
         }
     if topology in CORNER_TOPOLOGIES:
         angle = float(geometry.get("AngleDegrees", math.nan))
-        if math.isclose(angle, 90.0, abs_tol=1.0e-8):
+        if math.isfinite(angle) and 0.0 < angle < 180.0:
             return {
                 "Method": "CornerCoupon",
                 "MeshGenerator": str(CORNER_MESH.relative_to(ROOT.parent.parent)),
@@ -154,7 +154,7 @@ def preparation(requirement):
             }
         return {
             "Method": "Unsupported",
-            "Reason": "The current corner coupon generator supports 90-degree corners",
+            "Reason": "Corner angles must lie strictly between zero and 180 degrees",
         }
     if topology in SPATIAL_TOPOLOGIES:
         return {
@@ -1115,6 +1115,54 @@ def build_parallel_cluster(coupon, args, parameters, cache):
     return final_library, qualification_path
 
 
+def generate_corner_meshes(
+    root, topology, angle, corner_radius, args, parameters, spec, factor
+):
+    mesh_root = (
+        root
+        if math.isclose(factor, 1.0)
+        else root / "mesh-calibrations" / f"h-{slug(factor)}"
+    )
+    mesh_root.mkdir(parents=True, exist_ok=True)
+    meshes = {}
+    for kind in ("thin", "fabricated"):
+        mesh = mesh_root / f"corner_{kind}.msh"
+        meshes[kind] = mesh
+        if mesh.is_file() and not args.force:
+            continue
+        run(
+            [
+                *julia_command(args),
+                CORNER_MESH,
+                f"{topology}-{kind}",
+                mesh,
+                "--radius",
+                args.matching_radius,
+                "--angle",
+                angle,
+                "--corner-radius",
+                corner_radius,
+                "--metal-thickness",
+                parameters["metal_thickness"],
+                "--overetch",
+                parameters["overetch"],
+                "--sidewall-angle",
+                parameters["sidewall_angle"],
+                "--top-radius",
+                parameters["top_radius"],
+                "--bottom-radius",
+                parameters["bottom_radius"],
+                "--lc-fine",
+                factor * args.corner_lc_fine,
+                "--lc-far",
+                args.corner_lc_far,
+                "--mesh-order",
+                spec["Mesh"]["Order"],
+            ]
+        )
+    return mesh_root, meshes
+
+
 def build_corner(coupon, args, parameters, cache):
     require_pec(coupon)
     resolution = process_resolution(
@@ -1122,14 +1170,31 @@ def build_corner(coupon, args, parameters, cache):
     )
     geometry = coupon["Geometry"]
     angle = float(geometry["AngleDegrees"])
-    if not math.isclose(angle, 90.0, abs_tol=1.0e-8):
-        raise ValueError(f"{coupon['Id']} requests unsupported corner angle {angle:g}")
+    if not math.isfinite(angle) or not 0.0 < angle < 180.0:
+        raise ValueError(f"{coupon['Id']} requests invalid corner angle {angle:g}")
     topology = "convex" if coupon["Topology"] == "ConvexCorner" else "concave"
     corner_radius = float(geometry.get("CornerRadius", 0.0))
+    if (
+        not math.isfinite(corner_radius)
+        or not 0.0 <= corner_radius < args.matching_radius
+    ):
+        raise ValueError(
+            f"{coupon['Id']} corner radius must be finite and lie in "
+            f"[0, {args.matching_radius:g})"
+        )
+    tangent_distance = corner_radius / math.tan(0.5 * math.radians(angle))
+    if corner_radius > 0.0 and tangent_distance >= args.matching_radius:
+        raise ValueError(
+            f"{coupon['Id']} rounded-corner tangency distance "
+            f"{tangent_distance:g} must be smaller than matching radius "
+            f"{args.matching_radius:g}"
+        )
+    geometry_order = max(2, args.mesh_order)
     spec = {
-        "Version": 1,
+        "Version": 3,
         "Family": "corner",
         "Topology": topology,
+        "AngleDegrees": angle,
         "CornerRadius": corner_radius,
         "Fabrication": parameters,
         "MatchingRadius": args.matching_radius,
@@ -1137,7 +1202,11 @@ def build_corner(coupon, args, parameters, cache):
         "Mesh": {
             "FineSize": args.corner_lc_fine,
             "FarSize": args.corner_lc_far,
-            "Order": args.mesh_order,
+            "Order": geometry_order,
+            "HRefinementFactors": sorted(
+                set(getattr(args, "corner_h_factors", (2.0, 1.0))),
+                reverse=True,
+            ),
         },
         "ProcessResolution": resolution,
         "Response": {"RingSize": args.ring_size},
@@ -1170,38 +1239,16 @@ def build_corner(coupon, args, parameters, cache):
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
-    meshes = {}
-    for kind in ("thin", "fabricated"):
-        mesh = root / f"corner_{kind}.msh"
-        meshes[kind] = mesh
-        run(
-            [
-                *julia_command(args),
-                CORNER_MESH,
-                f"{topology}-{kind}",
-                mesh,
-                "--radius",
-                args.matching_radius,
-                "--corner-radius",
-                corner_radius,
-                "--metal-thickness",
-                parameters["metal_thickness"],
-                "--overetch",
-                parameters["overetch"],
-                "--sidewall-angle",
-                parameters["sidewall_angle"],
-                "--top-radius",
-                parameters["top_radius"],
-                "--bottom-radius",
-                parameters["bottom_radius"],
-                "--lc-fine",
-                args.corner_lc_fine,
-                "--lc-far",
-                args.corner_lc_far,
-                "--mesh-order",
-                args.mesh_order,
-            ]
-        )
+    _, meshes = generate_corner_meshes(
+        root,
+        topology,
+        angle,
+        corner_radius,
+        args,
+        parameters,
+        spec,
+        1.0,
+    )
     run(
         [
             sys.executable,
@@ -1214,6 +1261,8 @@ def build_corner(coupon, args, parameters, cache):
             meshes["fabricated"],
             "--radius",
             args.matching_radius,
+            "--angle",
+            angle,
             "--corner-radius",
             corner_radius,
             "--ring-size",
@@ -1252,6 +1301,50 @@ def build_corner(coupon, args, parameters, cache):
         write_json(qualification_path, qualification)
         raise RuntimeError(f"Corner probe convergence failed: {qualification_path}")
 
+    mesh_calibrations = []
+    for factor in spec["Mesh"]["HRefinementFactors"]:
+        if math.isclose(factor, 1.0):
+            calibration = convergence_root / f"p{max(args.orders)}"
+        else:
+            mesh_root, factor_meshes = generate_corner_meshes(
+                root,
+                topology,
+                angle,
+                corner_radius,
+                args,
+                parameters,
+                spec,
+                factor,
+            )
+            calibration = prepare_probe_mesh_calibration(
+                root, mesh_root / "calibration", factor_meshes
+            )
+        mesh_calibrations.append((f"h-{slug(factor)}", calibration))
+    mesh_convergence_root = root / "mesh-convergence"
+    (
+        mesh_convergence_code,
+        mesh_convergence_report,
+        mesh_convergence,
+    ) = run_mesh_convergence(mesh_calibrations, mesh_convergence_root, args)
+    if (
+        mesh_convergence_code != 0
+        or not mesh_convergence.get("Passed", False)
+    ):
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "corner",
+            "Library": str(library_path),
+            "HeldoutReport": None,
+            "ConvergenceReport": str(convergence_report),
+            "MeshConvergenceReport": str(mesh_convergence_report),
+            "Passed": False,
+        }
+        write_json(qualification_path, qualification)
+        raise RuntimeError(
+            f"Corner mesh convergence failed: {qualification_path}"
+        )
+
     for name in ("thin", "fabricated"):
         run(palace_command(args, root / f"{name}.json"))
     run([sys.executable, CORNER_FINALIZER, root])
@@ -1280,6 +1373,7 @@ def build_corner(coupon, args, parameters, cache):
         "Library": str(library_path),
         "HeldoutReport": str(heldout_report),
         "ConvergenceReport": str(convergence_report),
+        "MeshConvergenceReport": str(mesh_convergence_report),
         "Passed": passed,
     }
     write_json(qualification_path, qualification)
@@ -1419,7 +1513,7 @@ def generate_spatial_meshes(
     return mesh_root, meshes
 
 
-def prepare_spatial_mesh_calibration(source, destination, meshes):
+def prepare_probe_mesh_calibration(source, destination, meshes):
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("probe-manifest.json", "process-library.json"):
         shutil.copy2(source / name, destination / name)
@@ -1555,7 +1649,7 @@ def build_spatial(coupon, args, parameters, cache):
                 spec,
                 factor,
             )
-            calibration = prepare_spatial_mesh_calibration(
+            calibration = prepare_probe_mesh_calibration(
                 root, mesh_root / "calibration", factor_meshes
             )
         mesh_calibrations.append((f"h-{slug(factor)}", calibration))
@@ -1778,6 +1872,16 @@ def parse_args():
     parser.add_argument("--cluster-lc-far", type=float, default=0.05)
     parser.add_argument("--corner-lc-fine", type=float, default=0.02)
     parser.add_argument("--corner-lc-far", type=float, default=0.3)
+    parser.add_argument(
+        "--corner-h-factors",
+        type=float,
+        nargs="+",
+        default=[2.0, 1.0],
+        help=(
+            "Coarse-to-fine multipliers on --corner-lc-fine used for the "
+            "mesh-resolution convergence gate"
+        ),
+    )
     parser.add_argument("--spatial-lc-fine", type=float, default=0.02)
     parser.add_argument("--spatial-lc-far", type=float, default=0.3)
     parser.add_argument(
@@ -1830,6 +1934,17 @@ def parse_args():
         parser.error("--edge-offset-tolerance must be nonnegative")
     if args.min_process_feature_elements <= 0.0:
         parser.error("--min-process-feature-elements must be positive")
+    args.corner_h_factors = sorted(
+        set(args.corner_h_factors), reverse=True
+    )
+    if (
+        len(args.corner_h_factors) < 2
+        or any(factor < 1.0 for factor in args.corner_h_factors)
+        or not math.isclose(args.corner_h_factors[-1], 1.0)
+    ):
+        parser.error(
+            "--corner-h-factors requires at least two values >= 1 ending at 1"
+        )
     args.spatial_h_factors = sorted(
         set(args.spatial_h_factors), reverse=True
     )
