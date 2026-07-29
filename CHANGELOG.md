@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Delayed visualization setup until after the first solve, reused output staging
+    storage, and added an optional CUDA profiling range to reduce peak device memory.
   - Routed ParaView and GridFunction output through device-backed point-field
     evaluators while preserving field names, units, and layouts.
   - Added lazy ParaView VTU serialization for device-evaluated point and cell
