@@ -7,6 +7,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
@@ -32,6 +33,57 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+internal::ResponseCorrectedMass
+internal::BuildResponseCorrectedMass(const ComplexOperator &mass, const Operator &response)
+{
+  MFEM_VERIFY(mass.Real(), "Response-corrected eigenmode mass requires a real part!");
+  ResponseCorrectedMass corrected;
+  corrected.real = std::make_unique<SumOperator>(*mass.Real());
+  corrected.real->AddOperator(response);
+  corrected.op =
+      std::make_unique<ComplexWrapperOperator>(corrected.real.get(), mass.Imag());
+  return corrected;
+}
+
+internal::EigenvalueTarget
+internal::GetEigenvalueTarget(double target, bool lambda_eigenproblem,
+                              EigenSolverBackend backend,
+                              NonlinearEigenSolver nonlinear_type)
+{
+  if (lambda_eigenproblem)
+  {
+    EigenvalueSolver::WhichType which;
+    if (backend == EigenSolverBackend::ARPACK)
+    {
+      // ARPACK searches the transformed spectrum. An eigenvalue just above iσ maps to a
+      // large-magnitude negative imaginary value under shift-and-invert.
+      which = EigenvalueSolver::WhichType::SMALLEST_IMAGINARY;
+    }
+    else if (nonlinear_type == NonlinearEigenSolver::SLP)
+    {
+      which = EigenvalueSolver::WhichType::TARGET_MAGNITUDE;
+    }
+    else
+    {
+      which = EigenvalueSolver::WhichType::TARGET_IMAGINARY;
+    }
+    return {1i * target, which};
+  }
+
+  // For μ = ω², an eigenvalue just below σ² maps to a large positive real value under
+  // shift-and-invert.
+  const auto which = backend == EigenSolverBackend::ARPACK
+                         ? EigenvalueSolver::WhichType::LARGEST_REAL
+                         : EigenvalueSolver::WhichType::TARGET_REAL;
+  return {target * target, which};
+}
+
+std::complex<double> internal::EigenvalueToAngularFrequency(std::complex<double> value,
+                                                            bool lambda_eigenproblem)
+{
+  return lambda_eigenproblem ? value / 1i : std::sqrt(value);
+}
 
 std::vector<int>
 internal::MaximumWeightModeAssignment(const std::vector<std::vector<double>> &weights)
@@ -316,27 +368,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              type == EigenSolverBackend::ARPACK ? "ARPACK" : "SLEPc");
   auto eigen = MakeEigenvalueSolver();
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
-  const bool self_consistent_response = response_correction && !C && !has_A2;
-  if (response_correction && !self_consistent_response)
-  {
-    Mpi::Warning(
-        "Self-consistent eigenmode surface-response correction currently requires a "
-        "linear eigenproblem without damping or frequency-dependent operators. Raw, "
-        "fixed-trace, and fixed-flux results remain available.\n");
-  }
   std::unique_ptr<ComplexWrapperOperator> response_mass;
-  std::unique_ptr<SumOperator> corrected_M_real;
-  std::unique_ptr<ComplexWrapperOperator> corrected_M;
+  internal::ResponseCorrectedMass corrected_M, corrected_Mp;
   std::unique_ptr<EigenvalueSolver> corrected_eigen;
-  if (self_consistent_response)
+  if (response_correction)
   {
     Mpi::Print("Configuring self-consistent response-corrected eigenvalue solver:\n");
     response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
-    MFEM_VERIFY(M->Real(), "Response-corrected eigenmode mass requires a real part!");
-    corrected_M_real = std::make_unique<SumOperator>(*M->Real());
-    corrected_M_real->AddOperator(*response_correction);
-    corrected_M =
-        std::make_unique<ComplexWrapperOperator>(corrected_M_real.get(), M->Imag());
+    corrected_M = internal::BuildResponseCorrectedMass(*M, *response_correction);
     corrected_eigen = MakeEigenvalueSolver();
     E_corrected.SetSize(Curl.Width());
     E_corrected.UseDevice(true);
@@ -352,7 +391,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
-    eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    if (C)
+    {
+      eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    }
+    else
+    {
+      eigen->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
+    }
     eigen->SetExtraSystemMatrix(funcA2);
     eigen->SetPreconditionerUpdate(funcP);
   }
@@ -373,7 +419,34 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (corrected_eigen)
   {
-    corrected_eigen->SetOperators(*K, *corrected_M, scale);
+    if (nonlinear_type == NonlinearEigenSolver::SLP)
+    {
+      if (C)
+      {
+        corrected_eigen->SetOperators(*K, *C, *corrected_M.op,
+                                      EigenvalueSolver::ScaleType::NONE);
+      }
+      else
+      {
+        corrected_eigen->SetOperators(*K, *corrected_M.op,
+                                      EigenvalueSolver::ScaleType::NONE);
+      }
+      corrected_eigen->SetExtraSystemMatrix(funcA2);
+      corrected_eigen->SetPreconditionerUpdate(funcP);
+    }
+    else if (has_A2)
+    {
+      corrected_Mp = internal::BuildResponseCorrectedMass(*Mp, *response_correction);
+      corrected_eigen->SetOperators(*Kp, *Cp, *corrected_Mp.op, scale);
+    }
+    else if (C)
+    {
+      corrected_eigen->SetOperators(*K, *C, *corrected_M.op, scale);
+    }
+    else
+    {
+      corrected_eigen->SetOperators(*K, *corrected_M.op, scale);
+    }
   }
   const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
                          ? iodata.solver.eigenmode.linear_tol
@@ -489,41 +562,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
+  const bool lambda_eigenproblem =
+      C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP;
+  auto ConfigureSpectralTarget = [&](EigenvalueSolver &solver)
   {
-    // Search for eigenvalues closest to λ = iσ.
-    eigen->SetShiftInvert(1i * target);
-    if (nonlinear_type == NonlinearEigenSolver::SLP)
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-    }
-  }
-  else
-  {
-    // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
-      // will be a large-magnitude positive real number for an eigenvalue μ with frequency
-      // close to but below the target σ².
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
-    }
-  }
+    const auto config =
+        internal::GetEigenvalueTarget(target, lambda_eigenproblem, type, nonlinear_type);
+    solver.SetShiftInvert(config.shift);
+    solver.SetWhichEigenpairs(config.which);
+  };
+  ConfigureSpectralTarget(*eigen);
   if (corrected_eigen)
   {
-    corrected_eigen->SetShiftInvert(target * target);
-    corrected_eigen->SetWhichEigenpairs(type == EigenSolverBackend::ARPACK
-                                            ? EigenvalueSolver::WhichType::LARGEST_REAL
-                                            : EigenvalueSolver::WhichType::TARGET_REAL);
+    ConfigureSpectralTarget(*corrected_eigen);
   }
 
   // Set up the linear solver required for solving systems involving the shifted operator
@@ -623,34 +674,50 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
-    Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-    auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), std::move(eigen),
-                                                  num_conv, iodata.problem.verbose,
-                                                  iodata.solver.eigenmode.refine_nonlinear);
-    qn->SetTol(iodata.solver.eigenmode.tol);
-    qn->SetMaxIter(iodata.solver.eigenmode.max_it);
-    if (C)
+    auto RefineEigenproblem =
+        [&](std::unique_ptr<EigenvalueSolver> linear_eigen, int linear_num_conv,
+            const ComplexOperator &mass, ComplexKspSolver &linear_solver,
+            bool corrected) -> std::pair<std::unique_ptr<EigenvalueSolver>, int>
     {
-      qn->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    }
-    else
-    {
-      qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
-    }
-    qn->SetExtraSystemMatrix(funcA2);
-    qn->SetPreconditionerUpdate(funcP);
-    qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
-    qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
-                             iodata.solver.eigenmode.preconditioner_lag_tol);
-    qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
-    qn->SetLinearSolver(*ksp);
-    qn->SetShiftInvert(1i * target);
-    eigen = std::move(qn);
+      Mpi::Print("\n Refining {}eigenvalues with Quasi-Newton solver\n",
+                 corrected ? "response-corrected " : "");
+      auto qn = std::make_unique<QuasiNewtonSolver>(
+          space_op.GetComm(), std::move(linear_eigen), linear_num_conv,
+          iodata.problem.verbose, iodata.solver.eigenmode.refine_nonlinear);
+      qn->SetTol(iodata.solver.eigenmode.tol);
+      qn->SetMaxIter(iodata.solver.eigenmode.max_it);
+      if (C)
+      {
+        qn->SetOperators(*K, *C, mass, EigenvalueSolver::ScaleType::NONE);
+      }
+      else
+      {
+        qn->SetOperators(*K, mass, EigenvalueSolver::ScaleType::NONE);
+      }
+      qn->SetExtraSystemMatrix(funcA2);
+      qn->SetPreconditionerUpdate(funcP);
+      qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+      qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
+                               iodata.solver.eigenmode.preconditioner_lag_tol);
+      qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
+      qn->SetLinearSolver(linear_solver);
+      qn->SetShiftInvert(1i * target);
 
-    // Suppress wave port output during nonlinear eigensolver iterations.
-    space_op.GetWavePortOp().SetSuppressOutput(true);
-    num_conv = eigen->Solve();
-    space_op.GetWavePortOp().SetSuppressOutput(false);
+      // Suppress wave port output during nonlinear eigensolver iterations.
+      space_op.GetWavePortOp().SetSuppressOutput(true);
+      const int refined_num_conv = qn->Solve();
+      space_op.GetWavePortOp().SetSuppressOutput(false);
+      return {std::move(qn), refined_num_conv};
+    };
+
+    std::tie(eigen, num_conv) =
+        RefineEigenproblem(std::move(eigen), num_conv, *M, *ksp, false);
+    if (corrected_eigen)
+    {
+      std::tie(corrected_eigen, corrected_num_conv) =
+          RefineEigenproblem(std::move(corrected_eigen), corrected_num_conv,
+                             *corrected_M.op, *corrected_ksp, true);
+    }
   }
 
   BlockTimer bt2(Timer::POSTPRO);
@@ -676,6 +743,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<double> corrected_mode_overlap(num_conv,
                                              std::numeric_limits<double>::quiet_NaN());
   std::vector<std::complex<double>> corrected_omega(corrected_num_conv);
+  auto GetOmega = [&](const EigenvalueSolver &solver, int i)
+  {
+    return internal::EigenvalueToAngularFrequency(solver.GetEigenvalue(i),
+                                                  lambda_eigenproblem);
+  };
   if (corrected_eigen)
   {
     MFEM_VERIFY(corrected_num_conv >= iodata.solver.eigenmode.n,
@@ -684,7 +756,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                     << " were requested!");
     for (int j = 0; j < corrected_num_conv; j++)
     {
-      corrected_omega[j] = std::sqrt(corrected_eigen->GetEigenvalue(j));
+      corrected_omega[j] = GetOmega(*corrected_eigen, j);
     }
 
     const int pair_count = std::min(num_conv, corrected_num_conv);
@@ -739,7 +811,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       table["corrected"].print_as_int = true;
       for (int i = 0; i < pair_count; i++)
       {
-        const auto raw_omega = std::sqrt(eigen->GetEigenvalue(i));
+        const auto raw_omega = GetOmega(*eigen, i);
         const auto response_omega = corrected_omega[corrected_mode[i]];
         table["raw"] << i + 1;
         table["corrected"] << corrected_mode[i] + 1;
@@ -760,19 +832,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigen->GetEigenvalue(i);
+    std::complex<double> omega = GetOmega(*eigen, i);
     double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (!C && !has_A2)
-    {
-      // Linear EVP has eigenvalue μ = -λ² = ω².
-      omega = std::sqrt(omega);
-    }
-    else
-    {
-      // Quadratic EVP solves for eigenvalue λ = iω.
-      omega /= 1i;
-    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.

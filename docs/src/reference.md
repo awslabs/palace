@@ -1563,23 +1563,27 @@ error. This avoids assuming that the raw basis resolves resonances shifted by th
 fabrication response. The raw PROM field remains the ordinary output and supplies the AMR
 error indicator.
 
-For a linear eigenmode problem without damping or frequency-dependent operators, Palace
-also solves
+For eigenmode problems, Palace also solves the fabrication-response-corrected problem
 
 ```math
-K\bm{E}_{corr}
-= \omega_{corr}^2
-\left[M + P^T(S_{fabricated}-S_{thin})P\right]\bm{E}_{corr}.
+\left[
+K + \lambda C
++ \lambda^2\left(M + P^T(S_{fabricated}-S_{thin})P\right)
++ A_2(\lambda)
+\right]\bm{E}_{corr}=0,
 ```
 
+where ``\lambda=i\omega``. This reduces to the corresponding generalized linear
+eigenproblem when damping ``C`` and the frequency-dependent operator ``A_2`` are absent.
 The raw eigenproblem remains unchanged and supplies the ordinary output and AMR error
 indicator. The corrected eigenproblem uses the same target and the raw shifted operator
 as its preconditioner. Palace pairs raw and corrected modes using a maximum-total-weight
 one-to-one assignment of their normalized raw-``M`` overlaps. The corrected frequency,
 paired-mode index, and overlap are reported separately; a self-consistent corrected
-eigenmode requires overlap at least 0.8 to pass confidence. Damped and
-frequency-dependent eigenproblems retain raw, fixed-trace, and fixed-flux output and
-warn that no self-consistent corrected mode is available.
+eigenmode requires overlap at least 0.8 to pass confidence. For a frequency-dependent
+hybrid solve, Palace independently refines the raw and corrected interpolated polynomial
+seeds with the full nonlinear operators. SLP uses the corrected mass in its nonlinear
+operator directly.
 
 Boundary modes also report raw, fixed-trace, and fixed-flux results only. Their correction
 uses the transverse field ``\bm{E}_t`` and is intended for quasi-TEM modes whose
@@ -1592,7 +1596,7 @@ gating limits in the following table hold. `surface-Q-corrected.csv` also report
 matched and unmodeled-corner fractions for each target interface; nontarget interfaces
 receive `NaN` in those columns.
 
-When a uniform driven or supported linear eigenmode solve provides a self-consistent
+When a uniform driven or eigenmode solve provides a self-consistent
 corrected field,
 `self-consistent confidence pass` applies the same limits except for trace closure.
 The global corrected solve supplies the exterior coupling which fixed-trace and

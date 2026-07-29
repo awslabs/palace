@@ -4,9 +4,13 @@
 #ifndef PALACE_DRIVERS_EIGEN_SOLVER_HPP
 #define PALACE_DRIVERS_EIGEN_SOLVER_HPP
 
+#include <complex>
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "linalg/eps.hpp"
+#include "linalg/operator.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -18,6 +22,32 @@ class SurfaceResponseGeometry;
 
 namespace internal
 {
+
+struct ResponseCorrectedMass
+{
+  std::unique_ptr<SumOperator> real;
+  std::unique_ptr<ComplexWrapperOperator> op;
+};
+
+struct EigenvalueTarget
+{
+  std::complex<double> shift;
+  EigenvalueSolver::WhichType which;
+};
+
+// Construct M + R while preserving separate access to its real and imaginary parts.
+ResponseCorrectedMass BuildResponseCorrectedMass(const ComplexOperator &mass,
+                                                 const Operator &response);
+
+// Return the shift and spectrum selector for an eigenproblem represented in either
+// λ = iω or μ = -λ² = ω².
+EigenvalueTarget GetEigenvalueTarget(double target, bool lambda_eigenproblem,
+                                     EigenSolverBackend backend,
+                                     NonlinearEigenSolver nonlinear_type);
+
+// Convert the solver eigenvalue to angular frequency.
+std::complex<double> EigenvalueToAngularFrequency(std::complex<double> value,
+                                                  bool lambda_eigenproblem);
 
 // Return the maximum-total-weight one-to-one column assignment for a rectangular matrix
 // with no more rows than columns.
