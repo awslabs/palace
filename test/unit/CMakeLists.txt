@@ -50,6 +50,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-pointevaluation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
@@ -109,7 +110,7 @@ endif()
 # Add JIT source file path definition for libCEED
 set_property(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}/fem/\""
 )
 
 # Add path for test data files.
