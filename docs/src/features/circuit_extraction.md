@@ -20,6 +20,11 @@ We will continue to use the transmon model as our reference example; it also app
 
     The internal algorithmic choices may change if better numerical algorithms become available. Furthermore, the interpretation of the output results requires some care to get right. Please proceed with caution.
 
+!!! note
+
+    Generate the tutorial data with `examples/transmon/transmon_tutorial_circuit.jl` and the
+    figures with `examples/transmon/transmon_tutorial_circuit_plots.jl`.
+
 !!! note "Naming Convention"
 
     There are a few cases where variables can cause naming confusion. *Palace* uses the notation ``\bm{A}(\omega) = \bm{K} + i\omega \bm{C} - \omega^2 \bm{M}`` for the matrix at a given ``\omega``. Here ``\bm{C}`` is the loss matrix in the finite element space, which is not the same as the capacitance matrix. The ``R`` matrix of ``QR`` orthogonalization is not the circuit resistance matrix.
