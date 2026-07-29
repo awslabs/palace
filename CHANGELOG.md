@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added device-backed domain point-field evaluators for primary and derived
+    visualization quantities.
   - Routed surface, port, and far-field postprocessing through device-backed
     reductions with batched ports and corrected 2D magnetic-energy references.
   - Added libCEED surface reduction functionals for energy, flux, power,
