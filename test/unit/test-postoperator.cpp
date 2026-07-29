@@ -22,6 +22,23 @@ using namespace Catch::Matchers;
 using json = nlohmann::json;
 // Helpers
 
+class DrivenPostOperatorTest : public PostOperator<ProblemType::DRIVEN>
+{
+public:
+  using PostOperator<ProblemType::DRIVEN>::PostOperator;
+
+  Measurement::PortPostData MeasureLumpedPortForTest(int idx, const ComplexVector &e,
+                                                     const ComplexVector &b,
+                                                     std::complex<double> omega)
+  {
+    measurement_cache.freq = omega;
+    SetEGridFunction(e);
+    SetBGridFunction(b);
+    MeasureLumpedPorts();
+    return measurement_cache.lumped_port_vi.at(idx);
+  }
+};
+
 // random integer between 0 and n as a double.
 auto randd(int n)
 {
@@ -488,6 +505,36 @@ TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
     const double expected_freq =
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
     CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
+  }
+
+  SECTION("Driven reactive lumped port measurement")
+  {
+    // Purely reactive ports use the unit real reference resistance for excitation and
+    // S-parameter normalization. Exercise the batched PostOperator measurement path,
+    // which must agree with LumpedPortData::GetSParameter rather than special-case R = 0.
+    json reactive_boundaries = {{"LumpedPort",
+                                 {{{"Attributes", {2}},
+                                   {"Index", 1},
+                                   {"L", 1.0},
+                                   {"Direction", "+X"},
+                                   {"Excitation", true}}}}};
+    config::BoundaryData reactive_port(reactive_boundaries);
+
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.sample_f = {1.0};
+    iodata.boundaries.lumpedport = reactive_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    DrivenPostOperatorTest post_op(iodata, space_op);
+
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 1.0;
+    B = 0.0;
+    const auto vi = post_op.MeasureLumpedPortForTest(1, E, B, 1.0);
+    const auto &port = space_op.GetLumpedPortOp().GetPort(1);
+    REQUIRE(std::abs(vi.V) > 0.0);
+    CHECK_THAT(std::abs(vi.S - vi.V / std::sqrt(port.GetExcitationRefResistance())),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(vi.V)));
   }
 
   SECTION("Eigenmode")
