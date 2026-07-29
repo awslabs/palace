@@ -274,25 +274,145 @@ void UpdateSingularSourceEntityIds(
     GlobalVertexId maximum_id = -1;
     for (GlobalVertexId id : source_vertex_ids)
     {
+      MFEM_VERIFY(id >= 0,
+                  "Conforming singular mesh contains an invalid source vertex ID!");
       maximum_id = std::max(maximum_id, id);
     }
     Mpi::GlobalMax(1, &maximum_id, mesh.GetComm());
+    MFEM_VERIFY(maximum_id <= std::numeric_limits<int>::max(),
+                "Conforming singular vertex identity exceeds the supported mesh-ID "
+                "range!");
+
+    const int new_vertices = mesh.GetNV() - static_cast<int>(old_vertices);
+    std::vector<int> counts(Mpi::Size(mesh.GetComm()));
+    Mpi::Allgather(1, &new_vertices, counts.data(), mesh.GetComm());
+    std::vector<int> offsets(counts.size());
+    std::partial_sum(counts.begin(), counts.end() - 1, offsets.begin() + 1);
+    const std::size_t gathered_size =
+        std::accumulate(counts.begin(), counts.end(), std::size_t{0});
+    MFEM_VERIFY(gathered_size <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+                "Conforming refined vertex metadata exceeds MPI integer counts!");
 
     mfem::Array<HYPRE_BigInt> global_vertices;
     mesh.GetGlobalVertexIndices(global_vertices);
     MFEM_VERIFY(global_vertices.Size() == mesh.GetNV(),
                 "Conforming refined mesh has incomplete global vertex numbering!");
-    source_vertex_ids.resize(mesh.GetNV());
-    for (int vertex = static_cast<int>(old_vertices); vertex < mesh.GetNV(); vertex++)
+    std::vector<GlobalVertexId> local_global_vertices(new_vertices);
+    std::vector<double> local_coordinates(3 * new_vertices);
+    const int dimension = mesh.SpaceDimension();
+    MFEM_VERIFY(dimension == 2 || dimension == 3,
+                "Singular refinement requires a two- or three-dimensional mesh!");
+    for (int local = 0; local < new_vertices; local++)
     {
+      const int vertex = static_cast<int>(old_vertices) + local;
       const HYPRE_BigInt global_vertex = global_vertices[vertex];
-      MFEM_VERIFY(global_vertex >= 0 &&
-                      global_vertex <=
-                          std::numeric_limits<GlobalVertexId>::max() - maximum_id - 1,
-                  "Refined singular vertex identity exceeds the supported integer range!");
-      source_vertex_ids[vertex] =
-          maximum_id + 1 + static_cast<GlobalVertexId>(global_vertex);
+      MFEM_VERIFY(global_vertex >= 0 && static_cast<unsigned long long>(global_vertex) <=
+                                            static_cast<unsigned long long>(
+                                                std::numeric_limits<GlobalVertexId>::max()),
+                  "Conforming refined mesh has an invalid global vertex number!");
+      local_global_vertices[local] = static_cast<GlobalVertexId>(global_vertex);
+      const double *coordinate = mesh.GetVertex(vertex);
+      for (int d = 0; d < dimension; d++)
+      {
+        MFEM_VERIFY(std::isfinite(coordinate[d]),
+                    "Conforming refined mesh has a nonfinite vertex coordinate!");
+        local_coordinates[3 * local + d] = coordinate[d] == 0.0 ? 0.0 : coordinate[d];
+      }
+      for (int d = dimension; d < 3; d++)
+      {
+        local_coordinates[3 * local + d] = 0.0;
+      }
     }
+
+    std::vector<int> coordinate_counts(counts), coordinate_offsets(offsets);
+    for (int &count : coordinate_counts)
+    {
+      MFEM_VERIFY(count <= std::numeric_limits<int>::max() / 3,
+                  "Conforming refined vertex coordinates exceed MPI integer counts!");
+      count *= 3;
+    }
+    for (int &offset : coordinate_offsets)
+    {
+      MFEM_VERIFY(offset <= std::numeric_limits<int>::max() / 3,
+                  "Conforming refined vertex coordinates exceed MPI integer counts!");
+      offset *= 3;
+    }
+
+    const bool root = Mpi::Root(mesh.GetComm());
+    std::vector<GlobalVertexId> gathered_global_vertices(root ? gathered_size : 0);
+    std::vector<double> gathered_coordinates(root ? 3 * gathered_size : 0);
+    MPI_Gatherv(local_global_vertices.data(), new_vertices, MPI_INT64_T,
+                gathered_global_vertices.data(), counts.data(), offsets.data(), MPI_INT64_T,
+                0, mesh.GetComm());
+    MPI_Gatherv(local_coordinates.data(), 3 * new_vertices, MPI_DOUBLE,
+                gathered_coordinates.data(), coordinate_counts.data(),
+                coordinate_offsets.data(), MPI_DOUBLE, 0, mesh.GetComm());
+
+    struct VertexRecord
+    {
+      std::array<double, 3> coordinate{};
+      GlobalVertexId id = -1;
+    };
+    std::vector<GlobalVertexId> gathered_ids(root ? gathered_size : 0);
+    bool valid = true;
+    if (root)
+    {
+      std::map<GlobalVertexId, VertexRecord> records;
+      for (std::size_t occurrence = 0; occurrence < gathered_size; occurrence++)
+      {
+        std::array<double, 3> coordinate{gathered_coordinates[3 * occurrence],
+                                         gathered_coordinates[3 * occurrence + 1],
+                                         gathered_coordinates[3 * occurrence + 2]};
+        const auto [record, inserted] = records.emplace(
+            gathered_global_vertices[occurrence], VertexRecord{coordinate, -1});
+        if (!inserted && record->second.coordinate != coordinate)
+        {
+          valid = false;
+        }
+      }
+
+      std::vector<VertexRecord *> ordered;
+      ordered.reserve(records.size());
+      for (auto &[global_vertex, record] : records)
+      {
+        ordered.push_back(&record);
+      }
+      std::sort(ordered.begin(), ordered.end(),
+                [](const VertexRecord *left, const VertexRecord *right)
+                { return left->coordinate < right->coordinate; });
+      for (std::size_t vertex = 1; vertex < ordered.size(); vertex++)
+      {
+        if (ordered[vertex - 1]->coordinate == ordered[vertex]->coordinate)
+        {
+          valid = false;
+        }
+      }
+      if (ordered.size() >
+          static_cast<std::size_t>(std::numeric_limits<int>::max() - maximum_id))
+      {
+        valid = false;
+      }
+      if (valid)
+      {
+        for (std::size_t vertex = 0; vertex < ordered.size(); vertex++)
+        {
+          ordered[vertex]->id = maximum_id + 1 + static_cast<GlobalVertexId>(vertex);
+        }
+        for (std::size_t occurrence = 0; occurrence < gathered_size; occurrence++)
+        {
+          gathered_ids[occurrence] = records.at(gathered_global_vertices[occurrence]).id;
+        }
+      }
+    }
+    MPI_Bcast(&valid, 1, MPI_C_BOOL, 0, mesh.GetComm());
+    MFEM_VERIFY(valid,
+                "Conforming singular refinement could not assign canonical new vertex "
+                "IDs. Distinct refined vertices must not have coincident coordinates!");
+
+    source_vertex_ids.resize(mesh.GetNV());
+    MPI_Scatterv(gathered_ids.data(), counts.data(), offsets.data(), MPI_INT64_T,
+                 source_vertex_ids.data() + old_vertices, new_vertices, MPI_INT64_T, 0,
+                 mesh.GetComm());
   }
 
   std::set<GlobalVertexId> unique_vertices(source_vertex_ids.begin(),
@@ -310,12 +430,229 @@ void UpdateSingularSourceEntityIds(
 namespace
 {
 
-using StableFaceKey = std::array<fem::singular::GlobalVertexId, 3>;
+using GlobalVertexId = fem::singular::GlobalVertexId;
+using StableEdgeKey = std::array<GlobalVertexId, 2>;
+using StableFaceKey = std::array<GlobalVertexId, 3>;
+
+template <std::size_t N>
+std::map<std::array<GlobalVertexId, N>, int>
+GatherSelectedBoundaryEntities(const mfem::ParMesh &mesh,
+                               const std::vector<int> &boundary_attributes,
+                               const std::vector<GlobalVertexId> &source_vertex_ids)
+{
+  MFEM_VERIFY(source_vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV()),
+              "Singular boundary reconstruction received incomplete vertex identities!");
+  const std::set<int> selected(boundary_attributes.begin(), boundary_attributes.end());
+  std::vector<GlobalVertexId> local;
+  std::set<int> local_attributes;
+  for (int boundary_element = 0; boundary_element < mesh.GetNBE(); boundary_element++)
+  {
+    const int attribute = mesh.GetBdrAttribute(boundary_element);
+    if (selected.find(attribute) == selected.end())
+    {
+      continue;
+    }
+    local_attributes.insert(attribute);
+    const auto &element = *mesh.GetBdrElement(boundary_element);
+    MFEM_VERIFY(element.GetNVertices() == static_cast<int>(N),
+                "A selected singular boundary entity has invalid simplex topology!");
+    std::array<GlobalVertexId, N> key;
+    const int *vertices = element.GetVertices();
+    for (std::size_t vertex = 0; vertex < N; vertex++)
+    {
+      MFEM_VERIFY(vertices[vertex] >= 0 &&
+                      vertices[vertex] < static_cast<int>(mesh.GetNV()),
+                  "A selected singular boundary entity has an invalid mesh vertex!");
+      key[vertex] = source_vertex_ids[vertices[vertex]];
+    }
+    std::sort(key.begin(), key.end());
+    MFEM_VERIFY(key.front() >= 0 && std::adjacent_find(key.begin(), key.end()) == key.end(),
+                "A selected singular boundary entity has invalid stable vertex IDs!");
+    local.insert(local.end(), key.begin(), key.end());
+    local.push_back(attribute);
+  }
+
+  constexpr std::size_t width = N + 1;
+  MFEM_VERIFY(local.size() % width == 0 &&
+                  local.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local singular boundary topology exceeds MPI integer counts!");
+  const int local_count = static_cast<int>(local.size());
+  std::vector<int> counts(Mpi::Size(mesh.GetComm()));
+  Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
+  std::vector<int> offsets(counts.size());
+  std::partial_sum(counts.begin(), counts.end() - 1, offsets.begin() + 1);
+  const std::size_t global_count =
+      std::accumulate(counts.begin(), counts.end(), std::size_t{0});
+  MFEM_VERIFY(global_count % width == 0 &&
+                  global_count <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Global singular boundary topology exceeds MPI integer counts!");
+  std::vector<GlobalVertexId> global(global_count);
+  Mpi::Allgatherv(local_count, local.data(), global.data(), counts.data(), offsets.data(),
+                  mesh.GetComm());
+
+  std::map<std::array<GlobalVertexId, N>, int> result;
+  std::set<int> present;
+  for (std::size_t offset = 0; offset < global.size(); offset += width)
+  {
+    std::array<GlobalVertexId, N> key;
+    std::copy_n(global.begin() + offset, N, key.begin());
+    const auto raw_attribute = global[offset + N];
+    MFEM_VERIFY(raw_attribute > 0 && raw_attribute <= static_cast<GlobalVertexId>(
+                                                          std::numeric_limits<int>::max()),
+                "A gathered singular boundary entity has an invalid attribute!");
+    const int attribute = static_cast<int>(raw_attribute);
+    const auto [record, inserted] = result.emplace(key, attribute);
+    MFEM_VERIFY(inserted || record->second == attribute,
+                "One singular boundary entity has inconsistent attributes across MPI "
+                "ranks!");
+    present.insert(attribute);
+  }
+  MFEM_VERIFY(present == selected,
+              "Adaptive refinement removed a selected singular boundary attribute!");
+  return result;
+}
+
+int CheckedMeshEntityId(GlobalVertexId id)
+{
+  MFEM_VERIFY(id >= 0 && id <= static_cast<GlobalVertexId>(std::numeric_limits<int>::max()),
+              "Refined singular feature identity exceeds the supported mesh-ID range!");
+  return static_cast<int>(id);
+}
+
+std::map<GlobalVertexId, std::array<double, 3>>
+GatherStableVertexCoordinates(const mfem::ParMesh &mesh,
+                              const std::vector<GlobalVertexId> &source_vertex_ids,
+                              const std::set<GlobalVertexId> &requested)
+{
+  const int dimension = mesh.SpaceDimension();
+  MFEM_VERIFY(dimension == 2 || dimension == 3,
+              "Singular feature coordinates require a two- or three-dimensional mesh!");
+  std::vector<GlobalVertexId> ids(requested.begin(), requested.end());
+  std::map<GlobalVertexId, std::size_t> index;
+  for (std::size_t i = 0; i < ids.size(); i++)
+  {
+    index.emplace(ids[i], i);
+  }
+  std::vector<int> counts(ids.size(), 0);
+  std::vector<double> minima(3 * ids.size(), std::numeric_limits<double>::infinity());
+  std::vector<double> maxima(3 * ids.size(), -std::numeric_limits<double>::infinity());
+  std::array<double, 3> coordinate{};
+  for (int vertex = 0; vertex < mesh.GetNV(); vertex++)
+  {
+    const auto requested_vertex = index.find(source_vertex_ids[vertex]);
+    if (requested_vertex == index.end())
+    {
+      continue;
+    }
+    const auto i = requested_vertex->second;
+    counts[i] = 1;
+    mesh.GetNode(vertex, coordinate.data());
+    for (int d = 0; d < dimension; d++)
+    {
+      MFEM_VERIFY(std::isfinite(coordinate[d]),
+                  "A refined singular feature vertex has a nonfinite coordinate!");
+      minima[3 * i + d] = coordinate[d];
+      maxima[3 * i + d] = coordinate[d];
+    }
+    for (int d = dimension; d < 3; d++)
+    {
+      minima[3 * i + d] = maxima[3 * i + d] = 0.0;
+    }
+  }
+  if (!ids.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(counts.size()), counts.data(), mesh.GetComm());
+    Mpi::GlobalMin(static_cast<int>(minima.size()), minima.data(), mesh.GetComm());
+    Mpi::GlobalMax(static_cast<int>(maxima.size()), maxima.data(), mesh.GetComm());
+  }
+
+  std::map<GlobalVertexId, std::array<double, 3>> result;
+  for (std::size_t i = 0; i < ids.size(); i++)
+  {
+    MFEM_VERIFY(counts[i] > 0,
+                "A refined singular feature references a missing stable vertex!");
+    std::array<double, 3> value{};
+    for (int d = 0; d < dimension; d++)
+    {
+      const double scale =
+          std::max({1.0, std::abs(minima[3 * i + d]), std::abs(maxima[3 * i + d])});
+      const double tolerance = 4096.0 * std::numeric_limits<double>::epsilon() * scale;
+      MFEM_VERIFY(maxima[3 * i + d] - minima[3 * i + d] <= tolerance,
+                  "A shared refined singular vertex has inconsistent coordinates!");
+      value[d] = 0.5 * (minima[3 * i + d] + maxima[3 * i + d]);
+    }
+    result.emplace(ids[i], value);
+  }
+  return result;
+}
+
+double Norm(const std::array<double, 3> &value)
+{
+  return std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+}
+
+struct ChildFeatureSegment
+{
+  StableEdgeKey edge;
+  std::size_t parent = 0;
+  double first = 0.0;
+  double second = 0.0;
+};
+
+bool IsChildSegment(const StableEdgeKey &candidate, const StableEdgeKey &parent,
+                    const std::map<GlobalVertexId, std::array<double, 3>> &coordinates,
+                    ChildFeatureSegment &child)
+{
+  const auto &a = coordinates.at(parent[0]);
+  const auto &b = coordinates.at(parent[1]);
+  const auto &p = coordinates.at(candidate[0]);
+  const auto &q = coordinates.at(candidate[1]);
+  std::array<double, 3> direction{}, offset_p{}, offset_q{};
+  double length_squared = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    direction[d] = b[d] - a[d];
+    offset_p[d] = p[d] - a[d];
+    offset_q[d] = q[d] - a[d];
+    length_squared += direction[d] * direction[d];
+  }
+  MFEM_VERIFY(length_squared > 0.0 && std::isfinite(length_squared),
+              "A parent singular segment has invalid physical length!");
+  const double first = (offset_p[0] * direction[0] + offset_p[1] * direction[1] +
+                        offset_p[2] * direction[2]) /
+                       length_squared;
+  const double second = (offset_q[0] * direction[0] + offset_q[1] * direction[1] +
+                         offset_q[2] * direction[2]) /
+                        length_squared;
+  std::array<double, 3> residual_p{}, residual_q{};
+  for (int d = 0; d < 3; d++)
+  {
+    residual_p[d] = offset_p[d] - first * direction[d];
+    residual_q[d] = offset_q[d] - second * direction[d];
+  }
+  const double length = std::sqrt(length_squared);
+  const double coordinate_scale = std::max({1.0, Norm(a), Norm(b), Norm(p), Norm(q)});
+  const double distance_tolerance =
+      1.0e-10 * length + 4096.0 * std::numeric_limits<double>::epsilon() * coordinate_scale;
+  const double parameter_tolerance = distance_tolerance / length;
+  if (Norm(residual_p) > distance_tolerance || Norm(residual_q) > distance_tolerance ||
+      first < -parameter_tolerance || first > 1.0 + parameter_tolerance ||
+      second < -parameter_tolerance || second > 1.0 + parameter_tolerance ||
+      std::abs(second - first) <= parameter_tolerance)
+  {
+    return false;
+  }
+  child.edge = candidate;
+  child.first = std::clamp(std::min(first, second), 0.0, 1.0);
+  child.second = std::clamp(std::max(first, second), 0.0, 1.0);
+  return true;
+}
 
 template <typename FeatureTopology>
 mfem::Array<int> BuildSingularRefinementProtectionImpl(
     const mfem::ParMesh &mesh, const FeatureTopology &features,
-    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids)
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids, bool *conforming,
+    mfem::Array<int> *repair)
 {
   MFEM_VERIFY(features.elements.size() == static_cast<std::size_t>(mesh.GetNE()) &&
                   source_vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV()),
@@ -324,162 +661,394 @@ mfem::Array<int> BuildSingularRefinementProtectionImpl(
   MFEM_VERIFY((dimension == 2 && mesh.SpaceDimension() == 2) ||
                   (dimension == 3 && mesh.SpaceDimension() == 3),
               "Singular refinement protection requires a 2D or 3D simplex mesh!");
-  auto ElementFaceKeys = [&](int element)
-  {
-    std::vector<StableFaceKey> keys;
-    const auto &record = *mesh.GetElement(element);
-    const int *vertices = record.GetVertices();
-    if (dimension == 2)
-    {
-      constexpr std::array<std::array<int, 2>, 3> faces{
-          std::array<int, 2>{0, 1}, {1, 2}, {2, 0}};
-      keys.reserve(faces.size());
-      for (const auto &face : faces)
-      {
-        std::array<fem::singular::GlobalVertexId, 2> edge{
-            source_vertex_ids[vertices[face[0]]], source_vertex_ids[vertices[face[1]]]};
-        std::sort(edge.begin(), edge.end());
-        keys.push_back({edge[0], edge[1], -1});
-      }
-    }
-    else
-    {
-      constexpr std::array<std::array<int, 3>, 4> faces{
-          std::array<int, 3>{0, 1, 2}, {0, 1, 3}, {0, 2, 3}, {1, 2, 3}};
-      keys.reserve(faces.size());
-      for (const auto &face : faces)
-      {
-        StableFaceKey key{source_vertex_ids[vertices[face[0]]],
-                          source_vertex_ids[vertices[face[1]]],
-                          source_vertex_ids[vertices[face[2]]]};
-        std::sort(key.begin(), key.end());
-        keys.push_back(key);
-      }
-    }
-    return keys;
-  };
 
-  std::map<StableFaceKey, bool> conforming_faces;
-  if (mesh.Nonconforming())
-  {
-    mfem::Array<int> vertices;
-    for (int face = 0; face < mesh.GetNumFaces(); face++)
-    {
-      mesh.GetFaceVertices(face, vertices);
-      MFEM_VERIFY(vertices.Size() == dimension,
-                  "Singular refinement protection found a nonsimplex mesh face!");
-      StableFaceKey key{-1, -1, -1};
-      for (int vertex = 0; vertex < vertices.Size(); vertex++)
-      {
-        key[vertex] = source_vertex_ids[vertices[vertex]];
-      }
-      std::sort(key.begin(), key.begin() + vertices.Size());
-      const auto information = mesh.GetFaceInformation(face);
-      const bool conforming = information.IsBoundary() || information.IsConforming();
-      auto [record, inserted] = conforming_faces.emplace(key, conforming);
-      if (!inserted)
-      {
-        record->second = record->second && conforming;
-      }
-    }
-  }
-
-  std::vector<StableFaceKey> local_faces;
+  mfem::Array<int> local_enriched(mesh.GetNE());
+  local_enriched = 0;
   for (int element = 0; element < mesh.GetNE(); element++)
   {
     const auto &incidence = features.elements[element];
-    const bool enriched = [&]()
+    if constexpr (std::is_same_v<FeatureTopology, fem::singular::TriangleFeatureTopology>)
     {
-      if constexpr (std::is_same_v<FeatureTopology, fem::singular::TriangleFeatureTopology>)
-      {
-        return !incidence.nodes.empty();
-      }
-      else
-      {
-        return !incidence.nodes.empty() || !incidence.edges.empty();
-      }
-    }();
-    if (!enriched)
+      local_enriched[element] = !incidence.nodes.empty();
+    }
+    else
+    {
+      local_enriched[element] = !incidence.nodes.empty() || !incidence.edges.empty();
+    }
+  }
+
+  // Exchange one scalar per element so the closure follows MFEM's actual shared and
+  // nonconforming master/slave face topology. Exact face-vertex matching is insufficient
+  // once one side of a face has been refined.
+  auto &parallel_mesh = const_cast<mfem::ParMesh &>(mesh);
+  mfem::L2_FECollection collection(0, dimension);
+  mfem::ParFiniteElementSpace space(&parallel_mesh, &collection);
+  mfem::ParGridFunction enriched(&space);
+  enriched = 0.0;
+  mfem::Array<int> dofs;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    if (!local_enriched[element])
     {
       continue;
     }
-    auto keys = ElementFaceKeys(element);
-    if (mesh.Nonconforming())
-    {
-      for (const auto &key : keys)
-      {
-        const auto face = conforming_faces.find(key);
-        MFEM_VERIFY(
-            face != conforming_faces.end() && face->second,
-            "A singular-enriched element touches a nonconforming interface. Refinement "
-            "through the protected singular patch requires certified parent/child "
-            "enrichment constraints!");
-      }
-    }
-    local_faces.insert(local_faces.end(), keys.begin(), keys.end());
+    space.GetElementDofs(element, dofs);
+    MFEM_VERIFY(dofs.Size() == 1,
+                "Singular refinement metadata must have one value per element!");
+    enriched[dofs[0]] = 1.0;
   }
-  std::sort(local_faces.begin(), local_faces.end());
-  local_faces.erase(std::unique(local_faces.begin(), local_faces.end()), local_faces.end());
+  enriched.ExchangeFaceNbrData();
 
-  const std::size_t local_scalar_size = 3 * local_faces.size();
-  MFEM_VERIFY(local_scalar_size <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local singular refinement protection exceeds MPI integer counts!");
-  const int local_count = static_cast<int>(local_scalar_size);
-  std::vector<int> counts(Mpi::Size(mesh.GetComm()));
-  Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
-  std::vector<int> offsets(counts.size());
-  std::partial_sum(counts.begin(), counts.end() - 1, offsets.begin() + 1);
-  const std::size_t global_scalar_size =
-      std::accumulate(counts.begin(), counts.end(), std::size_t{0});
-  MFEM_VERIFY(global_scalar_size <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Global singular refinement protection exceeds MPI integer counts!");
-  std::vector<fem::singular::GlobalVertexId> local_data(local_scalar_size);
-  std::vector<fem::singular::GlobalVertexId> global_data(global_scalar_size);
-  for (std::size_t face = 0; face < local_faces.size(); face++)
-  {
-    std::copy(local_faces[face].begin(), local_faces[face].end(),
-              local_data.begin() + 3 * face);
-  }
-  Mpi::Allgatherv(local_count, local_data.data(), global_data.data(), counts.data(),
-                  offsets.data(), mesh.GetComm());
-  MFEM_VERIFY(global_data.size() % 3 == 0,
-              "Gathered singular refinement protection is malformed!");
-
-  std::set<StableFaceKey> protected_faces;
-  for (std::size_t offset = 0; offset < global_data.size(); offset += 3)
-  {
-    protected_faces.insert(
-        {global_data[offset], global_data[offset + 1], global_data[offset + 2]});
-  }
-
-  mfem::Array<int> marker(mesh.GetNE());
-  marker = 0;
+  std::vector<bool> all_enriched(mesh.GetNE() + parallel_mesh.GetNFaceNeighborElements(),
+                                 false);
   for (int element = 0; element < mesh.GetNE(); element++)
   {
-    const auto keys = ElementFaceKeys(element);
-    marker[element] =
-        std::any_of(keys.begin(), keys.end(), [&protected_faces](const auto &key)
-                    { return protected_faces.find(key) != protected_faces.end(); });
+    all_enriched[element] = local_enriched[element] != 0;
+  }
+  mfem::Vector value;
+  for (int neighbor = 0; neighbor < parallel_mesh.GetNFaceNeighborElements(); neighbor++)
+  {
+    enriched.GetElementDofValues(mesh.GetNE() + neighbor, value);
+    MFEM_VERIFY(value.Size() == 1 &&
+                    (std::abs(value[0]) <= 1.0e-12 || std::abs(value[0] - 1.0) <= 1.0e-12),
+                "Singular refinement metadata exchange is inconsistent!");
+    all_enriched[mesh.GetNE() + neighbor] = value[0] > 0.5;
+  }
+
+  std::unique_ptr<mfem::Table> face_elements(parallel_mesh.GetFaceToAllElementTable());
+  MFEM_VERIFY(face_elements,
+              "Singular refinement closure requires face-to-element topology!");
+  mfem::Array<int> marker(mesh.GetNE());
+  marker = 0;
+  mfem::Array<int> local_repair(mesh.GetNE());
+  local_repair = 0;
+  bool locally_conforming = true;
+  mfem::Array<int> elements;
+  for (int face = 0; face < face_elements->Size(); face++)
+  {
+    face_elements->GetRow(face, elements);
+    bool has_local = false;
+    bool touches_enrichment = false;
+    for (int element : elements)
+    {
+      MFEM_VERIFY(element >= 0 && element < static_cast<int>(all_enriched.size()),
+                  "Singular refinement face topology has an invalid element!");
+      if (element < mesh.GetNE())
+      {
+        has_local = true;
+      }
+      touches_enrichment = touches_enrichment || all_enriched[element];
+    }
+    if (!has_local || !touches_enrichment)
+    {
+      continue;
+    }
+    const auto information = mesh.GetFaceInformation(face);
+    const bool face_conforming = information.IsBoundary() || information.IsConforming();
+    locally_conforming = locally_conforming && face_conforming;
+    if (!face_conforming)
+    {
+      for (const auto &side : information.element)
+      {
+        if (side.location == mfem::Mesh::ElementLocation::Local &&
+            side.conformity == mfem::Mesh::ElementConformity::Superset)
+        {
+          MFEM_VERIFY(side.index >= 0 && side.index < mesh.GetNE(),
+                      "Singular refinement repair has an invalid coarse element!");
+          local_repair[side.index] = 1;
+        }
+      }
+      if (information.tag == mfem::Mesh::FaceInfoTag::MasterNonconforming)
+      {
+        const int coarse = information.element[0].index;
+        MFEM_VERIFY(coarse >= 0 && coarse < mesh.GetNE(),
+                    "Singular refinement repair has an invalid master element!");
+        local_repair[coarse] = 1;
+      }
+    }
+    for (int element : elements)
+    {
+      if (element < mesh.GetNE())
+      {
+        marker[element] = 1;
+      }
+    }
+  }
+  Mpi::GlobalAnd(1, &locally_conforming, mesh.GetComm());
+  if (conforming)
+  {
+    *conforming = locally_conforming;
+  }
+  if (repair)
+  {
+    *repair = std::move(local_repair);
   }
   return marker;
 }
 
 }  // namespace
 
+void RebuildRefinedSingularFeatures(
+    const mfem::ParMesh &mesh, const std::vector<int> &boundary_attributes,
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    fem::singular::TriangleFeatureTopology &features)
+{
+  MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2 &&
+                  source_vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV()) &&
+                  !features.vertices.empty(),
+              "Refined triangular singular topology is inconsistent!");
+  const auto selected =
+      GatherSelectedBoundaryEntities<2>(mesh, boundary_attributes, source_vertex_ids);
+
+  fem::singular::TriangleFeatureTopology updated;
+  updated.vertices = features.vertices;
+  updated.selected_segments.reserve(selected.size());
+  std::map<GlobalVertexId, std::vector<std::size_t>> incident_segments;
+  for (const auto &[edge, attribute] : selected)
+  {
+    const std::size_t segment = updated.selected_segments.size();
+    updated.selected_segments.push_back(
+        {static_cast<int>(segment),
+         static_cast<int>(segment),
+         {CheckedMeshEntityId(edge[0]), CheckedMeshEntityId(edge[1])},
+         attribute});
+    incident_segments[edge[0]].push_back(segment);
+    incident_segments[edge[1]].push_back(segment);
+  }
+  for (auto &vertex : updated.vertices)
+  {
+    const GlobalVertexId id = vertex.mesh_vertex;
+    const auto incident = incident_segments.find(id);
+    MFEM_VERIFY(incident != incident_segments.end() && !incident->second.empty(),
+                "Adaptive refinement disconnected a singular line tip or corner from "
+                "its selected PEC boundary!");
+    vertex.selected_segments = incident->second;
+  }
+  updated.elements.clear();
+  features = std::move(updated);
+}
+
+void RebuildRefinedSingularFeatures(
+    const mfem::ParMesh &mesh, const std::vector<int> &boundary_attributes,
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    fem::singular::FeatureTopology &features)
+{
+  MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3 &&
+                  source_vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV()) &&
+                  !features.features.empty() && !features.segments.empty(),
+              "Refined tetrahedral singular topology is inconsistent!");
+  const auto selected_faces =
+      GatherSelectedBoundaryEntities<3>(mesh, boundary_attributes, source_vertex_ids);
+
+  std::set<StableEdgeKey> selected_edges;
+  std::set<GlobalVertexId> coordinate_ids;
+  for (const auto &[face, attribute] : selected_faces)
+  {
+    MFEM_CONTRACT_VAR(attribute);
+    coordinate_ids.insert(face.begin(), face.end());
+    selected_edges.insert({face[0], face[1]});
+    selected_edges.insert({face[0], face[2]});
+    selected_edges.insert({face[1], face[2]});
+  }
+  std::vector<StableEdgeKey> parent_edges(features.segments.size());
+  std::map<GlobalVertexId, std::vector<std::size_t>> parents_by_endpoint;
+  for (std::size_t parent = 0; parent < features.segments.size(); parent++)
+  {
+    const auto &segment = features.segments[parent];
+    parent_edges[parent] = {segment.mesh_vertices[0], segment.mesh_vertices[1]};
+    std::sort(parent_edges[parent].begin(), parent_edges[parent].end());
+    coordinate_ids.insert(parent_edges[parent].begin(), parent_edges[parent].end());
+    parents_by_endpoint[parent_edges[parent][0]].push_back(parent);
+    parents_by_endpoint[parent_edges[parent][1]].push_back(parent);
+  }
+  const auto coordinates =
+      GatherStableVertexCoordinates(mesh, source_vertex_ids, coordinate_ids);
+
+  std::vector<ChildFeatureSegment> children;
+  children.reserve(features.segments.size() * 2);
+  for (const auto &candidate : selected_edges)
+  {
+    std::set<std::size_t> possible_parents;
+    for (GlobalVertexId endpoint : candidate)
+    {
+      const auto parent = parents_by_endpoint.find(endpoint);
+      if (parent != parents_by_endpoint.end())
+      {
+        possible_parents.insert(parent->second.begin(), parent->second.end());
+      }
+    }
+    ChildFeatureSegment child;
+    std::vector<ChildFeatureSegment> matches;
+    for (std::size_t parent : possible_parents)
+    {
+      if (IsChildSegment(candidate, parent_edges[parent], coordinates, child))
+      {
+        child.parent = parent;
+        matches.push_back(child);
+      }
+    }
+    if (matches.empty())
+    {
+      // A refinement implementation may split one old edge more than once in a single
+      // call, leaving an interior child without an old endpoint. Fall back to a complete
+      // geometric search in that uncommon case.
+      for (std::size_t parent = 0; parent < parent_edges.size(); parent++)
+      {
+        if (possible_parents.find(parent) != possible_parents.end())
+        {
+          continue;
+        }
+        if (IsChildSegment(candidate, parent_edges[parent], coordinates, child))
+        {
+          child.parent = parent;
+          matches.push_back(child);
+        }
+      }
+    }
+    MFEM_VERIFY(matches.size() <= 1,
+                "A refined selected PEC edge maps to multiple parent singular segments!");
+    if (!matches.empty())
+    {
+      children.push_back(matches.front());
+    }
+  }
+  std::sort(children.begin(), children.end(),
+            [](const auto &a, const auto &b) { return a.edge < b.edge; });
+  MFEM_VERIFY(std::adjacent_find(children.begin(), children.end(),
+                                 [](const auto &a, const auto &b)
+                                 { return a.edge == b.edge; }) == children.end(),
+              "Refined singular segment reconstruction produced duplicate child edges!");
+
+  std::vector<std::vector<std::pair<double, double>>> parent_intervals(
+      features.segments.size());
+  for (const auto &child : children)
+  {
+    parent_intervals[child.parent].emplace_back(child.first, child.second);
+  }
+  constexpr double coverage_tolerance = 2.0e-9;
+  for (std::size_t parent = 0; parent < parent_intervals.size(); parent++)
+  {
+    auto &intervals = parent_intervals[parent];
+    MFEM_VERIFY(!intervals.empty(),
+                "Adaptive refinement removed a three-dimensional singular feature "
+                "segment!");
+    std::sort(intervals.begin(), intervals.end());
+    MFEM_VERIFY(intervals.front().first <= coverage_tolerance &&
+                    intervals.back().second >= 1.0 - coverage_tolerance,
+                "Refined child singular segments do not cover their parent edge!");
+    double endpoint = intervals.front().second;
+    for (std::size_t interval = 1; interval < intervals.size(); interval++)
+    {
+      MFEM_VERIFY(
+          std::abs(intervals[interval].first - endpoint) <= coverage_tolerance,
+          "Refined child singular segments contain a gap or overlap on their parent "
+          "edge!");
+      endpoint = intervals[interval].second;
+    }
+  }
+
+  fem::singular::FeatureTopology updated;
+  updated.features = features.features;
+  for (auto &feature : updated.features)
+  {
+    feature.segments.clear();
+    feature.mesh_vertices.clear();
+  }
+  updated.sheet_faces.reserve(selected_faces.size());
+  for (const auto &[face, attribute] : selected_faces)
+  {
+    updated.sheet_faces.push_back(
+        {static_cast<int>(updated.sheet_faces.size()), face, attribute});
+  }
+
+  updated.segments.reserve(children.size());
+  std::map<GlobalVertexId, std::vector<std::size_t>> incident_segments;
+  for (const auto &child : children)
+  {
+    const auto &parent = features.segments[child.parent];
+    const std::size_t segment = updated.segments.size();
+    updated.segments.push_back(
+        {static_cast<int>(segment),
+         {CheckedMeshEntityId(child.edge[0]), CheckedMeshEntityId(child.edge[1])},
+         parent.feature,
+         parent.boundary_attributes,
+         parent.type});
+    auto &feature = updated.features.at(parent.feature);
+    feature.segments.push_back(segment);
+    feature.mesh_vertices.push_back(CheckedMeshEntityId(child.edge[0]));
+    feature.mesh_vertices.push_back(CheckedMeshEntityId(child.edge[1]));
+    incident_segments[child.edge[0]].push_back(segment);
+    incident_segments[child.edge[1]].push_back(segment);
+  }
+  for (auto &feature : updated.features)
+  {
+    std::sort(feature.mesh_vertices.begin(), feature.mesh_vertices.end());
+    feature.mesh_vertices.erase(
+        std::unique(feature.mesh_vertices.begin(), feature.mesh_vertices.end()),
+        feature.mesh_vertices.end());
+    MFEM_VERIFY(!feature.segments.empty(),
+                "Adaptive refinement removed a complete straight singular feature!");
+  }
+
+  std::map<GlobalVertexId, fem::singular::FeatureVertex> old_vertices;
+  for (const auto &vertex : features.vertices)
+  {
+    old_vertices.emplace(vertex.mesh_vertex, vertex);
+  }
+  updated.vertices.reserve(incident_segments.size());
+  for (const auto &[id, segments] : incident_segments)
+  {
+    fem::singular::FeatureVertex vertex;
+    const auto old = old_vertices.find(id);
+    if (old != old_vertices.end())
+    {
+      vertex = old->second;
+    }
+    else
+    {
+      MFEM_VERIFY(segments.size() == 2 && updated.segments[segments[0]].feature ==
+                                              updated.segments[segments[1]].feature,
+                  "Refinement created a nonregular vertex on a straight singular "
+                  "feature!");
+      vertex.mesh_vertex = CheckedMeshEntityId(id);
+      vertex.type = fem::singular::FeatureVertexType::REGULAR;
+      vertex.nu = updated.features[updated.segments[segments[0]].feature].nu;
+    }
+    vertex.id = updated.vertices.size();
+    vertex.mesh_vertex = CheckedMeshEntityId(id);
+    vertex.segments = segments;
+    vertex.features.clear();
+    for (std::size_t segment : segments)
+    {
+      vertex.features.push_back(updated.segments[segment].feature);
+      vertex.nu =
+          std::min(vertex.nu, updated.features[updated.segments[segment].feature].nu);
+    }
+    std::sort(vertex.features.begin(), vertex.features.end());
+    vertex.features.erase(std::unique(vertex.features.begin(), vertex.features.end()),
+                          vertex.features.end());
+    updated.vertices.push_back(std::move(vertex));
+  }
+  updated.elements.clear();
+  features = std::move(updated);
+}
+
 mfem::Array<int> BuildSingularRefinementProtection(
     const mfem::ParMesh &mesh, const fem::singular::FeatureTopology &features,
-    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids)
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids, bool *conforming,
+    mfem::Array<int> *repair)
 {
-  return BuildSingularRefinementProtectionImpl(mesh, features, source_vertex_ids);
+  return BuildSingularRefinementProtectionImpl(mesh, features, source_vertex_ids,
+                                               conforming, repair);
 }
 
 mfem::Array<int> BuildSingularRefinementProtection(
     const mfem::ParMesh &mesh, const fem::singular::TriangleFeatureTopology &features,
-    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids)
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids, bool *conforming,
+    mfem::Array<int> *repair)
 {
-  return BuildSingularRefinementProtectionImpl(mesh, features, source_vertex_ids);
+  return BuildSingularRefinementProtectionImpl(mesh, features, source_vertex_ids,
+                                               conforming, repair);
 }
 
 void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
@@ -574,6 +1143,18 @@ void FullWaveSingularFeatures::ProcessRefinedMesh(const IoData &iodata,
                   parallel_mesh.Dimension() == dimension,
               "Unexpected or inconsistent refined full-wave singular mesh!");
   UpdateSingularSourceEntityIds(parallel_mesh, source_vertex_ids, source_element_ids);
+  if (dimension == 2)
+  {
+    RebuildRefinedSingularFeatures(parallel_mesh,
+                                   iodata.solver.singular_elements.attributes,
+                                   source_vertex_ids, serial_line_features);
+  }
+  else
+  {
+    RebuildRefinedSingularFeatures(parallel_mesh,
+                                   iodata.solver.singular_elements.attributes,
+                                   source_vertex_ids, serial_sheet_features);
+  }
   mesh::PartitionMetadata metadata{source_vertex_ids, source_element_ids};
   ProcessPartitionedMesh(iodata, parallel_mesh, metadata);
 }
@@ -600,15 +1181,16 @@ mesh::PartitionMetadata FullWaveSingularFeatures::GetSourceEntityMetadata() cons
   return {source_vertex_ids, source_element_ids};
 }
 
-mfem::Array<int>
-FullWaveSingularFeatures::GetRefinementProtection(const mfem::ParMesh &mesh) const
+mfem::Array<int> FullWaveSingularFeatures::GetRefinementProtection(
+    const mfem::ParMesh &mesh, bool *conforming, mfem::Array<int> *repair) const
 {
   MFEM_VERIFY(mesh.Dimension() == dimension && !source_vertex_ids.empty(),
               "Full-wave singular refinement protection is not initialized!");
-  return dimension == 3 ? BuildSingularRefinementProtection(mesh, local_sheet_features,
-                                                            source_vertex_ids)
-                        : BuildSingularRefinementProtection(mesh, local_line_features,
-                                                            source_vertex_ids);
+  return dimension == 3
+             ? BuildSingularRefinementProtection(mesh, local_sheet_features,
+                                                 source_vertex_ids, conforming, repair)
+             : BuildSingularRefinementProtection(mesh, local_line_features,
+                                                 source_vertex_ids, conforming, repair);
 }
 
 double SingularComplexQuadraticForm(MPI_Comm comm, const mfem::Operator &op,

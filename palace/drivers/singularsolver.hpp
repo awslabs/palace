@@ -43,24 +43,43 @@ nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
     const fem::singular::TriangleFeatureTopology &features);
 
 // Rebuild exact rank-local source identities after in-place refinement. Conforming
-// refinement preserves existing vertex indices and assigns globally consistent IDs to
-// appended vertices. Nonconforming refinement uses persistent NCMesh node IDs directly.
-// Element IDs are refreshed for diagnostics; singular incidence is reconstructed from
-// vertex and edge identities rather than element numbering.
+// refinement preserves existing vertex indices and assigns decomposition-independent IDs
+// to appended vertices in canonical physical-coordinate order. Distinct coincident new
+// vertices are rejected because they require explicit refinement ancestry. Nonconforming
+// refinement uses persistent NCMesh node IDs directly. Element IDs are refreshed for
+// diagnostics; singular incidence is reconstructed from vertex and edge identities rather
+// than element numbering.
 void UpdateSingularSourceEntityIds(
     const mfem::ParMesh &mesh,
     std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
     std::vector<fem::singular::GlobalVertexId> &source_element_ids);
 
-// Return a marker for every enriched element and its complete face-neighbor layer. The
-// protected layer keeps custom enrichment away from hanging interfaces until a certified
-// parent/child enrichment constraint operator is available.
+// Rebuild the immutable global feature blueprint after h-refinement. Existing physical
+// singular features retain their exponent and straight-feature identity; selected
+// boundary entities and any child feature segments are reconstructed from stable mesh
+// vertex IDs. The solve is rebuilt from scratch, so no coefficient transfer is involved.
+void RebuildRefinedSingularFeatures(
+    const mfem::ParMesh &mesh, const std::vector<int> &boundary_attributes,
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    fem::singular::FeatureTopology &features);
+void RebuildRefinedSingularFeatures(
+    const mfem::ParMesh &mesh, const std::vector<int> &boundary_attributes,
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    fem::singular::TriangleFeatureTopology &features);
+
+// Return a marker for every enriched element and its complete face-neighbor layer. On a
+// nonconforming mesh this is the refinement closure used to keep all custom enrichment
+// away from hanging interfaces. If supplied, "conforming" reports collectively whether
+// every enriched element currently has only conforming or physical-boundary faces, and
+// "repair" marks the local coarse elements which must be refined to restore that property.
 mfem::Array<int> BuildSingularRefinementProtection(
     const mfem::ParMesh &mesh, const fem::singular::FeatureTopology &features,
-    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids);
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    bool *conforming = nullptr, mfem::Array<int> *repair = nullptr);
 mfem::Array<int> BuildSingularRefinementProtection(
     const mfem::ParMesh &mesh, const fem::singular::TriangleFeatureTopology &features,
-    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids);
+    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+    bool *conforming = nullptr, mfem::Array<int> *repair = nullptr);
 
 // Immutable-source feature extraction and partition transport shared by the
 // driven and eigenmode singular-element drivers.
@@ -86,7 +105,9 @@ public:
   const fem::singular::TriangleFeatureTopology *GetLineFeatures() const;
   const std::vector<fem::singular::GlobalVertexId> *GetSourceVertexIds() const;
   mesh::PartitionMetadata GetSourceEntityMetadata() const;
-  mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh) const;
+  mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh,
+                                           bool *conforming = nullptr,
+                                           mfem::Array<int> *repair = nullptr) const;
 };
 
 struct SingularFullWaveEnergy

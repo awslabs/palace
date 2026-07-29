@@ -132,8 +132,11 @@ linear mesh. A genuinely curved enriched triangle instead uses singularity-align
 reference quadrature with its physical Jacobian evaluated pointwise. Curved elements
 away from singular features are unrestricted. Selected PEC line segments themselves
 must remain geometrically straight and regular, but may use a nonuniform high-order
-parametrization along that straight image. AMR through enriched elements, GPU execution,
-and triangular singular order greater than one are not supported.
+parametrization along that straight image. Conforming and nonconforming AMR may refine
+through enriched elements, after which Palace reconstructs the physical singular
+features and enrichment degrees of freedom; mesh rebalancing is supported. Parallel
+uniform refinement, GPU execution, and triangular singular order greater than one are
+not supported.
 
 Selected singular attributes are automatically excluded from Palace's internal-boundary
 cracking pass because their conforming two-sided topology defines the singular feature.
@@ -146,8 +149,9 @@ singular coefficients, fitted tip slopes, and combined-field dielectric surface
 participation. The singular `BoundaryMode` solve supports isotropic materials, including
 bulk dielectric loss, with PEC or natural PMC boundaries. It reports propagation
 constants, combined-field energies, canonical ND/H1 coefficients, fitted transverse field
-slopes, and dielectric surface participation. Voltage, impedance, and the standard error
-estimator remain disabled on the enriched `BoundaryMode` path.
+slopes, and dielectric surface participation. Voltage, impedance, and saved grid-function
+output remain disabled on the enriched `BoundaryMode` path. Its AMR indicator is computed
+from the standard-space smooth remainder of the combined solution.
 
 The thin-sheet examples specify an explicit cutoff on each dielectric interface:
 
@@ -169,10 +173,11 @@ The paired thick `BoundaryMode` configurations therefore leave `EdgeCutoff` at z
 the singular case computes the untruncated combined-field MS and MA participation.
 
 The driven configuration is a restricted full-wave validation case with a surface-current
-source. Singular driven and eigenmode simulations currently require CPU execution, a
-fixed simplex mesh, and isotropic materials without bulk conductivity or London
-penetration depth. Bulk dielectric loss, lumped-port `R/L/C` terms, and combined-field
-dielectric surface postprocessing are supported.
+source. Singular driven and eigenmode simulations currently require CPU execution and
+isotropic materials without bulk conductivity or London penetration depth. Conforming and
+nonconforming AMR, including refinement through enriched elements and subsequent mesh
+rebalancing, is supported. Bulk dielectric loss, lumped-port `R/L/C` terms, and
+combined-field dielectric surface postprocessing are supported.
 
 Reported electric and magnetic field energies exclude reactive lumped-boundary matrix
 terms, matching standard Palace domain postprocessing. Eigenmode balance still uses the
@@ -188,9 +193,9 @@ direct solver types such as SuperLU_DIST or STRUMPACK therefore factor only the 
 block and an enrichment correction; this path is validated for driven solves but is not
 yet certified for eigenmode shift-and-invert.
 
-Mesh refinement, wave and Floquet ports, periodic boundaries, impedance or absorbing
-boundaries, saved standard-grid fields, general field or probe postprocessing, adaptive
-frequency sweeps, and PROM are not yet supported on the singular full-wave path.
+Parallel uniform refinement, wave and Floquet ports, periodic boundaries, impedance or
+absorbing boundaries, saved standard-grid fields, general field or probe postprocessing,
+adaptive frequency sweeps, and PROM are not yet supported on the singular full-wave path.
 
 The zero-thickness surface integral of ``|E|^2`` still diverges logarithmically at a sheet
 edge. A fabricated-device participation requires resolved finite-thickness interface

@@ -1194,13 +1194,24 @@ void BoundaryModeSolver::ProcessPartitionedMesh(
   source_element_ids = metadata.source_element_ids;
 }
 
-mfem::Array<int>
-BoundaryModeSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+mfem::Array<int> BoundaryModeSolver::GetRefinementProtection(const mfem::ParMesh &mesh,
+                                                             bool *conforming,
+                                                             mfem::Array<int> *repair) const
 {
-  return iodata.solver.singular_elements.Enabled()
-             ? BuildSingularRefinementProtection(mesh, local_singular_features,
-                                                 source_vertex_ids)
-             : mfem::Array<int>{};
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    if (conforming)
+    {
+      *conforming = true;
+    }
+    if (repair)
+    {
+      repair->SetSize(0);
+    }
+    return {};
+  }
+  return BuildSingularRefinementProtection(mesh, local_singular_features, source_vertex_ids,
+                                           conforming, repair);
 }
 
 void BoundaryModeSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
@@ -1210,6 +1221,8 @@ void BoundaryModeSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
     return;
   }
   UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+  RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,
+                                 source_vertex_ids, serial_singular_features);
   ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});
 }
 
@@ -1393,8 +1406,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               {"VoltageAndImpedance", false},
               {"SurfaceMeasurements", !singular_surface_postoperator->Empty()},
               {"SurfaceQuadrature", "endpoint-weighted Gauss-Jacobi"}}},
-            {"ErrorEstimator",
-             "standard-space smooth remainder outside protected singular patch"},
+            {"ErrorEstimator", "standard-space smooth remainder on the complete mesh"},
             {"SurfaceIntegrability",
              GetSingularSurfaceIntegrabilityMetadata(local_singular_features)},
             {"SurfaceParticipation", GetSingularSurfaceParticipationMetadata(iodata)}});
@@ -1404,8 +1416,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "transverse/normal electric and magnetic energies. Integrable dielectric surface "
         "measurements use the combined field and endpoint-weighted quadrature. Voltage, "
         "impedance, and MFEM grid-function output remain disabled. AMR estimates the "
-        "standard-space smooth remainder and masks every enriched element plus one face "
-        "layer. Ideal-sheet surface traces with nu <= 1/2 require an explicit physical "
+        "standard-space smooth remainder; nonconforming refinement expands marks to keep "
+        "the enriched patch conforming. Ideal-sheet surface traces with nu <= 1/2 require "
+        "an explicit physical "
         "cutoff or response model.\n");
   }
 
@@ -1548,7 +1561,6 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   if (singular)
   {
-    indicator.ZeroElements(GetRefinementProtection(mode_op.GetMesh().Get()));
     WriteSingularModeMeasurements(post_dir, iodata, singular_measurements, root);
     WriteSingularModeCoefficientMeasurements(post_dir, iodata,
                                              singular_coefficient_measurements, root);

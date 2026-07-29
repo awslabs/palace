@@ -1793,15 +1793,16 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Uniform refinement is rejected while restricted adaptive refinement is allowed")
+  SECTION("Uniform refinement is rejected while adaptive refinement is allowed")
   {
     auto config = MakeConfig();
     config["Model"]["Refinement"] = {{"UniformLevels", 1}};
     CHECK_THROWS(IoData(config, false));
 
     config = MakeConfig();
-    config["Model"]["Refinement"] = {{"MaxIts", 1}};
-    CHECK_THROWS(IoData(config, false));
+    config["Model"]["Refinement"] = {
+        {"MaxIts", 1}, {"Nonconformal", true}, {"MaxNCLevels", 1}};
+    CHECK_NOTHROW(IoData(config, false));
 
     config["Model"]["Refinement"]["MaxNCLevels"] = 0;
     CHECK_NOTHROW(IoData(config, false));

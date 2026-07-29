@@ -1,0 +1,64 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "postpro/standard_amr"
+  },
+  "Model": {
+    "Mesh": "singular_corner_electrostatic.mesh",
+    "L0": 1.0,
+    "Refinement": {
+      "MaxIts": 1,
+      "Tol": 1.0e-20,
+      "Nonconformal": true,
+      "MaxNCLevels": 1,
+      "UpdateFraction": 0.5,
+      "MaximumImbalance": 1.01
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [2],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [1, 2]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [8]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [7]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Electrostatic": {
+      "Save": 0
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 500,
+      "MGMaxLevels": 1
+    }
+  }
+}

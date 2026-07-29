@@ -67,7 +67,9 @@ public:
   void ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
                               const mesh::PartitionMetadata &metadata) const override;
   mesh::PartitionMetadata GetSourceEntityMetadata() const override;
-  mfem::Array<int> GetRefinementProtection(const mfem::ParMesh &mesh) const override;
+  mfem::Array<int>
+  GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming = nullptr,
+                          mfem::Array<int> *repair = nullptr) const override;
   void ProcessRefinedMesh(const mfem::ParMesh &mesh) const override;
 };
 

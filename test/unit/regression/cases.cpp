@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <set>
 #include <string>
 
@@ -207,6 +208,209 @@ palace::test::CustomCheck CompareCanonicalRows(std::size_t numeric_columns,
   };
 }
 
+palace::test::CustomCheck CompareCanonicalKeySets(std::size_t numeric_columns,
+                                                  std::set<std::string> ignored_key_headers)
+{
+  return [numeric_columns, ignored_key_headers = std::move(ignored_key_headers)](
+             palace::Table &actual, palace::Table &reference)
+  {
+    REQUIRE(actual.n_cols() == reference.n_cols());
+    REQUIRE(actual.n_cols() >= numeric_columns);
+    const std::size_t numeric_begin = actual.n_cols() - numeric_columns;
+    for (std::size_t column = 0; column < actual.n_cols(); column++)
+    {
+      CHECK(actual[column].header_text == reference[column].header_text);
+    }
+    const auto Keys = [&](palace::Table &table)
+    {
+      std::set<std::vector<double>> keys;
+      for (std::size_t row = 0; row < table.n_rows(); row++)
+      {
+        std::vector<double> key;
+        for (std::size_t column = 0; column < numeric_begin; column++)
+        {
+          if (ignored_key_headers.count(table[column].header_text) == 0)
+          {
+            key.push_back(table[column].data[row]);
+          }
+        }
+        REQUIRE(keys.insert(std::move(key)).second);
+        for (std::size_t column = numeric_begin; column < table.n_cols(); column++)
+        {
+          CHECK(std::isfinite(table[column].data[row]));
+        }
+      }
+      return keys;
+    };
+    CHECK(Keys(actual) == Keys(reference));
+  };
+}
+
+palace::test::CustomCheck CompareBoundaryModeSpectrum(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &reference)
+  {
+    REQUIRE(actual.n_cols() == reference.n_cols());
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    for (std::size_t column = 0; column < actual.n_cols(); column++)
+    {
+      CHECK(actual[column].header_text == reference[column].header_text);
+    }
+    auto FindColumn = [](palace::Table &table, std::string_view header)
+    {
+      const auto column =
+          std::find_if(table.begin(), table.end(),
+                       [header](const auto &entry) { return entry.header_text == header; });
+      REQUIRE(column != table.end());
+      return static_cast<std::size_t>(std::distance(table.begin(), column));
+    };
+    const std::size_t kn_real = FindColumn(actual, "Re{kn} (1/m)");
+    const std::size_t kn_imag = FindColumn(actual, "Im{kn} (1/m)");
+    const std::size_t neff_real = FindColumn(actual, "Re{n_eff}");
+    const std::size_t neff_imag = FindColumn(actual, "Im{n_eff}");
+    const std::size_t backward_error = FindColumn(actual, "Error (Bkwd.)");
+    const std::size_t absolute_error = FindColumn(actual, "Error (Abs.)");
+    std::vector<std::size_t> actual_order(actual.n_rows());
+    std::vector<std::size_t> reference_order(reference.n_rows());
+    std::iota(actual_order.begin(), actual_order.end(), 0);
+    std::iota(reference_order.begin(), reference_order.end(), 0);
+    const auto SortByPropagationConstant = [kn_real](palace::Table &table, auto &order)
+    {
+      std::sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right)
+                { return table[kn_real].data[left] < table[kn_real].data[right]; });
+    };
+    SortByPropagationConstant(actual, actual_order);
+    SortByPropagationConstant(reference, reference_order);
+    for (std::size_t mode = 0; mode < actual_order.size(); mode++)
+    {
+      const std::size_t a = actual_order[mode];
+      const std::size_t r = reference_order[mode];
+      CAPTURE(mode);
+      CHECK_THAT(actual[kn_real].data[a],
+                 Catch::Matchers::WithinRel(reference[kn_real].data[r], rtol));
+      CHECK_THAT(actual[neff_real].data[a],
+                 Catch::Matchers::WithinRel(reference[neff_real].data[r], rtol));
+      CHECK(std::abs(actual[kn_imag].data[a]) < 1.0e-3);
+      CHECK(std::abs(actual[neff_imag].data[a]) < 1.0e-5);
+      CHECK(std::abs(actual[backward_error].data[a]) < 1.0e-7);
+      CHECK(std::abs(actual[absolute_error].data[a]) < 1.0e-7);
+    }
+  };
+}
+
+palace::test::CustomCheck CompareBoundaryModeSubspaceDiagnostics(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &reference)
+  {
+    REQUIRE(actual.n_cols() == reference.n_cols());
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    for (std::size_t column = 0; column < actual.n_cols(); column++)
+    {
+      CHECK(actual[column].header_text == reference[column].header_text);
+      for (double value : actual[column].data)
+      {
+        CHECK(std::isfinite(value));
+      }
+    }
+    auto FindColumn = [](palace::Table &table, std::string_view header)
+    {
+      const auto column =
+          std::find_if(table.begin(), table.end(),
+                       [header](const auto &entry) { return entry.header_text == header; });
+      REQUIRE(column != table.end());
+      return static_cast<std::size_t>(std::distance(table.begin(), column));
+    };
+    const std::size_t power_real = FindColumn(actual, "Re{P} (normalized)");
+    const std::size_t power_imag = FindColumn(actual, "Im{P} (normalized)");
+    const std::size_t electric = FindColumn(actual, "Total electric field energy (J)");
+    const std::size_t magnetic = FindColumn(actual, "Total magnetic field energy (J)");
+    for (std::size_t mode = 0; mode < actual.n_rows(); mode++)
+    {
+      CAPTURE(mode);
+      CHECK(std::abs(actual[power_real].data[mode] - 1.0) < 1.0e-8);
+      CHECK(std::abs(actual[power_imag].data[mode]) < 1.0e-5);
+      CHECK(actual[electric].data[mode] > 0.0);
+      CHECK(actual[magnetic].data[mode] > 0.0);
+      CHECK(std::abs(actual[electric].data[mode] - actual[magnetic].data[mode]) /
+                std::max(actual[electric].data[mode], actual[magnetic].data[mode]) <
+            2.0e-3);
+    }
+    for (std::size_t column = 0; column < actual.n_cols(); column++)
+    {
+      if (actual[column].header_text.find("field energy") == std::string::npos)
+      {
+        continue;
+      }
+      const double actual_trace =
+          std::accumulate(actual[column].data.begin(), actual[column].data.end(), 0.0);
+      const double reference_trace = std::accumulate(reference[column].data.begin(),
+                                                     reference[column].data.end(), 0.0);
+      INFO("subspace trace of '" << actual[column].header_text << "'");
+      CHECK_THAT(actual_trace, Catch::Matchers::WithinRel(reference_trace, rtol) ||
+                                   Catch::Matchers::WithinAbs(reference_trace, 1.0e-12));
+    }
+  };
+}
+
+palace::test::CustomCheck CompareBoundaryModeSurfaceSubspace(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &reference)
+  {
+    REQUIRE(actual.n_cols() == reference.n_cols());
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    for (std::size_t column = 0; column < actual.n_cols(); column++)
+    {
+      CHECK(actual[column].header_text == reference[column].header_text);
+    }
+    REQUIRE(actual.n_cols() == 3);
+    double actual_trace = 0.0;
+    double reference_trace = 0.0;
+    for (std::size_t mode = 0; mode < actual.n_rows(); mode++)
+    {
+      const double participation = actual[1].data[mode];
+      const double quality_factor = actual[2].data[mode];
+      CAPTURE(mode, participation, quality_factor);
+      CHECK(participation > 0.0);
+      CHECK(quality_factor > 0.0);
+      CHECK(std::abs(participation * quality_factor - 1.0) < 1.0e-8);
+      actual_trace += participation;
+      reference_trace += reference[1].data[mode];
+    }
+    CHECK_THAT(actual_trace, Catch::Matchers::WithinRel(reference_trace, rtol));
+  };
+}
+
+palace::test::CustomCheck ValidateBoundaryModeTipSlopes()
+{
+  return [](palace::Table &actual, palace::Table &reference)
+  {
+    REQUIRE(actual.n_cols() == reference.n_cols());
+    for (std::size_t column = 0; column < actual.n_cols(); column++)
+    {
+      CHECK(actual[column].header_text == reference[column].header_text);
+    }
+    auto FindColumn = [](palace::Table &table, std::string_view header)
+    {
+      const auto column =
+          std::find_if(table.begin(), table.end(),
+                       [header](const auto &entry) { return entry.header_text == header; });
+      REQUIRE(column != table.end());
+      return static_cast<std::size_t>(std::distance(table.begin(), column));
+    };
+    const std::size_t valid = FindColumn(actual, "fit_valid");
+    const std::size_t expected = FindColumn(actual, "expected_slope");
+    const std::size_t fitted = FindColumn(actual, "fitted_slope");
+    const std::size_t r_squared = FindColumn(actual, "R_squared");
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      CAPTURE(row);
+      CHECK(actual[valid].data[row] == 1.0);
+      CHECK(std::abs(actual[fitted].data[row] - actual[expected].data[row]) < 3.0e-2);
+      CHECK(actual[r_squared].data[row] > 0.999);
+    }
+  };
+}
+
 // Standard "drop per-element extrema + eigenmode error columns" list.
 const std::vector<std::string> kEigenExcluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
@@ -341,6 +545,38 @@ TEST_CASE("singular_wedge_eigenmode", "[Serial][Parallel][Regression]")
                                   "eigenmode", opts);
 }
 
+TEST_CASE("singular_wedge_eigenmode_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-12;
+  opts.excluded_columns = {"Error ("};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_eigenmode_amr.json",
+                                  "amr_eigenmode", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    for (const std::string prefix : {"", "iteration1/"})
+    {
+      auto diagnostics = LoadRegressionOutputTable("singular_wedge", "amr_eigenmode",
+                                                   prefix + "singular-eigenmode.csv");
+      const double electric = GetTableValue(diagnostics, "Electric field energy (J)");
+      const double magnetic = GetTableValue(diagnostics, "Magnetic field energy (J)");
+      const double mismatch = GetTableValue(diagnostics, "Relative energy mismatch");
+      const double divergence = GetTableValue(diagnostics, "Relative weak divergence");
+      CAPTURE(prefix, electric, magnetic, mismatch, divergence);
+      CHECK(electric > 0.0);
+      CHECK(magnetic > 0.0);
+      CHECK(mismatch < 1.0e-10);
+      CHECK(divergence < 1.0e-10);
+    }
+  }
+}
+
 TEST_CASE("singular_wedge_loss_eigenmode", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -449,6 +685,34 @@ TEST_CASE("singular_wedge_driven", "[Serial][Parallel][Regression]")
     const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
     CAPTURE(singular_participation, standard_participation);
     CHECK(singular_participation / standard_participation > 1.5);
+  }
+}
+
+TEST_CASE("singular_wedge_driven_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-14;
+  opts.excluded_columns = {"Relative residual"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_driven_amr.json",
+                                  "amr_driven", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    for (const std::string prefix : {"", "iteration1/"})
+    {
+      auto diagnostics = LoadRegressionOutputTable("singular_wedge", "amr_driven",
+                                                   prefix + "singular-driven.csv");
+      const double electric = GetTableValue(diagnostics, "Electric field energy (J)");
+      const double magnetic = GetTableValue(diagnostics, "Magnetic field energy (J)");
+      const double residual = GetTableValue(diagnostics, "Relative residual");
+      CAPTURE(prefix, electric, magnetic, residual);
+      CHECK(electric > 0.0);
+      CHECK(magnetic > 0.0);
+      CHECK(residual < 1.0e-8);
+    }
   }
 }
 
@@ -1075,6 +1339,38 @@ TEST_CASE("singular_corner_electrostatic", "[Serial][Parallel][Regression]")
                                   "singular_corner_electrostatic.json", "", opts);
 }
 
+TEST_CASE("singular_corner_electrostatic_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-18;
+  opts.excluded_columns = {"true_dof"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  for (const std::string prefix : {"", "iteration1/"})
+  {
+    opts.custom_checks[prefix + "singular-coefficients.csv"] =
+        CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+    opts.custom_checks[prefix + "singular-tip-slopes.csv"] =
+        CompareCanonicalRows(8, {"source_element"}, opts.rtol, opts.atol);
+  }
+  palace::test::RunRegressionCase("singular_corner_electrostatic",
+                                  "singular_corner_electrostatic_amr.json", "amr", opts);
+}
+
+TEST_CASE("standard_corner_electrostatic_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-18;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_corner_electrostatic",
+                                  "singular_corner_electrostatic_standard_amr.json",
+                                  "standard_amr", opts);
+}
+
 TEST_CASE("singular_line_boundarymode", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1222,6 +1518,31 @@ TEST_CASE("singular_line_boundarymode_multigrid", "[Serial][Parallel][Regression
       CompareCanonicalRows(8, {}, 2.0e-3, opts.atol);
   palace::test::RunRegressionCase("singular_line_boundarymode",
                                   "singular_line_boundarymode_mg2.json", "mg2", opts);
+}
+
+TEST_CASE("singular_line_boundarymode_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-12;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  for (const std::string prefix : {"", "iteration1/"})
+  {
+    opts.custom_checks[prefix + "mode-kn.csv"] = CompareBoundaryModeSpectrum(2.0e-5);
+    opts.custom_checks[prefix + "singular-mode-diagnostics.csv"] =
+        CompareBoundaryModeSubspaceDiagnostics(1.0e-3);
+    opts.custom_checks[prefix + "singular-mode-nd-coefficients.csv"] =
+        CompareCanonicalKeySets(2, {"enrichment_true_dof"});
+    opts.custom_checks[prefix + "singular-mode-h1-coefficients.csv"] =
+        CompareCanonicalKeySets(2, {"enrichment_true_dof"});
+    opts.custom_checks[prefix + "singular-mode-tip-slopes.csv"] =
+        ValidateBoundaryModeTipSlopes();
+    opts.custom_checks[prefix + "surface-Q.csv"] =
+        CompareBoundaryModeSurfaceSubspace(5.0e-2);
+  }
+  palace::test::RunRegressionCase("singular_line_boundarymode",
+                                  "singular_line_boundarymode_amr.json", "amr", opts);
 }
 
 TEST_CASE("singular_line_eigenmode", "[Serial][Parallel][Regression]")

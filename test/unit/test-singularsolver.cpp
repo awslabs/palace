@@ -192,8 +192,7 @@ TEST_CASE("Conforming AMR preserves singular source identities and line-tip inci
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   auto serial_mesh = LongInternalLineMesh();
-  const auto serial_features =
-      fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
+  auto serial_features = fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
   mfem::ParMesh mesh(Mpi::World(), serial_mesh);
 
   std::vector<fem::singular::GlobalVertexId> source_vertex_ids(mesh.GetNV());
@@ -202,13 +201,10 @@ TEST_CASE("Conforming AMR preserves singular source identities and line-tip inci
   std::iota(source_element_ids.begin(), source_element_ids.end(), 0);
   auto local_features = fem::singular::DistributeSerialLineTipFeatures(
       serial_features, mesh, source_vertex_ids, source_element_ids);
-  const auto protection =
-      BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids);
-
   mfem::Array<int> marked;
-  for (int element = protection.Size() - 1; element >= 0; element--)
+  for (int element = 0; element < mesh.GetNE(); element++)
   {
-    if (!protection[element])
+    if (!local_features.elements[element].nodes.empty())
     {
       marked.Append(element);
       break;
@@ -228,19 +224,23 @@ TEST_CASE("Conforming AMR preserves singular source identities and line-tip inci
   CHECK(std::set(source_vertex_ids.begin(), source_vertex_ids.end()).size() ==
         source_vertex_ids.size());
 
+  RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_features);
   local_features = fem::singular::DistributeSerialLineTipFeatures(
       serial_features, mesh, source_vertex_ids, source_element_ids);
   CHECK_NOTHROW(BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids));
+  CHECK_NOTHROW(fem::singular::BuildLocalTriangleDofTopology(mesh, local_features,
+                                                             source_vertex_ids, 1));
 }
 
-TEST_CASE("Nonconforming AMR preserves singular source identities and a conforming patch",
+TEST_CASE("Nonconforming AMR refines and rebuilds a conforming singular patch",
           "[singularsolver][singularelements][Serial]")
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int max_nc_levels = GENERATE(0, 1);
+  CAPTURE(max_nc_levels);
   auto serial_mesh = LongInternalLineMesh();
   const int original_vertices = serial_mesh.GetNV();
-  const auto serial_features =
-      fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
+  auto serial_features = fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
   serial_mesh.EnsureNCMesh(true);
   mfem::ParMesh mesh(Mpi::World(), serial_mesh);
 
@@ -256,40 +256,170 @@ TEST_CASE("Nonconforming AMR preserves singular source identities and a conformi
   for (int iteration = 0; iteration < 2; iteration++)
   {
     mfem::Array<int> protection;
+    bool conforming = false;
     INFO("Checking the singular patch before nonconforming refinement " << iteration + 1);
-    REQUIRE_NOTHROW(protection = BuildSingularRefinementProtection(mesh, local_features,
-                                                                   source_vertex_ids));
+    REQUIRE_NOTHROW(protection = BuildSingularRefinementProtection(
+                        mesh, local_features, source_vertex_ids, &conforming));
+    REQUIRE(conforming);
 
     mfem::Array<int> marked;
-    for (int element = protection.Size() - 1; element >= 0; element--)
+    for (int element = 0; element < protection.Size(); element++)
     {
-      if (!protection[element])
+      if (protection[element])
+      {
+        marked.Append(element);
+      }
+    }
+    REQUIRE(marked.Size() > 0);
+    mesh.GeneralRefinement(marked, -1, max_nc_levels);
+    REQUIRE(mesh.Nonconforming());
+
+    UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+    CHECK(std::set(source_vertex_ids.begin(), source_vertex_ids.end()).size() ==
+          source_vertex_ids.size());
+    RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_features);
+    local_features = fem::singular::DistributeSerialLineTipFeatures(
+        serial_features, mesh, source_vertex_ids, source_element_ids);
+    INFO("Checking the singular patch after nonconforming refinement " << iteration + 1);
+    conforming = false;
+    CHECK_NOTHROW(BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids,
+                                                    &conforming));
+    CHECK(conforming);
+    CHECK_NOTHROW(fem::singular::BuildLocalTriangleDofTopology(mesh, local_features,
+                                                               source_vertex_ids, 1));
+  }
+}
+
+TEST_CASE("Nonconforming AMR detects and repairs a hanging singular interface",
+          "[singularsolver][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int dimension = GENERATE(2, 3);
+  const int max_nc_levels = GENERATE(0, 1);
+  CAPTURE(dimension, max_nc_levels);
+
+  auto serial_mesh = dimension == 2 ? LongInternalLineMesh() : InternalSheetMesh();
+  fem::singular::TriangleFeatureTopology serial_line_features;
+  fem::singular::FeatureTopology serial_sheet_features;
+  if (dimension == 2)
+  {
+    serial_line_features = fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
+  }
+  else
+  {
+    serial_sheet_features = fem::singular::ExtractSerialSheetFeatures(serial_mesh, {7});
+  }
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
+  std::vector<fem::singular::GlobalVertexId> source_element_ids;
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+
+  if (dimension == 2)
+  {
+    auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+        serial_line_features, mesh, source_vertex_ids, source_element_ids);
+    mfem::Array<int> marked;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      if (!local_features.elements[element].nodes.empty())
       {
         marked.Append(element);
         break;
       }
     }
     REQUIRE(marked.Size() == 1);
-    mesh.GeneralRefinement(marked, -1, 0);
-    REQUIRE(mesh.Nonconforming());
-
+    mesh.GeneralRefinement(marked, -1, max_nc_levels);
     UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
-    CHECK(std::set(source_vertex_ids.begin(), source_vertex_ids.end()).size() ==
-          source_vertex_ids.size());
+    RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_line_features);
     local_features = fem::singular::DistributeSerialLineTipFeatures(
-        serial_features, mesh, source_vertex_ids, source_element_ids);
-    INFO("Checking the singular patch after nonconforming refinement " << iteration + 1);
+        serial_line_features, mesh, source_vertex_ids, source_element_ids);
+
+    bool conforming = true;
+    mfem::Array<int> repair_elements;
+    auto closure = BuildSingularRefinementProtection(
+        mesh, local_features, source_vertex_ids, &conforming, &repair_elements);
+    REQUIRE_FALSE(conforming);
+    for (int repair = 0; repair < 8 && !conforming; repair++)
+    {
+      marked.SetSize(0);
+      for (int element = 0; element < repair_elements.Size(); element++)
+      {
+        if (repair_elements[element])
+        {
+          marked.Append(element);
+        }
+      }
+      REQUIRE(marked.Size() > 0);
+      mesh.GeneralRefinement(marked, -1, max_nc_levels);
+      UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+      RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_line_features);
+      local_features = fem::singular::DistributeSerialLineTipFeatures(
+          serial_line_features, mesh, source_vertex_ids, source_element_ids);
+      closure = BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids,
+                                                  &conforming, &repair_elements);
+    }
+    CHECK(conforming);
+    CHECK_NOTHROW(fem::singular::BuildLocalTriangleDofTopology(mesh, local_features,
+                                                               source_vertex_ids, 1));
+  }
+  else
+  {
+    auto local_features = fem::singular::DistributeSerialSheetFeatures(
+        serial_sheet_features, mesh, source_vertex_ids, source_element_ids);
+    mfem::Array<int> marked;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      if (!local_features.elements[element].nodes.empty() ||
+          !local_features.elements[element].edges.empty())
+      {
+        marked.Append(element);
+        break;
+      }
+    }
+    REQUIRE(marked.Size() == 1);
+    mesh.GeneralRefinement(marked, -1, max_nc_levels);
+    UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+    RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_sheet_features);
+    local_features = fem::singular::DistributeSerialSheetFeatures(
+        serial_sheet_features, mesh, source_vertex_ids, source_element_ids);
+
+    bool conforming = true;
+    mfem::Array<int> repair_elements;
+    auto closure = BuildSingularRefinementProtection(
+        mesh, local_features, source_vertex_ids, &conforming, &repair_elements);
+    REQUIRE_FALSE(conforming);
+    for (int repair = 0; repair < 8 && !conforming; repair++)
+    {
+      marked.SetSize(0);
+      for (int element = 0; element < repair_elements.Size(); element++)
+      {
+        if (repair_elements[element])
+        {
+          marked.Append(element);
+        }
+      }
+      REQUIRE(marked.Size() > 0);
+      mesh.GeneralRefinement(marked, -1, max_nc_levels);
+      UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+      RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_sheet_features);
+      local_features = fem::singular::DistributeSerialSheetFeatures(
+          serial_sheet_features, mesh, source_vertex_ids, source_element_ids);
+      closure = BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids,
+                                                  &conforming, &repair_elements);
+    }
+    CHECK(conforming);
     CHECK_NOTHROW(
-        BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids));
+        fem::singular::BuildLocalDofTopology(mesh, local_features, source_vertex_ids, 1));
   }
 }
 
-TEST_CASE("Three-dimensional refinement through a singular edge fails closed",
+TEST_CASE("Conforming AMR rebuilds refined three-dimensional singular edges",
           "[singularsolver][singularelements][Serial]")
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   auto serial_mesh = InternalSheetMesh();
-  const auto serial_features = fem::singular::ExtractSerialSheetFeatures(serial_mesh, {7});
+  auto serial_features = fem::singular::ExtractSerialSheetFeatures(serial_mesh, {7});
   mfem::ParMesh mesh(Mpi::World(), serial_mesh);
   std::vector<fem::singular::GlobalVertexId> source_vertex_ids(mesh.GetNV());
   std::iota(source_vertex_ids.begin(), source_vertex_ids.end(), 0);
@@ -300,11 +430,13 @@ TEST_CASE("Three-dimensional refinement through a singular edge fails closed",
   marked[0] = 0;
   mesh.GeneralRefinement(marked, -1, 1);
   UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
-  CHECK_THROWS_WITH(
-      fem::singular::DistributeSerialSheetFeatures(serial_features, mesh, source_vertex_ids,
-                                                   source_element_ids),
-      Catch::Matchers::ContainsSubstring(
-          "refinement changed a protected three-dimensional singular feature"));
+  RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_features);
+  const auto local_features = fem::singular::DistributeSerialSheetFeatures(
+      serial_features, mesh, source_vertex_ids, source_element_ids);
+  CHECK(serial_features.segments.size() >= 4);
+  CHECK_NOTHROW(BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids));
+  CHECK_NOTHROW(
+      fem::singular::BuildLocalDofTopology(mesh, local_features, source_vertex_ids, 1));
 }
 
 TEST_CASE("Singular refinement protection crosses MPI partition faces",
@@ -333,6 +465,61 @@ TEST_CASE("Singular refinement protection crosses MPI partition faces",
       BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids);
   REQUIRE(protection.Size() == 1);
   CHECK(protection[0] == 1);
+}
+
+TEST_CASE("Conforming refinement gives decomposition-independent vertex identities",
+          "[singularsolver][singularelements][Parallel]")
+{
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    SUCCEED("Conforming refined identities are exercised by the parallel suite.");
+    return;
+  }
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  auto reference_serial_mesh = TwoTrianglePartitionMesh();
+  mfem::ParMesh reference_mesh(MPI_COMM_SELF, reference_serial_mesh);
+  std::vector<fem::singular::GlobalVertexId> reference_vertex_ids(reference_mesh.GetNV());
+  std::iota(reference_vertex_ids.begin(), reference_vertex_ids.end(), 0);
+  std::vector<fem::singular::GlobalVertexId> reference_element_ids(reference_mesh.GetNE());
+  std::iota(reference_element_ids.begin(), reference_element_ids.end(), 0);
+  mfem::Array<int> reference_marked(reference_mesh.GetNE());
+  std::iota(reference_marked.begin(), reference_marked.end(), 0);
+  reference_mesh.GeneralRefinement(reference_marked, -1, 1);
+  UpdateSingularSourceEntityIds(reference_mesh, reference_vertex_ids,
+                                reference_element_ids);
+  std::map<std::array<double, 2>, fem::singular::GlobalVertexId> reference_by_coordinate;
+  for (int vertex = 0; vertex < reference_mesh.GetNV(); vertex++)
+  {
+    const double *coordinate = reference_mesh.GetVertex(vertex);
+    REQUIRE(reference_by_coordinate
+                .emplace(std::array<double, 2>{coordinate[0], coordinate[1]},
+                         reference_vertex_ids[vertex])
+                .second);
+  }
+
+  auto serial_mesh = TwoTrianglePartitionMesh();
+  const std::array<int, 2> partition{0, 1};
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh, partition.data());
+  auto source_vertex_ids =
+      fem::singular::MapPartitionedSerialVertexIds(serial_mesh, mesh, partition.data());
+  std::vector<fem::singular::GlobalVertexId> source_element_ids(mesh.GetNE());
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    source_element_ids[element] = mesh.GetGlobalElementNum(element);
+  }
+  mfem::Array<int> marked(mesh.GetNE());
+  std::iota(marked.begin(), marked.end(), 0);
+  mesh.GeneralRefinement(marked, -1, 1);
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+
+  for (int vertex = 0; vertex < mesh.GetNV(); vertex++)
+  {
+    const double *coordinate = mesh.GetVertex(vertex);
+    const auto reference = reference_by_coordinate.find({coordinate[0], coordinate[1]});
+    REQUIRE(reference != reference_by_coordinate.end());
+    CHECK(source_vertex_ids[vertex] == reference->second);
+  }
 }
 
 TEST_CASE("Nonconforming refinement gives shared vertices rank-consistent identities",
@@ -419,16 +606,14 @@ TEST_CASE("Rebalancing preserves singular feature incidence and global DOFs",
   const bool nonconforming = GENERATE(false, true);
   CAPTURE(nonconforming);
   auto serial_mesh = LongInternalLineMesh();
-  const auto serial_features =
-      fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
-  const auto serial_dofs =
-      fem::singular::BuildSerialTriangleDofTopology(serial_mesh, serial_features, 1);
+  auto serial_features = fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
   if (nonconforming)
   {
     serial_mesh.EnsureNCMesh(true);
   }
 
   std::vector<int> partition(serial_mesh.GetNE(), 0);
+  partition.back() = 1;
   auto parallel_mesh =
       std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, partition.data());
   mesh::PartitionMetadata metadata;
@@ -454,36 +639,160 @@ TEST_CASE("Rebalancing preserves singular feature incidence and global DOFs",
         mesh, local_features, source.source_vertex_ids, 1);
     const auto numbering =
         fem::singular::BuildParallelDofNumbering(Mpi::World(), local_dofs);
-    CHECK(numbering.h1.global_size ==
-          static_cast<HYPRE_BigInt>(serial_dofs.h1_dofs.size()));
-    CHECK(numbering.nd.global_size ==
-          static_cast<HYPRE_BigInt>(serial_dofs.nd_dofs.size()));
-    CHECK_NOTHROW(
-        BuildSingularRefinementProtection(mesh, local_features, source.source_vertex_ids));
+    bool conforming = false;
+    CHECK_NOTHROW(BuildSingularRefinementProtection(mesh, local_features,
+                                                    source.source_vertex_ids, &conforming));
+    CHECK(conforming);
     int enriched_elements = 0;
     for (const auto &element : local_features.elements)
     {
       enriched_elements += !element.nodes.empty();
     }
     Mpi::GlobalSum(1, &enriched_elements, Mpi::World());
-    return enriched_elements;
+    return std::array<HYPRE_BigInt, 3>{numbering.h1.global_size, numbering.nd.global_size,
+                                       enriched_elements};
   };
 
-  const auto initial_features = fem::singular::DistributeSerialLineTipFeatures(
+  auto local_features = fem::singular::DistributeSerialLineTipFeatures(
       serial_features, *parallel_mesh, metadata.source_vertex_ids,
       metadata.source_element_ids);
-  int initial_enriched_elements = 0;
-  for (const auto &element : initial_features.elements)
+  const auto closure = BuildSingularRefinementProtection(*parallel_mesh, local_features,
+                                                         metadata.source_vertex_ids);
+  mfem::Array<int> marked;
+  for (int element = 0; element < closure.Size(); element++)
   {
-    initial_enriched_elements += !element.nodes.empty();
+    if (closure[element])
+    {
+      marked.Append(element);
+    }
   }
-  Mpi::GlobalSum(1, &initial_enriched_elements, Mpi::World());
+  int global_marked = marked.Size();
+  Mpi::GlobalSum(1, &global_marked, Mpi::World());
+  REQUIRE(global_marked > 0);
+  parallel_mesh->GeneralRefinement(marked, -1, 1);
+  UpdateSingularSourceEntityIds(*parallel_mesh, metadata.source_vertex_ids,
+                                metadata.source_element_ids);
+  RebuildRefinedSingularFeatures(*parallel_mesh, {7}, metadata.source_vertex_ids,
+                                 serial_features);
+  local_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, *parallel_mesh, metadata.source_vertex_ids,
+      metadata.source_element_ids);
+  int refined_enriched_elements = 0;
+  for (const auto &element : local_features.elements)
+  {
+    refined_enriched_elements += !element.nodes.empty();
+  }
+  Mpi::GlobalSum(1, &refined_enriched_elements, Mpi::World());
+
   IoData iodata(Units(1.0, 1.0));
   iodata.model.refinement.maximum_imbalance = 1.01;
   const double initial_imbalance = mesh::RebalanceMesh(iodata, parallel_mesh, &metadata);
-  CHECK(std::isinf(initial_imbalance));
+  CHECK(initial_imbalance > iodata.model.refinement.maximum_imbalance);
   CHECK(parallel_mesh->GetNE() > 0);
-  CHECK(CheckTopology(*parallel_mesh, metadata) == initial_enriched_elements);
+  const auto rebalanced_topology = CheckTopology(*parallel_mesh, metadata);
+  CHECK(rebalanced_topology[0] > 0);
+  CHECK(rebalanced_topology[1] >= rebalanced_topology[0]);
+  CHECK(rebalanced_topology[2] == refined_enriched_elements);
+}
+
+TEST_CASE("Three-dimensional singular refinement survives MPI rebalancing",
+          "[singularsolver][singularelements][Parallel]")
+{
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    SUCCEED("Three-dimensional singular AMR migration is exercised in parallel.");
+    return;
+  }
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  const bool nonconforming = GENERATE(false, true);
+  CAPTURE(nonconforming);
+  auto serial_mesh = InternalSheetMesh();
+  auto serial_features = fem::singular::ExtractSerialSheetFeatures(serial_mesh, {7});
+  if (nonconforming)
+  {
+    serial_mesh.EnsureNCMesh(true);
+  }
+
+  std::vector<int> partition(serial_mesh.GetNE(), 0);
+  partition.back() = 1;
+  auto parallel_mesh =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, partition.data());
+  mesh::PartitionMetadata metadata;
+  if (nonconforming)
+  {
+    UpdateSingularSourceEntityIds(*parallel_mesh, metadata.source_vertex_ids,
+                                  metadata.source_element_ids);
+  }
+  else
+  {
+    metadata.source_vertex_ids = fem::singular::MapPartitionedSerialVertexIds(
+        serial_mesh, *parallel_mesh, partition.data());
+    metadata.source_element_ids.resize(parallel_mesh->GetNE());
+    std::iota(metadata.source_element_ids.begin(), metadata.source_element_ids.end(), 0);
+  }
+
+  auto local_features = fem::singular::DistributeSerialSheetFeatures(
+      serial_features, *parallel_mesh, metadata.source_vertex_ids,
+      metadata.source_element_ids);
+  const auto closure = BuildSingularRefinementProtection(*parallel_mesh, local_features,
+                                                         metadata.source_vertex_ids);
+  mfem::Array<int> marked;
+  for (int element = 0; element < closure.Size(); element++)
+  {
+    if (closure[element])
+    {
+      marked.Append(element);
+    }
+  }
+  int global_marked = marked.Size();
+  Mpi::GlobalSum(1, &global_marked, Mpi::World());
+  REQUIRE(global_marked > 0);
+  parallel_mesh->GeneralRefinement(marked, -1, 1);
+  UpdateSingularSourceEntityIds(*parallel_mesh, metadata.source_vertex_ids,
+                                metadata.source_element_ids);
+  RebuildRefinedSingularFeatures(*parallel_mesh, {7}, metadata.source_vertex_ids,
+                                 serial_features);
+  local_features = fem::singular::DistributeSerialSheetFeatures(
+      serial_features, *parallel_mesh, metadata.source_vertex_ids,
+      metadata.source_element_ids);
+  int refined_enriched_elements = 0;
+  for (const auto &element : local_features.elements)
+  {
+    refined_enriched_elements += !element.nodes.empty() || !element.edges.empty();
+  }
+  Mpi::GlobalSum(1, &refined_enriched_elements, Mpi::World());
+
+  const auto CheckTopology =
+      [&](const mfem::ParMesh &mesh, const mesh::PartitionMetadata &source)
+  {
+    const auto features = fem::singular::DistributeSerialSheetFeatures(
+        serial_features, mesh, source.source_vertex_ids, source.source_element_ids);
+    const auto dofs =
+        fem::singular::BuildLocalDofTopology(mesh, features, source.source_vertex_ids, 1);
+    const auto numbering = fem::singular::BuildParallelDofNumbering(Mpi::World(), dofs);
+    bool conforming = false;
+    CHECK_NOTHROW(BuildSingularRefinementProtection(mesh, features,
+                                                    source.source_vertex_ids, &conforming));
+    CHECK(conforming);
+    int enriched_elements = 0;
+    for (const auto &element : features.elements)
+    {
+      enriched_elements += !element.nodes.empty() || !element.edges.empty();
+    }
+    Mpi::GlobalSum(1, &enriched_elements, Mpi::World());
+    return std::array<HYPRE_BigInt, 3>{numbering.h1.global_size, numbering.nd.global_size,
+                                       enriched_elements};
+  };
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.refinement.maximum_imbalance = 1.01;
+  const double initial_imbalance = mesh::RebalanceMesh(iodata, parallel_mesh, &metadata);
+  CHECK(initial_imbalance > iodata.model.refinement.maximum_imbalance);
+  CHECK(parallel_mesh->GetNE() > 0);
+  const auto rebalanced_topology = CheckTopology(*parallel_mesh, metadata);
+  CHECK(rebalanced_topology[0] > 0);
+  CHECK(rebalanced_topology[1] >= rebalanced_topology[0]);
+  CHECK(rebalanced_topology[2] == refined_enriched_elements);
 }
 
 }  // namespace palace

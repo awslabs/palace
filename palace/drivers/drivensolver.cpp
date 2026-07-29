@@ -61,11 +61,23 @@ mesh::PartitionMetadata DrivenSolver::GetSourceEntityMetadata() const
   return singular_features.GetSourceEntityMetadata();
 }
 
-mfem::Array<int> DrivenSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+mfem::Array<int> DrivenSolver::GetRefinementProtection(const mfem::ParMesh &mesh,
+                                                       bool *conforming,
+                                                       mfem::Array<int> *repair) const
 {
-  return iodata.solver.singular_elements.Enabled()
-             ? singular_features.GetRefinementProtection(mesh)
-             : mfem::Array<int>{};
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    if (conforming)
+    {
+      *conforming = true;
+    }
+    if (repair)
+    {
+      repair->SetSize(0);
+    }
+    return {};
+  }
+  return singular_features.GetRefinementProtection(mesh, conforming, repair);
 }
 
 void DrivenSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
@@ -601,16 +613,13 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"FieldGridOutput", false},
-          {"ErrorEstimator",
-           "standard-space smooth remainder outside protected singular patch"},
+          {"ErrorEstimator", "standard-space smooth remainder on the complete mesh"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
                                        ? GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetSheetFeatures())
                                        : GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetLineFeatures())},
           {"SurfaceParticipation", GetSingularSurfaceParticipationMetadata(iodata)}});
-  indicator.ZeroElements(
-      singular_features.GetRefinementProtection(space_op.GetMesh().Get()));
   return indicator;
 }
 

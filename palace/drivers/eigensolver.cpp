@@ -57,11 +57,23 @@ mesh::PartitionMetadata EigenSolver::GetSourceEntityMetadata() const
   return singular_features.GetSourceEntityMetadata();
 }
 
-mfem::Array<int> EigenSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+mfem::Array<int> EigenSolver::GetRefinementProtection(const mfem::ParMesh &mesh,
+                                                      bool *conforming,
+                                                      mfem::Array<int> *repair) const
 {
-  return iodata.solver.singular_elements.Enabled()
-             ? singular_features.GetRefinementProtection(mesh)
-             : mfem::Array<int>{};
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    if (conforming)
+    {
+      *conforming = true;
+    }
+    if (repair)
+    {
+      repair->SetSize(0);
+    }
+    return {};
+  }
+  return singular_features.GetRefinementProtection(mesh, conforming, repair);
 }
 
 void EigenSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
@@ -992,8 +1004,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"DivergenceProjection", divfree != nullptr},
           {"FieldGridOutput", false},
-          {"ErrorEstimator",
-           "standard-space smooth remainder outside protected singular patch"},
+          {"ErrorEstimator", "standard-space smooth remainder on the complete mesh"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
                                        ? GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetSheetFeatures())
@@ -1004,8 +1015,6 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
               "Singular eigenmode solve found " << num_converged << " modes when "
                                                 << iodata.solver.eigenmode.n
                                                 << " were requested!");
-  indicator.ZeroElements(
-      singular_features.GetRefinementProtection(space_op.GetMesh().Get()));
   return {std::move(indicator), space_op.GlobalTrueVSize()};
 }
 

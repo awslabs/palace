@@ -36,9 +36,8 @@ public:
   // Add an indicator to the running total.
   void AddIndicator(const Vector &indicator);
 
-  // Set selected local element indicators to zero. This is used when an estimator is
-  // mathematically valid only on a subset of the mesh, such as the smooth remainder away
-  // from a protected singular-enrichment patch.
+  // Set selected local element indicators to zero when an estimator should not drive
+  // refinement on a caller-selected subset of the mesh.
   void ZeroElements(const mfem::Array<int> &marker);
 
   // Return the local error indicator.

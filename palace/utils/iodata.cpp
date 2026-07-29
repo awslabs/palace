@@ -389,14 +389,7 @@ void IoData::CheckConfiguration()
     }
     MFEM_VERIFY(model.refinement.uniform_ref_levels == 0,
                 "Singular elements do not yet support parallel uniform refinement. Use "
-                "region-based preprocessing or adaptive refinement, which protect the "
-                "enriched patch until parent/child enrichment constraints are available!");
-    MFEM_VERIFY(model.refinement.max_it == 0 || !model.refinement.nonconformal ||
-                    model.refinement.max_nc_levels == 0,
-                "Nonconforming singular AMR requires "
-                "Model.Refinement.MaxNCLevels = 0. A positive limit lets MFEM's "
-                "nonconformity closure refine protected singular-patch elements; "
-                "unlimited hanging depth keeps refinement outside the protected patch!");
+                "region-based preprocessing or adaptive refinement!");
   }
 
   // Check that the provided domain and boundary objects are all supported by the requested

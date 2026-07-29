@@ -1166,17 +1166,26 @@ void ElectrostaticSolver::ProcessPartitionedMesh(
 }
 
 mfem::Array<int>
-ElectrostaticSolver::GetRefinementProtection(const mfem::ParMesh &mesh) const
+ElectrostaticSolver::GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming,
+                                             mfem::Array<int> *repair) const
 {
   if (!iodata.solver.singular_elements.Enabled())
   {
+    if (conforming)
+    {
+      *conforming = true;
+    }
+    if (repair)
+    {
+      repair->SetSize(0);
+    }
     return {};
   }
   return mesh.Dimension() == 2
              ? BuildSingularRefinementProtection(mesh, local_triangle_singular_features,
-                                                 source_vertex_ids)
+                                                 source_vertex_ids, conforming, repair)
              : BuildSingularRefinementProtection(mesh, local_singular_features,
-                                                 source_vertex_ids);
+                                                 source_vertex_ids, conforming, repair);
 }
 
 void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
@@ -1186,6 +1195,16 @@ void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
     return;
   }
   UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids);
+  if (mesh.Dimension() == 2)
+  {
+    RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,
+                                   source_vertex_ids, serial_triangle_singular_features);
+  }
+  else
+  {
+    RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,
+                                   source_vertex_ids, serial_singular_features);
+  }
   ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});
 }
 
@@ -1352,7 +1371,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {"CombinedFieldEvaluation", true},
           {"DomainEnergy", true},
           {"SmoothRemainderErrorEstimator", true},
-          {"ProtectedSingularPatch", true},
+          {"SingularRefinementClosure", true},
           {"SurfaceMeasurements", true},
           {"SurfaceQuadrature", "basis-aware Gauss-Jacobi power expansion"},
           {"CoefficientDiagnostics", true},
@@ -1379,7 +1398,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {"CombinedFieldEvaluation", true},
           {"DomainEnergy", true},
           {"SmoothRemainderErrorEstimator", true},
-          {"ProtectedSingularPatch", true},
+          {"SingularRefinementClosure", true},
           {"SurfaceMeasurements", true},
           {"SurfaceQuadrature",
            "edge-aligned graded Gauss-Jacobi with logarithmic cutoff map"},
@@ -1441,9 +1460,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "use the combined H1 gradient and basis-aware Gauss-Jacobi quadrature. "
         "Three-dimensional dielectric surface measurements use combined-field "
         "edge-aligned singular quadrature. AMR estimates the standard-space smooth "
-        "remainder only and masks every enriched element plus one face layer. MFEM "
-        "grid-function output remains disabled. Ideal zero-thickness line-tip or "
-        "sheet-edge traces with nu <= 1/2 require explicit physical regularization.\n");
+        "remainder; after refinement, singular features and enrichment DOFs are rebuilt "
+        "on the adapted mesh. MFEM grid-function output remains disabled. Ideal "
+        "zero-thickness line-tip or sheet-edge traces with nu <= 1/2 require explicit "
+        "physical regularization.\n");
 
     Mpi::Print("\nComputing singular electrostatic fields for {:d} terminal {}\n", n_step,
                (n_step > 1) ? "boundaries" : "boundary");
@@ -1606,7 +1626,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       WriteSingularEdgeSlopeMeasurements(post_dir, iodata, edge_slope_measurements, root);
     }
-    indicator.ZeroElements(GetRefinementProtection(laplace_op.GetMesh().Get()));
     PostprocessSingularTerminals(laplace_op, laplace_op.GetSources(), V);
     return {std::move(indicator), laplace_op.GlobalTrueVSize()};
   }
