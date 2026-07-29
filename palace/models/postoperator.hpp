@@ -252,11 +252,15 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Optional Maxwell surface response correction. The ordinary measurement cache and
-  // surface-Q.csv remain the raw thin-metal result.
+  // Optional Maxwell surface response correction. The ordinary measurement cache,
+  // surface-Q.csv, and primary E/D fields remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
-  const ComplexVector *surface_response_corrected_field = nullptr;
-  const ComplexVector *surface_response_corrected_flux = nullptr;
+  std::unique_ptr<GridFunction> surface_response_corrected_field;
+  std::unique_ptr<GridFunction> surface_response_corrected_flux;
+  bool has_surface_response_corrected_field = false;
+  bool has_surface_response_corrected_flux = false;
+  bool surface_response_field_paraview_registered = false;
+  bool surface_response_flux_paraview_registered = false;
   std::optional<std::complex<double>> surface_response_corrected_frequency;
   std::optional<double> surface_response_corrected_mode_overlap;
   struct MaxwellSurfaceResponseMeasurement
@@ -327,6 +331,8 @@ protected:
   void MeasureSurfaceResponseCorrection() const;  // Depends: Domain, ports, interfaces
   void MeasureProbes() const;
   void PrintSurfaceResponseCorrection(double output_index, int excitation) const;
+  void RegisterSurfaceResponseParaviewFields();
+  void ClearSurfaceResponseCorrectedField();
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with
   // dependent measurements.
@@ -455,10 +461,39 @@ public:
       std::optional<double> mode_overlap = std::nullopt)
       -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
   {
-    surface_response_corrected_field = &e;
-    surface_response_corrected_flux = d;
+    if (!surface_response_corrected_field)
+    {
+      surface_response_corrected_field =
+          std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+    }
+    surface_response_corrected_field->Real().SetFromTrueDofs(e.Real());
+    surface_response_corrected_field->Imag().SetFromTrueDofs(e.Imag());
+    surface_response_corrected_field->Real().ExchangeFaceNbrData();
+    surface_response_corrected_field->Imag().ExchangeFaceNbrData();
+    if (d)
+    {
+      if (!surface_response_corrected_flux)
+      {
+        surface_response_corrected_flux =
+            std::make_unique<GridFunction>(fem_op->GetRTSpace(), true);
+      }
+      surface_response_corrected_flux->Real().SetFromTrueDofs(d->Real());
+      surface_response_corrected_flux->Imag().SetFromTrueDofs(d->Imag());
+      surface_response_corrected_flux->Real().ExchangeFaceNbrData();
+      surface_response_corrected_flux->Imag().ExchangeFaceNbrData();
+      has_surface_response_corrected_flux = true;
+    }
+    else
+    {
+      MFEM_VERIFY(!D_recovered,
+                  "Self-consistent Maxwell surface-response postprocessing requires "
+                  "recovered electric flux for the corrected field!");
+      has_surface_response_corrected_flux = false;
+    }
+    has_surface_response_corrected_field = true;
     surface_response_corrected_frequency = frequency;
     surface_response_corrected_mode_overlap = mode_overlap;
+    RegisterSurfaceResponseParaviewFields();
   }
 
   template <ProblemType U = solver_t>

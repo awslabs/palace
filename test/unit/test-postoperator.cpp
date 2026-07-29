@@ -586,6 +586,27 @@ TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
       }
     }
   };
+  auto check_paraview_fields =
+      [&](const std::string &subdir, const std::vector<std::string> &fields)
+  {
+    std::string metadata;
+    const auto paraview_dir = fs::path(iodata.problem.output) / "paraview" / subdir;
+    for (const auto &entry : fs::recursive_directory_iterator(paraview_dir))
+    {
+      const auto extension = entry.path().extension();
+      if (!entry.is_regular_file() ||
+          (extension != ".pvd" && extension != ".pvtu" && extension != ".vtu"))
+      {
+        continue;
+      }
+      std::ifstream file(entry.path(), std::ios::binary);
+      metadata.append(std::istreambuf_iterator<char>(file), {});
+    }
+    for (const auto &field : fields)
+    {
+      CHECK(metadata.find(field) != std::string::npos);
+    }
+  };
 
   SECTION("Electrostatic")
   {
@@ -656,12 +677,21 @@ TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
     // Write fields.
     const int pad_digits = post_op.GetPadDigitsDefault();
     ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
-        B(space_op.GetRTSpace().GetTrueVSize());
+        B(space_op.GetRTSpace().GetTrueVSize()),
+        E_corrected(space_op.GetNDSpace().GetTrueVSize()),
+        D_corrected(space_op.GetRTSpace().GetTrueVSize());
     E = 0.0;
     B = 0.0;
+    E_corrected = 1.0;
+    D_corrected = 2.0;
+    post_op.SetSurfaceResponseCorrectedField(E_corrected, &D_corrected);
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
     check_files("driven", 1, post_op.GetPadDigitsDefault(),
-                {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
+                {"E_real", "E_imag", "B_real", "B_imag", "E_corrected_real",
+                 "E_corrected_imag", "D_corrected_real", "D_corrected_imag", "S", "U_e",
+                 "U_m"});
+    check_paraview_fields("driven", {"E_corrected_real", "E_corrected_imag",
+                                     "D_corrected_real", "D_corrected_imag"});
 
     // The ParaView "Time" field for a driven solve is the physical frequency in
     // GHz, not the nondimensional angular frequency omega passed above.

@@ -67,8 +67,9 @@ The feature is complete for production when all of the following hold:
 | 3D linear undamped eigenmode | Implemented | Implemented | Implemented | High-order/AMR validation |
 | 3D damped or frequency-dependent eigenmode | Implemented | Implemented | Missing | Nonlinear corrected EVP |
 
-Standard GridFunction and ParaView output is currently the raw thin-metal field. Export
-of the self-consistent corrected field is missing.
+Standard GridFunction and ParaView ``E`` output remains the raw thin-metal field.
+Self-consistent Maxwell solves additionally export corrected electric field and recovered
+electric flux under distinct ``E_corrected_*`` and ``D_corrected_*`` names.
 
 ### Metal boundary support
 
@@ -252,7 +253,8 @@ and boundary-law range, and held-out Maxwell coupon tests pass the accuracy gate
      through AMR.
   2. Add the corrected nonlinear operator required by damped and frequency-dependent
      eigenmodes.
-  3. Add optional corrected-field and corrected-flux GridFunction export.
+  3. Validate corrected-field and corrected-flux GridFunction/ParaView export in
+     high-order distributed runs.
   4. Determine whether raw-field AMR resolves every response contour. If not, add a
      correction-trace indicator without changing raw output semantics.
 

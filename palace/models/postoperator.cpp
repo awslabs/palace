@@ -59,6 +59,51 @@ std::string OutputFolderName(const ProblemType solver_t)
   }
 }
 
+void ScaleSurfaceResponseGridFunctions(double L, int dim, GridFunction *E, GridFunction *D)
+{
+  if (E)
+  {
+    E->Real() *= L;
+    E->Real().FaceNbrData() *= L;
+    E->Imag() *= L;
+    E->Imag().FaceNbrData() *= L;
+  }
+  if (D)
+  {
+    const auto Ld = std::pow(L, dim - 1);
+    D->Real() *= Ld;
+    D->Real().FaceNbrData() *= Ld;
+    D->Imag() *= Ld;
+    D->Imag().FaceNbrData() *= Ld;
+  }
+}
+
+void DimensionalizeSurfaceResponseGridFunctions(Units &units, GridFunction *E,
+                                                GridFunction *D)
+{
+  if (E)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
+  }
+  if (D)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_D>(*D);
+  }
+}
+
+void NondimensionalizeSurfaceResponseGridFunctions(Units &units, GridFunction *E,
+                                                   GridFunction *D)
+{
+  if (E)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
+  }
+  if (D)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_D>(*D);
+  }
+}
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -422,6 +467,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // Set up postprocessing for output to disk.
   paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
   paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
+  surface_response_field_paraview_registered = false;
+  surface_response_flux_paraview_registered = false;
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
 #if defined(MFEM_USE_ZLIB)
@@ -573,6 +620,49 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_bdr->RegisterVCoeffField(fmt::format("E0_{}_real", idx), data.E0r.get());
     paraview_bdr->RegisterVCoeffField(fmt::format("E0_{}_imag", idx), data.E0i.get());
   }
+  RegisterSurfaceResponseParaviewFields();
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::RegisterSurfaceResponseParaviewFields()
+{
+  if (!paraview)
+  {
+    return;
+  }
+  if (has_surface_response_corrected_field && !surface_response_field_paraview_registered)
+  {
+    paraview->RegisterField("E_corrected_real", &surface_response_corrected_field->Real());
+    paraview->RegisterField("E_corrected_imag", &surface_response_corrected_field->Imag());
+    surface_response_field_paraview_registered = true;
+  }
+  if (has_surface_response_corrected_flux && !surface_response_flux_paraview_registered)
+  {
+    paraview->RegisterField("D_corrected_real", &surface_response_corrected_flux->Real());
+    paraview->RegisterField("D_corrected_imag", &surface_response_corrected_flux->Imag());
+    surface_response_flux_paraview_registered = true;
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::ClearSurfaceResponseCorrectedField()
+{
+  if (paraview && surface_response_field_paraview_registered)
+  {
+    paraview->DeregisterField("E_corrected_real");
+    paraview->DeregisterField("E_corrected_imag");
+  }
+  if (paraview && surface_response_flux_paraview_registered)
+  {
+    paraview->DeregisterField("D_corrected_real");
+    paraview->DeregisterField("D_corrected_imag");
+  }
+  has_surface_response_corrected_field = false;
+  has_surface_response_corrected_flux = false;
+  surface_response_field_paraview_registered = false;
+  surface_response_flux_paraview_registered = false;
+  surface_response_corrected_frequency.reset();
+  surface_response_corrected_mode_overlap.reset();
 }
 
 void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
@@ -677,6 +767,17 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (has_surface_response_corrected_field)
+  {
+    ScaleSurfaceResponseGridFunctions(
+        mesh_Lc0, mesh.Dimension(), surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+    DimensionalizeSurfaceResponseGridFunctions(
+        units, surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+  }
   if (En)
   {
     // H1 scalar field: no Piola transform scaling (unlike ND vector Et which gets
@@ -713,6 +814,17 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (has_surface_response_corrected_field)
+  {
+    ScaleSurfaceResponseGridFunctions(
+        1.0 / mesh_Lc0, mesh.Dimension(), surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+    NondimensionalizeSurfaceResponseGridFunctions(
+        units, surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+  }
   if (En)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -824,6 +936,17 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (has_surface_response_corrected_field)
+  {
+    ScaleSurfaceResponseGridFunctions(
+        mesh_Lc0, mesh.Dimension(), surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+    DimensionalizeSurfaceResponseGridFunctions(
+        units, surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+  }
   if (En)
   {
     units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -873,6 +996,16 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
         // Write real part only.
         write_grid_function(E->Real(), "E");
       }
+    }
+  }
+  if (has_surface_response_corrected_field)
+  {
+    write_grid_function(surface_response_corrected_field->Real(), "E_corrected_real");
+    write_grid_function(surface_response_corrected_field->Imag(), "E_corrected_imag");
+    if (has_surface_response_corrected_flux)
+    {
+      write_grid_function(surface_response_corrected_flux->Real(), "D_corrected_real");
+      write_grid_function(surface_response_corrected_flux->Imag(), "D_corrected_imag");
     }
   }
 
@@ -957,6 +1090,17 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (has_surface_response_corrected_field)
+  {
+    ScaleSurfaceResponseGridFunctions(
+        1.0 / mesh_Lc0, mesh.Dimension(), surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+    NondimensionalizeSurfaceResponseGridFunctions(
+        units, surface_response_corrected_field.get(),
+        has_surface_response_corrected_flux ? surface_response_corrected_flux.get()
+                                            : nullptr);
+  }
   if (En)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -1644,25 +1788,12 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
     {
-      if (surface_response_corrected_field)
+      if (has_surface_response_corrected_field)
       {
-        GridFunction corrected_field(*E->ParFESpace(), true);
-        corrected_field.Real().SetFromTrueDofs(surface_response_corrected_field->Real());
-        corrected_field.Imag().SetFromTrueDofs(surface_response_corrected_field->Imag());
-        corrected_field.Real().ExchangeFaceNbrData();
-        corrected_field.Imag().ExchangeFaceNbrData();
-        std::unique_ptr<GridFunction> corrected_flux;
-        if (D_recovered)
-        {
-          MFEM_VERIFY(surface_response_corrected_flux,
-                      "Self-consistent Maxwell surface-response postprocessing requires "
-                      "recovered electric flux for the corrected field!");
-          corrected_flux = std::make_unique<GridFunction>(*D_recovered->ParFESpace(), true);
-          corrected_flux->Real().SetFromTrueDofs(surface_response_corrected_flux->Real());
-          corrected_flux->Imag().SetFromTrueDofs(surface_response_corrected_flux->Imag());
-          corrected_flux->Real().ExchangeFaceNbrData();
-          corrected_flux->Imag().ExchangeFaceNbrData();
-        }
+        auto &corrected_field = *surface_response_corrected_field;
+        const GridFunction *corrected_flux = has_surface_response_corrected_flux
+                                                 ? surface_response_corrected_flux.get()
+                                                 : nullptr;
 
         double capacitor_energy = 0.0;
         for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
@@ -1693,7 +1824,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         for (auto &[index, interface] : result.interfaces)
         {
           interface.self_consistent_energy = surf_post_op.GetInterfaceElectricFieldEnergy(
-              index, corrected_field, corrected_flux.get());
+              index, corrected_field, corrected_flux);
         }
         for (const int target : target_interfaces)
         {
@@ -1703,7 +1834,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                       "energy for target "
                           << target << "!");
           const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
-              target, corrected_field, corrected_flux.get());
+              target, corrected_field, corrected_flux);
           const double radius = surface_response_op->GetMatchingRadius();
           auto outside = std::find_if(edge_energies.begin(), edge_energies.end(),
                                       [&](const auto &edge)
@@ -2046,10 +2177,6 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   PrintSurfaceResponseCorrection(freq.real(), ex_idx);
-  surface_response_corrected_field = nullptr;
-  surface_response_corrected_flux = nullptr;
-  surface_response_corrected_frequency.reset();
-  surface_response_corrected_mode_overlap.reset();
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
@@ -2068,6 +2195,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     WriteMFEMGridFunctions(freq.real(), ind);
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
+  ClearSurfaceResponseCorrectedField();
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
 }
@@ -2117,10 +2245,6 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   PrintSurfaceResponseCorrection(print_idx, 0);
-  surface_response_corrected_field = nullptr;
-  surface_response_corrected_flux = nullptr;
-  surface_response_corrected_frequency.reset();
-  surface_response_corrected_mode_overlap.reset();
   if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);
@@ -2131,6 +2255,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     WriteMFEMGridFunctions(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
   }
+  ClearSurfaceResponseCorrectedField();
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
 }

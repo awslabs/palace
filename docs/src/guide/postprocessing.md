@@ -203,6 +203,12 @@ boundary conditions as well as any material interfaces in the computational doma
 located in the same `paraview/` directory, with suffix `_boundary`. The boundary data
 collection is only available for the ParaView output format.
 
+When Maxwell surface-response correction supplies a self-consistent corrected field,
+Palace preserves the ordinary ``E`` output as the raw thin-metal solution and additionally
+writes ``E_corrected_real`` and ``E_corrected_imag``. If recovered electric flux is needed
+by interface postprocessing, ``D_corrected_real`` and ``D_corrected_imag`` are also written.
+These names are used by both ParaView and MFEM GridFunction output.
+
 The boundary data collection includes the 3D field values sampled on the boundary mesh as
 well as:
 
