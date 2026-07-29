@@ -77,8 +77,7 @@ BuildEigenvalueSolver(MPI_Comm comm, const config::EigenSolverData &eigenmode,
     eigen = std::move(slepc);
 #endif
   }
-  MFEM_VERIFY(eigen,
-              "Failed to configure an eigenvalue solver for the requested backend!");
+  MFEM_VERIFY(eigen, "Failed to configure an eigenvalue solver for the requested backend!");
   eigen->SetNumModes(eigenmode.n, eigenmode.max_size);
   eigen->SetTol(eigenmode.tol);
   eigen->SetMaxIter(eigenmode.max_it);
