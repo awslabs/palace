@@ -630,16 +630,18 @@ void IoData::CheckConfiguration()
   }
   MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
                   problem.type == ProblemType::DRIVEN ||
-                  problem.type == ProblemType::EIGENMODE,
-              "Singular geometric multigrid is currently available for driven and "
-              "eigenmode Maxwell simulations!");
+                  problem.type == ProblemType::EIGENMODE ||
+                  problem.type == ProblemType::BOUNDARYMODE,
+              "Singular geometric multigrid is currently available for BoundaryMode, "
+              "driven, and eigenmode Maxwell simulations!");
   MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
                   solver.linear.pc_mat_real,
               "Singular Maxwell polynomial multigrid currently requires "
               "Solver.Linear.PCMatReal = true!");
   MFEM_VERIFY(
       !solver.singular_elements.Enabled() ||
-          (problem.type != ProblemType::DRIVEN && problem.type != ProblemType::EIGENMODE) ||
+          (problem.type != ProblemType::DRIVEN && problem.type != ProblemType::EIGENMODE &&
+           problem.type != ProblemType::BOUNDARYMODE) ||
           solver.linear.type != LinearSolver::AMS || !solver.linear.complex_coarse_solve,
       "Singular Maxwell with AMS does not support "
       "Solver.Linear.ComplexCoarseSolve = true!");

@@ -929,22 +929,69 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
     }
   };
 
+  const auto MakeBlockCoarseSolver =
+      [&](LinearSolver type, bool transverse) -> std::unique_ptr<Solver<ComplexOperator>>
+  {
+    if (!bmo->HasSingularEnrichment())
+    {
+      return MakeCoarseSolver(type);
+    }
+    return MakeSingularComplexCoarseSolver(
+        linear, type, MatrixSymmetry::UNSYMMETRIC, verbose, comm,
+        transverse ? bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(0).GetTrueVSize()
+                   : bmo->GetH1SpaceHierarchy().GetFESpaceAtLevel(0).GetTrueVSize(),
+        transverse && type == LinearSolver::AMS ? &bmo->GetNDSpaceHierarchy() : nullptr,
+        transverse && type == LinearSolver::AMS ? &bmo->GetH1AuxSpaceHierarchy() : nullptr);
+  };
+
   // ND block: p-multigrid with Hiptmair distributive relaxation smoothing.
-  const auto nd_P = bmo->GetNDSpaceHierarchy().GetProlongationOperators();
-  const auto nd_G =
-      bmo->GetNDSpaceHierarchy().GetDiscreteInterpolators(bmo->GetH1AuxSpaceHierarchy());
+  const auto nd_P = bmo->HasSingularEnrichment()
+                        ? bmo->GetCombinedNDProlongationOperators()
+                        : bmo->GetNDSpaceHierarchy().GetProlongationOperators();
+  const auto nd_G = bmo->HasSingularEnrichment()
+                        ? bmo->GetCombinedGradientOperators()
+                        : bmo->GetNDSpaceHierarchy().GetDiscreteInterpolators(
+                              bmo->GetH1AuxSpaceHierarchy());
+  std::vector<const mfem::Array<int> *> nd_essential, nd_auxiliary_essential;
+  if (bmo->HasSingularEnrichment())
+  {
+    const auto &combined_nd = bmo->GetCombinedNDDbcTDofLists();
+    const auto &combined_h1 = bmo->GetCombinedH1DbcTDofLists();
+    nd_essential.resize(combined_nd.size());
+    nd_auxiliary_essential.resize(combined_h1.size());
+    for (std::size_t level = 0; level < combined_nd.size(); level++)
+    {
+      nd_essential[level] = &combined_nd[level];
+      nd_auxiliary_essential[level] = &combined_h1[level];
+    }
+  }
   auto nd_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
-      comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
+      comm, MakeBlockCoarseSolver(nd_pc_type, true), nd_P, &nd_G, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
-      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+      nd_essential.empty() ? nullptr : &nd_essential,
+      nd_auxiliary_essential.empty() ? nullptr : &nd_auxiliary_essential);
   nd_gmg->EnableTimer();
 
   // H1 block: p-multigrid with Chebyshev smoothing.
-  const auto h1_P = bmo->GetH1SpaceHierarchy().GetProlongationOperators();
+  const auto h1_P = bmo->HasSingularEnrichment()
+                        ? bmo->GetCombinedH1ProlongationOperators()
+                        : bmo->GetH1SpaceHierarchy().GetProlongationOperators();
+  std::vector<const mfem::Array<int> *> h1_essential;
+  if (bmo->HasSingularEnrichment())
+  {
+    const auto &combined_h1 = bmo->GetCombinedH1DbcTDofLists();
+    h1_essential.resize(combined_h1.size());
+    for (std::size_t level = 0; level < combined_h1.size(); level++)
+    {
+      h1_essential[level] = &combined_h1[level];
+    }
+  }
   auto h1_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
-      comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
+      comm, MakeBlockCoarseSolver(h1_pc_type, false), h1_P, nullptr, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
-      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+      h1_essential.empty() ? nullptr : &h1_essential);
   h1_gmg->EnableTimer();
 
   // Combine into block-diagonal preconditioner.
@@ -990,6 +1037,49 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   MFEM_VERIFY(bmo, "AssembleAttPreconditioner requires BMO ctor (2D domain path)!");
   const auto n_levels = bmo->GetNDSpaceHierarchy().GetNumLevels();
   auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
+  if (bmo->HasSingularEnrichment())
+  {
+    const auto prolongations = bmo->GetCombinedNDProlongationOperators();
+    const auto gradients = bmo->GetCombinedGradientOperators();
+    const auto &nd_essential = bmo->GetCombinedNDDbcTDofLists();
+    const auto &h1_essential = bmo->GetCombinedH1DbcTDofLists();
+    MFEM_VERIFY(prolongations.size() + 1 == n_levels && gradients.size() == n_levels &&
+                    nd_essential.size() == n_levels && h1_essential.size() == n_levels,
+                "Combined BoundaryMode transverse hierarchy is inconsistent!");
+
+    std::vector<std::unique_ptr<mfem::HypreParMatrix>> operators(n_levels);
+    operators.back() = bmo->AssembleAttPreconditioner(omega, sigma);
+    operators.back()->EliminateBC(nd_essential.back(), Operator::DIAG_ONE);
+    for (std::size_t fine_level = n_levels - 1; fine_level > 0; fine_level--)
+    {
+      const std::size_t coarse_level = fine_level - 1;
+      const auto *prolongation =
+          dynamic_cast<const mfem::HypreParMatrix *>(prolongations[coarse_level]);
+      MFEM_VERIFY(prolongation,
+                  "Combined BoundaryMode transverse prolongation is not assembled!");
+      operators[coarse_level].reset(
+          mfem::RAP(prolongation, operators[fine_level].get(), prolongation));
+      MFEM_VERIFY(operators[coarse_level],
+                  "Failed to Galerkin-project the combined BoundaryMode transverse "
+                  "preconditioner!");
+      operators[coarse_level]->EliminateBC(nd_essential[coarse_level], Operator::DIAG_ONE);
+    }
+    for (std::size_t level = 0; level < n_levels; level++)
+    {
+      const auto *gradient = dynamic_cast<const mfem::HypreParMatrix *>(gradients[level]);
+      MFEM_VERIFY(gradient, "Combined BoundaryMode exact gradient is not assembled!");
+      std::unique_ptr<mfem::HypreParMatrix> auxiliary(
+          mfem::RAP(gradient, operators[level].get(), gradient));
+      MFEM_VERIFY(auxiliary, "Failed to project the combined BoundaryMode transverse "
+                             "preconditioner into H1!");
+      auxiliary->EliminateBC(h1_essential[level], Operator::DIAG_ONE);
+      B->AddOperator(
+          std::make_unique<ComplexWrapperOperator>(std::move(operators[level]), nullptr));
+      B->AddAuxiliaryOperator(
+          std::make_unique<ComplexWrapperOperator>(std::move(auxiliary), nullptr));
+    }
+    return B;
+  }
 
   // Material coefficients (same at all levels — indexed by element attribute, not by p).
   // The 2D MaterialOperator exposes the scalar out-of-plane μ⁻¹ directly via
@@ -1082,6 +1172,36 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   MFEM_VERIFY(bmo, "AssembleAnnPreconditioner requires BMO ctor (2D domain path)!");
   const auto n_levels = bmo->GetH1SpaceHierarchy().GetNumLevels();
   auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
+  if (bmo->HasSingularEnrichment())
+  {
+    const auto prolongations = bmo->GetCombinedH1ProlongationOperators();
+    const auto &essential = bmo->GetCombinedH1DbcTDofLists();
+    MFEM_VERIFY(prolongations.size() + 1 == n_levels && essential.size() == n_levels,
+                "Combined BoundaryMode longitudinal hierarchy is inconsistent!");
+
+    std::vector<std::unique_ptr<mfem::HypreParMatrix>> operators(n_levels);
+    operators.back() = bmo->AssembleAnnPreconditioner(omega);
+    operators.back()->EliminateBC(essential.back(), Operator::DIAG_ONE);
+    for (std::size_t fine_level = n_levels - 1; fine_level > 0; fine_level--)
+    {
+      const std::size_t coarse_level = fine_level - 1;
+      const auto *prolongation =
+          dynamic_cast<const mfem::HypreParMatrix *>(prolongations[coarse_level]);
+      MFEM_VERIFY(prolongation,
+                  "Combined BoundaryMode longitudinal prolongation is not assembled!");
+      operators[coarse_level].reset(
+          mfem::RAP(prolongation, operators[fine_level].get(), prolongation));
+      MFEM_VERIFY(operators[coarse_level],
+                  "Failed to Galerkin-project the combined BoundaryMode longitudinal "
+                  "preconditioner!");
+      operators[coarse_level]->EliminateBC(essential[coarse_level], Operator::DIAG_ONE);
+    }
+    for (auto &op : operators)
+    {
+      B->AddOperator(std::make_unique<ComplexWrapperOperator>(std::move(op), nullptr));
+    }
+    return B;
+  }
 
   // Material coefficients matching AssembleAnn (real part only). The negative diffusion
   // sign from the IBP is preserved — this matches the actual operator. In-plane tensors

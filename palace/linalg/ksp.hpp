@@ -111,6 +111,16 @@ std::unique_ptr<KspSolver> MakeSingularDirectKspSolver(const IoData &iodata, MPI
 std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(const IoData &iodata,
                                                                MPI_Comm comm);
 
+// Construct a coarse solver for one combined standard-plus-singular block. AMS acts on
+// the standard H(curl) subspace and is completed by a symmetric enrichment correction;
+// the other solver types act on the full combined matrix directly.
+std::unique_ptr<Solver<ComplexOperator>>
+MakeSingularComplexCoarseSolver(const config::LinearSolverData &linear, LinearSolver type,
+                                MatrixSymmetry matrix_symmetry, int verbose, MPI_Comm comm,
+                                int standard_size,
+                                FiniteElementSpaceHierarchy *primary_fespaces = nullptr,
+                                FiniteElementSpaceHierarchy *auxiliary_fespaces = nullptr);
+
 // Configure the combined standard-plus-singular Maxwell solve. The outer Krylov
 // method remains user-configured. For multiple polynomial levels, the
 // preconditioner is geometric multigrid with combined transfer

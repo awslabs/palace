@@ -13,7 +13,9 @@
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fem/singulardofs.hpp"
 #include "fem/singularfeatures.hpp"
+#include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -92,6 +94,20 @@ void SetQuadraticCurvedGeometry(mfem::Mesh &mesh)
 double RelativeNorm(const mfem::Vector &residual, const mfem::Vector &reference)
 {
   return residual.Norml2() / std::max(1.0, reference.Norml2());
+}
+
+void FillVector(mfem::Vector &vector, double phase)
+{
+  for (int i = 0; i < vector.Size(); i++)
+  {
+    vector[i] = std::sin(phase + 0.37 * (i + 1));
+  }
+}
+
+double RelativeGlobalNorm(const mfem::Vector &residual, const mfem::Vector &reference)
+{
+  return linalg::Norml2(Mpi::World(), residual) /
+         std::max(1.0, linalg::Norml2(Mpi::World(), reference));
 }
 
 std::complex<double> SolveFundamentalMode(const IoData &iodata,
@@ -567,6 +583,187 @@ TEST_CASE("Singular BoundaryMode blocks preserve the complete exact sequence",
   CHECK(maximum_h1_gradient > 1.0e-10);
   CHECK(maximum_electric_energy > 1.0e-10);
   CHECK(maximum_magnetic_normal_energy > 1.0e-10);
+}
+
+TEST_CASE("Singular BoundaryMode multigrid hierarchy commutes",
+          "[boundarymodeoperator][singularelements][Serial][Parallel]")
+{
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {2.3, 2.3, 2.3};
+  material.mu_r.s = {1.7, 1.7, 1.7};
+  iodata.boundaries.pec.attributes = {1, 7};
+  iodata.solver.order = 2;
+  iodata.solver.boundary_mode.freq = 10.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.linear.type = LinearSolver::AMS;
+  iodata.solver.linear.mg_max_levels = 2;
+  iodata.solver.linear.pc_mat_real = true;
+  iodata.solver.linear.pc_mat_shifted = true;
+  iodata.solver.linear.complex_coarse_solve = false;
+  iodata.solver.singular_elements.attributes = {7};
+  iodata.solver.singular_elements.order = 1;
+  iodata.solver.singular_elements.abs_tol = 2.0e-8;
+  iodata.solver.singular_elements.rel_tol = 2.0e-8;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(InternalPecLineMesh());
+  iodata.NondimensionalizeInputs(serial_mesh);
+  iodata.CheckConfiguration();
+  const auto serial_features =
+      fem::singular::ExtractSerialLineTipFeatures(*serial_mesh, {7});
+  std::vector<int> partition(serial_mesh->GetNE());
+  for (int element = 0; element < serial_mesh->GetNE(); element++)
+  {
+    partition[element] = std::min(Mpi::Size(Mpi::World()) - 1,
+                                  element * Mpi::Size(Mpi::World()) / serial_mesh->GetNE());
+  }
+  auto par_mesh =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh, partition.data());
+  auto source_vertex_ids = fem::singular::MapPartitionedSerialVertexIds(
+      *serial_mesh, *par_mesh, partition.data());
+  std::vector<fem::singular::GlobalVertexId> source_element_ids(par_mesh->GetNE());
+  for (int element = 0; element < par_mesh->GetNE(); element++)
+  {
+    source_element_ids[element] = par_mesh->GetGlobalElementNum(element);
+  }
+  const auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, *par_mesh, source_vertex_ids, source_element_ids);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  MaterialOperator mat_op(iodata, *meshes.back());
+  BoundaryModeOperator mode_op(iodata, meshes, mat_op, &local_features, &source_vertex_ids);
+
+  const auto nd_prolongations = mode_op.GetCombinedNDProlongationOperators();
+  const auto h1_prolongations = mode_op.GetCombinedH1ProlongationOperators();
+  const auto gradients = mode_op.GetCombinedGradientOperators();
+  const auto &nd_spaces = mode_op.GetNDSpaceHierarchy();
+  const auto &h1_spaces = mode_op.GetH1SpaceHierarchy();
+  const auto &nd_essential = mode_op.GetCombinedNDDbcTDofLists();
+  const auto &h1_essential = mode_op.GetCombinedH1DbcTDofLists();
+  REQUIRE(nd_spaces.GetNumLevels() == 2);
+  REQUIRE(h1_spaces.GetNumLevels() == nd_spaces.GetNumLevels());
+  REQUIRE(nd_prolongations.size() + 1 == nd_spaces.GetNumLevels());
+  REQUIRE(h1_prolongations.size() == nd_prolongations.size());
+  REQUIRE(gradients.size() == nd_spaces.GetNumLevels());
+  REQUIRE(nd_essential.size() == nd_spaces.GetNumLevels());
+  REQUIRE(h1_essential.size() == h1_spaces.GetNumLevels());
+
+  for (std::size_t level = 0; level < gradients.size(); level++)
+  {
+    const int standard_nd_size = nd_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    const int standard_h1_size = h1_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    CHECK(gradients[level]->Height() - standard_nd_size ==
+          static_cast<int>(mode_op.GetSingularDofNumbering().nd.owned_size));
+    CHECK(gradients[level]->Width() - standard_h1_size ==
+          static_cast<int>(mode_op.GetSingularDofNumbering().h1.owned_size));
+    CHECK(std::is_sorted(nd_essential[level].begin(), nd_essential[level].end()));
+    CHECK(std::is_sorted(h1_essential[level].begin(), h1_essential[level].end()));
+  }
+
+  const auto check_identity_enrichment = [](const mfem::HypreParMatrix &prolongation,
+                                            int coarse_standard_size,
+                                            int fine_standard_size)
+  {
+    mfem::Vector coarse(prolongation.Width()), fine(prolongation.Height());
+    coarse = 0.0;
+    for (int i = coarse_standard_size; i < coarse.Size(); i++)
+    {
+      coarse[i] = 0.13 * (i - coarse_standard_size + 1);
+    }
+    prolongation.Mult(coarse, fine);
+    for (int i = 0; i < fine_standard_size; i++)
+    {
+      CHECK(fine[i] == 0.0);
+    }
+    for (int i = fine_standard_size; i < fine.Size(); i++)
+    {
+      CHECK(fine[i] == coarse[coarse_standard_size + i - fine_standard_size]);
+    }
+  };
+
+  for (std::size_t level = 0; level < nd_prolongations.size(); level++)
+  {
+    const auto *nd_prolongation =
+        dynamic_cast<const mfem::HypreParMatrix *>(nd_prolongations[level]);
+    const auto *h1_prolongation =
+        dynamic_cast<const mfem::HypreParMatrix *>(h1_prolongations[level]);
+    const auto *coarse_gradient =
+        dynamic_cast<const mfem::HypreParMatrix *>(gradients[level]);
+    const auto *fine_gradient =
+        dynamic_cast<const mfem::HypreParMatrix *>(gradients[level + 1]);
+    REQUIRE(nd_prolongation);
+    REQUIRE(h1_prolongation);
+    REQUIRE(coarse_gradient);
+    REQUIRE(fine_gradient);
+    CHECK(nd_prolongation->Width() == coarse_gradient->Height());
+    CHECK(nd_prolongation->Height() == fine_gradient->Height());
+    CHECK(h1_prolongation->Width() == coarse_gradient->Width());
+    CHECK(h1_prolongation->Height() == fine_gradient->Width());
+
+    check_identity_enrichment(*nd_prolongation,
+                              nd_spaces.GetFESpaceAtLevel(level).GetTrueVSize(),
+                              nd_spaces.GetFESpaceAtLevel(level + 1).GetTrueVSize());
+    check_identity_enrichment(*h1_prolongation,
+                              h1_spaces.GetFESpaceAtLevel(level).GetTrueVSize(),
+                              h1_spaces.GetFESpaceAtLevel(level + 1).GetTrueVSize());
+
+    mfem::Vector coarse_h1(coarse_gradient->Width()), fine_h1(fine_gradient->Width()),
+        fine_gradient_h1(fine_gradient->Height()),
+        coarse_gradient_h1(coarse_gradient->Height()),
+        prolonged_gradient(nd_prolongation->Height());
+    FillVector(coarse_h1, 0.83);
+    h1_prolongation->Mult(coarse_h1, fine_h1);
+    fine_gradient->Mult(fine_h1, fine_gradient_h1);
+    coarse_gradient->Mult(coarse_h1, coarse_gradient_h1);
+    nd_prolongation->Mult(coarse_gradient_h1, prolonged_gradient);
+    fine_gradient_h1 -= prolonged_gradient;
+    CHECK(RelativeGlobalNorm(fine_gradient_h1, prolonged_gradient) < 2.0e-12);
+  }
+
+  const double omega = 2.0 * M_PI *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+                           iodata.solver.boundary_mode.freq);
+  auto finest_att = mode_op.AssembleAttPreconditioner(omega, -omega * omega);
+  auto finest_ann = mode_op.AssembleAnnPreconditioner(omega);
+  REQUIRE(finest_att);
+  REQUIRE(finest_ann);
+  finest_att->EliminateBC(nd_essential.back(), Operator::DIAG_ONE);
+  finest_ann->EliminateBC(h1_essential.back(), Operator::DIAG_ONE);
+
+  const auto check_galerkin = [](const mfem::HypreParMatrix &fine,
+                                 const mfem::HypreParMatrix &prolongation,
+                                 const mfem::Array<int> &coarse_essential)
+  {
+    std::unique_ptr<mfem::HypreParMatrix> coarse(
+        mfem::RAP(&prolongation, &fine, &prolongation));
+    REQUIRE(coarse);
+    coarse->EliminateBC(coarse_essential, Operator::DIAG_ONE);
+    mfem::Vector coarse_x(coarse->Width()), coarse_action(coarse->Height()),
+        fine_x(fine.Width()), fine_action(fine.Height()),
+        restricted_action(coarse->Height());
+    FillVector(coarse_x, 0.41);
+    linalg::SetSubVector(coarse_x, coarse_essential, 0.0);
+    coarse->Mult(coarse_x, coarse_action);
+    prolongation.Mult(coarse_x, fine_x);
+    fine.Mult(fine_x, fine_action);
+    prolongation.MultTranspose(fine_action, restricted_action);
+    linalg::SetSubVector(restricted_action, coarse_essential, 0.0);
+    restricted_action -= coarse_action;
+    CHECK(RelativeGlobalNorm(restricted_action, coarse_action) < 2.0e-11);
+  };
+
+  const auto *nd_prolongation =
+      dynamic_cast<const mfem::HypreParMatrix *>(nd_prolongations.front());
+  const auto *h1_prolongation =
+      dynamic_cast<const mfem::HypreParMatrix *>(h1_prolongations.front());
+  REQUIRE(nd_prolongation);
+  REQUIRE(h1_prolongation);
+  check_galerkin(*finest_att, *nd_prolongation, nd_essential.front());
+  check_galerkin(*finest_ann, *h1_prolongation, h1_essential.front());
 }
 
 TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")

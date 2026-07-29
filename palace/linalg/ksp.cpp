@@ -533,6 +533,103 @@ public:
 
 }  // namespace
 
+std::unique_ptr<Solver<ComplexOperator>>
+MakeSingularComplexCoarseSolver(const config::LinearSolverData &linear, LinearSolver type,
+                                MatrixSymmetry matrix_symmetry, int verbose, MPI_Comm comm,
+                                int standard_size,
+                                FiniteElementSpaceHierarchy *primary_fespaces,
+                                FiniteElementSpaceHierarchy *auxiliary_fespaces)
+{
+  const int print = verbose - 1;
+  switch (type)
+  {
+    case LinearSolver::AMS:
+      {
+        MFEM_VERIFY(primary_fespaces && auxiliary_fespaces && standard_size > 0 &&
+                        !linear.complex_coarse_solve,
+                    "Combined singular AMS requires standard H(curl) and H1 spaces, a "
+                    "valid standard block size, and ComplexCoarseSolve = false!");
+        auto standard_solver = MakeWrapperSolver<ComplexOperator, HypreAmsSolver>(
+            linear, primary_fespaces->GetFESpaceAtLevel(0),
+            auxiliary_fespaces->GetFESpaceAtLevel(0), linear.ams_max_it,
+            linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
+            linear.amg_agg_coarsen, print);
+        auto enrichment_solver = MakeWrapperSolver<ComplexOperator, BoomerAmgSolver>(
+            linear, linear.ams_max_it, linear.mg_smooth_it, linear.amg_agg_coarsen, print);
+        return std::make_unique<SingularAmsCoarseSolver>(
+            standard_size, std::move(standard_solver), std::move(enrichment_solver));
+      }
+    case LinearSolver::BOOMER_AMG:
+      return MakeWrapperSolver<ComplexOperator, BoomerAmgSolver>(
+          linear, linear.ams_max_it, linear.mg_smooth_it, linear.amg_agg_coarsen, print);
+    case LinearSolver::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+      {
+        auto coarse_linear = linear;
+        if (coarse_linear.sym_factorization == SymbolicFactorization::DEFAULT &&
+            Mpi::Size(comm) > 1)
+        {
+          coarse_linear.sym_factorization = SymbolicFactorization::PARMETIS;
+        }
+        return MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
+            coarse_linear, comm, coarse_linear.sym_factorization, coarse_linear.superlu_3d,
+            coarse_linear.reorder_reuse, print);
+      }
+#else
+      MFEM_ABORT("Solver was not built with SuperLU_DIST support!");
+      return {};
+#endif
+    case LinearSolver::STRUMPACK:
+#if defined(MFEM_USE_STRUMPACK)
+      return MakeWrapperSolver<ComplexOperator, StrumpackSolver>(
+          linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support!");
+      return {};
+#endif
+    case LinearSolver::STRUMPACK_MP:
+#if defined(MFEM_USE_STRUMPACK)
+      return MakeWrapperSolver<ComplexOperator, StrumpackMixedPrecisionSolver>(
+          linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support!");
+      return {};
+#endif
+    case LinearSolver::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+      return MakeWrapperSolver<ComplexOperator, MumpsSolver>(
+          linear, comm, matrix_symmetry, linear.sym_factorization,
+          (linear.strumpack_compression_type == SparseCompression::BLR)
+              ? linear.strumpack_lr_tol
+              : 0.0,
+          linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with MUMPS support!");
+      return {};
+#endif
+    case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+      return MakeWrapperSolver<ComplexOperator, CuDSSSolver>(linear, comm, matrix_symmetry,
+                                                             linear.sym_factorization,
+                                                             linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with cuDSS support!");
+      return {};
+#endif
+    case LinearSolver::JACOBI:
+      return std::make_unique<JacobiSmoother<ComplexOperator>>(comm);
+    case LinearSolver::DEFAULT:
+      MFEM_ABORT("Unexpected unresolved coarse solver type for singular Maxwell!");
+      return {};
+  }
+  MFEM_ABORT("Unsupported coarse solver type for singular Maxwell!");
+  return {};
+}
+
 std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(
     const IoData &iodata, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &h1_fespaces,
@@ -550,97 +647,12 @@ std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(
                   combined_h1_essential_tdofs.size() == number_levels,
               "Combined singular Maxwell solver received an inconsistent hierarchy!");
   const MPI_Comm comm = nd_fespaces.GetFinestFESpace().GetComm();
-  const int print = iodata.problem.verbose - 1;
   MFEM_VERIFY(linear.type != LinearSolver::AMS || !linear.complex_coarse_solve,
               "Singular Maxwell with AMS does not support ComplexCoarseSolve = true!");
 
-  auto coarse_solver = [&]() -> std::unique_ptr<Solver<ComplexOperator>>
-  {
-    switch (linear.type)
-    {
-      case LinearSolver::AMS:
-        {
-          auto standard_solver = MakeWrapperSolver<ComplexOperator, HypreAmsSolver>(
-              linear, nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0),
-              linear.ams_max_it, linear.mg_smooth_it, linear.ams_vector_interp,
-              linear.ams_singular_op, linear.amg_agg_coarsen, print);
-          auto enrichment_solver = MakeWrapperSolver<ComplexOperator, BoomerAmgSolver>(
-              linear, linear.ams_max_it, linear.mg_smooth_it, linear.amg_agg_coarsen,
-              print);
-          return std::make_unique<SingularAmsCoarseSolver>(
-              nd_fespaces.GetFESpaceAtLevel(0).GetTrueVSize(), std::move(standard_solver),
-              std::move(enrichment_solver));
-        }
-      case LinearSolver::BOOMER_AMG:
-        return MakeWrapperSolver<ComplexOperator, BoomerAmgSolver>(
-            linear, linear.ams_max_it, linear.mg_smooth_it, linear.amg_agg_coarsen, print);
-      case LinearSolver::SUPERLU:
-#if defined(MFEM_USE_SUPERLU)
-        {
-          auto coarse_linear = linear;
-          if (coarse_linear.sym_factorization == SymbolicFactorization::DEFAULT &&
-              Mpi::Size(comm) > 1)
-          {
-            coarse_linear.sym_factorization = SymbolicFactorization::PARMETIS;
-          }
-          return MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
-              coarse_linear, comm, coarse_linear.sym_factorization,
-              coarse_linear.superlu_3d, coarse_linear.reorder_reuse, print);
-        }
-#else
-        MFEM_ABORT("Solver was not built with SuperLU_DIST support!");
-        return {};
-#endif
-      case LinearSolver::STRUMPACK:
-#if defined(MFEM_USE_STRUMPACK)
-        return MakeWrapperSolver<ComplexOperator, StrumpackSolver>(
-            linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
-            linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-            linear.strumpack_lossy_precision, linear.reorder_reuse, print);
-#else
-        MFEM_ABORT("Solver was not built with STRUMPACK support!");
-        return {};
-#endif
-      case LinearSolver::STRUMPACK_MP:
-#if defined(MFEM_USE_STRUMPACK)
-        return MakeWrapperSolver<ComplexOperator, StrumpackMixedPrecisionSolver>(
-            linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
-            linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-            linear.strumpack_lossy_precision, linear.reorder_reuse, print);
-#else
-        MFEM_ABORT("Solver was not built with STRUMPACK support!");
-        return {};
-#endif
-      case LinearSolver::MUMPS:
-#if defined(MFEM_USE_MUMPS)
-        return MakeWrapperSolver<ComplexOperator, MumpsSolver>(
-            linear, comm, GetPreconditionerMatrixSymmetry(iodata), linear.sym_factorization,
-            (linear.strumpack_compression_type == SparseCompression::BLR)
-                ? linear.strumpack_lr_tol
-                : 0.0,
-            linear.reorder_reuse, print);
-#else
-        MFEM_ABORT("Solver was not built with MUMPS support!");
-        return {};
-#endif
-      case LinearSolver::CUDSS:
-#if defined(MFEM_USE_CUDSS)
-        return MakeWrapperSolver<ComplexOperator, CuDSSSolver>(
-            linear, comm, GetPreconditionerMatrixSymmetry(iodata), linear.sym_factorization,
-            linear.reorder_reuse, print);
-#else
-        MFEM_ABORT("Solver was not built with cuDSS support!");
-        return {};
-#endif
-      case LinearSolver::JACOBI:
-        return std::make_unique<JacobiSmoother<ComplexOperator>>(comm);
-      case LinearSolver::DEFAULT:
-        MFEM_ABORT("Unexpected unresolved coarse solver type for singular Maxwell!");
-        return {};
-    }
-    MFEM_ABORT("Unsupported coarse solver type for singular Maxwell!");
-    return {};
-  }();
+  auto coarse_solver = MakeSingularComplexCoarseSolver(
+      linear, linear.type, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
+      comm, nd_fespaces.GetFESpaceAtLevel(0).GetTrueVSize(), &nd_fespaces, &h1_fespaces);
 
   std::unique_ptr<Solver<ComplexOperator>> preconditioner;
   if (number_levels == 1)

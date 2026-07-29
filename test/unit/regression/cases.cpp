@@ -1205,6 +1205,25 @@ TEST_CASE("singular_line_boundarymode_loss", "[Serial][Parallel][Regression]")
   }
 }
 
+TEST_CASE("singular_line_boundarymode_multigrid", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 2.0e-9;
+  opts.excluded_columns = {"enrichment_true_dof", "Im{kn}", "Im{n_eff}", "Error (",
+                           "coefficient norm"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["singular-mode-nd-coefficients.csv"] =
+      CompareCanonicalRows(2, {"enrichment_true_dof"}, 2.0e-3, 3.0e-1, true);
+  opts.custom_checks["singular-mode-h1-coefficients.csv"] =
+      CompareCanonicalRows(2, {"enrichment_true_dof"}, 2.0e-3, 2.0e-2, true);
+  opts.custom_checks["singular-mode-tip-slopes.csv"] =
+      CompareCanonicalRows(8, {}, 2.0e-3, opts.atol);
+  palace::test::RunRegressionCase("singular_line_boundarymode",
+                                  "singular_line_boundarymode_mg2.json", "mg2", opts);
+}
+
 TEST_CASE("singular_line_eigenmode", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;

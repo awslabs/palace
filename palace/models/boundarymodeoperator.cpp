@@ -101,9 +101,9 @@ BoundaryModeOperator::BoundaryModeOperator(
   MFEM_VERIFY(!btti_tmp, "BoundaryMode inverse-permeability mass must be real!");
   if (HasSingularEnrichment())
   {
-    Bttr = fem::singular::BuildParallelEnrichedOperator(*bttr_tmp,
-                                                        singular_mu_matrices.nd_mass);
-    Atnr.reset(mfem::ParMult(Bttr.get(), singular_gradient.get(), true));
+    Bttr = fem::singular::BuildParallelEnrichedOperator(
+        *bttr_tmp, singular_mu_matrices.back().nd_mass);
+    Atnr.reset(mfem::ParMult(Bttr.get(), singular_gradients.back().get(), true));
     MFEM_VERIFY(Atnr, "Failed to multiply the singular ND mass and exact gradient!");
     *Atnr *= -1.0;
   }
@@ -137,20 +137,21 @@ BoundaryModeOperator::AssembleAtt(std::complex<double> omega, double sigma) cons
               "Triangular BoundaryMode singular enrichment currently supports only "
               "real excitation frequencies!");
   const double omega_squared = omega.real() * omega.real();
-  auto enrichment_real = CombineOperatorBlocks(
-      1.0, singular_mu_matrices.nd_curl_curl, -omega_squared,
-      singular_epsilon_matrices.nd_mass, -sigma, singular_mu_matrices.nd_mass);
+  auto enrichment_real =
+      CombineOperatorBlocks(1.0, singular_mu_matrices.back().nd_curl_curl, -omega_squared,
+                            singular_epsilon_matrices.back().nd_mass, -sigma,
+                            singular_mu_matrices.back().nd_mass);
   auto combined_real =
       fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment_real);
   std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
   if (standard_imag)
   {
-    MFEM_VERIFY(singular_epsilon_imag_matrices.nd_mass.enrichment_enrichment,
+    MFEM_VERIFY(singular_epsilon_imag_matrices.back().nd_mass.enrichment_enrichment,
                 "Triangular BoundaryMode imaginary permittivity blocks were not "
                 "assembled!");
     auto enrichment_imaginary =
-        CombineOperatorBlocks(-omega_squared, singular_epsilon_imag_matrices.nd_mass, 0.0,
-                              singular_epsilon_imag_matrices.nd_mass);
+        CombineOperatorBlocks(-omega_squared, singular_epsilon_imag_matrices.back().nd_mass,
+                              0.0, singular_epsilon_imag_matrices.back().nd_mass);
     combined_imaginary =
         fem::singular::BuildParallelEnrichedOperator(*standard_imag, enrichment_imaginary);
   }
@@ -172,23 +173,104 @@ BoundaryModeOperator::AssembleAnn(std::complex<double> omega) const
               "real excitation frequencies!");
   const double omega_squared = omega.real() * omega.real();
   auto enrichment_real =
-      CombineOperatorBlocks(-1.0, singular_mu_matrices.h1_diffusion, omega_squared,
-                            singular_epsilon_matrices.h1_mass);
+      CombineOperatorBlocks(-1.0, singular_mu_matrices.back().h1_diffusion, omega_squared,
+                            singular_epsilon_matrices.back().h1_mass);
   auto combined_real =
       fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment_real);
   std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
   if (standard_imag)
   {
-    MFEM_VERIFY(singular_epsilon_imag_matrices.h1_mass.enrichment_enrichment,
+    MFEM_VERIFY(singular_epsilon_imag_matrices.back().h1_mass.enrichment_enrichment,
                 "Triangular BoundaryMode imaginary permittivity blocks were not "
                 "assembled!");
     auto enrichment_imaginary =
-        CombineOperatorBlocks(omega_squared, singular_epsilon_imag_matrices.h1_mass, 0.0,
-                              singular_epsilon_imag_matrices.h1_mass);
+        CombineOperatorBlocks(omega_squared, singular_epsilon_imag_matrices.back().h1_mass,
+                              0.0, singular_epsilon_imag_matrices.back().h1_mass);
     combined_imaginary =
         fem::singular::BuildParallelEnrichedOperator(*standard_imag, enrichment_imaginary);
   }
   return {std::move(combined_real), std::move(combined_imaginary)};
+}
+
+std::unique_ptr<mfem::HypreParMatrix>
+BoundaryModeOperator::AssembleAttPreconditioner(double omega, double sigma) const
+{
+  MFEM_VERIFY(HasSingularEnrichment() && !singular_mu_matrices.empty() &&
+                  !singular_epsilon_matrices.empty(),
+              "Combined BoundaryMode transverse preconditioning requires singular "
+              "enrichment!");
+  MaterialPropertyCoefficient muinv_cc_func(mat_op.GetAttributeToMaterial(),
+                                            mat_op.GetCurlCurlInvPermeability());
+  const bool shifted = iodata.solver.linear.pc_mat_shifted;
+  const double mass_coefficient = shifted ? std::abs(omega * omega) : -omega * omega;
+  const double shift_coefficient = shifted ? std::abs(sigma) : -sigma;
+  MaterialPropertyCoefficient mass_func(mat_op.GetAttributeToMaterial(),
+                                        mat_op.GetPermittivityReal(), mass_coefficient);
+  mass_func.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
+                           shift_coefficient);
+
+  MaterialPropertyCoefficient boundary_func(mat_op.MaxCeedBdrAttribute());
+  surf_z_op->AddStiffnessBdrCoefficients(1.0, boundary_func);
+  surf_z_op->AddMassBdrCoefficients(shifted ? std::abs(omega * omega) : -omega * omega,
+                                    boundary_func);
+  farfield_op->AddDampingBdrCoefficients(omega, boundary_func);
+  surf_sigma_op->AddExtraSystemBdrCoefficients(omega, boundary_func, boundary_func);
+  surf_rz_op->AddExtraSystemBdrCoefficients(omega, boundary_func, boundary_func);
+
+  BilinearForm form(GetNDSpace());
+  form.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, mass_func);
+  if (!boundary_func.empty())
+  {
+    form.AddBoundaryIntegrator<VectorFEMassIntegrator>(boundary_func);
+  }
+  auto standard =
+      ParOperator(form.FullAssemble(false), GetNDSpace()).StealParallelAssemble(false);
+  const auto enrichment =
+      CombineOperatorBlocks(1.0, singular_mu_matrices.back().nd_curl_curl, mass_coefficient,
+                            singular_epsilon_matrices.back().nd_mass, shift_coefficient,
+                            singular_mu_matrices.back().nd_mass);
+  return fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
+}
+
+std::unique_ptr<mfem::HypreParMatrix>
+BoundaryModeOperator::AssembleAnnPreconditioner(double omega) const
+{
+  MFEM_VERIFY(HasSingularEnrichment() && !singular_mu_matrices.empty() &&
+                  !singular_epsilon_matrices.empty(),
+              "Combined BoundaryMode longitudinal preconditioning requires singular "
+              "enrichment!");
+  MaterialPropertyCoefficient neg_muinv_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetInvPermeability(), -1.0);
+  MaterialPropertyCoefficient mass_func(mat_op.GetAttributeToMaterial(),
+                                        mat_op.GetPermittivityScalar(), omega * omega);
+
+  MaterialPropertyCoefficient boundary_func(mat_op.MaxCeedBdrAttribute());
+  surf_z_op->AddStiffnessBdrCoefficients(-1.0, boundary_func);
+  surf_z_op->AddMassBdrCoefficients(omega * omega, boundary_func);
+  {
+    MaterialPropertyCoefficient conductivity(mat_op.MaxCeedBdrAttribute());
+    surf_sigma_op->AddExtraSystemBdrCoefficients(omega, conductivity, conductivity);
+    surf_rz_op->AddExtraSystemBdrCoefficients(omega, conductivity, conductivity);
+    if (!conductivity.empty())
+    {
+      conductivity *= -1.0;
+      boundary_func.AddCoefficient(conductivity.GetAttributeToMaterial(),
+                                   conductivity.GetMaterialProperties());
+    }
+  }
+
+  BilinearForm form(GetH1Space());
+  form.AddDomainIntegrator<DiffusionMassIntegrator>(neg_muinv_func, mass_func);
+  if (!boundary_func.empty())
+  {
+    form.AddBoundaryIntegrator<MassIntegrator>(boundary_func);
+  }
+  auto standard =
+      ParOperator(form.FullAssemble(false), GetH1Space()).StealParallelAssemble(false);
+  const auto enrichment =
+      CombineOperatorBlocks(-1.0, singular_mu_matrices.back().h1_diffusion, omega * omega,
+                            singular_epsilon_matrices.back().h1_mass);
+  return fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
 }
 
 void BoundaryModeOperator::ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn,
@@ -310,8 +392,8 @@ BoundaryModeOperator::ComputeSingularFieldEnergies(double omega, std::complex<do
   };
 
   ComplexVector grad_en(GetNDTrueVSize());
-  singular_gradient->Mult(en.Real(), grad_en.Real());
-  singular_gradient->Mult(en.Imag(), grad_en.Imag());
+  singular_gradients.back()->Mult(en.Real(), grad_en.Real());
+  singular_gradients.back()->Mult(en.Imag(), grad_en.Imag());
   ComplexVector transverse_magnetic_coordinate(et);
   // Bt = R(-kn Et + i grad(En))/omega, where R is a ninety-degree
   // rotation. Isotropic mu^{-1} makes R an isometry for the Btt inner product.
@@ -322,6 +404,41 @@ BoundaryModeOperator::ComputeSingularFieldEnergies(double omega, std::complex<do
           quadratic_energy(en, *singular_epsilon_h1_mass, 0.5),
           quadratic_energy(transverse_magnetic_coordinate, *Bttr, 0.5 / (omega * omega)),
           quadratic_energy(et, *singular_mu_nd_curl_curl, 0.5 / (omega * omega))};
+}
+
+std::vector<const Operator *>
+BoundaryModeOperator::GetCombinedNDProlongationOperators() const
+{
+  std::vector<const Operator *> operators;
+  operators.reserve(singular_nd_prolongations.size());
+  for (const auto &prolongation : singular_nd_prolongations)
+  {
+    operators.push_back(prolongation.get());
+  }
+  return operators;
+}
+
+std::vector<const Operator *>
+BoundaryModeOperator::GetCombinedH1ProlongationOperators() const
+{
+  std::vector<const Operator *> operators;
+  operators.reserve(singular_h1_prolongations.size());
+  for (const auto &prolongation : singular_h1_prolongations)
+  {
+    operators.push_back(prolongation.get());
+  }
+  return operators;
+}
+
+std::vector<const Operator *> BoundaryModeOperator::GetCombinedGradientOperators() const
+{
+  std::vector<const Operator *> operators;
+  operators.reserve(singular_gradients.size());
+  for (const auto &gradient : singular_gradients)
+  {
+    operators.push_back(gradient.get());
+  }
+  return operators;
 }
 
 void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh)
@@ -374,6 +491,8 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
       mg.mg_max_levels, mesh, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
   rt_fespaces = fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
       rt_mg_max_levels, mesh, rt_fecs);
+  combined_nd_dbc_tdof_lists = nd_dbc_tdof_lists;
+  combined_h1_dbc_tdof_lists = h1_dbc_tdof_lists;
 
   // L2 curl space for 2D B-field.
   l2_curl_fec = std::make_unique<mfem::L2_FECollection>(
@@ -393,13 +512,23 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
   MFEM_VERIFY(singular_features && source_vertex_ids &&
                   source_vertex_ids->size() ==
                       static_cast<std::size_t>(solve_mesh->Get().GetNV()) &&
-                  iodata.solver.singular_elements.order == 1 &&
-                  iodata.solver.linear.mg_max_levels == 1,
+                  iodata.solver.singular_elements.order == 1,
               "BoundaryMode singular enrichment requires complete source topology, "
-              "singular order one, and one finite-element level!");
+              "source vertex IDs, and singular order one!");
   MFEM_VERIFY(!mat_op.HasConductivity() && !mat_op.HasLondonDepth(),
               "BoundaryMode singular enrichment does not support bulk conductivity or "
               "London penetration depth!");
+  const auto number_levels = nd_fespaces.GetNumLevels();
+  MFEM_VERIFY(number_levels > 0 && h1_fespaces.GetNumLevels() == number_levels &&
+                  h1_aux_fespaces.GetNumLevels() == number_levels,
+              "BoundaryMode singular ND and H1 hierarchies have inconsistent levels!");
+  for (std::size_t level = 0; level < number_levels; level++)
+  {
+    MFEM_VERIFY(&nd_fespaces.GetFESpaceAtLevel(level).GetMesh() == solve_mesh &&
+                    &h1_fespaces.GetFESpaceAtLevel(level).GetMesh() == solve_mesh,
+                "BoundaryMode singular multigrid currently supports polynomial levels "
+                "on one mesh!");
+  }
 
   singular_dofs = std::make_unique<fem::singular::TriangleDofTopology>(
       fem::singular::BuildLocalTriangleDofTopology(solve_mesh->Get(), *singular_features,
@@ -438,23 +567,42 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
       iodata.solver.singular_elements.quadrature_order,
       iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
       iodata.solver.singular_elements.max_subdivisions};
-  const auto local_mu = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-      *singular_dofs, GetH1Space().Get(), GetNDSpace().Get(), mu_materials, options);
-  const auto local_epsilon = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-      *singular_dofs, GetH1Space().Get(), GetNDSpace().Get(), epsilon_materials, options);
-  singular_mu_matrices = fem::singular::AssembleParallelSparseEnrichmentMatrices(
-      local_mu, *singular_numbering, GetH1Space().Get(), GetNDSpace().Get());
-  singular_epsilon_matrices = fem::singular::AssembleParallelSparseEnrichmentMatrices(
-      local_epsilon, *singular_numbering, GetH1Space().Get(), GetNDSpace().Get());
-  if (mat_op.HasLossTangent())
+  singular_mu_matrices.resize(number_levels);
+  singular_epsilon_matrices.resize(number_levels);
+  singular_epsilon_imag_matrices.resize(number_levels);
+  singular_gradients.reserve(number_levels);
+  for (std::size_t level = 0; level < number_levels; level++)
   {
-    const auto local_epsilon_imag = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-        *singular_dofs, GetH1Space().Get(), GetNDSpace().Get(), epsilon_imag_materials,
-        options);
-    singular_epsilon_imag_matrices =
+    auto &h1_space = h1_fespaces.GetFESpaceAtLevel(level);
+    auto &nd_space = nd_fespaces.GetFESpaceAtLevel(level);
+    const auto local_mu = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+        *singular_dofs, h1_space.Get(), nd_space.Get(), mu_materials, options);
+    const auto local_epsilon = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+        *singular_dofs, h1_space.Get(), nd_space.Get(), epsilon_materials, options);
+    singular_mu_matrices[level] = fem::singular::AssembleParallelSparseEnrichmentMatrices(
+        local_mu, *singular_numbering, h1_space.Get(), nd_space.Get());
+    singular_epsilon_matrices[level] =
         fem::singular::AssembleParallelSparseEnrichmentMatrices(
-            local_epsilon_imag, *singular_numbering, GetH1Space().Get(),
-            GetNDSpace().Get());
+            local_epsilon, *singular_numbering, h1_space.Get(), nd_space.Get());
+    if (mat_op.HasLossTangent())
+    {
+      const auto local_epsilon_imag = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+          *singular_dofs, h1_space.Get(), nd_space.Get(), epsilon_imag_materials, options);
+      singular_epsilon_imag_matrices[level] =
+          fem::singular::AssembleParallelSparseEnrichmentMatrices(
+              local_epsilon_imag, *singular_numbering, h1_space.Get(), nd_space.Get());
+    }
+
+    auto enrichment_gradient =
+        fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
+    const auto &standard_gradient_operator = nd_space.GetDiscreteInterpolator(h1_space);
+    const auto *standard_gradient =
+        dynamic_cast<const ParOperator *>(&standard_gradient_operator);
+    MFEM_VERIFY(standard_gradient,
+                "BoundaryMode singular enrichment requires an assembled standard "
+                "gradient!");
+    singular_gradients.push_back(fem::singular::BuildParallelEnrichedGradient(
+        standard_gradient->ParallelAssemble(), *enrichment_gradient));
   }
 
   {
@@ -465,7 +613,7 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
     auto standard =
         ParOperator(mass.FullAssemble(false), GetNDSpace()).StealParallelAssemble();
     singular_epsilon_nd_mass = fem::singular::BuildParallelEnrichedOperator(
-        *standard, singular_epsilon_matrices.nd_mass);
+        *standard, singular_epsilon_matrices.back().nd_mass);
   }
   {
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
@@ -475,7 +623,7 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
     auto standard =
         ParOperator(mass.FullAssemble(false), GetH1Space()).StealParallelAssemble();
     singular_epsilon_h1_mass = fem::singular::BuildParallelEnrichedOperator(
-        *standard, singular_epsilon_matrices.h1_mass);
+        *standard, singular_epsilon_matrices.back().h1_mass);
   }
   {
     MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
@@ -485,25 +633,55 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
     auto standard =
         ParOperator(stiffness.FullAssemble(false), GetNDSpace()).StealParallelAssemble();
     singular_mu_nd_curl_curl = fem::singular::BuildParallelEnrichedOperator(
-        *standard, singular_mu_matrices.nd_curl_curl);
+        *standard, singular_mu_matrices.back().nd_curl_curl);
   }
-
-  auto enrichment_gradient =
-      fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
-  const auto &standard_gradient_operator =
-      GetNDSpace().GetDiscreteInterpolator(GetH1Space());
-  const auto *standard_gradient =
-      dynamic_cast<const ParOperator *>(&standard_gradient_operator);
-  MFEM_VERIFY(standard_gradient,
-              "BoundaryMode singular enrichment requires an assembled standard "
-              "gradient!");
-  singular_gradient = fem::singular::BuildParallelEnrichedGradient(
-      standard_gradient->ParallelAssemble(), *enrichment_gradient);
 
   singular_h1_essential_true_dofs = fem::singular::GetEssentialTriangleH1TrueDofs(
       GetComm(), *singular_features, *singular_dofs, *singular_numbering);
   singular_nd_essential_true_dofs = fem::singular::GetEssentialTriangleNDTrueDofs(
       GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+
+  combined_nd_dbc_tdof_lists = nd_dbc_tdof_lists;
+  combined_h1_dbc_tdof_lists = h1_dbc_tdof_lists;
+  for (std::size_t level = 0; level < number_levels; level++)
+  {
+    auto &combined_nd = combined_nd_dbc_tdof_lists[level];
+    const int standard_nd_size = nd_fespaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    for (int dof : singular_nd_essential_true_dofs)
+    {
+      combined_nd.Append(standard_nd_size + dof);
+    }
+    combined_nd.Sort();
+
+    auto &combined_h1 = combined_h1_dbc_tdof_lists[level];
+    const int standard_h1_size = h1_fespaces.GetFESpaceAtLevel(level).GetTrueVSize();
+    for (int dof : singular_h1_essential_true_dofs)
+    {
+      combined_h1.Append(standard_h1_size + dof);
+    }
+    combined_h1.Sort();
+    MFEM_VERIFY(
+        std::adjacent_find(combined_nd.begin(), combined_nd.end()) == combined_nd.end() &&
+            std::adjacent_find(combined_h1.begin(), combined_h1.end()) == combined_h1.end(),
+        "BoundaryMode singular essential true DOFs are not unique!");
+  }
+
+  singular_nd_prolongations.reserve(number_levels > 0 ? number_levels - 1 : 0);
+  singular_h1_prolongations.reserve(number_levels > 0 ? number_levels - 1 : 0);
+  for (std::size_t level = 0; level + 1 < number_levels; level++)
+  {
+    const auto *standard_nd_prolongation =
+        dynamic_cast<const ParOperator *>(&nd_fespaces.GetProlongationAtLevel(level));
+    const auto *standard_h1_prolongation =
+        dynamic_cast<const ParOperator *>(&h1_fespaces.GetProlongationAtLevel(level));
+    MFEM_VERIFY(standard_nd_prolongation && standard_h1_prolongation,
+                "BoundaryMode singular p-multigrid requires assembled standard ND and "
+                "H1 prolongation operators!");
+    singular_nd_prolongations.push_back(fem::singular::BuildParallelEnrichedProlongation(
+        standard_nd_prolongation->ParallelAssemble(), singular_numbering->nd));
+    singular_h1_prolongations.push_back(fem::singular::BuildParallelEnrichedProlongation(
+        standard_h1_prolongation->ParallelAssemble(), singular_numbering->h1));
+  }
 
   const int standard_nd_size = GetNDSpace().GetTrueVSize();
   const int combined_nd_size = GetNDTrueVSize();
@@ -529,8 +707,9 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
       "BoundaryMode singular essential true DOFs are not unique!");
 
   Mpi::Print(" Singular BoundaryMode enrichment: {:d} ND + {:d} H1 global true "
-             "DOFs\n",
-             singular_numbering->nd.global_size, singular_numbering->h1.global_size);
+             "DOFs on {:d} polynomial level{}\n",
+             singular_numbering->nd.global_size, singular_numbering->h1.global_size,
+             number_levels, number_levels == 1 ? "" : "s");
 }
 
 }  // namespace palace

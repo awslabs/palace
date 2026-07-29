@@ -1828,6 +1828,14 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", true}};
     CHECK_THROWS(IoData(config, false));
 
+    config = MakeConfig();
+    config["Problem"]["Type"] = "BoundaryMode";
+    config["Solver"]["BoundaryMode"] = {
+        {"Freq", 1.0}, {"N", 1}, {"Save", 0}, {"Target", 1.0}};
+    config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", true}};
+    CHECK_NOTHROW(IoData(config, false));
+
+    config = MakeConfig();
     config["Problem"]["Type"] = "Driven";
     config["Boundaries"]["SurfaceCurrent"] = {
         {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};

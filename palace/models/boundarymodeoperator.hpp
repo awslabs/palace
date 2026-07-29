@@ -14,6 +14,7 @@
 #include "fem/singularassembly.hpp"
 #include "fem/singularfeatures.hpp"
 #include "fem/singularsystem.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/iodata.hpp"
@@ -102,7 +103,7 @@ public:
   const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
   const mfem::HypreParMatrix *GetCombinedGradient() const
   {
-    return singular_gradient.get();
+    return singular_gradients.empty() ? nullptr : singular_gradients.back().get();
   }
 
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
@@ -114,6 +115,9 @@ public:
   //   Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n
   ComplexHypreParMatrix AssembleAtt(std::complex<double> omega, double sigma) const;
   ComplexHypreParMatrix AssembleAnn(std::complex<double> omega) const;
+  std::unique_ptr<mfem::HypreParMatrix> AssembleAttPreconditioner(double omega,
+                                                                  double sigma) const;
+  std::unique_ptr<mfem::HypreParMatrix> AssembleAnnPreconditioner(double omega) const;
 
   // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde]
   // as et / en, then apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn)
@@ -175,6 +179,17 @@ public:
   }
   bool HasSingularEnrichment() const { return singular_features != nullptr; }
   const mfem::Array<int> &GetCombinedDbcTDofList() const { return combined_dbc_tdof_list; }
+  const std::vector<mfem::Array<int>> &GetCombinedNDDbcTDofLists() const
+  {
+    return combined_nd_dbc_tdof_lists;
+  }
+  const std::vector<mfem::Array<int>> &GetCombinedH1DbcTDofLists() const
+  {
+    return combined_h1_dbc_tdof_lists;
+  }
+  std::vector<const Operator *> GetCombinedNDProlongationOperators() const;
+  std::vector<const Operator *> GetCombinedH1ProlongationOperators() const;
+  std::vector<const Operator *> GetCombinedGradientOperators() const;
 
 private:
   const IoData &iodata;
@@ -202,15 +217,20 @@ private:
   const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids;
   std::unique_ptr<fem::singular::TriangleDofTopology> singular_dofs;
   std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
-  fem::singular::ParallelSparseEnrichmentMatrices singular_mu_matrices;
-  fem::singular::ParallelSparseEnrichmentMatrices singular_epsilon_matrices;
-  fem::singular::ParallelSparseEnrichmentMatrices singular_epsilon_imag_matrices;
-  std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
+  std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_mu_matrices;
+  std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_epsilon_matrices;
+  std::vector<fem::singular::ParallelSparseEnrichmentMatrices>
+      singular_epsilon_imag_matrices;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_gradients;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_prolongations;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_h1_prolongations;
   std::unique_ptr<mfem::HypreParMatrix> singular_epsilon_nd_mass;
   std::unique_ptr<mfem::HypreParMatrix> singular_epsilon_h1_mass;
   std::unique_ptr<mfem::HypreParMatrix> singular_mu_nd_curl_curl;
   mfem::Array<int> singular_nd_essential_true_dofs;
   mfem::Array<int> singular_h1_essential_true_dofs;
+  std::vector<mfem::Array<int>> combined_nd_dbc_tdof_lists;
+  std::vector<mfem::Array<int>> combined_h1_dbc_tdof_lists;
   mfem::Array<int> combined_dbc_tdof_list;
 
   // Material and boundary operators. mat_op is caller-owned; the rest are constructed
