@@ -651,6 +651,7 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   edge_distance_smoothing =
       dielectric.value("EdgeDistanceSmoothing", edge_distance_smoothing);
   localize_edge_energy = dielectric.value("LocalizeEdgeEnergy", localize_edge_energy);
+  save_local_edge_energy = dielectric.value("SaveLocalEdgeEnergy", save_local_edge_energy);
   if (auto it = dielectric.find("EdgeFrameNormal"); it != dielectric.end())
   {
     edge_frame_normal = it->get<std::array<double, 3>>();

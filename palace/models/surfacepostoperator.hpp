@@ -78,6 +78,7 @@ private:
     std::vector<double> edge_distances;
     double edge_distance_smoothing;
     bool localize_edge_energy;
+    bool save_local_edge_energy;
     std::array<double, 3> edge_frame_normal;
     std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
 

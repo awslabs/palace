@@ -632,6 +632,12 @@ thin-sheet edge and provides an interface-independent local singular-amplitude p
 Localized volume integration adds postprocessing cost and can produce large tables on
 detailed 3D perimeters.
 
+Set `SaveLocalEdgeEnergy` to `false` to retain localized edge-energy computation for
+response matrices while suppressing the ordinary per-source
+`surface-Q-edge-local.csv` table. Coupon generators use this option because their
+qualified output is the response matrix, not the redundant source-by-source local
+diagnostic.
+
 For automatically extracted edges, the table also reports `p_vertex_in` and
 `p_bulk_vertex_ann`. The first is the surface-core participation at points with
 ``d_{edge}<R`` whose graph distance along the physical edge chain to a non-regular

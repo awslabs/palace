@@ -302,6 +302,7 @@ def dielectric(
         "EdgeExcludeAttributes": [1],
         "EdgeDistances": [0.2],
         "LocalizeEdgeEnergy": True,
+        "SaveLocalEdgeEnergy": False,
         "EdgeFrameNormal": [0.0, 1.0, 0.0],
     }
 

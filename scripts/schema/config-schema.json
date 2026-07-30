@@ -1885,6 +1885,11 @@
           "description": "Resolve each matching-annulus energy by nearest physical edge segment and write `surface-Q-edge-local.csv`. With `AutomaticEdges`, Palace infers a process normal for every segment; otherwise `EdgeFrameNormal` is required. This is intended for local edge-correction models and can produce large output tables in 3D.",
           "default": false
         },
+        "SaveLocalEdgeEnergy": {
+          "type": "boolean",
+          "description": "Write the per-segment localized edge energies to `surface-Q-edge-local.csv`. Disable this for response-matrix coupon generation when localized energies are needed internally but the potentially large ordinary per-source table is not needed.",
+          "default": true
+        },
         "EdgeFrameNormal": {
           "type": "array",
           "description": "Normal defining the positive and negative sides and the polarization frame for manual localized edge diagnostics. With `AutomaticEdges`, this is an optional fallback for materially ambiguous surfaces. The positive direction should point from the substrate or process side toward air or vacuum.",

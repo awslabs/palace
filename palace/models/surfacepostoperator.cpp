@@ -202,6 +202,7 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   edge_distances = data.edge_distances;
   edge_distance_smoothing = data.edge_distance_smoothing;
   localize_edge_energy = data.localize_edge_energy;
+  save_local_edge_energy = data.save_local_edge_energy;
   edge_frame_normal = data.edge_frame_normal.value_or(std::array<double, 3>{});
   flux_recovery = data.flux_recovery;
 
@@ -934,7 +935,7 @@ std::size_t SurfacePostOperator::GetNInterfaceLocalEdgeEntries() const
   std::size_t size = 0;
   for (const auto &[idx, data] : eps_surfs)
   {
-    if (data.localize_edge_energy)
+    if (data.localize_edge_energy && data.save_local_edge_energy)
     {
       size += data.edge_distances.size() * data.edge_distance_tree->Size();
     }

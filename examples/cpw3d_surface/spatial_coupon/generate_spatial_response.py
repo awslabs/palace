@@ -742,6 +742,7 @@ def dielectric(
         "Permittivity": permittivity,
         "LossTan": INTERFACE_LOSS[interface_type],
         "LocalizeEdgeEnergy": True,
+        "SaveLocalEdgeEnergy": False,
         "EdgeAttributes": edge_attributes,
         "EdgeExcludeAttributes": [1],
         "EdgeDistances": [radius],

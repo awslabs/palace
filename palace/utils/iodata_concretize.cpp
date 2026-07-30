@@ -523,6 +523,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
               Concretize(j_entry, "EdgeDistanceSmoothing",
                          it->second.edge_distance_smoothing);
               Concretize(j_entry, "LocalizeEdgeEnergy", it->second.localize_edge_energy);
+              Concretize(j_entry, "SaveLocalEdgeEnergy", it->second.save_local_edge_energy);
             }
             if (it->second.edge_refinement)
             {

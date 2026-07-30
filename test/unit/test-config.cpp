@@ -764,6 +764,12 @@ TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
   const config::InterfaceDielectricData automatic(dielectric);
   CHECK(automatic.automatic_edges);
   CHECK(automatic.edge_attributes.empty());
+  CHECK(automatic.save_local_edge_energy);
+
+  dielectric["SaveLocalEdgeEnergy"] = false;
+  const config::InterfaceDielectricData compact_output(dielectric);
+  CHECK_FALSE(compact_output.save_local_edge_energy);
+  dielectric.erase("SaveLocalEdgeEnergy");
 
   dielectric["EdgeAttributes"] = {2};
   CHECK_THROWS(config::InterfaceDielectricData(dielectric));
@@ -1674,6 +1680,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           iodata1.boundaries.postpro.dielectric.at(1).edge_distance_smoothing);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).localize_edge_energy ==
           iodata1.boundaries.postpro.dielectric.at(1).localize_edge_energy);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).save_local_edge_energy ==
+          iodata1.boundaries.postpro.dielectric.at(1).save_local_edge_energy);
     REQUIRE(iodata2.boundaries.postpro.dielectric.at(1).edge_refinement);
     REQUIRE(iodata1.boundaries.postpro.dielectric.at(1).edge_refinement);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_refinement->radius ==

@@ -1659,6 +1659,10 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
             edge.energy_outside / energy_electric_all, edge.energy_annulus,
             edge.energy_annulus / energy_electric_all});
       }
+      if (!data.save_local_edge_energy)
+      {
+        continue;
+      }
       for (const auto &edge : surf_post_op.GetInterfaceLocalEdgeElectricFieldEnergies(
                idx, *E, D_recovered.get()))
       {

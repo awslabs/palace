@@ -344,6 +344,7 @@ def dielectric(
         "Permittivity": permittivity,
         "LossTan": loss_tangent,
         "LocalizeEdgeEnergy": True,
+        "SaveLocalEdgeEnergy": False,
         "AutomaticEdges": True,
         "EdgeExcludeAttributes": [1],
         "EdgeFrameNormal": [0.0, 0.0, 1.0],
@@ -720,6 +721,7 @@ def main():
             interface_layers,
         )
         config["Solver"]["Electrostatic"]["ResponseMatrix"] = False
+        config["Solver"]["Electrostatic"]["AggregateResponseMatrix"] = False
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
 
     probe_directory = output / "convergence-probes"

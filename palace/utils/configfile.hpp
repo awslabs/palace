@@ -711,6 +711,9 @@ public:
   // Whether to resolve annular interface energies by physical edge segment.
   bool localize_edge_energy = false;
 
+  // Whether to write per-segment localized energies to surface-Q-edge-local.csv.
+  bool save_local_edge_energy = true;
+
   // Unit normal defining the positive and negative sides and polarization frame for local
   // edge diagnostics. The positive side points from the substrate/process side toward
   // air or vacuum.

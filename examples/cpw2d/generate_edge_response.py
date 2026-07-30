@@ -191,6 +191,7 @@ def dielectric(index, attributes, interface_type, thickness, permittivity):
         "EdgeExcludeAttributes": [1],
         "EdgeDistances": [0.2],
         "LocalizeEdgeEnergy": True,
+        "SaveLocalEdgeEnergy": False,
         "EdgeFrameNormal": [0.0, 1.0, 0.0],
     }
 
