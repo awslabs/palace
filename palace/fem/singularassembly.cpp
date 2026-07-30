@@ -4466,6 +4466,237 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
   return result;
 }
 
+namespace
+{
+
+template <typename Topology, typename ElementAssembler>
+std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatchImpl(
+    const Topology &topology, mfem::FiniteElementSpace &h1_fespace,
+    mfem::FiniteElementSpace &nd_fespace,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
+    ElementAssembler &&assemble_element)
+{
+  auto *mesh = h1_fespace.GetMesh();
+  if (material_batches.empty())
+  {
+    throw std::invalid_argument(
+        "Singular sparse batch assembly requires at least one material field!");
+  }
+  for (const auto &materials : material_batches)
+  {
+    if (materials.size() != static_cast<std::size_t>(mesh->GetNE()))
+    {
+      throw std::invalid_argument(
+          "Singular sparse batch assembly material fields must cover every element!");
+    }
+    for (const auto &material : materials)
+    {
+      ValidateMaterialCoefficients(material);
+    }
+  }
+  for (std::size_t h1 = 0; h1 < topology.h1_to_nd.size(); h1++)
+  {
+    const std::size_t nd = topology.h1_to_nd[h1];
+    if (nd >= topology.nd_dofs.size() || !(topology.h1_dofs[h1] == topology.nd_dofs[nd]))
+    {
+      throw std::invalid_argument(
+          "Singular sparse batch assembly requires a consistent H1-to-ND topology!");
+    }
+  }
+
+  const int h1_enrichment_size = static_cast<int>(topology.h1_dofs.size());
+  const int nd_enrichment_size = static_cast<int>(topology.nd_dofs.size());
+  std::vector<LocalSparseEnrichmentMatrices> results(material_batches.size());
+  for (auto &result : results)
+  {
+    InitializeLocalSparseBlock(result.h1_diffusion, h1_fespace.GetVSize(),
+                               h1_enrichment_size);
+    InitializeLocalSparseBlock(result.h1_mass, h1_fespace.GetVSize(), h1_enrichment_size);
+    InitializeLocalSparseBlock(result.nd_mass, nd_fespace.GetVSize(), nd_enrichment_size);
+    InitializeLocalSparseBlock(result.nd_curl_curl, nd_fespace.GetVSize(),
+                               nd_enrichment_size);
+  }
+
+  for (int element = 0; element < mesh->GetNE(); element++)
+  {
+    const auto &element_dofs = topology.elements[element];
+    if (element_dofs.h1.empty() && element_dofs.nd.empty())
+    {
+      continue;
+    }
+    const auto h1_enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs.h1, topology.h1_dofs.size());
+    const auto nd_enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs.nd, topology.nd_dofs.size());
+    auto &transformation = *mesh->GetElementTransformation(element);
+    const auto [unweighted_enrichment, unweighted_coupling] =
+        assemble_element(element, element_dofs, transformation);
+
+    mfem::Array<int> h1_standard_dofs, nd_standard_dofs;
+    mfem::DofTransformation h1_dof_transformation, nd_dof_transformation;
+    h1_fespace.GetElementVDofs(element, h1_standard_dofs, h1_dof_transformation);
+    nd_fespace.GetElementVDofs(element, nd_standard_dofs, nd_dof_transformation);
+    const auto h1_unsigned_dofs = UnsignedDofs(h1_standard_dofs);
+    const auto nd_unsigned_dofs = UnsignedDofs(nd_standard_dofs);
+
+    for (std::size_t batch = 0; batch < material_batches.size(); batch++)
+    {
+      auto enrichment = unweighted_enrichment;
+      auto coupling = unweighted_coupling;
+      ApplyIsotropicMaterialCoefficients(material_batches[batch][element], enrichment);
+      ApplyIsotropicMaterialCoefficients(material_batches[batch][element], coupling);
+      ApplyStandardDofTransformations(h1_dof_transformation, nd_dof_transformation,
+                                      coupling);
+      auto &result = results[batch];
+
+      result.h1_diffusion.enrichment_enrichment->AddSubMatrix(
+          h1_enrichment_dofs, h1_enrichment_dofs, enrichment.h1_diffusion);
+      result.h1_diffusion.standard_enrichment->AddSubMatrix(
+          h1_standard_dofs, h1_enrichment_dofs, coupling.h1_standard_enrichment);
+      result.h1_diffusion.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+          h1_enrichment_dofs, h1_enrichment_dofs,
+          enrichment.h1_diffusion_estimated_absolute_error);
+      result.h1_diffusion.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+          h1_unsigned_dofs, h1_enrichment_dofs, coupling.h1_estimated_absolute_error);
+
+      result.h1_mass.enrichment_enrichment->AddSubMatrix(
+          h1_enrichment_dofs, h1_enrichment_dofs, enrichment.h1_mass);
+      result.h1_mass.standard_enrichment->AddSubMatrix(
+          h1_standard_dofs, h1_enrichment_dofs, coupling.h1_mass_standard_enrichment);
+      result.h1_mass.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+          h1_enrichment_dofs, h1_enrichment_dofs,
+          enrichment.h1_mass_estimated_absolute_error);
+      result.h1_mass.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+          h1_unsigned_dofs, h1_enrichment_dofs, coupling.h1_mass_estimated_absolute_error);
+
+      result.nd_mass.enrichment_enrichment->AddSubMatrix(
+          nd_enrichment_dofs, nd_enrichment_dofs, enrichment.nd_mass);
+      result.nd_mass.standard_enrichment->AddSubMatrix(
+          nd_standard_dofs, nd_enrichment_dofs, coupling.nd_mass_standard_enrichment);
+      result.nd_mass.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+          nd_enrichment_dofs, nd_enrichment_dofs,
+          enrichment.nd_mass_estimated_absolute_error);
+      result.nd_mass.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+          nd_unsigned_dofs, nd_enrichment_dofs, coupling.nd_mass_estimated_absolute_error);
+
+      result.nd_curl_curl.enrichment_enrichment->AddSubMatrix(
+          nd_enrichment_dofs, nd_enrichment_dofs, enrichment.nd_curl_curl);
+      result.nd_curl_curl.standard_enrichment->AddSubMatrix(
+          nd_standard_dofs, nd_enrichment_dofs, coupling.nd_curl_curl_standard_enrichment);
+      result.nd_curl_curl.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+          nd_enrichment_dofs, nd_enrichment_dofs,
+          enrichment.nd_curl_curl_estimated_absolute_error);
+      result.nd_curl_curl.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+          nd_unsigned_dofs, nd_enrichment_dofs,
+          coupling.nd_curl_curl_estimated_absolute_error);
+
+      AccumulateQuadratureStatistics(enrichment, result.total_quadrature_leaf_count,
+                                     result.maximum_subdivision_depth);
+      AccumulateQuadratureStatistics(coupling, result.total_quadrature_leaf_count,
+                                     result.maximum_subdivision_depth);
+    }
+  }
+
+  for (auto &result : results)
+  {
+    FinalizeLocalSparseBlock(result.h1_diffusion);
+    FinalizeLocalSparseBlock(result.h1_mass);
+    FinalizeLocalSparseBlock(result.nd_mass);
+    FinalizeLocalSparseBlock(result.nd_curl_curl);
+  }
+  return results;
+}
+
+}  // namespace
+
+std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
+    const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    mfem::FiniteElementSpace &nd_fespace,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
+    const AdaptiveAssemblyOptions &options)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = h1_fespace.GetMesh();
+  if (!mesh || nd_fespace.GetMesh() != mesh ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.h1_to_nd.size() != topology.h1_dofs.size() ||
+      topology.h1_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+      topology.nd_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Singular sparse batch topology and spaces must share one mesh!");
+  }
+  return AssembleLocalSparseEnrichmentMatricesBatchImpl(
+      topology, h1_fespace, nd_fespace, material_batches,
+      [&](int element, const ElementDofMap &element_dofs,
+          mfem::ElementTransformation &transformation)
+      {
+        try
+        {
+          auto enrichment =
+              AssembleElementEnrichmentMatrices(element_dofs, transformation, options);
+          auto coupling = AssembleElementStandardEnrichmentMatrices(
+              element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
+              transformation, options);
+          return std::make_pair(std::move(enrichment), std::move(coupling));
+        }
+        catch (const std::exception &error)
+        {
+          throw std::runtime_error(
+              fmt::format("Singular sparse batch assembly failed on local mesh element "
+                          "{}: {}",
+                          element, error.what()));
+        }
+      });
+}
+
+std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    mfem::FiniteElementSpace &nd_fespace,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
+    const AdaptiveAssemblyOptions &options)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = h1_fespace.GetMesh();
+  if (!mesh || nd_fespace.GetMesh() != mesh || mesh->Dimension() != 2 ||
+      mesh->SpaceDimension() != 2 ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.h1_to_nd.size() != topology.h1_dofs.size() ||
+      topology.h1_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+      topology.nd_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Triangular singular sparse batch topology and spaces must share one "
+        "two-dimensional mesh!");
+  }
+  return AssembleLocalSparseEnrichmentMatricesBatchImpl(
+      topology, h1_fespace, nd_fespace, material_batches,
+      [&](int element, const TriangleElementDofMap &element_dofs,
+          mfem::ElementTransformation &transformation)
+      {
+        try
+        {
+          auto enrichment = AssembleTriangleElementEnrichmentMatrices(
+              element_dofs, transformation, options);
+          auto coupling = AssembleTriangleElementStandardEnrichmentMatrices(
+              element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
+              transformation, options);
+          return std::make_pair(std::move(enrichment), std::move(coupling));
+        }
+        catch (const std::exception &error)
+        {
+          const auto &basis = element_dofs.nd.front().basis;
+          throw std::runtime_error(fmt::format(
+              "Triangular singular sparse batch assembly failed on local mesh element {} "
+              "(relative Jacobian variation = {:.3e}, first singular basis family = {}, "
+              "nodes = [{}, {}, {}], nu = {:.17g}): {}",
+              element, GetElementTransformationRelativeJacobianVariation(transformation),
+              static_cast<int>(basis.family), basis.nodes[0], basis.nodes[1],
+              basis.nodes[2], basis.nu, error.what()));
+        }
+      });
+}
+
 LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
     const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     const std::vector<IsotropicMaterialCoefficients> &materials,

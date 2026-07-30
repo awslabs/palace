@@ -276,6 +276,21 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
     const std::vector<IsotropicMaterialCoefficients> &materials,
     const AdaptiveAssemblyOptions &options);
 
+// Assemble several material-weighted operators while evaluating each element's
+// nonpolynomial basis tensors and adaptive quadrature only once. The outer result
+// ordering matches material_batches.
+std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
+    const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    mfem::FiniteElementSpace &nd_fespace,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
+    const AdaptiveAssemblyOptions &options);
+
+std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    mfem::FiniteElementSpace &nd_fespace,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
+    const AdaptiveAssemblyOptions &options);
+
 // Electrostatic specialization of AssembleLocalSparseEnrichmentMatrices. It
 // assembles only the H1 diffusion block and therefore does not evaluate any
 // rotational ND basis or curl-curl integral.

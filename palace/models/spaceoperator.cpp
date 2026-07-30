@@ -231,24 +231,32 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
   {
     auto &h1_space = GetH1Spaces().GetFESpaceAtLevel(level);
     auto &nd_space = GetNDSpaces().GetFESpaceAtLevel(level);
-    const auto assemble_domain =
-        [&](const std::vector<fem::singular::IsotropicMaterialCoefficients>
-                &level_materials)
-    {
-      const auto local = tetrahedral ? fem::singular::AssembleLocalSparseEnrichmentMatrices(
-                                           *singular_dofs, h1_space.Get(), nd_space.Get(),
-                                           level_materials, options)
-                                     : fem::singular::AssembleLocalSparseEnrichmentMatrices(
-                                           *triangle_singular_dofs, h1_space.Get(),
-                                           nd_space.Get(), level_materials, options);
-      return fem::singular::AssembleParallelSparseEnrichmentMatrices(
-          local, *singular_numbering, h1_space.Get(), nd_space.Get());
-    };
-    singular_domain_matrices[level] = assemble_domain(materials);
-    singular_domain_abs_matrices[level] = assemble_domain(absolute_materials);
+    std::vector<std::vector<fem::singular::IsotropicMaterialCoefficients>> material_batches{
+        materials, absolute_materials};
     if (mat_op.HasLossTangent())
     {
-      singular_domain_imag_matrices[level] = assemble_domain(imaginary_materials);
+      material_batches.push_back(imaginary_materials);
+    }
+    const auto local_matrices =
+        tetrahedral
+            ? fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+                  *singular_dofs, h1_space.Get(), nd_space.Get(), material_batches, options)
+            : fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+                  *triangle_singular_dofs, h1_space.Get(), nd_space.Get(), material_batches,
+                  options);
+    MFEM_VERIFY(local_matrices.size() == material_batches.size(),
+                "Full-wave singular material batch assembly returned an inconsistent "
+                "number of operators!");
+    const auto assemble_domain = [&](std::size_t batch)
+    {
+      return fem::singular::AssembleParallelSparseEnrichmentMatrices(
+          local_matrices[batch], *singular_numbering, h1_space.Get(), nd_space.Get());
+    };
+    singular_domain_matrices[level] = assemble_domain(0);
+    singular_domain_abs_matrices[level] = assemble_domain(1);
+    if (mat_op.HasLossTangent())
+    {
+      singular_domain_imag_matrices[level] = assemble_domain(2);
     }
 
     const auto assemble_lumped_boundary = [&](const std::map<int, double> &coefficients)

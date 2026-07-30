@@ -875,6 +875,21 @@ void CheckClose(const mfem::DenseMatrix &matrix, const mfem::DenseMatrix &refere
   }
 }
 
+void CheckClose(const fem::singular::LocalSparseOperatorBlocks &matrix,
+                const fem::singular::LocalSparseOperatorBlocks &reference)
+{
+  CheckClose(DenseMatrix(*matrix.enrichment_enrichment),
+             DenseMatrix(*reference.enrichment_enrichment));
+  CheckClose(DenseMatrix(*matrix.standard_enrichment),
+             DenseMatrix(*reference.standard_enrichment));
+  CheckClose(DenseMatrix(*matrix.enrichment_standard),
+             DenseMatrix(*reference.enrichment_standard));
+  CheckClose(DenseMatrix(*matrix.enrichment_enrichment_estimated_absolute_error),
+             DenseMatrix(*reference.enrichment_enrichment_estimated_absolute_error));
+  CheckClose(DenseMatrix(*matrix.standard_enrichment_estimated_absolute_error),
+             DenseMatrix(*reference.standard_enrichment_estimated_absolute_error));
+}
+
 double BilinearErrorBound(const mfem::Vector &standard, const mfem::DenseMatrix &error,
                           const mfem::Vector &enrichment)
 {
@@ -1252,6 +1267,24 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
   const std::vector<fem::singular::IsotropicMaterialCoefficients> materials{{1.7, 0.8}};
   const auto full_sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
       topology, h1_space, nd_space, materials, options);
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> second_materials{
+      {0.35, 1.6}};
+  const auto second_sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+      topology, h1_space, nd_space, second_materials, options);
+  const auto batched_sparse = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+      topology, h1_space, nd_space, {materials, second_materials}, options);
+  REQUIRE(batched_sparse.size() == 2);
+  for (const auto &[batch, independent] : {std::pair{&batched_sparse[0], &full_sparse},
+                                           std::pair{&batched_sparse[1], &second_sparse}})
+  {
+    CheckClose(batch->h1_diffusion, independent->h1_diffusion);
+    CheckClose(batch->h1_mass, independent->h1_mass);
+    CheckClose(batch->nd_mass, independent->nd_mass);
+    CheckClose(batch->nd_curl_curl, independent->nd_curl_curl);
+    CHECK(batch->total_quadrature_leaf_count == independent->total_quadrature_leaf_count);
+    CHECK(batch->maximum_subdivision_depth == independent->maximum_subdivision_depth);
+  }
+
   const auto h1_sparse = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
       topology, h1_space, materials, options);
   CheckClose(DenseMatrix(*h1_sparse.diffusion.enrichment_enrichment),
@@ -3372,6 +3405,23 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
   const auto sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
       topology, h1_space, nd_space, materials, options);
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> second_materials{
+      {0.35, 1.6}, {1.2, 0.55}};
+  const auto second_sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+      topology, h1_space, nd_space, second_materials, options);
+  const auto batched_sparse = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+      topology, h1_space, nd_space, {materials, second_materials}, options);
+  REQUIRE(batched_sparse.size() == 2);
+  for (const auto &[batch, independent] : {std::pair{&batched_sparse[0], &sparse},
+                                           std::pair{&batched_sparse[1], &second_sparse}})
+  {
+    CheckClose(batch->h1_diffusion, independent->h1_diffusion);
+    CheckClose(batch->h1_mass, independent->h1_mass);
+    CheckClose(batch->nd_mass, independent->nd_mass);
+    CheckClose(batch->nd_curl_curl, independent->nd_curl_curl);
+    CHECK(batch->total_quadrature_leaf_count == independent->total_quadrature_leaf_count);
+    CHECK(batch->maximum_subdivision_depth == independent->maximum_subdivision_depth);
+  }
 
   REQUIRE(sparse.h1_diffusion.enrichment_enrichment);
   REQUIRE(sparse.h1_diffusion.standard_enrichment);
@@ -3573,10 +3623,19 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   CHECK_THROWS_AS(fem::singular::AssembleLocalSparseEnrichmentMatrices(
                       invalid_topology, h1_space, nd_space, materials, options),
                   std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+                      invalid_topology, h1_space, nd_space, {materials}, options),
+                  std::invalid_argument);
   auto missing_material = materials;
   missing_material.pop_back();
   CHECK_THROWS_AS(fem::singular::AssembleLocalSparseEnrichmentMatrices(
                       topology, h1_space, nd_space, missing_material, options),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+                      topology, h1_space, nd_space, {}, options),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+                      topology, h1_space, nd_space, {materials, missing_material}, options),
                   std::invalid_argument);
 }
 

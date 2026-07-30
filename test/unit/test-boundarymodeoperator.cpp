@@ -440,6 +440,14 @@ TEST_CASE("Singular BoundaryMode blocks preserve the complete exact sequence",
   const auto &btt = *mode_op.GetBtt();
   const auto &atn = *mode_op.GetAtnr();
   const auto &btn = *mode_op.GetBtnr();
+  // The complete Btt * G product has the correct action but creates structural fill
+  // in the standard-standard block through element-level cancellation. Keep the
+  // blockwise assembly sparse without relying on a numerical drop tolerance.
+  std::unique_ptr<mfem::HypreParMatrix> full_product(mfem::ParMult(&btt, &gradient, true));
+  REQUIRE(full_product);
+  CAPTURE(atn.NNZ(), full_product->NNZ());
+  CHECK(atn.NNZ() < full_product->NNZ());
+
   mfem::Vector h1(mode_op.GetH1TrueVSize());
   mfem::Vector nd(mode_op.GetNDTrueVSize());
   for (int i = 0; i < h1.Size(); i++)

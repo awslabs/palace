@@ -76,6 +76,41 @@ fem::singular::ParallelSparseOperatorBlocks AddScaledOperatorBlocks(
   return result;
 }
 
+std::unique_ptr<mfem::HypreParMatrix>
+BuildEnrichedAtn(const mfem::HypreParMatrix &standard_atn,
+                 const fem::singular::ParallelSparseOperatorBlocks &nd_mass,
+                 const mfem::HypreParMatrix &standard_gradient,
+                 const mfem::HypreParMatrix &enrichment_gradient)
+{
+  MFEM_VERIFY(nd_mass.standard_enrichment && nd_mass.enrichment_standard &&
+                  nd_mass.enrichment_enrichment,
+              "Cannot construct singular BoundaryMode gradient coupling from incomplete "
+              "ND mass blocks!");
+
+  // Assemble only the enrichment-containing blocks through -Btt G. Multiplying the
+  // complete standard mass and gradient matrices creates millions of structural zeros
+  // from element-level cancellations. The standard mixed-gradient block is assembled
+  // directly by the same path used without enrichment.
+  std::unique_ptr<mfem::HypreParMatrix> standard_enrichment(
+      mfem::ParMult(nd_mass.standard_enrichment.get(), &enrichment_gradient, true));
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_standard(
+      mfem::ParMult(nd_mass.enrichment_standard.get(), &standard_gradient, true));
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_enrichment(
+      mfem::ParMult(nd_mass.enrichment_enrichment.get(), &enrichment_gradient, true));
+  MFEM_VERIFY(standard_enrichment && enrichment_standard && enrichment_enrichment,
+              "Failed to multiply singular BoundaryMode gradient-coupling blocks!");
+  *standard_enrichment *= -1.0;
+  *enrichment_standard *= -1.0;
+  *enrichment_enrichment *= -1.0;
+
+  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+  blocks(0, 0) = &standard_atn;
+  blocks(0, 1) = standard_enrichment.get();
+  blocks(1, 0) = enrichment_standard.get();
+  blocks(1, 1) = enrichment_enrichment.get();
+  return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
+}
+
 }  // namespace
 
 BoundaryModeOperator::BoundaryModeOperator(
@@ -109,22 +144,32 @@ BoundaryModeOperator::BoundaryModeOperator(
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.
-  if (!HasSingularEnrichment())
-  {
-    std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op);
-  }
+  auto [standard_atnr, standard_atni] =
+      mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op);
   auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op);
+  MFEM_VERIFY(!standard_atni,
+              "BoundaryMode inverse-permeability gradient coupling must be real!");
   MFEM_VERIFY(!btti_tmp, "BoundaryMode inverse-permeability mass must be real!");
   if (HasSingularEnrichment())
   {
     Bttr = fem::singular::BuildParallelEnrichedOperator(
         *bttr_tmp, singular_mu_matrices.back().nd_mass);
-    Atnr.reset(mfem::ParMult(Bttr.get(), singular_gradients.back().get(), true));
-    MFEM_VERIFY(Atnr, "Failed to multiply the singular ND mass and exact gradient!");
-    *Atnr *= -1.0;
+    const auto &standard_gradient_operator =
+        GetNDSpace().GetDiscreteInterpolator(GetH1Space());
+    const auto *standard_gradient =
+        dynamic_cast<const ParOperator *>(&standard_gradient_operator);
+    MFEM_VERIFY(standard_gradient,
+                "BoundaryMode singular enrichment requires an assembled standard "
+                "gradient!");
+    auto enrichment_gradient =
+        fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
+    Atnr = BuildEnrichedAtn(*standard_atnr, singular_mu_matrices.back().nd_mass,
+                            standard_gradient->ParallelAssemble(), *enrichment_gradient);
   }
   else
   {
+    Atnr = std::move(standard_atnr);
+    Atni = std::move(standard_atni);
     Bttr = std::move(bttr_tmp);
   }
   Btnr.reset(Atnr->Transpose());
@@ -617,22 +662,27 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
   {
     auto &h1_space = h1_fespaces.GetFESpaceAtLevel(level);
     auto &nd_space = nd_fespaces.GetFESpaceAtLevel(level);
-    const auto local_mu = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-        *singular_dofs, h1_space.Get(), nd_space.Get(), mu_materials, options);
-    const auto local_epsilon = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-        *singular_dofs, h1_space.Get(), nd_space.Get(), epsilon_materials, options);
-    singular_mu_matrices[level] = fem::singular::AssembleParallelSparseEnrichmentMatrices(
-        local_mu, *singular_numbering, h1_space.Get(), nd_space.Get());
-    singular_epsilon_matrices[level] =
-        fem::singular::AssembleParallelSparseEnrichmentMatrices(
-            local_epsilon, *singular_numbering, h1_space.Get(), nd_space.Get());
+    std::vector<std::vector<fem::singular::IsotropicMaterialCoefficients>> material_batches{
+        mu_materials, epsilon_materials};
     if (mat_op.HasLossTangent())
     {
-      const auto local_epsilon_imag = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-          *singular_dofs, h1_space.Get(), nd_space.Get(), epsilon_imag_materials, options);
+      material_batches.push_back(epsilon_imag_materials);
+    }
+    const auto local_matrices = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+        *singular_dofs, h1_space.Get(), nd_space.Get(), material_batches, options);
+    MFEM_VERIFY(local_matrices.size() == material_batches.size(),
+                "BoundaryMode singular material batch assembly returned an inconsistent "
+                "number of operators!");
+    singular_mu_matrices[level] = fem::singular::AssembleParallelSparseEnrichmentMatrices(
+        local_matrices[0], *singular_numbering, h1_space.Get(), nd_space.Get());
+    singular_epsilon_matrices[level] =
+        fem::singular::AssembleParallelSparseEnrichmentMatrices(
+            local_matrices[1], *singular_numbering, h1_space.Get(), nd_space.Get());
+    if (mat_op.HasLossTangent())
+    {
       singular_epsilon_imag_matrices[level] =
           fem::singular::AssembleParallelSparseEnrichmentMatrices(
-              local_epsilon_imag, *singular_numbering, h1_space.Get(), nd_space.Get());
+              local_matrices[2], *singular_numbering, h1_space.Get(), nd_space.Get());
     }
 
     const auto assemble_nd_boundary = [&](const std::map<int, double> &coefficients)
