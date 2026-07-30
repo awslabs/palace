@@ -100,7 +100,9 @@ using ComplexKspSolver = BaseKspSolver<ComplexOperator>;
 std::unique_ptr<KspSolver>
 MakeSingularPatchKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                            const Operator &full_operator, const Operator &standard_operator,
-                           const fem::singular::ParallelFeaturePatches &feature_patches);
+                           const fem::singular::ParallelFeaturePatches &feature_patches,
+                           const std::vector<const Operator *> &combined_prolongations,
+                           const std::vector<mfem::Array<int>> &combined_essential_tdofs);
 bool UsesSingularPatchKspSolver(const IoData &iodata);
 
 // Configure correctness-first solvers for assembled combined standard-plus-singular

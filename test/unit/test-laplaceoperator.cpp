@@ -13,6 +13,7 @@
 
 #include "fem/mesh.hpp"
 #include "fem/singularfeatures.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -117,7 +118,7 @@ void SetQuadraticGeometry(mfem::Mesh &mesh)
   mesh.GetNodes()->ProjectCoefficient(geometry);
 }
 
-IoData SingularElectrostaticData()
+IoData SingularElectrostaticData(int order = 1, int mg_max_levels = 1)
 {
   config::json config = {
       {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -127,7 +128,7 @@ IoData SingularElectrostaticData()
        {{"PEC", {{"Attributes", {1}}}},
         {"Terminal", {{{"Index", 1}, {"Attributes", {7, 8}}}}}}},
       {"Solver",
-       {{"Order", 1},
+       {{"Order", order},
         {"SingularElements",
          {{"Attributes", {7, 8}},
           {"Order", 1},
@@ -135,11 +136,15 @@ IoData SingularElectrostaticData()
           {"AbsTol", 1.0e-3},
           {"RelTol", 1.0e-3},
           {"MaxSubdivisions", 6}}},
-        {"Linear", {{"MGMaxLevels", 1}}}}}};
+        {"Linear",
+         {{"MGMaxLevels", mg_max_levels},
+          {"KSPType", "CG"},
+          {"Tol", 1.0e-11},
+          {"MaxIts", 500}}}}}};
   return IoData(config, false);
 }
 
-IoData TriangleSingularElectrostaticData()
+IoData TriangleSingularElectrostaticData(int order = 1, int mg_max_levels = 1)
 {
   config::json config = {
       {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -149,7 +154,7 @@ IoData TriangleSingularElectrostaticData()
        {{"PEC", {{"Attributes", {1}}}},
         {"Terminal", {{{"Index", 1}, {"Attributes", {7}}}}}}},
       {"Solver",
-       {{"Order", 1},
+       {{"Order", order},
         {"SingularElements",
          {{"Attributes", {7}},
           {"Order", 1},
@@ -157,7 +162,11 @@ IoData TriangleSingularElectrostaticData()
           {"AbsTol", 2.0e-6},
           {"RelTol", 2.0e-6},
           {"MaxSubdivisions", 6}}},
-        {"Linear", {{"MGMaxLevels", 1}}}}}};
+        {"Linear",
+         {{"MGMaxLevels", mg_max_levels},
+          {"KSPType", "CG"},
+          {"Tol", 1.0e-11},
+          {"MaxIts", 500}}}}}};
   return IoData(config, false);
 }
 
@@ -169,12 +178,90 @@ void FillVector(Vector &x, double phase)
   }
 }
 
+void CheckSingularElectrostaticMultigrid(const IoData &iodata, LaplaceOperator &laplace,
+                                         const Operator &K, const Vector &RHS)
+{
+  const auto *hierarchy = dynamic_cast<const MultigridOperator *>(&K);
+  REQUIRE(hierarchy);
+  REQUIRE(hierarchy->GetNumLevels() == 2);
+  REQUIRE(laplace.GetH1Spaces().GetNumLevels() == 2);
+  const auto prolongations = laplace.GetCombinedH1ProlongationOperators();
+  const auto &essential = laplace.GetCombinedH1DbcTDofLists();
+  REQUIRE(prolongations.size() == 1);
+  REQUIRE(essential.size() == 2);
+
+  const auto *prolongation =
+      dynamic_cast<const mfem::HypreParMatrix *>(prolongations.front());
+  const auto *coarse =
+      dynamic_cast<const mfem::HypreParMatrix *>(&hierarchy->GetOperatorAtLevel(0));
+  const auto *fine =
+      dynamic_cast<const mfem::HypreParMatrix *>(&hierarchy->GetOperatorAtLevel(1));
+  REQUIRE(prolongation);
+  REQUIRE(coarse);
+  REQUIRE(fine);
+
+  const int coarse_standard_size =
+      laplace.GetH1Spaces().GetFESpaceAtLevel(0).GetTrueVSize();
+  const int fine_standard_size = laplace.GetH1Spaces().GetFESpaceAtLevel(1).GetTrueVSize();
+  REQUIRE(coarse->Height() - coarse_standard_size == fine->Height() - fine_standard_size);
+
+  Vector coarse_enrichment(coarse->Width()), fine_enrichment(fine->Height());
+  coarse_enrichment = 0.0;
+  for (int i = coarse_standard_size; i < coarse_enrichment.Size(); i++)
+  {
+    coarse_enrichment[i] = 0.17 * (i - coarse_standard_size + 1);
+  }
+  prolongation->Mult(coarse_enrichment, fine_enrichment);
+  for (int i = 0; i < fine_standard_size; i++)
+  {
+    CHECK(fine_enrichment[i] == 0.0);
+  }
+  for (int i = fine_standard_size; i < fine_enrichment.Size(); i++)
+  {
+    CHECK(fine_enrichment[i] ==
+          coarse_enrichment[coarse_standard_size + i - fine_standard_size]);
+  }
+
+  Vector coarse_x(coarse->Width()), coarse_action(coarse->Height()),
+      prolonged_x(fine->Width()), fine_action(fine->Height()),
+      restricted_action(coarse->Height());
+  FillVector(coarse_x, 0.43);
+  linalg::SetSubVector(coarse_x, essential.front(), 0.0);
+  coarse->Mult(coarse_x, coarse_action);
+  prolongation->Mult(coarse_x, prolonged_x);
+  fine->Mult(prolonged_x, fine_action);
+  prolongation->MultTranspose(fine_action, restricted_action);
+  linalg::SetSubVector(restricted_action, essential.front(), 0.0);
+  restricted_action -= coarse_action;
+  const double galerkin_error = linalg::Norml2(Mpi::World(), restricted_action) /
+                                std::max(linalg::Norml2(Mpi::World(), coarse_action),
+                                         std::numeric_limits<double>::min());
+  CHECK(galerkin_error < 2.0e-11);
+
+  auto ksp = MakeSingularPatchKspSolver(
+      iodata, laplace.GetH1Spaces(), K, laplace.GetSingularStandardStiffnessMatrix(),
+      laplace.GetSingularFeaturePatches(), prolongations, essential);
+  ksp->SetOperators(K, K);
+  Vector solution(K.Width());
+  solution = 0.0;
+  ksp->Mult(RHS, solution);
+  CHECK(ksp->NumFailedMult() == 0);
+  Vector residual(RHS);
+  K.AddMult(solution, residual, -1.0);
+  const double relative_residual =
+      linalg::Norml2(Mpi::World(), residual) /
+      std::max(linalg::Norml2(Mpi::World(), RHS), std::numeric_limits<double>::min());
+  CHECK(relative_residual < 2.0e-10);
+}
+
 }  // namespace
 
-void CheckSingularLaplaceOperator(const std::array<int, 4> &partition, bool curved = false)
+void CheckSingularLaplaceOperator(const std::array<int, 4> &partition, bool curved = false,
+                                  int order = 1, int mg_max_levels = 1)
 {
   auto serial_mesh = InternalSheetMesh();
-  if (curved)
+  const bool curved_geometry = curved || order > 1;
+  if (curved_geometry)
   {
     SetQuadraticGeometry(serial_mesh);
   }
@@ -197,13 +284,15 @@ void CheckSingularLaplaceOperator(const std::array<int, 4> &partition, bool curv
 
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
-  auto iodata = SingularElectrostaticData();
+  auto iodata = SingularElectrostaticData(order, mg_max_levels);
   LaplaceOperator laplace(iodata, meshes, &local_features, &source_vertex_ids);
   auto K = laplace.GetStiffnessMatrix();
   const auto &G = laplace.GetGradMatrix();
   const int standard_h1_size = laplace.GetH1Space().GetTrueVSize();
   const int standard_nd_size = laplace.GetNDSpace().GetTrueVSize();
-  const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(K.get());
+  const auto *hierarchy = dynamic_cast<const MultigridOperator *>(K.get());
+  const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(
+      hierarchy ? &hierarchy->GetFinestOperator() : K.get());
   const auto *hypre_G = dynamic_cast<const mfem::HypreParMatrix *>(&G);
 
   REQUIRE(K);
@@ -219,10 +308,10 @@ void CheckSingularLaplaceOperator(const std::array<int, 4> &partition, bool curv
   const auto &diagnostics = laplace.GetSingularDiagnostics();
   CHECK(diagnostics.convention_version ==
         fem::singular::ReferenceIntegral::ConventionVersion);
-  CHECK(diagnostics.standard_order == 1);
+  CHECK(diagnostics.standard_order == order);
   CHECK(diagnostics.singular_order == 1);
   CHECK(diagnostics.quadrature_order == 8);
-  if (curved)
+  if (curved_geometry)
   {
     CHECK(diagnostics.quadrature_leaf_count > 0);
     CHECK(diagnostics.duffy_reference_table_maximum_entries == 0);
@@ -263,6 +352,10 @@ void CheckSingularLaplaceOperator(const std::array<int, 4> &partition, bool curv
   for (int i = standard_h1_size; i < V.Size(); i++)
   {
     CHECK(V[i] == 0.0);
+  }
+  if (mg_max_levels > 1)
+  {
+    CheckSingularElectrostaticMultigrid(iodata, laplace, *K, RHS);
   }
 
   mfem::CGSolver cg(Mpi::World());
@@ -374,7 +467,8 @@ void CheckSingularLaplaceOperator(const std::array<int, 4> &partition, bool curv
 }
 
 void CheckTriangleSingularLaplaceOperator(const std::array<int, 8> &partition,
-                                          bool curved = false)
+                                          bool curved = false, int order = 1,
+                                          int mg_max_levels = 1)
 {
   auto serial_mesh = InternalLineTipMesh();
   if (curved)
@@ -400,13 +494,15 @@ void CheckTriangleSingularLaplaceOperator(const std::array<int, 8> &partition,
 
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
-  auto iodata = TriangleSingularElectrostaticData();
+  auto iodata = TriangleSingularElectrostaticData(order, mg_max_levels);
   LaplaceOperator laplace(iodata, meshes, nullptr, &source_vertex_ids, &local_features);
   auto K = laplace.GetStiffnessMatrix();
   const auto &G = laplace.GetGradMatrix();
   const int standard_h1_size = laplace.GetH1Space().GetTrueVSize();
   const int standard_nd_size = laplace.GetNDSpace().GetTrueVSize();
-  const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(K.get());
+  const auto *hierarchy = dynamic_cast<const MultigridOperator *>(K.get());
+  const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(
+      hierarchy ? &hierarchy->GetFinestOperator() : K.get());
   const auto *hypre_G = dynamic_cast<const mfem::HypreParMatrix *>(&G);
 
   REQUIRE(K);
@@ -421,7 +517,7 @@ void CheckTriangleSingularLaplaceOperator(const std::array<int, 8> &partition,
   CHECK(G.Height() >= standard_nd_size);
 
   const auto &diagnostics = laplace.GetSingularDiagnostics();
-  CHECK(diagnostics.standard_order == 1);
+  CHECK(diagnostics.standard_order == order);
   CHECK(diagnostics.singular_order == 1);
   CHECK(diagnostics.quadrature_leaf_count > 0);
   CHECK(diagnostics.quadrature_maximum_depth == 0);
@@ -447,6 +543,10 @@ void CheckTriangleSingularLaplaceOperator(const std::array<int, 8> &partition,
   for (int i = standard_h1_size; i < V.Size(); i++)
   {
     CHECK(V[i] == 0.0);
+  }
+  if (mg_max_levels > 1)
+  {
+    CheckSingularElectrostaticMultigrid(iodata, laplace, *K, RHS);
   }
 
   mfem::CGSolver cg(Mpi::World());
@@ -519,6 +619,26 @@ TEST_CASE("Curved triangular singular H1 enrichment is partition conforming",
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 2);
   CheckTriangleSingularLaplaceOperator({0, 0, 0, 0, 1, 1, 1, 1}, true);
+}
+
+TEST_CASE("Tetrahedral singular electrostatic multigrid is Galerkin consistent",
+          "[laplaceoperator][singular][multigrid][Serial][Parallel]")
+{
+  const std::array<int, 4> partition = Mpi::Size(Mpi::World()) == 1
+                                           ? std::array<int, 4>{0, 0, 0, 0}
+                                           : std::array<int, 4>{0, 0, 1, 1};
+  REQUIRE((Mpi::Size(Mpi::World()) == 1 || Mpi::Size(Mpi::World()) == 2));
+  CheckSingularLaplaceOperator(partition, false, 2, 2);
+}
+
+TEST_CASE("Triangular singular electrostatic multigrid is Galerkin consistent",
+          "[laplaceoperator][singular][triangle][multigrid][Serial][Parallel]")
+{
+  const std::array<int, 8> partition = Mpi::Size(Mpi::World()) == 1
+                                           ? std::array<int, 8>{0, 0, 0, 0, 0, 0, 0, 0}
+                                           : std::array<int, 8>{0, 0, 0, 0, 1, 1, 1, 1};
+  REQUIRE((Mpi::Size(Mpi::World()) == 1 || Mpi::Size(Mpi::World()) == 2));
+  CheckTriangleSingularLaplaceOperator(partition, false, 2, 2);
 }
 
 }  // namespace palace

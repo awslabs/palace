@@ -949,7 +949,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(singular.rel_tol == 2.0e-8);
     CHECK(singular.max_subdivisions == 11);
     CHECK(iodata.solver.device == Device::CPU);
-    CHECK(iodata.solver.linear.mg_max_levels == 1);
+    CHECK(iodata.solver.linear.mg_max_levels == 100);
 
     config = IoData::ConcretizeDefaults(iodata, config);
     const auto &j_singular = config["Solver"]["SingularElements"];
@@ -1819,7 +1819,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("GPU execution is rejected and full-wave polynomial multigrid is accepted")
+  SECTION("GPU execution is rejected and polynomial multigrid is accepted")
   {
     auto config = MakeConfig();
     config["Solver"]["Device"] = "GPU";
@@ -1827,7 +1827,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
 
     config = MakeConfig();
     config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", true}};
-    CHECK_THROWS(IoData(config, false));
+    CHECK_NOTHROW(IoData(config, false));
 
     config = MakeConfig();
     config["Problem"]["Type"] = "BoundaryMode";

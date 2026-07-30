@@ -75,6 +75,15 @@ LaplaceOperator::LaplaceOperator(
                  static_cast<std::size_t>(mesh.back()->GetNE()) &&
              mesh.back()->Dimension() == 3))),
       "Singular feature topology does not match the electrostatic solve mesh!");
+  if (HasSingularEnrichment())
+  {
+    for (std::size_t level = 0; level < h1_fespaces.GetNumLevels(); level++)
+    {
+      MFEM_VERIFY(&h1_fespaces.GetFESpaceAtLevel(level).GetMesh() == &GetMesh(),
+                  "Singular electrostatic multigrid currently supports polynomial "
+                  "levels on one mesh!");
+    }
+  }
 
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -378,8 +387,17 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     auto parallel_enrichment = fem::singular::AssembleParallelSparseH1EnrichmentMatrices(
         local_enrichment, *singular_numbering, GetH1Space().Get());
 
-    auto standard_stiffness =
-        ParOperator(k.FullAssemble(skip_zeros), GetH1Space()).StealParallelAssemble();
+    const std::size_t number_levels = GetH1Spaces().GetNumLevels();
+    std::vector<std::unique_ptr<mfem::HypreParMatrix>> standard_operators(number_levels);
+    for (std::size_t level = 0; level < number_levels; level++)
+    {
+      auto &h1_fespace = GetH1Spaces().GetFESpaceAtLevel(level);
+      BilinearForm k_level(h1_fespace);
+      k_level.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+      standard_operators[level] =
+          ParOperator(k_level.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
+    }
+    const auto &standard_stiffness = standard_operators.back();
     auto unconstrained = fem::singular::BuildParallelEnrichedOperator(*standard_stiffness,
                                                                       parallel_enrichment);
     singular_unconstrained_stiffness =
@@ -428,18 +446,88 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
           *triangle_singular_features, *triangle_singular_dofs);
       feature_count = triangle_singular_features->vertices.size();
     }
+
+    combined_h1_dbc_tdof_lists = dbc_tdof_lists;
+    for (std::size_t level = 0; level < number_levels; level++)
+    {
+      auto &combined_essential = combined_h1_dbc_tdof_lists[level];
+      const int standard_size = GetH1Spaces().GetFESpaceAtLevel(level).GetTrueVSize();
+      for (int dof : enrichment_essential)
+      {
+        combined_essential.Append(standard_size + dof);
+      }
+      combined_essential.Sort();
+      MFEM_VERIFY(std::adjacent_find(combined_essential.begin(),
+                                     combined_essential.end()) == combined_essential.end(),
+                  "Singular electrostatic essential true DOFs are not unique!");
+    }
+
+    singular_h1_prolongations.reserve(number_levels > 0 ? number_levels - 1 : 0);
+    for (std::size_t level = 0; level + 1 < number_levels; level++)
+    {
+      const auto *standard_prolongation =
+          dynamic_cast<const ParOperator *>(&GetH1Spaces().GetProlongationAtLevel(level));
+      MFEM_VERIFY(standard_prolongation,
+                  "Singular electrostatic p-multigrid requires assembled standard H1 "
+                  "prolongation operators!");
+      singular_h1_prolongations.push_back(fem::singular::BuildParallelEnrichedProlongation(
+          standard_prolongation->ParallelAssemble(), singular_numbering->h1));
+    }
+
     auto constrained_blocks = fem::singular::BuildParallelConstrainedOperatorBlocks(
         *standard_stiffness, parallel_enrichment, dbc_tdof_lists.back(),
         enrichment_essential);
     auto dirichlet = fem::singular::BuildParallelDirichletSystem(
         std::move(unconstrained), GetH1Space().GetTrueVSize(), dbc_tdof_lists.back(),
         enrichment_essential);
+
+    std::vector<std::unique_ptr<mfem::HypreParMatrix>> combined_operators(number_levels),
+        coupling_operators(number_levels);
+    const std::size_t finest_level = number_levels - 1;
+    combined_operators[finest_level] = std::move(dirichlet.constrained);
+    standard_operators[finest_level] = std::move(constrained_blocks.standard_standard);
+    coupling_operators[finest_level] = std::move(constrained_blocks.standard_enrichment);
+    // Rediscretize the standard block to preserve local FE sparsity. The singular space is
+    // identical on every p-level, so A_ee is invariant and A_se,c = P_s^T A_se,f.
+    for (std::size_t fine_level = finest_level; fine_level > 0; fine_level--)
+    {
+      const std::size_t coarse_level = fine_level - 1;
+      std::unique_ptr<mfem::HypreParMatrix> discarded(
+          standard_operators[coarse_level]->EliminateRowsCols(
+              dbc_tdof_lists[coarse_level]));
+
+      const auto *standard_par_operator = dynamic_cast<const ParOperator *>(
+          &GetH1Spaces().GetProlongationAtLevel(coarse_level));
+      MFEM_VERIFY(standard_par_operator,
+                  "Singular electrostatic p-multigrid requires assembled standard H1 "
+                  "prolongation operators!");
+      const auto &standard_prolongation = standard_par_operator->ParallelAssemble();
+      std::unique_ptr<mfem::HypreParMatrix> standard_restriction(
+          standard_prolongation.Transpose());
+      coupling_operators[coarse_level].reset(
+          mfem::ParMult(standard_restriction.get(), coupling_operators[fine_level].get()));
+      MFEM_VERIFY(coupling_operators[coarse_level],
+                  "Failed to restrict the singular electrostatic coupling block!");
+      coupling_operators[coarse_level]->EliminateRows(dbc_tdof_lists[coarse_level]);
+      discarded.reset(
+          coupling_operators[coarse_level]->EliminateCols(enrichment_essential));
+
+      fem::singular::ParallelSparseOperatorBlocks coarse_enrichment;
+      coarse_enrichment.enrichment_enrichment =
+          std::make_unique<mfem::HypreParMatrix>(*constrained_blocks.enrichment_enrichment);
+      coarse_enrichment.standard_enrichment = std::move(coupling_operators[coarse_level]);
+      coarse_enrichment.enrichment_standard.reset(
+          coarse_enrichment.standard_enrichment->Transpose());
+      combined_operators[coarse_level] = fem::singular::BuildParallelEnrichedOperator(
+          *standard_operators[coarse_level], coarse_enrichment);
+      coupling_operators[coarse_level] = std::move(coarse_enrichment.standard_enrichment);
+    }
+
     auto feature_patches = fem::singular::BuildParallelFeaturePatches(
-        *dirichlet.constrained, *constrained_blocks.standard_enrichment,
-        GetH1Space().GetTrueVSize(), feature_membership, singular_numbering->h1,
-        feature_count);
-    singular_constrained_standard_stiffness =
-        std::move(constrained_blocks.standard_standard);
+        *combined_operators.front(), *coupling_operators.front(),
+        GetH1Spaces().GetFESpaceAtLevel(0).GetTrueVSize(), feature_membership,
+        singular_numbering->h1, feature_count);
+    singular_constrained_standard_stiffness = std::move(standard_operators.front());
     singular_diagnostics->feature_patch_count = feature_patches.patches.size();
     singular_diagnostics->feature_patch_sum_standard_dofs =
         feature_patches.sum_global_standard_dofs;
@@ -456,6 +544,12 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     singular_feature_patches = std::move(feature_patches);
     singular_eliminated_stiffness = std::move(dirichlet.eliminated);
     singular_essential_true_dofs = std::move(dirichlet.essential_true_dofs);
+    MFEM_VERIFY(singular_essential_true_dofs.Size() ==
+                        combined_h1_dbc_tdof_lists.back().Size() &&
+                    std::equal(singular_essential_true_dofs.begin(),
+                               singular_essential_true_dofs.end(),
+                               combined_h1_dbc_tdof_lists.back().begin()),
+                "Finest singular electrostatic essential true DOFs are inconsistent!");
 
     if (triangle_singular_features)
     {
@@ -489,7 +583,22 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
         singular_diagnostics->feature_patch_minimum_enrichment_multiplicity,
         singular_diagnostics->feature_patch_maximum_enrichment_multiplicity);
     print_hdr = false;
-    return std::move(dirichlet.constrained);
+    if (number_levels == 1)
+    {
+      return std::move(combined_operators.front());
+    }
+
+    auto hierarchy = std::make_unique<MultigridOperator>(number_levels);
+    for (std::size_t level = 0; level < number_levels; level++)
+    {
+      HYPRE_BigInt nnz = combined_operators[level]->NNZ();
+      Mpi::GlobalSum(1, &nnz, GetComm());
+      Mpi::Print(" Level {:d} (p = {:d}): {:d} combined H1 unknowns, {:d} NNZ\n", level,
+                 GetH1Spaces().GetFESpaceAtLevel(level).GetMaxElementOrder(),
+                 combined_operators[level]->GetGlobalNumRows(), nnz);
+      hierarchy->AddOperator(std::move(combined_operators[level]));
+    }
+    return hierarchy;
   }
 
   // k.AssembleQuadratureData();
@@ -554,6 +663,17 @@ LaplaceOperator::GetSingularFeaturePatches() const
   MFEM_VERIFY(!singular_feature_patches.patches.empty(),
               "Feature patches are available only after singular assembly!");
   return singular_feature_patches;
+}
+
+std::vector<const Operator *> LaplaceOperator::GetCombinedH1ProlongationOperators() const
+{
+  std::vector<const Operator *> operators;
+  operators.reserve(singular_h1_prolongations.size());
+  for (const auto &prolongation : singular_h1_prolongations)
+  {
+    operators.push_back(prolongation.get());
+  }
+  return operators;
 }
 
 const SingularOperatorDiagnostics &LaplaceOperator::GetSingularDiagnostics() const
@@ -658,7 +778,9 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
     {
       X[i] = standard_x[i];
     }
-    const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(&K);
+    const auto *hierarchy = dynamic_cast<const MultigridOperator *>(&K);
+    const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(
+        hierarchy ? &hierarchy->GetFinestOperator() : &K);
     MFEM_VERIFY(hypre_K, "Singular LaplaceOperator requires an assembled Hypre matrix!");
     hypre_K->EliminateBC(*singular_eliminated_stiffness, singular_essential_true_dofs, X,
                          RHS);

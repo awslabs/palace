@@ -531,6 +531,23 @@ TEST_CASE("singular_wedge_electrostatic", "[Serial][Parallel][Regression]")
                                   "electrostatic", opts);
 }
 
+TEST_CASE("singular_wedge_electrostatic_multigrid", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 1.0e-20;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-coefficients.csv"] =
+      CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+  opts.custom_checks["singular-edge-slopes.csv"] =
+      CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_electrostatic_p2.json",
+                                  "electrostatic_p2", opts);
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_electrostatic_mg2.json",
+                                  "electrostatic_p2", opts);
+}
+
 TEST_CASE("singular_wedge_eigenmode", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1354,6 +1371,24 @@ TEST_CASE("singular_line_electrostatic", "[Serial][Parallel][Regression]")
       CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
   palace::test::RunRegressionCase("singular_line_electrostatic",
                                   "singular_line_electrostatic.json", "", opts);
+}
+
+TEST_CASE("singular_line_electrostatic_multigrid", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-9;
+  opts.atol = 1.0e-20;
+  opts.excluded_columns = {"true_dof"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-coefficients.csv"] =
+      CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+  opts.custom_checks["singular-tip-slopes.csv"] =
+      CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("singular_line_electrostatic",
+                                  "singular_line_electrostatic_p2.json", "p2", opts);
+  palace::test::RunRegressionCase("singular_line_electrostatic",
+                                  "singular_line_electrostatic_mg2.json", "p2", opts);
 }
 
 TEST_CASE("singular_corner_electrostatic", "[Serial][Parallel][Regression]")

@@ -1251,7 +1251,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     ksp = MakeSingularPatchKspSolver(iodata, laplace_op.GetH1Spaces(), *K,
                                      laplace_op.GetSingularStandardStiffnessMatrix(),
-                                     laplace_op.GetSingularFeaturePatches());
+                                     laplace_op.GetSingularFeaturePatches(),
+                                     laplace_op.GetCombinedH1ProlongationOperators(),
+                                     laplace_op.GetCombinedH1DbcTDofLists());
   }
   else
   {

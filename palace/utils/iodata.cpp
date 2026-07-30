@@ -627,12 +627,12 @@ void IoData::CheckConfiguration()
   if (solver.linear.mg_max_levels < 0)
   {
     if (problem.type == ProblemType::BOUNDARYMODE ||
-        (solver.singular_elements.Enabled() &&
-         (problem.type == ProblemType::ELECTROSTATIC || !solver.linear.pc_mat_real)))
+        (solver.singular_elements.Enabled() && problem.type != ProblemType::ELECTROSTATIC &&
+         !solver.linear.pc_mat_real))
     {
-      // Boundary mode, singular electrostatics, and singular Maxwell with a complex
-      // preconditioner retain single-level defaults. Singular driven and eigenmode
-      // simulations use the complete polynomial hierarchy when PCMatReal is enabled.
+      // Boundary mode and singular Maxwell with a complex preconditioner retain
+      // single-level defaults. Singular electrostatics and real-preconditioned singular
+      // Maxwell use the complete polynomial hierarchy.
       solver.linear.mg_max_levels = 1;
     }
     else
@@ -641,13 +641,14 @@ void IoData::CheckConfiguration()
     }
   }
   MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
+                  problem.type == ProblemType::ELECTROSTATIC ||
                   problem.type == ProblemType::DRIVEN ||
                   problem.type == ProblemType::EIGENMODE ||
                   problem.type == ProblemType::BOUNDARYMODE,
-              "Singular geometric multigrid is currently available for BoundaryMode, "
-              "driven, and eigenmode Maxwell simulations!");
+              "Singular geometric multigrid is currently available for electrostatic, "
+              "BoundaryMode, driven, and eigenmode simulations!");
   MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
-                  solver.linear.pc_mat_real,
+                  problem.type == ProblemType::ELECTROSTATIC || solver.linear.pc_mat_real,
               "Singular Maxwell polynomial multigrid currently requires "
               "Solver.Linear.PCMatReal = true!");
   MFEM_VERIFY(

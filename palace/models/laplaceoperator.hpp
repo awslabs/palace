@@ -115,6 +115,8 @@ private:
   std::unique_ptr<mfem::HypreParMatrix> singular_stiffness_enrichment_error;
   std::unique_ptr<mfem::HypreParMatrix> singular_stiffness_coupling_error;
   mfem::Array<int> singular_essential_true_dofs;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_h1_prolongations;
+  std::vector<mfem::Array<int>> combined_h1_dbc_tdof_lists;
   std::unique_ptr<SingularOperatorDiagnostics> singular_diagnostics;
 
   mfem::Array<int>
@@ -179,6 +181,11 @@ public:
   const mfem::HypreParMatrix &GetSingularStandardStiffnessMatrix() const;
   const fem::singular::ParallelFeaturePatches &GetSingularFeaturePatches() const;
   const SingularOperatorDiagnostics &GetSingularDiagnostics() const;
+  std::vector<const Operator *> GetCombinedH1ProlongationOperators() const;
+  const std::vector<mfem::Array<int>> &GetCombinedH1DbcTDofLists() const
+  {
+    return combined_h1_dbc_tdof_lists;
+  }
   double GetSingularStiffnessEnergyErrorBound(const mfem::Vector &combined_true_dofs) const;
   std::unique_ptr<fem::singular::EnrichedH1FieldEvaluator> GetSingularFieldEvaluator();
   std::unique_ptr<fem::singular::TriangleEnrichedH1FieldEvaluator>

@@ -242,6 +242,80 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
 }
 
+std::unique_ptr<Solver<Operator>>
+ConfigureSingularElectrostaticCoarseSolver(const config::LinearSolverData &linear,
+                                           MatrixSymmetry matrix_symmetry, int verbose,
+                                           MPI_Comm comm)
+{
+  const int print = verbose - 1;
+  switch (linear.type)
+  {
+    case LinearSolver::BOOMER_AMG:
+      return MakeWrapperSolver<Operator, BoomerAmgSolver>(linear, 1, linear.mg_smooth_it,
+                                                          linear.amg_agg_coarsen, print);
+    case LinearSolver::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+      return MakeWrapperSolver<Operator, SuperLUSolver>(
+          linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
+          print);
+#else
+      MFEM_ABORT("Solver was not built with SuperLU_DIST support!");
+      return {};
+#endif
+    case LinearSolver::STRUMPACK:
+#if defined(MFEM_USE_STRUMPACK)
+      return MakeWrapperSolver<Operator, StrumpackSolver>(
+          linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support!");
+      return {};
+#endif
+    case LinearSolver::STRUMPACK_MP:
+#if defined(MFEM_USE_STRUMPACK)
+      return MakeWrapperSolver<Operator, StrumpackMixedPrecisionSolver>(
+          linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support!");
+      return {};
+#endif
+    case LinearSolver::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+      return MakeWrapperSolver<Operator, MumpsSolver>(
+          linear, comm, matrix_symmetry, linear.sym_factorization,
+          (linear.strumpack_compression_type == SparseCompression::BLR)
+              ? linear.strumpack_lr_tol
+              : 0.0,
+          linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with MUMPS support!");
+      return {};
+#endif
+    case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+      return MakeWrapperSolver<Operator, CuDSSSolver>(linear, comm, matrix_symmetry,
+                                                      linear.sym_factorization,
+                                                      linear.reorder_reuse, print);
+#else
+      MFEM_ABORT("Solver was not built with cuDSS support!");
+      return {};
+#endif
+    case LinearSolver::JACOBI:
+      return std::make_unique<JacobiSmoother<Operator>>(comm);
+    case LinearSolver::AMS:
+      MFEM_ABORT("Electrostatic singular multigrid does not support an AMS coarse solver!");
+      return {};
+    case LinearSolver::DEFAULT:
+      MFEM_ABORT("Unexpected unresolved coarse solver type for singular electrostatics!");
+      return {};
+  }
+  MFEM_ABORT("Unsupported coarse solver type for singular electrostatics!");
+  return {};
+}
+
 }  // namespace
 
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
@@ -264,55 +338,89 @@ MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
 std::unique_ptr<KspSolver>
 MakeSingularPatchKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                            const Operator &full_operator, const Operator &standard_operator,
-                           const fem::singular::ParallelFeaturePatches &feature_patches)
+                           const fem::singular::ParallelFeaturePatches &feature_patches,
+                           const std::vector<const Operator *> &combined_prolongations,
+                           const std::vector<mfem::Array<int>> &combined_essential_tdofs)
 {
   const auto &linear = iodata.solver.linear;
   const MPI_Comm comm = fespaces.GetFinestFESpace().GetComm();
-  if (!UsesSingularPatchKspSolver(iodata))
+  const auto number_levels = fespaces.GetNumLevels();
+  const auto *hierarchy = dynamic_cast<const MultigridOperator *>(&full_operator);
+  MFEM_VERIFY(number_levels > 0 && combined_prolongations.size() + 1 == number_levels &&
+                  combined_essential_tdofs.size() == number_levels &&
+                  ((number_levels == 1 && !hierarchy) ||
+                   (hierarchy && hierarchy->GetNumLevels() == number_levels)),
+              "Singular electrostatic solver received an inconsistent multigrid "
+              "hierarchy!");
+  const Operator &coarse_operator =
+      hierarchy ? hierarchy->GetOperatorAtLevel(0) : full_operator;
+
+  std::unique_ptr<Solver<Operator>> coarse_solver;
+  if (UsesSingularPatchKspSolver(iodata))
   {
-#if !defined(MFEM_USE_SUPERLU)
-    if (linear.type == LinearSolver::BOOMER_AMG)
+#if defined(MFEM_USE_SUPERLU)
+    auto standard_pc = std::make_unique<BoomerAmgSolver>(
+        number_levels > 1 ? 1 : linear.mg_cycle_it, linear.mg_smooth_it,
+        linear.amg_agg_coarsen, iodata.problem.verbose - 1);
+    std::vector<mfem::Array<int>> patch_dofs;
+    std::vector<std::unique_ptr<mfem::Solver>> patch_solvers;
+    std::vector<const Operator *> patch_operators;
+    patch_dofs.reserve(feature_patches.patches.size());
+    patch_solvers.reserve(feature_patches.patches.size());
+    patch_operators.reserve(feature_patches.patches.size());
+    for (const auto &patch : feature_patches.patches)
     {
-      Mpi::Warning(comm, "Singular feature-patch preconditioning requires SuperLU. "
-                         "Falling back to the "
-                         "configured monolithic preconditioner!\n");
+      patch_dofs.push_back(patch.true_dofs);
+      patch_solvers.push_back(std::make_unique<SuperLUSolver>(
+          comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
+          iodata.problem.verbose - 1));
+      patch_operators.push_back(patch.matrix.get());
     }
+    auto patch_pc = std::make_unique<AdditivePatchSolver>(
+        coarse_operator.Height(), std::move(patch_dofs), std::move(patch_solvers));
+    patch_pc->SetPatchOperators(patch_operators);
+    auto patch_solver = std::make_unique<SymmetricPatchSubspacePreconditioner>(
+        standard_operator.Height(), std::move(standard_pc), std::move(patch_pc));
+    patch_solver->SetSubspaceOperators(coarse_operator, standard_operator);
+    coarse_solver = std::move(patch_solver);
+#else
+    throw std::logic_error("Unreachable singular feature-patch solver configuration!");
 #endif
-    return std::make_unique<KspSolver>(iodata, fespaces);
+  }
+  else
+  {
+    coarse_solver = ConfigureSingularElectrostaticCoarseSolver(
+        linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose, comm);
   }
 
-#if defined(MFEM_USE_SUPERLU)
-  auto standard_pc =
-      std::make_unique<BoomerAmgSolver>(linear.mg_cycle_it, linear.mg_smooth_it,
-                                        linear.amg_agg_coarsen, iodata.problem.verbose - 1);
-  std::vector<mfem::Array<int>> patch_dofs;
-  std::vector<std::unique_ptr<mfem::Solver>> patch_solvers;
-  std::vector<const Operator *> patch_operators;
-  patch_dofs.reserve(feature_patches.patches.size());
-  patch_solvers.reserve(feature_patches.patches.size());
-  patch_operators.reserve(feature_patches.patches.size());
-  for (const auto &patch : feature_patches.patches)
+  std::unique_ptr<Solver<Operator>> preconditioner;
+  if (number_levels == 1)
   {
-    patch_dofs.push_back(patch.true_dofs);
-    patch_solvers.push_back(
-        std::make_unique<SuperLUSolver>(comm, linear.sym_factorization, linear.superlu_3d,
-                                        linear.reorder_reuse, iodata.problem.verbose - 1));
-    patch_operators.push_back(patch.matrix.get());
+    preconditioner = std::move(coarse_solver);
   }
-  auto patch_pc = std::make_unique<AdditivePatchSolver>(
-      full_operator.Height(), std::move(patch_dofs), std::move(patch_solvers));
-  patch_pc->SetPatchOperators(patch_operators);
-  auto pc = std::make_unique<SymmetricPatchSubspacePreconditioner>(
-      standard_operator.Height(), std::move(standard_pc), std::move(patch_pc));
-  pc->SetSubspaceOperators(full_operator, standard_operator);
+  else
+  {
+    MFEM_VERIFY(!linear.mg_smooth_aux,
+                "Singular electrostatic multigrid does not use an auxiliary-space "
+                "smoother!");
+    std::vector<const mfem::Array<int> *> essential_tdofs(number_levels);
+    for (std::size_t level = 0; level < number_levels; level++)
+    {
+      essential_tdofs[level] = &combined_essential_tdofs[level];
+    }
+    auto multigrid = std::make_unique<GeometricMultigridSolver<Operator>>(
+        comm, std::move(coarse_solver), combined_prolongations, nullptr, linear.mg_cycle_it,
+        linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
+        linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th, &essential_tdofs);
+    multigrid->EnableTimer();
+    preconditioner = std::move(multigrid);
+  }
 
   auto result = std::make_unique<KspSolver>(
-      ConfigureKrylovSolver<Operator>(linear, iodata.problem.verbose, comm), std::move(pc));
+      ConfigureKrylovSolver<Operator>(linear, iodata.problem.verbose, comm),
+      std::move(preconditioner));
   result->EnableTimer();
   return result;
-#else
-  throw std::logic_error("Unreachable singular feature-patch solver configuration!");
-#endif
 }
 
 bool UsesSingularPatchKspSolver(const IoData &iodata)
