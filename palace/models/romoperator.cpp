@@ -1196,10 +1196,9 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu)
   // the driven case.
   Mpi::Print("\nComputing quasistatic anchor solves for {:d} lumped ports (ν² screening)\n",
              NumSynthesisAnchorPorts());
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0),
-                                    std::complex<double>(0.0, 0.0),
-                                    std::complex<double>(nu * nu, 0.0), K.get(), C.get(),
-                                    M.get());
+  auto A = space_op.GetSystemMatrix(
+      std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0),
+      std::complex<double>(nu * nu, 0.0), K.get(), C.get(), M.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
                                                              nu * nu + 0.0i, 0.0);
   // Safe to repurpose the shared solver: every SolveHDM call resets the operators.

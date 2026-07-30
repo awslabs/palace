@@ -1131,9 +1131,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
       "AdaptiveCircuitSynthesisEigenmodes", adaptive_circuit_synthesis_eigenmodes);
   adaptive_circuit_synthesis_electrostatic = driven.value(
       "AdaptiveCircuitSynthesisElectrostatic", adaptive_circuit_synthesis_electrostatic);
-  adaptive_circuit_synthesis_anchor_freq =
-      driven.value("AdaptiveCircuitSynthesisAnchorFreq",
-                   adaptive_circuit_synthesis_anchor_freq);
+  adaptive_circuit_synthesis_anchor_freq = driven.value(
+      "AdaptiveCircuitSynthesisAnchorFreq", adaptive_circuit_synthesis_anchor_freq);
   MFEM_VERIFY(adaptive_circuit_synthesis_anchor_freq >= 0.0,
               "\"AdaptiveCircuitSynthesisAnchorFreq\" must be non-negative!");
 

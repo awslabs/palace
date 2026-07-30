@@ -1185,8 +1185,8 @@ TEST_CASE("RomOperator-Synthesis-AnchorOnCapOnlyPortRejected", "[romoperator][Se
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
   setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
   setup_json["Domains"] = {
-      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                               {"Permittivity", 1.0}})})}};
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
   setup_json["Boundaries"] = {
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"C", 1.0e-12},
@@ -1211,8 +1211,8 @@ TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][S
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
   setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
   setup_json["Domains"] = {
-      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                               {"Permittivity", 1.0}})})}};
+      {"Materials", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
   setup_json["Boundaries"] = {
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"L", 25.0e-9},
@@ -1240,7 +1240,8 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-AnchorEnte
                  "[romoperator][Serial]")
 {
   MPI_Comm world_comm = Mpi::World();
-  auto mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
 
   json setup_json;
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
@@ -1258,16 +1259,17 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-AnchorEnte
                                                 {"Excitation", uint(1)},
                                                 {"Attributes", json::array({100})},
                                                 {"Direction", "+X"}})})}};
-  setup_json["Solver"] = {{"Order", 1UL},
-                          {"Device", "CPU"},
-                          {"Driven",
-                           {{"AdaptiveTol", 1e-3},
-                            {"AdaptiveCircuitSynthesis", true},
-                            {"MinFreq", 2.0},
-                            {"MaxFreq", 32.0},
-                            {"FreqStep", 1.0}}},
-                          {"Linear", {{"Type", "Default"}, {"KSPType", "GMRES"},
-                                      {"MaxIts", 200}, {"Tol", 1e-8}}}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 1.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1e-8}}}};
 
   IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
@@ -1290,7 +1292,6 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-AnchorEnte
   CHECK(prom_op.GetOrthR()(0, 0) > 0.0);  // Port mode orth_R diag untouched
   CHECK(prom_op.GetOrthR()(1, 1) > 0.0);  // Anchor has non-zero content
 }
-
 
 TEST_CASE("RomOperator-Synthesis-EigenWithoutTargetRejected", "[romoperator][Serial]")
 {
