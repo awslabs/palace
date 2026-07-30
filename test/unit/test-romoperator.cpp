@@ -1179,6 +1179,119 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
 // ENRICHMENT CONFIG VALIDATION TESTS
 // =============================================================================
 
+TEST_CASE("RomOperator-Synthesis-AnchorOnCapOnlyPortRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"C", 1.0e-12},
+                                                {"SynthesisAnchor", true},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("SynthesisAnchor"));
+}
+
+TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"L", 25.0e-9},
+                                                {"SynthesisAnchor", true},
+                                                {"IncludeInSynthesis", false},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("SynthesisAnchor"));
+}
+
+// =============================================================================
+// ANCHOR SOLVE BASIS INJECTION TEST
+// =============================================================================
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-AnchorEntersBasis",
+                 "[romoperator][Serial]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"L", 25.0e-9},
+                                                {"SynthesisAnchor", true},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Device", "CPU"},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}},
+                          {"Linear", {{"Type", "Default"}, {"KSPType", "GMRES"},
+                                      {"MaxIts", 200}, {"Tol", 1e-8}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  prom_op.AddLumpedPortModesForSynthesis();
+  auto dim_after_ports = prom_op.GetReducedDimension();
+  CHECK(dim_after_ports == 1);  // One L-port → one port mode
+
+  // Anchor solve at nu = 1/4 of MinFreq (nondimensionalized already in iodata).
+  double nu = 0.25 * iodata.solver.driven.sample_f.front();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
+
+  CHECK(prom_op.GetReducedDimension() == dim_after_ports + 1);  // Exactly 1 anchor vector
+  // Check label.
+  const auto &labels = prom_op.GetNodeLabels();
+  CHECK(labels.back() == "anchor_1_re");
+  // Check anchor didn't clobber port-block diag.
+  CHECK(prom_op.GetOrthR()(0, 0) > 0.0);  // Port mode orth_R diag untouched
+  CHECK(prom_op.GetOrthR()(1, 1) > 0.0);  // Anchor has non-zero content
+}
+
+
 TEST_CASE("RomOperator-Synthesis-EigenWithoutTargetRejected", "[romoperator][Serial]")
 {
   json setup_json;
