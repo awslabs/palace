@@ -347,6 +347,11 @@ EnumerateHigherOrderEdgeRotationalBases(const std::array<int, 4> &canonical_node
 VectorBasisValue EvaluateHigherOrderBasis(const BarycentricPoint &lambda,
                                           const BarycentricGradients &grad_lambda,
                                           const HigherOrderBasis &basis);
+// Value-only counterpart used by electric surface observables. This avoids
+// evaluating curls for rotational bases when they are not consumed.
+Vector3 EvaluateHigherOrderBasisValue(const BarycentricPoint &lambda,
+                                      const BarycentricGradients &grad_lambda,
+                                      const HigherOrderBasis &basis);
 // Evaluate the scalar potential whose physical gradient is a retained
 // higher-order gradient-family basis. Rotational families have no scalar H1
 // potential and are rejected.

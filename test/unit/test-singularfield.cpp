@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <mfem.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -239,6 +240,8 @@ TEST_CASE("Combined singular tetrahedral ND field evaluates value and curl",
           "[singularfield][Serial]")
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int standard_order = GENERATE(2, 3, 4);
+  CAPTURE(standard_order);
   mfem::Mesh serial_mesh(3, 4, 1, 0, 3);
   for (const auto &vertex : kVertices)
   {
@@ -278,7 +281,7 @@ TEST_CASE("Combined singular tetrahedral ND field evaluates value and curl",
   numbering.nd.owner = {0, 0};
   numbering.nd.local_to_true = {0, 1};
 
-  mfem::ND_FECollection collection(2, 3);
+  mfem::ND_FECollection collection(standard_order, 3);
   mfem::ParFiniteElementSpace fespace(&mesh, &collection);
   mfem::VectorFunctionCoefficient standard_coefficient(
       3,
@@ -348,6 +351,26 @@ TEST_CASE("Combined singular tetrahedral ND field evaluates value and curl",
   mfem::IntegrationPoint face_point;
   face_point.Set3(0.23, 0.31, 0.0);
   const auto face_value = evaluator.EvaluateClosure(0, face_point);
+  CHECK(evaluator.EvaluateValueClosure(0, face_point) == face_value.value);
+  mfem::Vector second_combined(combined);
+  second_combined *= -0.37;
+  fem::singular::EnrichedNDFieldEvaluator second_evaluator(topology, numbering, fespace);
+  second_evaluator.SetFromTrueDofs(second_combined);
+  const auto second_value = second_evaluator.EvaluateValueClosure(0, face_point);
+  const auto paired = evaluator.EvaluateValueClosurePair(second_evaluator, 0, face_point);
+  std::vector<fem::singular::NDFieldValuePair> batched(2);
+  evaluator.EvaluateValueClosureBatch(
+      {{&evaluator, &second_evaluator}, {&second_evaluator, &evaluator}}, 0, face_point,
+      batched);
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(paired.first[d], WithinAbs(face_value.value[d], 2.0e-15));
+    CHECK_THAT(paired.second[d], WithinAbs(second_value[d], 2.0e-15));
+    CHECK_THAT(batched[0].first[d], WithinAbs(paired.first[d], 2.0e-15));
+    CHECK_THAT(batched[0].second[d], WithinAbs(paired.second[d], 2.0e-15));
+    CHECK_THAT(batched[1].first[d], WithinAbs(paired.second[d], 2.0e-15));
+    CHECK_THAT(batched[1].second[d], WithinAbs(paired.first[d], 2.0e-15));
+  }
   for (double component : face_value.value)
   {
     CHECK(std::isfinite(component));

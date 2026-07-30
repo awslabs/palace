@@ -683,15 +683,18 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
     Mpi::Print(" Shift-and-invert sigma = {:.3e} GHz ({:.3e})\n", frequency, target);
   }
-  BlockTimer bt(Timer::EPS);
-  Mpi::Print("\n");
-  const int num_converged = eigen->Solve();
-  MFEM_VERIFY(ksp->NumFailedMult() == 0,
-              "Singular eigenmode shift-and-invert failed to converge "
-                  << ksp->NumFailedMult() << " of " << ksp->NumTotalMult()
-                  << " inner linear solves!");
-  Mpi::Print(" Found {:d} converged enriched eigenvalue{}\n", num_converged,
-             num_converged == 1 ? "" : "s");
+  int num_converged;
+  {
+    BlockTimer bt(Timer::EPS);
+    Mpi::Print("\n");
+    num_converged = eigen->Solve();
+    MFEM_VERIFY(ksp->NumFailedMult() == 0,
+                "Singular eigenmode shift-and-invert failed to converge "
+                    << ksp->NumFailedMult() << " of " << ksp->NumTotalMult()
+                    << " inner linear solves!");
+    Mpi::Print(" Found {:d} converged enriched eigenvalue{}\n", num_converged,
+               num_converged == 1 ? "" : "s");
+  }
   if (!iodata.solver.eigenmode.mass_orthog)
   {
     // Match the standard eigenmode path: use Euclidean orthogonalization during
@@ -700,13 +703,12 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
   eigen->RescaleEigenvectors(num_converged);
   SaveMetadata(*ksp);
+  BlockTimer postprocess_timer(Timer::POSTPRO);
 
   const fem::singular::AdaptiveAssemblyOptions surface_options{
       iodata.solver.singular_elements.quadrature_order,
       iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
       iodata.solver.singular_elements.max_subdivisions};
-  std::unique_ptr<fem::singular::EnrichedNDFieldEvaluator> tetrahedral_real_evaluator,
-      tetrahedral_imaginary_evaluator;
   std::unique_ptr<fem::singular::TriangleEnrichedNDFieldEvaluator>
       triangular_real_evaluator, triangular_imaginary_evaluator;
   std::unique_ptr<TetrahedronSingularSurfacePostOperator> tetrahedral_surface_postoperator;
@@ -717,12 +719,6 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     MFEM_VERIFY(topology,
                 "Three-dimensional eigenmode singular surface postprocessing requires "
                 "tetrahedral singular DOF topology!");
-    tetrahedral_real_evaluator = std::make_unique<fem::singular::EnrichedNDFieldEvaluator>(
-        *topology, space_op.GetSingularParallelNumbering(), space_op.GetNDSpace().Get());
-    tetrahedral_imaginary_evaluator =
-        std::make_unique<fem::singular::EnrichedNDFieldEvaluator>(
-            *topology, space_op.GetSingularParallelNumbering(),
-            space_op.GetNDSpace().Get());
     tetrahedral_surface_postoperator =
         std::make_unique<TetrahedronSingularSurfacePostOperator>(
             iodata.boundaries.postpro, space_op.GetMaterialOp(),
@@ -744,6 +740,15 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
             space_op.GetNDSpace().Get());
     triangular_surface_postoperator = std::make_unique<TriangleSingularSurfacePostOperator>(
         iodata.boundaries.postpro, space_op.GetMaterialOp(), space_op.GetNDSpace().Get());
+  }
+  {
+    const auto start = Timer::Now();
+    space_op.CacheSingularLumpedPortFunctionals(false);
+    double elapsed = Timer::Duration(Timer::Now() - start).count();
+    Mpi::GlobalMax(1, &elapsed, space_op.GetComm());
+    Mpi::Print(" Singular postprocessing setup, cached lumped-port functionals (s): "
+               "{:.3f}\n",
+               elapsed);
   }
 
   TableWithCSVFile eig_output, energy_output, surface_output;
@@ -825,8 +830,91 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
   ErrorIndicator indicator;
   const auto &gradient = space_op.GetGradMatrix();
+  std::vector<std::unique_ptr<fem::singular::EnrichedNDFieldEvaluator>>
+      tetrahedral_real_evaluators, tetrahedral_imaginary_evaluators;
+  std::vector<double> tetrahedral_participation_energies;
+  std::vector<std::vector<TetrahedronSingularSurfacePostOperator::Measurement>>
+      tetrahedral_surface_measurements;
+  if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
+  {
+    const auto *topology = space_op.GetSingularDofTopology();
+    MFEM_VERIFY(topology,
+                "Three-dimensional eigenmode singular surface postprocessing requires "
+                "tetrahedral singular DOF topology!");
+    tetrahedral_real_evaluators.reserve(num_converged);
+    tetrahedral_imaginary_evaluators.reserve(num_converged);
+    tetrahedral_participation_energies.reserve(num_converged);
+    std::vector<TetrahedronSingularSurfacePostOperator::NDFieldEvaluatorPair>
+        field_evaluators;
+    field_evaluators.reserve(num_converged);
+    const auto setup_start = Timer::Now();
+    for (int mode = 0; mode < num_converged; mode++)
+    {
+      eigen->GetEigenvector(mode, electric_field);
+      linalg::NormalizePhase(space_op.GetComm(), electric_field);
+      const double electric_energy =
+          0.5 * std::max(0.0, SingularComplexQuadraticForm(space_op.GetComm(), *M_bulk,
+                                                           electric_field));
+      double capacitor_energy = 0.0;
+      for (const auto &[port_index, port] : space_op.GetLumpedPortOp())
+      {
+        const auto voltage =
+            space_op.GetSingularLumpedPortVoltage(port_index, electric_field);
+        capacitor_energy +=
+            0.5 * std::abs(port.C) * std::real(voltage * std::conj(voltage));
+      }
+      const double participation_energy = electric_energy + capacitor_energy;
+      MFEM_VERIFY(participation_energy > 0.0 && std::isfinite(participation_energy),
+                  "Eigenmode singular participation requires positive finite bulk "
+                  "electric plus lumped-capacitor energy!");
+      tetrahedral_participation_energies.push_back(participation_energy);
+
+      tetrahedral_real_evaluators.push_back(
+          std::make_unique<fem::singular::EnrichedNDFieldEvaluator>(
+              *topology, space_op.GetSingularParallelNumbering(),
+              space_op.GetNDSpace().Get()));
+      tetrahedral_imaginary_evaluators.push_back(
+          std::make_unique<fem::singular::EnrichedNDFieldEvaluator>(
+              *topology, space_op.GetSingularParallelNumbering(),
+              space_op.GetNDSpace().Get()));
+      auto &real_evaluator = *tetrahedral_real_evaluators.back();
+      auto &imaginary_evaluator = *tetrahedral_imaginary_evaluators.back();
+      real_evaluator.SetFromTrueDofs(electric_field.Real());
+      imaginary_evaluator.SetFromTrueDofs(electric_field.Imag());
+      field_evaluators.emplace_back(&real_evaluator, &imaginary_evaluator);
+    }
+    double setup_elapsed = Timer::Duration(Timer::Now() - setup_start).count();
+    Mpi::GlobalMax(1, &setup_elapsed, space_op.GetComm());
+    Mpi::Print(" Singular batched surface evaluator setup for {:d} mode{} (s): {:.3f}\n",
+               num_converged, num_converged == 1 ? "" : "s", setup_elapsed);
+
+    const auto integration_start = Timer::Now();
+    tetrahedral_surface_measurements = tetrahedral_surface_postoperator->Measure(
+        field_evaluators, tetrahedral_participation_energies, surface_options);
+    double integration_elapsed = Timer::Duration(Timer::Now() - integration_start).count();
+    Mpi::GlobalMax(1, &integration_elapsed, space_op.GetComm());
+    Mpi::Print(" Singular batched surface integration for {:d} mode{} (s): {:.3f}\n",
+               num_converged, num_converged == 1 ? "" : "s", integration_elapsed);
+  }
   for (int mode = 0; mode < num_converged; mode++)
   {
+    const auto mode_start = Timer::Now();
+    auto stage_start = mode_start;
+    const auto report_stage = [&](std::string_view stage)
+    {
+      const auto now = Timer::Now();
+      double elapsed = Timer::Duration(now - stage_start).count();
+      double minimum = elapsed;
+      double maximum = elapsed;
+      Mpi::GlobalMin(1, &minimum, space_op.GetComm());
+      Mpi::GlobalMax(1, &maximum, space_op.GetComm());
+      Mpi::GlobalSum(1, &elapsed, space_op.GetComm());
+      Mpi::Print(" Singular mode {:d} timing, {} (s): min. {:.3f}, max. {:.3f}, "
+                 "avg. {:.3f}\n",
+                 mode + 1, stage, minimum, maximum,
+                 elapsed / Mpi::Size(space_op.GetComm()));
+      stage_start = Timer::Now();
+    };
     const std::complex<double> omega = std::sqrt(eigen->GetEigenvalue(mode));
     const double error_backward =
         eigen->GetError(mode, EigenvalueSolver::ErrorType::BACKWARD);
@@ -834,6 +922,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
         eigen->GetError(mode, EigenvalueSolver::ErrorType::ABSOLUTE);
     eigen->GetEigenvector(mode, electric_field);
     linalg::NormalizePhase(space_op.GetComm(), electric_field);
+    report_stage("eigenvector extraction");
 
     const auto augmented_energy = MeasureSingularFullWaveEnergy(
         space_op.GetComm(), *M_energy, *K_energy, electric_field, omega);
@@ -843,6 +932,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
         std::abs(augmented_energy.electric - augmented_energy.magnetic) /
         std::max({augmented_energy.electric, augmented_energy.magnetic,
                   std::numeric_limits<double>::min()});
+    report_stage("quadratic energy products");
     struct LumpedPortMeasurement
     {
       int index;
@@ -878,24 +968,38 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     {
       measurement.inductive_participation /= participation_energy;
     }
+    if (!tetrahedral_participation_energies.empty())
+    {
+      const double cached_participation_energy =
+          tetrahedral_participation_energies.at(mode);
+      const double scale =
+          std::max({std::abs(participation_energy), std::abs(cached_participation_energy),
+                    std::numeric_limits<double>::min()});
+      MFEM_VERIFY(std::abs(participation_energy - cached_participation_energy) <=
+                      1.0e-11 * scale,
+                  "Batched eigenmode singular surface participation normalization "
+                  "changed during output processing!");
+    }
+    report_stage("lumped-port evaluation");
 
     std::vector<TriangleSingularSurfacePostOperator::Measurement> surface_measurements;
-    if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
-    {
-      tetrahedral_real_evaluator->SetFromTrueDofs(electric_field.Real());
-      tetrahedral_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
-      surface_measurements = tetrahedral_surface_postoperator->Measure(
-          *tetrahedral_real_evaluator, *tetrahedral_imaginary_evaluator,
-          participation_energy, surface_options);
-    }
-    else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
+    if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
     {
       triangular_real_evaluator->SetFromTrueDofs(electric_field.Real());
       triangular_imaginary_evaluator->SetFromTrueDofs(electric_field.Imag());
+    }
+    report_stage("surface evaluator update");
+    if (tetrahedral_surface_postoperator && !tetrahedral_surface_postoperator->Empty())
+    {
+      surface_measurements = tetrahedral_surface_measurements.at(mode);
+    }
+    else if (triangular_surface_postoperator && !triangular_surface_postoperator->Empty())
+    {
       surface_measurements = triangular_surface_postoperator->Measure(
           *triangular_real_evaluator, *triangular_imaginary_evaluator, participation_energy,
           surface_options);
     }
+    report_stage("surface integration");
     const double electric_energy =
         iodata.units.Dimensionalize<Units::ValueType::ENERGY>(field_energy.electric);
     const double magnetic_energy =
@@ -943,6 +1047,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
                                         total_field_energy, indicator);
       }
     }
+    report_stage("diagnostics and estimation");
     if (root)
     {
       eig_output.table["idx"] << mode + 1;
@@ -989,6 +1094,10 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
         surface_output.WriteFullTableTrunc();
       }
     }
+    report_stage("output");
+    double mode_total = Timer::Duration(Timer::Now() - mode_start).count();
+    Mpi::GlobalMax(1, &mode_total, space_op.GetComm());
+    Mpi::Print(" Singular mode {:d} timing, total (s): {:.3f}\n", mode + 1, mode_total);
   }
 
   SaveMetadata(

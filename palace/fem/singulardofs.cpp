@@ -160,13 +160,31 @@ DofKey MakeDofKey(const mfem::Element &element, const HigherOrderBasis &basis,
   return key;
 }
 
-void AppendBases(const mfem::Element &element, std::vector<HigherOrderBasis> basis,
-                 const std::vector<GlobalVertexId> &serial_vertex_ids,
-                 std::vector<ProvisionalDof> &h1, std::vector<ProvisionalDof> &nd)
+void AppendBases(
+    const mfem::Element &element, std::vector<HigherOrderBasis> basis,
+    const std::vector<GlobalVertexId> &serial_vertex_ids,
+    const std::vector<std::array<GlobalVertexId, 3>> &excluded_boundary_trace_faces,
+    std::vector<ProvisionalDof> &h1, std::vector<ProvisionalDof> &nd)
 {
   for (auto &entry : basis)
   {
     ProvisionalDof dof{MakeDofKey(element, entry, serial_vertex_ids), std::move(entry)};
+    const bool nonintegrable_edge_trace =
+        dof.key.family == HigherOrderBasisFamily::EDGE_GRADIENT && dof.basis.nu <= 0.5;
+    const bool excluded =
+        nonintegrable_edge_trace &&
+        std::any_of(
+            excluded_boundary_trace_faces.begin(), excluded_boundary_trace_faces.end(),
+            [&dof](const std::array<GlobalVertexId, 3> &face)
+            {
+              return std::includes(
+                  face.begin(), face.end(), dof.key.support_entity.vertices.begin(),
+                  dof.key.support_entity.vertices.begin() + dof.key.support_entity.size);
+            });
+    if (excluded)
+    {
+      continue;
+    }
     if (IsGradientFamily(dof.key.family))
     {
       h1.push_back(dof);
@@ -1348,14 +1366,23 @@ MapPartitionedSerialVertexIds(const mfem::Mesh &serial_mesh,
   return result;
 }
 
-DofTopology BuildLocalDofTopology(const mfem::Mesh &mesh, const FeatureTopology &features,
-                                  const std::vector<GlobalVertexId> &serial_vertex_ids,
-                                  int order)
+DofTopology BuildLocalDofTopology(
+    const mfem::Mesh &mesh, const FeatureTopology &features,
+    const std::vector<GlobalVertexId> &serial_vertex_ids, int order,
+    const std::vector<std::array<GlobalVertexId, 3>> &excluded_boundary_trace_faces)
 {
   ValidateFeatureTopology(mesh, features, serial_vertex_ids);
   if (order < 1)
   {
     throw std::invalid_argument("Singular basis order must be positive!");
+  }
+  for (const auto &face : excluded_boundary_trace_faces)
+  {
+    if (face[0] < 0 || !std::is_sorted(face.begin(), face.end()) ||
+        std::adjacent_find(face.begin(), face.end()) != face.end())
+    {
+      throw std::invalid_argument("A singular boundary-trace exclusion face is invalid!");
+    }
   }
 
   std::vector<std::vector<ProvisionalDof>> element_h1(mesh.GetNE());
@@ -1377,20 +1404,20 @@ DofTopology BuildLocalDofTopology(const mfem::Mesh &mesh, const FeatureTopology 
       const double nu = features.vertices[node.vertex].nu;
       AppendBases(tetrahedron,
                   EnumerateHigherOrderNodeGradientBases(node.canonical_nodes, order, nu),
-                  serial_vertex_ids, h1, nd);
+                  serial_vertex_ids, excluded_boundary_trace_faces, h1, nd);
       AppendBases(tetrahedron,
                   EnumerateHigherOrderNodeRotationalBases(node.canonical_nodes, order, nu),
-                  serial_vertex_ids, h1, nd);
+                  serial_vertex_ids, excluded_boundary_trace_faces, h1, nd);
     }
     for (const auto &edge : features.elements[element].edges)
     {
       const double nu = features.features[edge.feature].nu;
       AppendBases(tetrahedron,
                   EnumerateHigherOrderEdgeGradientBases(edge.canonical_nodes, order, nu),
-                  serial_vertex_ids, h1, nd);
+                  serial_vertex_ids, excluded_boundary_trace_faces, h1, nd);
       AppendBases(tetrahedron,
                   EnumerateHigherOrderEdgeRotationalBases(edge.canonical_nodes, order, nu),
-                  serial_vertex_ids, h1, nd);
+                  serial_vertex_ids, excluded_boundary_trace_faces, h1, nd);
     }
     CheckUniqueLocalKeys(h1);
     CheckUniqueLocalKeys(nd);

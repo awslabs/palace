@@ -381,6 +381,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
     triangular_surface_postoperator = std::make_unique<TriangleSingularSurfacePostOperator>(
         iodata.boundaries.postpro, space_op.GetMaterialOp(), space_op.GetNDSpace().Get());
   }
+  space_op.CacheSingularLumpedPortFunctionals(true);
 
   TableWithCSVFile output, surface_output;
   if (root)

@@ -31,6 +31,10 @@ std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichedOperator(const mfem::HypreParMatrix &standard_standard,
                               const ParallelSparseOperatorBlocks &enrichment);
 
+// Compact exact off-diagonal zeros left behind by essential-DOF elimination.
+// Diagonal storage is always retained, and no tolerance is applied.
+HYPRE_BigInt RemoveExplicitZeros(mfem::HypreParMatrix &matrix);
+
 // Form diag(G_standard, G_enrichment), the exact true-DOF gradient from the
 // combined standard-plus-enriched H1 space to the corresponding ND space.
 std::unique_ptr<mfem::HypreParMatrix>

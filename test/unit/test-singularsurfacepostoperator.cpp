@@ -68,17 +68,15 @@ std::unique_ptr<mfem::Mesh> MakePartitionedSurfaceTestMesh()
 std::unique_ptr<mfem::Mesh>
 MakeSplitCutoffSurfaceTestMesh(const std::vector<double> &breakpoints)
 {
-  if (breakpoints.size() < 2 || breakpoints.front() != 0.0 ||
-      breakpoints.back() != 1.0 ||
+  if (breakpoints.size() < 2 || breakpoints.front() != 0.0 || breakpoints.back() != 1.0 ||
       !std::is_sorted(breakpoints.begin(), breakpoints.end()) ||
       std::adjacent_find(breakpoints.begin(), breakpoints.end()) != breakpoints.end())
   {
     throw std::invalid_argument("Invalid split surface test mesh breakpoints!");
   }
   const int intervals = static_cast<int>(breakpoints.size()) - 1;
-  auto mesh =
-      std::make_unique<mfem::Mesh>(2, 2 * (intervals + 1), 2 * intervals,
-                                   2 * intervals + 2, 2);
+  auto mesh = std::make_unique<mfem::Mesh>(2, 2 * (intervals + 1), 2 * intervals,
+                                           2 * intervals + 2, 2);
   for (double x : breakpoints)
   {
     mesh->AddVertex(x, 0.0);
@@ -174,6 +172,29 @@ config::BoundaryPostData MakeDefaultPostprocessing(double edge_cutoff = 0.0)
   data.attributes = {1};
   config::BoundaryPostData postpro;
   postpro.dielectric.emplace(7, data);
+  return postpro;
+}
+
+config::BoundaryPostData MakeMSMAPostprocessing(bool include_ms, bool include_ma,
+                                                double edge_cutoff = 0.0)
+{
+  config::BoundaryPostData postpro;
+  config::InterfaceDielectricData data;
+  data.t = 0.01;
+  data.epsilon_r = 2.0;
+  data.tandelta = 0.125;
+  data.edge_cutoff = edge_cutoff;
+  data.attributes = {1};
+  if (include_ms)
+  {
+    data.type = InterfaceDielectric::MS;
+    postpro.dielectric.emplace(7, data);
+  }
+  if (include_ma)
+  {
+    data.type = InterfaceDielectric::MA;
+    postpro.dielectric.emplace(8, data);
+  }
   return postpro;
 }
 
@@ -700,21 +721,21 @@ TEST_CASE("Singular surface cutoff spans refined boundary segments",
     nd_zero = 0.0;
     fem::singular::TriangleEnrichedH1FieldEvaluator h1_real(topology, h1_numbering,
                                                             h1_fespace);
-    fem::singular::TriangleEnrichedH1FieldEvaluator h1_imaginary(
-        topology, h1_numbering, h1_fespace);
+    fem::singular::TriangleEnrichedH1FieldEvaluator h1_imaginary(topology, h1_numbering,
+                                                                 h1_fespace);
     fem::singular::TriangleEnrichedNDFieldEvaluator nd_real(topology, nd_numbering,
                                                             nd_fespace);
-    fem::singular::TriangleEnrichedNDFieldEvaluator nd_imaginary(
-        topology, nd_numbering, nd_fespace);
+    fem::singular::TriangleEnrichedNDFieldEvaluator nd_imaginary(topology, nd_numbering,
+                                                                 nd_fespace);
     h1_real.SetFromTrueDofs(h1_combined);
     h1_imaginary.SetFromTrueDofs(h1_zero);
     nd_real.SetFromTrueDofs(nd_combined);
     nd_imaginary.SetFromTrueDofs(nd_zero);
 
-    TriangleSingularSurfacePostOperator h1_postoperator(
-        MakeMSPostprocessing(cutoff), material, h1_fespace);
-    TriangleSingularSurfacePostOperator nd_postoperator(
-        MakeMSPostprocessing(cutoff), material, nd_fespace);
+    TriangleSingularSurfacePostOperator h1_postoperator(MakeMSPostprocessing(cutoff),
+                                                        material, h1_fespace);
+    TriangleSingularSurfacePostOperator nd_postoperator(MakeMSPostprocessing(cutoff),
+                                                        material, nd_fespace);
     const fem::singular::AdaptiveAssemblyOptions options{8, 1.0e-12, 2.0e-9, 12};
     const double h1_energy =
         h1_postoperator.MeasureElectrostatic(h1_real, h1_imaginary, 1.0, options)
@@ -907,6 +928,111 @@ TEST_CASE("Tetrahedral singular full-wave surface postprocessor reproduces a "
   CHECK_THAT(measurements[0].energy, WithinAbs(0.08, 3.0e-13));
   CHECK_THAT(measurements[0].participation, WithinAbs(0.08, 3.0e-13));
   CHECK_THAT(measurements[0].quality_factor, WithinAbs(100.0, 3.0e-11));
+}
+
+TEST_CASE("Tetrahedral singular surface postprocessor fuses compatible interfaces",
+          "[singularsurface][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  auto serial_mesh = MakePartitionedTetrahedronSurfaceTestMesh();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh mesh(std::move(par_mesh));
+  auto material = MakeSubstrateMaterial(mesh);
+  const fem::singular::AdaptiveAssemblyOptions options{4, 1.0e-12, 1.0e-11, 8};
+
+  const auto check_measurements = [](const auto &grouped, const auto &ms, const auto &ma)
+  {
+    REQUIRE(grouped.size() == 2);
+    REQUIRE(ms.size() == 1);
+    REQUIRE(ma.size() == 1);
+    REQUIRE(grouped[0].index == 7);
+    REQUIRE(grouped[1].index == 8);
+    CHECK_THAT(grouped[0].energy, WithinAbs(ms[0].energy, 3.0e-13));
+    CHECK_THAT(grouped[1].energy, WithinAbs(ma[0].energy, 3.0e-13));
+  };
+
+  SECTION("Electrostatic H1 gradient")
+  {
+    mfem::H1_FECollection collection(1, 3);
+    mfem::ParFiniteElementSpace fespace(&mesh.Get(), &collection);
+    mfem::FunctionCoefficient coefficient([](const mfem::Vector &point)
+                                          { return 2.0 * point[2]; });
+    mfem::ParGridFunction potential(&fespace);
+    potential.ProjectCoefficient(coefficient);
+    mfem::Vector true_dofs(fespace.GetTrueVSize());
+    potential.ParallelProject(true_dofs);
+    mfem::Vector zero(true_dofs.Size());
+    zero = 0.0;
+
+    fem::singular::DofTopology topology;
+    topology.elements.resize(fespace.GetNE());
+    const auto numbering = MakeH1Numbering(0);
+    fem::singular::EnrichedH1FieldEvaluator real(topology, numbering, fespace);
+    fem::singular::EnrichedH1FieldEvaluator imaginary(topology, numbering, fespace);
+    real.SetFromTrueDofs(true_dofs);
+    imaginary.SetFromTrueDofs(zero);
+
+    TetrahedronSingularSurfacePostOperator grouped_postoperator(
+        MakeMSMAPostprocessing(true, true), material, fespace);
+    TetrahedronSingularSurfacePostOperator ms_postoperator(
+        MakeMSMAPostprocessing(true, false), material, fespace);
+    TetrahedronSingularSurfacePostOperator ma_postoperator(
+        MakeMSMAPostprocessing(false, true), material, fespace);
+    check_measurements(
+        grouped_postoperator.MeasureElectrostatic(real, imaginary, 1.0, options),
+        ms_postoperator.MeasureElectrostatic(real, imaginary, 1.0, options),
+        ma_postoperator.MeasureElectrostatic(real, imaginary, 1.0, options));
+  }
+
+  SECTION("Full-wave Nedelec field")
+  {
+    mfem::ND_FECollection collection(1, 3);
+    mfem::ParFiniteElementSpace fespace(&mesh.Get(), &collection);
+    mfem::VectorFunctionCoefficient coefficient(
+        3,
+        [](const mfem::Vector &, mfem::Vector &value)
+        {
+          value.SetSize(3);
+          value = 0.0;
+          value[2] = 2.0;
+        });
+    mfem::ParGridFunction field(&fespace);
+    field.ProjectCoefficient(coefficient);
+    mfem::Vector true_dofs(fespace.GetTrueVSize());
+    field.ParallelProject(true_dofs);
+    mfem::Vector zero(true_dofs.Size());
+    zero = 0.0;
+
+    fem::singular::DofTopology topology;
+    topology.elements.resize(fespace.GetNE());
+    const auto numbering = MakeNumbering(false);
+    fem::singular::EnrichedNDFieldEvaluator real(topology, numbering, fespace);
+    fem::singular::EnrichedNDFieldEvaluator imaginary(topology, numbering, fespace);
+    real.SetFromTrueDofs(true_dofs);
+    imaginary.SetFromTrueDofs(zero);
+
+    TetrahedronSingularSurfacePostOperator grouped_postoperator(
+        MakeMSMAPostprocessing(true, true), material, fespace);
+    TetrahedronSingularSurfacePostOperator ms_postoperator(
+        MakeMSMAPostprocessing(true, false), material, fespace);
+    TetrahedronSingularSurfacePostOperator ma_postoperator(
+        MakeMSMAPostprocessing(false, true), material, fespace);
+    const auto grouped = grouped_postoperator.Measure(real, imaginary, 1.0, options);
+    check_measurements(grouped, ms_postoperator.Measure(real, imaginary, 1.0, options),
+                       ma_postoperator.Measure(real, imaginary, 1.0, options));
+    const auto batched = grouped_postoperator.Measure(
+        {{&real, &imaginary}, {&imaginary, &real}}, {1.0, 1.0}, options);
+    REQUIRE(batched.size() == 2);
+    REQUIRE(batched[0].size() == grouped.size());
+    REQUIRE(batched[1].size() == grouped.size());
+    for (std::size_t interface = 0; interface < grouped.size(); interface++)
+    {
+      CHECK_THAT(batched[0][interface].energy,
+                 WithinAbs(grouped[interface].energy, 3.0e-13));
+      CHECK_THAT(batched[1][interface].energy,
+                 WithinAbs(grouped[interface].energy, 3.0e-13));
+    }
+  }
 }
 
 TEST_CASE("Tetrahedral singular surface postprocessor evaluates off-rank traces",

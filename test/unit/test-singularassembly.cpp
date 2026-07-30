@@ -568,9 +568,10 @@ void CheckPositiveSemidefinite(const mfem::DenseMatrix &matrix,
   CHECK(solver.eigenvalues().minCoeff() >= -2.0 * error_bound - 1.0e-11);
 }
 
-mfem::Mesh SharedFaceTetrahedronMesh(bool permute_vertices)
+mfem::Mesh SharedFaceTetrahedronMesh(bool permute_vertices,
+                                     bool add_internal_boundary = false)
 {
-  mfem::Mesh mesh(3, 5, 2, 0, 3);
+  mfem::Mesh mesh(3, 5, 2, add_internal_boundary ? 1 : 0, 3);
   mesh.AddVertex(0.0, 0.0, 0.0);
   mesh.AddVertex(1.0, 0.0, 0.0);
   mesh.AddVertex(0.0, 1.0, 0.0);
@@ -593,6 +594,10 @@ mfem::Mesh SharedFaceTetrahedronMesh(bool permute_vertices)
   for (int i = 0; i < static_cast<int>(elements.size()); i++)
   {
     mesh.AddTet(elements[i].data(), i + 1);
+  }
+  if (add_internal_boundary)
+  {
+    mesh.AddBdrTriangle(0, 2, 1, 11);
   }
   mesh.FinalizeTopology();
   mesh.Finalize(false, false);
@@ -828,6 +833,20 @@ mfem::DenseMatrix GatherParallelMatrix(const mfem::HypreParMatrix &matrix)
     }
   }
   return result;
+}
+
+mfem::DenseMatrix GatherParallelSparsityPattern(const mfem::HypreParMatrix &matrix)
+{
+  mfem::HypreParMatrix pattern(matrix);
+  auto *parallel = static_cast<hypre_ParCSRMatrix *>(pattern);
+  const auto set_stored_entries = [](hypre_CSRMatrix *block)
+  {
+    auto *data = hypre_CSRMatrixData(block);
+    std::fill(data, data + hypre_CSRMatrixNumNonzeros(block), 1.0);
+  };
+  set_stored_entries(hypre_ParCSRMatrixDiag(parallel));
+  set_stored_entries(hypre_ParCSRMatrixOffd(parallel));
+  return GatherParallelMatrix(pattern);
 }
 
 mfem::DenseMatrix DenseMatrix(const mfem::SparseMatrix &matrix)
@@ -1283,6 +1302,9 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
     CheckClose(batch->nd_curl_curl, independent->nd_curl_curl);
     CHECK(batch->total_quadrature_leaf_count == independent->total_quadrature_leaf_count);
     CHECK(batch->maximum_subdivision_depth == independent->maximum_subdivision_depth);
+    CHECK(batch->affine_reference_table_entries ==
+          independent->affine_reference_table_entries);
+    CHECK(batch->affine_reference_cache_hits == independent->affine_reference_cache_hits);
   }
 
   const auto h1_sparse = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
@@ -1561,6 +1583,33 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
   point_singular.elements[0].nd[0].basis = *node_basis;
   CHECK_NOTHROW(fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
       point_singular, nd_space, {{11, 1.0}}, options));
+}
+
+TEST_CASE("Tetrahedral singular boundary mass accepts a conforming internal boundary",
+          "[singularelements][singularassembly][boundary][tetrahedron][Serial]")
+{
+  auto mesh = SharedFaceTetrahedronMesh(false, true);
+  fem::singular::DofTopology topology;
+  topology.nd_dofs.resize(2);
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    topology.elements.push_back(SharedFaceSingularDofs(*mesh.GetElement(element)));
+  }
+
+  mfem::ND_FECollection nd_collection(1, 3);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
+  const auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+      topology, nd_space, {{11, 1.7}}, options);
+
+  REQUIRE(blocks.standard_enrichment);
+  REQUIRE(blocks.enrichment_standard);
+  REQUIRE(blocks.enrichment_enrichment);
+  CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+  CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
+  CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
+  CHECK(blocks.standard_enrichment->MaxNorm() > 1.0e-8);
+  CHECK(blocks.enrichment_enrichment->MaxNorm() > 1.0e-8);
 }
 
 TEST_CASE("Triangular singular boundary mass matches the physical tangential trace",
@@ -1945,12 +1994,23 @@ TEST_CASE("Tetrahedral singular boundary linear form matches boundary mass varia
     fem::singular::AssembleParallelNDBoundaryLinearForm(
         topology, numbering, space, boundary_coefficient, options, assembled);
     REQUIRE(assembled.Size() == expected.Size());
+    mfem::Array<int> marker(mesh.bdr_attributes.Max());
+    marker = 1;
+    mfem::Vector marked;
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        topology, numbering, space, boundary_coefficient, options, marked, &marker);
+    REQUIRE(marked.Size() == assembled.Size());
     for (int i = 0; i < assembled.Size(); i++)
     {
       CAPTURE(curved, i, assembled[i], expected[i]);
       CHECK(std::abs(assembled[i] - expected[i]) <=
             2.0e-7 * std::max({1.0, std::abs(assembled[i]), std::abs(expected[i])}));
+      CHECK(marked[i] == assembled[i]);
     }
+    marker = 0;
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        topology, numbering, space, boundary_coefficient, options, marked, &marker);
+    CHECK(marked.Normlinf() == 0.0);
   }
 }
 
@@ -2004,12 +2064,23 @@ TEST_CASE("Triangular singular boundary linear form matches boundary mass variat
     fem::singular::AssembleParallelNDBoundaryLinearForm(
         topology, numbering, space, boundary_coefficient, options, assembled);
     REQUIRE(assembled.Size() == expected.Size());
+    mfem::Array<int> marker(mesh.bdr_attributes.Max());
+    marker = 1;
+    mfem::Vector marked;
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        topology, numbering, space, boundary_coefficient, options, marked, &marker);
+    REQUIRE(marked.Size() == assembled.Size());
     for (int i = 0; i < assembled.Size(); i++)
     {
       CAPTURE(curved, i, assembled[i], expected[i]);
       CHECK(std::abs(assembled[i] - expected[i]) <=
             2.0e-7 * std::max({1.0, std::abs(assembled[i]), std::abs(expected[i])}));
+      CHECK(marked[i] == assembled[i]);
     }
+    marker = 0;
+    fem::singular::AssembleParallelNDBoundaryLinearForm(
+        topology, numbering, space, boundary_coefficient, options, marked, &marker);
+    CHECK(marked.Normlinf() == 0.0);
   }
 }
 
@@ -3437,6 +3508,8 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   REQUIRE(sparse.nd_curl_curl.enrichment_standard);
   CHECK(sparse.total_quadrature_leaf_count > 0);
   CHECK(sparse.maximum_subdivision_depth <= options.maximum_subdivisions);
+  CHECK(sparse.affine_reference_table_entries > 0);
+  CHECK(sparse.affine_reference_cache_hits > 0);
   CHECK(sparse.h1_diffusion.enrichment_enrichment->Height() == 1);
   CHECK(sparse.h1_diffusion.standard_enrichment->Height() == h1_space.GetVSize());
   CHECK(sparse.h1_mass.enrichment_enrichment->Height() == 1);
@@ -4234,6 +4307,46 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
   REQUIRE(blockwise_constrained);
   CheckClose(GatherParallelMatrix(*blockwise_constrained),
              GatherParallelMatrix(*dirichlet.constrained));
+
+  mfem::Array<int> combined_essential(standard_essential);
+  for (int dof : enrichment_essential)
+  {
+    combined_essential.Append(parallel_h1_space.GetTrueVSize() + dof);
+  }
+  auto explicitly_zeroed = std::make_unique<mfem::HypreParMatrix>(*combined_h1);
+  explicitly_zeroed->EliminateBC(combined_essential, mfem::Matrix::DIAG_ONE);
+  const HYPRE_BigInt nnz_before_compaction = explicitly_zeroed->NNZ();
+  const mfem::DenseMatrix dense_before_compaction =
+      GatherParallelMatrix(*explicitly_zeroed);
+  mfem::Vector input(explicitly_zeroed->Width()),
+      action_before(explicitly_zeroed->Height()), action_after(explicitly_zeroed->Height());
+  for (int i = 0; i < input.Size(); i++)
+  {
+    input[i] = std::sin(0.19 * (i + 1) + Mpi::Rank(Mpi::World()));
+  }
+  explicitly_zeroed->Mult(input, action_before);
+
+  const HYPRE_BigInt removed = fem::singular::RemoveExplicitZeros(*explicitly_zeroed);
+  CHECK(removed > 0);
+  CHECK(explicitly_zeroed->NNZ() + removed == nnz_before_compaction);
+  CheckMatricesEqual(GatherParallelMatrix(*explicitly_zeroed), dense_before_compaction);
+  explicitly_zeroed->Mult(input, action_after);
+  for (int i = 0; i < action_before.Size(); i++)
+  {
+    CHECK(action_after[i] == action_before[i]);
+  }
+
+  const mfem::DenseMatrix compacted_pattern =
+      GatherParallelSparsityPattern(*explicitly_zeroed);
+  REQUIRE(compacted_pattern.Height() == compacted_pattern.Width());
+  for (int i = 0; i < compacted_pattern.Height(); i++)
+  {
+    CHECK(compacted_pattern(i, i) == 1.0);
+    for (int j = 0; j < compacted_pattern.Width(); j++)
+    {
+      CHECK(compacted_pattern(i, j) == compacted_pattern(j, i));
+    }
+  }
 
   mfem::Array<int> no_enrichment_essential;
   auto correction_dirichlet = fem::singular::BuildParallelDirichletSystem(

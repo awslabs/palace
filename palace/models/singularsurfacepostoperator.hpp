@@ -5,6 +5,7 @@
 #define PALACE_MODELS_SINGULAR_SURFACE_POST_OPERATOR_HPP
 
 #include <map>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 
@@ -105,6 +106,8 @@ class TetrahedronSingularSurfacePostOperator
 {
 public:
   using Measurement = TriangleSingularSurfacePostOperator::Measurement;
+  using NDFieldEvaluatorPair = std::pair<fem::singular::EnrichedNDFieldEvaluator *,
+                                         fem::singular::EnrichedNDFieldEvaluator *>;
 
 private:
   struct InterfaceData
@@ -121,13 +124,15 @@ private:
   mfem::ParFiniteElementSpace &fespace;
   std::map<int, InterfaceData> interfaces;
 
-  double
-  IntegrateInterface(const InterfaceData &interface,
-                     fem::singular::EnrichedNDFieldEvaluator *real_evaluator,
-                     fem::singular::EnrichedNDFieldEvaluator *imaginary_evaluator,
-                     fem::singular::EnrichedH1FieldEvaluator *real_gradient_evaluator,
-                     fem::singular::EnrichedH1FieldEvaluator *imaginary_gradient_evaluator,
-                     const fem::singular::AdaptiveAssemblyOptions &options) const;
+  using IndexedInterface = std::pair<int, const InterfaceData *>;
+  std::vector<std::vector<IndexedInterface>> GetInterfaceGroups() const;
+
+  std::vector<double>
+  IntegrateInterfaces(const std::vector<const InterfaceData *> &interfaces,
+                      const std::vector<NDFieldEvaluatorPair> &field_evaluators,
+                      fem::singular::EnrichedH1FieldEvaluator *real_gradient_evaluator,
+                      fem::singular::EnrichedH1FieldEvaluator *imaginary_gradient_evaluator,
+                      const fem::singular::AdaptiveAssemblyOptions &options) const;
 
 public:
   TetrahedronSingularSurfacePostOperator(const config::BoundaryPostData &postpro,
@@ -140,6 +145,11 @@ public:
   Measure(fem::singular::EnrichedNDFieldEvaluator &real_evaluator,
           fem::singular::EnrichedNDFieldEvaluator &imaginary_evaluator,
           double total_electric_energy,
+          const fem::singular::AdaptiveAssemblyOptions &options) const;
+
+  std::vector<std::vector<Measurement>>
+  Measure(const std::vector<NDFieldEvaluatorPair> &field_evaluators,
+          const std::vector<double> &total_electric_energies,
           const fem::singular::AdaptiveAssemblyOptions &options) const;
 
   std::vector<Measurement>

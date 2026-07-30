@@ -2123,6 +2123,45 @@ VectorBasisValue EvaluateHigherOrderBasis(const BarycentricPoint &lambda,
   throw std::invalid_argument("Unknown higher-order singular-element basis family!");
 }
 
+Vector3 EvaluateHigherOrderBasisValue(const BarycentricPoint &lambda,
+                                      const BarycentricGradients &grad_lambda,
+                                      const HigherOrderBasis &basis)
+{
+  ValidateHigherOrderBasis(basis);
+  if (basis.family == HigherOrderBasisFamily::NODE_GRADIENT ||
+      basis.family == HigherOrderBasisFamily::EDGE_GRADIENT)
+  {
+    return EvaluateHigherOrderBasis(lambda, grad_lambda, basis).value;
+  }
+
+  const auto &nodes = basis.nodes;
+  if (basis.family == HigherOrderBasisFamily::NODE_ROTATIONAL)
+  {
+    ValidateEvaluation(lambda, grad_lambda, basis.nu);
+    const auto polynomials = EvaluateHigherOrderFacePolynomials(
+        lambda, nodes, basis.interpolation_indices, basis.order);
+    const double rho = NodeRadialCoordinate(lambda, nodes[0]);
+    ValidateRadialProxy(rho);
+    const auto edge = StandardEdge(lambda, grad_lambda, nodes[1], nodes[2]);
+    const double factor =
+        PolynomialProduct(polynomials) * PositivePowerMinusOne(rho, basis.nu);
+    return Scale(factor, edge.value);
+  }
+  if (basis.family == HigherOrderBasisFamily::EDGE_ROTATIONAL)
+  {
+    ValidateEvaluation(lambda, grad_lambda, basis.nu);
+    const auto polynomials = EvaluateHigherOrderVolumePolynomials(
+        lambda, nodes, basis.interpolation_indices, basis.order);
+    const double rho = EdgeRadialCoordinate(lambda, nodes[0], nodes[1]);
+    ValidateRadialProxy(rho);
+    const auto edge = StandardEdge(lambda, grad_lambda, nodes[2], nodes[3]);
+    const double factor = PolynomialProduct(polynomials) * lambda[nodes[0]] *
+                          lambda[nodes[1]] * PositivePowerMinusOne(rho, basis.nu);
+    return Scale(factor, edge.value);
+  }
+  throw std::invalid_argument("Unknown higher-order singular-element basis family!");
+}
+
 double EvaluateHigherOrderGradientPotential(const BarycentricPoint &lambda,
                                             const HigherOrderBasis &basis)
 {

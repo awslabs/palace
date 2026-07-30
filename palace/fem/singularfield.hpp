@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 
@@ -30,6 +31,12 @@ struct NDFieldValue
 {
   Vector3 value{};
   Vector3 curl{};
+};
+
+struct NDFieldValuePair
+{
+  Vector3 first{};
+  Vector3 second{};
 };
 
 enum class TetrahedronFaceSingularityType
@@ -176,6 +183,11 @@ NDFieldValue EvaluateElementNDEnrichment(const ElementDofMap &element_dofs,
                                          const BarycentricPoint &lambda,
                                          const BarycentricGradients &grad_lambda);
 
+Vector3 EvaluateElementNDEnrichmentValue(const ElementDofMap &element_dofs,
+                                         const mfem::Vector &local_coefficients,
+                                         const BarycentricPoint &lambda,
+                                         const BarycentricGradients &grad_lambda);
+
 TriangleH1FieldValue
 EvaluateElementTriangleH1Enrichment(const TriangleElementDofMap &element_dofs,
                                     const mfem::Vector &local_coefficients,
@@ -265,6 +277,13 @@ public:
 class EnrichedNDFieldEvaluator
 {
 private:
+  struct BarycentricGradientCache
+  {
+    bool initialized = false;
+    bool constant = false;
+    BarycentricGradients gradients{};
+  };
+
   const DofTopology &topology;
   const ParallelDofNumbering &numbering;
   mfem::ParFiniteElementSpace &fespace;
@@ -273,10 +292,24 @@ private:
   mfem::Vector local_enrichment;
   FaceNeighborEnrichmentData<ElementDofMap> face_neighbor_enrichment;
   std::vector<double> nd_exponents;
+  std::vector<BarycentricGradientCache> barycentric_gradient_cache;
+  std::vector<mfem::Vector> standard_element_coefficients;
+  std::vector<bool> standard_element_coefficients_valid;
+  mfem::DenseMatrix standard_vector_shape;
   bool initialized;
 
+  const mfem::Vector &GetStandardElementCoefficients(int element);
+  BarycentricGradients
+  GetValueBarycentricGradients(int element, mfem::ElementTransformation &transformation,
+                               const mfem::IntegrationPoint &point);
   NDFieldValue EvaluateBarycentric(int element, const mfem::IntegrationPoint &point,
                                    const BarycentricPoint &lambda);
+  Vector3 EvaluateValueBarycentric(int element, const mfem::IntegrationPoint &point,
+                                   const BarycentricPoint &lambda);
+  NDFieldValuePair EvaluateValueBarycentricPair(EnrichedNDFieldEvaluator &second,
+                                                int element,
+                                                const mfem::IntegrationPoint &point,
+                                                const BarycentricPoint &lambda);
 
 public:
   EnrichedNDFieldEvaluator(const DofTopology &topology,
@@ -291,6 +324,22 @@ public:
   // Evaluate on the closed reference tetrahedron, excluding a singular node
   // or edge itself. This is intended for trace and boundary integration.
   NDFieldValue EvaluateClosure(int element, const mfem::IntegrationPoint &point);
+
+  // Value-only boundary evaluation for electric surface observables.
+  Vector3 EvaluateValueClosure(int element, const mfem::IntegrationPoint &point);
+
+  // Evaluate two fields on the same geometry while computing every singular
+  // basis value only once.
+  NDFieldValuePair EvaluateValueClosurePair(EnrichedNDFieldEvaluator &second, int element,
+                                            const mfem::IntegrationPoint &point);
+
+  // Evaluate multiple real/imaginary field pairs on the same geometry while
+  // computing every singular basis value only once.
+  void EvaluateValueClosureBatch(
+      const std::vector<std::pair<EnrichedNDFieldEvaluator *, EnrichedNDFieldEvaluator *>>
+          &evaluators,
+      int element, const mfem::IntegrationPoint &point,
+      std::vector<NDFieldValuePair> &values);
 
   // Return each distinct gradient-singular node or edge contained in the
   // specified element face exactly once.

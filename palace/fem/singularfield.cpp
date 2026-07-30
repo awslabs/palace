@@ -940,6 +940,35 @@ NDFieldValue EvaluateElementNDEnrichment(const ElementDofMap &element_dofs,
   return result;
 }
 
+Vector3 EvaluateElementNDEnrichmentValue(const ElementDofMap &element_dofs,
+                                         const mfem::Vector &local_coefficients,
+                                         const BarycentricPoint &lambda,
+                                         const BarycentricGradients &grad_lambda)
+{
+  Vector3 result{};
+  for (const auto &element_dof : element_dofs.nd)
+  {
+    if (element_dof.dof >= static_cast<std::size_t>(local_coefficients.Size()))
+    {
+      throw std::invalid_argument(
+          "Singular ND field evaluation received an invalid element DOF map!");
+    }
+    const double coefficient = local_coefficients[element_dof.dof];
+    if (!std::isfinite(coefficient))
+    {
+      throw std::invalid_argument(
+          "Singular ND field evaluation received a nonfinite coefficient!");
+    }
+    const auto value =
+        EvaluateHigherOrderBasisValue(lambda, grad_lambda, element_dof.basis);
+    for (int d = 0; d < 3; d++)
+    {
+      result[d] += coefficient * value[d];
+    }
+  }
+  return result;
+}
+
 TriangleH1FieldValue EvaluateElementTriangleH1Enrichment(
     const TriangleElementDofMap &element_dofs, const mfem::Vector &local_coefficients,
     const TriangleBarycentricPoint &lambda, const TriangleBarycentricGradients &grad_lambda)
@@ -1651,6 +1680,11 @@ EnrichedNDFieldEvaluator::EnrichedNDFieldEvaluator(const DofTopology &topology,
   local_enrichment.SetSize(static_cast<int>(topology.nd_dofs.size()));
   InitializeFaceNeighborEnrichment(fespace, topology.elements, false,
                                    face_neighbor_enrichment);
+  const std::size_t parallel_element_count =
+      topology.elements.size() + face_neighbor_enrichment.element_dofs.size();
+  barycentric_gradient_cache.resize(parallel_element_count);
+  standard_element_coefficients.resize(parallel_element_count);
+  standard_element_coefficients_valid.assign(parallel_element_count, false);
 }
 
 void EnrichedNDFieldEvaluator::SetFromTrueDofs(const mfem::Vector &combined_true_dofs)
@@ -1680,6 +1714,8 @@ void EnrichedNDFieldEvaluator::SetFromTrueDofs(const mfem::Vector &combined_true
   enrichment_prolongation->Mult(enrichment_true_dofs, local_enrichment);
   ExchangeFaceNeighborEnrichment(topology.elements, local_enrichment, false, fespace,
                                  face_neighbor_enrichment);
+  std::fill(standard_element_coefficients_valid.begin(),
+            standard_element_coefficients_valid.end(), false);
   initialized = true;
 }
 
@@ -1699,6 +1735,117 @@ NDFieldValue EnrichedNDFieldEvaluator::EvaluateClosure(int element,
   const BarycentricPoint lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
                                 point.z};
   return EvaluateBarycentric(element, point, lambda);
+}
+
+Vector3 EnrichedNDFieldEvaluator::EvaluateValueClosure(int element,
+                                                       const mfem::IntegrationPoint &point)
+{
+  ValidateClosurePoint(point);
+  const BarycentricPoint lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
+                                point.z};
+  return EvaluateValueBarycentric(element, point, lambda);
+}
+
+NDFieldValuePair EnrichedNDFieldEvaluator::EvaluateValueClosurePair(
+    EnrichedNDFieldEvaluator &second, int element, const mfem::IntegrationPoint &point)
+{
+  ValidateClosurePoint(point);
+  const BarycentricPoint lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
+                                point.z};
+  return EvaluateValueBarycentricPair(second, element, point, lambda);
+}
+
+void EnrichedNDFieldEvaluator::EvaluateValueClosureBatch(
+    const std::vector<std::pair<EnrichedNDFieldEvaluator *, EnrichedNDFieldEvaluator *>>
+        &evaluators,
+    int element, const mfem::IntegrationPoint &point, std::vector<NDFieldValuePair> &values)
+{
+  ValidateClosurePoint(point);
+  if (evaluators.empty() || values.size() != evaluators.size())
+  {
+    throw std::invalid_argument(
+        "Batched singular ND field evaluation requires matching nonempty input and "
+        "output!");
+  }
+  for (const auto &[real, imaginary] : evaluators)
+  {
+    if (!real || !imaginary || !real->initialized || !imaginary->initialized ||
+        &topology != &real->topology || &topology != &imaginary->topology ||
+        &numbering != &real->numbering || &numbering != &imaginary->numbering ||
+        &fespace != &real->fespace || &fespace != &imaginary->fespace)
+    {
+      throw std::invalid_argument(
+          "Batched singular ND field evaluation requires initialized matching spaces "
+          "and topology!");
+    }
+  }
+
+  const BarycentricPoint lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
+                                point.z};
+  const auto &element_dofs = GetParallelElementDofs(
+      element, fespace.GetNE(), topology.elements, face_neighbor_enrichment);
+  auto &transformation = GetParallelElementTransformation(fespace, element);
+  const auto grad_lambda = GetValueBarycentricGradients(element, transformation, point);
+  const int local_elements = fespace.GetNE();
+  const auto *finite_element = element < local_elements
+                                   ? fespace.GetFE(element)
+                                   : fespace.GetFaceNbrFE(element - local_elements);
+  if (!finite_element || finite_element->GetRangeType() != mfem::FiniteElement::VECTOR ||
+      finite_element->GetDof() <= 0 || finite_element->GetRangeDim() > 3)
+  {
+    throw std::runtime_error(
+        "Batched singular ND field evaluation received an incompatible standard "
+        "element!");
+  }
+  transformation.SetIntPoint(&point);
+  standard_vector_shape.SetSize(finite_element->GetDof(), 3);
+  finite_element->CalcVShape(transformation, standard_vector_shape);
+  for (std::size_t field = 0; field < evaluators.size(); field++)
+  {
+    auto &[real, imaginary] = evaluators[field];
+    double real_data[3], imaginary_data[3];
+    mfem::Vector real_standard(real_data, 3), imaginary_standard(imaginary_data, 3);
+    standard_vector_shape.MultTranspose(real->GetStandardElementCoefficients(element),
+                                        real_standard);
+    standard_vector_shape.MultTranspose(imaginary->GetStandardElementCoefficients(element),
+                                        imaginary_standard);
+    values[field] = {{real_standard[0], real_standard[1], real_standard[2]},
+                     {imaginary_standard[0], imaginary_standard[1], imaginary_standard[2]}};
+  }
+
+  for (const auto &element_dof : element_dofs.nd)
+  {
+    const auto value =
+        EvaluateHigherOrderBasisValue(lambda, grad_lambda, element_dof.basis);
+    for (std::size_t field = 0; field < evaluators.size(); field++)
+    {
+      auto &[real, imaginary] = evaluators[field];
+      const auto &real_coefficients = element < fespace.GetNE()
+                                          ? real->local_enrichment
+                                          : real->face_neighbor_enrichment.coefficients;
+      const auto &imaginary_coefficients =
+          element < fespace.GetNE() ? imaginary->local_enrichment
+                                    : imaginary->face_neighbor_enrichment.coefficients;
+      if (element_dof.dof >= static_cast<std::size_t>(real_coefficients.Size()) ||
+          element_dof.dof >= static_cast<std::size_t>(imaginary_coefficients.Size()))
+      {
+        throw std::invalid_argument(
+            "Batched singular ND field evaluation received an invalid element DOF map!");
+      }
+      const double real_coefficient = real_coefficients[element_dof.dof];
+      const double imaginary_coefficient = imaginary_coefficients[element_dof.dof];
+      if (!std::isfinite(real_coefficient) || !std::isfinite(imaginary_coefficient))
+      {
+        throw std::invalid_argument(
+            "Batched singular ND field evaluation received a nonfinite coefficient!");
+      }
+      for (int d = 0; d < 3; d++)
+      {
+        values[field].first[d] += real_coefficient * value[d];
+        values[field].second[d] += imaginary_coefficient * value[d];
+      }
+    }
+  }
 }
 
 std::vector<TetrahedronFaceSingularity>
@@ -1775,9 +1922,7 @@ NDFieldValue EnrichedNDFieldEvaluator::EvaluateBarycentric(
   const auto &element_dofs = GetParallelElementDofs(
       element, fespace.GetNE(), topology.elements, face_neighbor_enrichment);
   auto &transformation = GetParallelElementTransformation(fespace, element);
-  double jacobian_determinant;
-  const auto grad_lambda =
-      GetBarycentricGradients(transformation, point, jacobian_determinant);
+  const auto grad_lambda = GetValueBarycentricGradients(element, transformation, point);
 
   transformation.SetIntPoint(&point);
   NDFieldValue result;
@@ -1799,6 +1944,192 @@ NDFieldValue EnrichedNDFieldEvaluator::EvaluateBarycentric(
   {
     result.value[d] += enrichment.value[d];
     result.curl[d] += enrichment.curl[d];
+  }
+  return result;
+}
+
+const mfem::Vector &EnrichedNDFieldEvaluator::GetStandardElementCoefficients(int element)
+{
+  if (element < 0 || element >= static_cast<int>(standard_element_coefficients.size()))
+  {
+    throw std::out_of_range(
+        "Singular ND value evaluation received an invalid element index!");
+  }
+  if (standard_element_coefficients_valid[element])
+  {
+    return standard_element_coefficients[element];
+  }
+
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dof_transformation;
+  const int local_elements = fespace.GetNE();
+  const mfem::FiniteElement *finite_element;
+  auto &coefficients = standard_element_coefficients[element];
+  if (element < local_elements)
+  {
+    fespace.GetElementVDofs(element, dofs, dof_transformation);
+    standard_field.GetSubVector(dofs, coefficients);
+    finite_element = fespace.GetFE(element);
+  }
+  else
+  {
+    const int neighbor = element - local_elements;
+    fespace.GetFaceNbrElementVDofs(neighbor, dofs, dof_transformation);
+    standard_field.FaceNbrData().GetSubVector(dofs, coefficients);
+    finite_element = fespace.GetFaceNbrFE(neighbor);
+  }
+  dof_transformation.InvTransformPrimal(coefficients);
+  if (!finite_element || finite_element->GetRangeType() != mfem::FiniteElement::VECTOR ||
+      finite_element->GetDof() != coefficients.Size())
+  {
+    throw std::runtime_error(
+        "Singular ND value evaluation received an incompatible standard element!");
+  }
+  standard_element_coefficients_valid[element] = true;
+  return coefficients;
+}
+
+BarycentricGradients EnrichedNDFieldEvaluator::GetValueBarycentricGradients(
+    int element, mfem::ElementTransformation &transformation,
+    const mfem::IntegrationPoint &point)
+{
+  if (element < 0 || element >= static_cast<int>(barycentric_gradient_cache.size()))
+  {
+    throw std::out_of_range(
+        "Singular ND value evaluation received an invalid element index!");
+  }
+  auto &cache = barycentric_gradient_cache[element];
+  if (!cache.initialized)
+  {
+    cache.constant = transformation.OrderJ() == 0;
+    cache.initialized = true;
+    if (cache.constant)
+    {
+      double jacobian_determinant;
+      cache.gradients =
+          GetBarycentricGradients(transformation, point, jacobian_determinant);
+    }
+  }
+  if (cache.constant)
+  {
+    return cache.gradients;
+  }
+  double jacobian_determinant;
+  return GetBarycentricGradients(transformation, point, jacobian_determinant);
+}
+
+Vector3 EnrichedNDFieldEvaluator::EvaluateValueBarycentric(
+    int element, const mfem::IntegrationPoint &point, const BarycentricPoint &lambda)
+{
+  if (!initialized)
+  {
+    throw std::logic_error("Singular ND field evaluator has no combined true-DOF vector!");
+  }
+  const auto &element_dofs = GetParallelElementDofs(
+      element, fespace.GetNE(), topology.elements, face_neighbor_enrichment);
+  auto &transformation = GetParallelElementTransformation(fespace, element);
+  const auto grad_lambda = GetValueBarycentricGradients(element, transformation, point);
+
+  Vector3 result{};
+  transformation.SetIntPoint(&point);
+  const int local_elements = fespace.GetNE();
+  const auto *finite_element = element < local_elements
+                                   ? fespace.GetFE(element)
+                                   : fespace.GetFaceNbrFE(element - local_elements);
+  if (!finite_element || finite_element->GetRangeType() != mfem::FiniteElement::VECTOR ||
+      finite_element->GetDof() <= 0 || finite_element->GetRangeDim() > 3)
+  {
+    throw std::runtime_error(
+        "Singular ND value evaluation received an incompatible standard element!");
+  }
+  standard_vector_shape.SetSize(finite_element->GetDof(), 3);
+  finite_element->CalcVShape(transformation, standard_vector_shape);
+  mfem::Vector standard_value(3);
+  standard_vector_shape.MultTranspose(GetStandardElementCoefficients(element),
+                                      standard_value);
+  result = {standard_value[0], standard_value[1], standard_value[2]};
+
+  const auto &coefficients =
+      element < fespace.GetNE() ? local_enrichment : face_neighbor_enrichment.coefficients;
+  const auto enrichment =
+      EvaluateElementNDEnrichmentValue(element_dofs, coefficients, lambda, grad_lambda);
+  for (int d = 0; d < 3; d++)
+  {
+    result[d] += enrichment[d];
+  }
+  return result;
+}
+
+NDFieldValuePair EnrichedNDFieldEvaluator::EvaluateValueBarycentricPair(
+    EnrichedNDFieldEvaluator &second, int element, const mfem::IntegrationPoint &point,
+    const BarycentricPoint &lambda)
+{
+  if (!initialized || !second.initialized)
+  {
+    throw std::logic_error(
+        "Paired singular ND field evaluation requires two initialized fields!");
+  }
+  if (&topology != &second.topology || &numbering != &second.numbering ||
+      &fespace != &second.fespace)
+  {
+    throw std::invalid_argument(
+        "Paired singular ND field evaluation requires matching spaces and topology!");
+  }
+  const auto &element_dofs = GetParallelElementDofs(
+      element, fespace.GetNE(), topology.elements, face_neighbor_enrichment);
+  auto &transformation = GetParallelElementTransformation(fespace, element);
+  const auto grad_lambda = GetValueBarycentricGradients(element, transformation, point);
+
+  NDFieldValuePair result;
+  transformation.SetIntPoint(&point);
+  const int local_elements = fespace.GetNE();
+  const auto *finite_element = element < local_elements
+                                   ? fespace.GetFE(element)
+                                   : fespace.GetFaceNbrFE(element - local_elements);
+  if (!finite_element || finite_element->GetRangeType() != mfem::FiniteElement::VECTOR ||
+      finite_element->GetDof() <= 0 || finite_element->GetRangeDim() > 3)
+  {
+    throw std::runtime_error(
+        "Paired singular ND field evaluation received an incompatible standard "
+        "element!");
+  }
+  standard_vector_shape.SetSize(finite_element->GetDof(), 3);
+  finite_element->CalcVShape(transformation, standard_vector_shape);
+  mfem::Vector first_standard(3), second_standard(3);
+  standard_vector_shape.MultTranspose(GetStandardElementCoefficients(element),
+                                      first_standard);
+  standard_vector_shape.MultTranspose(second.GetStandardElementCoefficients(element),
+                                      second_standard);
+  result = {{first_standard[0], first_standard[1], first_standard[2]},
+            {second_standard[0], second_standard[1], second_standard[2]}};
+
+  const auto &first_coefficients =
+      element < fespace.GetNE() ? local_enrichment : face_neighbor_enrichment.coefficients;
+  const auto &second_coefficients = element < fespace.GetNE()
+                                        ? second.local_enrichment
+                                        : second.face_neighbor_enrichment.coefficients;
+  for (const auto &element_dof : element_dofs.nd)
+  {
+    if (element_dof.dof >= static_cast<std::size_t>(first_coefficients.Size()) ||
+        element_dof.dof >= static_cast<std::size_t>(second_coefficients.Size()))
+    {
+      throw std::invalid_argument(
+          "Paired singular ND field evaluation received an invalid element DOF map!");
+    }
+    const double first_coefficient = first_coefficients[element_dof.dof];
+    const double second_coefficient = second_coefficients[element_dof.dof];
+    if (!std::isfinite(first_coefficient) || !std::isfinite(second_coefficient))
+    {
+      throw std::invalid_argument(
+          "Paired singular ND field evaluation received a nonfinite coefficient!");
+    }
+    const auto value =
+        EvaluateHigherOrderBasisValue(lambda, grad_lambda, element_dof.basis);
+    for (int d = 0; d < 3; d++)
+    {
+      result.first[d] += first_coefficient * value[d];
+      result.second[d] += second_coefficient * value[d];
+    }
   }
   return result;
 }

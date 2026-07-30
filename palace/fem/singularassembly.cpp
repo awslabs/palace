@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -16,6 +17,7 @@
 #include <vector>
 #include <fmt/format.h>
 
+#include "fem/coefficient.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -263,6 +265,61 @@ public:
         {canonical.row_basis, canonical.column_basis, integral, estimated_absolute_error});
     integral.input_to_canonical = canonical.input_to_canonical;
     return DuffyH1ReferenceIntegral{std::move(integral), estimated_absolute_error};
+  }
+
+  std::size_t Size() const { return entries.size(); }
+  std::size_t Hits() const { return hits; }
+};
+
+class AdaptiveReferenceTable
+{
+private:
+  struct Entry
+  {
+    ReferenceBasis row_basis;
+    ReferenceBasis column_basis;
+    AdaptiveReferenceIntegral reference;
+  };
+
+  AdaptiveAssemblyOptions options;
+  std::vector<Entry> entries;
+  std::size_t hits = 0;
+
+public:
+  explicit AdaptiveReferenceTable(const AdaptiveAssemblyOptions &options_in)
+    : options(options_in)
+  {
+  }
+
+  AdaptiveReferenceIntegral Get(const ReferenceBasis &row_basis,
+                                const ReferenceBasis &column_basis)
+  {
+    const auto canonical = CanonicalizeReferenceBasisPair(row_basis, column_basis);
+    for (const auto &entry : entries)
+    {
+      if (SameBasis(entry.row_basis, canonical.row_basis) &&
+          SameBasis(entry.column_basis, canonical.column_basis))
+      {
+        hits++;
+        auto reference = entry.reference;
+        reference.integral.input_to_canonical = canonical.input_to_canonical;
+        return reference;
+      }
+    }
+
+    auto reference = ComputeAdaptiveReferenceIntegral(
+        canonical.row_basis, canonical.column_basis, options.quadrature_order,
+        options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions);
+    if (!SameBasis(reference.integral.row_basis, canonical.row_basis) ||
+        !SameBasis(reference.integral.column_basis, canonical.column_basis))
+    {
+      throw std::logic_error(
+          "Singular adaptive reference table canonicalization is inconsistent!");
+    }
+    entries.push_back({canonical.row_basis, canonical.column_basis, reference});
+    reference.integral.input_to_canonical = canonical.input_to_canonical;
+    return reference;
   }
 
   std::size_t Size() const { return entries.size(); }
@@ -1367,6 +1424,328 @@ void ValidateDuffyH1Entry(double value, double estimated_absolute_error,
   }
 }
 
+bool BasisLess(const HigherOrderBasis &a, const HigherOrderBasis &b)
+{
+  return std::tie(a.family, a.nodes, a.interpolation_indices, a.order, a.nu) <
+         std::tie(b.family, b.nodes, b.interpolation_indices, b.order, b.nu);
+}
+
+struct AdaptiveCoefficientTensor
+{
+  ReferenceCoefficientTensor value{};
+  ReferenceCoefficientTensor estimated_absolute_error{};
+  std::size_t total_leaf_count = 0;
+  int maximum_subdivision_depth = 0;
+};
+
+template <typename Integrand>
+AdaptiveCoefficientTensor
+IntegrateAdaptiveCoefficientTensor(const AdaptiveAssemblyOptions &options,
+                                   const HigherOrderBasis &basis, int standard,
+                                   std::string_view quantity, Integrand &&integrand)
+{
+  AdaptiveCoefficientTensor result;
+  for (int u = 0; u < 3; u++)
+  {
+    for (int v = 0; v < 3; v++)
+    {
+      const auto entry = IntegrateReferenceTetrahedronAdaptive(
+          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
+          options.maximum_subdivisions,
+          [&](const BarycentricPoint &lambda) { return integrand(lambda, u, v); });
+      if (!entry.converged)
+      {
+        throw std::runtime_error(fmt::format(
+            "Cached affine singular {} tensor did not converge: standard ND DOF = {}, "
+            "family = {}, order = {}, nu = {:.17g}, nodes = [{}, {}, {}, {}], "
+            "interpolation = [{}, {}, {}, {}], component = [{}, {}], value = "
+            "{:.17g}, estimated absolute error = {:.17g}, leaves = {}, maximum depth "
+            "= {}!",
+            quantity, standard, static_cast<int>(basis.family), basis.order, basis.nu,
+            basis.nodes[0], basis.nodes[1], basis.nodes[2], basis.nodes[3],
+            basis.interpolation_indices[0], basis.interpolation_indices[1],
+            basis.interpolation_indices[2], basis.interpolation_indices[3], u, v,
+            entry.value, entry.estimated_absolute_error, entry.leaf_count,
+            entry.maximum_subdivision_depth));
+      }
+      result.value[u][v] = entry.value;
+      result.estimated_absolute_error[u][v] = entry.estimated_absolute_error;
+      if (result.total_leaf_count >
+          std::numeric_limits<std::size_t>::max() - entry.leaf_count)
+      {
+        throw std::overflow_error(
+            "Cached affine singular tensor quadrature leaf count overflow!");
+      }
+      result.total_leaf_count += entry.leaf_count;
+      result.maximum_subdivision_depth =
+          std::max(result.maximum_subdivision_depth, entry.maximum_subdivision_depth);
+    }
+  }
+  return result;
+}
+
+double ContractAffineMassTensor(const ReferenceCoefficientTensor &tensor,
+                                const BarycentricGradients &grad_lambda,
+                                double jacobian_determinant, bool error)
+{
+  long double result = 0.0L;
+  for (int u = 0; u < 3; u++)
+  {
+    for (int v = 0; v < 3; v++)
+    {
+      const long double geometry = Dot(grad_lambda[u + 1], grad_lambda[v + 1]);
+      result += static_cast<long double>(jacobian_determinant) *
+                static_cast<long double>(tensor[u][v]) *
+                (error ? std::abs(geometry) : geometry);
+    }
+  }
+  return static_cast<double>(result);
+}
+
+double ContractAffineCurlCurlTensor(const ReferenceCoefficientTensor &tensor,
+                                    const BarycentricGradients &grad_lambda,
+                                    double jacobian_determinant, bool error)
+{
+  const std::array<Vector3, 3> curl_geometry{Cross(grad_lambda[2], grad_lambda[3]),
+                                             Cross(grad_lambda[3], grad_lambda[1]),
+                                             Cross(grad_lambda[1], grad_lambda[2])};
+  long double result = 0.0L;
+  for (int u = 0; u < 3; u++)
+  {
+    for (int v = 0; v < 3; v++)
+    {
+      const long double geometry = Dot(curl_geometry[u], curl_geometry[v]);
+      result += static_cast<long double>(jacobian_determinant) *
+                static_cast<long double>(tensor[u][v]) *
+                (error ? std::abs(geometry) : geometry);
+    }
+  }
+  return static_cast<double>(result);
+}
+
+class AffineStandardReferenceTable
+{
+public:
+  struct Entry
+  {
+    AdaptiveCoefficientTensor mass;
+    AdaptiveCoefficientTensor curl_curl;
+  };
+
+private:
+  struct Key
+  {
+    const mfem::FiniteElement *finite_element;
+    int standard;
+    HigherOrderBasis basis;
+  };
+
+  struct KeyLess
+  {
+    bool operator()(const Key &a, const Key &b) const
+    {
+      const auto pointer_less = std::less<const mfem::FiniteElement *>{};
+      if (pointer_less(a.finite_element, b.finite_element))
+      {
+        return true;
+      }
+      if (pointer_less(b.finite_element, a.finite_element))
+      {
+        return false;
+      }
+      if (a.standard != b.standard)
+      {
+        return a.standard < b.standard;
+      }
+      return BasisLess(a.basis, b.basis);
+    }
+  };
+
+  AdaptiveAssemblyOptions options;
+  std::map<Key, Entry, KeyLess> entries;
+  std::size_t hits = 0;
+
+public:
+  explicit AffineStandardReferenceTable(const AdaptiveAssemblyOptions &options_in)
+    : options(options_in)
+  {
+  }
+
+  Entry Get(const mfem::FiniteElement &finite_element, int standard,
+            const HigherOrderBasis &basis)
+  {
+    const Key key{&finite_element, standard, basis};
+    const auto cached = entries.find(key);
+    if (cached != entries.end())
+    {
+      hits++;
+      return cached->second;
+    }
+
+    const int standard_size = finite_element.GetDof();
+    mfem::IntegrationPoint point;
+    mfem::DenseMatrix standard_value(standard_size, 3);
+    const auto mass = IntegrateAdaptiveCoefficientTensor(
+        options, basis, standard, "mass",
+        [&](const BarycentricPoint &lambda, int u, int v)
+        {
+          point.Set3(lambda[1], lambda[2], lambda[3]);
+          finite_element.CalcVShape(point, standard_value);
+          const auto singular =
+              EvaluateHigherOrderBasis(lambda, ReferenceBarycentricGradients(), basis);
+          return standard_value(standard, u) * singular.value[v];
+        });
+
+    AdaptiveCoefficientTensor curl_curl;
+    if (!IsGradientFamily(basis.family))
+    {
+      mfem::DenseMatrix standard_curl(standard_size, 3);
+      curl_curl = IntegrateAdaptiveCoefficientTensor(
+          options, basis, standard, "curl-curl",
+          [&](const BarycentricPoint &lambda, int u, int v)
+          {
+            point.Set3(lambda[1], lambda[2], lambda[3]);
+            finite_element.CalcCurlShape(point, standard_curl);
+            const auto singular =
+                EvaluateHigherOrderBasis(lambda, ReferenceBarycentricGradients(), basis);
+            return standard_curl(standard, u) * singular.curl[v];
+          });
+    }
+    return entries.emplace(key, Entry{mass, curl_curl}).first->second;
+  }
+
+  std::size_t Size() const { return entries.size(); }
+  std::size_t Hits() const { return hits; }
+};
+
+class AffineScalarReferenceTable
+{
+private:
+  struct PairKey
+  {
+    HigherOrderBasis row;
+    HigherOrderBasis column;
+  };
+
+  struct PairKeyLess
+  {
+    bool operator()(const PairKey &a, const PairKey &b) const
+    {
+      return BasisLess(a.row, b.row) ||
+             (!BasisLess(b.row, a.row) && BasisLess(a.column, b.column));
+    }
+  };
+
+  struct StandardKey
+  {
+    const mfem::FiniteElement *finite_element;
+    int standard;
+    HigherOrderBasis basis;
+  };
+
+  struct StandardKeyLess
+  {
+    bool operator()(const StandardKey &a, const StandardKey &b) const
+    {
+      const auto pointer_less = std::less<const mfem::FiniteElement *>{};
+      if (pointer_less(a.finite_element, b.finite_element))
+      {
+        return true;
+      }
+      if (pointer_less(b.finite_element, a.finite_element))
+      {
+        return false;
+      }
+      if (a.standard != b.standard)
+      {
+        return a.standard < b.standard;
+      }
+      return BasisLess(a.basis, b.basis);
+    }
+  };
+
+  AdaptiveAssemblyOptions options;
+  std::map<PairKey, AdaptiveQuadratureResult, PairKeyLess> pair_entries;
+  std::map<StandardKey, AdaptiveQuadratureResult, StandardKeyLess> standard_entries;
+  std::size_t hits = 0;
+
+  static void Validate(const AdaptiveQuadratureResult &entry, std::string_view quantity)
+  {
+    if (!entry.converged || !std::isfinite(entry.value) ||
+        !std::isfinite(entry.estimated_absolute_error) ||
+        entry.estimated_absolute_error < 0.0)
+    {
+      throw std::runtime_error(
+          fmt::format("Cached affine singular {} integral did not converge: value = "
+                      "{:.17g}, estimated absolute error = {:.17g}, leaves = {}, "
+                      "maximum depth = {}!",
+                      quantity, entry.value, entry.estimated_absolute_error,
+                      entry.leaf_count, entry.maximum_subdivision_depth));
+    }
+  }
+
+public:
+  explicit AffineScalarReferenceTable(const AdaptiveAssemblyOptions &options_in)
+    : options(options_in)
+  {
+  }
+
+  AdaptiveQuadratureResult GetPair(const HigherOrderBasis &row_basis,
+                                   const HigherOrderBasis &column_basis)
+  {
+    const auto canonical = CanonicalizeReferenceBasisPair(ReferenceBasis{row_basis},
+                                                          ReferenceBasis{column_basis});
+    const auto &row = std::get<HigherOrderBasis>(canonical.row_basis);
+    const auto &column = std::get<HigherOrderBasis>(canonical.column_basis);
+    const PairKey key{row, column};
+    const auto cached = pair_entries.find(key);
+    if (cached != pair_entries.end())
+    {
+      hits++;
+      return cached->second;
+    }
+    const auto entry = IntegrateReferenceTetrahedronAdaptive(
+        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions,
+        [&](const BarycentricPoint &lambda)
+        {
+          return EvaluateHigherOrderGradientPotential(lambda, row) *
+                 EvaluateHigherOrderGradientPotential(lambda, column);
+        });
+    Validate(entry, "H1 enrichment mass");
+    return pair_entries.emplace(key, entry).first->second;
+  }
+
+  AdaptiveQuadratureResult GetStandard(const mfem::FiniteElement &finite_element,
+                                       int standard, const HigherOrderBasis &basis)
+  {
+    const StandardKey key{&finite_element, standard, basis};
+    const auto cached = standard_entries.find(key);
+    if (cached != standard_entries.end())
+    {
+      hits++;
+      return cached->second;
+    }
+    mfem::IntegrationPoint point;
+    mfem::Vector standard_shape(finite_element.GetDof());
+    const auto entry = IntegrateReferenceTetrahedronAdaptive(
+        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions,
+        [&](const BarycentricPoint &lambda)
+        {
+          point.Set3(lambda[1], lambda[2], lambda[3]);
+          finite_element.CalcShape(point, standard_shape);
+          return standard_shape[standard] *
+                 EvaluateHigherOrderGradientPotential(lambda, basis);
+        });
+    Validate(entry, "standard-enrichment H1 mass");
+    return standard_entries.emplace(key, entry).first->second;
+  }
+
+  std::size_t Size() const { return pair_entries.size() + standard_entries.size(); }
+  std::size_t Hits() const { return hits; }
+};
+
 }  // namespace
 
 BarycentricGradients
@@ -1409,9 +1788,13 @@ BuildParallelEnrichmentProlongation(MPI_Comm comm, const TrueDofMap &dofs)
   return BuildEnrichmentProlongation(comm, dofs);
 }
 
-ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
+namespace
+{
+
+ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
     const ElementDofMap &element_dofs, const BarycentricGradients &grad_lambda,
-    double jacobian_determinant, const AdaptiveAssemblyOptions &options)
+    double jacobian_determinant, const AdaptiveAssemblyOptions &options,
+    AdaptiveReferenceTable *reference_table, AffineScalarReferenceTable *scalar_table)
 {
   ValidateInputs(element_dofs, grad_lambda, jacobian_determinant, options);
   const auto h1_to_nd = BuildH1ToNDMap(element_dofs);
@@ -1434,10 +1817,13 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
     {
       const auto &row_basis = element_dofs.nd[row].basis;
       const auto &column_basis = element_dofs.nd[column].basis;
-      const auto reference = ComputeAdaptiveReferenceIntegral(
-          ReferenceBasis{row_basis}, ReferenceBasis{column_basis}, options.quadrature_order,
-          options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions);
+      const auto reference =
+          reference_table ? reference_table->Get(ReferenceBasis{row_basis},
+                                                 ReferenceBasis{column_basis})
+                          : ComputeAdaptiveReferenceIntegral(
+                                ReferenceBasis{row_basis}, ReferenceBasis{column_basis},
+                                options.quadrature_order, options.absolute_tolerance,
+                                options.relative_tolerance, options.maximum_subdivisions);
       if (!reference.converged)
       {
         throw std::runtime_error(
@@ -1488,15 +1874,25 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
     {
       const auto &row_basis = element_dofs.h1[row].basis;
       const auto &column_basis = element_dofs.h1[column].basis;
-      const auto integral = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
-          [&](const BarycentricPoint &lambda)
-          {
-            return jacobian_determinant *
-                   EvaluateHigherOrderGradientPotential(lambda, row_basis) *
-                   EvaluateHigherOrderGradientPotential(lambda, column_basis);
-          });
+      const auto integral = [&]()
+      {
+        if (scalar_table)
+        {
+          auto reference = scalar_table->GetPair(row_basis, column_basis);
+          reference.value *= jacobian_determinant;
+          reference.estimated_absolute_error *= jacobian_determinant;
+          return reference;
+        }
+        return IntegrateReferenceTetrahedronAdaptive(
+            options.quadrature_order, options.absolute_tolerance,
+            options.relative_tolerance, options.maximum_subdivisions,
+            [&](const BarycentricPoint &lambda)
+            {
+              return jacobian_determinant *
+                     EvaluateHigherOrderGradientPotential(lambda, row_basis) *
+                     EvaluateHigherOrderGradientPotential(lambda, column_basis);
+            });
+      }();
       if (!integral.converged || !std::isfinite(integral.value) ||
           !std::isfinite(integral.estimated_absolute_error) ||
           integral.estimated_absolute_error < 0.0)
@@ -1514,6 +1910,19 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
     }
   }
   return result;
+}
+
+}  // namespace
+
+ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
+    const ElementDofMap &element_dofs, const BarycentricGradients &grad_lambda,
+    double jacobian_determinant, const AdaptiveAssemblyOptions &options)
+{
+  AdaptiveReferenceTable reference_table(options);
+  AffineScalarReferenceTable scalar_table(options);
+  return AssembleAffineElementEnrichmentMatrices(element_dofs, grad_lambda,
+                                                 jacobian_determinant, options,
+                                                 &reference_table, &scalar_table);
 }
 
 ElementEnrichmentMatrices
@@ -1647,6 +2056,28 @@ AssembleElementEnrichmentMatrices(const ElementDofMap &element_dofs,
   }
   return result;
 }
+
+namespace
+{
+
+ElementEnrichmentMatrices AssembleElementEnrichmentMatricesCached(
+    const ElementDofMap &element_dofs, mfem::ElementTransformation &transformation,
+    const AdaptiveAssemblyOptions &options, AdaptiveReferenceTable &reference_table,
+    AffineScalarReferenceTable &scalar_table)
+{
+  if (!IsAffineElementTransformation(transformation))
+  {
+    return AssembleElementEnrichmentMatrices(element_dofs, transformation, options);
+  }
+  double jacobian_determinant;
+  const auto grad_lambda =
+      GetAffineBarycentricGradients(transformation, jacobian_determinant);
+  return AssembleAffineElementEnrichmentMatrices(element_dofs, grad_lambda,
+                                                 jacobian_determinant, options,
+                                                 &reference_table, &scalar_table);
+}
+
+}  // namespace
 
 ElementEnrichmentMatrices
 AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_dofs,
@@ -1898,10 +2329,15 @@ AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_d
   return result;
 }
 
-ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
+namespace
+{
+
+ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
     const ElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
     const mfem::FiniteElement &nd_fe, mfem::ElementTransformation &transformation,
-    const AdaptiveAssemblyOptions &options)
+    const AdaptiveAssemblyOptions &options,
+    AffineStandardReferenceTable *standard_reference_table,
+    AffineScalarReferenceTable *scalar_reference_table)
 {
   ValidateStandardFiniteElements(h1_fe, nd_fe, transformation);
   const bool affine_geometry = IsAffineElementTransformation(transformation);
@@ -1944,29 +2380,48 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
     for (int enrichment = 0; enrichment < enrichment_nd_size; enrichment++)
     {
       const auto &basis = element_dofs.nd[enrichment].basis;
-      const auto mass = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
-          [&](const BarycentricPoint &lambda)
+      const auto integrate_mass = [&]()
+      {
+        if (affine_geometry && standard_reference_table)
+        {
+          const auto reference = standard_reference_table->Get(nd_fe, standard, basis);
+          const double value = ContractAffineMassTensor(
+              reference.mass.value, center_grad_lambda, center_jacobian_determinant, false);
+          const double error = ContractAffineMassTensor(
+              reference.mass.estimated_absolute_error, center_grad_lambda,
+              center_jacobian_determinant, true);
+          if (error <=
+              options.absolute_tolerance + options.relative_tolerance * std::abs(value))
           {
-            point.Set3(lambda[1], lambda[2], lambda[3]);
-            double jacobian_determinant = center_jacobian_determinant;
-            auto grad_lambda = center_grad_lambda;
-            if (affine_geometry)
+            return AdaptiveQuadratureResult{value, error, reference.mass.total_leaf_count,
+                                            reference.mass.maximum_subdivision_depth, true};
+          }
+        }
+        return IntegrateReferenceTetrahedronAdaptive(
+            options.quadrature_order, options.absolute_tolerance,
+            options.relative_tolerance, options.maximum_subdivisions,
+            [&](const BarycentricPoint &lambda)
             {
-              CalcAffinePhysVShape(nd_fe, point, center_inverse_jacobian,
-                                   reference_standard_value, standard_value);
-            }
-            else
-            {
-              grad_lambda =
-                  GetBarycentricGradients(transformation, point, jacobian_determinant);
-              nd_fe.CalcPhysVShape(transformation, standard_value);
-            }
-            const auto singular = EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
-            return jacobian_determinant *
-                   Dot(DenseMatrixRow(standard_value, standard), singular.value);
-          });
+              point.Set3(lambda[1], lambda[2], lambda[3]);
+              double jacobian_determinant = center_jacobian_determinant;
+              auto grad_lambda = center_grad_lambda;
+              if (affine_geometry)
+              {
+                CalcAffinePhysVShape(nd_fe, point, center_inverse_jacobian,
+                                     reference_standard_value, standard_value);
+              }
+              else
+              {
+                grad_lambda =
+                    GetBarycentricGradients(transformation, point, jacobian_determinant);
+                nd_fe.CalcPhysVShape(transformation, standard_value);
+              }
+              const auto singular = EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+              return jacobian_determinant *
+                     Dot(DenseMatrixRow(standard_value, standard), singular.value);
+            });
+      };
+      const auto mass = integrate_mass();
       ValidateAdaptiveEntry(mass, "mass", standard, enrichment, basis);
       RecordQuadratureStatistics(mass, result);
       result.nd_mass_standard_enrichment(standard, enrichment) = mass.value;
@@ -1982,30 +2437,51 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
         continue;
       }
 
-      const auto curl_curl = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
-          [&](const BarycentricPoint &lambda)
+      const auto integrate_curl_curl = [&]()
+      {
+        if (affine_geometry && standard_reference_table)
+        {
+          const auto reference = standard_reference_table->Get(nd_fe, standard, basis);
+          const double value =
+              ContractAffineCurlCurlTensor(reference.curl_curl.value, center_grad_lambda,
+                                           center_jacobian_determinant, false);
+          const double error = ContractAffineCurlCurlTensor(
+              reference.curl_curl.estimated_absolute_error, center_grad_lambda,
+              center_jacobian_determinant, true);
+          if (error <=
+              options.absolute_tolerance + options.relative_tolerance * std::abs(value))
           {
-            point.Set3(lambda[1], lambda[2], lambda[3]);
-            double jacobian_determinant = center_jacobian_determinant;
-            auto grad_lambda = center_grad_lambda;
-            if (affine_geometry)
+            return AdaptiveQuadratureResult{
+                value, error, reference.curl_curl.total_leaf_count,
+                reference.curl_curl.maximum_subdivision_depth, true};
+          }
+        }
+        return IntegrateReferenceTetrahedronAdaptive(
+            options.quadrature_order, options.absolute_tolerance,
+            options.relative_tolerance, options.maximum_subdivisions,
+            [&](const BarycentricPoint &lambda)
             {
-              CalcAffinePhysCurlShape(nd_fe, point, center_jacobian,
-                                      center_jacobian_determinant, reference_standard_curl,
-                                      standard_curl);
-            }
-            else
-            {
-              grad_lambda =
-                  GetBarycentricGradients(transformation, point, jacobian_determinant);
-              nd_fe.CalcPhysCurlShape(transformation, standard_curl);
-            }
-            const auto singular = EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
-            return jacobian_determinant *
-                   Dot(DenseMatrixRow(standard_curl, standard), singular.curl);
-          });
+              point.Set3(lambda[1], lambda[2], lambda[3]);
+              double jacobian_determinant = center_jacobian_determinant;
+              auto grad_lambda = center_grad_lambda;
+              if (affine_geometry)
+              {
+                CalcAffinePhysCurlShape(nd_fe, point, center_jacobian,
+                                        center_jacobian_determinant,
+                                        reference_standard_curl, standard_curl);
+              }
+              else
+              {
+                grad_lambda =
+                    GetBarycentricGradients(transformation, point, jacobian_determinant);
+                nd_fe.CalcPhysCurlShape(transformation, standard_curl);
+              }
+              const auto singular = EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+              return jacobian_determinant *
+                     Dot(DenseMatrixRow(standard_curl, standard), singular.curl);
+            });
+      };
+      const auto curl_curl = integrate_curl_curl();
       ValidateAdaptiveEntry(curl_curl, "curl-curl", standard, enrichment, basis);
       RecordQuadratureStatistics(curl_curl, result);
       result.nd_curl_curl_standard_enrichment(standard, enrichment) = curl_curl.value;
@@ -2058,21 +2534,37 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
     for (int enrichment_h1 = 0; enrichment_h1 < enrichment_h1_size; enrichment_h1++)
     {
       const auto &basis = element_dofs.h1[enrichment_h1].basis;
-      const auto mass = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
-          [&](const BarycentricPoint &lambda)
+      const auto integrate_h1_mass = [&]()
+      {
+        if (affine_geometry && scalar_reference_table)
+        {
+          auto reference = scalar_reference_table->GetStandard(h1_fe, standard_h1, basis);
+          reference.value *= center_jacobian_determinant;
+          reference.estimated_absolute_error *= center_jacobian_determinant;
+          if (reference.estimated_absolute_error <=
+              options.absolute_tolerance +
+                  options.relative_tolerance * std::abs(reference.value))
           {
-            point.Set3(lambda[1], lambda[2], lambda[3]);
-            double jacobian_determinant = center_jacobian_determinant;
-            if (!affine_geometry)
+            return reference;
+          }
+        }
+        return IntegrateReferenceTetrahedronAdaptive(
+            options.quadrature_order, options.absolute_tolerance,
+            options.relative_tolerance, options.maximum_subdivisions,
+            [&](const BarycentricPoint &lambda)
             {
-              (void)GetBarycentricGradients(transformation, point, jacobian_determinant);
-            }
-            h1_fe.CalcShape(point, standard_shape);
-            return jacobian_determinant * standard_shape[standard_h1] *
-                   EvaluateHigherOrderGradientPotential(lambda, basis);
-          });
+              point.Set3(lambda[1], lambda[2], lambda[3]);
+              double jacobian_determinant = center_jacobian_determinant;
+              if (!affine_geometry)
+              {
+                (void)GetBarycentricGradients(transformation, point, jacobian_determinant);
+              }
+              h1_fe.CalcShape(point, standard_shape);
+              return jacobian_determinant * standard_shape[standard_h1] *
+                     EvaluateHigherOrderGradientPotential(lambda, basis);
+            });
+      };
+      const auto mass = integrate_h1_mass();
       ValidateAdaptiveEntry(mass, "H1 mass", standard_h1, enrichment_h1, basis);
       RecordQuadratureStatistics(mass, result);
       result.h1_mass_standard_enrichment(standard_h1, enrichment_h1) = mass.value;
@@ -2083,6 +2575,37 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
   }
   return result;
 }
+
+}  // namespace
+
+ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
+    const ElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
+    const mfem::FiniteElement &nd_fe, mfem::ElementTransformation &transformation,
+    const AdaptiveAssemblyOptions &options)
+{
+  AffineStandardReferenceTable standard_reference_table(options);
+  AffineScalarReferenceTable scalar_reference_table(options);
+  return AssembleElementStandardEnrichmentMatricesImpl(
+      element_dofs, h1_fe, nd_fe, transformation, options, &standard_reference_table,
+      &scalar_reference_table);
+}
+
+namespace
+{
+
+ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesCached(
+    const ElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
+    const mfem::FiniteElement &nd_fe, mfem::ElementTransformation &transformation,
+    const AdaptiveAssemblyOptions &options,
+    AffineStandardReferenceTable &standard_reference_table,
+    AffineScalarReferenceTable &scalar_reference_table)
+{
+  return AssembleElementStandardEnrichmentMatricesImpl(
+      element_dofs, h1_fe, nd_fe, transformation, options, &standard_reference_table,
+      &scalar_reference_table);
+}
+
+}  // namespace
 
 ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatrices(
     const TriangleElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
@@ -2597,13 +3120,20 @@ int SetBoundaryIntegrationPoint(mfem::Mesh &mesh, int boundary,
 {
   int face_index = -1, orientation = -1;
   mesh.GetBdrElementFace(boundary, &face_index, &orientation);
-  mesh.GetFaceElementTransformations(face_index, face, element1, element2);
-  if (!face.Elem1 || face.Elem2 || face.Elem1No < 0 ||
-      face.GetGeometryType() == mfem::Geometry::INVALID)
+  if (auto *parallel_mesh = dynamic_cast<mfem::ParMesh *>(&mesh))
+  {
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+        boundary, *parallel_mesh, face, element1, element2);
+  }
+  else
+  {
+    mesh.GetFaceElementTransformations(face_index, face, element1, element2);
+  }
+  if (!face.Elem1 || face.Elem1No < 0 || face.GetGeometryType() == mfem::Geometry::INVALID)
   {
     throw std::domain_error(
-        "Singular lumped-port traces currently require a conforming one-sided "
-        "boundary element!");
+        "Singular lumped-port traces require a conforming boundary element with a "
+        "locally owned first adjacent element!");
   }
   const auto face_point = mfem::Mesh::TransformBdrElementToFace(
       face.GetGeometryType(), orientation, boundary_point);
@@ -3937,7 +4467,8 @@ void AssembleParallelNDBoundaryLinearForm(const DofTopology &topology,
                                           mfem::ParFiniteElementSpace &nd_fespace,
                                           mfem::VectorCoefficient &coefficient,
                                           const AdaptiveAssemblyOptions &options,
-                                          mfem::Vector &enrichment_true_dofs)
+                                          mfem::Vector &enrichment_true_dofs,
+                                          const mfem::Array<int> *attribute_marker)
 {
   ValidateAdaptiveAssemblyOptions(options);
   auto *mesh = nd_fespace.GetParMesh();
@@ -3957,6 +4488,12 @@ void AssembleParallelNDBoundaryLinearForm(const DofTopology &topology,
   local = 0.0;
   for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
   {
+    const int attribute = mesh->GetBdrAttribute(boundary);
+    if (attribute_marker && (attribute <= 0 || attribute > attribute_marker->Size() ||
+                             !(*attribute_marker)[attribute - 1]))
+    {
+      continue;
+    }
     int element = -1, local_face = -1;
     mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
     if (element < 0 || element >= mesh->GetNE())
@@ -4063,7 +4600,8 @@ void AssembleParallelNDBoundaryLinearForm(const TriangleDofTopology &topology,
                                           mfem::ParFiniteElementSpace &nd_fespace,
                                           mfem::VectorCoefficient &coefficient,
                                           const AdaptiveAssemblyOptions &options,
-                                          mfem::Vector &enrichment_true_dofs)
+                                          mfem::Vector &enrichment_true_dofs,
+                                          const mfem::Array<int> *attribute_marker)
 {
   ValidateAdaptiveAssemblyOptions(options);
   auto *mesh = nd_fespace.GetParMesh();
@@ -4083,6 +4621,12 @@ void AssembleParallelNDBoundaryLinearForm(const TriangleDofTopology &topology,
   local = 0.0;
   for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
   {
+    const int attribute = mesh->GetBdrAttribute(boundary);
+    if (attribute_marker && (attribute <= 0 || attribute > attribute_marker->Size() ||
+                             !(*attribute_marker)[attribute - 1]))
+    {
+      continue;
+    }
     int element = -1, local_face = -1;
     mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
     if (element < 0 || element >= mesh->GetNE())
@@ -4228,6 +4772,9 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
   InitializeLocalSparseBlock(result.nd_mass, nd_fespace.GetVSize(), nd_enrichment_size);
   InitializeLocalSparseBlock(result.nd_curl_curl, nd_fespace.GetVSize(),
                              nd_enrichment_size);
+  AdaptiveReferenceTable reference_table(options);
+  AffineStandardReferenceTable standard_reference_table(options);
+  AffineScalarReferenceTable scalar_reference_table(options);
 
   for (int element = 0; element < mesh->GetNE(); element++)
   {
@@ -4246,10 +4793,11 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
     ElementStandardEnrichmentMatrices coupling;
     try
     {
-      enrichment = AssembleElementEnrichmentMatrices(element_dofs, transformation, options);
-      coupling = AssembleElementStandardEnrichmentMatrices(
+      enrichment = AssembleElementEnrichmentMatricesCached(
+          element_dofs, transformation, options, reference_table, scalar_reference_table);
+      coupling = AssembleElementStandardEnrichmentMatricesCached(
           element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
-          transformation, options);
+          transformation, options, standard_reference_table, scalar_reference_table);
     }
     catch (const std::exception &error)
     {
@@ -4319,6 +4867,12 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
   FinalizeLocalSparseBlock(result.h1_mass);
   FinalizeLocalSparseBlock(result.nd_mass);
   FinalizeLocalSparseBlock(result.nd_curl_curl);
+  result.affine_reference_table_entries = reference_table.Size() +
+                                          standard_reference_table.Size() +
+                                          scalar_reference_table.Size();
+  result.affine_reference_cache_hits = reference_table.Hits() +
+                                       standard_reference_table.Hits() +
+                                       scalar_reference_table.Hits();
   return result;
 }
 
@@ -4626,18 +5180,22 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     throw std::invalid_argument(
         "Singular sparse batch topology and spaces must share one mesh!");
   }
-  return AssembleLocalSparseEnrichmentMatricesBatchImpl(
+  AdaptiveReferenceTable reference_table(options);
+  AffineStandardReferenceTable standard_reference_table(options);
+  AffineScalarReferenceTable scalar_reference_table(options);
+  auto results = AssembleLocalSparseEnrichmentMatricesBatchImpl(
       topology, h1_fespace, nd_fespace, material_batches,
       [&](int element, const ElementDofMap &element_dofs,
           mfem::ElementTransformation &transformation)
       {
         try
         {
-          auto enrichment =
-              AssembleElementEnrichmentMatrices(element_dofs, transformation, options);
-          auto coupling = AssembleElementStandardEnrichmentMatrices(
+          auto enrichment = AssembleElementEnrichmentMatricesCached(
+              element_dofs, transformation, options, reference_table,
+              scalar_reference_table);
+          auto coupling = AssembleElementStandardEnrichmentMatricesCached(
               element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
-              transformation, options);
+              transformation, options, standard_reference_table, scalar_reference_table);
           return std::make_pair(std::move(enrichment), std::move(coupling));
         }
         catch (const std::exception &error)
@@ -4648,6 +5206,16 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
                           element, error.what()));
         }
       });
+  for (auto &result : results)
+  {
+    result.affine_reference_table_entries = reference_table.Size() +
+                                            standard_reference_table.Size() +
+                                            scalar_reference_table.Size();
+    result.affine_reference_cache_hits = reference_table.Hits() +
+                                         standard_reference_table.Hits() +
+                                         scalar_reference_table.Hits();
+  }
+  return results;
 }
 
 std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(

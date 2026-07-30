@@ -12,6 +12,7 @@
 #include <numeric>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <fmt/format.h>
 
@@ -22,6 +23,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -219,8 +221,7 @@ GetBoundaryBernsteinControlPoints(mfem::ElementTransformation &transformation)
     const double tolerance =
         1.0e-11 * std::max(1.0, physical_point.Norml2()) +
         4096.0 * std::numeric_limits<double>::epsilon() * coordinate_scale;
-    if (!std::isfinite(reconstructed.Norml2()) ||
-        reconstructed.Norml2() > tolerance)
+    if (!std::isfinite(reconstructed.Norml2()) || reconstructed.Norml2() > tolerance)
     {
       throw std::domain_error(
           "Singular surface cutoff clipping could not certify the high-order "
@@ -246,15 +247,14 @@ long double BinomialCoefficient(int n, int k)
   return value;
 }
 
-std::vector<double>
-BuildSquaredDistanceBernstein(const mfem::DenseMatrix &control_points,
-                              const PhysicalSingularTip &tip, double cutoff)
+std::vector<double> BuildSquaredDistanceBernstein(const mfem::DenseMatrix &control_points,
+                                                  const PhysicalSingularTip &tip,
+                                                  double cutoff)
 {
   const int order = control_points.Height() - 1;
   if (order < 1 || control_points.Width() != 2 || !(cutoff > 0.0))
   {
-    throw std::invalid_argument(
-        "Singular surface cutoff distance received invalid input!");
+    throw std::invalid_argument("Singular surface cutoff distance received invalid input!");
   }
 
   std::vector<double> coefficients(2 * order + 1, -cutoff * cutoff);
@@ -272,8 +272,7 @@ BuildSquaredDistanceBernstein(const mfem::DenseMatrix &control_points,
                    (control_points(i, d) - tip.position[d]) *
                    (control_points(j, d) - tip.position[d]);
       }
-      coefficients[k] +=
-          static_cast<double>(product / BinomialCoefficient(2 * order, k));
+      coefficients[k] += static_cast<double>(product / BinomialCoefficient(2 * order, k));
     }
   }
   if (!std::all_of(coefficients.begin(), coefficients.end(),
@@ -375,23 +374,20 @@ GetBoundaryRetainedIntervals(mfem::ElementTransformation &transformation,
     double distance_scale = cutoff;
     for (int i = 0; i < control_points.Height(); i++)
     {
-      coordinate_scale =
-          std::max({coordinate_scale, std::abs(control_points(i, 0)),
-                    std::abs(control_points(i, 1)), std::abs(tip.position[0]),
-                    std::abs(tip.position[1])});
+      coordinate_scale = std::max({coordinate_scale, std::abs(control_points(i, 0)),
+                                   std::abs(control_points(i, 1)),
+                                   std::abs(tip.position[0]), std::abs(tip.position[1])});
       distance_scale =
-          std::max(distance_scale,
-                   std::hypot(control_points(i, 0) - tip.position[0],
-                              control_points(i, 1) - tip.position[1]));
+          std::max(distance_scale, std::hypot(control_points(i, 0) - tip.position[0],
+                                              control_points(i, 1) - tip.position[1]));
     }
     for (double coefficient : distance_squared)
     {
       scale = std::max(scale, std::abs(coefficient));
     }
-    const double tolerance =
-        8192.0 * std::numeric_limits<double>::epsilon() *
-        std::max({scale, coordinate_scale * distance_scale,
-                  std::numeric_limits<double>::min()});
+    const double tolerance = 8192.0 * std::numeric_limits<double>::epsilon() *
+                             std::max({scale, coordinate_scale * distance_scale,
+                                       std::numeric_limits<double>::min()});
     if (std::all_of(distance_squared.begin(), distance_squared.end(),
                     [=](double value) { return std::abs(value) <= tolerance; }))
     {
@@ -408,8 +404,7 @@ GetBoundaryRetainedIntervals(mfem::ElementTransformation &transformation,
 
   std::sort(excluded.begin(), excluded.end());
   std::vector<std::pair<double, double>> merged;
-  constexpr double coordinate_tolerance =
-      64.0 * std::numeric_limits<double>::epsilon();
+  constexpr double coordinate_tolerance = 64.0 * std::numeric_limits<double>::epsilon();
   for (const auto &[lower, upper] : excluded)
   {
     if (merged.empty() || lower > merged.back().second + coordinate_tolerance)
@@ -1188,8 +1183,7 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
             throw std::domain_error(
                 "Singular surface cutoff found invalid physical tip data!");
           }
-          local_tip_data.insert(local_tip_data.end(),
-                                {position[0], position[1], exponent});
+          local_tip_data.insert(local_tip_data.end(), {position[0], position[1], exponent});
         }
       }
     }
@@ -1200,8 +1194,7 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
   Mpi::Allgather(1, &local_tip_count, tip_counts.data(), mesh.GetComm());
   std::vector<int> tip_offsets(tip_counts.size());
   std::partial_sum(tip_counts.begin(), tip_counts.end() - 1, tip_offsets.begin() + 1);
-  const int global_tip_count =
-      std::accumulate(tip_counts.begin(), tip_counts.end(), 0);
+  const int global_tip_count = std::accumulate(tip_counts.begin(), tip_counts.end(), 0);
   if (local_tip_count % 3 != 0 || global_tip_count % 3 != 0)
   {
     throw std::runtime_error(
@@ -1223,9 +1216,8 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
       throw std::domain_error(
           "Singular surface cutoff received invalid gathered tip data!");
     }
-    tip_coordinate_scale =
-        std::max({tip_coordinate_scale, std::abs(tip.position[0]),
-                  std::abs(tip.position[1])});
+    tip_coordinate_scale = std::max(
+        {tip_coordinate_scale, std::abs(tip.position[0]), std::abs(tip.position[1])});
     singular_tips.push_back(tip);
   }
   std::sort(singular_tips.begin(), singular_tips.end(),
@@ -1245,8 +1237,7 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
       const double dy = tip.position[1] - unique_singular_tips.back().position[1];
       if (std::hypot(dx, dy) <= duplicate_tolerance)
       {
-        unique_singular_tips.back().nu =
-            std::min(unique_singular_tips.back().nu, tip.nu);
+        unique_singular_tips.back().nu = std::min(unique_singular_tips.back().nu, tip.nu);
         continue;
       }
     }
@@ -1304,8 +1295,8 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
         const int node = FindTriangleVertex(side.point);
         if (node >= 0)
         {
-          endpoint_exponents[endpoint] = std::min(
-              endpoint_exponents[endpoint], node_exponent(side.element, node));
+          endpoint_exponents[endpoint] =
+              std::min(endpoint_exponents[endpoint], node_exponent(side.element, node));
         }
       }
     }
@@ -1336,8 +1327,8 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
     }
     const auto retained_intervals =
         interface.edge_cutoff > 0.0
-            ? GetBoundaryRetainedIntervals(*boundary_transformation,
-                                           unique_singular_tips, interface.edge_cutoff)
+            ? GetBoundaryRetainedIntervals(*boundary_transformation, unique_singular_tips,
+                                           interface.edge_cutoff)
             : std::vector<std::pair<double, double>>{{0.0, 1.0}};
 
     const auto coefficient_expansion = [&](double coordinate)
@@ -1470,8 +1461,7 @@ double TriangleSingularSurfacePostOperator::IntegrateInterface(
     };
     for (const auto &[lower, upper] : retained_intervals)
     {
-      local_energy +=
-          IntegratePowerExpansion(coefficient_expansion, lower, upper, options);
+      local_energy += IntegratePowerExpansion(coefficient_expansion, lower, upper, options);
     }
   }
   double energy = static_cast<double>(local_energy);
@@ -1590,20 +1580,77 @@ TetrahedronSingularSurfacePostOperator::TetrahedronSingularSurfacePostOperator(
   }
 }
 
-double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
-    const InterfaceData &interface, fem::singular::EnrichedNDFieldEvaluator *real_evaluator,
-    fem::singular::EnrichedNDFieldEvaluator *imaginary_evaluator,
+std::vector<std::vector<TetrahedronSingularSurfacePostOperator::IndexedInterface>>
+TetrahedronSingularSurfacePostOperator::GetInterfaceGroups() const
+{
+  const auto same_geometry = [](const InterfaceData &left, const InterfaceData &right)
+  {
+    if (left.edge_cutoff != right.edge_cutoff ||
+        left.attribute_marker.Size() != right.attribute_marker.Size())
+    {
+      return false;
+    }
+    for (int attribute = 0; attribute < left.attribute_marker.Size(); attribute++)
+    {
+      if (left.attribute_marker[attribute] != right.attribute_marker[attribute])
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  std::vector<std::vector<IndexedInterface>> groups;
+  for (const auto &[index, interface] : interfaces)
+  {
+    const auto *current = &interface;
+    const auto group = std::find_if(
+        groups.begin(), groups.end(), [current, &same_geometry](const auto &candidate)
+        { return same_geometry(*current, *candidate.front().second); });
+    if (group == groups.end())
+    {
+      groups.push_back({{index, &interface}});
+    }
+    else
+    {
+      group->push_back({index, &interface});
+    }
+  }
+  return groups;
+}
+
+std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
+    const std::vector<const InterfaceData *> &interfaces,
+    const std::vector<NDFieldEvaluatorPair> &field_evaluators,
     fem::singular::EnrichedH1FieldEvaluator *real_gradient_evaluator,
     fem::singular::EnrichedH1FieldEvaluator *imaginary_gradient_evaluator,
     const fem::singular::AdaptiveAssemblyOptions &options) const
 {
-  if ((real_evaluator == nullptr) != (imaginary_evaluator == nullptr) ||
-      (real_gradient_evaluator == nullptr) != (imaginary_gradient_evaluator == nullptr) ||
-      (real_evaluator == nullptr) == (real_gradient_evaluator == nullptr))
+  if (interfaces.empty() ||
+      std::any_of(interfaces.begin(), interfaces.end(),
+                  [](const auto *interface) { return interface == nullptr; }))
+  {
+    throw std::invalid_argument(
+        "Tetrahedral singular surface postprocessing requires at least one interface!");
+  }
+  const bool full_wave = !field_evaluators.empty();
+  const bool electrostatic =
+      real_gradient_evaluator != nullptr && imaginary_gradient_evaluator != nullptr;
+  if ((real_gradient_evaluator == nullptr) != (imaginary_gradient_evaluator == nullptr) ||
+      full_wave == electrostatic)
   {
     throw std::invalid_argument(
         "Tetrahedral singular surface postprocessing requires exactly one complete "
-        "full-wave or electrostatic evaluator pair!");
+        "full-wave batch or electrostatic evaluator pair!");
+  }
+  if (full_wave &&
+      std::any_of(field_evaluators.begin(), field_evaluators.end(),
+                  [](const auto &evaluators)
+                  { return evaluators.first == nullptr || evaluators.second == nullptr; }))
+  {
+    throw std::invalid_argument(
+        "Tetrahedral singular surface postprocessing received a null full-wave "
+        "evaluator!");
   }
   if (options.quadrature_order < 1 || !std::isfinite(options.absolute_tolerance) ||
       options.absolute_tolerance < 0.0 || !std::isfinite(options.relative_tolerance) ||
@@ -1616,15 +1663,45 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
         "quadrature options!");
   }
 
+  const auto &geometry = *interfaces.front();
+  bool requires_vacuum = false;
+  bool requires_substrate = false;
+  for (const auto *interface : interfaces)
+  {
+    if (interface->edge_cutoff != geometry.edge_cutoff ||
+        interface->attribute_marker.Size() != geometry.attribute_marker.Size())
+    {
+      throw std::invalid_argument(
+          "Tetrahedral singular surface integration group has inconsistent geometry!");
+    }
+    for (int attribute = 0; attribute < geometry.attribute_marker.Size(); attribute++)
+    {
+      if (interface->attribute_marker[attribute] != geometry.attribute_marker[attribute])
+      {
+        throw std::invalid_argument(
+            "Tetrahedral singular surface integration group has inconsistent "
+            "attributes!");
+      }
+    }
+    requires_vacuum = requires_vacuum || interface->type == InterfaceDielectric::DEFAULT ||
+                      interface->type == InterfaceDielectric::MA ||
+                      interface->type == InterfaceDielectric::SA;
+    requires_substrate = requires_substrate ||
+                         interface->type == InterfaceDielectric::DEFAULT ||
+                         interface->type == InterfaceDielectric::MS;
+  }
+
   auto &mesh = *fespace.GetParMesh();
   mfem::FaceElementTransformations face;
   mfem::IsoparametricTransformation element1, element2;
-  long double local_energy = 0.0L;
+  const std::size_t mode_count = full_wave ? field_evaluators.size() : 1;
+  const std::size_t component_count = mode_count * interfaces.size();
+  std::vector<long double> local_energy(component_count, 0.0L);
   for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
   {
     const int attribute = mesh.GetBdrAttribute(boundary);
-    if (attribute <= 0 || attribute > interface.attribute_marker.Size() ||
-        !interface.attribute_marker[attribute - 1])
+    if (attribute <= 0 || attribute > geometry.attribute_marker.Size() ||
+        !geometry.attribute_marker[attribute - 1])
     {
       continue;
     }
@@ -1637,6 +1714,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
     }
 
     std::map<int, std::array<int, 3>> element_face_nodes;
+    std::map<int, int> element_attributes;
     bool has_selected_side = false;
     for (int face_node = 0; face_node < 3; face_node++)
     {
@@ -1644,12 +1722,26 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
       point.Set2(face_node == 1 ? 1.0 : 0.0, face_node == 2 ? 1.0 : 0.0);
       BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
           boundary, mesh, face, element1, element2, &point);
-      const auto sides = GetSelectedTetrahedronSides(material, face, interface.type);
-      has_selected_side = has_selected_side || !sides.empty();
+      const auto sides =
+          GetSelectedTetrahedronSides(material, face, InterfaceDielectric::DEFAULT);
       for (const auto &side : sides)
       {
+        const bool vacuum = IsVacuumSide(material, side.attribute);
+        if ((vacuum && !requires_vacuum) || (!vacuum && !requires_substrate))
+        {
+          continue;
+        }
+        has_selected_side = true;
         auto [entry, inserted] =
             element_face_nodes.emplace(side.element, std::array<int, 3>{-1, -1, -1});
+        auto [attribute_entry, attribute_inserted] =
+            element_attributes.emplace(side.element, side.attribute);
+        if (!attribute_inserted && attribute_entry->second != side.attribute)
+        {
+          throw std::runtime_error(
+              "Tetrahedral singular surface postprocessing found inconsistent adjacent "
+              "element attributes!");
+        }
         const int node = GetTetrahedronVertex(side.point);
         if (entry->second[face_node] >= 0 && entry->second[face_node] != node)
         {
@@ -1664,6 +1756,20 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
     {
       continue;
     }
+    if (element_attributes.size() != element_face_nodes.size())
+    {
+      throw std::runtime_error(
+          "Tetrahedral singular surface postprocessing found incomplete adjacent "
+          "element attributes!");
+    }
+    struct ElementFaceData
+    {
+      int element;
+      std::array<int, 3> nodes;
+      int attribute;
+    };
+    std::vector<ElementFaceData> element_faces;
+    element_faces.reserve(element_face_nodes.size());
     for (const auto &[element, nodes] : element_face_nodes)
     {
       auto sorted = nodes;
@@ -1675,6 +1781,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
             "Tetrahedral singular surface postprocessing could not map a complete "
             "adjacent element face!");
       }
+      element_faces.push_back({element, nodes, element_attributes.at(element)});
     }
 
     std::vector<TetrahedronFaceSingularity> singularities;
@@ -1700,13 +1807,14 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
             "Tetrahedral singular surface face has inconsistent feature exponents!");
       }
     };
-    for (const auto &element_face : element_face_nodes)
+    for (const auto &element_face : element_faces)
     {
-      const int element = element_face.first;
-      const auto &face_nodes = element_face.second;
+      const int element = element_face.element;
+      const auto &face_nodes = element_face.nodes;
       const auto local_singularities =
-          real_evaluator
-              ? real_evaluator->GetElementFaceSingularities(element, face_nodes)
+          full_wave
+              ? field_evaluators.front().first->GetElementFaceSingularities(element,
+                                                                            face_nodes)
               : real_gradient_evaluator->GetElementFaceSingularities(element, face_nodes);
       const auto to_face_node = [&face_nodes](int local_node)
       {
@@ -1734,7 +1842,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
         !fem::singular::IsAffineElementTransformation(*boundary_transformation);
     bool curved_edge_cutoff = false;
     bool curved_multi_edge_cutoff = false;
-    if (interface.edge_cutoff > 0.0)
+    if (geometry.edge_cutoff > 0.0)
     {
       const int edge_count = static_cast<int>(std::count_if(
           singularities.begin(), singularities.end(), [](const auto &feature)
@@ -1750,7 +1858,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
         }
         const int opposite_node = 3 - feature.nodes[0] - feature.nodes[1];
         const double coordinate =
-            interface.edge_cutoff /
+            geometry.edge_cutoff /
             GetTriangleAltitude(*boundary_transformation, opposite_node);
         cutoffs[opposite_node] = std::max(cutoffs[opposite_node], coordinate);
       }
@@ -1766,7 +1874,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
       if (feature.type == fem::singular::TetrahedronFaceSingularityType::EDGE)
       {
         const int opposite_node = 3 - feature.nodes[0] - feature.nodes[1];
-        if (interface.edge_cutoff == 0.0 && cutoffs[opposite_node] == 0.0 &&
+        if (geometry.edge_cutoff == 0.0 && cutoffs[opposite_node] == 0.0 &&
             !(feature.nu > 0.5))
         {
           throw std::domain_error(
@@ -1823,7 +1931,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
         double previous_tangent = 0.0;
         int previous_active =
             GetFaceCutoffRay(*boundary_transformation, physical_cutoff_edges, boundary_edge,
-                             previous_tangent, interface.edge_cutoff)
+                             previous_tangent, geometry.edge_cutoff)
                 .active_edge;
         const auto locate_transitions = [&](auto &&self, double lower, int lower_active,
                                             double upper, int upper_active,
@@ -1843,7 +1951,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
           const double midpoint = 0.5 * (lower + upper);
           const int midpoint_active =
               GetFaceCutoffRay(*boundary_transformation, physical_cutoff_edges,
-                               boundary_edge, midpoint, interface.edge_cutoff)
+                               boundary_edge, midpoint, geometry.edge_cutoff)
                   .active_edge;
           if (lower_active != midpoint_active)
           {
@@ -1859,7 +1967,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
           const double tangent = static_cast<double>(interval) / tangent_search_intervals;
           const int active =
               GetFaceCutoffRay(*boundary_transformation, physical_cutoff_edges,
-                               boundary_edge, tangent, interface.edge_cutoff)
+                               boundary_edge, tangent, geometry.edge_cutoff)
                   .active_edge;
           if (active != previous_active)
           {
@@ -1883,97 +1991,178 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
       }
     }
 
-    const auto density = [&](const std::array<double, 3> &lambda)
+    struct AccumulatedField
+    {
+      fem::singular::Vector3 real{};
+      fem::singular::Vector3 imaginary{};
+      int count = 0;
+      int attribute = -1;
+    };
+    std::vector<fem::singular::NDFieldValuePair> evaluated_fields(mode_count);
+    std::vector<std::array<AccumulatedField, 3>> fields(mode_count);
+    fem::singular::Vector3 affine_normal{};
+    double affine_boundary_weight = 0.0;
+    if (!curved_face)
     {
       mfem::IntegrationPoint point;
-      point.Set2(lambda[1], lambda[2]);
-      const bool inverted =
-          BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
-              boundary, mesh, face, element1, element2, &point);
-      const auto sides = GetSelectedTetrahedronSides(material, face, interface.type);
-      if (sides.empty())
+      point.Set2(1.0 / 3.0, 1.0 / 3.0);
+      boundary_transformation->SetIntPoint(&point);
+      double normal_data[3];
+      mfem::Vector normal_vector(normal_data, 3);
+      BdrGridFunctionCoefficient::GetNormal(*boundary_transformation, normal_vector);
+      affine_normal = {normal_data[0], normal_data[1], normal_data[2]};
+      affine_boundary_weight = boundary_transformation->Weight();
+    }
+    const auto accumulate_density = [&](const std::array<double, 3> &lambda,
+                                        double quadrature_weight,
+                                        std::vector<long double> &values)
+    {
+      if (values.size() != component_count)
       {
-        return 0.0;
+        throw std::logic_error(
+            "Tetrahedral singular surface integration accumulator has invalid size!");
       }
-      fem::singular::Vector3 electric_real{};
-      fem::singular::Vector3 electric_imaginary{};
-      const double average_scale = 1.0 / static_cast<double>(sides.size());
-      for (const auto &side : sides)
+      mfem::IntegrationPoint point;
+      point.Set2(lambda[1], lambda[2]);
+      std::fill(fields.begin(), fields.end(), std::array<AccumulatedField, 3>{});
+      for (const auto &element_face : element_faces)
       {
-        if (real_evaluator)
+        const int element = element_face.element;
+        const auto &face_nodes = element_face.nodes;
+        std::array<double, 4> element_lambda{};
+        for (int face_node = 0; face_node < 3; face_node++)
         {
-          const auto real_value = real_evaluator->EvaluateClosure(side.element, side.point);
-          const auto imaginary_value =
-              imaginary_evaluator->EvaluateClosure(side.element, side.point);
-          for (int d = 0; d < 3; d++)
-          {
-            electric_real[d] += average_scale * real_value.value[d];
-            electric_imaginary[d] += average_scale * imaginary_value.value[d];
-          }
+          element_lambda[face_nodes[face_node]] = lambda[face_node];
+        }
+        mfem::IntegrationPoint element_point;
+        element_point.Set3(element_lambda[1], element_lambda[2], element_lambda[3]);
+        if (full_wave)
+        {
+          field_evaluators.front().first->EvaluateValueClosureBatch(
+              field_evaluators, element, element_point, evaluated_fields);
         }
         else
         {
           const auto real_value =
-              real_gradient_evaluator->EvaluateClosure(side.element, side.point);
+              real_gradient_evaluator->EvaluateClosure(element, element_point);
           const auto imaginary_value =
-              imaginary_gradient_evaluator->EvaluateClosure(side.element, side.point);
+              imaginary_gradient_evaluator->EvaluateClosure(element, element_point);
           for (int d = 0; d < 3; d++)
           {
-            electric_real[d] -= average_scale * real_value.gradient[d];
-            electric_imaginary[d] -= average_scale * imaginary_value.gradient[d];
+            evaluated_fields[0].first[d] = -real_value.gradient[d];
+            evaluated_fields[0].second[d] = -imaginary_value.gradient[d];
+          }
+        }
+
+        const int element_attribute = element_face.attribute;
+        const int material_group = IsVacuumSide(material, element_attribute) ? 1 : 2;
+        for (std::size_t mode = 0; mode < mode_count; mode++)
+        {
+          for (int group : {0, material_group})
+          {
+            auto &field = fields[mode][group];
+            field.count++;
+            if (field.attribute < 0)
+            {
+              field.attribute = element_attribute;
+            }
+            for (int d = 0; d < 3; d++)
+            {
+              field.real[d] += evaluated_fields[mode].first[d];
+              field.imaginary[d] += evaluated_fields[mode].second[d];
+            }
           }
         }
       }
 
-      boundary_transformation->SetIntPoint(&point);
-      mfem::Vector normal_vector(3);
-      BdrGridFunctionCoefficient::GetNormal(*boundary_transformation, normal_vector,
-                                            inverted);
-      const fem::singular::Vector3 normal{normal_vector[0], normal_vector[1],
-                                          normal_vector[2]};
-      const double real_normal = Dot(electric_real, normal);
-      const double imaginary_normal = Dot(electric_imaginary, normal);
-      const double normal_product =
-          real_normal * real_normal + imaginary_normal * imaginary_normal;
-      const double field_product =
-          Dot(electric_real, electric_real) + Dot(electric_imaginary, electric_imaginary);
+      fem::singular::Vector3 normal = affine_normal;
+      double boundary_weight = affine_boundary_weight;
+      if (curved_face)
+      {
+        boundary_transformation->SetIntPoint(&point);
+        double normal_data[3];
+        mfem::Vector normal_vector(normal_data, 3);
+        BdrGridFunctionCoefficient::GetNormal(*boundary_transformation, normal_vector);
+        normal = {normal_data[0], normal_data[1], normal_data[2]};
+        boundary_weight = boundary_transformation->Weight();
+      }
+      for (std::size_t mode = 0; mode < mode_count; mode++)
+      {
+        for (std::size_t interface_index = 0; interface_index < interfaces.size();
+             interface_index++)
+        {
+          const auto &interface = *interfaces[interface_index];
+          const int material_group =
+              interface.type == InterfaceDielectric::DEFAULT
+                  ? 0
+                  : (interface.type == InterfaceDielectric::MS ? 2 : 1);
+          const auto &field = fields[mode][material_group];
+          if (field.count == 0)
+          {
+            continue;
+          }
+          const double average_scale = 1.0 / static_cast<double>(field.count);
+          fem::singular::Vector3 electric_real = field.real;
+          fem::singular::Vector3 electric_imaginary = field.imaginary;
+          for (int d = 0; d < 3; d++)
+          {
+            electric_real[d] *= average_scale;
+            electric_imaginary[d] *= average_scale;
+          }
+          const double real_normal = Dot(electric_real, normal);
+          const double imaginary_normal = Dot(electric_imaginary, normal);
+          const double normal_product =
+              real_normal * real_normal + imaginary_normal * imaginary_normal;
+          const double field_product = Dot(electric_real, electric_real) +
+                                       Dot(electric_imaginary, electric_imaginary);
 
-      double surface_density = 0.0;
-      if (interface.type == InterfaceDielectric::DEFAULT)
-      {
-        surface_density =
-            0.5 * interface.thickness * interface.permittivity * field_product;
+          double surface_density = 0.0;
+          if (interface.type == InterfaceDielectric::DEFAULT)
+          {
+            surface_density =
+                0.5 * interface.thickness * interface.permittivity * field_product;
+          }
+          else if (interface.type == InterfaceDielectric::MA)
+          {
+            surface_density =
+                0.5 * (interface.thickness / interface.permittivity) * normal_product;
+          }
+          else if (interface.type == InterfaceDielectric::MS)
+          {
+            fem::singular::Vector3 displacement_real{};
+            fem::singular::Vector3 displacement_imaginary{};
+            mfem::Vector electric_real_vector(electric_real.data(), 3);
+            mfem::Vector electric_imaginary_vector(electric_imaginary.data(), 3);
+            mfem::Vector displacement_real_vector(displacement_real.data(), 3);
+            mfem::Vector displacement_imaginary_vector(displacement_imaginary.data(), 3);
+            const auto &permittivity = material.GetPermittivityReal(field.attribute);
+            permittivity.Mult(electric_real_vector, displacement_real_vector);
+            permittivity.Mult(electric_imaginary_vector, displacement_imaginary_vector);
+            const double displacement_normal_real = Dot(displacement_real, normal);
+            const double displacement_normal_imaginary =
+                Dot(displacement_imaginary, normal);
+            surface_density =
+                0.5 * (interface.thickness / interface.permittivity) *
+                (displacement_normal_real * displacement_normal_real +
+                 displacement_normal_imaginary * displacement_normal_imaginary);
+          }
+          else
+          {
+            const double tangential_product = field_product - normal_product;
+            surface_density = 0.5 * interface.thickness *
+                              (interface.permittivity * tangential_product +
+                               normal_product / interface.permittivity);
+          }
+          const double contribution = quadrature_weight * boundary_weight * surface_density;
+          if (!std::isfinite(contribution))
+          {
+            throw std::runtime_error(
+                "Tetrahedral singular surface quadrature produced a nonfinite "
+                "contribution!");
+          }
+          values[mode * interfaces.size() + interface_index] += contribution;
+        }
       }
-      else if (interface.type == InterfaceDielectric::MA)
-      {
-        surface_density =
-            0.5 * (interface.thickness / interface.permittivity) * normal_product;
-      }
-      else if (interface.type == InterfaceDielectric::MS)
-      {
-        fem::singular::Vector3 displacement_real{};
-        fem::singular::Vector3 displacement_imaginary{};
-        mfem::Vector electric_real_vector(electric_real.data(), 3);
-        mfem::Vector electric_imaginary_vector(electric_imaginary.data(), 3);
-        mfem::Vector displacement_real_vector(displacement_real.data(), 3);
-        mfem::Vector displacement_imaginary_vector(displacement_imaginary.data(), 3);
-        const auto &permittivity = material.GetPermittivityReal(sides.front().attribute);
-        permittivity.Mult(electric_real_vector, displacement_real_vector);
-        permittivity.Mult(electric_imaginary_vector, displacement_imaginary_vector);
-        const double displacement_normal_real = Dot(displacement_real, normal);
-        const double displacement_normal_imaginary = Dot(displacement_imaginary, normal);
-        surface_density = 0.5 * (interface.thickness / interface.permittivity) *
-                          (displacement_normal_real * displacement_normal_real +
-                           displacement_normal_imaginary * displacement_normal_imaginary);
-      }
-      else
-      {
-        const double tangential_product = field_product - normal_product;
-        surface_density = 0.5 * interface.thickness *
-                          (interface.permittivity * tangential_product +
-                           normal_product / interface.permittivity);
-      }
-      return boundary_transformation->Weight() * surface_density;
     };
 
     const double simplex_scale = 1.0 - cutoff_sum;
@@ -2029,9 +2218,9 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
 
     const auto integrate = [&](int order)
     {
+      std::vector<long double> value(component_count, 0.0L);
       const auto standard_segment_rule =
           fem::singular::BuildWeightedSegmentQuadrature(order, 0.0, 0.0);
-      long double value = 0.0L;
       if (curved_multi_edge_cutoff)
       {
         // The retained physical domain is the face minus the union of all edge
@@ -2042,14 +2231,14 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
         const auto integrate_interval = [&](int boundary_edge, int first, int second,
                                             double interval_lower, double interval_upper)
         {
-          long double result = 0.0L;
+          std::vector<long double> result(component_count, 0.0L);
           for (const auto &tangent_quadrature : standard_segment_rule)
           {
             const double tangent = interval_lower + (interval_upper - interval_lower) *
                                                         tangent_quadrature.coordinate;
             const double maximum_radius =
                 GetFaceCutoffRay(*boundary_transformation, physical_cutoff_edges,
-                                 boundary_edge, tangent, interface.edge_cutoff)
+                                 boundary_edge, tangent, geometry.edge_cutoff)
                     .radius;
             for (const auto &radial_quadrature : standard_segment_rule)
             {
@@ -2063,40 +2252,54 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
                                            (1.0 - radius) / 3.0};
               lambda[first] += radius * (1.0 - tangent);
               lambda[second] += radius * tangent;
-              const double contribution = radial_quadrature.weight *
-                                          tangent_quadrature.weight *
-                                          (interval_upper - interval_lower) * dr_du *
-                                          radius / 3.0 * density(lambda);
-              if (!std::isfinite(contribution))
-              {
-                throw std::runtime_error(
-                    "Tetrahedral curved-face multi-edge cutoff quadrature produced "
-                    "a nonfinite contribution!");
-              }
-              result += contribution;
+              const double quadrature_weight =
+                  radial_quadrature.weight * tangent_quadrature.weight *
+                  (interval_upper - interval_lower) * dr_du * radius / 3.0;
+              accumulate_density(lambda, quadrature_weight, result);
             }
           }
           return result;
         };
         const auto integrate_tangent_interval =
             [&](auto &&self, int boundary_edge, int first, int second, double lower,
-                double upper, long double coarse, int depth) -> long double
+                double upper, const std::vector<long double> &coarse,
+                int depth) -> std::vector<long double>
         {
           const double midpoint = 0.5 * (lower + upper);
-          const long double left =
+          const auto left =
               integrate_interval(boundary_edge, first, second, lower, midpoint);
-          const long double right =
+          const auto right =
               integrate_interval(boundary_edge, first, second, midpoint, upper);
-          const long double fine = left + right;
-          const double scale = std::max(std::abs(static_cast<double>(fine)),
-                                        std::abs(static_cast<double>(coarse)));
-          const double error = 8.0 * std::abs(static_cast<double>(fine - coarse)) +
-                               256.0 * std::numeric_limits<double>::epsilon() * scale;
+          std::vector<long double> fine(component_count);
+          for (std::size_t component = 0; component < fine.size(); component++)
+          {
+            fine[component] = left[component] + right[component];
+          }
           const double interval_fraction = upper - lower;
-          const double tolerance =
-              0.125 * (options.absolute_tolerance * interval_fraction / 3.0 +
-                       options.relative_tolerance * std::abs(static_cast<double>(fine)));
-          if (std::isfinite(error) && error <= tolerance)
+          bool converged = true;
+          std::size_t failed_component = 0;
+          double failed_error = 0.0;
+          double failed_tolerance = 0.0;
+          for (std::size_t component = 0; component < fine.size(); component++)
+          {
+            const double fine_value = static_cast<double>(fine[component]);
+            const double coarse_value = static_cast<double>(coarse[component]);
+            const double scale = std::max(std::abs(fine_value), std::abs(coarse_value));
+            const double error = 8.0 * std::abs(fine_value - coarse_value) +
+                                 256.0 * std::numeric_limits<double>::epsilon() * scale;
+            const double tolerance =
+                0.125 * (options.absolute_tolerance * interval_fraction / 3.0 +
+                         options.relative_tolerance * std::abs(fine_value));
+            if (!std::isfinite(error) || error > tolerance)
+            {
+              converged = false;
+              failed_component = component;
+              failed_error = error;
+              failed_tolerance = tolerance;
+              break;
+            }
+          }
+          if (converged)
           {
             return fine;
           }
@@ -2105,15 +2308,21 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
             throw std::runtime_error(fmt::format(
                 "Tetrahedral curved-face multi-edge cutoff tangent quadrature did "
                 "not meet tolerance: value = {:.17g}, estimated absolute error = "
-                "{:.17g}, tolerance = {:.17g}, interval = [{:.17g}, {:.17g}], "
-                "order = {}, subdivisions = {}!",
-                static_cast<double>(fine), error, tolerance, lower, upper, order,
-                options.maximum_subdivisions));
+                "{:.17g}, tolerance = {:.17g}, component = {}, interval = "
+                "[{:.17g}, {:.17g}], order = {}, subdivisions = {}!",
+                static_cast<double>(fine[failed_component]), failed_error, failed_tolerance,
+                failed_component, lower, upper, order, options.maximum_subdivisions));
           }
-          return self(self, boundary_edge, first, second, lower, midpoint, left,
-                      depth + 1) +
-                 self(self, boundary_edge, first, second, midpoint, upper, right,
-                      depth + 1);
+          const auto refined_left =
+              self(self, boundary_edge, first, second, lower, midpoint, left, depth + 1);
+          const auto refined_right =
+              self(self, boundary_edge, first, second, midpoint, upper, right, depth + 1);
+          std::vector<long double> refined(component_count);
+          for (std::size_t component = 0; component < refined.size(); component++)
+          {
+            refined[component] = refined_left[component] + refined_right[component];
+          }
+          return refined;
         };
         for (int boundary_edge = 0; boundary_edge < 3; boundary_edge++)
         {
@@ -2130,13 +2339,18 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
           {
             const double lower = breakpoints[interval - 1];
             const double upper = breakpoints[interval];
-            const long double coarse =
+            const auto coarse =
                 integrate_interval(boundary_edge, first, second, lower, upper);
-            value += integrate_tangent_interval(integrate_tangent_interval, boundary_edge,
-                                                first, second, lower, upper, coarse, 0);
+            const auto refined =
+                integrate_tangent_interval(integrate_tangent_interval, boundary_edge, first,
+                                           second, lower, upper, coarse, 0);
+            for (std::size_t component = 0; component < value.size(); component++)
+            {
+              value[component] += refined[component];
+            }
           }
         }
-        return static_cast<double>(value);
+        return value;
       }
       if (chart_singularities.empty())
       {
@@ -2149,10 +2363,10 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
             const double r = radial.coordinate;
             const double t = tangent.coordinate;
             const std::array<double, 3> lambda{1.0 - r, r * (1.0 - t), r * t};
-            value += radial.weight * tangent.weight * r * density(lambda);
+            accumulate_density(lambda, radial.weight * tangent.weight * r, value);
           }
         }
-        return static_cast<double>(value);
+        return value;
       }
 
       for (std::size_t selected = 0; selected < chart_singularities.size(); selected++)
@@ -2185,7 +2399,7 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
                   0.5 * tangent_power * std::pow(tangent.coordinate, tangent_power - 1.0);
               const double t = endpoint == 0 ? distance : 1.0 - distance;
               const double floor = GetFaceEdgeCutoffCoordinate(
-                  *boundary_transformation, feature.nodes, t, interface.edge_cutoff);
+                  *boundary_transformation, feature.nodes, t, geometry.edge_cutoff);
               const double logarithmic_length = std::log(1.0 / floor);
               const auto radial_rule =
                   fem::singular::BuildWeightedSegmentQuadrature(order, 0.0, 0.0);
@@ -2198,15 +2412,9 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
                 lambda[opposite_node] = r;
                 lambda[feature.nodes[0]] = (1.0 - r) * (1.0 - t);
                 lambda[feature.nodes[1]] = (1.0 - r) * t;
-                const double contribution = radial.weight * tangent.weight * dt_du *
-                                            (1.0 - r) * dr_du * density(lambda);
-                if (!std::isfinite(contribution))
-                {
-                  throw std::runtime_error(
-                      "Tetrahedral curved-face cutoff quadrature produced a nonfinite "
-                      "contribution!");
-                }
-                value += contribution;
+                const double quadrature_weight =
+                    radial.weight * tangent.weight * dt_du * (1.0 - r) * dr_du;
+                accumulate_density(lambda, quadrature_weight, value);
               }
             }
           }
@@ -2254,16 +2462,10 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
             }
             const double chart_jacobian =
                 simplex_scale * simplex_scale * (node ? r : 1.0 - r) * radial_jacobian;
-            const double contribution = radial_weight * tangent_weight * chart_jacobian *
-                                        partition_weight(selected, lambda) *
-                                        density(lambda) / radial_weight_function;
-            if (!std::isfinite(contribution))
-            {
-              throw std::runtime_error(
-                  "Tetrahedral singular surface quadrature produced a nonfinite "
-                  "contribution!");
-            }
-            value += contribution;
+            const double quadrature_weight =
+                radial_weight * tangent_weight * chart_jacobian *
+                partition_weight(selected, lambda) / radial_weight_function;
+            accumulate_density(lambda, quadrature_weight, value);
           };
           if (node)
           {
@@ -2339,28 +2541,44 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
           }
         }
       }
-      return static_cast<double>(value);
+      return value;
     };
 
     constexpr int order_increment = 4;
     int comparison_order = std::max(4, 2 * options.quadrature_order);
-    double comparison = integrate(comparison_order);
-    double value = comparison;
-    double error = std::numeric_limits<double>::infinity();
-    double tolerance = 0.0;
+    auto comparison = integrate(comparison_order);
+    auto value = comparison;
+    std::size_t failed_component = 0;
+    double failed_error = std::numeric_limits<double>::infinity();
+    double failed_tolerance = 0.0;
     int order = comparison_order + order_increment;
     bool converged = false;
     for (int refinement = 0; refinement <= options.maximum_subdivisions; refinement++)
     {
       value = integrate(order);
-      const double scale = std::max({1.0, std::abs(value), std::abs(comparison)});
-      error = 8.0 * std::abs(value - comparison) +
-              256.0 * std::numeric_limits<double>::epsilon() * scale;
-      tolerance = options.absolute_tolerance + options.relative_tolerance * std::abs(value);
-      if (std::isfinite(value) && std::isfinite(comparison) && std::isfinite(error) &&
-          error <= tolerance)
+      converged = true;
+      for (std::size_t component = 0; component < value.size(); component++)
       {
-        converged = true;
+        const double component_value = static_cast<double>(value[component]);
+        const double component_comparison = static_cast<double>(comparison[component]);
+        const double scale =
+            std::max({1.0, std::abs(component_value), std::abs(component_comparison)});
+        const double error = 8.0 * std::abs(component_value - component_comparison) +
+                             256.0 * std::numeric_limits<double>::epsilon() * scale;
+        const double tolerance = options.absolute_tolerance +
+                                 options.relative_tolerance * std::abs(component_value);
+        if (!std::isfinite(component_value) || !std::isfinite(component_comparison) ||
+            !std::isfinite(error) || error > tolerance)
+        {
+          converged = false;
+          failed_component = component;
+          failed_error = error;
+          failed_tolerance = tolerance;
+          break;
+        }
+      }
+      if (converged)
+      {
         break;
       }
       if (refinement < options.maximum_subdivisions)
@@ -2375,14 +2593,21 @@ double TetrahedronSingularSurfacePostOperator::IntegrateInterface(
       throw std::runtime_error(fmt::format(
           "Tetrahedral singular surface quadrature did not meet tolerance: value = "
           "{:.17g}, comparison = {:.17g}, estimated absolute error = {:.17g}, "
-          "tolerance = {:.17g}, orders = {}/{}, order refinements = {}!",
-          value, comparison, error, tolerance, order, comparison_order,
-          options.maximum_subdivisions));
+          "tolerance = {:.17g}, component = {}, orders = {}/{}, order refinements = "
+          "{}!",
+          static_cast<double>(value[failed_component]),
+          static_cast<double>(comparison[failed_component]), failed_error, failed_tolerance,
+          failed_component, order, comparison_order, options.maximum_subdivisions));
     }
-    local_energy += value;
+    for (std::size_t component = 0; component < local_energy.size(); component++)
+    {
+      local_energy[component] += value[component];
+    }
   }
-  double energy = static_cast<double>(local_energy);
-  Mpi::GlobalSum(1, &energy, mesh.GetComm());
+  std::vector<double> energy(local_energy.size());
+  std::transform(local_energy.begin(), local_energy.end(), energy.begin(),
+                 [](long double value) { return static_cast<double>(value); });
+  Mpi::GlobalSum(static_cast<int>(energy.size()), energy.data(), mesh.GetComm());
   return energy;
 }
 
@@ -2393,24 +2618,84 @@ TetrahedronSingularSurfacePostOperator::Measure(
     double total_electric_energy,
     const fem::singular::AdaptiveAssemblyOptions &options) const
 {
-  if (!std::isfinite(total_electric_energy) || !(total_electric_energy > 0.0))
+  auto measurements =
+      Measure({{&real_evaluator, &imaginary_evaluator}}, {total_electric_energy}, options);
+  if (measurements.size() != 1)
+  {
+    throw std::logic_error(
+        "Tetrahedral singular surface single-field measurement returned invalid "
+        "dimensions!");
+  }
+  return std::move(measurements.front());
+}
+
+std::vector<std::vector<TetrahedronSingularSurfacePostOperator::Measurement>>
+TetrahedronSingularSurfacePostOperator::Measure(
+    const std::vector<NDFieldEvaluatorPair> &field_evaluators,
+    const std::vector<double> &total_electric_energies,
+    const fem::singular::AdaptiveAssemblyOptions &options) const
+{
+  if (field_evaluators.empty() ||
+      total_electric_energies.size() != field_evaluators.size() ||
+      std::any_of(total_electric_energies.begin(), total_electric_energies.end(),
+                  [](double energy) { return !std::isfinite(energy) || !(energy > 0.0); }))
   {
     throw std::invalid_argument(
-        "Tetrahedral singular surface participation requires positive total electric "
-        "energy!");
+        "Tetrahedral singular surface participation requires matching fields and "
+        "positive total electric energies!");
   }
-  std::vector<Measurement> measurements;
-  measurements.reserve(interfaces.size());
-  for (const auto &[index, interface] : interfaces)
+  std::vector<std::map<int, double>> energies(field_evaluators.size());
+  for (const auto &group : GetInterfaceGroups())
   {
-    const double energy = IntegrateInterface(
-        interface, &real_evaluator, &imaginary_evaluator, nullptr, nullptr, options);
-    const double participation = energy / total_electric_energy;
-    const double quality_factor = participation == 0.0 || interface.loss_tangent == 0.0
-                                      ? mfem::infinity()
-                                      : 1.0 / (participation * interface.loss_tangent);
-    measurements.push_back(
-        {index, energy, interface.loss_tangent, participation, quality_factor});
+    std::vector<const InterfaceData *> grouped_interfaces;
+    grouped_interfaces.reserve(group.size());
+    for (const auto &[index, interface] : group)
+    {
+      grouped_interfaces.push_back(interface);
+    }
+    const auto start = Timer::Now();
+    const auto grouped_energies = IntegrateInterfaces(grouped_interfaces, field_evaluators,
+                                                      nullptr, nullptr, options);
+    double elapsed = Timer::Duration(Timer::Now() - start).count();
+    Mpi::GlobalMax(1, &elapsed, fespace.GetComm());
+    std::string indices = fmt::format("{}", group.front().first);
+    for (std::size_t interface = 1; interface < group.size(); interface++)
+    {
+      indices += fmt::format(",{}", group[interface].first);
+    }
+    Mpi::Print(" Singular surface interface group {} for {} field{} integration (s): "
+               "{:.3f}\n",
+               indices, field_evaluators.size(), field_evaluators.size() == 1 ? "" : "s",
+               elapsed);
+    if (grouped_energies.size() != group.size() * field_evaluators.size())
+    {
+      throw std::logic_error(
+          "Tetrahedral singular surface integration returned invalid dimensions!");
+    }
+    for (std::size_t field = 0; field < field_evaluators.size(); field++)
+    {
+      for (std::size_t interface = 0; interface < group.size(); interface++)
+      {
+        energies[field].emplace(group[interface].first,
+                                grouped_energies[field * group.size() + interface]);
+      }
+    }
+  }
+
+  std::vector<std::vector<Measurement>> measurements(field_evaluators.size());
+  for (std::size_t field = 0; field < field_evaluators.size(); field++)
+  {
+    measurements[field].reserve(interfaces.size());
+    for (const auto &[index, interface] : interfaces)
+    {
+      const double energy = energies[field].at(index);
+      const double participation = energy / total_electric_energies[field];
+      const double quality_factor = participation == 0.0 || interface.loss_tangent == 0.0
+                                        ? mfem::infinity()
+                                        : 1.0 / (participation * interface.loss_tangent);
+      measurements[field].push_back(
+          {index, energy, interface.loss_tangent, participation, quality_factor});
+    }
   }
   return measurements;
 }
@@ -2428,12 +2713,33 @@ TetrahedronSingularSurfacePostOperator::MeasureElectrostatic(
         "Tetrahedral singular surface participation requires positive total electric "
         "energy!");
   }
+  std::map<int, double> energies;
+  for (const auto &group : GetInterfaceGroups())
+  {
+    std::vector<const InterfaceData *> grouped_interfaces;
+    grouped_interfaces.reserve(group.size());
+    for (const auto &[index, interface] : group)
+    {
+      grouped_interfaces.push_back(interface);
+    }
+    const auto grouped_energies = IntegrateInterfaces(
+        grouped_interfaces, {}, &real_evaluator, &imaginary_evaluator, options);
+    if (grouped_energies.size() != group.size())
+    {
+      throw std::logic_error(
+          "Tetrahedral singular surface integration returned invalid dimensions!");
+    }
+    for (std::size_t interface = 0; interface < group.size(); interface++)
+    {
+      energies.emplace(group[interface].first, grouped_energies[interface]);
+    }
+  }
+
   std::vector<Measurement> measurements;
   measurements.reserve(interfaces.size());
   for (const auto &[index, interface] : interfaces)
   {
-    const double energy = IntegrateInterface(interface, nullptr, nullptr, &real_evaluator,
-                                             &imaginary_evaluator, options);
+    const double energy = energies.at(index);
     const double participation = energy / total_electric_energy;
     const double quality_factor = participation == 0.0 || interface.loss_tangent == 0.0
                                       ? mfem::infinity()

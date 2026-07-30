@@ -5,6 +5,7 @@
 #define PALACE_MODELS_SPACE_OPERATOR_HPP
 
 #include <complex>
+#include <map>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -115,6 +116,8 @@ private:
   mfem::Array<int> singular_h1_essential_true_dofs;
   std::vector<mfem::Array<int>> combined_nd_dbc_tdof_lists;
   std::vector<mfem::Array<int>> combined_h1_dbc_tdof_lists;
+  std::map<int, std::unique_ptr<Vector>> singular_lumped_voltage_functionals;
+  std::map<int, std::unique_ptr<Vector>> singular_lumped_sparameter_functionals;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -154,8 +157,11 @@ private:
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS,
                                     Vector *singular_RHS = nullptr);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
-  std::complex<double> GetSingularBoundaryFunctional(SumVectorCoefficient &coefficient,
-                                                     const ComplexVector &field);
+  std::unique_ptr<Vector>
+  BuildSingularBoundaryFunctional(SumVectorCoefficient &coefficient,
+                                  mfem::Array<int> attribute_marker);
+  std::complex<double> ApplySingularBoundaryFunctional(const Vector &functional,
+                                                       const ComplexVector &field) const;
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
@@ -502,6 +508,7 @@ public:
 
   // Evaluate the same lumped-port voltage and modal-overlap functionals used
   // by standard postprocessing on a combined standard-plus-singular field.
+  void CacheSingularLumpedPortFunctionals(bool include_sparameters);
   std::complex<double> GetSingularLumpedPortVoltage(int port_idx,
                                                     const ComplexVector &field);
   std::complex<double> GetSingularLumpedPortSParameter(int port_idx,

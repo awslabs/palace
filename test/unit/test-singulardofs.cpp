@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -535,6 +536,59 @@ TEST_CASE("First-order singular DOFs preserve the enriched H1 to ND gradient",
       CHECK(local_nd.insert(nd.dof).second);
     }
   }
+}
+
+TEST_CASE("Nonintegrable edge-gradient traces are excluded on selected faces",
+          "[singulardofs][Serial]")
+{
+  auto mesh = RectangleSheetMesh();
+  const auto features = fem::singular::ExtractSerialSheetFeatures(mesh, {7, 8}, 0.5);
+  std::vector<fem::singular::GlobalVertexId> vertex_ids(mesh.GetNV());
+  std::iota(vertex_ids.begin(), vertex_ids.end(), 0);
+  const auto unfiltered =
+      fem::singular::BuildLocalDofTopology(mesh, features, vertex_ids, 1);
+  const std::array<fem::singular::GlobalVertexId, 3> excluded_face{0, 1, 2};
+  const auto filtered =
+      fem::singular::BuildLocalDofTopology(mesh, features, vertex_ids, 1, {excluded_face});
+
+  const std::set<fem::singular::DofKey> filtered_h1(filtered.h1_dofs.begin(),
+                                                    filtered.h1_dofs.end());
+  int excluded = 0;
+  for (const auto &key : unfiltered.h1_dofs)
+  {
+    const bool should_exclude =
+        key.family == fem::singular::HigherOrderBasisFamily::EDGE_GRADIENT &&
+        IsSupportedOnFace(key.support_entity, {0, 1, 2});
+    CAPTURE(static_cast<int>(key.family), key.support_entity.size,
+            key.support_entity.vertices);
+    CHECK((filtered_h1.count(key) == 0) == should_exclude);
+    excluded += should_exclude;
+  }
+  CHECK(excluded > 0);
+  CHECK(filtered.h1_dofs.size() + excluded == unfiltered.h1_dofs.size());
+  CHECK(std::count_if(filtered.nd_dofs.begin(), filtered.nd_dofs.end(),
+                      [](const auto &key)
+                      {
+                        return key.family ==
+                               fem::singular::HigherOrderBasisFamily::EDGE_ROTATIONAL;
+                      }) ==
+        std::count_if(unfiltered.nd_dofs.begin(), unfiltered.nd_dofs.end(),
+                      [](const auto &key)
+                      {
+                        return key.family ==
+                               fem::singular::HigherOrderBasisFamily::EDGE_ROTATIONAL;
+                      }));
+  REQUIRE(filtered.h1_to_nd.size() == filtered.h1_dofs.size());
+  for (std::size_t h1 = 0; h1 < filtered.h1_dofs.size(); h1++)
+  {
+    REQUIRE(filtered.h1_to_nd[h1] < filtered.nd_dofs.size());
+    CHECK(filtered.h1_dofs[h1] == filtered.nd_dofs[filtered.h1_to_nd[h1]]);
+  }
+
+  CHECK_THROWS_AS(fem::singular::BuildLocalDofTopology(
+                      mesh, features, vertex_ids, 1,
+                      {std::array<fem::singular::GlobalVertexId, 3>{1, 0, 2}}),
+                  std::invalid_argument);
 }
 
 TEST_CASE("Singular DOF keys encode retained interpolation entities",

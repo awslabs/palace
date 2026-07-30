@@ -122,6 +122,8 @@ struct LocalSparseEnrichmentMatrices
 
   std::size_t total_quadrature_leaf_count = 0;
   int maximum_subdivision_depth = 0;
+  std::size_t affine_reference_table_entries = 0;
+  std::size_t affine_reference_cache_hits = 0;
 };
 
 struct LocalSparseH1EnrichmentMatrices
@@ -368,22 +370,21 @@ AssembleParallelSparseH1BoundaryMassMatrices(const LocalSparseOperatorBlocks &lo
 //
 //   integral_Gamma coefficient dot v dS
 //
-// into the process-local owned enrichment true-DOF vector. The coefficient
-// itself is responsible for restricting its support to the desired boundary
-// attributes. Standard entries continue to use MFEM's boundary linear form.
-void AssembleParallelNDBoundaryLinearForm(const DofTopology &topology,
-                                          const ParallelDofNumbering &parallel_numbering,
-                                          mfem::ParFiniteElementSpace &nd_fespace,
-                                          mfem::VectorCoefficient &coefficient,
-                                          const AdaptiveAssemblyOptions &options,
-                                          mfem::Vector &enrichment_true_dofs);
+// into the process-local owned enrichment true-DOF vector. When supplied, the
+// boundary marker avoids evaluating the coefficient and singular traces on
+// attributes outside its support. Standard entries continue to use MFEM's
+// boundary linear form.
+void AssembleParallelNDBoundaryLinearForm(
+    const DofTopology &topology, const ParallelDofNumbering &parallel_numbering,
+    mfem::ParFiniteElementSpace &nd_fespace, mfem::VectorCoefficient &coefficient,
+    const AdaptiveAssemblyOptions &options, mfem::Vector &enrichment_true_dofs,
+    const mfem::Array<int> *attribute_marker = nullptr);
 
-void AssembleParallelNDBoundaryLinearForm(const TriangleDofTopology &topology,
-                                          const ParallelDofNumbering &parallel_numbering,
-                                          mfem::ParFiniteElementSpace &nd_fespace,
-                                          mfem::VectorCoefficient &coefficient,
-                                          const AdaptiveAssemblyOptions &options,
-                                          mfem::Vector &enrichment_true_dofs);
+void AssembleParallelNDBoundaryLinearForm(
+    const TriangleDofTopology &topology, const ParallelDofNumbering &parallel_numbering,
+    mfem::ParFiniteElementSpace &nd_fespace, mfem::VectorCoefficient &coefficient,
+    const AdaptiveAssemblyOptions &options, mfem::Vector &enrichment_true_dofs,
+    const mfem::Array<int> *attribute_marker = nullptr);
 
 // Construct the exact true-DOF map from enriched scalar potentials to their
 // matching enriched ND gradient functions. Every H1 column has one coefficient

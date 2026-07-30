@@ -177,9 +177,10 @@ DofTopology BuildSerialDofTopology(const mfem::Mesh &mesh, const FeatureTopology
 // Enumerate rank-local retained bases using decomposition-independent serial
 // vertex IDs. This constructs local key tables and element maps only; MPI
 // ownership and true-DOF numbering are a subsequent phase.
-DofTopology BuildLocalDofTopology(const mfem::Mesh &mesh, const FeatureTopology &features,
-                                  const std::vector<GlobalVertexId> &serial_vertex_ids,
-                                  int order);
+DofTopology BuildLocalDofTopology(
+    const mfem::Mesh &mesh, const FeatureTopology &features,
+    const std::vector<GlobalVertexId> &serial_vertex_ids, int order,
+    const std::vector<std::array<GlobalVertexId, 3>> &excluded_boundary_trace_faces = {});
 
 // Enumerate the two edge-trace gradient functions and one element-interior
 // rotational function associated with each singular tip/triangle incidence.

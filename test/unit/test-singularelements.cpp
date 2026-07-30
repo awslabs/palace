@@ -1312,7 +1312,11 @@ TEST_CASE("Singular element higher-order retained sets match Table I",
   for (const auto &basis :
        fem::singular::EnumerateHigherOrderNodeGradientBases(canonical_nodes, 1, nu))
   {
-    CheckBasisValue(fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis),
+    const auto evaluated =
+        fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+    CHECK(fem::singular::EvaluateHigherOrderBasisValue(lambda, grad_lambda, basis) ==
+          evaluated.value);
+    CheckBasisValue(evaluated,
                     fem::singular::EvaluateNodeGradient(lambda, grad_lambda, basis.nodes[0],
                                                         basis.nodes[1], nu),
                     0.0);
@@ -1320,7 +1324,11 @@ TEST_CASE("Singular element higher-order retained sets match Table I",
   for (const auto &basis :
        fem::singular::EnumerateHigherOrderNodeRotationalBases(canonical_nodes, 1, nu))
   {
-    CheckBasisValue(fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis),
+    const auto evaluated =
+        fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+    CHECK(fem::singular::EvaluateHigherOrderBasisValue(lambda, grad_lambda, basis) ==
+          evaluated.value);
+    CheckBasisValue(evaluated,
                     fem::singular::EvaluateNodeRotational(lambda, grad_lambda,
                                                           basis.nodes[0], basis.nodes[1],
                                                           basis.nodes[2], nu),
@@ -1329,7 +1337,11 @@ TEST_CASE("Singular element higher-order retained sets match Table I",
   for (const auto &basis :
        fem::singular::EnumerateHigherOrderEdgeGradientBases(canonical_nodes, 1, nu))
   {
-    CheckBasisValue(fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis),
+    const auto evaluated =
+        fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+    CHECK(fem::singular::EvaluateHigherOrderBasisValue(lambda, grad_lambda, basis) ==
+          evaluated.value);
+    CheckBasisValue(evaluated,
                     fem::singular::EvaluateEdgeGradient(lambda, grad_lambda, basis.nodes[0],
                                                         basis.nodes[1], basis.nodes[2], nu),
                     0.0);
@@ -1337,7 +1349,11 @@ TEST_CASE("Singular element higher-order retained sets match Table I",
   for (const auto &basis :
        fem::singular::EnumerateHigherOrderEdgeRotationalBases(canonical_nodes, 1, nu))
   {
-    CheckBasisValue(fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis),
+    const auto evaluated =
+        fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+    CHECK(fem::singular::EvaluateHigherOrderBasisValue(lambda, grad_lambda, basis) ==
+          evaluated.value);
+    CheckBasisValue(evaluated,
                     fem::singular::EvaluateEdgeRotational(
                         lambda, grad_lambda, basis.nodes[0], basis.nodes[1], basis.nodes[2],
                         basis.nodes[3], nu),

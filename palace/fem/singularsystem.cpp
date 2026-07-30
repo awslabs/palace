@@ -552,6 +552,60 @@ BuildParallelEnrichedOperator(const mfem::HypreParMatrix &standard_standard,
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
 }
 
+HYPRE_BigInt RemoveExplicitZeros(mfem::HypreParMatrix &matrix)
+{
+  auto *parallel = static_cast<hypre_ParCSRMatrix *>(matrix);
+  if (hypre_ParCSRMatrixMemoryLocation(parallel) != HYPRE_MEMORY_HOST)
+  {
+    throw std::invalid_argument(
+        "Singular sparse compaction currently requires a CPU HypreParMatrix!");
+  }
+
+  HYPRE_BigInt local_removed = 0;
+  const auto compact = [&local_removed](hypre_CSRMatrix *block, bool diagonal)
+  {
+    auto *offsets = hypre_CSRMatrixI(block);
+    auto *columns = hypre_CSRMatrixJ(block);
+    auto *values = hypre_CSRMatrixData(block);
+    const HYPRE_Int rows = hypre_CSRMatrixNumRows(block);
+    HYPRE_Int read_begin = offsets[0];
+    HYPRE_Int write = 0;
+    offsets[0] = 0;
+    for (HYPRE_Int row = 0; row < rows; row++)
+    {
+      const HYPRE_Int read_end = offsets[row + 1];
+      for (HYPRE_Int entry = read_begin; entry < read_end; entry++)
+      {
+        if (values[entry] != 0.0 || (diagonal && columns[entry] == row))
+        {
+          columns[write] = columns[entry];
+          values[write] = values[entry];
+          write++;
+        }
+        else
+        {
+          local_removed++;
+        }
+      }
+      offsets[row + 1] = write;
+      read_begin = read_end;
+    }
+    hypre_CSRMatrixNumNonzeros(block) = write;
+  };
+  compact(hypre_ParCSRMatrixDiag(parallel), true);
+  compact(hypre_ParCSRMatrixOffd(parallel), false);
+
+  if (hypre_ParCSRMatrixSetNumNonzeros(parallel) != 0 ||
+      hypre_ParCSRMatrixSetDNumNonzeros(parallel) != 0)
+  {
+    throw std::runtime_error(
+        "Hypre failed to update singular sparse-matrix nonzero counts!");
+  }
+  HYPRE_BigInt global_removed = local_removed;
+  Mpi::GlobalSum(1, &global_removed, matrix.GetComm());
+  return global_removed;
+}
+
 std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichedGradient(const mfem::HypreParMatrix &standard_gradient,
                               const mfem::HypreParMatrix &enrichment_gradient)
@@ -1093,6 +1147,7 @@ BuildParallelDirichletSystem(std::unique_ptr<mfem::HypreParMatrix> &&matrix,
   {
     throw std::runtime_error("Failed to retain the eliminated singular operator entries!");
   }
+  RemoveExplicitZeros(*matrix);
   return {std::move(matrix), std::move(eliminated), std::move(essential)};
 }
 
