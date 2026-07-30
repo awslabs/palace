@@ -13,18 +13,28 @@ namespace
 
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
-  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
-  DiagonalOperator Dinv(dinv);
-  ProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, true);
+  // D⁻¹A is generally not Hermitian, but is similar to the Hermitian operator
+  // D⁻¹ᐟ²AD⁻¹ᐟ² under the existing SPD assumption.
+  Vector dinv_sqrt(dinv);
+  linalg::Sqrt(dinv_sqrt);
+  DiagonalOperator DinvSqrt(dinv_sqrt);
+  ProductOperator S(DinvSqrt, A, DinvSqrt);
+  return linalg::SpectralNorm(comm, S, true);
 }
 
 double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
 {
-  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
+  if (A.IsReal())
+  {
+    ComplexVector dinv_sqrt(dinv);
+    linalg::Sqrt(dinv_sqrt.Real());
+    ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
+    ComplexProductOperator S(DinvSqrt, A, DinvSqrt);
+    return linalg::SpectralNorm(comm, S, true);
+  }
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, A.IsReal());
+  return linalg::SpectralNorm(comm, DinvA, false);
 }
 
 template <bool Transpose = false>
