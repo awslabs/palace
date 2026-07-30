@@ -237,7 +237,7 @@ TEST_CASE("Singular loss-tangent validation distinguishes sheets from transmissi
   }
 }
 
-TEST_CASE("Singular impedance validation requires an integrable homogeneous trace",
+TEST_CASE("Singular impedance validation constrains nonintegrable homogeneous traces",
           "[singularsolver][singularelements][impedance][Serial]")
 {
   IoData iodata(Units(1.0, 1.0));
@@ -252,10 +252,11 @@ TEST_CASE("Singular impedance validation requires an integrable homogeneous trac
     features.vertices.push_back(
         {0, 0, {0}, 0.6, fem::singular::FeatureVertexType::CORNER, {}});
     CHECK_NOTHROW(ValidateSingularImpedanceFeatures(iodata, features));
+    CHECK(GetConstrainedSingularImpedanceAttributes(iodata, features).empty());
 
     features.vertices[0].nu = 0.5;
-    CHECK_THROWS_WITH(ValidateSingularImpedanceFeatures(iodata, features),
-                      Catch::Matchers::ContainsSubstring("nu <= 1/2"));
+    CHECK_NOTHROW(ValidateSingularImpedanceFeatures(iodata, features));
+    CHECK(GetConstrainedSingularImpedanceAttributes(iodata, features) == std::set<int>{7});
   }
 
   SECTION("Two-dimensional mixed PEC and impedance corner")
@@ -278,10 +279,11 @@ TEST_CASE("Singular impedance validation requires an integrable homogeneous trac
     features.segments.push_back(
         {0, {0, 1}, 0, {7}, fem::singular::FeatureSegmentType::TRANSMISSION_WEDGE});
     CHECK_NOTHROW(ValidateSingularImpedanceFeatures(iodata, features));
+    CHECK(GetConstrainedSingularImpedanceAttributes(iodata, features).empty());
 
     features.features[0].nu = 0.5;
-    CHECK_THROWS_WITH(ValidateSingularImpedanceFeatures(iodata, features),
-                      Catch::Matchers::ContainsSubstring("nu <= 1/2"));
+    CHECK_NOTHROW(ValidateSingularImpedanceFeatures(iodata, features));
+    CHECK(GetConstrainedSingularImpedanceAttributes(iodata, features) == std::set<int>{7});
   }
 
   SECTION("Three-dimensional mixed PEC and impedance edge")

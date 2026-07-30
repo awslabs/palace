@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json_fwd.hpp>
@@ -36,14 +37,20 @@ void ValidateSingularLossTangents(const IoData &iodata, const mfem::Mesh &mesh,
 void ValidateSingularLossTangents(const IoData &iodata,
                                   const fem::singular::TriangleFeatureTopology &features);
 
-// Finite Robin coefficients are lower-order edge terms, so the PEC-derived
-// wedge exponent remains admissible only when its free tangential trace is
-// square integrable. The current basis therefore supports homogeneous
-// impedance wedges with nu > 1/2 and rejects thin sheets and mixed
-// PEC/impedance feature junctions.
+// Finite Robin coefficients are lower-order edge terms. Free singular
+// tangential traces are retained when square integrable (nu > 1/2). At the
+// thin-sheet threshold they are excluded from the impedance energy space and
+// constrained like PEC enrichment traces, while standard impedance trace DOFs
+// remain free. Mixed PEC/impedance feature junctions still require a distinct
+// trace space and are rejected.
 void ValidateSingularImpedanceFeatures(const IoData &iodata,
                                        const fem::singular::FeatureTopology &features);
 void ValidateSingularImpedanceFeatures(
+    const IoData &iodata, const fem::singular::TriangleFeatureTopology &features);
+std::set<int>
+GetConstrainedSingularImpedanceAttributes(const IoData &iodata,
+                                          const fem::singular::FeatureTopology &features);
+std::set<int> GetConstrainedSingularImpedanceAttributes(
     const IoData &iodata, const fem::singular::TriangleFeatureTopology &features);
 
 nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata);

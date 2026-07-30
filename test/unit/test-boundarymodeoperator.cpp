@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "drivers/singularsolver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "fem/singulardofs.hpp"
@@ -592,6 +593,77 @@ TEST_CASE("Singular BoundaryMode blocks preserve the complete exact sequence",
   CHECK(maximum_h1_gradient > 1.0e-10);
   CHECK(maximum_electric_energy > 1.0e-10);
   CHECK(maximum_magnetic_normal_energy > 1.0e-10);
+}
+
+TEST_CASE("Singular BoundaryMode constrains thin-sheet impedance enrichment traces",
+          "[boundarymodeoperator][singularelements][impedance][curved][Serial]")
+{
+  MPI_Comm comm = Mpi::World();
+  REQUIRE(Mpi::Size(comm) == 1);
+
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {2.3, 2.3, 2.3};
+  material.mu_r.s = {1.0, 1.0, 1.0};
+  iodata.boundaries.pec.attributes = {1};
+  auto &impedance = iodata.boundaries.impedance.emplace_back();
+  impedance.attributes = {7};
+  impedance.Ls = 1.0;
+  iodata.solver.order = 1;
+  iodata.solver.boundary_mode.freq = 1.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.linear.mg_max_levels = 1;
+  iodata.solver.singular_elements.attributes = {7};
+  iodata.solver.singular_elements.order = 1;
+  iodata.solver.singular_elements.abs_tol = 2.0e-10;
+  iodata.solver.singular_elements.rel_tol = 2.0e-10;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(InternalPecLineMesh());
+  SetQuadraticCurvedGeometry(*serial_mesh);
+  iodata.NondimensionalizeInputs(serial_mesh);
+  iodata.CheckConfiguration();
+  const auto serial_features =
+      fem::singular::ExtractSerialLineTipFeatures(*serial_mesh, {7});
+  REQUIRE(GetConstrainedSingularImpedanceAttributes(iodata, serial_features) ==
+          std::set<int>{7});
+
+  std::vector<fem::singular::GlobalVertexId> source_vertex_ids(serial_mesh->GetNV());
+  std::iota(source_vertex_ids.begin(), source_vertex_ids.end(), 0);
+  std::vector<fem::singular::GlobalVertexId> source_element_ids(serial_mesh->GetNE());
+  std::iota(source_element_ids.begin(), source_element_ids.end(), 0);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  const auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, *par_mesh, source_vertex_ids, source_element_ids);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  MaterialOperator mat_op(iodata, *meshes.back());
+  BoundaryModeOperator mode_op(iodata, meshes, mat_op, &local_features, &source_vertex_ids);
+
+  REQUIRE(mode_op.HasSingularEnrichment());
+  CHECK(mode_op.GetCombinedDbcTDofList().Size() >
+        mode_op.GetNDDbcTDofLists().back().Size() +
+            mode_op.GetH1DbcTDofLists().back().Size());
+  const double omega = 2.0 * M_PI *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+                           iodata.solver.boundary_mode.freq);
+  auto [att, att_imaginary] = mode_op.AssembleAtt(omega, 0.0);
+  auto [ann, ann_imaginary] = mode_op.AssembleAnn(omega);
+  REQUIRE(att);
+  REQUIRE(ann);
+  CHECK_FALSE(att_imaginary);
+  CHECK_FALSE(ann_imaginary);
+
+  mfem::Vector input_nd(att->Width()), output_nd(att->Height());
+  mfem::Vector input_h1(ann->Width()), output_h1(ann->Height());
+  input_nd = 1.0;
+  input_h1 = 1.0;
+  att->Mult(input_nd, output_nd);
+  ann->Mult(input_h1, output_h1);
+  CHECK(std::isfinite(output_nd.Norml2()));
+  CHECK(std::isfinite(output_h1.Norml2()));
 }
 
 TEST_CASE("Singular BoundaryMode multigrid hierarchy commutes",

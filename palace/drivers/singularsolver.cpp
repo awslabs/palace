@@ -191,23 +191,22 @@ std::set<int> GetImpedanceSingularAttributes(const IoData &iodata)
   return attributes;
 }
 
-void VerifyImpedanceExponent(double nu, const char *description)
+bool ConstrainImpedanceTrace(double nu, const char *description)
 {
-  MFEM_VERIFY(
-      std::isfinite(nu) && nu > 0.5,
-      description << " has nu <= 1/2. Its free singular tangential trace is not square "
-                     "integrable in the surface-impedance Robin form. Use a resolved "
-                     "finite-thickness corner with nu > 1/2, remove that attribute from "
-                     "Solver.SingularElements, or use PEC enrichment!");
+  MFEM_VERIFY(std::isfinite(nu) && nu > 0.0,
+              description << " has an invalid singular exponent " << nu << "!");
+  return !(nu > 0.5);
 }
 
 }  // namespace
 
-void ValidateSingularImpedanceFeatures(const IoData &iodata,
-                                       const fem::singular::FeatureTopology &features)
+std::set<int>
+GetConstrainedSingularImpedanceAttributes(const IoData &iodata,
+                                          const fem::singular::FeatureTopology &features)
 {
   const auto pec_attributes = GetPecSingularAttributes(iodata);
   const auto impedance_attributes = GetImpedanceSingularAttributes(iodata);
+  std::set<int> constrained_attributes;
   for (const auto &segment : features.segments)
   {
     bool has_pec = false, has_impedance = false;
@@ -224,17 +223,28 @@ void ValidateSingularImpedanceFeatures(const IoData &iodata,
     {
       MFEM_VERIFY(segment.feature < features.features.size(),
                   "A singular impedance edge references an invalid straight feature!");
-      VerifyImpedanceExponent(features.features[segment.feature].nu,
-                              "A three-dimensional singular impedance edge");
+      if (ConstrainImpedanceTrace(features.features[segment.feature].nu,
+                                  "A three-dimensional singular impedance edge"))
+      {
+        for (int attribute : segment.boundary_attributes)
+        {
+          if (impedance_attributes.count(attribute) > 0)
+          {
+            constrained_attributes.insert(attribute);
+          }
+        }
+      }
     }
   }
+  return constrained_attributes;
 }
 
-void ValidateSingularImpedanceFeatures(
+std::set<int> GetConstrainedSingularImpedanceAttributes(
     const IoData &iodata, const fem::singular::TriangleFeatureTopology &features)
 {
   const auto pec_attributes = GetPecSingularAttributes(iodata);
   const auto impedance_attributes = GetImpedanceSingularAttributes(iodata);
+  std::set<int> constrained_attributes;
   for (const auto &vertex : features.vertices)
   {
     bool has_pec = false, has_impedance = false;
@@ -253,9 +263,33 @@ void ValidateSingularImpedanceFeatures(
         "shared feature DOF!");
     if (has_impedance)
     {
-      VerifyImpedanceExponent(vertex.nu, "A two-dimensional singular impedance corner");
+      if (ConstrainImpedanceTrace(vertex.nu, "A two-dimensional singular impedance corner"))
+      {
+        for (std::size_t segment_index : vertex.selected_segments)
+        {
+          const int attribute =
+              features.selected_segments[segment_index].boundary_attribute;
+          if (impedance_attributes.count(attribute) > 0)
+          {
+            constrained_attributes.insert(attribute);
+          }
+        }
+      }
     }
   }
+  return constrained_attributes;
+}
+
+void ValidateSingularImpedanceFeatures(const IoData &iodata,
+                                       const fem::singular::FeatureTopology &features)
+{
+  static_cast<void>(GetConstrainedSingularImpedanceAttributes(iodata, features));
+}
+
+void ValidateSingularImpedanceFeatures(
+    const IoData &iodata, const fem::singular::TriangleFeatureTopology &features)
+{
+  static_cast<void>(GetConstrainedSingularImpedanceAttributes(iodata, features));
 }
 
 nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata)

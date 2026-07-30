@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include "drivers/singularsolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
@@ -586,6 +587,22 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
       iodata.solver.singular_elements.quadrature_order,
       iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
       iodata.solver.singular_elements.max_subdivisions};
+  const auto constrained_impedance_attributes =
+      GetConstrainedSingularImpedanceAttributes(iodata, *singular_features);
+  const auto filter_impedance_coefficients = [&](std::map<int, double> coefficients)
+  {
+    for (int attribute : constrained_impedance_attributes)
+    {
+      coefficients.erase(attribute);
+    }
+    return coefficients;
+  };
+  const auto impedance_stiffness_coefficients =
+      filter_impedance_coefficients(surf_z_op->GetStiffnessBdrCoefficientMap());
+  const auto impedance_damping_coefficients =
+      filter_impedance_coefficients(surf_z_op->GetDampingBdrCoefficientMap());
+  const auto impedance_mass_coefficients =
+      filter_impedance_coefficients(surf_z_op->GetMassBdrCoefficientMap());
   singular_mu_matrices.resize(number_levels);
   singular_epsilon_matrices.resize(number_levels);
   singular_epsilon_imag_matrices.resize(number_levels);
@@ -642,19 +659,18 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
       return fem::singular::AssembleParallelSparseH1BoundaryMassMatrices(
           local, *singular_numbering, h1_space.Get());
     };
-    const auto stiffness_coefficients = surf_z_op->GetStiffnessBdrCoefficientMap();
-    const auto damping_coefficients = surf_z_op->GetDampingBdrCoefficientMap();
-    const auto mass_coefficients = surf_z_op->GetMassBdrCoefficientMap();
     singular_impedance_nd_stiffness_matrices[level] =
-        assemble_nd_boundary(stiffness_coefficients);
+        assemble_nd_boundary(impedance_stiffness_coefficients);
     singular_impedance_nd_damping_matrices[level] =
-        assemble_nd_boundary(damping_coefficients);
-    singular_impedance_nd_mass_matrices[level] = assemble_nd_boundary(mass_coefficients);
+        assemble_nd_boundary(impedance_damping_coefficients);
+    singular_impedance_nd_mass_matrices[level] =
+        assemble_nd_boundary(impedance_mass_coefficients);
     singular_impedance_h1_stiffness_matrices[level] =
-        assemble_h1_boundary(stiffness_coefficients);
+        assemble_h1_boundary(impedance_stiffness_coefficients);
     singular_impedance_h1_damping_matrices[level] =
-        assemble_h1_boundary(damping_coefficients);
-    singular_impedance_h1_mass_matrices[level] = assemble_h1_boundary(mass_coefficients);
+        assemble_h1_boundary(impedance_damping_coefficients);
+    singular_impedance_h1_mass_matrices[level] =
+        assemble_h1_boundary(impedance_mass_coefficients);
 
     auto enrichment_gradient =
         fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
@@ -699,10 +715,19 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
         *standard, singular_mu_matrices.back().nd_curl_curl);
   }
 
+  mfem::Array<int> singular_essential_attributes = dbc_bcs;
+  for (int attribute : constrained_impedance_attributes)
+  {
+    singular_essential_attributes.Append(attribute);
+  }
+  singular_essential_attributes.Sort();
+  singular_essential_attributes.Unique();
   singular_h1_essential_true_dofs = fem::singular::GetEssentialTriangleH1TrueDofs(
-      GetComm(), *singular_features, *singular_dofs, *singular_numbering, dbc_bcs);
+      GetComm(), *singular_features, *singular_dofs, *singular_numbering,
+      singular_essential_attributes);
   singular_nd_essential_true_dofs = fem::singular::GetEssentialTriangleNDTrueDofs(
-      GetComm(), *singular_features, *singular_dofs, *singular_numbering, dbc_bcs);
+      GetComm(), *singular_features, *singular_dofs, *singular_numbering,
+      singular_essential_attributes);
 
   combined_nd_dbc_tdof_lists = nd_dbc_tdof_lists;
   combined_h1_dbc_tdof_lists = h1_dbc_tdof_lists;

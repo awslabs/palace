@@ -120,8 +120,7 @@ private:
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
   void CheckExcitations(ProblemType problem_type) const;
-  void SetUpSingularEnrichment(const config::SolverData &solver,
-                               const config::BoundaryData &boundaries);
+  void SetUpSingularEnrichment(const IoData &iodata);
   void CheckSingularExcitations(ProblemType problem_type) const;
 
   // Helper functions for building the bilinear forms corresponding to the discretized

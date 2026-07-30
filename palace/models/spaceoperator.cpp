@@ -6,6 +6,7 @@
 #include <limits>
 #include <set>
 #include <type_traits>
+#include "drivers/singularsolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -110,7 +111,7 @@ SpaceOperator::SpaceOperator(
   source_vertex_ids = source_vertex_ids_in;
   if (singular_features || triangle_singular_features)
   {
-    SetUpSingularEnrichment(iodata.solver, iodata.boundaries);
+    SetUpSingularEnrichment(iodata);
     CheckSingularExcitations(iodata.problem.type);
   }
 
@@ -118,9 +119,10 @@ SpaceOperator::SpaceOperator(
   CheckExcitations(iodata.problem.type);
 }
 
-void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver,
-                                            const config::BoundaryData &boundaries)
+void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
 {
+  const auto &solver = iodata.solver;
+  const auto &boundaries = iodata.boundaries;
   const bool tetrahedral = singular_features != nullptr;
   const bool triangular = triangle_singular_features != nullptr;
   MFEM_VERIFY(tetrahedral != triangular && source_vertex_ids &&
@@ -196,6 +198,24 @@ void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver,
   const fem::singular::AdaptiveAssemblyOptions options{
       solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
       solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions};
+  const auto constrained_impedance_attributes =
+      tetrahedral
+          ? GetConstrainedSingularImpedanceAttributes(iodata, *singular_features)
+          : GetConstrainedSingularImpedanceAttributes(iodata, *triangle_singular_features);
+  const auto filter_impedance_coefficients = [&](std::map<int, double> coefficients)
+  {
+    for (int attribute : constrained_impedance_attributes)
+    {
+      coefficients.erase(attribute);
+    }
+    return coefficients;
+  };
+  const auto impedance_stiffness_coefficients =
+      filter_impedance_coefficients(surf_z_op.GetStiffnessBdrCoefficientMap());
+  const auto impedance_damping_coefficients =
+      filter_impedance_coefficients(surf_z_op.GetDampingBdrCoefficientMap());
+  const auto impedance_mass_coefficients =
+      filter_impedance_coefficients(surf_z_op.GetMassBdrCoefficientMap());
   singular_assembly_options = options;
   singular_domain_matrices.resize(number_levels);
   singular_domain_imag_matrices.resize(number_levels);
@@ -253,11 +273,11 @@ void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver,
     singular_lumped_mass_matrices[level] =
         assemble_lumped_boundary(lumped_port_op.GetMassBdrCoefficientMap());
     singular_impedance_stiffness_matrices[level] =
-        assemble_lumped_boundary(surf_z_op.GetStiffnessBdrCoefficientMap());
+        assemble_lumped_boundary(impedance_stiffness_coefficients);
     singular_impedance_damping_matrices[level] =
-        assemble_lumped_boundary(surf_z_op.GetDampingBdrCoefficientMap());
+        assemble_lumped_boundary(impedance_damping_coefficients);
     singular_impedance_mass_matrices[level] =
-        assemble_lumped_boundary(surf_z_op.GetMassBdrCoefficientMap());
+        assemble_lumped_boundary(impedance_mass_coefficients);
 
     auto enrichment_gradient =
         fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
@@ -274,6 +294,10 @@ void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver,
   singular_essential_attributes.Append(
       boundaries.auxpec.attributes.data(),
       static_cast<int>(boundaries.auxpec.attributes.size()));
+  for (int attribute : constrained_impedance_attributes)
+  {
+    singular_essential_attributes.Append(attribute);
+  }
   singular_essential_attributes.Sort();
   singular_essential_attributes.Unique();
   if (tetrahedral)
