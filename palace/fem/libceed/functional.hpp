@@ -1,0 +1,52 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef PALACE_LIBCEED_FUNCTIONAL_HPP
+#define PALACE_LIBCEED_FUNCTIONAL_HPP
+
+#include <string>
+#include <vector>
+#include "fem/libceed/ceed.hpp"
+#include "fem/libceed/integrator.hpp"
+
+namespace palace::ceed
+{
+
+// Description of a passive field input for a libCEED pointwise operator. The field
+// vector is evaluated at the operator points through the provided element restriction
+// and basis.
+struct CeedFunctionalFieldInput
+{
+  // Name of the QFunction input field (QFunction inputs are added in the order the
+  // inputs are provided, after the geometry data inputs).
+  std::string name;
+
+  // Field vector (L-vector layout matching the restriction).
+  CeedVector vec;
+
+  // Element restriction and basis for evaluation at quadrature points.
+  CeedElemRestriction restr;
+  CeedBasis basis;
+
+  // Evaluation modes (ceed::EvalMode) for the field input.
+  unsigned int ops;
+};
+
+// Construct a libCEED operator which evaluates a pointwise function of the provided
+// fields at arbitrary points of each element (for example the nodal points of an
+// interpolatory output space), writing num_out_comp values per point through out_restr
+// (CEED_EVAL_NONE, so the number of "quadrature" points of the operator must match the
+// element size of the output restriction). No quadrature weighting or sum over points
+// is performed, and the element geometry is computed on the fly from a mesh nodes
+// gradient input rather than stored geometry factor data. Apply with
+// CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, output, ...) (contributions accumulate,
+// e.g. for the real and imaginary part applications of quadratic quantities).
+void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
+                                std::size_t ctx_size, Ceed ceed,
+                                const std::vector<CeedFunctionalFieldInput> &inputs,
+                                CeedInt num_out_comp, CeedElemRestriction out_restr,
+                                CeedOperator *op);
+
+}  // namespace palace::ceed
+
+#endif  // PALACE_LIBCEED_FUNCTIONAL_HPP
