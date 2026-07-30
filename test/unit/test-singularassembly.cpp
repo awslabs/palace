@@ -4313,6 +4313,42 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
   {
     combined_essential.Append(parallel_h1_space.GetTrueVSize() + dof);
   }
+  for (const auto diagonal_policy : {mfem::Matrix::DIAG_ONE, mfem::Matrix::DIAG_ZERO})
+  {
+    auto reference = std::make_unique<mfem::HypreParMatrix>(*combined_h1);
+    reference->EliminateBC(combined_essential, diagonal_policy);
+    auto hybrid_standard = std::make_unique<mfem::HypreParMatrix>(*standard_h1_matrix);
+    hybrid_standard->EliminateBC(standard_essential, diagonal_policy);
+    fem::singular::ParallelHybridEnrichedOperator hybrid(
+        std::move(hybrid_standard), parallel.h1_diffusion, standard_essential,
+        enrichment_essential, diagonal_policy);
+
+    Vector input(hybrid.Width()), reference_action(hybrid.Height()),
+        hybrid_action(hybrid.Height()), reference_transpose(hybrid.Width()),
+        hybrid_transpose(hybrid.Width());
+    for (int i = 0; i < input.Size(); i++)
+    {
+      input[i] = std::sin(0.23 * (i + 1) + Mpi::Rank(Mpi::World()));
+    }
+    reference->Mult(input, reference_action);
+    hybrid.Mult(input, hybrid_action);
+    reference_action -= hybrid_action;
+    CHECK(linalg::Norml2(Mpi::World(), reference_action) < 2.0e-12);
+
+    reference->MultTranspose(input, reference_transpose);
+    hybrid.MultTranspose(input, hybrid_transpose);
+    reference_transpose -= hybrid_transpose;
+    CHECK(linalg::Norml2(Mpi::World(), reference_transpose) < 2.0e-12);
+
+    Vector reference_diagonal(reference->Height()), hybrid_diagonal(hybrid.Height());
+    reference->AssembleDiagonal(reference_diagonal);
+    hybrid.AssembleDiagonal(hybrid_diagonal);
+    reference_diagonal -= hybrid_diagonal;
+    double diagonal_error = reference_diagonal.Normlinf();
+    Mpi::GlobalMax(1, &diagonal_error, Mpi::World());
+    CHECK(diagonal_error < 2.0e-12);
+  }
+
   auto explicitly_zeroed = std::make_unique<mfem::HypreParMatrix>(*combined_h1);
   explicitly_zeroed->EliminateBC(combined_essential, mfem::Matrix::DIAG_ONE);
   const HYPRE_BigInt nnz_before_compaction = explicitly_zeroed->NNZ();

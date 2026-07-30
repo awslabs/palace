@@ -1104,15 +1104,15 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     MFEM_VERIFY(kr && !ki, "Full-wave singular stiffness assembly requires a real domain "
                            "curl-curl operator without Floquet terms!");
-    auto standard =
-        ParOperator(std::move(kr), GetNDSpace()).StealParallelAssemble(skip_zeros);
+    auto standard = std::make_unique<ParOperator>(std::move(kr), GetNDSpace());
+    standard->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     const auto enrichment = AddScaledSingularOperatorBlocks(
         {{1.0, &singular_domain_matrices.back().nd_curl_curl},
          {1.0, &singular_lumped_stiffness_matrices.back()},
          {1.0, &singular_impedance_stiffness_matrices.back()}});
-    auto combined = fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
-    combined->EliminateBC(GetCombinedNDDbcTDofList(), diag_policy);
-    fem::singular::RemoveExplicitZeros(*combined);
+    auto combined = std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+        std::move(standard), enrichment, nd_dbc_tdof_lists.back(),
+        singular_nd_essential_true_dofs, diag_policy);
     if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
       return std::make_unique<ComplexWrapperOperator>(std::move(combined), nullptr);
@@ -1165,14 +1165,14 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     MFEM_VERIFY(c && !mat_op.HasConductivity() && !mat_op.HasFloquetFrequencyScaling(),
                 "Full-wave singular damping assembly supports only lumped-port and "
                 "surface-impedance resistance!");
-    auto standard =
-        ParOperator(std::move(c), GetNDSpace()).StealParallelAssemble(skip_zeros);
+    auto standard = std::make_unique<ParOperator>(std::move(c), GetNDSpace());
+    standard->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     const auto enrichment = AddScaledSingularOperatorBlocks(
         {{1.0, &singular_lumped_damping_matrices.back()},
          {1.0, &singular_impedance_damping_matrices.back()}});
-    auto combined = fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
-    combined->EliminateBC(GetCombinedNDDbcTDofList(), diag_policy);
-    fem::singular::RemoveExplicitZeros(*combined);
+    auto combined = std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+        std::move(standard), enrichment, nd_dbc_tdof_lists.back(),
+        singular_nd_essential_true_dofs, diag_policy);
     if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
       return std::make_unique<ComplexWrapperOperator>(std::move(combined), nullptr);
@@ -1232,30 +1232,31 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     MFEM_VERIFY(mr, "Full-wave singular mass assembly requires a positive real "
                     "domain permittivity operator!");
-    auto standard_real =
-        ParOperator(std::move(mr), GetNDSpace()).StealParallelAssemble(skip_zeros);
+    auto standard_real = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
+    standard_real->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     const auto real_enrichment =
         AddScaledSingularOperatorBlocks({{1.0, &singular_domain_matrices.back().nd_mass},
                                          {1.0, &singular_lumped_mass_matrices.back()},
                                          {1.0, &singular_impedance_mass_matrices.back()}});
-    auto combined_real =
-        fem::singular::BuildParallelEnrichedOperator(*standard_real, real_enrichment);
-    combined_real->EliminateBC(GetCombinedNDDbcTDofList(), diag_policy);
-    fem::singular::RemoveExplicitZeros(*combined_real);
+    auto combined_real = std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+        std::move(standard_real), real_enrichment, nd_dbc_tdof_lists.back(),
+        singular_nd_essential_true_dofs, diag_policy);
     if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
-      std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
+      std::unique_ptr<Operator> combined_imaginary;
       if (mi)
       {
         MFEM_VERIFY(singular_domain_imag_matrices.back().nd_mass.enrichment_enrichment,
                     "Full-wave singular imaginary mass blocks were not assembled!");
         auto standard_imaginary =
-            ParOperator(std::move(mi), GetNDSpace()).StealParallelAssemble(skip_zeros);
-        combined_imaginary = fem::singular::BuildParallelEnrichedOperator(
-            *standard_imaginary, singular_domain_imag_matrices.back().nd_mass);
-        combined_imaginary->EliminateBC(GetCombinedNDDbcTDofList(),
-                                        Operator::DiagonalPolicy::DIAG_ZERO);
-        fem::singular::RemoveExplicitZeros(*combined_imaginary);
+            std::make_unique<ParOperator>(std::move(mi), GetNDSpace());
+        standard_imaginary->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(),
+                                                 Operator::DiagonalPolicy::DIAG_ZERO);
+        combined_imaginary =
+            std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+                std::move(standard_imaginary), singular_domain_imag_matrices.back().nd_mass,
+                nd_dbc_tdof_lists.back(), singular_nd_essential_true_dofs,
+                Operator::DiagonalPolicy::DIAG_ZERO);
       }
       return std::make_unique<ComplexWrapperOperator>(std::move(combined_real),
                                                       std::move(combined_imaginary));
@@ -1292,13 +1293,11 @@ SpaceOperator::GetBulkStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   auto kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, nullptr, nullptr, skip_zeros);
   MFEM_VERIFY(kr, "Full-wave singular field energy requires a real bulk curl-curl "
                   "operator!");
-  auto standard =
-      ParOperator(std::move(kr), GetNDSpace()).StealParallelAssemble(skip_zeros);
-  auto combined = fem::singular::BuildParallelEnrichedOperator(
-      *standard, singular_domain_matrices.back().nd_curl_curl);
-  combined->EliminateBC(GetCombinedNDDbcTDofList(), diag_policy);
-  fem::singular::RemoveExplicitZeros(*combined);
-  return combined;
+  auto standard = std::make_unique<ParOperator>(std::move(kr), GetNDSpace());
+  standard->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+      std::move(standard), singular_domain_matrices.back().nd_curl_curl,
+      nd_dbc_tdof_lists.back(), singular_nd_essential_true_dofs, diag_policy);
 }
 
 std::unique_ptr<Operator>
@@ -1314,13 +1313,11 @@ SpaceOperator::GetBulkMassMatrix(Operator::DiagonalPolicy diag_policy)
       AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, nullptr, nullptr, skip_zeros);
   MFEM_VERIFY(mr, "Full-wave singular divergence projection requires a positive real "
                   "bulk permittivity operator!");
-  auto standard =
-      ParOperator(std::move(mr), GetNDSpace()).StealParallelAssemble(skip_zeros);
-  auto combined = fem::singular::BuildParallelEnrichedOperator(
-      *standard, singular_domain_matrices.back().nd_mass);
-  combined->EliminateBC(GetCombinedNDDbcTDofList(), diag_policy);
-  fem::singular::RemoveExplicitZeros(*combined);
-  return combined;
+  auto standard = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
+  standard->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+      std::move(standard), singular_domain_matrices.back().nd_mass,
+      nd_dbc_tdof_lists.back(), singular_nd_essential_true_dofs, diag_policy);
 }
 
 template <typename OperType>
@@ -1608,43 +1605,6 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   }
 }
 
-namespace
-{
-
-std::unique_ptr<mfem::HypreParMatrix> AddScaledHypreMatrices(
-    const std::vector<std::pair<double, const mfem::HypreParMatrix *>> &terms)
-{
-  std::unique_ptr<mfem::HypreParMatrix> result;
-  for (const auto &[coefficient, matrix] : terms)
-  {
-    if (coefficient == 0.0 || !matrix)
-    {
-      continue;
-    }
-    if (!result)
-    {
-      result = std::make_unique<mfem::HypreParMatrix>(*matrix);
-      *result *= coefficient;
-    }
-    else
-    {
-      result.reset(mfem::Add(1.0, *result, coefficient, *matrix));
-    }
-  }
-  return result;
-}
-
-const mfem::HypreParMatrix *GetHyprePart(const ComplexOperator *op, bool imaginary)
-{
-  if (!op)
-  {
-    return nullptr;
-  }
-  return dynamic_cast<const mfem::HypreParMatrix *>(imaginary ? op->Imag() : op->Real());
-}
-
-}  // namespace
-
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -1655,45 +1615,42 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
   {
     if constexpr (std::is_same_v<OperType, ComplexOperator>)
     {
-      const auto sparse = [](const ComplexOperator *op)
+      auto combined = std::make_unique<SumComplexOperator>(GetNDTrueVSize());
+      const auto add =
+          [&combined](const ComplexOperator *op, std::complex<double> coefficient)
       {
-        return !op ||
-               ((!op->Real() || dynamic_cast<const mfem::HypreParMatrix *>(op->Real())) &&
-                (!op->Imag() || dynamic_cast<const mfem::HypreParMatrix *>(op->Imag())));
+        if (op && coefficient != 0.0)
+        {
+          combined->AddOperator(*op, coefficient);
+          return true;
+        }
+        return false;
       };
-      MFEM_VERIFY(sparse(K) && sparse(C) && sparse(M) && sparse(A2),
-                  "Full-wave singular system composition requires sparse assembled "
-                  "real and imaginary operator parts!");
-      const std::array<std::pair<std::complex<double>, const ComplexOperator *>, 4> terms{
-          std::pair{a0, K}, std::pair{a1, C}, std::pair{a2, M},
-          std::pair{std::complex<double>(1.0, 0.0), A2}};
-      std::vector<std::pair<double, const mfem::HypreParMatrix *>> real_terms;
-      std::vector<std::pair<double, const mfem::HypreParMatrix *>> imaginary_terms;
-      real_terms.reserve(2 * terms.size());
-      imaginary_terms.reserve(2 * terms.size());
-      for (const auto &[coefficient, op] : terms)
-      {
-        const auto *real = GetHyprePart(op, false);
-        const auto *imaginary = GetHyprePart(op, true);
-        real_terms.emplace_back(coefficient.real(), real);
-        real_terms.emplace_back(-coefficient.imag(), imaginary);
-        imaginary_terms.emplace_back(coefficient.real(), imaginary);
-        imaginary_terms.emplace_back(coefficient.imag(), real);
-      }
-      auto Ar = AddScaledHypreMatrices(real_terms);
-      auto Ai = AddScaledHypreMatrices(imaginary_terms);
-      MFEM_VERIFY(Ar || Ai, "Full-wave singular system matrix is empty!");
-      return std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
+      bool nonempty = add(K, a0);
+      nonempty = add(C, a1) || nonempty;
+      nonempty = add(M, a2) || nonempty;
+      nonempty = add(A2, 1.0) || nonempty;
+      MFEM_VERIFY(nonempty, "Full-wave singular system operator is empty!");
+      return combined;
     }
     else
     {
-      const auto *Kr = dynamic_cast<const mfem::HypreParMatrix *>(K);
-      const auto *Cr = dynamic_cast<const mfem::HypreParMatrix *>(C);
-      const auto *Mr = dynamic_cast<const mfem::HypreParMatrix *>(M);
-      const auto *A2r = dynamic_cast<const mfem::HypreParMatrix *>(A2);
-      auto A = AddScaledHypreMatrices({{a0, Kr}, {a1, Cr}, {a2, Mr}, {1.0, A2r}});
-      MFEM_VERIFY(A, "Full-wave singular real system matrix is empty!");
-      return A;
+      auto combined = std::make_unique<SumOperator>(GetNDTrueVSize());
+      const auto add = [&combined](const Operator *op, double coefficient)
+      {
+        if (op && coefficient != 0.0)
+        {
+          combined->AddOperator(*op, coefficient);
+          return true;
+        }
+        return false;
+      };
+      bool nonempty = add(K, a0);
+      nonempty = add(C, a1) || nonempty;
+      nonempty = add(M, a2) || nonempty;
+      nonempty = add(A2, 1.0) || nonempty;
+      MFEM_VERIFY(nonempty, "Full-wave singular real system operator is empty!");
+      return combined;
     }
   }
 
@@ -1733,11 +1690,20 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
 {
   if (HasSingularEnrichment())
   {
-    const auto *Kr = GetHyprePart(K, false);
-    const auto *Mr = GetHyprePart(M, false);
-    MFEM_VERIFY((!K || Kr) && (!M || Mr),
-                "Full-wave singular inner product requires sparse real matrix parts!");
-    return AddScaledHypreMatrices({{a0, Kr}, {a2, Mr}});
+    auto combined = std::make_unique<SumOperator>(GetNDTrueVSize());
+    bool nonempty = false;
+    if (K && K->Real() && a0 != 0.0)
+    {
+      combined->AddOperator(*K->Real(), a0);
+      nonempty = true;
+    }
+    if (M && M->Real() && a2 != 0.0)
+    {
+      combined->AddOperator(*M->Real(), a2);
+      nonempty = true;
+    }
+    MFEM_VERIFY(nonempty, "Full-wave singular inner-product operator is empty!");
+    return combined;
   }
   const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
   const auto *PtAP_M = (M) ? dynamic_cast<const ComplexParOperator *>(M) : nullptr;

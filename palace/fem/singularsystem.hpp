@@ -8,6 +8,7 @@
 #include <mfem.hpp>
 
 #include "fem/singularassembly.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -30,6 +31,44 @@ namespace singular
 std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichedOperator(const mfem::HypreParMatrix &standard_standard,
                               const ParallelSparseOperatorBlocks &enrichment);
+
+// Matrix-free standard-standard block plus sparse enrichment couplings:
+//
+//   [ A_ss  A_se ]
+//   [ A_es  A_ee ].
+//
+// The standard block can retain libCEED partial assembly. Essential rows and
+// columns are eliminated independently in each block, exactly matching
+// monolithic symmetric elimination.
+class ParallelHybridEnrichedOperator : public Operator
+{
+private:
+  std::unique_ptr<Operator> standard_standard;
+  ParallelSparseOperatorBlocks enrichment;
+  int standard_size;
+
+  void MakeInputBlocks(const Vector &input, Vector &standard, Vector &enriched) const;
+  void MakeOutputBlocks(Vector &output, Vector &standard, Vector &enriched) const;
+
+public:
+  ParallelHybridEnrichedOperator(std::unique_ptr<Operator> &&standard_standard,
+                                 const ParallelSparseOperatorBlocks &enrichment,
+                                 const mfem::Array<int> &standard_essential_true_dofs,
+                                 const mfem::Array<int> &enrichment_essential_true_dofs,
+                                 Operator::DiagonalPolicy diagonal_policy);
+
+  const Operator &GetStandardStandard() const { return *standard_standard; }
+  const ParallelSparseOperatorBlocks &GetEnrichmentBlocks() const { return enrichment; }
+  int GetStandardSize() const { return standard_size; }
+
+  void AssembleDiagonal(Vector &diagonal) const override;
+  void Mult(const Vector &input, Vector &output) const override;
+  void MultTranspose(const Vector &input, Vector &output) const override;
+  void AddMult(const Vector &input, Vector &output,
+               double coefficient = 1.0) const override;
+  void AddMultTranspose(const Vector &input, Vector &output,
+                        double coefficient = 1.0) const override;
+};
 
 // Compact exact off-diagonal zeros left behind by essential-DOF elimination.
 // Diagonal storage is always retained, and no tolerance is applied.

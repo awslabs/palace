@@ -552,6 +552,144 @@ BuildParallelEnrichedOperator(const mfem::HypreParMatrix &standard_standard,
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
 }
 
+ParallelHybridEnrichedOperator::ParallelHybridEnrichedOperator(
+    std::unique_ptr<Operator> &&standard_standard,
+    const ParallelSparseOperatorBlocks &enrichment,
+    const mfem::Array<int> &standard_essential_true_dofs,
+    const mfem::Array<int> &enrichment_essential_true_dofs,
+    Operator::DiagonalPolicy diagonal_policy)
+  : Operator(0), standard_standard(std::move(standard_standard)),
+    standard_size(this->standard_standard ? this->standard_standard->Height() : 0)
+{
+  if (!this->standard_standard || !enrichment.standard_enrichment ||
+      !enrichment.enrichment_standard || !enrichment.enrichment_enrichment)
+  {
+    throw std::invalid_argument(
+        "A hybrid singular operator requires all four operator blocks!");
+  }
+  const auto &se = *enrichment.standard_enrichment;
+  const auto &es = *enrichment.enrichment_standard;
+  const auto &ee = *enrichment.enrichment_enrichment;
+  const MPI_Comm comm = ee.GetComm();
+  bool valid =
+      diagonal_policy == Operator::DIAG_ONE || diagonal_policy == Operator::DIAG_ZERO;
+  valid = valid && this->standard_standard->Height() == this->standard_standard->Width() &&
+          standard_size == se.Height() && standard_size == es.Width() &&
+          ee.Height() == ee.Width() && ee.Height() == se.Width() &&
+          ee.Height() == es.Height() && SameCommunicator(comm, se.GetComm()) &&
+          SameCommunicator(comm, es.GetComm()) && SameRowColumnPartition(ee) &&
+          SameColumnPartition(ee, se) && SameRowPartition(ee, es) &&
+          se.GetGlobalNumRows() == es.GetGlobalNumCols() &&
+          ValidEssentialDofs(standard_essential_true_dofs, standard_size) &&
+          ValidEssentialDofs(enrichment_essential_true_dofs, ee.Height());
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "A hybrid singular operator received inconsistent blocks or essential DOFs!");
+  }
+
+  this->enrichment.standard_enrichment = std::make_unique<mfem::HypreParMatrix>(se);
+  this->enrichment.enrichment_standard = std::make_unique<mfem::HypreParMatrix>(es);
+  this->enrichment.enrichment_enrichment = std::make_unique<mfem::HypreParMatrix>(ee);
+
+  std::unique_ptr<mfem::HypreParMatrix> discarded;
+  this->enrichment.standard_enrichment->EliminateRows(standard_essential_true_dofs);
+  discarded.reset(
+      this->enrichment.enrichment_standard->EliminateCols(standard_essential_true_dofs));
+  this->enrichment.enrichment_standard->EliminateRows(enrichment_essential_true_dofs);
+  discarded.reset(
+      this->enrichment.standard_enrichment->EliminateCols(enrichment_essential_true_dofs));
+  this->enrichment.enrichment_enrichment->EliminateBC(enrichment_essential_true_dofs,
+                                                      diagonal_policy);
+  RemoveExplicitZeros(*this->enrichment.standard_enrichment);
+  RemoveExplicitZeros(*this->enrichment.enrichment_standard);
+  RemoveExplicitZeros(*this->enrichment.enrichment_enrichment);
+
+  height = width = standard_size + ee.Height();
+}
+
+void ParallelHybridEnrichedOperator::MakeInputBlocks(const Vector &input, Vector &standard,
+                                                     Vector &enriched) const
+{
+  MFEM_ASSERT(input.Size() == width,
+              "Incompatible input dimensions for a hybrid singular operator!");
+  auto &mutable_input = const_cast<Vector &>(input);
+  standard.MakeRef(mutable_input, 0, standard_size);
+  enriched.MakeRef(mutable_input, standard_size, width - standard_size);
+}
+
+void ParallelHybridEnrichedOperator::MakeOutputBlocks(Vector &output, Vector &standard,
+                                                      Vector &enriched) const
+{
+  MFEM_ASSERT(output.Size() == height,
+              "Incompatible output dimensions for a hybrid singular operator!");
+  standard.MakeRef(output, 0, standard_size);
+  enriched.MakeRef(output, standard_size, height - standard_size);
+}
+
+void ParallelHybridEnrichedOperator::AssembleDiagonal(Vector &diagonal) const
+{
+  diagonal.SetSize(height);
+  diagonal.UseDevice(true);
+  Vector standard_diagonal(standard_size);
+  Vector enrichment_diagonal(height - standard_size);
+  standard_standard->AssembleDiagonal(standard_diagonal);
+  enrichment.enrichment_enrichment->AssembleDiagonal(enrichment_diagonal);
+  linalg::SetSubVector(diagonal, 0, standard_diagonal);
+  linalg::SetSubVector(diagonal, standard_size, enrichment_diagonal);
+}
+
+void ParallelHybridEnrichedOperator::Mult(const Vector &input, Vector &output) const
+{
+  Vector input_standard, input_enriched, output_standard, output_enriched;
+  MakeInputBlocks(input, input_standard, input_enriched);
+  MakeOutputBlocks(output, output_standard, output_enriched);
+  standard_standard->Mult(input_standard, output_standard);
+  enrichment.standard_enrichment->AddMult(input_enriched, output_standard);
+  enrichment.enrichment_standard->Mult(input_standard, output_enriched);
+  enrichment.enrichment_enrichment->AddMult(input_enriched, output_enriched);
+}
+
+void ParallelHybridEnrichedOperator::MultTranspose(const Vector &input,
+                                                   Vector &output) const
+{
+  Vector input_standard, input_enriched, output_standard, output_enriched;
+  MakeInputBlocks(input, input_standard, input_enriched);
+  MakeOutputBlocks(output, output_standard, output_enriched);
+  standard_standard->MultTranspose(input_standard, output_standard);
+  enrichment.enrichment_standard->AddMultTranspose(input_enriched, output_standard);
+  enrichment.standard_enrichment->MultTranspose(input_standard, output_enriched);
+  enrichment.enrichment_enrichment->AddMultTranspose(input_enriched, output_enriched);
+}
+
+void ParallelHybridEnrichedOperator::AddMult(const Vector &input, Vector &output,
+                                             double coefficient) const
+{
+  Vector input_standard, input_enriched, output_standard, output_enriched;
+  MakeInputBlocks(input, input_standard, input_enriched);
+  MakeOutputBlocks(output, output_standard, output_enriched);
+  standard_standard->AddMult(input_standard, output_standard, coefficient);
+  enrichment.standard_enrichment->AddMult(input_enriched, output_standard, coefficient);
+  enrichment.enrichment_standard->AddMult(input_standard, output_enriched, coefficient);
+  enrichment.enrichment_enrichment->AddMult(input_enriched, output_enriched, coefficient);
+}
+
+void ParallelHybridEnrichedOperator::AddMultTranspose(const Vector &input, Vector &output,
+                                                      double coefficient) const
+{
+  Vector input_standard, input_enriched, output_standard, output_enriched;
+  MakeInputBlocks(input, input_standard, input_enriched);
+  MakeOutputBlocks(output, output_standard, output_enriched);
+  standard_standard->AddMultTranspose(input_standard, output_standard, coefficient);
+  enrichment.enrichment_standard->AddMultTranspose(input_enriched, output_standard,
+                                                   coefficient);
+  enrichment.standard_enrichment->AddMultTranspose(input_standard, output_enriched,
+                                                   coefficient);
+  enrichment.enrichment_enrichment->AddMultTranspose(input_enriched, output_enriched,
+                                                     coefficient);
+}
+
 HYPRE_BigInt RemoveExplicitZeros(mfem::HypreParMatrix &matrix)
 {
   auto *parallel = static_cast<hypre_ParCSRMatrix *>(matrix);
