@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <complex>
+#include <map>
 #include <set>
 #include <string>
+#include <tuple>
+#include <vector>
 #include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
@@ -1093,11 +1096,13 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
                 solver_t == ProblemType::TRANSIENT)
   {
+    const auto port_powers = fem_op->GetLumpedPortOp().GetPowers(*E, *B);
+    const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
-      vi.V = data.GetVoltage(*E);
+      vi.P = port_powers.at(idx);
+      vi.V = port_voltages.at(idx);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
@@ -1123,7 +1128,9 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
                 : 0.0;
         vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
                                std::complex<double>{0.0, 0.0});
-        vi.S = data.GetSParameter(*E);
+        // S-parameter mode coefficient uses the same real reference resistance as the
+        // excitation source, including the unit reference for purely reactive ports.
+        vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
 
         // Add contribution due to all inductive lumped boundaries in the model:
         //                      E_ind = ∑_j 1/2 L_j I_mj².
@@ -1220,10 +1227,13 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
-      vi.V = data.GetVoltage(*E);
-      vi.Z_PV = data.GetCharacteristicImpedance();
+      if (data.HasVoltageCoords())
+      {
+        vi.P = data.GetPower(*E, *B);
+        vi.V = data.GetVoltage(*E);
+        vi.Z_PV = data.GetCharacteristicImpedance();
+      }
     }
   }
 }
@@ -1434,8 +1444,7 @@ void PostOperator<solver_t>::MeasureFarField() const
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq.real(),
-        measurement_cache.freq.imag());
+        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
   }
 }
 
@@ -1830,11 +1839,60 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   measurement_cache.mode_data.kn = kn;
   measurement_cache.mode_data.n_eff = n_eff;
 
-  // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
-  auto ComputeVoltage = [this](const std::vector<mfem::Vector> &path, bool has_coords,
-                               mfem::Array<int> marker, int quad_order,
-                               const GridFunction &field) -> std::complex<double>
+  struct LineIntegralKey
   {
+    bool has_coords = false;
+    int quad_order = 0;
+    std::vector<double> path_data;
+    std::vector<int> marker_data;
+
+    bool operator<(const LineIntegralKey &other) const
+    {
+      return std::tie(has_coords, quad_order, path_data, marker_data) <
+             std::tie(other.has_coords, other.quad_order, other.path_data,
+                      other.marker_data);
+    }
+  };
+  auto MakeLineIntegralKey = [](const std::vector<mfem::Vector> &path, bool has_coords,
+                                const mfem::Array<int> &marker, int quad_order)
+  {
+    LineIntegralKey key;
+    key.has_coords = has_coords;
+    key.quad_order = quad_order;
+    if (has_coords)
+    {
+      for (const auto &pt : path)
+      {
+        for (int d = 0; d < pt.Size(); d++)
+        {
+          key.path_data.push_back(pt(d));
+        }
+      }
+    }
+    else
+    {
+      key.marker_data.reserve(marker.Size());
+      for (int i = 0; i < marker.Size(); i++)
+      {
+        key.marker_data.push_back(marker[i]);
+      }
+    }
+    return key;
+  };
+  std::map<LineIntegralKey, std::complex<double>> voltage_cache, current_cache;
+
+  // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
+  auto ComputeVoltage = [this, &MakeLineIntegralKey, &voltage_cache](
+                            const std::vector<mfem::Vector> &path, bool has_coords,
+                            mfem::Array<int> marker, int quad_order,
+                            const GridFunction &field) -> std::complex<double>
+  {
+    auto key = MakeLineIntegralKey(path, has_coords, marker, quad_order);
+    if (auto it = voltage_cache.find(key); it != voltage_cache.end())
+    {
+      return it->second;
+    }
+
     std::complex<double> V(0.0, 0.0);
     if (has_coords)
     {
@@ -1863,14 +1921,22 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       V.real(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fr));
       V.imag(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fi));
     }
+    voltage_cache.emplace(std::move(key), V);
     return V;
   };
 
   // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
-  auto ComputeCurrent = [this](const std::vector<mfem::Vector> &path, bool has_path,
-                               mfem::Array<int> marker, int quad_order,
-                               const GridFunction &field) -> std::complex<double>
+  auto ComputeCurrent = [this, &MakeLineIntegralKey, &current_cache](
+                            const std::vector<mfem::Vector> &path, bool has_path,
+                            mfem::Array<int> marker, int quad_order,
+                            const GridFunction &field) -> std::complex<double>
   {
+    auto key = MakeLineIntegralKey(path, has_path, marker, quad_order);
+    if (auto it = current_cache.find(key); it != current_cache.end())
+    {
+      return it->second;
+    }
+
     std::complex<double> I(0.0, 0.0);
     if (has_path)
     {
@@ -1899,8 +1965,57 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       I.real(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fr));
       I.imag(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fi));
     }
+    current_cache.emplace(std::move(key), I);
     return I;
   };
+
+  auto SameMarker = [](const mfem::Array<int> &a, const mfem::Array<int> &b)
+  {
+    if (a.Size() != b.Size())
+    {
+      return false;
+    }
+    for (int i = 0; i < a.Size(); i++)
+    {
+      if (a[i] != b[i])
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto SamePath = [](const std::vector<mfem::Vector> &a, const std::vector<mfem::Vector> &b)
+  {
+    if (a.size() != b.size())
+    {
+      return false;
+    }
+    for (std::size_t i = 0; i < a.size(); i++)
+    {
+      if (a[i].Size() != b[i].Size())
+      {
+        return false;
+      }
+      for (int d = 0; d < a[i].Size(); d++)
+      {
+        if (a[i](d) != b[i](d))
+        {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  auto SameVoltageConfig =
+      [&](const ImpedancePostproConfig &imp, const VoltagePostproConfig &vol)
+  {
+    return imp.n_samples == vol.n_samples &&
+           imp.has_voltage_coordinates == vol.has_coordinates &&
+           (imp.has_voltage_coordinates
+                ? SamePath(imp.voltage_path, vol.voltage_path)
+                : SameMarker(imp.voltage_marker, vol.voltage_marker));
+  };
+  std::set<int> filled_voltage_postpro;
 
   // Compute impedance for each configured entry. P is the Poynting power of the
   // power-normalized mode (|P| ≈ 1), computed by the caller on the mode eigensolver.
@@ -1909,6 +2024,12 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
                             cfg.voltage_marker, cfg.n_samples, *E);
     auto &result = measurement_cache.mode_data.impedance[idx];
+    if (auto vol_it = voltage_postpro.find(idx);
+        vol_it != voltage_postpro.end() && SameVoltageConfig(cfg, vol_it->second))
+    {
+      measurement_cache.mode_data.voltage[idx] = {V};
+      filled_voltage_postpro.insert(idx);
+    }
 
     // Power-voltage impedance: Z_PV = |V|^2 / (2P).
     if (std::abs(P) > 1e-30)
@@ -1919,18 +2040,25 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     }
 
     // V/I impedance: Z_VI = |V| / |I|.
-    auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
-                            cfg.n_samples, *Bt_inplane);
-    if (std::abs(I) > 1e-30)
+    if (cfg.has_current)
     {
-      result.Z_VI = std::abs(V) / std::abs(I);
-      result.has_vi_impedance = true;
+      auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
+                              cfg.n_samples, *Bt_inplane);
+      if (std::abs(I) > 1e-30)
+      {
+        result.Z_VI = std::abs(V) / std::abs(I);
+        result.has_vi_impedance = true;
+      }
     }
   }
 
   // Compute voltage for each configured voltage-only entry.
   for (const auto &[idx, cfg] : voltage_postpro)
   {
+    if (filled_voltage_postpro.count(idx))
+    {
+      continue;
+    }
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_coordinates, cfg.voltage_marker,
                             cfg.n_samples, *E);
     measurement_cache.mode_data.voltage[idx] = {V};
