@@ -3,6 +3,7 @@
 
 #include "magnetostaticsolver.hpp"
 
+#include <cmath>
 #include <limits>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
@@ -20,6 +21,68 @@
 
 namespace palace
 {
+
+namespace
+{
+
+// Invert a matrix in place, returning false and leaving it untouched if it cannot be
+// inverted. The entries are checked first because mfem's LU factorization aborts rather
+// than reporting failure on a singular matrix.
+bool InvertOrMarkSingular(mfem::DenseMatrix &mat)
+{
+  const int n = mat.Height();
+  if (n == 0)
+  {
+    return true;
+  }
+  const double norm = mat.MaxMaxNorm();
+  if (!std::isfinite(norm) || norm == 0.0)
+  {
+    return false;
+  }
+  // Reject a matrix whose LU pivots underflow relative to its scale, which is what an
+  // uninvertible block looks like here (for example a flux loop that links no flux).
+  mfem::DenseMatrix lu(mat);
+  mfem::Array<int> ipiv(n);
+  mfem::LUFactors factors(lu.GetData(), ipiv.GetData());
+  if (!factors.Factor(n, std::numeric_limits<double>::epsilon() * norm))
+  {
+    return false;
+  }
+  mat.Invert();
+  return true;
+}
+
+// Fill the reluctance Minv = M^-1 and the mutual (current-difference) matrix Mm from a
+// fully populated inductance matrix M. If M is not usable every entry is left as NaN.
+void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
+                      mfem::DenseMatrix &Mm, bool valid)
+{
+  if (!valid)
+  {
+    return;
+  }
+  const int n = M.Height();
+  mfem::DenseMatrix M_inv(M);
+  if (InvertOrMarkSingular(M_inv))
+  {
+    Minv = M_inv;
+  }
+  for (int i = 0; i < n; i++)
+  {
+    Mm(i, i) = M(i, i);
+    for (int j = 0; j < n; j++)
+    {
+      if (i != j)
+      {
+        Mm(i, j) = -M(i, j);
+        Mm(i, i) += M(i, j);
+      }
+    }
+  }
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -69,9 +132,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
-  MFEM_VERIFY(n_current_steps == 0 || n_flux_steps == 0,
-              "Combining SurfaceCurrent and FluxLoop excitations in the same "
-              "magnetostatic simulation is not yet supported!");
   MFEM_VERIFY(
       n_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
           !iodata.model.refinement.nonconformal,
@@ -238,7 +298,26 @@ void MagnetostaticSolver::PostprocessTerminals(
   // If flux excitation is employed, inductance matrix is computed by first computing
   // the reluctance:
   //                          R_ij = (A_j^T*K*A_i)/(Φ_i*Φ_j)
-  // and then M = R^-1. Mixed current/flux excitation is rejected before solving.
+  // and then M = R^-1.
+  //
+  // With both current and flux excitations present the normalized cross-energies form a
+  // hybrid (mixed impedance/admittance) matrix H rather than an inductance matrix: each
+  // column is normalized by its own excitation, so a current column carries units of H, a
+  // flux column of 1/H, and a mixed entry is dimensionless. Writing c for the current ports
+  // and f for the flux ports, a current step holds the flux loops at zero flux (their PEC
+  // surfaces are part of the base essential set) while a flux step leaves the current ports
+  // open, so the response to (I_c, Φ_f) is
+  //                  Φ_c = H_cc*I_c + H_cf*Φ_f
+  //                  I_f = H_fc*I_c + H_ff*Φ_f
+  // where H_cc is the current-port inductance screened by zero-flux loops (a Schur
+  // complement of the bare inductance, not the bare M_cc) and H_ff is the flux-loop
+  // reluctance. Inverting the block system recovers the bare inductance matrix in henries:
+  //                  M_ff = H_ff^-1
+  //                  M_cf = H_cf*H_ff^-1
+  //                  M_cc = H_cc + H_cf*H_ff^-1*H_cf^T
+  // so only H_ff has to be inverted, exactly as in the pure flux case. If H_ff is singular
+  // the flux rows and columns, and the un-screening correction to M_cc, are not defined and
+  // the affected entries are reported as NaN.
   //
   // Reciprocity note for Short inactive ports: the reciprocal cross-energy formula only
   // holds when every excitation is solved with the same operator (same essential-DOF set).
@@ -320,6 +399,72 @@ void MagnetostaticSolver::PostprocessTerminals(
     // Get inductance from reluctance: M = R^{-1}
     M = Minv;
     M.Invert();
+  }
+  else if (n_current > 0 && n_flux > 0)
+  {
+    // Mixed current/flux case: normalize each column by its own excitation to build the
+    // hybrid matrix H, then convert the blocks to a single inductance matrix in henries.
+    // Current columns come first, followed by flux columns.
+    auto excitation = [&](int i) { return (i < n_current) ? I_inc[i] : Phi_inc[i]; };
+    mfem::DenseMatrix H(n);
+    H = nan;
+    for (int i = 0; i < n; i++)
+    {
+      H(i, i) = cross_energy(i, i) / (excitation(i) * excitation(i));
+      for (int j = i + 1; j < n; j++)
+      {
+        H(i, j) = H(j, i) = cross_energy(i, j) / (excitation(i) * excitation(j));
+      }
+    }
+
+    // Invert the flux-flux reluctance block H_ff to get the flux-loop inductance block.
+    mfem::DenseMatrix Mff(n_flux);
+    for (int a = 0; a < n_flux; a++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        Mff(a, b) = H(n_current + a, n_current + b);
+      }
+    }
+    const bool flux_invertible = InvertOrMarkSingular(Mff);
+
+    // M_ff = H_ff^-1.
+    for (int a = 0; a < n_flux; a++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        M(n_current + a, n_current + b) = flux_invertible ? Mff(a, b) : nan;
+      }
+    }
+    // M_cf = H_cf*H_ff^-1, and its transpose M_fc.
+    for (int i = 0; i < n_current; i++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        double sum = 0.0;
+        for (int a = 0; a < n_flux; a++)
+        {
+          sum += H(i, n_current + a) * Mff(a, b);
+        }
+        M(i, n_current + b) = M(n_current + b, i) = flux_invertible ? sum : nan;
+      }
+    }
+    // M_cc = H_cc + H_cf*H_ff^-1*H_cf^T un-screens the current-port block, which the
+    // zero-flux loops would otherwise report as a Schur complement.
+    for (int i = 0; i < n_current; i++)
+    {
+      for (int j = i; j < n_current; j++)
+      {
+        double correction = 0.0;
+        for (int b = 0; b < n_flux; b++)
+        {
+          correction += M(i, n_current + b) * H(j, n_current + b);
+        }
+        M(i, j) = M(j, i) = flux_invertible ? H(i, j) + correction : nan;
+      }
+    }
+
+    ComputeMinvAndMm(M, Minv, Mm, flux_invertible);
   }
   else
   {

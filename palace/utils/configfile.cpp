@@ -1474,13 +1474,6 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
-  // Check for unsupported boundary combinations.
-  if (!boundaries.current.empty() && !boundaries.fluxloop.empty())
-  {
-    errors << "Combining \"SurfaceCurrent\" and \"FluxLoop\" excitations in the same "
-              "magnetostatic simulation is not yet supported\n";
-  }
-
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
   // SurfaceCurrent, FluxLoop, Terminal.
   std::map<int, std::string> index_map;
