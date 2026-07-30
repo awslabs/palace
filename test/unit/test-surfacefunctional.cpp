@@ -11,7 +11,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/coefficient.hpp"
-#include "fem/domain_point_field_evaluator.hpp"
 #include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
@@ -19,6 +18,7 @@
 #include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
+#include "fem/point_field_evaluator.hpp"
 #include "fixtures.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/domainpostoperator.hpp"
@@ -1632,8 +1632,7 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
   }
 }
 
-TEST_CASE("DomainPointFieldEvaluator Domain Fields",
-          "[surfacefunctional][Serial][Parallel][GPU]")
+TEST_CASE("PointFieldEvaluator Domain Fields", "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
@@ -1727,8 +1726,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields",
 
   SECTION("Electric energy density")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::ENERGY_E, *mesh, mat_op,
-                                   E.ParFESpace(), nullptr, viz_scalar, scaling);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_E, *mesh, mat_op,
+                             E.ParFESpace(), nullptr, viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
     eval.Eval(&E, nullptr, val);
@@ -1739,8 +1738,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields",
 
   SECTION("Magnetic energy density")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::ENERGY_M, *mesh, mat_op,
-                                   nullptr, B.ParFESpace(), viz_scalar, scaling);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_M, *mesh, mat_op, nullptr,
+                             B.ParFESpace(), viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
     eval.Eval(nullptr, &B, val);
@@ -1751,8 +1750,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields",
 
   SECTION("Poynting vector")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::POYNTING, *mesh, mat_op,
-                                   E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::POYNTING, *mesh, mat_op,
+                             E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_vector), ref(&viz_vector);
     eval.Eval(&E, &B, val);
@@ -1762,7 +1761,7 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields",
   }
 }
 
-TEST_CASE("DomainPointFieldEvaluator Domain Fields 2D",
+TEST_CASE("PointFieldEvaluator Domain Fields 2D",
           "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
@@ -1844,8 +1843,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields 2D",
 
   SECTION("Electric energy density")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::ENERGY_E, mesh, mat_op,
-                                   E.ParFESpace(), nullptr, viz_scalar, scaling);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_E, mesh, mat_op,
+                             E.ParFESpace(), nullptr, viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
     eval.Eval(&E, nullptr, val);
@@ -1856,8 +1855,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields 2D",
 
   SECTION("Magnetic flux density")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::FIELD_B, mesh, mat_op,
-                                   nullptr, B.ParFESpace(), viz_scalar, 1.0);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::FIELD_B, mesh, mat_op, nullptr,
+                             B.ParFESpace(), viz_scalar, 1.0);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
     eval.Eval(nullptr, &B, val);
@@ -1875,8 +1874,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields 2D",
 
   SECTION("Magnetic energy density")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::ENERGY_M, mesh, mat_op,
-                                   nullptr, B.ParFESpace(), viz_scalar, scaling);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_M, mesh, mat_op, nullptr,
+                             B.ParFESpace(), viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
     eval.Eval(nullptr, &B, val);
@@ -1887,8 +1886,8 @@ TEST_CASE("DomainPointFieldEvaluator Domain Fields 2D",
 
   SECTION("Poynting vector")
   {
-    DomainPointFieldEvaluator eval(DomainPointFieldEvaluator::Kind::POYNTING, mesh, mat_op,
-                                   E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::POYNTING, mesh, mat_op,
+                             E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_vector), ref(&viz_vector);
     eval.Eval(&E, &B, val);
@@ -2048,7 +2047,7 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
 }
 
 #if defined(MFEM_USE_GSLIB)
-TEST_CASE("InterpolationOperator Ceed Probes", "[interpolator][Serial][Parallel][GPU]")
+TEST_CASE("InterpolationOperator Ceed Probes", "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
@@ -2147,7 +2146,197 @@ TEST_CASE("InterpolationOperator Ceed Probes", "[interpolator][Serial][Parallel]
 }
 #endif
 
-TEST_CASE("FaceNbrFieldExchange 2D", "[facenbrexchange][Serial][Parallel]")
+TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  CAPTURE(elem_type, order, nonconformal);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, false), B(rt_fespace, false);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  E.Real().ExchangeFaceNbrData();
+  B.Real().ExchangeFaceNbrData();
+
+  const int lod = order;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+
+  auto TestKind = [&](PointFieldEvaluator::Kind kind,
+                      const mfem::ParFiniteElementSpace &fes,
+                      const mfem::ParGridFunction &U)
+  {
+    PointFieldEvaluator viz(kind, *mesh, marker, fes, lod);
+
+    // The validity decision must be identical on all ranks; interior surfaces split
+    // across processes fall back (consistently).
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    if (!valid)
+    {
+      return;
+    }
+
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    // Constructor warm-up releases its source storage. Two evaluations exercise both
+    // the first direct reattachment and the later take-and-repoint path, including MPI
+    // face-neighbor exporters on partition interfaces.
+    viz.EvalBuffer(U, buffer);
+    viz.EvalBuffer(U, buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+    const int component_stride = viz.BufferSize() / 3;
+
+    BdrFieldVectorCoefficient legacy(U);
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        legacy.Eval(V, *T, ip);
+        for (int c = 0; c < 3; c++)
+        {
+          const double val = buf[bases[i] + j + c * component_stride];
+          CAPTURE(i, j, c, V(c), val);
+          CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+        }
+      }
+    }
+  };
+
+  TestKind(PointFieldEvaluator::Kind::FIELD_E, nd_fespace, E.Real());
+  TestKind(PointFieldEvaluator::Kind::FIELD_B, rt_fespace, B.Real());
+
+  // Material-dependent boundary visualization kinds (surface charge, surface current,
+  // boundary energy densities) against the corresponding legacy coefficients.
+  const double scaling = 1.7;
+  auto TestKindCoeff = [&](PointFieldEvaluator::Kind kind,
+                           const mfem::ParFiniteElementSpace &fes,
+                           mfem::Coefficient *legacy_s, mfem::VectorCoefficient *legacy_v)
+  {
+    PointFieldEvaluator viz(kind, *mesh, marker, fes, mat_op, lod, scaling);
+    const int nc = viz.BufferNumComp();
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    if (!valid)
+    {
+      return;
+    }
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    const auto &u = kind == PointFieldEvaluator::Kind::CURRENT_J ||
+                            kind == PointFieldEvaluator::Kind::ENERGY_M
+                        ? B.Real()
+                        : E.Real();
+    viz.EvalBuffer(u, buffer);
+    viz.EvalBuffer(u, buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+    const int component_stride = viz.BufferSize() / nc;
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        if (nc == 1)
+        {
+          const double ref = legacy_s->Eval(*T, ip);
+          const double val = buf[bases[i] + j];
+          CAPTURE(i, j, ref, val);
+          CHECK(val == Catch::Approx(ref).epsilon(1.0e-10).margin(1.0e-13));
+        }
+        else
+        {
+          legacy_v->Eval(V, *T, ip);
+          for (int c = 0; c < 3; c++)
+          {
+            const double val = buf[bases[i] + j + c * component_stride];
+            CAPTURE(i, j, c, V(c), val);
+            CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+          }
+        }
+      }
+    }
+  };
+  {
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> q_legacy(
+        &E.Real(), nullptr, mat_op, true, mfem::Vector(), scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::FLUX_Q, nd_fespace, &q_legacy, nullptr);
+  }
+  {
+    BdrSurfaceCurrentVectorCoefficient j_legacy(B.Real(), mat_op, scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::CURRENT_J, rt_fespace, nullptr, &j_legacy);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> ue_legacy(E, mat_op, scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::ENERGY_E, nd_fespace, &ue_legacy, nullptr);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> um_legacy(B, mat_op, scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::ENERGY_M, rt_fespace, &um_legacy, nullptr);
+  }
+}
+
+TEST_CASE("FaceNbrFieldExchange 2D", "[surfacefunctional][Serial][Parallel]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto mesh = MakeInterfaceMesh2D(comm, mfem::Element::TRIANGLE);
@@ -2207,7 +2396,7 @@ TEST_CASE("FaceNbrFieldExchange 2D", "[facenbrexchange][Serial][Parallel]")
   CHECK((Mpi::Size(comm) == 1 || num_global > 0));
 }
 
-TEST_CASE("FaceNbrFieldExchange", "[facenbrexchange][Serial][Parallel]")
+TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
