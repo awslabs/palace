@@ -441,11 +441,10 @@ double TriangleDuffyPartitionWeight(const TriangleBarycentricPoint &lambda,
 }
 
 template <typename Integrand>
-TriangleQuadratureResult IntegrateTriangleDuffy(int row_node, int column_node,
-                                                const char *quantity, int matrix_row,
-                                                int matrix_column,
-                                                const AdaptiveAssemblyOptions &options,
-                                                Integrand &&integrand)
+TriangleQuadratureResult
+IntegrateTriangleDuffy(int row_node, int column_node, const char *quantity, int matrix_row,
+                       int matrix_column, const AdaptiveAssemblyOptions &options,
+                       Integrand &&integrand)
 {
   if (!quantity)
   {
@@ -1173,9 +1172,9 @@ Vector2 DenseMatrixRow2(const mfem::DenseMatrix &matrix, int row)
   return {matrix(row, 0), matrix(row, 1)};
 }
 
-double NormalizeTriangleBarycentricGradients(
-    const TriangleBarycentricGradients &grad_lambda,
-    TriangleBarycentricGradients &normalized_grad_lambda)
+double
+NormalizeTriangleBarycentricGradients(const TriangleBarycentricGradients &grad_lambda,
+                                      TriangleBarycentricGradients &normalized_grad_lambda)
 {
   double scale = 1.0;
   for (const auto &gradient : grad_lambda)
@@ -1201,8 +1200,8 @@ double NormalizeTriangleBarycentricGradients(
   return scale;
 }
 
-double ScaleTriangleJacobianDeterminant(double jacobian_determinant,
-                                        double gradient_scale, int gradient_power)
+double ScaleTriangleJacobianDeterminant(double jacobian_determinant, double gradient_scale,
+                                        int gradient_power)
 {
   long double scaled = jacobian_determinant;
   for (int i = 0; i < gradient_power; i++)
@@ -2103,10 +2102,10 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
                          options);
   const auto h1_to_nd = BuildTriangleH1ToNDMap(element_dofs);
   TriangleBarycentricGradients normalized_center_grad_lambda;
-  const double gradient_scale = affine_geometry
-                                    ? NormalizeTriangleBarycentricGradients(
-                                          center_grad_lambda, normalized_center_grad_lambda)
-                                    : 1.0;
+  const double gradient_scale =
+      affine_geometry ? NormalizeTriangleBarycentricGradients(center_grad_lambda,
+                                                              normalized_center_grad_lambda)
+                      : 1.0;
   if (!affine_geometry)
   {
     normalized_center_grad_lambda = center_grad_lambda;
@@ -2149,8 +2148,8 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
       const auto &basis = element_dofs.nd[enrichment].basis;
       const int singular_node = TriangleSingularNode(basis);
       const auto mass = IntegrateTriangleDuffy(
-          singular_node, singular_node, "standard-enrichment ND mass", standard,
-          enrichment, options,
+          singular_node, singular_node, "standard-enrichment ND mass", standard, enrichment,
+          options,
           [&](const TriangleBarycentricPoint &lambda)
           {
             point.Set2(lambda[1], lambda[2]);
@@ -2164,16 +2163,15 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
             }
             else
             {
-              grad_lambda = GetTriangleBarycentricGradients(
-                  transformation, point, integration_prefactor);
+              grad_lambda = GetTriangleBarycentricGradients(transformation, point,
+                                                            integration_prefactor);
               nd_fe.CalcPhysVShape(transformation, standard_value);
             }
-            const auto singular =
-                affine_geometry
-                    ? EvaluateAffineNormalizedTriangleBasis(
-                          lambda, normalized_center_grad_lambda, affine_mass_prefactor,
-                          basis)
-                    : EvaluateTriangleBasis(lambda, grad_lambda, basis);
+            const auto singular = affine_geometry
+                                      ? EvaluateAffineNormalizedTriangleBasis(
+                                            lambda, normalized_center_grad_lambda,
+                                            affine_mass_prefactor, basis)
+                                      : EvaluateTriangleBasis(lambda, grad_lambda, basis);
             return integration_prefactor *
                    Dot(DenseMatrixRow2(standard_value, standard), singular.value);
           });
@@ -2201,22 +2199,20 @@ ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatri
             if (affine_geometry)
             {
               integration_prefactor = affine_curl_curl_prefactor;
-              CalcAffinePhysCurlShape(nd_fe, point, center_jacobian,
-                                      affine_mass_prefactor, reference_standard_curl,
-                                      standard_curl);
+              CalcAffinePhysCurlShape(nd_fe, point, center_jacobian, affine_mass_prefactor,
+                                      reference_standard_curl, standard_curl);
             }
             else
             {
-              grad_lambda = GetTriangleBarycentricGradients(
-                  transformation, point, integration_prefactor);
+              grad_lambda = GetTriangleBarycentricGradients(transformation, point,
+                                                            integration_prefactor);
               nd_fe.CalcPhysCurlShape(transformation, standard_curl);
             }
-            const auto singular =
-                affine_geometry
-                    ? EvaluateAffineNormalizedTriangleBasis(
-                          lambda, normalized_center_grad_lambda, affine_mass_prefactor,
-                          basis)
-                    : EvaluateTriangleBasis(lambda, grad_lambda, basis);
+            const auto singular = affine_geometry
+                                      ? EvaluateAffineNormalizedTriangleBasis(
+                                            lambda, normalized_center_grad_lambda,
+                                            affine_mass_prefactor, basis)
+                                      : EvaluateTriangleBasis(lambda, grad_lambda, basis);
             return integration_prefactor * standard_curl(standard, 0) * singular.curl;
           });
       result.nd_curl_curl_standard_enrichment(standard, enrichment) = curl_curl.value;
@@ -2783,9 +2779,9 @@ IntegrateTetrahedronBoundaryTrace(const TetrahedronFaceTracePowers &powers, int 
         if (!(outer_edge_power > -1.0) || !(effective_radial_power > -1.0))
         {
           throw std::domain_error(
-              "A lumped-port boundary face contains a nonintegrable singular edge or "
-              "point. Split the port from the enriched feature or exclude enrichment "
-              "near the port!");
+              "A boundary face contains a nonintegrable singular edge or point. Split "
+              "the boundary operator from the enriched feature or exclude enrichment "
+              "near that boundary!");
         }
         const auto radial_rule =
             BuildWeightedSegmentQuadrature(order, effective_radial_power, 0.0);
@@ -2964,6 +2960,27 @@ std::array<double, 2> GetTriangleBoundaryPowers(const TriangleBasis &basis,
   return powers;
 }
 
+std::array<double, 2> GetTriangleBoundaryMonomialPowers(const TriangleBasis &basis,
+                                                        const std::array<int, 2> &nodes,
+                                                        double power)
+{
+  if (basis.family != HigherOrderBasisFamily::NODE_GRADIENT)
+  {
+    throw std::invalid_argument(
+        "Only triangular node-gradient functions have a boundary monomial trace!");
+  }
+  std::array<double, 2> powers{};
+  const int singular_node = TriangleSingularNode(basis);
+  for (int endpoint = 0; endpoint < 2; endpoint++)
+  {
+    if (singular_node == nodes[endpoint])
+    {
+      powers[endpoint] = power;
+    }
+  }
+  return powers;
+}
+
 bool HasTriangleBoundaryTrace(const TriangleBasis &basis, const std::array<int, 2> &nodes)
 {
   if (basis.family == HigherOrderBasisFamily::NODE_ROTATIONAL)
@@ -2977,6 +2994,28 @@ bool HasTriangleBoundaryTrace(const TriangleBasis &basis, const std::array<int, 
   }
   return std::find(nodes.begin(), nodes.end(), basis.nodes[0]) != nodes.end() &&
          std::find(nodes.begin(), nodes.end(), basis.nodes[1]) != nodes.end();
+}
+
+void AddScaledIntegral(WeightedSegmentIntegral &sum, double coefficient,
+                       const WeightedSegmentIntegral &term)
+{
+  if (sum.value.empty())
+  {
+    sum.value.resize(term.value.size());
+    sum.estimated_absolute_error.resize(term.estimated_absolute_error.size());
+  }
+  if (sum.value.size() != term.value.size() ||
+      sum.estimated_absolute_error.size() != term.estimated_absolute_error.size())
+  {
+    throw std::invalid_argument(
+        "Cannot combine triangular boundary integrals with different dimensions!");
+  }
+  for (std::size_t i = 0; i < sum.value.size(); i++)
+  {
+    sum.value[i] += coefficient * term.value[i];
+    sum.estimated_absolute_error[i] +=
+        std::abs(coefficient) * term.estimated_absolute_error[i];
+  }
 }
 
 template <typename Integrand>
@@ -2993,51 +3032,32 @@ IntegrateTriangleBoundaryTrace(const std::array<double, 2> &powers, int value_si
   if (!(powers[0] > -1.0) || !(powers[1] > -1.0))
   {
     throw std::domain_error(
-        "A lumped-port boundary segment contains a nonintegrable singular endpoint. "
-        "Split the port from the enriched feature or exclude enrichment near the port!");
+        "A boundary segment contains a nonintegrable singular endpoint. Split the "
+        "boundary operator from the enriched feature or exclude enrichment near that "
+        "boundary!");
   }
 
   const auto integrate = [&](int order)
   {
     std::vector<long double> accumulation(static_cast<std::size_t>(value_size));
-    // Cubic grading exactly resolves the fractional residual power for nu = 2/3
-    // without placing high-order nodes close enough to round onto the endpoint.
-    constexpr double radial_power = 3.0;
-    for (int endpoint = 0; endpoint < 2; endpoint++)
+    for (const auto &quadrature :
+         BuildWeightedSegmentQuadrature(order, powers[0], powers[1]))
     {
-      const double effective_power = radial_power * (powers[endpoint] + 1.0) - 1.0;
-      const auto rule = BuildWeightedSegmentQuadrature(order, effective_power, 0.0);
-      for (const auto &quadrature : rule)
+      const auto values = integrand(quadrature.coordinate);
+      if (values.size() != accumulation.size())
       {
-        const double radial = quadrature.coordinate;
-        const double distance = 0.5 * std::pow(radial, radial_power);
-        const double coordinate = endpoint == 0 ? distance : 1.0 - distance;
-        const double jacobian = 0.5 * radial_power * std::pow(radial, radial_power - 1.0);
-        const double weight_function = std::pow(radial, effective_power);
-        if (!std::isfinite(jacobian) || !(jacobian > 0.0) ||
-            !std::isfinite(weight_function) || !(weight_function > 0.0))
+        throw std::runtime_error(
+            "Triangular singular boundary trace integrand changed dimensions!");
+      }
+      for (std::size_t i = 0; i < values.size(); i++)
+      {
+        const double contribution = quadrature.weight * values[i];
+        if (!std::isfinite(contribution))
         {
           throw std::runtime_error(
-              "Triangular singular boundary trace produced an invalid graded map!");
+              "Triangular singular boundary trace produced a nonfinite contribution!");
         }
-        const auto values = integrand(coordinate);
-        if (values.size() != accumulation.size())
-        {
-          throw std::runtime_error(
-              "Triangular singular boundary trace integrand changed dimensions!");
-        }
-        for (std::size_t i = 0; i < values.size(); i++)
-        {
-          const double contribution =
-              quadrature.weight * jacobian * values[i] / weight_function;
-          if (!std::isfinite(contribution))
-          {
-            throw std::runtime_error(
-                "Triangular singular boundary trace produced a nonfinite "
-                "contribution!");
-          }
-          accumulation[i] += contribution;
-        }
+        accumulation[i] += contribution;
       }
     }
     std::vector<double> result(accumulation.size());
@@ -3051,6 +3071,9 @@ IntegrateTriangleBoundaryTrace(const std::array<double, 2> &powers, int value_si
   auto comparison = integrate(comparison_order);
   std::vector<double> value;
   std::vector<double> estimated_absolute_error(static_cast<std::size_t>(value_size));
+  double maximum_ratio = 0.0, maximum_error = 0.0, maximum_tolerance = 0.0;
+  double maximum_value = 0.0, maximum_comparison = 0.0;
+  std::size_t maximum_index = 0;
   int order = comparison_order + order_increment;
   for (int refinement = 0; refinement <= options.maximum_subdivisions; refinement++)
   {
@@ -3064,6 +3087,16 @@ IntegrateTriangleBoundaryTrace(const std::array<double, 2> &powers, int value_si
       estimated_absolute_error[i] = error;
       const double tolerance =
           options.absolute_tolerance + options.relative_tolerance * std::abs(value[i]);
+      const double ratio = error / tolerance;
+      if (ratio > maximum_ratio)
+      {
+        maximum_ratio = ratio;
+        maximum_error = error;
+        maximum_tolerance = tolerance;
+        maximum_value = value[i];
+        maximum_comparison = comparison[i];
+        maximum_index = i;
+      }
       converged = converged && std::isfinite(error) && error <= tolerance;
     }
     if (converged)
@@ -3079,8 +3112,12 @@ IntegrateTriangleBoundaryTrace(const std::array<double, 2> &powers, int value_si
   }
   throw std::runtime_error(
       fmt::format("Triangular singular boundary trace quadrature did not meet tolerance "
-                  "(orders = {}/{}, order refinements = {})!",
-                  order, comparison_order, options.maximum_subdivisions));
+                  "(orders = {}/{}, order refinements = {}, worst value = {:.16e}, "
+                  "comparison = {:.16e}, error = {:.3e}, tolerance = {:.3e}, "
+                  "endpoint powers = [{:.12g}, {:.12g}], value size = {}, index = {})!",
+                  order, comparison_order, options.maximum_subdivisions, maximum_value,
+                  maximum_comparison, maximum_error, maximum_tolerance, powers[0],
+                  powers[1], value_size, maximum_index));
 }
 
 ElementNDBoundaryMassMatrices AssembleTetrahedronElementNDBoundaryMassMatrices(
@@ -3264,13 +3301,19 @@ ElementNDBoundaryMassMatrices AssembleTriangleElementNDBoundaryMassMatrices(
 
   const int standard_size = nd_fe.GetDof();
   const int enrichment_size = static_cast<int>(element_dofs.nd.size());
-  auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
-  if (!boundary_transformation ||
-      boundary_transformation->GetGeometryType() != mfem::Geometry::SEGMENT)
+  mfem::IsoparametricTransformation boundary_transformation;
+  mesh.GetBdrElementTransformation(boundary, &boundary_transformation);
+  if (boundary_transformation.GetGeometryType() != mfem::Geometry::SEGMENT)
   {
     throw std::runtime_error(
         "Triangular singular boundary mass assembly requires segment boundaries!");
   }
+  const auto reference_vertex = [](int node)
+  { return Vector2{node == 1 ? 1.0 : 0.0, node == 2 ? 1.0 : 0.0}; };
+  const auto reference_start = reference_vertex(boundary_nodes[0]);
+  const auto reference_end = reference_vertex(boundary_nodes[1]);
+  const Vector2 reference_tangent{reference_end[0] - reference_start[0],
+                                  reference_end[1] - reference_start[1]};
 
   mfem::DenseMatrix standard_value(standard_size, 2);
   const auto evaluate_traces = [&](double coordinate)
@@ -3285,40 +3328,35 @@ ElementNDBoundaryMassMatrices AssembleTriangleElementNDBoundaryMassMatrices(
           "Triangular singular boundary mass changed adjacent element!");
     }
     const auto &element_point = face.Elem1->GetIntPoint();
-    double jacobian_determinant = 0.0;
-    const auto grad_lambda =
-        GetTriangleBarycentricGradients(*face.Elem1, element_point, jacobian_determinant);
-    nd_fe.CalcPhysVShape(*face.Elem1, standard_value);
+    nd_fe.CalcVShape(element_point, standard_value);
 
-    boundary_transformation->SetIntPoint(&boundary_point);
-    const auto &jacobian = boundary_transformation->Jacobian();
-    Vector2 tangent{jacobian(0, 0), jacobian(1, 0)};
-    const double boundary_weight = std::sqrt(Dot(tangent, tangent));
+    boundary_transformation.SetIntPoint(&boundary_point);
+    const double boundary_weight = boundary_transformation.Weight();
     if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
     {
       throw std::runtime_error(
           "Triangular singular boundary mass found a degenerate segment!");
     }
-    tangent[0] /= boundary_weight;
-    tangent[1] /= boundary_weight;
 
-    const TriangleBarycentricPoint lambda{1.0 - element_point.x - element_point.y,
-                                          element_point.x, element_point.y};
     std::vector<double> standard_trace(static_cast<std::size_t>(standard_size));
     for (int i = 0; i < standard_size; i++)
     {
-      standard_trace[i] =
-          standard_value(i, 0) * tangent[0] + standard_value(i, 1) * tangent[1];
+      standard_trace[i] = standard_value(i, 0) * reference_tangent[0] +
+                          standard_value(i, 1) * reference_tangent[1];
     }
-    std::vector<double> enrichment_trace(static_cast<std::size_t>(enrichment_size));
+    std::vector<double> enrichment_derivative(static_cast<std::size_t>(enrichment_size));
     for (int i = 0; i < enrichment_size; i++)
     {
-      const auto basis =
-          EvaluateTriangleBasis(lambda, grad_lambda, element_dofs.nd[i].basis);
-      enrichment_trace[i] = Dot(basis.value, tangent);
+      const auto &basis = element_dofs.nd[i].basis;
+      if (!HasTriangleBoundaryTrace(basis, boundary_nodes))
+      {
+        continue;
+      }
+      const int singular_node = TriangleSingularNode(basis);
+      enrichment_derivative[i] = singular_node == boundary_nodes[0] ? 1.0 : -1.0;
     }
-    return std::make_tuple(std::move(standard_trace), std::move(enrichment_trace),
-                           coefficient * boundary_weight);
+    return std::make_tuple(std::move(standard_trace), std::move(enrichment_derivative),
+                           coefficient / boundary_weight);
   };
 
   ElementNDBoundaryMassMatrices result;
@@ -3334,19 +3372,26 @@ ElementNDBoundaryMassMatrices AssembleTriangleElementNDBoundaryMassMatrices(
     {
       continue;
     }
-    const auto powers =
-        GetTriangleBoundaryPowers(element_dofs.nd[enrichment].basis, boundary_nodes);
-    const auto integral = IntegrateTriangleBoundaryTrace(
-        powers, standard_size, options,
-        [&](double coordinate)
-        {
-          auto [standard_trace, enrichment_trace, scale] = evaluate_traces(coordinate);
-          for (int standard = 0; standard < standard_size; standard++)
-          {
-            standard_trace[standard] *= scale * enrichment_trace[enrichment];
-          }
-          return standard_trace;
-        });
+    const auto &basis = element_dofs.nd[enrichment].basis;
+    const auto integrate_term = [&](const std::array<double, 2> &powers)
+    {
+      return IntegrateTriangleBoundaryTrace(powers, standard_size, options,
+                                            [&](double coordinate)
+                                            {
+                                              auto [standard_trace, enrichment_derivative,
+                                                    scale] = evaluate_traces(coordinate);
+                                              for (double &value : standard_trace)
+                                              {
+                                                value *= scale *
+                                                         enrichment_derivative[enrichment];
+                                              }
+                                              return standard_trace;
+                                            });
+    };
+    WeightedSegmentIntegral integral;
+    AddScaledIntegral(integral, 1.0, integrate_term({0.0, 0.0}));
+    AddScaledIntegral(integral, -basis.nu,
+                      integrate_term(GetTriangleBoundaryPowers(basis, boundary_nodes)));
     for (int standard = 0; standard < standard_size; standard++)
     {
       result.standard_enrichment(standard, enrichment) = integral.value[standard];
@@ -3371,16 +3416,190 @@ ElementNDBoundaryMassMatrices AssembleTriangleElementNDBoundaryMassMatrices(
       }
       const auto column_powers =
           GetTriangleBoundaryPowers(element_dofs.nd[column].basis, boundary_nodes);
-      const std::array<double, 2> powers{row_powers[0] + column_powers[0],
-                                         row_powers[1] + column_powers[1]};
-      const auto integral = IntegrateTriangleBoundaryTrace(
-          powers, 1, options,
-          [&](double coordinate)
-          {
-            auto [standard_trace, enrichment_trace, scale] = evaluate_traces(coordinate);
-            return std::vector<double>{scale * enrichment_trace[row] *
-                                       enrichment_trace[column]};
-          });
+      const auto integrate_term = [&](const std::array<double, 2> &powers)
+      {
+        return IntegrateTriangleBoundaryTrace(
+            powers, 1, options,
+            [&](double coordinate)
+            {
+              auto [standard_trace, enrichment_derivative, scale] =
+                  evaluate_traces(coordinate);
+              return std::vector<double>{scale * enrichment_derivative[row] *
+                                         enrichment_derivative[column]};
+            });
+      };
+      const std::array<double, 2> combined_powers{row_powers[0] + column_powers[0],
+                                                  row_powers[1] + column_powers[1]};
+      const auto &row_basis = element_dofs.nd[row].basis;
+      const auto &column_basis = element_dofs.nd[column].basis;
+      WeightedSegmentIntegral integral;
+      AddScaledIntegral(integral, 1.0, integrate_term({0.0, 0.0}));
+      AddScaledIntegral(integral, -row_basis.nu, integrate_term(row_powers));
+      AddScaledIntegral(integral, -column_basis.nu, integrate_term(column_powers));
+      AddScaledIntegral(integral, row_basis.nu * column_basis.nu,
+                        integrate_term(combined_powers));
+      result.enrichment_enrichment(row, column) =
+          result.enrichment_enrichment(column, row) = integral.value[0];
+      result.enrichment_enrichment_estimated_absolute_error(row, column) =
+          result.enrichment_enrichment_estimated_absolute_error(column, row) =
+              integral.estimated_absolute_error[0];
+    }
+  }
+  return result;
+}
+
+ElementNDBoundaryMassMatrices AssembleTriangleElementH1BoundaryMassMatrices(
+    const TriangleElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
+    mfem::Mesh &mesh, int boundary, double coefficient,
+    const AdaptiveAssemblyOptions &options)
+{
+  if (mesh.Dimension() != 2 || mesh.SpaceDimension() != 2 ||
+      h1_fe.GetGeomType() != mfem::Geometry::TRIANGLE ||
+      h1_fe.GetRangeType() != mfem::FiniteElement::SCALAR ||
+      h1_fe.GetMapType() != mfem::FiniteElement::VALUE || !std::isfinite(coefficient))
+  {
+    throw std::invalid_argument(
+        "Triangular singular H1 boundary mass assembly received invalid input!");
+  }
+  ValidateAdaptiveAssemblyOptions(options);
+  mfem::FaceElementTransformations face;
+  mfem::IsoparametricTransformation element1, element2;
+  int element = -1;
+  const auto boundary_nodes =
+      GetTriangleBoundaryNodes(mesh, boundary, face, element1, element2, element);
+
+  const int standard_size = h1_fe.GetDof();
+  const int enrichment_size = static_cast<int>(element_dofs.h1.size());
+  mfem::IsoparametricTransformation boundary_transformation;
+  mesh.GetBdrElementTransformation(boundary, &boundary_transformation);
+  if (boundary_transformation.GetGeometryType() != mfem::Geometry::SEGMENT)
+  {
+    throw std::runtime_error(
+        "Triangular singular H1 boundary mass assembly requires segment boundaries!");
+  }
+
+  mfem::Vector standard_value(standard_size);
+  const auto evaluate_traces = [&](double coordinate)
+  {
+    mfem::IntegrationPoint boundary_point;
+    boundary_point.x = coordinate;
+    const int current = SetBoundaryIntegrationPoint(mesh, boundary, boundary_point, face,
+                                                    element1, element2);
+    if (current != element)
+    {
+      throw std::runtime_error(
+          "Triangular singular H1 boundary mass changed adjacent element!");
+    }
+    const auto &element_point = face.Elem1->GetIntPoint();
+    h1_fe.CalcShape(element_point, standard_value);
+
+    boundary_transformation.SetIntPoint(&boundary_point);
+    const double boundary_weight = boundary_transformation.Weight();
+    if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
+    {
+      throw std::runtime_error(
+          "Triangular singular H1 boundary mass found a degenerate segment!");
+    }
+
+    std::vector<double> standard_trace(static_cast<std::size_t>(standard_size));
+    for (int i = 0; i < standard_size; i++)
+    {
+      standard_trace[i] = standard_value[i];
+    }
+    return std::make_pair(std::move(standard_trace), coefficient * boundary_weight);
+  };
+
+  ElementNDBoundaryMassMatrices result;
+  result.standard_enrichment.SetSize(standard_size, enrichment_size);
+  result.enrichment_standard.SetSize(enrichment_size, standard_size);
+  result.enrichment_enrichment.SetSize(enrichment_size);
+  result.standard_enrichment_estimated_absolute_error.SetSize(standard_size,
+                                                              enrichment_size);
+  result.enrichment_enrichment_estimated_absolute_error.SetSize(enrichment_size);
+  for (int enrichment = 0; enrichment < enrichment_size; enrichment++)
+  {
+    const auto &basis = element_dofs.h1[enrichment].basis;
+    if (!HasTriangleBoundaryTrace(basis, boundary_nodes))
+    {
+      continue;
+    }
+    const auto integrate_term = [&](const std::array<double, 2> &powers)
+    {
+      return IntegrateTriangleBoundaryTrace(powers, standard_size, options,
+                                            [&](double coordinate)
+                                            {
+                                              auto [standard_trace, scale] =
+                                                  evaluate_traces(coordinate);
+                                              for (double &value : standard_trace)
+                                              {
+                                                value *= scale;
+                                              }
+                                              return standard_trace;
+                                            });
+    };
+    WeightedSegmentIntegral integral;
+    AddScaledIntegral(
+        integral, 1.0,
+        integrate_term(GetTriangleBoundaryMonomialPowers(basis, boundary_nodes, 1.0)));
+    AddScaledIntegral(
+        integral, -1.0,
+        integrate_term(GetTriangleBoundaryMonomialPowers(basis, boundary_nodes, basis.nu)));
+    for (int standard = 0; standard < standard_size; standard++)
+    {
+      result.standard_enrichment(standard, enrichment) = integral.value[standard];
+      result.standard_enrichment_estimated_absolute_error(standard, enrichment) =
+          integral.estimated_absolute_error[standard];
+    }
+  }
+  result.enrichment_standard.Transpose(result.standard_enrichment);
+  for (int row = 0; row < enrichment_size; row++)
+  {
+    const auto &row_basis = element_dofs.h1[row].basis;
+    if (!HasTriangleBoundaryTrace(row_basis, boundary_nodes))
+    {
+      continue;
+    }
+    const auto row_linear_powers =
+        GetTriangleBoundaryMonomialPowers(row_basis, boundary_nodes, 1.0);
+    const auto row_singular_powers =
+        GetTriangleBoundaryMonomialPowers(row_basis, boundary_nodes, row_basis.nu);
+    for (int column = row; column < enrichment_size; column++)
+    {
+      const auto &column_basis = element_dofs.h1[column].basis;
+      if (!HasTriangleBoundaryTrace(column_basis, boundary_nodes))
+      {
+        continue;
+      }
+      const auto column_linear_powers =
+          GetTriangleBoundaryMonomialPowers(column_basis, boundary_nodes, 1.0);
+      const auto column_singular_powers =
+          GetTriangleBoundaryMonomialPowers(column_basis, boundary_nodes, column_basis.nu);
+      const auto add_powers =
+          [](const std::array<double, 2> &a, const std::array<double, 2> &b)
+      { return std::array<double, 2>{a[0] + b[0], a[1] + b[1]}; };
+      const auto integrate_term = [&](const std::array<double, 2> &powers)
+      {
+        return IntegrateTriangleBoundaryTrace(powers, 1, options,
+                                              [&](double coordinate)
+                                              {
+                                                auto [standard_trace, scale] =
+                                                    evaluate_traces(coordinate);
+                                                return std::vector<double>{scale};
+                                              });
+      };
+      WeightedSegmentIntegral integral;
+      AddScaledIntegral(
+          integral, 1.0,
+          integrate_term(add_powers(row_linear_powers, column_linear_powers)));
+      AddScaledIntegral(
+          integral, -1.0,
+          integrate_term(add_powers(row_linear_powers, column_singular_powers)));
+      AddScaledIntegral(
+          integral, -1.0,
+          integrate_term(add_powers(row_singular_powers, column_linear_powers)));
+      AddScaledIntegral(
+          integral, 1.0,
+          integrate_term(add_powers(row_singular_powers, column_singular_powers)));
       result.enrichment_enrichment(row, column) =
           result.enrichment_enrichment(column, row) = integral.value[0];
       result.enrichment_enrichment_estimated_absolute_error(row, column) =
@@ -3577,6 +3796,98 @@ LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
   return result;
 }
 
+LocalSparseOperatorBlocks AssembleLocalSparseH1BoundaryMassMatrices(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    const std::map<int, double> &boundary_coefficients,
+    const AdaptiveAssemblyOptions &options)
+{
+  ValidateAdaptiveAssemblyOptions(options);
+  auto *mesh = h1_fespace.GetMesh();
+  if (!mesh || mesh->Dimension() != 2 || mesh->SpaceDimension() != 2 ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.h1_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Triangular singular H1 boundary mass topology and space must share one "
+        "two-dimensional mesh!");
+  }
+  for (const auto &[attribute, coefficient] : boundary_coefficients)
+  {
+    if (attribute <= 0 || !std::isfinite(coefficient))
+    {
+      throw std::invalid_argument(
+          "Triangular singular H1 boundary mass requires positive attributes and finite "
+          "coefficients!");
+    }
+  }
+
+  LocalSparseOperatorBlocks result;
+  InitializeLocalSparseBlock(result, h1_fespace.GetVSize(),
+                             static_cast<int>(topology.h1_dofs.size()));
+  for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
+  {
+    const auto coefficient = boundary_coefficients.find(mesh->GetBdrAttribute(boundary));
+    if (coefficient == boundary_coefficients.end() || coefficient->second == 0.0)
+    {
+      continue;
+    }
+
+    int element = -1, local_face = -1;
+    mesh->GetBdrElementAdjacentElement(boundary, element, local_face);
+    if (element < 0 || element >= mesh->GetNE())
+    {
+      throw std::runtime_error(
+          "Triangular singular H1 boundary mass could not find its adjacent element!");
+    }
+    const auto &element_dofs = topology.elements[element];
+    if (element_dofs.h1.empty())
+    {
+      continue;
+    }
+    const auto enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs.h1, topology.h1_dofs.size());
+
+    ElementNDBoundaryMassMatrices matrices;
+    try
+    {
+      matrices = AssembleTriangleElementH1BoundaryMassMatrices(
+          element_dofs, *h1_fespace.GetFE(element), *mesh, boundary, coefficient->second,
+          options);
+    }
+    catch (const std::exception &error)
+    {
+      throw std::runtime_error(fmt::format(
+          "Triangular singular H1 boundary mass assembly failed on local boundary "
+          "element {} (attribute {}, adjacent element {}): {}",
+          boundary, mesh->GetBdrAttribute(boundary), element, error.what()));
+    }
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    h1_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    ValidateStandardRowTransformation(
+        dof_transformation, matrices.standard_enrichment, matrices.enrichment_standard,
+        matrices.standard_enrichment_estimated_absolute_error);
+    ApplyStandardRowTransformation(dof_transformation, matrices.standard_enrichment,
+                                   matrices.enrichment_standard,
+                                   matrices.standard_enrichment_estimated_absolute_error);
+    const auto unsigned_standard_dofs = UnsignedDofs(standard_dofs);
+
+    result.enrichment_enrichment->AddSubMatrix(enrichment_dofs, enrichment_dofs,
+                                               matrices.enrichment_enrichment);
+    result.standard_enrichment->AddSubMatrix(standard_dofs, enrichment_dofs,
+                                             matrices.standard_enrichment);
+    result.enrichment_enrichment_estimated_absolute_error->AddSubMatrix(
+        enrichment_dofs, enrichment_dofs,
+        matrices.enrichment_enrichment_estimated_absolute_error);
+    result.standard_enrichment_estimated_absolute_error->AddSubMatrix(
+        unsigned_standard_dofs, enrichment_dofs,
+        matrices.standard_enrichment_estimated_absolute_error);
+  }
+  FinalizeLocalSparseBlock(result);
+  return result;
+}
+
 ParallelSparseOperatorBlocks
 AssembleParallelSparseNDBoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
                                              const ParallelDofNumbering &parallel_numbering,
@@ -3590,6 +3901,28 @@ AssembleParallelSparseNDBoundaryMassMatrices(const LocalSparseOperatorBlocks &lo
   {
     throw std::runtime_error(
         "MFEM did not provide an ND finite-element prolongation matrix!");
+  }
+  auto absolute_prolongation = BuildAbsoluteProlongation(*standard_prolongation);
+
+  ParallelSparseOperatorBlocks result;
+  AssembleParallelSparseBlock(comm, local, *standard_prolongation, *absolute_prolongation,
+                              *enrichment_prolongation, result);
+  return result;
+}
+
+ParallelSparseOperatorBlocks
+AssembleParallelSparseH1BoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
+                                             const ParallelDofNumbering &parallel_numbering,
+                                             const mfem::ParFiniteElementSpace &h1_fespace)
+{
+  const MPI_Comm comm = h1_fespace.GetComm();
+  auto enrichment_prolongation =
+      BuildParallelEnrichmentProlongation(comm, parallel_numbering.h1);
+  const auto *standard_prolongation = h1_fespace.Dof_TrueDof_Matrix();
+  if (!standard_prolongation)
+  {
+    throw std::runtime_error(
+        "MFEM did not provide an H1 finite-element prolongation matrix!");
   }
   auto absolute_prolongation = BuildAbsoluteProlongation(*standard_prolongation);
 
@@ -3785,54 +4118,58 @@ void AssembleParallelNDBoundaryLinearForm(const TriangleDofTopology &topology,
     const int enrichment_size = static_cast<int>(element_dofs.nd.size());
     for (int i = 0; i < enrichment_size; i++)
     {
-      if (!HasTriangleBoundaryTrace(element_dofs.nd[i].basis, boundary_nodes))
+      const auto &basis = element_dofs.nd[i].basis;
+      if (!HasTriangleBoundaryTrace(basis, boundary_nodes))
       {
         continue;
       }
-      const auto powers =
-          GetTriangleBoundaryPowers(element_dofs.nd[i].basis, boundary_nodes);
-      const auto integral = IntegrateTriangleBoundaryTrace(
-          powers, 1, options,
-          [&](double coordinate)
-          {
-            mfem::IntegrationPoint boundary_point;
-            boundary_point.x = coordinate;
-            const int current = SetBoundaryIntegrationPoint(*mesh, boundary, boundary_point,
-                                                            face, element1, element2);
-            if (current != element)
+      const int singular_node = TriangleSingularNode(basis);
+      const double orientation = singular_node == boundary_nodes[0] ? 1.0 : -1.0;
+      const auto integrate_term = [&](const std::array<double, 2> &powers)
+      {
+        return IntegrateTriangleBoundaryTrace(
+            powers, 1, options,
+            [&](double coordinate)
             {
-              throw std::runtime_error(
-                  "Triangular singular boundary linear form changed adjacent element!");
-            }
-            const auto &element_point = face.Elem1->GetIntPoint();
-            double jacobian_determinant = 0.0;
-            const auto grad_lambda = GetTriangleBarycentricGradients(
-                *face.Elem1, element_point, jacobian_determinant);
-            const TriangleBarycentricPoint lambda{1.0 - element_point.x - element_point.y,
-                                                  element_point.x, element_point.y};
+              mfem::IntegrationPoint boundary_point;
+              boundary_point.x = coordinate;
+              const int current = SetBoundaryIntegrationPoint(
+                  *mesh, boundary, boundary_point, face, element1, element2);
+              if (current != element)
+              {
+                throw std::runtime_error(
+                    "Triangular singular boundary linear form changed adjacent element!");
+              }
 
-            boundary_transformation->SetIntPoint(&boundary_point);
-            const double boundary_weight = boundary_transformation->Weight();
-            if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
-            {
-              throw std::runtime_error(
-                  "Triangular singular boundary linear form found a degenerate "
-                  "segment!");
-            }
-            mfem::Vector coefficient_value(2);
-            coefficient.Eval(coefficient_value, *boundary_transformation, boundary_point);
-            if (!std::isfinite(coefficient_value[0]) ||
-                !std::isfinite(coefficient_value[1]))
-            {
-              throw std::runtime_error(
-                  "Triangular singular boundary linear form coefficient is nonfinite!");
-            }
+              boundary_transformation->SetIntPoint(&boundary_point);
+              const auto &jacobian = boundary_transformation->Jacobian();
+              Vector2 tangent{jacobian(0, 0), jacobian(1, 0)};
+              const double boundary_weight = std::sqrt(Dot(tangent, tangent));
+              if (!std::isfinite(boundary_weight) || !(boundary_weight > 0.0))
+              {
+                throw std::runtime_error(
+                    "Triangular singular boundary linear form found a degenerate "
+                    "segment!");
+              }
+              tangent[0] /= boundary_weight;
+              tangent[1] /= boundary_weight;
 
-            const Vector2 value{coefficient_value[0], coefficient_value[1]};
-            const auto basis =
-                EvaluateTriangleBasis(lambda, grad_lambda, element_dofs.nd[i].basis);
-            return std::vector<double>{boundary_weight * Dot(basis.value, value)};
-          });
+              mfem::Vector coefficient_value(2);
+              coefficient.Eval(coefficient_value, *boundary_transformation, boundary_point);
+              if (!std::isfinite(coefficient_value[0]) ||
+                  !std::isfinite(coefficient_value[1]))
+              {
+                throw std::runtime_error(
+                    "Triangular singular boundary linear form coefficient is nonfinite!");
+              }
+              const Vector2 value{coefficient_value[0], coefficient_value[1]};
+              return std::vector<double>{orientation * Dot(tangent, value)};
+            });
+      };
+      WeightedSegmentIntegral integral;
+      AddScaledIntegral(integral, 1.0, integrate_term({0.0, 0.0}));
+      AddScaledIntegral(integral, -basis.nu,
+                        integrate_term(GetTriangleBoundaryPowers(basis, boundary_nodes)));
       const std::size_t dof = element_dofs.nd[i].dof;
       if (dof >= topology.nd_dofs.size())
       {
@@ -4262,8 +4599,8 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
 
   mfem::ND_FECollection nd_collection(h1_fespace.GetMaxElementOrder(), mesh->Dimension());
   mfem::FiniteElementSpace nd_fespace(mesh, &nd_collection);
-  auto full = AssembleLocalSparseEnrichmentMatrices(
-      gradient_topology, h1_fespace, nd_fespace, materials, options);
+  auto full = AssembleLocalSparseEnrichmentMatrices(gradient_topology, h1_fespace,
+                                                    nd_fespace, materials, options);
   LocalSparseH1EnrichmentMatrices result;
   result.diffusion = std::move(full.h1_diffusion);
   result.total_quadrature_leaf_count = full.total_quadrature_leaf_count;

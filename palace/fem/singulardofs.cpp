@@ -998,28 +998,37 @@ mfem::Array<int> GetEssentialNDTrueDofsImpl(MPI_Comm comm,
   return result;
 }
 
-std::set<EntityKey> GetSelectedTriangleSegments(const TriangleFeatureTopology &features)
+std::set<EntityKey>
+GetSelectedTriangleSegments(const TriangleFeatureTopology &features,
+                            const std::set<int> *essential_boundary_attributes = nullptr)
 {
   std::set<EntityKey> selected_segments;
+  std::set<EntityKey> unique_segments;
   for (const auto &segment : features.selected_segments)
   {
+    const auto key = MakeEntityKey({segment.mesh_vertices[0], segment.mesh_vertices[1]});
     if (segment.boundary_attribute <= 0 || segment.mesh_vertices[0] < 0 ||
         segment.mesh_vertices[0] >= segment.mesh_vertices[1] ||
-        !selected_segments
-             .insert(MakeEntityKey({segment.mesh_vertices[0], segment.mesh_vertices[1]}))
-             .second)
+        !unique_segments.insert(key).second)
     {
       throw std::invalid_argument(
           "Essential triangular classification received invalid selected segments!");
+    }
+    if (!essential_boundary_attributes ||
+        essential_boundary_attributes->count(segment.boundary_attribute) > 0)
+    {
+      selected_segments.insert(key);
     }
   }
   return selected_segments;
 }
 
 std::vector<std::array<GlobalVertexId, 3>>
-GetSelectedSheetFaces(const FeatureTopology &features)
+GetSelectedSheetFaces(const FeatureTopology &features,
+                      const std::set<int> *essential_boundary_attributes = nullptr)
 {
   std::set<std::array<GlobalVertexId, 3>> unique_faces;
+  std::vector<std::array<GlobalVertexId, 3>> selected_faces;
   for (const auto &face : features.sheet_faces)
   {
     if (face.boundary_attribute <= 0 ||
@@ -1031,8 +1040,13 @@ GetSelectedSheetFaces(const FeatureTopology &features)
       throw std::invalid_argument(
           "Essential singular classification received invalid sheet faces!");
     }
+    if (!essential_boundary_attributes ||
+        essential_boundary_attributes->count(face.boundary_attribute) > 0)
+    {
+      selected_faces.push_back(face.mesh_vertices);
+    }
   }
-  return {unique_faces.begin(), unique_faces.end()};
+  return selected_faces;
 }
 
 template <typename Dof>
@@ -1570,6 +1584,22 @@ mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &fe
                                         const DofTopology &topology,
                                         const ParallelDofNumbering &parallel_numbering)
 {
+  mfem::Array<int> attributes;
+  for (const auto &face : features.sheet_faces)
+  {
+    attributes.Append(face.boundary_attribute);
+  }
+  attributes.Sort();
+  attributes.Unique();
+  return GetEssentialH1TrueDofs(comm, features, topology, parallel_numbering, attributes);
+}
+
+mfem::Array<int>
+GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
+                       const DofTopology &topology,
+                       const ParallelDofNumbering &parallel_numbering,
+                       const mfem::Array<int> &essential_boundary_attributes)
+{
   const auto &numbering = parallel_numbering.h1;
   if (numbering.owner.size() != topology.h1_dofs.size() ||
       numbering.local_to_true.size() != topology.h1_dofs.size() ||
@@ -1580,7 +1610,9 @@ mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &fe
         "Essential singular H1 classification received inconsistent DOF numbering!");
   }
 
-  const auto sheet_faces = GetSelectedSheetFaces(features);
+  const std::set<int> attributes(essential_boundary_attributes.begin(),
+                                 essential_boundary_attributes.end());
+  const auto sheet_faces = GetSelectedSheetFaces(features, &attributes);
 
   mfem::Array<int> result;
   for (std::size_t local = 0; local < topology.h1_dofs.size(); local++)
@@ -1610,6 +1642,22 @@ mfem::Array<int> GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &fe
                                         const DofTopology &topology,
                                         const ParallelDofNumbering &parallel_numbering)
 {
+  mfem::Array<int> attributes;
+  for (const auto &face : features.sheet_faces)
+  {
+    attributes.Append(face.boundary_attribute);
+  }
+  attributes.Sort();
+  attributes.Unique();
+  return GetEssentialNDTrueDofs(comm, features, topology, parallel_numbering, attributes);
+}
+
+mfem::Array<int>
+GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &features,
+                       const DofTopology &topology,
+                       const ParallelDofNumbering &parallel_numbering,
+                       const mfem::Array<int> &essential_boundary_attributes)
+{
   const auto &numbering = parallel_numbering.nd;
   if (numbering.owner.size() != topology.nd_dofs.size() ||
       numbering.local_to_true.size() != topology.nd_dofs.size() ||
@@ -1619,7 +1667,9 @@ mfem::Array<int> GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &fe
     throw std::invalid_argument(
         "Essential singular ND classification received inconsistent DOF numbering!");
   }
-  const auto sheet_faces = GetSelectedSheetFaces(features);
+  const std::set<int> attributes(essential_boundary_attributes.begin(),
+                                 essential_boundary_attributes.end());
+  const auto sheet_faces = GetSelectedSheetFaces(features, &attributes);
 
   mfem::Array<int> result;
   for (std::size_t local = 0; local < topology.nd_dofs.size(); local++)
@@ -1655,11 +1705,35 @@ GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &fea
 }
 
 mfem::Array<int>
+GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering,
+                               const mfem::Array<int> &essential_boundary_attributes)
+{
+  const std::set<int> attributes(essential_boundary_attributes.begin(),
+                                 essential_boundary_attributes.end());
+  const auto selected_segments = GetSelectedTriangleSegments(features, &attributes);
+  return GetEssentialH1TrueDofsImpl(comm, selected_segments, topology, parallel_numbering);
+}
+
+mfem::Array<int>
 GetEssentialTriangleNDTrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
                                const TriangleDofTopology &topology,
                                const ParallelDofNumbering &parallel_numbering)
 {
   const auto selected_segments = GetSelectedTriangleSegments(features);
+  return GetEssentialNDTrueDofsImpl(comm, selected_segments, topology, parallel_numbering);
+}
+
+mfem::Array<int>
+GetEssentialTriangleNDTrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering,
+                               const mfem::Array<int> &essential_boundary_attributes)
+{
+  const std::set<int> attributes(essential_boundary_attributes.begin(),
+                                 essential_boundary_attributes.end());
+  const auto selected_segments = GetSelectedTriangleSegments(features, &attributes);
   return GetEssentialNDTrueDofsImpl(comm, selected_segments, topology, parallel_numbering);
 }
 

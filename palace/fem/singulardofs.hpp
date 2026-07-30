@@ -212,6 +212,11 @@ ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm,
 mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
                                         const DofTopology &topology,
                                         const ParallelDofNumbering &parallel_numbering);
+mfem::Array<int>
+GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
+                       const DofTopology &topology,
+                       const ParallelDofNumbering &parallel_numbering,
+                       const mfem::Array<int> &essential_boundary_attributes);
 
 // Return rank-local owned ND true DOFs whose vector enrichment has nonzero
 // tangential trace on a selected PEC sheet face. As for H1, trace support is
@@ -220,6 +225,11 @@ mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &fe
 mfem::Array<int> GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &features,
                                         const DofTopology &topology,
                                         const ParallelDofNumbering &parallel_numbering);
+mfem::Array<int>
+GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &features,
+                       const DofTopology &topology,
+                       const ParallelDofNumbering &parallel_numbering,
+                       const mfem::Array<int> &essential_boundary_attributes);
 
 // Return owned enriched H1 true DOFs whose nonzero trace lies on a selected
 // zero-thickness PEC line segment.
@@ -227,6 +237,11 @@ mfem::Array<int>
 GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
                                const TriangleDofTopology &topology,
                                const ParallelDofNumbering &parallel_numbering);
+mfem::Array<int>
+GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering,
+                               const mfem::Array<int> &essential_boundary_attributes);
 
 // Return owned enriched ND true DOFs with nonzero tangential trace on a
 // selected zero-thickness PEC line segment. Rotational triangle enrichments
@@ -235,6 +250,11 @@ mfem::Array<int>
 GetEssentialTriangleNDTrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
                                const TriangleDofTopology &topology,
                                const ParallelDofNumbering &parallel_numbering);
+mfem::Array<int>
+GetEssentialTriangleNDTrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering,
+                               const mfem::Array<int> &essential_boundary_attributes);
 
 }  // namespace singular
 

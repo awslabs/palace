@@ -1235,7 +1235,7 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
       CAPTURE(standard, enrichment_index,
               coupling.h1_mass_standard_enrichment(standard, enrichment_index), direct,
               coupling.h1_mass_estimated_absolute_error(standard, enrichment_index));
-  CHECK(std::abs(coupling.h1_mass_standard_enrichment(standard, enrichment_index) -
+      CHECK(std::abs(coupling.h1_mass_standard_enrichment(standard, enrichment_index) -
                      direct) <=
             coupling.h1_mass_estimated_absolute_error(standard, enrichment_index) +
                 2.0e-13);
@@ -1249,8 +1249,7 @@ TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
   topology.nd_dofs[1] = topology.h1_dofs[1];
   topology.h1_to_nd = {0, 1};
   topology.elements = {element_dofs};
-  const std::vector<fem::singular::IsotropicMaterialCoefficients> materials{
-      {1.7, 0.8}};
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> materials{{1.7, 0.8}};
   const auto full_sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
       topology, h1_space, nd_space, materials, options);
   const auto h1_sparse = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
@@ -1742,6 +1741,122 @@ TEST_CASE("Triangular singular boundary mass matches the physical tangential tra
                     Catch::Matchers::ContainsSubstring("nonintegrable singular endpoint"));
 }
 
+TEST_CASE("Triangular singular H1 boundary mass matches a graded physical oracle",
+          "[singularelements][singularassembly][boundary][triangle][h1][Serial]")
+{
+  constexpr double nu = 0.525553491856;
+  constexpr double coefficient = 1.7;
+  const fem::singular::TriangleBasis basis{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, nu};
+  fem::singular::TriangleDofTopology topology;
+  topology.h1_dofs.resize(1);
+  topology.elements.resize(1);
+  topology.elements[0].h1 = {{0, basis}};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-8, 2.0e-8, 9};
+
+  for (bool curved : {false, true})
+  {
+    auto mesh = BoundaryTriangleMesh();
+    SetQuadraticGeometry(mesh, curved);
+    mfem::H1_FECollection h1_collection(2, 2);
+    mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+    const auto blocks = fem::singular::AssembleLocalSparseH1BoundaryMassMatrices(
+        topology, h1_space, {{11, coefficient}}, options);
+    REQUIRE(blocks.standard_enrichment);
+    REQUIRE(blocks.enrichment_standard);
+    REQUIRE(blocks.enrichment_enrichment);
+    REQUIRE(blocks.standard_enrichment_estimated_absolute_error);
+    REQUIRE(blocks.enrichment_enrichment_estimated_absolute_error);
+    CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+    CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
+    CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
+
+    mfem::Vector standard(h1_space.GetVSize());
+    for (int i = 0; i < standard.Size(); i++)
+    {
+      standard[i] = 0.13 * (i + 1) - 0.27;
+    }
+    mfem::Vector enrichment({0.37});
+    mfem::Vector work(blocks.standard_enrichment->Height());
+    blocks.standard_enrichment->Mult(enrichment, work);
+    const double assembled_coupling = 2.0 * (standard * work);
+    work.SetSize(blocks.enrichment_enrichment->Height());
+    blocks.enrichment_enrichment->Mult(enrichment, work);
+    const double assembled_enrichment = enrichment * work;
+    const double assembled = assembled_coupling + assembled_enrichment;
+
+    int boundary = -1;
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (mesh.GetBdrAttribute(i) == 11)
+      {
+        boundary = i;
+        break;
+      }
+    }
+    REQUIRE(boundary >= 0);
+    int face_index = -1, orientation = -1;
+    mesh.GetBdrElementFace(boundary, &face_index, &orientation);
+    mfem::FaceElementTransformations face;
+    mfem::IsoparametricTransformation element1, element2;
+    mesh.GetFaceElementTransformations(face_index, face, element1, element2);
+    REQUIRE(face.Elem1);
+    REQUIRE(!face.Elem2);
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    h1_space.GetElementVDofs(face.Elem1No, standard_dofs, dof_transformation);
+    mfem::Vector standard_local;
+    standard.GetSubVector(standard_dofs, standard_local);
+    dof_transformation.InvTransformPrimal(standard_local);
+    mfem::Vector standard_shape(h1_space.GetFE(face.Elem1No)->GetDof());
+    mfem::IsoparametricTransformation boundary_transformation;
+    mesh.GetBdrElementTransformation(boundary, &boundary_transformation);
+
+    long double direct = 0.0L;
+    constexpr double grading = 3.0;
+    for (int endpoint = 0; endpoint < 2; endpoint++)
+    {
+      for (const auto &quadrature :
+           fem::singular::BuildWeightedSegmentQuadrature(64, 0.0, 0.0))
+      {
+        const double radial = quadrature.coordinate;
+        const double distance = 0.5 * std::pow(radial, grading);
+        mfem::IntegrationPoint boundary_point;
+        boundary_point.x = endpoint == 0 ? distance : 1.0 - distance;
+        const auto face_point = mfem::Mesh::TransformBdrElementToFace(
+            face.GetGeometryType(), orientation, boundary_point);
+        face.SetAllIntPoints(&face_point);
+        const auto &element_point = face.Elem1->GetIntPoint();
+        h1_space.GetFE(face.Elem1No)->CalcShape(element_point, standard_shape);
+        const fem::singular::TriangleBarycentricPoint lambda{
+            1.0 - element_point.x - element_point.y, element_point.x, element_point.y};
+        const double singular = fem::singular::EvaluateTriangleNodeGradientPotential(
+            lambda, basis.nodes[0], basis.nodes[1], basis.nu);
+        const double standard_value = standard_local * standard_shape;
+        boundary_transformation.SetIntPoint(&boundary_point);
+        const double scale = quadrature.weight * 0.5 * grading *
+                             std::pow(radial, grading - 1.0) * coefficient *
+                             boundary_transformation.Weight();
+        direct += static_cast<long double>(scale) *
+                  (2.0 * standard_value * enrichment[0] * singular +
+                   enrichment[0] * enrichment[0] * singular * singular);
+      }
+    }
+
+    const auto standard_absolute = AbsoluteValue(standard);
+    const auto enrichment_absolute = AbsoluteValue(enrichment);
+    work.SetSize(blocks.standard_enrichment_estimated_absolute_error->Height());
+    blocks.standard_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+    double error_bound = 2.0 * (standard_absolute * work);
+    work.SetSize(blocks.enrichment_enrichment_estimated_absolute_error->Height());
+    blocks.enrichment_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+    error_bound += enrichment_absolute * work;
+    CAPTURE(curved, assembled, direct, assembled_coupling, assembled_enrichment,
+            error_bound);
+    CHECK(std::abs(assembled - static_cast<double>(direct)) <= error_bound + 2.0e-10);
+  }
+}
+
 TEST_CASE("Tetrahedral singular boundary linear form matches boundary mass variation",
           "[singularelements][singularassembly][boundary][linearform][tetrahedron][Serial]")
 {
@@ -2057,11 +2172,9 @@ TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
   CHECK(triangle_allowance > 0.0);
   CHECK(fem::singular::IsAffineElementTransformation(triangle_transformation));
 
-  auto reference_triangle =
-      AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
+  auto reference_triangle = AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
   SetQuadraticGeometry(reference_triangle, false);
-  auto &reference_triangle_transformation =
-      *reference_triangle.GetElementTransformation(0);
+  auto &reference_triangle_transformation = *reference_triangle.GetElementTransformation(0);
   const fem::singular::TriangleBasis triangle_gradient{
       fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, 2.0 / 3.0};
   const fem::singular::TriangleBasis triangle_rotation{
@@ -2090,8 +2203,8 @@ TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
       fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
           triangle_dofs, *tiny_h1_space.GetFE(0), *tiny_nd_space.GetFE(0),
           triangle_transformation, options);
-  const auto check_scaled = [](const mfem::DenseMatrix &actual,
-                               const mfem::DenseMatrix &reference, double scale)
+  const auto check_scaled =
+      [](const mfem::DenseMatrix &actual, const mfem::DenseMatrix &reference, double scale)
   {
     REQUIRE(actual.Height() == reference.Height());
     REQUIRE(actual.Width() == reference.Width());
@@ -2103,8 +2216,7 @@ TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
         const double expected = reference(i, j);
         CAPTURE(i, j, normalized_actual, expected);
         CHECK(std::abs(normalized_actual - expected) <=
-              2.0e-7 *
-                  std::max({1.0, std::abs(normalized_actual), std::abs(expected)}));
+              2.0e-7 * std::max({1.0, std::abs(normalized_actual), std::abs(expected)}));
       }
     }
   };
@@ -2122,9 +2234,8 @@ TEST_CASE("Tiny translated affine simplices include coordinate roundoff",
   check_scaled(tiny_coupling.nd_curl_curl_standard_enrichment,
                reference_coupling.nd_curl_curl_standard_enrichment, 1.0 / (h * h));
 
-  auto tetrahedron =
-      AffineTetrahedronMesh({0.5, 0.25, 0.125}, {h, 0.0, 0.0}, {0.0, h, 0.0},
-                            {0.0, 0.0, h});
+  auto tetrahedron = AffineTetrahedronMesh({0.5, 0.25, 0.125}, {h, 0.0, 0.0}, {0.0, h, 0.0},
+                                           {0.0, 0.0, h});
   SetQuadraticGeometry(tetrahedron, false);
   auto &tetrahedron_transformation = *tetrahedron.GetElementTransformation(0);
   const double tetrahedron_variation =

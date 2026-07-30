@@ -358,12 +358,21 @@ TEST_CASE("Singular BoundaryMode rejects unsupported material and boundary physi
     iodata.domains.materials[0].lambda_L = 1.0e-7;
     CHECK_THROWS(iodata.CheckConfiguration());
   }
-  SECTION("Non-PEC boundary operator")
+  SECTION("Surface impedance is admitted")
   {
     auto iodata = make_input();
     auto &impedance = iodata.boundaries.impedance.emplace_back();
     impedance.attributes = {2};
     impedance.Ls = 1.0e-9;
+    CHECK_NOTHROW(iodata.CheckConfiguration());
+  }
+  SECTION("Surface conductivity remains unsupported")
+  {
+    auto iodata = make_input();
+    auto &conductivity = iodata.boundaries.conductivity.emplace_back();
+    conductivity.attributes = {2};
+    conductivity.sigma = 5.0e7;
+    conductivity.h = 1.0e-7;
     CHECK_THROWS(iodata.CheckConfiguration());
   }
 }

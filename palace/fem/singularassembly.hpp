@@ -312,6 +312,17 @@ LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
     const std::map<int, double> &boundary_coefficients,
     const AdaptiveAssemblyOptions &options);
 
+// Assemble the singular portions of a scalar H1 boundary mass operator
+//
+//   integral_Gamma coefficient u v dS
+//
+// on a two-dimensional triangular mesh. This is the longitudinal Robin block
+// required by BoundaryMode impedance boundaries.
+LocalSparseOperatorBlocks AssembleLocalSparseH1BoundaryMassMatrices(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    const std::map<int, double> &boundary_coefficients,
+    const AdaptiveAssemblyOptions &options);
+
 // Form true-DOF parallel blocks as P_test^T A_local P_trial. The custom
 // enrichment prolongations are built from the canonical parallel numbering;
 // the standard prolongations come from MFEM. Error bounds use entrywise
@@ -332,6 +343,11 @@ ParallelSparseOperatorBlocks
 AssembleParallelSparseNDBoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
                                              const ParallelDofNumbering &parallel_numbering,
                                              const mfem::ParFiniteElementSpace &nd_fespace);
+
+ParallelSparseOperatorBlocks
+AssembleParallelSparseH1BoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
+                                             const ParallelDofNumbering &parallel_numbering,
+                                             const mfem::ParFiniteElementSpace &h1_fespace);
 
 // Assemble the enrichment entries of
 //

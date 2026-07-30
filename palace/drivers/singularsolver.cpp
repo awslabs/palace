@@ -169,6 +169,95 @@ void ValidateSingularLossTangents(const IoData &iodata,
   }
 }
 
+namespace
+{
+
+std::set<int> GetPecSingularAttributes(const IoData &iodata)
+{
+  std::set<int> attributes(iodata.boundaries.pec.attributes.begin(),
+                           iodata.boundaries.pec.attributes.end());
+  attributes.insert(iodata.boundaries.auxpec.attributes.begin(),
+                    iodata.boundaries.auxpec.attributes.end());
+  return attributes;
+}
+
+std::set<int> GetImpedanceSingularAttributes(const IoData &iodata)
+{
+  std::set<int> attributes;
+  for (const auto &impedance : iodata.boundaries.impedance)
+  {
+    attributes.insert(impedance.attributes.begin(), impedance.attributes.end());
+  }
+  return attributes;
+}
+
+void VerifyImpedanceExponent(double nu, const char *description)
+{
+  MFEM_VERIFY(
+      std::isfinite(nu) && nu > 0.5,
+      description << " has nu <= 1/2. Its free singular tangential trace is not square "
+                     "integrable in the surface-impedance Robin form. Use a resolved "
+                     "finite-thickness corner with nu > 1/2, remove that attribute from "
+                     "Solver.SingularElements, or use PEC enrichment!");
+}
+
+}  // namespace
+
+void ValidateSingularImpedanceFeatures(const IoData &iodata,
+                                       const fem::singular::FeatureTopology &features)
+{
+  const auto pec_attributes = GetPecSingularAttributes(iodata);
+  const auto impedance_attributes = GetImpedanceSingularAttributes(iodata);
+  for (const auto &segment : features.segments)
+  {
+    bool has_pec = false, has_impedance = false;
+    for (int attribute : segment.boundary_attributes)
+    {
+      has_pec = has_pec || pec_attributes.count(attribute) > 0;
+      has_impedance = has_impedance || impedance_attributes.count(attribute) > 0;
+    }
+    MFEM_VERIFY(!(has_pec && has_impedance),
+                "A three-dimensional singular feature edge joins PEC and surface-impedance "
+                "faces. The current enrichment cannot impose distinct trace spaces on one "
+                "shared feature DOF!");
+    if (has_impedance)
+    {
+      MFEM_VERIFY(segment.feature < features.features.size(),
+                  "A singular impedance edge references an invalid straight feature!");
+      VerifyImpedanceExponent(features.features[segment.feature].nu,
+                              "A three-dimensional singular impedance edge");
+    }
+  }
+}
+
+void ValidateSingularImpedanceFeatures(
+    const IoData &iodata, const fem::singular::TriangleFeatureTopology &features)
+{
+  const auto pec_attributes = GetPecSingularAttributes(iodata);
+  const auto impedance_attributes = GetImpedanceSingularAttributes(iodata);
+  for (const auto &vertex : features.vertices)
+  {
+    bool has_pec = false, has_impedance = false;
+    for (std::size_t segment_index : vertex.selected_segments)
+    {
+      MFEM_VERIFY(segment_index < features.selected_segments.size(),
+                  "A singular impedance corner references an invalid boundary segment!");
+      const int attribute = features.selected_segments[segment_index].boundary_attribute;
+      has_pec = has_pec || pec_attributes.count(attribute) > 0;
+      has_impedance = has_impedance || impedance_attributes.count(attribute) > 0;
+    }
+    MFEM_VERIFY(
+        !(has_pec && has_impedance),
+        "A two-dimensional singular feature corner joins PEC and surface-impedance "
+        "segments. The current enrichment cannot impose distinct trace spaces on one "
+        "shared feature DOF!");
+    if (has_impedance)
+    {
+      VerifyImpedanceExponent(vertex.nu, "A two-dimensional singular impedance corner");
+    }
+  }
+}
+
 nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata)
 {
   auto interfaces = nlohmann::json::array();
@@ -260,10 +349,7 @@ private:
   std::map<int, GlobalVertexId> local_node_ids;
   GlobalVertexId next_id = 0;
 
-  static VertexKey LeafKey(int node)
-  {
-    return {0, static_cast<GlobalVertexId>(node), 0};
-  }
+  static VertexKey LeafKey(int node) { return {0, static_cast<GlobalVertexId>(node), 0}; }
 
   static VertexKey ParentKey(GlobalVertexId first, GlobalVertexId second)
   {
@@ -337,7 +423,7 @@ private:
   }
 
   std::vector<GlobalVertexId> AssignKeys(MPI_Comm comm,
-                                        const std::vector<VertexKey> &local_keys)
+                                         const std::vector<VertexKey> &local_keys)
   {
     const auto gathered = Gather(comm, local_keys);
     const int total = gathered.offsets.back() + gathered.counts.back();
@@ -383,8 +469,7 @@ public:
     next_id = 0;
   }
 
-  void Observe(const mfem::ParMesh &mesh,
-               const std::vector<GlobalVertexId> &vertex_ids)
+  void Observe(const mfem::ParMesh &mesh, const std::vector<GlobalVertexId> &vertex_ids)
   {
     MPI_Comm comm = mesh.GetComm();
     bool valid = vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV());
@@ -533,8 +618,7 @@ public:
   }
 };
 
-NonconformingVertexIdentity::NonconformingVertexIdentity()
-  : impl(std::make_unique<Impl>())
+NonconformingVertexIdentity::NonconformingVertexIdentity() : impl(std::make_unique<Impl>())
 {
 }
 
@@ -546,15 +630,13 @@ void NonconformingVertexIdentity::Clear()
 }
 
 void NonconformingVertexIdentity::Observe(
-    const mfem::ParMesh &mesh,
-    const std::vector<fem::singular::GlobalVertexId> &vertex_ids)
+    const mfem::ParMesh &mesh, const std::vector<fem::singular::GlobalVertexId> &vertex_ids)
 {
   impl->Observe(mesh, vertex_ids);
 }
 
 void NonconformingVertexIdentity::Update(
-    const mfem::ParMesh &mesh,
-    std::vector<fem::singular::GlobalVertexId> &vertex_ids)
+    const mfem::ParMesh &mesh, std::vector<fem::singular::GlobalVertexId> &vertex_ids)
 {
   impl->Update(mesh, vertex_ids);
 }
@@ -1042,12 +1124,12 @@ mfem::Array<int> BuildSingularRefinementProtectionImpl(
         // element on this rank.
         continue;
       }
-      MFEM_VERIFY(element >= 0 && element < static_cast<int>(all_enriched.size()),
-                  "Singular refinement face topology has invalid element "
-                      << element << " on face " << face << " (local elements = "
-                      << mesh.GetNE() << ", face-neighbor elements = "
-                      << parallel_mesh.GetNFaceNeighborElements()
-                      << ", metadata size = " << all_enriched.size() << ")!");
+      MFEM_VERIFY(
+          element >= 0 && element < static_cast<int>(all_enriched.size()),
+          "Singular refinement face topology has invalid element "
+              << element << " on face " << face << " (local elements = " << mesh.GetNE()
+              << ", face-neighbor elements = " << parallel_mesh.GetNFaceNeighborElements()
+              << ", metadata size = " << all_enriched.size() << ")!");
       if (element < mesh.GetNE())
       {
         has_local = true;
@@ -1394,6 +1476,7 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
           *serial_mesh, iodata.solver.singular_elements.attributes,
           GetSingularTriangleMaterials(iodata));
       ValidateSingularLossTangents(iodata, *serial_mesh, serial_sheet_features);
+      ValidateSingularImpedanceFeatures(iodata, serial_sheet_features);
     }
     else
     {
@@ -1407,6 +1490,7 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
           *serial_mesh, iodata.solver.singular_elements.attributes,
           GetSingularTriangleMaterials(iodata));
       ValidateSingularLossTangents(iodata, serial_line_features);
+      ValidateSingularImpedanceFeatures(iodata, serial_line_features);
     }
   }
   Mpi::Broadcast(1, &dimension, 0, comm);

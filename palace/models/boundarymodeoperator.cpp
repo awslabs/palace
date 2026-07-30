@@ -34,30 +34,45 @@ std::unique_ptr<mfem::HypreParMatrix> AddMatrices(double alpha,
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::Add(alpha, a, beta, b));
 }
 
-fem::singular::ParallelSparseOperatorBlocks
-CombineOperatorBlocks(double alpha, const fem::singular::ParallelSparseOperatorBlocks &a,
-                      double beta, const fem::singular::ParallelSparseOperatorBlocks &b)
+fem::singular::ParallelSparseOperatorBlocks AddScaledOperatorBlocks(
+    std::initializer_list<
+        std::pair<double, const fem::singular::ParallelSparseOperatorBlocks *>>
+        terms)
 {
-  MFEM_VERIFY(a.enrichment_enrichment && a.standard_enrichment && a.enrichment_standard &&
-                  b.enrichment_enrichment && b.standard_enrichment && b.enrichment_standard,
-              "Cannot combine incomplete singular operator blocks!");
   fem::singular::ParallelSparseOperatorBlocks result;
-  result.enrichment_enrichment =
-      AddMatrices(alpha, *a.enrichment_enrichment, beta, *b.enrichment_enrichment);
-  result.standard_enrichment =
-      AddMatrices(alpha, *a.standard_enrichment, beta, *b.standard_enrichment);
-  result.enrichment_standard =
-      AddMatrices(alpha, *a.enrichment_standard, beta, *b.enrichment_standard);
+  const auto add = [](std::unique_ptr<mfem::HypreParMatrix> &sum, double coefficient,
+                      const mfem::HypreParMatrix &matrix)
+  {
+    if (!sum)
+    {
+      sum = std::make_unique<mfem::HypreParMatrix>(matrix);
+      *sum *= coefficient;
+    }
+    else
+    {
+      sum = AddMatrices(1.0, *sum, coefficient, matrix);
+    }
+  };
+  for (const auto &[coefficient, blocks] : terms)
+  {
+    if (!blocks || !blocks->standard_enrichment)
+    {
+      continue;
+    }
+    MFEM_VERIFY(blocks->enrichment_standard && blocks->enrichment_enrichment,
+                "Cannot combine incomplete singular operator blocks!");
+    if (coefficient == 0.0 && result.standard_enrichment)
+    {
+      continue;
+    }
+    add(result.standard_enrichment, coefficient, *blocks->standard_enrichment);
+    add(result.enrichment_standard, coefficient, *blocks->enrichment_standard);
+    add(result.enrichment_enrichment, coefficient, *blocks->enrichment_enrichment);
+  }
+  MFEM_VERIFY(result.standard_enrichment && result.enrichment_standard &&
+                  result.enrichment_enrichment,
+              "BoundaryMode singular operator has no compatible enrichment blocks!");
   return result;
-}
-
-fem::singular::ParallelSparseOperatorBlocks
-CombineOperatorBlocks(double alpha, const fem::singular::ParallelSparseOperatorBlocks &a,
-                      double beta, const fem::singular::ParallelSparseOperatorBlocks &b,
-                      double gamma, const fem::singular::ParallelSparseOperatorBlocks &c)
-{
-  auto ab = CombineOperatorBlocks(alpha, a, beta, b);
-  return CombineOperatorBlocks(1.0, ab, gamma, c);
 }
 
 }  // namespace
@@ -137,21 +152,21 @@ BoundaryModeOperator::AssembleAtt(std::complex<double> omega, double sigma) cons
               "Triangular BoundaryMode singular enrichment currently supports only "
               "real excitation frequencies!");
   const double omega_squared = omega.real() * omega.real();
-  auto enrichment_real =
-      CombineOperatorBlocks(1.0, singular_mu_matrices.back().nd_curl_curl, -omega_squared,
-                            singular_epsilon_matrices.back().nd_mass, -sigma,
-                            singular_mu_matrices.back().nd_mass);
+  auto enrichment_real = AddScaledOperatorBlocks(
+      {{1.0, &singular_mu_matrices.back().nd_curl_curl},
+       {-omega_squared, &singular_epsilon_matrices.back().nd_mass},
+       {-sigma, &singular_mu_matrices.back().nd_mass},
+       {1.0, &singular_impedance_nd_stiffness_matrices.back()},
+       {-omega_squared, &singular_impedance_nd_mass_matrices.back()}});
   auto combined_real =
       fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment_real);
   std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
   if (standard_imag)
   {
-    MFEM_VERIFY(singular_epsilon_imag_matrices.back().nd_mass.enrichment_enrichment,
-                "Triangular BoundaryMode imaginary permittivity blocks were not "
-                "assembled!");
-    auto enrichment_imaginary =
-        CombineOperatorBlocks(-omega_squared, singular_epsilon_imag_matrices.back().nd_mass,
-                              0.0, singular_epsilon_imag_matrices.back().nd_mass);
+    auto enrichment_imaginary = AddScaledOperatorBlocks(
+        {{-omega_squared, &singular_epsilon_imag_matrices.back().nd_mass},
+         {omega.real(), &singular_impedance_nd_damping_matrices.back()},
+         {0.0, &singular_epsilon_matrices.back().nd_mass}});
     combined_imaginary =
         fem::singular::BuildParallelEnrichedOperator(*standard_imag, enrichment_imaginary);
   }
@@ -172,20 +187,20 @@ BoundaryModeOperator::AssembleAnn(std::complex<double> omega) const
               "Triangular BoundaryMode singular enrichment currently supports only "
               "real excitation frequencies!");
   const double omega_squared = omega.real() * omega.real();
-  auto enrichment_real =
-      CombineOperatorBlocks(-1.0, singular_mu_matrices.back().h1_diffusion, omega_squared,
-                            singular_epsilon_matrices.back().h1_mass);
+  auto enrichment_real = AddScaledOperatorBlocks(
+      {{-1.0, &singular_mu_matrices.back().h1_diffusion},
+       {omega_squared, &singular_epsilon_matrices.back().h1_mass},
+       {-1.0, &singular_impedance_h1_stiffness_matrices.back()},
+       {omega_squared, &singular_impedance_h1_mass_matrices.back()}});
   auto combined_real =
       fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment_real);
   std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
   if (standard_imag)
   {
-    MFEM_VERIFY(singular_epsilon_imag_matrices.back().h1_mass.enrichment_enrichment,
-                "Triangular BoundaryMode imaginary permittivity blocks were not "
-                "assembled!");
-    auto enrichment_imaginary =
-        CombineOperatorBlocks(omega_squared, singular_epsilon_imag_matrices.back().h1_mass,
-                              0.0, singular_epsilon_imag_matrices.back().h1_mass);
+    auto enrichment_imaginary = AddScaledOperatorBlocks(
+        {{omega_squared, &singular_epsilon_imag_matrices.back().h1_mass},
+         {-omega.real(), &singular_impedance_h1_damping_matrices.back()},
+         {0.0, &singular_epsilon_matrices.back().h1_mass}});
     combined_imaginary =
         fem::singular::BuildParallelEnrichedOperator(*standard_imag, enrichment_imaginary);
   }
@@ -225,10 +240,12 @@ BoundaryModeOperator::AssembleAttPreconditioner(double omega, double sigma) cons
   }
   auto standard =
       ParOperator(form.FullAssemble(false), GetNDSpace()).StealParallelAssemble(false);
-  const auto enrichment =
-      CombineOperatorBlocks(1.0, singular_mu_matrices.back().nd_curl_curl, mass_coefficient,
-                            singular_epsilon_matrices.back().nd_mass, shift_coefficient,
-                            singular_mu_matrices.back().nd_mass);
+  const auto enrichment = AddScaledOperatorBlocks(
+      {{1.0, &singular_mu_matrices.back().nd_curl_curl},
+       {mass_coefficient, &singular_epsilon_matrices.back().nd_mass},
+       {shift_coefficient, &singular_mu_matrices.back().nd_mass},
+       {1.0, &singular_impedance_nd_stiffness_matrices.back()},
+       {mass_coefficient, &singular_impedance_nd_mass_matrices.back()}});
   return fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
 }
 
@@ -267,9 +284,11 @@ BoundaryModeOperator::AssembleAnnPreconditioner(double omega) const
   }
   auto standard =
       ParOperator(form.FullAssemble(false), GetH1Space()).StealParallelAssemble(false);
-  const auto enrichment =
-      CombineOperatorBlocks(-1.0, singular_mu_matrices.back().h1_diffusion, omega * omega,
-                            singular_epsilon_matrices.back().h1_mass);
+  const auto enrichment = AddScaledOperatorBlocks(
+      {{-1.0, &singular_mu_matrices.back().h1_diffusion},
+       {omega * omega, &singular_epsilon_matrices.back().h1_mass},
+       {-1.0, &singular_impedance_h1_stiffness_matrices.back()},
+       {omega * omega, &singular_impedance_h1_mass_matrices.back()}});
   return fem::singular::BuildParallelEnrichedOperator(*standard, enrichment);
 }
 
@@ -570,6 +589,12 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
   singular_mu_matrices.resize(number_levels);
   singular_epsilon_matrices.resize(number_levels);
   singular_epsilon_imag_matrices.resize(number_levels);
+  singular_impedance_nd_stiffness_matrices.resize(number_levels);
+  singular_impedance_nd_damping_matrices.resize(number_levels);
+  singular_impedance_nd_mass_matrices.resize(number_levels);
+  singular_impedance_h1_stiffness_matrices.resize(number_levels);
+  singular_impedance_h1_damping_matrices.resize(number_levels);
+  singular_impedance_h1_mass_matrices.resize(number_levels);
   singular_gradients.reserve(number_levels);
   for (std::size_t level = 0; level < number_levels; level++)
   {
@@ -592,6 +617,44 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
           fem::singular::AssembleParallelSparseEnrichmentMatrices(
               local_epsilon_imag, *singular_numbering, h1_space.Get(), nd_space.Get());
     }
+
+    const auto assemble_nd_boundary = [&](const std::map<int, double> &coefficients)
+    {
+      fem::singular::ParallelSparseOperatorBlocks result;
+      if (coefficients.empty())
+      {
+        return result;
+      }
+      const auto local = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+          *singular_dofs, nd_space.Get(), coefficients, options);
+      return fem::singular::AssembleParallelSparseNDBoundaryMassMatrices(
+          local, *singular_numbering, nd_space.Get());
+    };
+    const auto assemble_h1_boundary = [&](const std::map<int, double> &coefficients)
+    {
+      fem::singular::ParallelSparseOperatorBlocks result;
+      if (coefficients.empty())
+      {
+        return result;
+      }
+      const auto local = fem::singular::AssembleLocalSparseH1BoundaryMassMatrices(
+          *singular_dofs, h1_space.Get(), coefficients, options);
+      return fem::singular::AssembleParallelSparseH1BoundaryMassMatrices(
+          local, *singular_numbering, h1_space.Get());
+    };
+    const auto stiffness_coefficients = surf_z_op->GetStiffnessBdrCoefficientMap();
+    const auto damping_coefficients = surf_z_op->GetDampingBdrCoefficientMap();
+    const auto mass_coefficients = surf_z_op->GetMassBdrCoefficientMap();
+    singular_impedance_nd_stiffness_matrices[level] =
+        assemble_nd_boundary(stiffness_coefficients);
+    singular_impedance_nd_damping_matrices[level] =
+        assemble_nd_boundary(damping_coefficients);
+    singular_impedance_nd_mass_matrices[level] = assemble_nd_boundary(mass_coefficients);
+    singular_impedance_h1_stiffness_matrices[level] =
+        assemble_h1_boundary(stiffness_coefficients);
+    singular_impedance_h1_damping_matrices[level] =
+        assemble_h1_boundary(damping_coefficients);
+    singular_impedance_h1_mass_matrices[level] = assemble_h1_boundary(mass_coefficients);
 
     auto enrichment_gradient =
         fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
@@ -637,9 +700,9 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
   }
 
   singular_h1_essential_true_dofs = fem::singular::GetEssentialTriangleH1TrueDofs(
-      GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+      GetComm(), *singular_features, *singular_dofs, *singular_numbering, dbc_bcs);
   singular_nd_essential_true_dofs = fem::singular::GetEssentialTriangleNDTrueDofs(
-      GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+      GetComm(), *singular_features, *singular_dofs, *singular_numbering, dbc_bcs);
 
   combined_nd_dbc_tdof_lists = nd_dbc_tdof_lists;
   combined_h1_dbc_tdof_lists = h1_dbc_tdof_lists;

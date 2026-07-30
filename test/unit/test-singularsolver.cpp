@@ -237,6 +237,66 @@ TEST_CASE("Singular loss-tangent validation distinguishes sheets from transmissi
   }
 }
 
+TEST_CASE("Singular impedance validation requires an integrable homogeneous trace",
+          "[singularsolver][singularelements][impedance][Serial]")
+{
+  IoData iodata(Units(1.0, 1.0));
+  auto &impedance = iodata.boundaries.impedance.emplace_back();
+  impedance.attributes = {7};
+  impedance.Ls = 1.0;
+
+  SECTION("Two-dimensional finite and thin corners")
+  {
+    fem::singular::TriangleFeatureTopology features;
+    features.selected_segments.push_back({0, 0, {0, 1}, 7});
+    features.vertices.push_back(
+        {0, 0, {0}, 0.6, fem::singular::FeatureVertexType::CORNER, {}});
+    CHECK_NOTHROW(ValidateSingularImpedanceFeatures(iodata, features));
+
+    features.vertices[0].nu = 0.5;
+    CHECK_THROWS_WITH(ValidateSingularImpedanceFeatures(iodata, features),
+                      Catch::Matchers::ContainsSubstring("nu <= 1/2"));
+  }
+
+  SECTION("Two-dimensional mixed PEC and impedance corner")
+  {
+    iodata.boundaries.pec.attributes = {8};
+    fem::singular::TriangleFeatureTopology features;
+    features.selected_segments.push_back({0, 0, {0, 1}, 7});
+    features.selected_segments.push_back({1, 1, {0, 2}, 8});
+    features.vertices.push_back(
+        {0, 0, {0, 1}, 2.0 / 3.0, fem::singular::FeatureVertexType::CORNER, {}});
+    CHECK_THROWS_WITH(
+        ValidateSingularImpedanceFeatures(iodata, features),
+        Catch::Matchers::ContainsSubstring("joins PEC and surface-impedance"));
+  }
+
+  SECTION("Three-dimensional finite and thin edges")
+  {
+    fem::singular::FeatureTopology features;
+    features.features.push_back({0, {0}, {0, 1}, 0.6, false});
+    features.segments.push_back(
+        {0, {0, 1}, 0, {7}, fem::singular::FeatureSegmentType::TRANSMISSION_WEDGE});
+    CHECK_NOTHROW(ValidateSingularImpedanceFeatures(iodata, features));
+
+    features.features[0].nu = 0.5;
+    CHECK_THROWS_WITH(ValidateSingularImpedanceFeatures(iodata, features),
+                      Catch::Matchers::ContainsSubstring("nu <= 1/2"));
+  }
+
+  SECTION("Three-dimensional mixed PEC and impedance edge")
+  {
+    iodata.boundaries.pec.attributes = {8};
+    fem::singular::FeatureTopology features;
+    features.features.push_back({0, {0}, {0, 1}, 2.0 / 3.0, false});
+    features.segments.push_back(
+        {0, {0, 1}, 0, {7, 8}, fem::singular::FeatureSegmentType::TRANSMISSION_WEDGE});
+    CHECK_THROWS_WITH(
+        ValidateSingularImpedanceFeatures(iodata, features),
+        Catch::Matchers::ContainsSubstring("joins PEC and surface-impedance"));
+  }
+}
+
 TEST_CASE("Conforming AMR preserves singular source identities and line-tip incidence",
           "[singularsolver][singularelements][Serial]")
 {

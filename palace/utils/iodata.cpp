@@ -291,6 +291,15 @@ void IoData::CheckConfiguration()
     conductor_attributes.insert(conductor_attributes.end(),
                                 boundaries.auxpec.attributes.begin(),
                                 boundaries.auxpec.attributes.end());
+    if (problem.type != ProblemType::ELECTROSTATIC)
+    {
+      for (const auto &impedance : boundaries.impedance)
+      {
+        conductor_attributes.insert(conductor_attributes.end(),
+                                    impedance.attributes.begin(),
+                                    impedance.attributes.end());
+      }
+    }
     std::sort(conductor_attributes.begin(), conductor_attributes.end());
     conductor_attributes.erase(
         std::unique(conductor_attributes.begin(), conductor_attributes.end()),
@@ -302,8 +311,9 @@ void IoData::CheckConfiguration()
                         std::back_inserter(unconstrained_attributes));
     MFEM_VERIFY(
         unconstrained_attributes.empty(),
-        "Singular-element attributes must also be PEC, auxiliary PEC, or electrostatic "
-        "terminal boundary attributes! Missing conductor attributes: "
+        "Singular-element attributes must also be PEC, auxiliary PEC, electrostatic "
+        "terminal, or supported surface-impedance boundary attributes! Missing conductor "
+        "attributes: "
             << fmt::format("{}", fmt::join(unconstrained_attributes, " ")));
     const auto is_isotropic = [](const auto &property)
     {
@@ -317,10 +327,11 @@ void IoData::CheckConfiguration()
     };
     if (problem.type == ProblemType::BOUNDARYMODE)
     {
-      MFEM_VERIFY(boundaries.impedance.empty() && boundaries.conductivity.empty() &&
+      MFEM_VERIFY(boundaries.conductivity.empty() &&
                       boundaries.rational_impedance.empty() && boundaries.farfield.empty(),
-                  "Singular BoundaryMode simulations currently support only PEC, "
-                  "auxiliary PEC, and natural PMC boundary conditions!");
+                  "Singular BoundaryMode simulations currently support PEC, auxiliary "
+                  "PEC, finite-wedge surface impedance, and natural PMC boundary "
+                  "conditions!");
       for (const auto &material : domains.materials)
       {
         MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&
@@ -334,16 +345,16 @@ void IoData::CheckConfiguration()
     if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
     {
       constexpr std::array<double, 3> zero_wave_vector{0.0, 0.0, 0.0};
-      MFEM_VERIFY(boundaries.impedance.empty() && boundaries.conductivity.empty() &&
+      MFEM_VERIFY(boundaries.conductivity.empty() &&
                       boundaries.rational_impedance.empty() &&
                       boundaries.farfield.empty() && boundaries.waveport.empty() &&
                       boundaries.floquetport.empty() &&
                       boundaries.periodic.boundary_pairs.empty() &&
                       boundaries.periodic.wave_vector == zero_wave_vector,
-                  "Full-wave singular simulations currently support only PEC, auxiliary "
-                  "PEC, natural PMC, lumped-port, and source boundary terms; impedance, "
-                  "absorbing, wave-port, Floquet-port, and periodic terms are not yet "
-                  "supported!");
+                  "Full-wave singular simulations currently support PEC, auxiliary PEC, "
+                  "finite-wedge surface impedance, natural PMC, lumped-port, and source "
+                  "boundary terms; conductivity, rational impedance, absorbing, "
+                  "wave-port, Floquet-port, and periodic terms are not yet supported!");
       for (const auto &material : domains.materials)
       {
         MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&

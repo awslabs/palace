@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -62,6 +63,13 @@ public:
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+
+  // Scalar boundary coefficients indexed by original mesh attribute. These
+  // match the three Add*BdrCoefficients methods and are used by singular trace
+  // assembly, which cannot consume a standard-space libCEED coefficient.
+  std::map<int, double> GetStiffnessBdrCoefficientMap(double coeff = 1.0) const;
+  std::map<int, double> GetDampingBdrCoefficientMap(double coeff = 1.0) const;
+  std::map<int, double> GetMassBdrCoefficientMap(double coeff = 1.0) const;
 };
 
 }  // namespace palace

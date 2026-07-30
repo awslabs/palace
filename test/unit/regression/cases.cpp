@@ -787,6 +787,129 @@ TEST_CASE("singular_wedge_loss_driven", "[Serial][Parallel][Regression]")
   }
 }
 
+TEST_CASE("singular_wedge_impedance_driven", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-7;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Relative residual"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_impedance_driven.json",
+                                  "impedance_driven", opts);
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.push_back("Minimum");
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_impedance_standard_driven.json",
+                                  "impedance_standard_driven", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular = LoadRegressionOutputTable("singular_wedge", "impedance_driven",
+                                              "singular-driven.csv");
+    auto standard = LoadRegressionOutputTable("singular_wedge", "impedance_standard_driven",
+                                              "domain-E.csv");
+    const double singular_electric = GetTableValue(singular, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard, "E_elec (J)");
+    const double singular_magnetic = GetTableValue(singular, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard, "E_mag (J)");
+    const double residual = GetTableValue(singular, "Relative residual");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic,
+            residual);
+    CHECK(residual < 1.0e-7);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 2.0e-2);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 1.0e-2);
+    CHECK(RelativeDifference(singular_electric + singular_magnetic,
+                             standard_electric + standard_magnetic) < 1.0e-2);
+  }
+}
+
+TEST_CASE("singular_wedge_impedance_driven_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-14;
+  opts.excluded_columns = {"Relative residual"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_impedance_driven_amr.json",
+                                  "impedance_amr_driven", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    for (const std::string prefix : {"", "iteration1/"})
+    {
+      auto diagnostics = LoadRegressionOutputTable("singular_wedge", "impedance_amr_driven",
+                                                   prefix + "singular-driven.csv");
+      const double electric = GetTableValue(diagnostics, "Electric field energy (J)");
+      const double magnetic = GetTableValue(diagnostics, "Magnetic field energy (J)");
+      const double residual = GetTableValue(diagnostics, "Relative residual");
+      CAPTURE(prefix, electric, magnetic, residual);
+      CHECK(electric > 0.0);
+      CHECK(magnetic > 0.0);
+      CHECK(residual < 1.0e-7);
+    }
+  }
+}
+
+TEST_CASE("singular_wedge_impedance_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-7;
+  opts.atol = 1.0e-13;
+  opts.excluded_columns = {"Error (", "Relative energy mismatch",
+                           "Relative weak divergence"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_impedance_eigenmode.json",
+                                  "impedance_eigenmode", opts);
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.insert(standard_opts.excluded_columns.end(),
+                                        {"Minimum", "Im{f}", "Q"});
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_impedance_standard_eigenmode.json",
+                                  "impedance_standard_eigenmode", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular_mode =
+        LoadRegressionOutputTable("singular_wedge", "impedance_eigenmode", "eig.csv");
+    auto standard_mode = LoadRegressionOutputTable(
+        "singular_wedge", "impedance_standard_eigenmode", "eig.csv");
+    auto singular_diagnostics = LoadRegressionOutputTable(
+        "singular_wedge", "impedance_eigenmode", "singular-eigenmode.csv");
+    auto standard_energy = LoadRegressionOutputTable(
+        "singular_wedge", "impedance_standard_eigenmode", "domain-E.csv");
+
+    const double singular_frequency = GetTableValue(singular_mode, "Re{f} (GHz)");
+    const double standard_frequency = GetTableValue(standard_mode, "Re{f} (GHz)");
+    const double backward_error = GetTableValue(singular_mode, "Error (Bkwd.)");
+    const double absolute_error = GetTableValue(singular_mode, "Error (Abs.)");
+    const double energy_mismatch =
+        GetTableValue(singular_diagnostics, "Relative energy mismatch");
+    CAPTURE(singular_frequency, standard_frequency, backward_error, absolute_error,
+            energy_mismatch);
+    CHECK(RelativeDifference(singular_frequency, standard_frequency) < 1.0e-3);
+    CHECK(backward_error < 1.0e-10);
+    CHECK(absolute_error < 1.0e-8);
+    CHECK(energy_mismatch < 1.0e-9);
+
+    const double singular_electric =
+        GetTableValue(singular_diagnostics, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    const double singular_magnetic =
+        GetTableValue(singular_diagnostics, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard_energy, "E_mag (J)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 1.0e-3);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 1.0e-3);
+  }
+}
+
 TEST_CASE("singular_wedge_lumped_driven", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1759,6 +1882,27 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
   opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance.json", "thick_impedance",
                                   opts);
+}
+
+TEST_CASE("cpw2d_thick_impedance_singular", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 3.0e-4;
+  opts.atol = 2.0e-9;
+  opts.excluded_columns = {"enrichment_true_dof", "Im{kn}",
+                           "Im{n_eff}",           "Error (",
+                           "coefficient norm",    "Im{P} (normalized)"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-mode-nd-coefficients.csv"] =
+      CompareCanonicalRows(2, {"enrichment_true_dof"}, 1.0e-2, 2.0e-3, true);
+  opts.custom_checks["singular-mode-h1-coefficients.csv"] =
+      CompareCanonicalRows(2, {"enrichment_true_dof"}, 1.0e-2, 2.0e-3, true);
+  opts.custom_checks["singular-mode-tip-slopes.csv"] =
+      CompareCanonicalRows(8, {}, 1.0e-2, opts.atol);
+  palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance_singular.json",
+                                  "thick_impedance_singular", opts);
 }
 
 // 2D mode analysis from a 3D mesh: back to reltol=1e-4, atol still 1e-10.

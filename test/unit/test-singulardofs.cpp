@@ -371,8 +371,20 @@ TEST_CASE("Triangular singular H1 essential DOFs follow selected PEC traces",
       Mpi::World(), features, dofs, numbering);
   const auto essential_nd = fem::singular::GetEssentialTriangleNDTrueDofs(
       Mpi::World(), features, dofs, numbering);
+  const auto selected_essential = fem::singular::GetEssentialTriangleH1TrueDofs(
+      Mpi::World(), features, dofs, numbering, mfem::Array<int>({7}));
+  const auto selected_essential_nd = fem::singular::GetEssentialTriangleNDTrueDofs(
+      Mpi::World(), features, dofs, numbering, mfem::Array<int>({7}));
+  const auto impedance_h1 = fem::singular::GetEssentialTriangleH1TrueDofs(
+      Mpi::World(), features, dofs, numbering, mfem::Array<int>());
+  const auto impedance_nd = fem::singular::GetEssentialTriangleNDTrueDofs(
+      Mpi::World(), features, dofs, numbering, mfem::Array<int>());
   REQUIRE(essential.Size() == 1);
   REQUIRE(essential_nd.Size() == 1);
+  CHECK(selected_essential == essential);
+  CHECK(selected_essential_nd == essential_nd);
+  CHECK(impedance_h1.IsEmpty());
+  CHECK(impedance_nd.IsEmpty());
 
   const auto &key = dofs.h1_dofs[essential[0]];
   const auto &nd_key = dofs.nd_dofs[essential_nd[0]];

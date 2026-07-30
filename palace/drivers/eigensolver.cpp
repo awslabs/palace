@@ -623,10 +623,12 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
 
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  const bool has_reactive_lumped_boundary =
+  const bool has_reactive_boundary =
       !space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap().empty() ||
-      !space_op.GetLumpedPortOp().GetMassBdrCoefficientMap().empty();
-  if (iodata.solver.linear.divfree_max_it > 0 && !has_reactive_lumped_boundary)
+      !space_op.GetLumpedPortOp().GetMassBdrCoefficientMap().empty() ||
+      !space_op.GetSurfaceImpedanceOp().GetStiffnessBdrCoefficientMap().empty() ||
+      !space_op.GetSurfaceImpedanceOp().GetMassBdrCoefficientMap().empty();
+  if (iodata.solver.linear.divfree_max_it > 0 && !has_reactive_boundary)
   {
     Mpi::Print(" Configuring enriched divergence-free projection\n");
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
@@ -636,7 +638,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
   else if (iodata.solver.linear.divfree_max_it > 0)
   {
-    Mpi::Print(" Skipping enriched divergence-free projection because reactive lumped "
+    Mpi::Print(" Skipping enriched divergence-free projection because reactive "
                "boundaries lift the curl-gradient nullspace\n");
   }
 

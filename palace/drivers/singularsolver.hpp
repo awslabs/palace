@@ -36,6 +36,16 @@ void ValidateSingularLossTangents(const IoData &iodata, const mfem::Mesh &mesh,
 void ValidateSingularLossTangents(const IoData &iodata,
                                   const fem::singular::TriangleFeatureTopology &features);
 
+// Finite Robin coefficients are lower-order edge terms, so the PEC-derived
+// wedge exponent remains admissible only when its free tangential trace is
+// square integrable. The current basis therefore supports homogeneous
+// impedance wedges with nu > 1/2 and rejects thin sheets and mixed
+// PEC/impedance feature junctions.
+void ValidateSingularImpedanceFeatures(const IoData &iodata,
+                                       const fem::singular::FeatureTopology &features);
+void ValidateSingularImpedanceFeatures(
+    const IoData &iodata, const fem::singular::TriangleFeatureTopology &features);
+
 nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata);
 nlohmann::json
 GetSingularSurfaceIntegrabilityMetadata(const fem::singular::FeatureTopology &features);

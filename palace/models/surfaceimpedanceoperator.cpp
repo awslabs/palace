@@ -239,4 +239,57 @@ void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
+std::map<int, double>
+SurfaceImpedanceOperator::GetStiffnessBdrCoefficientMap(double coeff) const
+{
+  std::map<int, double> coefficients;
+  for (const auto &bdr : boundaries)
+  {
+    if (std::abs(bdr.Ls) == 0.0)
+    {
+      continue;
+    }
+    for (int attribute : bdr.attr_list)
+    {
+      coefficients[attribute] += coeff / (bdr.Ls * bdr.attr_scaling.at(attribute));
+    }
+  }
+  return coefficients;
+}
+
+std::map<int, double>
+SurfaceImpedanceOperator::GetDampingBdrCoefficientMap(double coeff) const
+{
+  std::map<int, double> coefficients;
+  for (const auto &bdr : boundaries)
+  {
+    if (std::abs(bdr.Rs) == 0.0)
+    {
+      continue;
+    }
+    for (int attribute : bdr.attr_list)
+    {
+      coefficients[attribute] += coeff / (bdr.Rs * bdr.attr_scaling.at(attribute));
+    }
+  }
+  return coefficients;
+}
+
+std::map<int, double> SurfaceImpedanceOperator::GetMassBdrCoefficientMap(double coeff) const
+{
+  std::map<int, double> coefficients;
+  for (const auto &bdr : boundaries)
+  {
+    if (std::abs(bdr.Cs) == 0.0)
+    {
+      continue;
+    }
+    for (int attribute : bdr.attr_list)
+    {
+      coefficients[attribute] += coeff * bdr.Cs / bdr.attr_scaling.at(attribute);
+    }
+  }
+  return coefficients;
+}
+
 }  // namespace palace

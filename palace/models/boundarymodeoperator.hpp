@@ -221,6 +221,18 @@ private:
   std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_epsilon_matrices;
   std::vector<fem::singular::ParallelSparseEnrichmentMatrices>
       singular_epsilon_imag_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_nd_stiffness_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_nd_damping_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_nd_mass_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_h1_stiffness_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_h1_damping_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_h1_mass_matrices;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_gradients;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_prolongations;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_h1_prolongations;

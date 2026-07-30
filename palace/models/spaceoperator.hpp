@@ -102,6 +102,11 @@ private:
       singular_lumped_stiffness_matrices;
   std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_lumped_damping_matrices;
   std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_lumped_mass_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_stiffness_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks>
+      singular_impedance_damping_matrices;
+  std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_impedance_mass_matrices;
   fem::singular::AdaptiveAssemblyOptions singular_assembly_options{};
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_gradients;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_prolongations;
@@ -115,7 +120,8 @@ private:
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
   void CheckExcitations(ProblemType problem_type) const;
-  void SetUpSingularEnrichment(const config::SolverData &solver);
+  void SetUpSingularEnrichment(const config::SolverData &solver,
+                               const config::BoundaryData &boundaries);
   void CheckSingularExcitations(ProblemType problem_type) const;
 
   // Helper functions for building the bilinear forms corresponding to the discretized
@@ -234,6 +240,7 @@ public:
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetSurfaceImpedanceOp() const { return surf_z_op; }
   const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
 

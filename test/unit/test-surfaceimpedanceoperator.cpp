@@ -140,16 +140,21 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddStiffnessBdrCoefficients(coeff, fb);
+    const auto coefficients = op.GetStiffnessBdrCoefficientMap(coeff);
 
     auto v1 = GetBdrCoeffValue(fb, palace_mesh, 1);
     auto v2 = GetBdrCoeffValue(fb, palace_mesh, 2);
     if (v1)
     {
       CHECK_THAT(*v1, WithinRel(coeff / (Ls * 1.0), 1e-12));
+      REQUIRE(coefficients.count(1) == 1);
+      CHECK_THAT(coefficients.at(1), WithinRel(*v1, 1e-12));
     }
     if (v2)
     {
       CHECK_THAT(*v2, WithinRel(coeff / (Ls * 2.0), 1e-12));
+      REQUIRE(coefficients.count(2) == 1);
+      CHECK_THAT(coefficients.at(2), WithinRel(*v2, 1e-12));
     }
     require_global_coverage(v1.has_value(), v2.has_value());
   }
@@ -167,16 +172,21 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddDampingBdrCoefficients(coeff, fb);
+    const auto coefficients = op.GetDampingBdrCoefficientMap(coeff);
 
     auto v1 = GetBdrCoeffValue(fb, palace_mesh, 1);
     auto v2 = GetBdrCoeffValue(fb, palace_mesh, 2);
     if (v1)
     {
       CHECK_THAT(*v1, WithinRel(coeff / (Rs * 1.0), 1e-12));
+      REQUIRE(coefficients.count(1) == 1);
+      CHECK_THAT(coefficients.at(1), WithinRel(*v1, 1e-12));
     }
     if (v2)
     {
       CHECK_THAT(*v2, WithinRel(coeff / (Rs * 2.0), 1e-12));
+      REQUIRE(coefficients.count(2) == 1);
+      CHECK_THAT(coefficients.at(2), WithinRel(*v2, 1e-12));
     }
     require_global_coverage(v1.has_value(), v2.has_value());
   }
@@ -194,16 +204,21 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddMassBdrCoefficients(coeff, fb);
+    const auto coefficients = op.GetMassBdrCoefficientMap(coeff);
 
     auto v1 = GetBdrCoeffValue(fb, palace_mesh, 1);
     auto v2 = GetBdrCoeffValue(fb, palace_mesh, 2);
     if (v1)
     {
       CHECK_THAT(*v1, WithinRel(coeff * Cs / 1.0, 1e-12));
+      REQUIRE(coefficients.count(1) == 1);
+      CHECK_THAT(coefficients.at(1), WithinRel(*v1, 1e-12));
     }
     if (v2)
     {
       CHECK_THAT(*v2, WithinRel(coeff * Cs / 2.0, 1e-12));
+      REQUIRE(coefficients.count(2) == 1);
+      CHECK_THAT(coefficients.at(2), WithinRel(*v2, 1e-12));
     }
     require_global_coverage(v1.has_value(), v2.has_value());
   }
