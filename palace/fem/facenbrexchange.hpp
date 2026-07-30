@@ -18,8 +18,8 @@ class Mesh;
 
 //
 // Exchanges field values evaluated at prescribed reference points of face neighbor
-// (ghost) elements between processes. This enables pointwise libCEED consumers to
-// evaluate two-sided data on interior boundaries crossing parallel interfaces
+// (ghost) elements between processes. This enables libCEED surface functionals to
+// evaluate two-sided integrands on interior boundaries crossing parallel interfaces
 // without exchanging field dofs (the legacy approach of
 // ParGridFunction::ExchangeFaceNbrData): each process posts requests against ghost
 // elements (by face neighbor index, with evaluation points in the neighbor element's
@@ -37,7 +37,8 @@ class Mesh;
 class FaceNbrFieldExchange
 {
 public:
-  // Number of source field slots matching the caller-provided source vectors.
+  // Number of source field slots (matching the source vectors of the surface
+  // functional evaluation calls).
   static constexpr int MaxSources = 4;
 
   struct Request
@@ -51,8 +52,8 @@ public:
     unsigned int source_mask;
 
     // Integer/topological identity of the point set, independent of physical or
-    // floating-point coordinates. Callers fill this with the topology, orientation,
-    // and subface key used to generate pts. Requests with the same
+    // floating-point coordinates. SurfaceFunctional fills this with the reference-face
+    // topology/orientation/subface key used to generate pts. Requests with the same
     // point_key, source slot, element geometry, and point count can share one libCEED
     // point evaluator. Empty keys are allowed for ad-hoc requests and force a unique
     // evaluator group.

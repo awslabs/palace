@@ -37,6 +37,10 @@ void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
       PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
       group.out_size = 0;
     }
+    if (group.ctx)
+    {
+      PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+    }
     if (group.op)
     {
       PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
@@ -141,8 +145,8 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
     }
     for (auto &[field_vec, source] : group.field_vec_sources)
     {
-      // Source index 4 selects an optional imported vector containing sampled
-      // face-neighbor field values. The operator's
+      // Source index 4 selects an optional imported vector, used by surface reductions
+      // and boundary point fields for face-neighbor field values. The operator's
       // restriction slices and transposes the shared vector to the per-element layout.
       const Vector *sv = (source < 4) ? srcs[source] : imported;
       MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");

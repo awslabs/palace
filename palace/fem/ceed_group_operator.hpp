@@ -24,6 +24,10 @@ struct CeedGroupOperator
   Ceed ceed = nullptr;
   CeedOperator op = nullptr;
   std::vector<std::pair<std::string, int>> field_sources;
+  // Optional retained QFunction context handle for in-place runtime updates (e.g.
+  // far-field frequency) without reassembly; nullptr if the operator has no context or
+  // the context is not updated. Owned by the group (destroyed with it).
+  CeedQFunctionContext ctx = nullptr;
   // Optional mesh-node source and operator input names. Unlike fixed coefficient data,
   // mesh coordinates may be scaled in place between applies for dimensional output, so
   // every listed libCEED vector is re-pointed at current MFEM memory on each evaluation.
@@ -31,7 +35,7 @@ struct CeedGroupOperator
   std::vector<std::string> mesh_node_fields;
   mutable std::vector<CeedVector> mesh_node_vecs;
   // Cached passive field vectors for field_sources, populated on first apply to avoid
-  // repeated string lookups during pointwise libCEED operator application.
+  // repeated string lookups in libCEED during ParaView point-field output.
   mutable std::vector<std::pair<CeedVector, int>> field_vec_sources;
   // True after construction storage has been detached from the cached vectors. The next
   // apply sets arrays directly instead of first taking a nonexistent borrowed array.
