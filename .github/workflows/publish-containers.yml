@@ -98,6 +98,7 @@ jobs:
       AWS_REGION: us-west-2
       ECR_REPOSITORY: palace
       S3_CONTAINERS_BUCKET: palace-ci-containers
+      S3_SCHEMAS_BUCKET: palace-ci-schemas
       GH_TOKEN: ${{ github.token }}
       OWNER_REPO: ${{ github.repository }}
       RUN_ID: ${{ github.event.workflow_run.id }}

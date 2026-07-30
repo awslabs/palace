@@ -59,6 +59,7 @@ jobs:
             test:
               - 'palace/**'
               - 'cmake/**'
+              - 'scripts/schema/**'
               - 'extern/**'
               - 'spack_repo/**'
               - '.github/actions/**'

@@ -13,21 +13,32 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from publish import PublishItem, arch_label_from_image, plan, s3_prefix_for
+from publish import (
+    PublishItem,
+    arch_label_from_image,
+    find_schema,
+    plan,
+    s3_prefix_for,
+    schema_s3_uri,
+)
 
 REGISTRY = "123456789012.dkr.ecr.us-west-2.amazonaws.com"
 ECR_REPO = "palace"
 BUCKET = "palace-ci-containers"
+SCHEMA_BUCKET = "palace-ci-schemas"
 
 
 def make_artifacts(root: Path, image_names: list[str]) -> None:
-    """Create the downloaded-artifact layout: <image>-oci/<image>.tar and
-    <image>-sif/<image>.sif for each image name."""
+    """Create the downloaded-artifact layout for each image name, as
+    build-container uploads it: <image>-oci/<image>.tar, <image>-sif/<image>.sif,
+    and <image>-schema/config-schema.json (bundled once per leg)."""
     for name in image_names:
         (root / f"{name}-oci").mkdir(parents=True)
         (root / f"{name}-oci" / f"{name}.tar").write_text("tar")
         (root / f"{name}-sif").mkdir(parents=True)
         (root / f"{name}-sif" / f"{name}.sif").write_text("sif")
+        (root / f"{name}-schema").mkdir(parents=True)
+        (root / f"{name}-schema" / "config-schema.json").write_text('{"$id": "urn:palace:schema:1-0-0"}')
 
 
 class ArchLabel(unittest.TestCase):
@@ -144,6 +155,54 @@ class PlanGuards(unittest.TestCase):
             make_artifacts(root, names)
             items = plan(root, "0.18.0", REGISTRY, ECR_REPO, BUCKET)
         self.assertEqual(len(items), 6)
+
+
+class SchemaUri(unittest.TestCase):
+    def test_release_layout(self):
+        self.assertEqual(
+            schema_s3_uri("0.18.0", SCHEMA_BUCKET),
+            f"s3://{SCHEMA_BUCKET}/0.18.0/schema.json",
+        )
+
+    def test_main_layout(self):
+        self.assertEqual(
+            schema_s3_uri("main", SCHEMA_BUCKET),
+            f"s3://{SCHEMA_BUCKET}/main/schema.json",
+        )
+
+    def test_dev_expands_to_slash(self):
+        self.assertEqual(
+            schema_s3_uri("dev-myfeature", SCHEMA_BUCKET),
+            f"s3://{SCHEMA_BUCKET}/dev/myfeature/schema.json",
+        )
+
+
+class FindSchema(unittest.TestCase):
+    def test_finds_bundled_schema(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            make_artifacts(root, ["palace-sapphirerapids-abc1234"])
+            found = find_schema(root)
+        self.assertEqual(found.name, "config-schema.json")
+
+    def test_returns_first_of_identical_legs(self):
+        # A release matrix bundles one schema per leg; any one is authoritative.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            make_artifacts(root, ["palace-x86_64_v3-abc1234", "palace-neoverse_v2-abc1234"])
+            found = find_schema(root)
+        self.assertEqual(found.name, "config-schema.json")
+
+    def test_raises_when_no_schema_bundled(self):
+        # Every build bundles the schema, so absence is a hard error, not a skip.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            # OCI/SIF legs but no -schema dir (simulate a broken/old build).
+            (root / "palace-aarch64-abc1234-oci").mkdir(parents=True)
+            (root / "palace-aarch64-abc1234-oci" / "palace-aarch64-abc1234.tar").write_text("tar")
+            with self.assertRaises(ValueError) as cm:
+                find_schema(root)
+            self.assertIn("config-schema.json", str(cm.exception))
 
 
 if __name__ == "__main__":

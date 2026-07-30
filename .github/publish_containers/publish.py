@@ -107,6 +107,31 @@ def plan(
     return items
 
 
+def schema_s3_uri(selector: str, schema_bucket: str) -> str:
+    """S3 destination for this build's config schema.
+
+    The schema is arch-independent, so a single object per selector suffices; it
+    mirrors the SIF prefix layout (``dev-<branch>`` -> ``dev/<branch>/``).
+    """
+    return f"s3://{schema_bucket}/{s3_prefix_for(selector)}/schema.json"
+
+
+def find_schema(artifacts_dir: Path) -> Path:
+    """Locate the bundled config schema among the downloaded artifacts.
+
+    ``build-container`` uploads ``config-schema.json`` once per build leg as
+    ``<image>-schema/config-schema.json``. The legs are byte-identical (the
+    schema does not vary by architecture), so any one is authoritative — we take
+    the first. Every build bundles it, so absence is a hard error (a
+    silently-unpublished schema would leave downstream tools unable to validate
+    against this build), mirroring the missing-SIF check in :func:`plan`.
+    """
+    matches = sorted(artifacts_dir.glob("*-schema/config-schema.json"))
+    if not matches:
+        raise ValueError("no config-schema.json artifact found among build artifacts")
+    return matches[0]
+
+
 def _run(cmd: list[str]) -> None:
     print("+ " + " ".join(cmd))
     subprocess.run(cmd, check=True)
@@ -121,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     region = os.environ["AWS_REGION"]
     ecr_repo = os.environ["ECR_REPOSITORY"]
     s3_bucket = os.environ["S3_CONTAINERS_BUCKET"]
+    schema_bucket = os.environ["S3_SCHEMAS_BUCKET"]
 
     account_id = subprocess.run(
         ["aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text"],
@@ -131,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         items = plan(Path(args.artifacts_dir), args.selector, registry, ecr_repo, s3_bucket)
+        # Resolve the schema up front too, so a missing one fails before any
+        # push rather than after the images are already live.
+        schema = find_schema(Path(args.artifacts_dir))
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -157,6 +186,14 @@ def main(argv: list[str] | None = None) -> int:
         _run(["aws", "s3", "cp", "--region", region, str(item.sif), item.s3_uri])
 
     print(f"Published {len(items)} image(s) for selector '{args.selector}'.")
+
+    # Publish the config schema (resolved above) alongside the images so
+    # downstream tools can fetch the exact contract this build was compiled
+    # from. One arch-independent object per selector.
+    schema_uri = schema_s3_uri(args.selector, schema_bucket)
+    print(f"Publishing schema {schema} -> {schema_uri}")
+    _run(["aws", "s3", "cp", "--region", region, str(schema), schema_uri])
+
     return 0
 
 
