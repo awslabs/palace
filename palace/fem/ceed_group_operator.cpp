@@ -21,6 +21,7 @@ void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
       PalaceCeedCall(group.ceed, CeedVectorDestroy(&field_vec));
     }
     group.field_vec_sources.clear();
+    group.field_vectors_detached = false;
     for (auto &mesh_nodes_vec : group.mesh_node_vecs)
     {
       if (mesh_nodes_vec)
@@ -81,8 +82,33 @@ void CacheGroupOperatorFieldVectors(const CeedGroupOperator &group)
   }
 }
 
+void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &groups)
+{
+  for (const auto &group : groups)
+  {
+    CacheGroupOperatorFieldVectors(group);
+    if (group.field_vec_sources.empty() || group.field_vectors_detached)
+    {
+      continue;
+    }
+    CeedMemType mem;
+    PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &mem));
+    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
+    {
+      mem = CEED_MEM_HOST;
+    }
+    for (auto &[field_vec, source] : group.field_vec_sources)
+    {
+      (void)source;
+      PalaceCeedCall(group.ceed, CeedVectorTakeArray(field_vec, mem, nullptr));
+    }
+    group.field_vectors_detached = true;
+  }
+}
+
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
-                            const std::array<const Vector *, 4> &srcs, const Vector &out)
+                            const std::array<const Vector *, 4> &srcs, const Vector &out,
+                            const Vector *imported)
 {
   if (groups.empty())
   {
@@ -115,11 +141,15 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
     }
     for (auto &[field_vec, source] : group.field_vec_sources)
     {
-      MFEM_ASSERT(source >= 0 && source < static_cast<int>(srcs.size()),
-                  "Invalid source index for libCEED field input!");
-      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
-      ceed::InitCeedVector(*srcs[source], group.ceed, &field_vec, false);
+      // Source index 4 selects an optional imported vector containing sampled
+      // face-neighbor field values. The operator's
+      // restriction slices and transposes the shared vector to the per-element layout.
+      const Vector *sv = (source < 4) ? srcs[source] : imported;
+      MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
+      ceed::InitCeedVector(*sv, group.ceed, &field_vec, false,
+                           !group.field_vectors_detached);
     }
+    group.field_vectors_detached = false;
     if (!group.out_vec || group.out_size != out_size)
     {
       if (group.out_vec)

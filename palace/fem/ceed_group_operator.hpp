@@ -33,6 +33,9 @@ struct CeedGroupOperator
   // Cached passive field vectors for field_sources, populated on first apply to avoid
   // repeated string lookups during pointwise libCEED operator application.
   mutable std::vector<std::pair<CeedVector, int>> field_vec_sources;
+  // True after construction storage has been detached from the cached vectors. The next
+  // apply sets arrays directly instead of first taking a nonexistent borrowed array.
+  mutable bool field_vectors_detached = false;
   // Reusable output vector wrapper. The pointed-to MFEM Vector data is supplied at
   // apply time, but the libCEED vector object itself can be retained across repeated
   // postprocessing evaluations instead of being created/destroyed for every group apply.
@@ -46,10 +49,18 @@ struct CeedGroupOperator
 // older call sites or any groups assembled without explicit caching.
 void CacheGroupOperatorFieldVectors(const CeedGroupOperator &group);
 
+// Detach borrowed arrays from cached passive field vectors before releasing their
+// construction storage. The next apply reattaches caller-owned arrays.
+void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &groups);
+
 // Re-point the passive field inputs of each group operator at the given source vectors
-// and accumulate into the output vector with CeedOperatorApplyAdd.
+// and accumulate into the output vector with CeedOperatorApplyAdd. A field source index
+// of 4 (out of the srcs range) selects the optional imported vector instead, used to
+// feed face-neighbor (ghost) field values exchanged for two-sided interior boundaries on
+// parallel interfaces.
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
-                            const std::array<const Vector *, 4> &srcs, const Vector &out);
+                            const std::array<const Vector *, 4> &srcs, const Vector &out,
+                            const Vector *imported = nullptr);
 
 // Destroy the libCEED references owned by a group-operator vector and clear it. The Ceed
 // context itself is borrowed and is not destroyed here.
