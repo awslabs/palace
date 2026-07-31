@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Routed ParaView and GridFunction output through device-backed point-field
+    evaluators while preserving field names, units, and layouts.
   - Added lazy ParaView VTU serialization for device-evaluated point and cell
     fields.
   - Added device-backed boundary point-field evaluators for field traces,
