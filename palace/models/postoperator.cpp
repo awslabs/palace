@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -32,6 +33,10 @@
 #include "utils/timer.hpp"
 
 #include <mfem/config/config.hpp>
+#if defined(MFEM_USE_CUDA)
+#include <cuda_profiler_api.h>
+#endif
+
 namespace palace
 {
 
@@ -66,6 +71,31 @@ void RequireCeedPointFieldEvaluator(const PointFieldEvaluator *eval,
 {
   MFEM_VERIFY(eval && eval->IsValid(), "libCEED postprocessing was expected for " + what +
                                            ", but PointFieldEvaluator could not assemble!");
+}
+
+bool UseCudaProfilerParaviewRange()
+{
+  return std::getenv("PALACE_PROFILE_PARAVIEW_RANGE") != nullptr;
+}
+
+void StartCudaProfilerParaviewRange()
+{
+#if defined(MFEM_USE_CUDA)
+  if (UseCudaProfilerParaviewRange())
+  {
+    cudaProfilerStart();
+  }
+#endif
+}
+
+void StopCudaProfilerParaviewRange()
+{
+#if defined(MFEM_USE_CUDA)
+  if (UseCudaProfilerParaviewRange())
+  {
+    cudaProfilerStop();
+  }
+#endif
 }
 
 std::string OutputFolderName(const ProblemType solver_t)
@@ -270,9 +300,6 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   RemovePreviousOutput(gridfunction_root, fem_op->GetComm());
   gridfunction_output_dir = (gridfunction_root / OutputFolderName(solver_t)).string();
 
-  SetupFieldCoefficients();
-  InitializeParaviewDataCollection();
-
   // Initialize CSV files for measurements.
   post_op_csv.InitializeCSVDataCollection(*this);
 }
@@ -308,6 +335,10 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   {
     return;
   }
+  MFEM_VERIFY(!field_coefficients_initialized,
+              "Field coefficients should only be initialized once!");
+  field_coefficients_initialized = true;
+
   // Initialize the (interpolatory L2) output spaces for the libCEED-evaluated
   // visualization fields. The order matches the ParaView output sampling lattice
   // (SetLevelsOfDetail below), preserving the existing VTU point layout.
@@ -614,9 +645,29 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::EnsureFieldCoefficientsSetup()
+{
+  if (!field_coefficients_initialized)
+  {
+    SetupFieldCoefficients();
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::EnsureParaviewDataCollection()
+{
+  EnsureFieldCoefficientsSetup();
+  if (ShouldWriteParaviewFields() && !paraview)
+  {
+    InitializeParaviewDataCollection();
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
     const fs::path &sub_folder_name)
 {
+  EnsureFieldCoefficientsSetup();
   if (!ShouldWriteParaviewFields())
   {
     return;
@@ -966,6 +1017,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
+  EnsureParaviewDataCollection();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -1003,8 +1055,10 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
+  StartCudaProfilerParaviewRange();
   paraview->Save();
   paraview_bdr->Save();
+  StopCudaProfilerParaviewRange();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
@@ -1027,6 +1081,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indicator)
 {
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
+  EnsureParaviewDataCollection();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -1077,7 +1132,9 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   {
     paraview->DeregisterDomainPointField(name);
   }
+  StartCudaProfilerParaviewRange();
   paraview->Save();
+  StopCudaProfilerParaviewRange();
   paraview->DeregisterDomainCellField("Rank");
   if (indicator)
   {
@@ -1103,6 +1160,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+  EnsureFieldCoefficientsSetup();
 
   // Create output directory if it doesn't exist (node-local filesystem aware).
   EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
@@ -1292,6 +1350,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+  EnsureFieldCoefficientsSetup();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
