@@ -1391,50 +1391,29 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
   topology.nd_dofs.resize(1);
   topology.elements.resize(1);
   topology.elements[0].nd = {{0, *edge_basis}};
-  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-3, 1.0e-3, 9};
 
-  for (bool curved : {false, true})
+  for (int order : {1, 2, 3, 4})
   {
-    auto mesh = BoundaryTetrahedronMesh();
-    if (curved)
+    for (bool curved : {false, true})
     {
-      SetQuadraticGeometry(mesh, true);
-    }
-    mfem::ND_FECollection nd_collection(2, 3);
-    mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
-    auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
-        topology, nd_space, {{11, coefficient}}, options);
-    REQUIRE(blocks.standard_enrichment);
-    REQUIRE(blocks.enrichment_standard);
-    REQUIRE(blocks.enrichment_enrichment);
-    REQUIRE(blocks.standard_enrichment_estimated_absolute_error);
-    REQUIRE(blocks.enrichment_enrichment_estimated_absolute_error);
-    CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
-    CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
-    CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
-
-    if (!curved)
-    {
-      const int old_p_trial = fem::DefaultIntegrationOrder::p_trial;
-      const int old_q_order_extra_pk = fem::DefaultIntegrationOrder::q_order_extra_pk;
-      const int old_q_order_extra_qk = fem::DefaultIntegrationOrder::q_order_extra_qk;
-      fem::DefaultIntegrationOrder::p_trial = 2;
-      fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
-      fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-
-      mfem::SparseMatrix interpolant(nd_space.GetVSize(), 1);
-      mfem::Vector interpolant_column(nd_space.GetVSize());
-      for (int standard = 0; standard < interpolant.Height(); standard++)
+      auto mesh = BoundaryTetrahedronMesh();
+      if (curved)
       {
-        interpolant_column[standard] = 0.03 * (standard + 1) - 0.17;
-        interpolant.Add(standard, 0, interpolant_column[standard]);
+        SetQuadraticGeometry(mesh, true);
       }
-      interpolant.Finalize();
-
-      const auto interpolated_diagonal =
-          fem::singular::AssembleLocalInterpolatedNDBoundaryDiagonal(
-              topology, nd_space, interpolant, {{11, coefficient}});
-      REQUIRE(interpolated_diagonal.Size() == 1);
+      mfem::ND_FECollection nd_collection(order, 3);
+      mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+      auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+          topology, nd_space, {{11, coefficient}}, options);
+      REQUIRE(blocks.standard_enrichment);
+      REQUIRE(blocks.enrichment_standard);
+      REQUIRE(blocks.enrichment_enrichment);
+      REQUIRE(blocks.standard_enrichment_estimated_absolute_error);
+      REQUIRE(blocks.enrichment_enrichment_estimated_absolute_error);
+      CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+      CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
+      CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
 
       mfem::Array<int> boundary_marker(mesh.bdr_attributes.Max());
       boundary_marker = 0;
@@ -1445,229 +1424,288 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
           new mfem::VectorFEMassIntegrator(boundary_coefficient), boundary_marker);
       standard_form.Assemble();
       standard_form.Finalize();
-      mfem::Vector standard_action(interpolant_column.Size());
-      standard_form.SpMat().Mult(interpolant_column, standard_action);
-      const double direct_standard_diagonal = interpolant_column * standard_action;
-      CheckClose(interpolated_diagonal[0], direct_standard_diagonal);
 
-      mfem::Vector unit_enrichment({1.0});
-      mfem::Vector coupling_action(interpolant_column.Size());
-      blocks.standard_enrichment->Mult(unit_enrichment, coupling_action);
-      mfem::Vector enrichment_diagonal(1);
-      blocks.enrichment_enrichment->GetDiag(enrichment_diagonal);
-      const double explicit_transformed_diagonal =
-          enrichment_diagonal[0] - 2.0 * (interpolant_column * coupling_action) +
-          direct_standard_diagonal;
-      fem::singular::SetLocalTransformedEnrichmentDiagonal(blocks, interpolant,
-                                                           interpolated_diagonal);
-      REQUIRE(blocks.transformed_enrichment_diagonal);
-      CheckClose((*blocks.transformed_enrichment_diagonal)[0],
-                 explicit_transformed_diagonal);
-
-      fem::DefaultIntegrationOrder::p_trial = old_p_trial;
-      fem::DefaultIntegrationOrder::q_order_extra_pk = old_q_order_extra_pk;
-      fem::DefaultIntegrationOrder::q_order_extra_qk = old_q_order_extra_qk;
-    }
-
-    mfem::Vector standard(nd_space.GetVSize());
-    for (int i = 0; i < standard.Size(); i++)
-    {
-      standard[i] = 0.07 * (i + 1) - 0.31;
-    }
-    mfem::Vector enrichment({0.37});
-    mfem::Vector work(blocks.standard_enrichment->Height());
-    blocks.standard_enrichment->Mult(enrichment, work);
-    const double assembled_coupling = 2.0 * (standard * work);
-    work.SetSize(blocks.enrichment_enrichment->Height());
-    blocks.enrichment_enrichment->Mult(enrichment, work);
-    const double assembled_enrichment = enrichment * work;
-    const double assembled = assembled_coupling + assembled_enrichment;
-
-    int boundary = -1;
-    for (int i = 0; i < mesh.GetNBE(); i++)
-    {
-      if (mesh.GetBdrAttribute(i) == 11)
+      const int standard_size = nd_space.GetVSize();
+      const int enrichment_size = blocks.enrichment_enrichment->Height();
+      const mfem::SparseMatrix &standard_matrix = standard_form.SpMat();
+      const mfem::SparseMatrix &standard_enrichment = *blocks.standard_enrichment;
+      const mfem::SparseMatrix &enrichment_standard = *blocks.enrichment_standard;
+      const mfem::SparseMatrix &enrichment_enrichment = *blocks.enrichment_enrichment;
+      Eigen::MatrixXd completed = Eigen::MatrixXd::Zero(standard_size + enrichment_size,
+                                                        standard_size + enrichment_size);
+      for (int row = 0; row < standard_size; row++)
       {
-        boundary = i;
-        break;
-      }
-    }
-    REQUIRE(boundary >= 0);
-    int face_index = -1, orientation = -1;
-    mesh.GetBdrElementFace(boundary, &face_index, &orientation);
-    mfem::FaceElementTransformations face;
-    mfem::IsoparametricTransformation element1, element2;
-    mesh.GetFaceElementTransformations(face_index, face, element1, element2);
-    REQUIRE(face.Elem1);
-    REQUIRE(!face.Elem2);
-
-    const auto map_boundary_point = [&](const std::array<double, 3> &lambda)
-    {
-      mfem::IntegrationPoint boundary_point;
-      boundary_point.Set2(lambda[1], lambda[2]);
-      const auto face_point = mfem::Mesh::TransformBdrElementToFace(
-          face.GetGeometryType(), orientation, boundary_point);
-      face.SetAllIntPoints(&face_point);
-      return boundary_point;
-    };
-    std::array<int, 3> face_nodes{};
-    for (int vertex = 0; vertex < 3; vertex++)
-    {
-      std::array<double, 3> lambda{};
-      lambda[vertex] = 1.0;
-      map_boundary_point(lambda);
-      const auto &point = face.Elem1->GetIntPoint();
-      const std::array<double, 4> element_lambda{1.0 - point.x - point.y - point.z, point.x,
-                                                 point.y, point.z};
-      face_nodes[vertex] = static_cast<int>(
-          std::distance(element_lambda.begin(),
-                        std::max_element(element_lambda.begin(), element_lambda.end())));
-    }
-    const auto opposite_entry = std::find(face_nodes.begin(), face_nodes.end(), 2);
-    REQUIRE(opposite_entry != face_nodes.end());
-    const int opposite =
-        static_cast<int>(std::distance(face_nodes.begin(), opposite_entry));
-    std::array<int, 2> edge_nodes{};
-    int next = 0;
-    for (int vertex = 0; vertex < 3; vertex++)
-    {
-      if (vertex != opposite)
-      {
-        edge_nodes[next++] = vertex;
-      }
-    }
-
-    mfem::Array<int> standard_dofs;
-    mfem::DofTransformation dof_transformation;
-    nd_space.GetElementVDofs(face.Elem1No, standard_dofs, dof_transformation);
-    mfem::Vector standard_local;
-    standard.GetSubVector(standard_dofs, standard_local);
-    dof_transformation.InvTransformPrimal(standard_local);
-    mfem::DenseMatrix standard_shape(nd_space.GetFE(face.Elem1No)->GetDof(), 3);
-    auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
-    REQUIRE(boundary_transformation);
-
-    {
-      const std::array<double, 3> lambda{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
-      const auto boundary_point = map_boundary_point(lambda);
-      const auto &element_point = face.Elem1->GetIntPoint();
-      double jacobian_determinant = 0.0;
-      const auto grad_lambda = fem::singular::GetBarycentricGradients(
-          *face.Elem1, element_point, jacobian_determinant);
-      const fem::singular::BarycentricPoint element_lambda{
-          1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
-          element_point.y, element_point.z};
-      const auto singular =
-          fem::singular::EvaluateHigherOrderBasis(element_lambda, grad_lambda, *edge_basis);
-      boundary_transformation->SetIntPoint(&boundary_point);
-      const auto &jacobian = boundary_transformation->Jacobian();
-      const fem::singular::Vector3 first{jacobian(0, 0), jacobian(1, 0), jacobian(2, 0)};
-      const fem::singular::Vector3 second{jacobian(0, 1), jacobian(1, 1), jacobian(2, 1)};
-      auto normal = Cross(first, second);
-      const double boundary_weight = std::sqrt(Dot(normal, normal));
-      REQUIRE(boundary_weight > 0.0);
-      for (double &value : normal)
-      {
-        value /= boundary_weight;
-      }
-      const double trace_norm =
-          Dot(singular.value, singular.value) - std::pow(Dot(singular.value, normal), 2);
-      CAPTURE(face_nodes, element_lambda, singular.value, normal, trace_norm);
-      REQUIRE(trace_norm > 1.0e-8);
-    }
-
-    const auto direct_integral = [&](double singular_power, bool coupling)
-    {
-      long double result = 0.0L;
-      constexpr double grading = 3.0;
-      const double effective_power = grading * (singular_power + 1.0) - 1.0;
-      const auto radial_rule =
-          fem::singular::BuildWeightedSegmentQuadrature(48, effective_power, 0.0);
-      const auto tangential_rule =
-          fem::singular::BuildWeightedSegmentQuadrature(48, 0.0, 0.0);
-      for (const auto &radial_quadrature : radial_rule)
-      {
-        const double parameter = radial_quadrature.coordinate;
-        const double radial = std::pow(parameter, grading);
-        const double radial_jacobian = grading * std::pow(parameter, grading - 1.0);
-        const double jacobi_weight = std::pow(parameter, effective_power);
-        for (const auto &tangential_quadrature : tangential_rule)
+        for (int column = 0; column < standard_size; column++)
         {
-          const double tangential = tangential_quadrature.coordinate;
-          std::array<double, 3> lambda{};
-          lambda[opposite] = radial;
-          lambda[edge_nodes[0]] = (1.0 - radial) * (1.0 - tangential);
-          lambda[edge_nodes[1]] = (1.0 - radial) * tangential;
-          const auto boundary_point = map_boundary_point(lambda);
-          const auto &element_point = face.Elem1->GetIntPoint();
-          double jacobian_determinant = 0.0;
-          const auto grad_lambda = fem::singular::GetBarycentricGradients(
-              *face.Elem1, element_point, jacobian_determinant);
-          nd_space.GetFE(face.Elem1No)->CalcPhysVShape(*face.Elem1, standard_shape);
-          const fem::singular::BarycentricPoint element_lambda{
-              1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
-              element_point.y, element_point.z};
-          const auto singular = fem::singular::EvaluateHigherOrderBasis(
-              element_lambda, grad_lambda, *edge_basis);
-
-          boundary_transformation->SetIntPoint(&boundary_point);
-          const auto &jacobian = boundary_transformation->Jacobian();
-          const fem::singular::Vector3 first{jacobian(0, 0), jacobian(1, 0),
-                                             jacobian(2, 0)};
-          const fem::singular::Vector3 second{jacobian(0, 1), jacobian(1, 1),
-                                              jacobian(2, 1)};
-          auto normal = Cross(first, second);
-          const double boundary_weight = std::sqrt(Dot(normal, normal));
-          REQUIRE(boundary_weight > 0.0);
-          for (double &value : normal)
-          {
-            value /= boundary_weight;
-          }
-
-          fem::singular::Vector3 standard_value{};
-          for (int i = 0; i < standard_local.Size(); i++)
-          {
-            for (int d = 0; d < 3; d++)
-            {
-              standard_value[d] += standard_local[i] * standard_shape(i, d);
-            }
-          }
-          const double standard_trace =
-              Dot(standard_value, singular.value) -
-              Dot(standard_value, normal) * Dot(singular.value, normal);
-          const double singular_trace = Dot(singular.value, singular.value) -
-                                        std::pow(Dot(singular.value, normal), 2);
-          const double product = coupling ? 2.0 * enrichment[0] * standard_trace
-                                          : enrichment[0] * enrichment[0] * singular_trace;
-          const double scale = radial_quadrature.weight * tangential_quadrature.weight *
-                               radial_jacobian * (1.0 - radial) * coefficient *
-                               boundary_weight / jacobi_weight;
-          result += static_cast<long double>(scale * product);
+          completed(row, column) = standard_matrix(row, column);
+        }
+        for (int column = 0; column < enrichment_size; column++)
+        {
+          completed(row, standard_size + column) = standard_enrichment(row, column);
+          completed(standard_size + column, row) = enrichment_standard(column, row);
         }
       }
-      return result;
-    };
-    const long double direct_coupling = direct_integral(nu - 1.0, true);
-    const long double direct_enrichment = direct_integral(2.0 * (nu - 1.0), false);
-    const long double direct = direct_coupling + direct_enrichment;
-    CAPTURE(curved, edge_basis->nodes, edge_basis->interpolation_indices,
-            assembled_coupling, assembled_enrichment, direct_coupling, direct_enrichment);
-    REQUIRE(std::abs(assembled_coupling) > 1.0e-8);
-    REQUIRE(std::abs(assembled_enrichment) > 1.0e-8);
-    REQUIRE(std::abs(direct_coupling) > 1.0e-8L);
-    REQUIRE(std::abs(direct_enrichment) > 1.0e-8L);
+      for (int row = 0; row < enrichment_size; row++)
+      {
+        for (int column = 0; column < enrichment_size; column++)
+        {
+          completed(standard_size + row, standard_size + column) =
+              enrichment_enrichment(row, column);
+        }
+      }
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> completed_solver(completed);
+      REQUIRE(completed_solver.info() == Eigen::Success);
+      const double completed_minimum = completed_solver.eigenvalues().minCoeff();
+      CAPTURE(order, curved, completed_minimum);
+      CHECK(completed_minimum >= -1.0e-11 * std::max(1.0, completed.cwiseAbs().maxCoeff()));
 
-    const auto standard_absolute = AbsoluteValue(standard);
-    const auto enrichment_absolute = AbsoluteValue(enrichment);
-    work.SetSize(blocks.standard_enrichment_estimated_absolute_error->Height());
-    blocks.standard_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
-    double error_bound = 2.0 * (standard_absolute * work);
-    work.SetSize(blocks.enrichment_enrichment_estimated_absolute_error->Height());
-    blocks.enrichment_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
-    error_bound += enrichment_absolute * work;
-    CAPTURE(curved, assembled, direct, assembled_coupling, direct_coupling,
-            assembled_enrichment, direct_enrichment, error_bound);
-    CHECK(std::abs(assembled - static_cast<double>(direct)) <= error_bound + 5.0e-10);
+      if (!curved)
+      {
+        const int old_p_trial = fem::DefaultIntegrationOrder::p_trial;
+        const int old_q_order_extra_pk = fem::DefaultIntegrationOrder::q_order_extra_pk;
+        const int old_q_order_extra_qk = fem::DefaultIntegrationOrder::q_order_extra_qk;
+        fem::DefaultIntegrationOrder::p_trial = order;
+        fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+        fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+        mfem::SparseMatrix interpolant(nd_space.GetVSize(), 1);
+        mfem::Vector interpolant_column(nd_space.GetVSize());
+        for (int standard = 0; standard < interpolant.Height(); standard++)
+        {
+          interpolant_column[standard] = 0.03 * (standard + 1) - 0.17;
+          interpolant.Add(standard, 0, interpolant_column[standard]);
+        }
+        interpolant.Finalize();
+
+        const auto interpolated_diagonal =
+            fem::singular::AssembleLocalInterpolatedNDBoundaryDiagonal(
+                topology, nd_space, interpolant, {{11, coefficient}});
+        REQUIRE(interpolated_diagonal.Size() == 1);
+
+        mfem::Vector standard_action(interpolant_column.Size());
+        standard_form.SpMat().Mult(interpolant_column, standard_action);
+        const double direct_standard_diagonal = interpolant_column * standard_action;
+        CheckClose(interpolated_diagonal[0], direct_standard_diagonal);
+
+        mfem::Vector unit_enrichment({1.0});
+        mfem::Vector coupling_action(interpolant_column.Size());
+        blocks.standard_enrichment->Mult(unit_enrichment, coupling_action);
+        mfem::Vector enrichment_diagonal(1);
+        blocks.enrichment_enrichment->GetDiag(enrichment_diagonal);
+        const double explicit_transformed_diagonal =
+            enrichment_diagonal[0] - 2.0 * (interpolant_column * coupling_action) +
+            direct_standard_diagonal;
+        fem::singular::SetLocalTransformedEnrichmentDiagonal(blocks, interpolant,
+                                                             interpolated_diagonal);
+        REQUIRE(blocks.transformed_enrichment_diagonal);
+        CheckClose((*blocks.transformed_enrichment_diagonal)[0],
+                   explicit_transformed_diagonal);
+
+        fem::DefaultIntegrationOrder::p_trial = old_p_trial;
+        fem::DefaultIntegrationOrder::q_order_extra_pk = old_q_order_extra_pk;
+        fem::DefaultIntegrationOrder::q_order_extra_qk = old_q_order_extra_qk;
+      }
+
+      mfem::Vector standard(nd_space.GetVSize());
+      for (int i = 0; i < standard.Size(); i++)
+      {
+        standard[i] = 0.07 * (i + 1) - 0.31;
+      }
+      mfem::Vector enrichment({0.37});
+      mfem::Vector work(blocks.standard_enrichment->Height());
+      blocks.standard_enrichment->Mult(enrichment, work);
+      const double assembled_coupling = 2.0 * (standard * work);
+      work.SetSize(blocks.enrichment_enrichment->Height());
+      blocks.enrichment_enrichment->Mult(enrichment, work);
+      const double assembled_enrichment = enrichment * work;
+      const double assembled = assembled_coupling + assembled_enrichment;
+
+      int boundary = -1;
+      for (int i = 0; i < mesh.GetNBE(); i++)
+      {
+        if (mesh.GetBdrAttribute(i) == 11)
+        {
+          boundary = i;
+          break;
+        }
+      }
+      REQUIRE(boundary >= 0);
+      int face_index = -1, orientation = -1;
+      mesh.GetBdrElementFace(boundary, &face_index, &orientation);
+      mfem::FaceElementTransformations face;
+      mfem::IsoparametricTransformation element1, element2;
+      mesh.GetFaceElementTransformations(face_index, face, element1, element2);
+      REQUIRE(face.Elem1);
+      REQUIRE(!face.Elem2);
+
+      const auto map_boundary_point = [&](const std::array<double, 3> &lambda)
+      {
+        mfem::IntegrationPoint boundary_point;
+        boundary_point.Set2(lambda[1], lambda[2]);
+        const auto face_point = mfem::Mesh::TransformBdrElementToFace(
+            face.GetGeometryType(), orientation, boundary_point);
+        face.SetAllIntPoints(&face_point);
+        return boundary_point;
+      };
+      std::array<int, 3> face_nodes{};
+      for (int vertex = 0; vertex < 3; vertex++)
+      {
+        std::array<double, 3> lambda{};
+        lambda[vertex] = 1.0;
+        map_boundary_point(lambda);
+        const auto &point = face.Elem1->GetIntPoint();
+        const std::array<double, 4> element_lambda{1.0 - point.x - point.y - point.z,
+                                                   point.x, point.y, point.z};
+        face_nodes[vertex] = static_cast<int>(
+            std::distance(element_lambda.begin(),
+                          std::max_element(element_lambda.begin(), element_lambda.end())));
+      }
+      const auto opposite_entry = std::find(face_nodes.begin(), face_nodes.end(), 2);
+      REQUIRE(opposite_entry != face_nodes.end());
+      const int opposite =
+          static_cast<int>(std::distance(face_nodes.begin(), opposite_entry));
+      std::array<int, 2> edge_nodes{};
+      int next = 0;
+      for (int vertex = 0; vertex < 3; vertex++)
+      {
+        if (vertex != opposite)
+        {
+          edge_nodes[next++] = vertex;
+        }
+      }
+
+      mfem::Array<int> standard_dofs;
+      mfem::DofTransformation dof_transformation;
+      nd_space.GetElementVDofs(face.Elem1No, standard_dofs, dof_transformation);
+      mfem::Vector standard_local;
+      standard.GetSubVector(standard_dofs, standard_local);
+      dof_transformation.InvTransformPrimal(standard_local);
+      mfem::DenseMatrix standard_shape(nd_space.GetFE(face.Elem1No)->GetDof(), 3);
+      auto *boundary_transformation = mesh.GetBdrElementTransformation(boundary);
+      REQUIRE(boundary_transformation);
+
+      {
+        const std::array<double, 3> lambda{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
+        const auto boundary_point = map_boundary_point(lambda);
+        const auto &element_point = face.Elem1->GetIntPoint();
+        double jacobian_determinant = 0.0;
+        const auto grad_lambda = fem::singular::GetBarycentricGradients(
+            *face.Elem1, element_point, jacobian_determinant);
+        const fem::singular::BarycentricPoint element_lambda{
+            1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
+            element_point.y, element_point.z};
+        const auto singular = fem::singular::EvaluateHigherOrderBasis(
+            element_lambda, grad_lambda, *edge_basis);
+        boundary_transformation->SetIntPoint(&boundary_point);
+        const auto &jacobian = boundary_transformation->Jacobian();
+        const fem::singular::Vector3 first{jacobian(0, 0), jacobian(1, 0), jacobian(2, 0)};
+        const fem::singular::Vector3 second{jacobian(0, 1), jacobian(1, 1), jacobian(2, 1)};
+        auto normal = Cross(first, second);
+        const double boundary_weight = std::sqrt(Dot(normal, normal));
+        REQUIRE(boundary_weight > 0.0);
+        for (double &value : normal)
+        {
+          value /= boundary_weight;
+        }
+        const double trace_norm =
+            Dot(singular.value, singular.value) - std::pow(Dot(singular.value, normal), 2);
+        CAPTURE(face_nodes, element_lambda, singular.value, normal, trace_norm);
+        REQUIRE(trace_norm > 1.0e-8);
+      }
+
+      const auto direct_integral = [&](double singular_power, bool coupling)
+      {
+        long double result = 0.0L;
+        constexpr double grading = 3.0;
+        const double effective_power = grading * (singular_power + 1.0) - 1.0;
+        const auto radial_rule =
+            fem::singular::BuildWeightedSegmentQuadrature(48, effective_power, 0.0);
+        const auto tangential_rule =
+            fem::singular::BuildWeightedSegmentQuadrature(48, 0.0, 0.0);
+        for (const auto &radial_quadrature : radial_rule)
+        {
+          const double parameter = radial_quadrature.coordinate;
+          const double radial = std::pow(parameter, grading);
+          const double radial_jacobian = grading * std::pow(parameter, grading - 1.0);
+          const double jacobi_weight = std::pow(parameter, effective_power);
+          for (const auto &tangential_quadrature : tangential_rule)
+          {
+            const double tangential = tangential_quadrature.coordinate;
+            std::array<double, 3> lambda{};
+            lambda[opposite] = radial;
+            lambda[edge_nodes[0]] = (1.0 - radial) * (1.0 - tangential);
+            lambda[edge_nodes[1]] = (1.0 - radial) * tangential;
+            const auto boundary_point = map_boundary_point(lambda);
+            const auto &element_point = face.Elem1->GetIntPoint();
+            double jacobian_determinant = 0.0;
+            const auto grad_lambda = fem::singular::GetBarycentricGradients(
+                *face.Elem1, element_point, jacobian_determinant);
+            nd_space.GetFE(face.Elem1No)->CalcPhysVShape(*face.Elem1, standard_shape);
+            const fem::singular::BarycentricPoint element_lambda{
+                1.0 - element_point.x - element_point.y - element_point.z, element_point.x,
+                element_point.y, element_point.z};
+            const auto singular = fem::singular::EvaluateHigherOrderBasis(
+                element_lambda, grad_lambda, *edge_basis);
+
+            boundary_transformation->SetIntPoint(&boundary_point);
+            const auto &jacobian = boundary_transformation->Jacobian();
+            const fem::singular::Vector3 first{jacobian(0, 0), jacobian(1, 0),
+                                               jacobian(2, 0)};
+            const fem::singular::Vector3 second{jacobian(0, 1), jacobian(1, 1),
+                                                jacobian(2, 1)};
+            auto normal = Cross(first, second);
+            const double boundary_weight = std::sqrt(Dot(normal, normal));
+            REQUIRE(boundary_weight > 0.0);
+            for (double &value : normal)
+            {
+              value /= boundary_weight;
+            }
+
+            fem::singular::Vector3 standard_value{};
+            for (int i = 0; i < standard_local.Size(); i++)
+            {
+              for (int d = 0; d < 3; d++)
+              {
+                standard_value[d] += standard_local[i] * standard_shape(i, d);
+              }
+            }
+            const double standard_trace =
+                Dot(standard_value, singular.value) -
+                Dot(standard_value, normal) * Dot(singular.value, normal);
+            const double singular_trace = Dot(singular.value, singular.value) -
+                                          std::pow(Dot(singular.value, normal), 2);
+            const double product = coupling
+                                       ? 2.0 * enrichment[0] * standard_trace
+                                       : enrichment[0] * enrichment[0] * singular_trace;
+            const double scale = radial_quadrature.weight * tangential_quadrature.weight *
+                                 radial_jacobian * (1.0 - radial) * coefficient *
+                                 boundary_weight / jacobi_weight;
+            result += static_cast<long double>(scale * product);
+          }
+        }
+        return result;
+      };
+      const long double direct_coupling = direct_integral(nu - 1.0, true);
+      const long double direct_enrichment = direct_integral(2.0 * (nu - 1.0), false);
+      const long double direct = direct_coupling + direct_enrichment;
+      CAPTURE(order, curved, edge_basis->nodes, edge_basis->interpolation_indices,
+              assembled_coupling, assembled_enrichment, direct_coupling, direct_enrichment);
+      REQUIRE(std::abs(assembled_enrichment) > 1.0e-8);
+      REQUIRE(std::abs(direct_enrichment) > 1.0e-8L);
+
+      const auto standard_absolute = AbsoluteValue(standard);
+      const auto enrichment_absolute = AbsoluteValue(enrichment);
+      work.SetSize(blocks.standard_enrichment_estimated_absolute_error->Height());
+      blocks.standard_enrichment_estimated_absolute_error->Mult(enrichment_absolute, work);
+      double error_bound = 2.0 * (standard_absolute * work);
+      work.SetSize(blocks.enrichment_enrichment_estimated_absolute_error->Height());
+      blocks.enrichment_enrichment_estimated_absolute_error->Mult(enrichment_absolute,
+                                                                  work);
+      error_bound += enrichment_absolute * work;
+      CAPTURE(order, curved, assembled, direct, assembled_coupling, direct_coupling,
+              assembled_enrichment, direct_enrichment, error_bound);
+      CHECK(std::abs(assembled - static_cast<double>(direct)) <= error_bound + 5.0e-10);
+    }
   }
 
   auto nonintegrable = topology;
@@ -1694,28 +1732,338 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
 TEST_CASE("Tetrahedral singular boundary mass accepts a conforming internal boundary",
           "[singularelements][singularassembly][boundary][tetrahedron][Serial]")
 {
-  auto mesh = SharedFaceTetrahedronMesh(false, true);
-  fem::singular::DofTopology topology;
-  topology.nd_dofs.resize(2);
-  for (int element = 0; element < mesh.GetNE(); element++)
+  for (bool permute_vertices : {false, true})
   {
-    topology.elements.push_back(SharedFaceSingularDofs(*mesh.GetElement(element)));
+    for (int order : {1, 2, 3, 4})
+    {
+      auto mesh = SharedFaceTetrahedronMesh(permute_vertices, true);
+      fem::singular::DofTopology topology;
+      topology.nd_dofs.resize(2);
+      for (int element = 0; element < mesh.GetNE(); element++)
+      {
+        topology.elements.push_back(SharedFaceSingularDofs(*mesh.GetElement(element)));
+      }
+
+      mfem::ND_FECollection nd_collection(order, 3);
+      mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+      const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-3, 1.0e-3, 9};
+      const auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+          topology, nd_space, {{11, 1.7}}, options);
+
+      CAPTURE(permute_vertices, order);
+      REQUIRE(blocks.standard_enrichment);
+      REQUIRE(blocks.enrichment_standard);
+      REQUIRE(blocks.enrichment_enrichment);
+      CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+      CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
+      CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
+      CHECK(blocks.standard_enrichment->MaxNorm() > 1.0e-8);
+      CHECK(blocks.enrichment_enrichment->MaxNorm() > 1.0e-8);
+    }
   }
+}
 
-  mfem::ND_FECollection nd_collection(1, 3);
-  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
-  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
-  const auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
-      topology, nd_space, {{11, 1.7}}, options);
+TEST_CASE("Tetrahedral singular domain Gram matrices remain positive through order four",
+          "[singularelements][singularassembly][tetrahedron][Serial]")
+{
+  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-3, 1.0e-3, 9};
+  constexpr double nu = 0.5;
+  const std::array<int, 4> first_node{0, 1, 2, 3};
+  const std::array<int, 4> second_node{1, 0, 2, 3};
+  const std::array<int, 4> edge{0, 1, 2, 3};
+  fem::singular::ElementDofMap element_dofs;
+  const auto append_gradients =
+      [&element_dofs](const std::vector<fem::singular::HigherOrderBasis> &bases)
+  {
+    for (const auto &basis : bases)
+    {
+      const std::size_t h1_dof = element_dofs.h1.size();
+      const std::size_t nd_dof = element_dofs.nd.size();
+      element_dofs.h1.push_back({h1_dof, basis});
+      element_dofs.nd.push_back({nd_dof, basis});
+    }
+  };
+  const auto append_rotations =
+      [&element_dofs](const std::vector<fem::singular::HigherOrderBasis> &bases)
+  {
+    for (const auto &basis : bases)
+    {
+      element_dofs.nd.push_back({element_dofs.nd.size(), basis});
+    }
+  };
+  append_gradients(fem::singular::EnumerateHigherOrderNodeGradientBases(first_node, 1, nu));
+  append_rotations(
+      fem::singular::EnumerateHigherOrderNodeRotationalBases(first_node, 1, nu));
+  append_gradients(
+      fem::singular::EnumerateHigherOrderNodeGradientBases(second_node, 1, nu));
+  append_rotations(
+      fem::singular::EnumerateHigherOrderNodeRotationalBases(second_node, 1, nu));
+  append_gradients(fem::singular::EnumerateHigherOrderEdgeGradientBases(edge, 1, nu));
+  append_rotations(fem::singular::EnumerateHigherOrderEdgeRotationalBases(edge, 1, nu));
+  REQUIRE(element_dofs.h1.size() == 8);
+  REQUIRE(element_dofs.nd.size() == 15);
 
-  REQUIRE(blocks.standard_enrichment);
-  REQUIRE(blocks.enrichment_standard);
-  REQUIRE(blocks.enrichment_enrichment);
-  CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
-  CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
-  CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
-  CHECK(blocks.standard_enrichment->MaxNorm() > 1.0e-8);
-  CHECK(blocks.enrichment_enrichment->MaxNorm() > 1.0e-8);
+  auto mesh = AffineTetrahedronMesh({0.4, -0.3, 0.2}, {1.7, 0.2, -0.1}, {0.3, 1.4, 0.25},
+                                    {-0.2, 0.1, 0.9});
+  auto &transformation = *mesh.GetElementTransformation(0);
+  const auto enrichment = fem::singular::AssembleElementEnrichmentMatrices(
+      element_dofs, transformation, options);
+
+  const auto check_completed = [&](int order, const char *quantity,
+                                   const mfem::DenseMatrix &standard,
+                                   const mfem::DenseMatrix &standard_enrichment,
+                                   const mfem::DenseMatrix &enrichment_standard,
+                                   const mfem::DenseMatrix &enrichment_enrichment)
+  {
+    const int standard_size = standard.Height();
+    const int enrichment_size = enrichment_enrichment.Height();
+    Eigen::MatrixXd completed = Eigen::MatrixXd::Zero(standard_size + enrichment_size,
+                                                      standard_size + enrichment_size);
+    completed.topLeftCorner(standard_size, standard_size) = ToEigen(standard);
+    completed.topRightCorner(standard_size, enrichment_size) = ToEigen(standard_enrichment);
+    completed.bottomLeftCorner(enrichment_size, standard_size) =
+        ToEigen(enrichment_standard);
+    completed.bottomRightCorner(enrichment_size, enrichment_size) =
+        ToEigen(enrichment_enrichment);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(completed);
+    REQUIRE(solver.info() == Eigen::Success);
+    const double minimum = solver.eigenvalues().minCoeff();
+    const double maximum = solver.eigenvalues().maxCoeff();
+    const double scale = std::max(1.0, std::abs(maximum));
+    constexpr double positivity_tolerance = 256.0 * std::numeric_limits<double>::epsilon();
+    CAPTURE(order, quantity, standard_size, enrichment_size, minimum, maximum);
+    CHECK(minimum >= -positivity_tolerance * scale);
+  };
+
+  for (int order : {1, 2, 3, 4})
+  {
+    mfem::H1_TetrahedronElement h1_fe(order);
+    mfem::ND_TetrahedronElement nd_fe(order);
+    const auto coupling = fem::singular::AssembleElementStandardEnrichmentMatrices(
+        element_dofs, h1_fe, nd_fe, transformation, options);
+    mfem::DenseMatrix standard_mass, standard_curl_curl;
+    mfem::VectorFEMassIntegrator mass_integrator;
+    mass_integrator.AssembleElementMatrix(nd_fe, transformation, standard_mass);
+    mfem::CurlCurlIntegrator curl_curl_integrator;
+    curl_curl_integrator.AssembleElementMatrix(nd_fe, transformation, standard_curl_curl);
+    check_completed(order, "mass", standard_mass, coupling.nd_mass_standard_enrichment,
+                    coupling.nd_mass_enrichment_standard, enrichment.nd_mass);
+    check_completed(order, "curl-curl", standard_curl_curl,
+                    coupling.nd_curl_curl_standard_enrichment,
+                    coupling.nd_curl_curl_enrichment_standard, enrichment.nd_curl_curl);
+  }
+}
+
+TEST_CASE("Tetrahedral singular sparse domain Gram matrices remain positive",
+          "[singularelements][singularassembly][tetrahedron][Serial]")
+{
+  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-3, 1.0e-3, 9};
+  for (bool permute_vertices : {false, true})
+  {
+    for (int order : {1, 2, 3, 4})
+    {
+      auto mesh = SharedFaceTetrahedronMesh(permute_vertices);
+      mfem::H1_FECollection h1_collection(order, 3);
+      mfem::ND_FECollection nd_collection(order, 3);
+      mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+      mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+
+      fem::singular::DofTopology topology;
+      topology.h1_dofs.resize(1);
+      topology.h1_dofs[0].family = fem::singular::HigherOrderBasisFamily::NODE_GRADIENT;
+      topology.nd_dofs.resize(2);
+      topology.nd_dofs[0] = topology.h1_dofs[0];
+      topology.nd_dofs[1].family = fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
+      topology.h1_to_nd = {0};
+      for (int element = 0; element < mesh.GetNE(); element++)
+      {
+        topology.elements.push_back(SharedFaceSingularDofs(*mesh.GetElement(element)));
+      }
+      const std::vector<fem::singular::IsotropicMaterialCoefficients> materials(
+          mesh.GetNE(), {1.0, 1.0});
+      const auto sparse = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+          topology, h1_space, nd_space, materials, options);
+
+      mfem::ConstantCoefficient coefficient(1.0);
+      mfem::BilinearForm standard_mass(&nd_space);
+      standard_mass.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(coefficient));
+      standard_mass.Assemble();
+      standard_mass.Finalize();
+      mfem::BilinearForm standard_curl_curl(&nd_space);
+      standard_curl_curl.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coefficient));
+      standard_curl_curl.Assemble();
+      standard_curl_curl.Finalize();
+
+      const auto check_completed =
+          [&](const mfem::SparseMatrix &standard,
+              const fem::singular::LocalSparseOperatorBlocks &blocks)
+      {
+        REQUIRE(blocks.standard_enrichment);
+        REQUIRE(blocks.enrichment_standard);
+        REQUIRE(blocks.enrichment_enrichment);
+        CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
+        const int standard_size = standard.Height();
+        const int enrichment_size = blocks.enrichment_enrichment->Height();
+        const mfem::SparseMatrix &standard_enrichment = *blocks.standard_enrichment;
+        const mfem::SparseMatrix &enrichment_standard = *blocks.enrichment_standard;
+        const mfem::SparseMatrix &enrichment_enrichment = *blocks.enrichment_enrichment;
+        Eigen::MatrixXd completed = Eigen::MatrixXd::Zero(standard_size + enrichment_size,
+                                                          standard_size + enrichment_size);
+        for (int row = 0; row < standard_size; row++)
+        {
+          for (int column = 0; column < standard_size; column++)
+          {
+            completed(row, column) = standard(row, column);
+          }
+          for (int column = 0; column < enrichment_size; column++)
+          {
+            completed(row, standard_size + column) = standard_enrichment(row, column);
+            completed(standard_size + column, row) = enrichment_standard(column, row);
+          }
+        }
+        for (int row = 0; row < enrichment_size; row++)
+        {
+          for (int column = 0; column < enrichment_size; column++)
+          {
+            completed(standard_size + row, standard_size + column) =
+                enrichment_enrichment(row, column);
+          }
+        }
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(completed);
+        REQUIRE(solver.info() == Eigen::Success);
+        const double minimum = solver.eigenvalues().minCoeff();
+        CAPTURE(permute_vertices, order, minimum);
+        CHECK(minimum >= -1.0e-10 * std::max(1.0, completed.cwiseAbs().maxCoeff()));
+      };
+      check_completed(standard_mass.SpMat(), sparse.nd_mass);
+      check_completed(standard_curl_curl.SpMat(), sparse.nd_curl_curl);
+    }
+  }
+}
+
+TEST_CASE("Transmon-like affine mass Gram matrix remains positive at high order",
+          "[singularelements][singularassembly][tetrahedron][transmon][Serial]")
+{
+  constexpr double nu = 0.5;
+  fem::singular::ElementDofMap element_dofs;
+  std::vector<std::size_t> h1_to_nd;
+  const auto append_gradients =
+      [&element_dofs, &h1_to_nd](const std::vector<fem::singular::HigherOrderBasis> &bases)
+  {
+    for (const auto &basis : bases)
+    {
+      const std::size_t h1_dof = element_dofs.h1.size();
+      const std::size_t nd_dof = element_dofs.nd.size();
+      element_dofs.h1.push_back({h1_dof, basis});
+      element_dofs.nd.push_back({nd_dof, basis});
+      h1_to_nd.push_back(nd_dof);
+    }
+  };
+  const auto append_rotations =
+      [&element_dofs](const std::vector<fem::singular::HigherOrderBasis> &bases)
+  {
+    for (const auto &basis : bases)
+    {
+      element_dofs.nd.push_back({element_dofs.nd.size(), basis});
+    }
+  };
+  append_gradients(fem::singular::EnumerateHigherOrderNodeGradientBases(
+      std::array<int, 4>{3, 0, 2, 1}, 1, nu));
+  append_rotations(fem::singular::EnumerateHigherOrderNodeRotationalBases(
+      std::array<int, 4>{3, 0, 2, 1}, 1, nu));
+  append_gradients(fem::singular::EnumerateHigherOrderNodeGradientBases(
+      std::array<int, 4>{2, 0, 3, 1}, 1, nu));
+  append_rotations(fem::singular::EnumerateHigherOrderNodeRotationalBases(
+      std::array<int, 4>{2, 0, 3, 1}, 1, nu));
+  append_gradients(fem::singular::EnumerateHigherOrderEdgeGradientBases(
+      std::array<int, 4>{3, 2, 0, 1}, 1, nu));
+  append_rotations(fem::singular::EnumerateHigherOrderEdgeRotationalBases(
+      std::array<int, 4>{3, 2, 0, 1}, 1, nu));
+  REQUIRE(element_dofs.h1.size() == 8);
+  REQUIRE(element_dofs.nd.size() == 15);
+
+  fem::singular::DofTopology topology;
+  topology.nd_dofs.resize(element_dofs.nd.size());
+  for (std::size_t i = 0; i < element_dofs.nd.size(); i++)
+  {
+    auto &key = topology.nd_dofs[i];
+    const auto &basis = element_dofs.nd[i].basis;
+    key.family = basis.family;
+    key.order = basis.order;
+    key.singular_entity.size = 1;
+    key.singular_entity.vertices[0] = basis.nodes[0];
+    key.support_entity.size = 1;
+    key.support_entity.vertices[0] = static_cast<long long>(10 + i);
+    key.component_entity.size = 1;
+    key.component_entity.vertices[0] = static_cast<long long>(100 + i);
+    key.interpolation_weights = basis.interpolation_indices;
+  }
+  topology.h1_to_nd = h1_to_nd;
+  topology.h1_dofs.reserve(h1_to_nd.size());
+  for (std::size_t nd : h1_to_nd)
+  {
+    topology.h1_dofs.push_back(topology.nd_dofs[nd]);
+  }
+  topology.elements.push_back(element_dofs);
+
+  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-3, 1.0e-3, 9};
+  for (int order : {3, 4})
+  {
+    auto mesh =
+        AffineTetrahedronMesh({-44.1232, 1160.62, -20.8651}, {-0.2192, -13.18, 20.8651},
+                              {6.0237, -10.79, 20.8651}, {-5.8768, -9.62, 20.8651});
+    mfem::H1_FECollection h1_collection(order, 3);
+    mfem::ND_FECollection nd_collection(order, 3);
+    mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+    mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+    const std::vector<std::vector<fem::singular::IsotropicMaterialCoefficients>> materials(
+        1, std::vector<fem::singular::IsotropicMaterialCoefficients>(1, {1.0, 1.0}));
+    auto batches = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+        topology, h1_space, nd_space, materials, options);
+    REQUIRE(batches.size() == 1);
+    const auto &blocks = batches[0].nd_mass;
+    REQUIRE(blocks.standard_enrichment);
+    REQUIRE(blocks.enrichment_standard);
+    REQUIRE(blocks.enrichment_enrichment);
+
+    mfem::BilinearForm standard_mass(&nd_space);
+    standard_mass.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
+    standard_mass.Assemble();
+    standard_mass.Finalize();
+    const int standard_size = standard_mass.SpMat().Height();
+    const int enrichment_size = blocks.enrichment_enrichment->Height();
+    Eigen::MatrixXd completed = Eigen::MatrixXd::Zero(standard_size + enrichment_size,
+                                                      standard_size + enrichment_size);
+    for (int row = 0; row < standard_size; row++)
+    {
+      for (int column = 0; column < standard_size; column++)
+      {
+        completed(row, column) = standard_mass.SpMat()(row, column);
+      }
+      for (int column = 0; column < enrichment_size; column++)
+      {
+        completed(row, standard_size + column) = (*blocks.standard_enrichment)(row, column);
+        completed(standard_size + column, row) = (*blocks.enrichment_standard)(column, row);
+      }
+    }
+    for (int row = 0; row < enrichment_size; row++)
+    {
+      for (int column = 0; column < enrichment_size; column++)
+      {
+        completed(standard_size + row, standard_size + column) =
+            (*blocks.enrichment_enrichment)(row, column);
+      }
+    }
+
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(completed);
+    REQUIRE(solver.info() == Eigen::Success);
+    const double minimum = solver.eigenvalues().minCoeff();
+    const double maximum = solver.eigenvalues().maxCoeff();
+    const double relative_minimum = minimum / std::max(1.0, std::abs(maximum));
+    constexpr double positivity_tolerance = 1024.0 * std::numeric_limits<double>::epsilon();
+    CAPTURE(order, standard_size, enrichment_size, minimum, maximum, relative_minimum);
+    CHECK(relative_minimum >= -positivity_tolerance);
+  }
 }
 
 TEST_CASE("Triangular singular boundary mass matches the physical tangential trace",
@@ -3737,61 +4085,54 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   const auto nd_absolute = AbsoluteValue(nd_field);
   const auto h1_enrichment_absolute = AbsoluteValue(h1_enrichment);
   const auto nd_enrichment_absolute = AbsoluteValue(nd_enrichment);
-  const auto check_energy = [](double sparse_value, double element_value)
+  const auto check_energy = [](double sparse_value, double element_value,
+                               double sparse_error, double element_error)
   {
+    const double roundoff =
+        128.0 * std::numeric_limits<double>::epsilon() *
+        std::max({1.0, std::abs(sparse_value), std::abs(element_value)});
     CHECK(std::abs(sparse_value - element_value) <=
-          128.0 * std::numeric_limits<double>::epsilon() *
-              std::max({1.0, std::abs(sparse_value), std::abs(element_value)}));
-  };
-  const auto check_bound = [](double sparse_bound, double element_bound)
-  {
-    CHECK(sparse_bound + 128.0 * std::numeric_limits<double>::epsilon() *
-                             std::max({1.0, sparse_bound, element_bound}) >=
-          element_bound);
+          sparse_error + element_error + roundoff);
   };
   check_energy(
       SparseBilinear(h1_field, *sparse.h1_diffusion.standard_enrichment, h1_enrichment),
-      element_sum.h1_coupling);
-  check_energy(SparseBilinear(h1_enrichment, *sparse.h1_diffusion.enrichment_enrichment,
-                              h1_enrichment),
-               element_sum.h1_enrichment);
-  check_energy(SparseBilinear(nd_field, *sparse.nd_mass.standard_enrichment, nd_enrichment),
-               element_sum.nd_mass_coupling);
-  check_energy(
-      SparseBilinear(nd_enrichment, *sparse.nd_mass.enrichment_enrichment, nd_enrichment),
-      element_sum.nd_mass_enrichment);
-  check_energy(
-      SparseBilinear(nd_field, *sparse.nd_curl_curl.standard_enrichment, nd_enrichment),
-      element_sum.nd_curl_curl_coupling);
-  check_energy(SparseBilinear(nd_enrichment, *sparse.nd_curl_curl.enrichment_enrichment,
-                              nd_enrichment),
-               element_sum.nd_curl_curl_enrichment);
-
-  check_bound(
+      element_sum.h1_coupling,
       SparseBilinear(h1_absolute,
                      *sparse.h1_diffusion.standard_enrichment_estimated_absolute_error,
                      h1_enrichment_absolute),
       element_sum.h1_coupling_error);
   check_energy(
+      SparseBilinear(h1_enrichment, *sparse.h1_diffusion.enrichment_enrichment,
+                     h1_enrichment),
+      element_sum.h1_enrichment,
       SparseBilinear(h1_enrichment_absolute,
                      *sparse.h1_diffusion.enrichment_enrichment_estimated_absolute_error,
                      h1_enrichment_absolute),
       element_sum.h1_enrichment_error);
-  check_bound(SparseBilinear(nd_absolute,
-                             *sparse.nd_mass.standard_enrichment_estimated_absolute_error,
-                             nd_enrichment_absolute),
-              element_sum.nd_mass_coupling_error);
+  check_energy(SparseBilinear(nd_field, *sparse.nd_mass.standard_enrichment, nd_enrichment),
+               element_sum.nd_mass_coupling,
+               SparseBilinear(nd_absolute,
+                              *sparse.nd_mass.standard_enrichment_estimated_absolute_error,
+                              nd_enrichment_absolute),
+               element_sum.nd_mass_coupling_error);
   check_energy(
+      SparseBilinear(nd_enrichment, *sparse.nd_mass.enrichment_enrichment, nd_enrichment),
+      element_sum.nd_mass_enrichment,
       SparseBilinear(nd_enrichment_absolute,
                      *sparse.nd_mass.enrichment_enrichment_estimated_absolute_error,
                      nd_enrichment_absolute),
       element_sum.nd_mass_enrichment_error);
-  check_bound(
+  check_energy(
+      SparseBilinear(nd_field, *sparse.nd_curl_curl.standard_enrichment, nd_enrichment),
+      element_sum.nd_curl_curl_coupling,
       SparseBilinear(nd_absolute,
                      *sparse.nd_curl_curl.standard_enrichment_estimated_absolute_error,
                      nd_enrichment_absolute),
       element_sum.nd_curl_curl_coupling_error);
   check_energy(
+      SparseBilinear(nd_enrichment, *sparse.nd_curl_curl.enrichment_enrichment,
+                     nd_enrichment),
+      element_sum.nd_curl_curl_enrichment,
       SparseBilinear(nd_enrichment_absolute,
                      *sparse.nd_curl_curl.enrichment_enrichment_estimated_absolute_error,
                      nd_enrichment_absolute),

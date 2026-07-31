@@ -1003,6 +1003,22 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     linalg::NormalizePhase(space_op.GetComm(), electric_field);
     report_stage("eigenvector extraction");
 
+    const double augmented_mass_form =
+        SingularComplexQuadraticForm(space_op.GetComm(), *M_energy, electric_field);
+    const double augmented_stiffness_form =
+        SingularComplexQuadraticForm(space_op.GetComm(), *K_energy, electric_field) /
+        std::norm(omega);
+    const double bulk_mass_form =
+        SingularComplexQuadraticForm(space_op.GetComm(), *M_bulk, electric_field);
+    const double bulk_stiffness_form =
+        SingularComplexQuadraticForm(space_op.GetComm(), *K_bulk, electric_field) /
+        std::norm(omega);
+    Mpi::Print(" Singular mode {:d} quadratic forms: M_aug = {:.16e}, "
+               "K_aug/|omega|^2 = {:.16e}, M_bulk = {:.16e}, "
+               "K_bulk/|omega|^2 = {:.16e}\n",
+               mode + 1, augmented_mass_form, augmented_stiffness_form, bulk_mass_form,
+               bulk_stiffness_form);
+
     const auto augmented_energy = MeasureSingularFullWaveEnergy(
         space_op.GetComm(), *M_energy, *K_energy, electric_field, omega);
     const auto field_energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_bulk,
