@@ -37,6 +37,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     treats it as a perfect conductor (PEC) allowing induced screening currents. The mode can
     be overridden per port with `config["Boundaries"]["SurfaceCurrent"][...]["InactiveMode"]`.
     SchemaVer 1-5-0 [PR 831](https://github.com/awslabs/palace/pull/831).
+  - Added support for magnetostatic inductance extraction with combined `SurfaceCurrent` and
+    `FluxLoop` excitations, which was previously rejected. The self-inductance blocks come
+    from the usual cross-energies, while the current-flux mutual inductance is measured from
+    the magnetic flux linked through each current port's aperture during the flux excitations,
+    since the two excitation types are energy-orthogonal and their coupling does not appear in
+    the cross-energy matrix. A new optional
+    `config["Boundaries"]["SurfaceCurrent"][...]["ApertureAttributes"]` specifies the surface
+    spanning a port's current loop; without it the mutual inductance is reported as `NaN` and
+    the port's self-inductance is reported screened by the zero-flux loops. SchemaVer 1-6-0
+    [PR 859](https://github.com/awslabs/palace/pull/859).
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Enable circuit synthesis with frequency-dependent boundary conditions, including

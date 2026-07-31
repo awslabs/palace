@@ -609,6 +609,13 @@ public:
   // used.
   std::optional<InactivePortMode> inactive_port_mode = std::nullopt;
 
+  // List of boundary attributes for the surface spanning this port's current loop. Only
+  // used for magnetostatic inductance extraction in a mixed current/flux simulation, where
+  // the flux linked through this surface during a flux excitation is what determines the
+  // current-flux mutual inductance. If empty, the mutual inductance to flux loops cannot be
+  // measured and the port's self-inductance is reported screened by the zero-flux loops.
+  std::vector<int> aperture_attributes = {};
+
   SurfaceCurrentData() = default;
   SurfaceCurrentData(const json &source);
 };

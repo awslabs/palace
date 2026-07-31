@@ -3,6 +3,7 @@
 
 #include "magnetostaticsolver.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <mfem.hpp>
@@ -35,8 +36,20 @@ bool InvertOrMarkSingular(mfem::DenseMatrix &mat)
   {
     return true;
   }
-  const double norm = mat.MaxMaxNorm();
-  if (!std::isfinite(norm) || norm == 0.0)
+  // The entries are scanned explicitly rather than via DenseMatrix::MaxMaxNorm, whose
+  // running maximum never updates on a NaN comparison and so hides NaNs behind a finite
+  // norm.
+  double norm = 0.0;
+  for (int i = 0; i < n * n; i++)
+  {
+    const double entry = std::abs(mat.GetData()[i]);
+    if (!std::isfinite(entry))
+    {
+      return false;
+    }
+    norm = std::max(norm, entry);
+  }
+  if (norm == 0.0)
   {
     return false;
   }
@@ -145,6 +158,14 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
   std::vector<double> Phi_inc(n_step);
+
+  // Magnetic flux linked through each current port's aperture during each flux excitation,
+  // used to recover the current-flux mutual inductance in a mixed simulation. This coupling
+  // is invisible to the cross-energy formula: a current step drives zero loop flux while a
+  // flux step drives zero port current, so the two states are energy-orthogonal and the
+  // mutual has to be measured directly. Entries are NaN for ports with no aperture given.
+  mfem::DenseMatrix linked_flux(n_current_steps, n_flux_steps);
+  linked_flux = std::numeric_limits<double>::quiet_NaN();
 
   // Initialize structures for storing and reducing the results of error estimation.
   // In 2D, the curl is scalar: use the L2 curl space and H1 spaces for the estimator.
@@ -260,6 +281,22 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
                              curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
                              flux_direction, curlcurl_op.GetComm());
+
+      // Measure the flux this excitation links through each current port's aperture. With
+      // the current ports open (I_c = 0) the response is Φ_c = M_cf*M_ff^-1*Φ_f, which is
+      // what makes the current-flux mutual inductance recoverable.
+      int col = 0;
+      for (const auto &[j_idx, j_data] : curlcurl_op.GetSurfaceCurrentOp())
+      {
+        const auto &aperture = iodata.boundaries.current.at(j_idx).aperture_attributes;
+        if (!aperture.empty())
+        {
+          linked_flux(col, flux_idx) = ComputeFluxThroughSurface(
+              B_gf, aperture, curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
+              flux_direction, curlcurl_op.GetComm());
+        }
+        col++;
+      }
     }
 
     // Energy calculation and error estimation.
@@ -276,7 +313,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
-                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc);
+                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux);
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
@@ -285,7 +322,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
-    const std::vector<double> &Phi_inc) const
+    const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -302,22 +339,28 @@ void MagnetostaticSolver::PostprocessTerminals(
   //
   // With both current and flux excitations present the normalized cross-energies form a
   // hybrid (mixed impedance/admittance) matrix H rather than an inductance matrix: each
-  // column is normalized by its own excitation, so a current column carries units of H, a
-  // flux column of 1/H, and a mixed entry is dimensionless. Writing c for the current ports
-  // and f for the flux ports, a current step holds the flux loops at zero flux (their PEC
-  // surfaces are part of the base essential set) while a flux step leaves the current ports
-  // open, so the response to (I_c, Φ_f) is
-  //                  Φ_c = H_cc*I_c + H_cf*Φ_f
-  //                  I_f = H_fc*I_c + H_ff*Φ_f
-  // where H_cc is the current-port inductance screened by zero-flux loops (a Schur
-  // complement of the bare inductance, not the bare M_cc) and H_ff is the flux-loop
-  // reluctance. Inverting the block system recovers the bare inductance matrix in henries:
+  // column is normalized by its own excitation, so a current column carries units of H and
+  // a flux column of 1/H. Writing c for the current ports and f for the flux ports, a
+  // current step holds the flux loops at zero flux (their PEC surfaces are part of the base
+  // essential set) while a flux step leaves the current ports open (I_c = 0), so
+  //                  H_cc = M_cc - M_cf*M_ff^-1*M_fc      (screened, a Schur complement)
+  //                  H_ff = M_ff^-1                        (flux-loop reluctance)
+  // The off-diagonal cross-energy H_cf, however, vanishes identically: pairing a current
+  // state with a flux state gives E = Σ_c I_c*Φ_c + Σ_f I_f*Φ_f, in which the first sum is
+  // zero because the flux state carries no port current and the second is zero because the
+  // current state links no loop flux. The two states are energy-orthogonal, so the mutual
+  // inductance cannot be obtained from cross-energies and has to be measured directly. A
+  // flux excitation responds with Φ_c = M_cf*M_ff^-1*Φ_f, so integrating B ⋅ n over each
+  // current port's aperture during each flux step gives G = M_cf*M_ff^-1 and hence
   //                  M_ff = H_ff^-1
-  //                  M_cf = H_cf*H_ff^-1
-  //                  M_cc = H_cc + H_cf*H_ff^-1*H_cf^T
-  // so only H_ff has to be inverted, exactly as in the pure flux case. If H_ff is singular
-  // the flux rows and columns, and the un-screening correction to M_cc, are not defined and
-  // the affected entries are reported as NaN.
+  //                  M_cf = G*M_ff
+  //                  M_cc = H_cc + G*M_ff*G^T
+  // recovering the bare inductance matrix in henries; only H_ff has to be inverted, exactly
+  // as in the pure flux case. If H_ff is singular the flux rows and columns, and the
+  // un-screening correction to M_cc, are not defined and the affected entries are reported
+  // as NaN. Current ports with no "ApertureAttributes" have no measurable G: their mutual
+  // inductance to the flux loops is reported as NaN and their self-inductance is left
+  // screened by the zero-flux loops.
   //
   // Reciprocity note for Short inactive ports: the reciprocal cross-energy formula only
   // holds when every excitation is solved with the same operator (same essential-DOF set).
@@ -404,7 +447,10 @@ void MagnetostaticSolver::PostprocessTerminals(
   {
     // Mixed current/flux case: normalize each column by its own excitation to build the
     // hybrid matrix H, then convert the blocks to a single inductance matrix in henries.
-    // Current columns come first, followed by flux columns.
+    // Current columns come first, followed by flux columns. Only the diagonal blocks of H
+    // are meaningful: the current-flux cross-energies vanish identically (the two
+    // excitation types are energy-orthogonal), so the coupling comes from the measured
+    // linked flux.
     auto excitation = [&](int i) { return (i < n_current) ? I_inc[i] : Phi_inc[i]; };
     mfem::DenseMatrix H(n);
     H = nan;
@@ -413,7 +459,56 @@ void MagnetostaticSolver::PostprocessTerminals(
       H(i, i) = cross_energy(i, i) / (excitation(i) * excitation(i));
       for (int j = i + 1; j < n; j++)
       {
+        // Skip the current-flux block, whose cross-energy is identically zero.
+        if ((i < n_current) != (j < n_current))
+        {
+          continue;
+        }
         H(i, j) = H(j, i) = cross_energy(i, j) / (excitation(i) * excitation(j));
+      }
+    }
+
+    // G = M_cf*M_ff^-1 from the flux linked through each current port's aperture, which is
+    // the only place the current-flux coupling is observable.
+    mfem::DenseMatrix G(n_current, n_flux);
+    for (int i = 0; i < n_current; i++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        G(i, b) = linked_flux(i, b) / Phi_inc[n_current + b];
+      }
+    }
+    // Note that DenseMatrix::MaxMaxNorm cannot be used to detect this: its running maximum
+    // never updates on a NaN comparison, so it reports a finite norm for a matrix with
+    // NaNs.
+    bool have_all_apertures = true;
+    for (int i = 0; i < n_current && have_all_apertures; i++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        if (!std::isfinite(G(i, b)))
+        {
+          have_all_apertures = false;
+          break;
+        }
+      }
+    }
+    if (!have_all_apertures)
+    {
+      // At least one current port has no "ApertureAttributes", so its mutual inductance to
+      // the flux loops is unmeasurable. Warn rather than silently reporting a screened
+      // self-inductance as if it were the bare value.
+      for (const auto &[idx, data] : surf_j_op)
+      {
+        if (iodata.boundaries.current.at(idx).aperture_attributes.empty())
+        {
+          Mpi::Warning(
+              "SurfaceCurrent index {:d} has no \"ApertureAttributes\": its mutual "
+              "inductance to the flux loops cannot be measured and is reported as "
+              "NaN, and its self-inductance is reported screened by the zero-flux "
+              "loops rather than as a bare inductance!\n",
+              idx);
+        }
       }
     }
 
@@ -436,7 +531,7 @@ void MagnetostaticSolver::PostprocessTerminals(
         M(n_current + a, n_current + b) = flux_invertible ? Mff(a, b) : nan;
       }
     }
-    // M_cf = H_cf*H_ff^-1, and its transpose M_fc.
+    // M_cf = G*M_ff, and its transpose M_fc. NaN propagates for ports with no aperture.
     for (int i = 0; i < n_current; i++)
     {
       for (int b = 0; b < n_flux; b++)
@@ -444,27 +539,37 @@ void MagnetostaticSolver::PostprocessTerminals(
         double sum = 0.0;
         for (int a = 0; a < n_flux; a++)
         {
-          sum += H(i, n_current + a) * Mff(a, b);
+          sum += G(i, a) * Mff(a, b);
         }
         M(i, n_current + b) = M(n_current + b, i) = flux_invertible ? sum : nan;
       }
     }
-    // M_cc = H_cc + H_cf*H_ff^-1*H_cf^T un-screens the current-port block, which the
-    // zero-flux loops would otherwise report as a Schur complement.
+    // M_cc = H_cc + G*M_ff*G^T un-screens the current-port block, which the zero-flux loops
+    // would otherwise report as a Schur complement. Without an aperture the correction is
+    // unknown, so H_cc is reported as-is and the entry stays screened.
     for (int i = 0; i < n_current; i++)
     {
       for (int j = i; j < n_current; j++)
       {
+        // correction = (G*M_ff*G^T)_ij, reusing the already-computed M_cf = G*M_ff row.
         double correction = 0.0;
         for (int b = 0; b < n_flux; b++)
         {
-          correction += M(i, n_current + b) * H(j, n_current + b);
+          correction += M(i, n_current + b) * G(j, b);
+        }
+        // A port with no aperture yields a NaN correction; report the screened H_cc rather
+        // than poisoning the whole current block.
+        if (!std::isfinite(correction))
+        {
+          correction = 0.0;
         }
         M(i, j) = M(j, i) = flux_invertible ? H(i, j) + correction : nan;
       }
     }
 
-    ComputeMinvAndMm(M, Minv, Mm, flux_invertible);
+    // Minv and Mm are only defined when every entry of M is, which requires an aperture for
+    // each current port.
+    ComputeMinvAndMm(M, Minv, Mm, flux_invertible && have_all_apertures);
   }
   else
   {

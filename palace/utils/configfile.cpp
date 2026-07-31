@@ -601,6 +601,11 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
   {
     inactive_port_mode = source.at("InactiveMode").get<InactivePortMode>();
   }
+  if (source.find("ApertureAttributes") != source.end())
+  {
+    aperture_attributes = source.at("ApertureAttributes").get<std::vector<int>>();
+    std::sort(aperture_attributes.begin(), aperture_attributes.end());
+  }
 }
 
 SurfaceFluxData::SurfaceFluxData(const json &flux)

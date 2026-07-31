@@ -26,14 +26,18 @@
   {
     "PEC":
     {
-      "Attributes": [2]  // Farfield
+      "Attributes": [2, 3]  // Farfield + ring metal
     },
     "SurfaceCurrent":
     [
       {
         "Index": 1,
         "Attributes": [4],  // Ring terminal
-        "Direction": [0.0, 1.0, 0.0]
+        "Direction": [0.0, 1.0, 0.0],
+        // Surfaces tiling the ring's interior, through which the flux linked by the ring is
+        // measured to recover the current-flux mutual inductance. The disk and hole
+        // contributions cancel, leaving the coupling through the annular gap.
+        "ApertureAttributes": [5, 6, 7]  // Disk + hole + gap
       }
     ],
     "FluxLoop":
