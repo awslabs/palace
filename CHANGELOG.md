@@ -46,7 +46,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `config["Boundaries"]["SurfaceCurrent"][...]["ApertureAttributes"]` specifies the surface
     spanning a port's current loop; without it the mutual inductance is reported as `NaN` and
     the port's self-inductance is reported screened by the zero-flux loops. SchemaVer 1-6-0
-    [PR 859](https://github.com/awslabs/palace/pull/859).
+    [PR 861](https://github.com/awslabs/palace/pull/861).
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Enable circuit synthesis with frequency-dependent boundary conditions, including
