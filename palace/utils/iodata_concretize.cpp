@@ -245,10 +245,16 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
     {
       const auto &m = domains.materials[i];
       ApplyEntries(j_mats[i], {{"Permeability", m.mu_r.s[0]},
-                               {"Permittivity", m.epsilon_r.s[0]},
                                {"LossTan", m.tandelta.s[0]},
-                               {"Conductivity", m.sigma.s[0]},
                                {"LondonDepth", m.lambda_L}});
+      if (!j_mats[i].contains("PermittivityEqn"))
+      {
+        Concretize(j_mats[i], "Permittivity", m.epsilon_r.s[0]);
+      }
+      if (!j_mats[i].contains("ConductivityEqn"))
+      {
+        Concretize(j_mats[i], "Conductivity", m.sigma.s[0]);
+      }
     }
   }
 }

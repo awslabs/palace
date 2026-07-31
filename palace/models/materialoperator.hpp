@@ -32,6 +32,7 @@ private:
       mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_invz0, mat_c0,
       mat_sigma, mat_sigma_scalar, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv,
       mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+  std::vector<std::string> mat_epsilon_eqn, mat_sigma_eqn;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Vector wave_vector;        // BZ-wrapped k_F (fixed) or k₀ = k_F/ω (freq-scaled).
   mfem::Vector wave_vector_bz;     // BZ-wrapped k_F (always k_F, never k₀). For BZ offset.
@@ -45,7 +46,8 @@ private:
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
   // London penetration depth, or Floquet wave vector.
-  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
+  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr,
+      has_permittivity_eqn_attr, has_conductivity_eqn_attr;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -120,11 +122,14 @@ public:
   }
   const auto &GetInvPermeability() const { return mat_muinv; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }
+  mfem::DenseTensor GetPermittivityReal(double f_hz) const;
   const auto &GetPermittivityImag() const { return mat_epsilon_imag; }
+  mfem::DenseTensor GetPermittivityImag(double f_hz) const;
   const auto &GetPermittivityAbs() const { return mat_epsilon_abs; }
   const auto &GetInvImpedance() const { return mat_invz0; }
   const auto &GetLightSpeed() const { return mat_c0; }
   const auto &GetConductivity() const { return mat_sigma; }
+  mfem::DenseTensor GetConductivity(double f_hz, double conductivity_scale) const;
   const auto &GetInvLondonDepth() const { return mat_invLondon; }
   // Scalar (1x1) out-of-plane London depth for the H1 Ann mass in 2D mode analysis.
   const auto &GetInvLondonDepthScalar() const { return mat_invLondon_scalar; }
@@ -145,6 +150,8 @@ public:
   bool HasConductivity() const { return has_conductivity_attr; }
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
+  bool HasPermittivityEquation() const { return has_permittivity_eqn_attr; }
+  bool HasConductivityEquation() const { return has_conductivity_eqn_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }
   const mfem::Vector &GetWaveVectorBZ() const { return wave_vector_bz; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }

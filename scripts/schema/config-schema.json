@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -629,6 +629,11 @@
           "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
           "default": 1.0
         },
+        "PermittivityEqn": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Frequency-dependent scalar relative permittivity expression for eigenmode simulations. Mutually exclusive with `\"Permittivity\"`; `f` is frequency in Hz."
+        },
         "LossTan": {
           "$ref": "#/$defs/ScalarOrVector3",
           "description": "Loss tangent for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
@@ -638,6 +643,11 @@
           "$ref": "#/$defs/ScalarOrVector3",
           "description": "Electrical conductivity for this material, S/m. Activates the Ohmic loss model in this domain. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
           "default": 0.0
+        },
+        "ConductivityEqn": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Frequency-dependent scalar electrical conductivity expression, S/m, for eigenmode simulations. Mutually exclusive with `\"Conductivity\"`; `f` is frequency in Hz."
         },
         "LondonDepth": {
           "type": "number",
@@ -670,7 +680,25 @@
           "minItems": 3,
           "maxItems": 3
         }
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "Permittivity",
+              "PermittivityEqn"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "Conductivity",
+              "ConductivityEqn"
+            ]
+          }
+        }
+      ]
     },
     "CurrentDipole": {
       "type": "object",

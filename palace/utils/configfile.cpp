@@ -4,6 +4,8 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <iterator>
 #include <sstream>
 #include <string_view>
@@ -71,6 +73,255 @@ inline int DefaultEigenSubspaceSize(int num_modes)
 {
   return std::max(2 * num_modes, num_modes + 15);
 }
+
+class ScalarExpressionParser
+{
+private:
+  std::string_view expr;
+  double f_hz;
+  std::size_t pos = 0;
+
+  void SkipSpace()
+  {
+    while (pos < expr.size() && std::isspace(static_cast<unsigned char>(expr[pos])))
+    {
+      pos++;
+    }
+  }
+
+  bool Consume(char c)
+  {
+    SkipSpace();
+    if (pos < expr.size() && expr[pos] == c)
+    {
+      pos++;
+      return true;
+    }
+    return false;
+  }
+
+  std::string ParseIdentifier()
+  {
+    SkipSpace();
+    const auto start = pos;
+    while (pos < expr.size() &&
+           (std::isalnum(static_cast<unsigned char>(expr[pos])) || expr[pos] == '_'))
+    {
+      pos++;
+    }
+    return std::string(expr.substr(start, pos - start));
+  }
+
+  double ParseNumber()
+  {
+    SkipSpace();
+    const auto start = pos;
+    bool seen_digit = false;
+    while (pos < expr.size() && std::isdigit(static_cast<unsigned char>(expr[pos])))
+    {
+      seen_digit = true;
+      pos++;
+    }
+    if (pos < expr.size() && expr[pos] == '.')
+    {
+      pos++;
+      while (pos < expr.size() && std::isdigit(static_cast<unsigned char>(expr[pos])))
+      {
+        seen_digit = true;
+        pos++;
+      }
+    }
+    if (pos < expr.size() && (expr[pos] == 'e' || expr[pos] == 'E'))
+    {
+      pos++;
+      if (pos < expr.size() && (expr[pos] == '+' || expr[pos] == '-'))
+      {
+        pos++;
+      }
+      bool exp_digit = false;
+      while (pos < expr.size() && std::isdigit(static_cast<unsigned char>(expr[pos])))
+      {
+        exp_digit = true;
+        pos++;
+      }
+      MFEM_VERIFY(exp_digit, "Invalid exponent in expression \"" << expr << "\"!");
+    }
+    MFEM_VERIFY(seen_digit, "Expected number in expression \"" << expr << "\"!");
+    return std::stod(std::string(expr.substr(start, pos - start)));
+  }
+
+  double ParseAddSub()
+  {
+    double value = ParseMulDiv();
+    while (true)
+    {
+      if (Consume('+'))
+      {
+        value += ParseMulDiv();
+      }
+      else if (Consume('-'))
+      {
+        value -= ParseMulDiv();
+      }
+      else
+      {
+        return value;
+      }
+    }
+  }
+
+  double ParseMulDiv()
+  {
+    double value = ParseUnary();
+    while (true)
+    {
+      if (Consume('*'))
+      {
+        value *= ParseUnary();
+      }
+      else if (Consume('/'))
+      {
+        value /= ParseUnary();
+      }
+      else
+      {
+        return value;
+      }
+    }
+  }
+
+  double ParseUnary()
+  {
+    if (Consume('+'))
+    {
+      return ParseUnary();
+    }
+    if (Consume('-'))
+    {
+      return -ParseUnary();
+    }
+    return ParsePower();
+  }
+
+  double ParsePower()
+  {
+    double value = ParsePrimary();
+    if (Consume('^'))
+    {
+      value = std::pow(value, ParseUnary());
+    }
+    return value;
+  }
+
+  double ParsePrimary()
+  {
+    SkipSpace();
+    MFEM_VERIFY(pos < expr.size(), "Unexpected end of expression \"" << expr << "\"!");
+    if (Consume('('))
+    {
+      double value = ParseAddSub();
+      MFEM_VERIFY(Consume(')'), "Expected ')' in expression \"" << expr << "\"!");
+      return value;
+    }
+    if (std::isdigit(static_cast<unsigned char>(expr[pos])) || expr[pos] == '.')
+    {
+      return ParseNumber();
+    }
+
+    const auto id = ParseIdentifier();
+    MFEM_VERIFY(!id.empty(), "Expected value in expression \"" << expr << "\"!");
+    if (id == "f" || id == "freq" || id == "frequency")
+    {
+      return f_hz;
+    }
+    if (id == "pi")
+    {
+      return M_PI;
+    }
+    if (id == "e")
+    {
+      return std::exp(1.0);
+    }
+
+    MFEM_VERIFY(Consume('('), "Expected '(' after function name \"" << id
+                                                                    << "\"!");
+    const double a = ParseAddSub();
+    if (Consume(','))
+    {
+      const double b = ParseAddSub();
+      MFEM_VERIFY(Consume(')'), "Expected ')' in expression \"" << expr << "\"!");
+      if (id == "pow")
+      {
+        return std::pow(a, b);
+      }
+      if (id == "min")
+      {
+        return std::min(a, b);
+      }
+      if (id == "max")
+      {
+        return std::max(a, b);
+      }
+      MFEM_ABORT("Unsupported two-argument function \"" << id << "\" in expression \""
+                                                        << expr << "\"!");
+    }
+    MFEM_VERIFY(Consume(')'), "Expected ')' in expression \"" << expr << "\"!");
+    if (id == "sqrt")
+    {
+      return std::sqrt(a);
+    }
+    if (id == "exp")
+    {
+      return std::exp(a);
+    }
+    if (id == "log" || id == "ln")
+    {
+      return std::log(a);
+    }
+    if (id == "log10")
+    {
+      return std::log10(a);
+    }
+    if (id == "sin")
+    {
+      return std::sin(a);
+    }
+    if (id == "cos")
+    {
+      return std::cos(a);
+    }
+    if (id == "tan")
+    {
+      return std::tan(a);
+    }
+    if (id == "atan")
+    {
+      return std::atan(a);
+    }
+    if (id == "abs")
+    {
+      return std::abs(a);
+    }
+    MFEM_ABORT("Unsupported function \"" << id << "\" in expression \"" << expr
+                                         << "\"!");
+  }
+
+public:
+  ScalarExpressionParser(std::string_view expr_, double f_hz_) : expr(expr_), f_hz(f_hz_)
+  {
+  }
+
+  double Eval()
+  {
+    double value = ParseAddSub();
+    SkipSpace();
+    MFEM_VERIFY(pos == expr.size(), "Unexpected token in expression \"" << expr << "\"!");
+    MFEM_VERIFY(std::isfinite(value), "Expression \"" << expr
+                                                       << "\" evaluated to non-finite "
+                                                          "value!");
+    return value;
+  }
+};
 
 int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
 {
@@ -146,6 +397,11 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 }
 
 }  // namespace
+
+double EvaluateScalarExpression(std::string_view expr, double f_hz)
+{
+  return ScalarExpressionParser(expr, f_hz).Eval();
+}
 
 // Parse optional JSON field into type T, returns default-constructed T if missing.
 template <typename T>
@@ -276,10 +532,39 @@ MaterialData::MaterialData(const json &domain)
 {
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
+  MFEM_VERIFY(!(domain.contains("Permittivity") && domain.contains("PermittivityEqn")),
+              "Material entries must specify only one of \"Permittivity\" and "
+              "\"PermittivityEqn\"!");
+  MFEM_VERIFY(!(domain.contains("Conductivity") && domain.contains("ConductivityEqn")),
+              "Material entries must specify only one of \"Conductivity\" and "
+              "\"ConductivityEqn\"!");
   ParseSymmetricMatrixData(domain, "Permeability", mu_r);
-  ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+  if (domain.contains("PermittivityEqn"))
+  {
+    epsilon_r_eqn = domain.at("PermittivityEqn").get<std::string>();
+    MFEM_VERIFY(!epsilon_r_eqn.empty(), "\"PermittivityEqn\" must be non-empty!");
+    const double eps = EvaluateScalarExpression(epsilon_r_eqn, 1.0);
+    MFEM_VERIFY(eps > 0.0, "\"PermittivityEqn\" must evaluate to a positive value!");
+    epsilon_r = eps;
+  }
+  else
+  {
+    ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+  }
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
-  ParseSymmetricMatrixData(domain, "Conductivity", sigma);
+  if (domain.contains("ConductivityEqn"))
+  {
+    sigma_eqn = domain.at("ConductivityEqn").get<std::string>();
+    MFEM_VERIFY(!sigma_eqn.empty(), "\"ConductivityEqn\" must be non-empty!");
+    const double conductivity = EvaluateScalarExpression(sigma_eqn, 1.0);
+    MFEM_VERIFY(conductivity >= 0.0,
+                "\"ConductivityEqn\" must evaluate to a non-negative value!");
+    sigma = conductivity;
+  }
+  else
+  {
+    ParseSymmetricMatrixData(domain, "Conductivity", sigma);
+  }
   lambda_L = domain.value("LondonDepth", lambda_L);
 }
 
@@ -1563,6 +1848,36 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     if (!valid)
     {
       errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
+    }
+  }
+
+  auto result = errors.str();
+  if (result.empty())
+  {
+    return std::nullopt;
+  }
+  return result;
+}
+
+std::optional<std::string> Validate(const ProblemData &problem, const DomainData &domains)
+{
+  std::ostringstream errors;
+
+  for (std::size_t i = 0; i < domains.materials.size(); ++i)
+  {
+    if (domains.materials[i].HasPermittivityEquation() &&
+        problem.type != ProblemType::EIGENMODE)
+    {
+      errors << "\"PermittivityEqn\" is currently supported for eigenmode simulations "
+                "only; got Problem.Type = \""
+             << ToString(problem.type) << "\" in Domains.Materials[" << i << "]\n";
+    }
+    if (domains.materials[i].HasConductivityEquation() &&
+        problem.type != ProblemType::EIGENMODE)
+    {
+      errors << "\"ConductivityEqn\" is currently supported for eigenmode simulations "
+                "only; got Problem.Type = \""
+             << ToString(problem.type) << "\" in Domains.Materials[" << i << "]\n";
     }
   }
 

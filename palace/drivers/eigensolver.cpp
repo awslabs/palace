@@ -55,6 +55,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
+  const EigenSolverBackend type = iodata.solver.eigenmode.type;
 
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
@@ -62,6 +63,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+  if (nonlinear_type == NonlinearEigenSolver::SLP &&
+      type != EigenSolverBackend::SLEPC)
+  {
+    Mpi::Warning("SLP nonlinear eigensolver requires SLEPc, using Hybrid!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -135,16 +142,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
-  const EigenSolverBackend type = iodata.solver.eigenmode.type;
 #if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
 #error "Eigenmode solver requires building with ARPACK or SLEPc!"
-#endif
-#if !defined(PALACE_WITH_SLEPC)
-  if (nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    Mpi::Warning("SLP nonlinear eigensolver not available without SLEPc, using Hybrid!\n");
-  }
-  nonlinear_type = NonlinearEigenSolver::HYBRID;
 #endif
   if (type == EigenSolverBackend::ARPACK)
   {

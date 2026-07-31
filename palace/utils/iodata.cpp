@@ -236,6 +236,10 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   MFEM_VERIFY(domains_it != config.end(),
               "\"Domains\" must be specified in the configuration file!");
   domains = config::DomainData(*domains_it);
+  if (auto err = config::Validate(problem, domains))
+  {
+    MFEM_ABORT("Configuration file validation failed!\n  " << *err);
+  }
   auto boundaries_it = config.find("Boundaries");
   MFEM_VERIFY(boundaries_it != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");

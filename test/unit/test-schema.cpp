@@ -321,9 +321,40 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Valid Material - frequency-dependent PermittivityEqn")
+  {
+    json mat = {{"Attributes", {1}}, {"PermittivityEqn", "2.0 + 0.1*f"}};
+    std::string err = ValidateConfig(mat, "Materials");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+  }
+
   SECTION("Invalid Material - bad Permittivity type")
   {
     json mat = {{"Attributes", {1}}, {"Permittivity", "not a number"}};
+    std::string err = ValidateConfig(mat, "Materials");
+    CHECK(!err.empty());
+  }
+
+  SECTION("Invalid Material - Permittivity and PermittivityEqn are mutually exclusive")
+  {
+    json mat = {{"Attributes", {1}}, {"Permittivity", 2.0}, {"PermittivityEqn", "2.0"}};
+    std::string err = ValidateConfig(mat, "Materials");
+    CHECK(!err.empty());
+  }
+
+  SECTION("Valid Material - frequency-dependent ConductivityEqn")
+  {
+    json mat = {{"Attributes", {1}}, {"ConductivityEqn", "1e-12 + 0.01*f"}};
+    std::string err = ValidateConfig(mat, "Materials");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+  }
+
+  SECTION("Invalid Material - Conductivity and ConductivityEqn are mutually exclusive")
+  {
+    json mat = {
+        {"Attributes", {1}}, {"Conductivity", 0.0}, {"ConductivityEqn", "0.01*f"}};
     std::string err = ValidateConfig(mat, "Materials");
     CHECK(!err.empty());
   }

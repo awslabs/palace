@@ -193,7 +193,10 @@ void MaterialOperator::SetUpMaterialProperties(
   mat_muinvkx.SetSize(sdim, sdim, nmats);
   mat_kxTmuinvkx.SetSize(sdim, sdim, nmats);
   mat_kx.SetSize(sdim, sdim, nmats);
-  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
+  mat_epsilon_eqn.resize(nmats);
+  mat_sigma_eqn.resize(nmats);
+  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr =
+      has_permittivity_eqn_attr = has_conductivity_eqn_attr = false;
 
   // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
   SetUpFloquetWaveVector(periodic, problem_type, mesh);
@@ -216,6 +219,9 @@ void MaterialOperator::SetUpMaterialProperties(
 
     if (problem_type == ProblemType::ELECTROSTATIC)
     {
+      MFEM_VERIFY(!data.HasPermittivityEquation() && !data.HasConductivityEquation(),
+                  "Frequency-dependent material expressions are currently supported for "
+                  "eigenmode simulations only!");
       MFEM_VERIFY(internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permittivity defined!");
       if (!internal::mat::IsIdentity(data.mu_r) || internal::mat::IsValid(data.sigma) ||
@@ -228,6 +234,9 @@ void MaterialOperator::SetUpMaterialProperties(
     }
     else if (problem_type == ProblemType::MAGNETOSTATIC)
     {
+      MFEM_VERIFY(!data.HasPermittivityEquation() && !data.HasConductivityEquation(),
+                  "Frequency-dependent material expressions are currently supported for "
+                  "eigenmode simulations only!");
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r),
                   "Material has no valid permeability defined!");
       if (!internal::mat::IsIdentity(data.epsilon_r) ||
@@ -244,6 +253,16 @@ void MaterialOperator::SetUpMaterialProperties(
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r) &&
                       internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permeability or no valid permittivity defined!");
+      MFEM_VERIFY(!data.HasPermittivityEquation() || problem_type == ProblemType::EIGENMODE,
+                  "\"PermittivityEqn\" is currently supported for eigenmode simulations "
+                  "only!");
+      MFEM_VERIFY(!data.HasConductivityEquation() ||
+                      problem_type == ProblemType::EIGENMODE,
+                  "\"ConductivityEqn\" is currently supported for eigenmode simulations "
+                  "only!");
+      MFEM_VERIFY(!data.HasPermittivityEquation() ||
+                      internal::mat::IsIsotropic(data.epsilon_r),
+                  "\"PermittivityEqn\" currently supports only scalar permittivity!");
       if (problem_type == ProblemType::TRANSIENT)
       {
         MFEM_VERIFY(!internal::mat::IsValid(data.tandelta),
@@ -253,7 +272,9 @@ void MaterialOperator::SetUpMaterialProperties(
       else
       {
         MFEM_VERIFY(
-            !(internal::mat::IsValid(data.tandelta) && internal::mat::IsValid(data.sigma)),
+            !(internal::mat::IsValid(data.tandelta) &&
+              (internal::mat::IsValid(data.sigma) ||
+               data.HasConductivityEquation())),
             "Material loss model should probably use only one of loss tangent or "
             "electrical conductivity!");
       }
@@ -313,6 +334,11 @@ void MaterialOperator::SetUpMaterialProperties(
     mfem::DenseMatrix T(sdim, sdim);
     mat_epsilon(count).Set(1.0,
                            internal::mat::ToDenseMatrixTruncated(data.epsilon_r, sdim));
+    if (data.HasPermittivityEquation())
+    {
+      mat_epsilon_eqn[count] = data.epsilon_r_eqn;
+      has_permittivity_eqn_attr = true;
+    }
     Mult(mat_epsilon(count), internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
     T *= -1.0;
     mat_epsilon_imag(count).Set(1.0, T);
@@ -341,6 +367,11 @@ void MaterialOperator::SetUpMaterialProperties(
 
     // Electrical conductivity, σ
     mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrixTruncated(data.sigma, sdim));
+    if (data.HasConductivityEquation())
+    {
+      mat_sigma_eqn[count] = data.sigma_eqn;
+      has_conductivity_eqn_attr = true;
+    }
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
@@ -374,7 +405,6 @@ void MaterialOperator::SetUpMaterialProperties(
 
     count++;
   }
-
   // Every domain retained in the mesh needs a material definition. This is normally
   // guaranteed by unused-element cleaning, but must also hold when cleaning is disabled.
   // Attribute presence is rank-local, so report the globally smallest missing attribute
@@ -397,13 +427,58 @@ void MaterialOperator::SetUpMaterialProperties(
                           "config[\"Domains\"][\"Materials\"]!",
                           missing_attr));
 
-  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr};
-  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
+  bool has_attr[6] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
+                      has_wave_attr, has_permittivity_eqn_attr,
+                      has_conductivity_eqn_attr};
+  Mpi::GlobalOr(6, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
+  has_permittivity_eqn_attr = has_attr[4];
+  has_conductivity_eqn_attr = has_attr[5];
+}
+
+mfem::DenseTensor MaterialOperator::GetPermittivityReal(double f_hz) const
+{
+  mfem::DenseTensor eps(mat_epsilon.SizeI(), mat_epsilon.SizeJ(), mat_epsilon.SizeK());
+  eps = 0.0;
+  for (int k = 0; k < eps.SizeK(); k++)
+  {
+    if (mat_epsilon_eqn[k].empty())
+    {
+      continue;
+    }
+    const double value = config::EvaluateScalarExpression(mat_epsilon_eqn[k], f_hz);
+    MFEM_VERIFY(value > 0.0, "\"PermittivityEqn\" evaluated to non-positive value "
+                                 << value << " at f = " << f_hz << " Hz!");
+    for (int d = 0; d < eps.SizeI(); d++)
+    {
+      eps(k)(d, d) = value - mat_epsilon(k)(d, d);
+    }
+  }
+  return eps;
+}
+
+mfem::DenseTensor MaterialOperator::GetPermittivityImag(double f_hz) const
+{
+  mfem::DenseTensor eps_imag(mat_epsilon.SizeI(), mat_epsilon.SizeJ(),
+                             mat_epsilon.SizeK());
+  eps_imag = 0.0;
+  for (int k = 0; k < eps_imag.SizeK(); k++)
+  {
+    if (mat_epsilon_eqn[k].empty())
+    {
+      continue;
+    }
+    const double value = config::EvaluateScalarExpression(mat_epsilon_eqn[k], f_hz);
+    MFEM_VERIFY(value > 0.0, "\"PermittivityEqn\" evaluated to non-positive value "
+                                 << value << " at f = " << f_hz << " Hz!");
+    const double ref = mat_epsilon(k)(0, 0);
+    const double scale = (value - ref) / ref;
+    eps_imag(k).Set(scale, mat_epsilon_imag(k));
+  }
+  return eps_imag;
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const
@@ -413,6 +488,30 @@ double MaterialOperator::GetMaxMuEpsilon() const
   MFEM_VERIFY(mu_eps_max > 0.0 && mu_eps_max < mfem::infinity(),
               "Invalid material permeability or permittivity!");
   return mu_eps_max;
+}
+
+mfem::DenseTensor MaterialOperator::GetConductivity(double f_hz,
+                                                    double conductivity_scale) const
+{
+  mfem::DenseTensor sigma(mat_sigma.SizeI(), mat_sigma.SizeJ(), mat_sigma.SizeK());
+  sigma = 0.0;
+  for (int k = 0; k < sigma.SizeK(); k++)
+  {
+    if (mat_sigma_eqn[k].empty())
+    {
+      continue;
+    }
+    const double value =
+        config::EvaluateScalarExpression(mat_sigma_eqn[k], f_hz) / conductivity_scale;
+    MFEM_VERIFY(value >= 0.0, "\"ConductivityEqn\" evaluated to negative value "
+                                  << value * conductivity_scale
+                                  << " S/m at f = " << f_hz << " Hz!");
+    for (int d = 0; d < sigma.SizeI(); d++)
+    {
+      sigma(k)(d, d) = value - mat_sigma(k)(d, d);
+    }
+  }
+  return sigma;
 }
 
 void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,

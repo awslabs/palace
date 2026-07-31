@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <set>
 #include <string>
@@ -1640,12 +1641,115 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(m2.lambda_L == m1.lambda_L);
 
     // Coverage gate. MaterialAxes is opt-in: omission means "diagonal in standard
-    // basis". Concretize does not synthesize one.
+    // basis". Equation fields are opt-in and mutually exclusive with their fixed-value
+    // counterparts, so the default material concretizes scalar values instead.
     auto mat_gaps = SchemaCoverageGaps("/properties/Domains/properties/Materials/items",
                                        config["Domains"]["Materials"][0],
-                                       /*skip=*/{"MaterialAxes"});
+                                       /*skip=*/{"MaterialAxes", "PermittivityEqn",
+                                                "ConductivityEqn"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+
+  SECTION("Round-trip: Material PermittivityEqn remains mutually exclusive")
+  {
+    json config = {
+        {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}},
+                                      {"Permeability", 1.0},
+                                      {"PermittivityEqn", "2.0 + 0.1*f"}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_mat = config["Domains"]["Materials"][0];
+    CHECK(j_mat.contains("PermittivityEqn"));
+    CHECK(!j_mat.contains("Permittivity"));
+    CHECK(config::EvaluateScalarExpression(j_mat["PermittivityEqn"].get<std::string>(),
+                                           2.0) == Catch::Approx(2.2));
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+  }
+
+  SECTION("Material PermittivityEqn rejects non-eigenmode problem types")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}},
+                                      {"Permeability", 1.0},
+                                      {"PermittivityEqn", "2.0 + 0.1*f"}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    const auto err = config::Validate(config::ProblemData(config["Problem"]),
+                                      config::DomainData(config["Domains"]));
+    REQUIRE(err);
+    CHECK_THAT(*err, Catch::Matchers::ContainsSubstring("PermittivityEqn"));
+    CHECK_THAT(*err, Catch::Matchers::ContainsSubstring("eigenmode simulations only"));
+    CHECK_THAT(*err, Catch::Matchers::ContainsSubstring("Problem.Type = \"Driven\""));
+  }
+
+  SECTION("Material PermittivityEqn accepts fixed loss tangent")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}},
+                                                 {"Permeability", 1.0},
+                                                 {"PermittivityEqn", "2.0 + 0.1*f"},
+                                                 {"LossTan", 0.001}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"N", 1}, {"Target", 1.0}}}}}};
+
+    const auto err = config::Validate(config::ProblemData(config["Problem"]),
+                                      config::DomainData(config["Domains"]));
+    CHECK_FALSE(err);
+
+    config::DomainData domains(config["Domains"]);
+    REQUIRE(domains.materials.size() == 1);
+    CHECK(domains.materials[0].HasPermittivityEquation());
+    CHECK(domains.materials[0].tandelta.s[0] == Catch::Approx(0.001));
+  }
+
+  SECTION("Round-trip: Material ConductivityEqn remains mutually exclusive")
+  {
+    json config = {
+        {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}},
+                                      {"Permeability", 1.0},
+                                      {"PermittivityEqn",
+                                       "3.30835 + 0.0287629*ln((2.53303e22 + f*f)/"
+                                       "(8.22935e9 + f*f))"},
+                                      {"ConductivityEqn",
+                                       "1e-12 + 3.20031e-12*f*(atan(f/90715.7) - "
+                                       "atan(f/1.59155e11))"}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_mat = config["Domains"]["Materials"][0];
+    CHECK(j_mat.contains("ConductivityEqn"));
+    CHECK(!j_mat.contains("Conductivity"));
+    CHECK(config::EvaluateScalarExpression("ln(e) + atan(1.0)", 2.0) ==
+          Catch::Approx(1.0 + std::atan(1.0)));
+    CHECK(config::EvaluateScalarExpression(j_mat["PermittivityEqn"].get<std::string>(),
+                                           2.4e9) ==
+          Catch::Approx(3.54964330500681));
+    CHECK(config::EvaluateScalarExpression(j_mat["ConductivityEqn"].get<std::string>(),
+                                           2.4e9) ==
+          Catch::Approx(0.0119487800734682));
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
   }
 }
 

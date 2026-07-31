@@ -263,6 +263,11 @@ void QuasiNewtonSolver::SetInitialGuess()
   // Get eigenmodes initial guesses from linear eigensolver
   eigenvalues.resize(nev_linear);
   eigenvectors.resize(nev_linear);
+  for (auto &eigenvector : eigenvectors)
+  {
+    eigenvector.SetSize(n);
+    eigenvector.UseDevice(true);
+  }
   for (int i = 0; i < nev_linear; i++)
   {
     eigenvalues[i] = linear_eigensolver_->GetEigenvalue(i);
@@ -611,10 +616,8 @@ int QuasiNewtonSolver::Solve()
         // Update the invariant pair with normalization.
         const auto scale = linalg::Norml2(GetComm(), v);
         v *= 1.0 / scale;
-        eigs.resize(k + 1);
-        eigs[k] = eig;
-        X.resize(k + 1);
-        X[k] = v;
+        eigs.push_back(eig);
+        X.emplace_back(v);
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
         H.col(k).head(k) = v2 / scale;
         H(k, k) = eig;

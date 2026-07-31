@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <cmath>
 #include <limits>
 #include <set>
 #include <type_traits>
@@ -21,6 +22,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -33,7 +35,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
-    print_hdr(true), print_prec_hdr(true),
+    units(units), print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
@@ -511,11 +513,15 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
                                     bool include_wave_ports)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute());
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemDomainCoefficients(omega, fr, &fi);
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
-  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+  int empty[2] = {(fr.empty() && dfbr.empty() && fbr.empty()),
+                  (fi.empty() && dfbi.empty() && fbi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -525,11 +531,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, &fi, &dfbi, &fbi, nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -557,11 +563,14 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   // complex frequency (ω = -i·λ). Always returns a ComplexOperator since these terms
   // carry a real-slot contribution at complex ω.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+  MaterialPropertyCoefficient fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemDomainCoefficients(omega, fr, &fi);
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+  int empty[2] = {(fr.empty() && dfbr.empty() && fbr.empty()),
+                  (fi.empty() && dfbi.empty() && fbi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -571,11 +580,11 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, &fi, &dfbi, &fbi, nullptr, skip_zeros);
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -971,6 +980,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(a2.imag(), fbi);
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
+  AddExtraSystemDomainCoefficients(a3, fr, &fi);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -1022,6 +1032,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddDampingBdrCoefficients(a1.imag(), fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
+  AddExtraSystemDomainCoefficients(a3, fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -1056,6 +1067,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddDampingBdrCoefficients(a1, fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+  AddExtraSystemDomainCoefficients(a3, fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -1260,6 +1272,76 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+void SpaceOperator::AddExtraSystemDomainCoefficients(double omega,
+                                                     MaterialPropertyCoefficient &fr,
+                                                     MaterialPropertyCoefficient *fi)
+{
+  if (mat_op.HasPermittivityEquation() || mat_op.HasConductivityEquation())
+  {
+    const double f_hz =
+        1.0e9 * units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2.0 * M_PI);
+    if (mat_op.HasPermittivityEquation())
+    {
+      fr.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(f_hz),
+                        -omega * omega);
+      if (fi != nullptr && mat_op.HasLossTangent())
+      {
+        fi->AddCoefficient(mat_op.GetAttributeToMaterial(),
+                           mat_op.GetPermittivityImag(f_hz), -omega * omega);
+      }
+    }
+    if (fi != nullptr && mat_op.HasConductivityEquation())
+    {
+      const double conductivity_scale =
+          units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+      fi->AddCoefficient(mat_op.GetAttributeToMaterial(),
+                         mat_op.GetConductivity(f_hz, conductivity_scale), omega);
+    }
+  }
+}
+
+void SpaceOperator::AddExtraSystemDomainCoefficients(std::complex<double> omega,
+                                                     MaterialPropertyCoefficient &fr,
+                                                     MaterialPropertyCoefficient *fi)
+{
+  if (!mat_op.HasPermittivityEquation() && !mat_op.HasConductivityEquation())
+  {
+    return;
+  }
+
+  const double f_hz =
+      1.0e9 * units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
+      (2.0 * M_PI);
+  const auto AddComplexCoefficient = [&](const mfem::DenseTensor &property,
+                                         std::complex<double> coeff)
+  {
+    if (coeff.real() != 0.0)
+    {
+      fr.AddCoefficient(mat_op.GetAttributeToMaterial(), property, coeff.real());
+    }
+    if (fi != nullptr && coeff.imag() != 0.0)
+    {
+      fi->AddCoefficient(mat_op.GetAttributeToMaterial(), property, coeff.imag());
+    }
+  };
+
+  if (mat_op.HasPermittivityEquation())
+  {
+    const auto mass_coeff = -omega * omega;
+    AddComplexCoefficient(mat_op.GetPermittivityReal(f_hz), mass_coeff);
+    if (mat_op.HasLossTangent())
+    {
+      AddComplexCoefficient(mat_op.GetPermittivityImag(f_hz), 1i * mass_coeff);
+    }
+  }
+  if (mat_op.HasConductivityEquation())
+  {
+    const double conductivity_scale =
+        units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+    AddComplexCoefficient(mat_op.GetConductivity(f_hz, conductivity_scale), 1i * omega);
+  }
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,

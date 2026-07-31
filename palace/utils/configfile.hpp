@@ -245,11 +245,19 @@ public:
   // Relative permittivity.
   SymmetricMatrixData<3> epsilon_r = 1.0;
 
+  // Frequency-dependent scalar relative permittivity expression. The variable `f`
+  // is the dimensional frequency in Hz. Mutually exclusive with epsilon_r input.
+  std::string epsilon_r_eqn = "";
+
   // Loss tangent.
   SymmetricMatrixData<3> tandelta = 0.0;
 
   // Conductivity [S/m].
   SymmetricMatrixData<3> sigma = 0.0;
+
+  // Frequency-dependent scalar conductivity expression [S/m]. The variable `f`
+  // is the dimensional frequency in Hz. Mutually exclusive with sigma input.
+  std::string sigma_eqn = "";
 
   // London penetration depth [m].
   double lambda_L = 0.0;
@@ -259,6 +267,9 @@ public:
 
   MaterialData() = default;
   MaterialData(const json &domain);
+
+  bool HasPermittivityEquation() const { return !epsilon_r_eqn.empty(); }
+  bool HasConductivityEquation() const { return !sigma_eqn.empty(); }
 };
 
 struct DomainEnergyData
@@ -1166,6 +1177,7 @@ ParseStringAsDirection(std::string str, bool required = true);
 
 // Validation functions for cross-field checks. Return empty string if valid, otherwise
 // return all error messages concatenated.
+std::optional<std::string> Validate(const ProblemData &problem, const DomainData &domains);
 std::optional<std::string> Validate(const BoundaryData &boundaries);
 
 }  // namespace palace::config
@@ -1183,6 +1195,8 @@ namespace palace::config
 // given struct using the provided Units.
 void Nondimensionalize(const Units &units, RefinementData &data);
 void Nondimensionalize(const Units &units, MaterialData &data);
+
+double EvaluateScalarExpression(std::string_view expr, double f_hz);
 void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);

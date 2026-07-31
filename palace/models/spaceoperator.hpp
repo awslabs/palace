@@ -28,6 +28,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class Units;
 
 namespace config
 {
@@ -49,6 +50,7 @@ class SpaceOperator
 private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
+  const Units &units;
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -112,6 +114,11 @@ private:
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+  void AddExtraSystemDomainCoefficients(double omega, MaterialPropertyCoefficient &fr,
+                                        MaterialPropertyCoefficient *fi = nullptr);
+  void AddExtraSystemDomainCoefficients(std::complex<double> omega,
+                                        MaterialPropertyCoefficient &fr,
+                                        MaterialPropertyCoefficient *fi = nullptr);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 

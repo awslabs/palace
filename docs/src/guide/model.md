@@ -59,6 +59,12 @@ Material properties are handled by the
 object. *Palace* supports linear, frequency independent constitutive laws for material
 modeling.
 
+For eigenmode simulations, scalar relative permittivity and electrical conductivity can
+instead be specified as frequency-dependent expressions using `"PermittivityEqn"` and
+`"ConductivityEqn"`. The expression variable `f` is the dimensional frequency in Hz;
+fixed-value and expression forms of the same property are mutually exclusive. A fixed
+`"LossTan"` can be combined with `"PermittivityEqn"`.
+
 Materials with scalar or symmetric matrix-valued material properties are supported. For most
 simulation types, each material in the model requires a specified relative permittivity and
 relative permeability (for electrostatic simulations, only the permittivity is required,
