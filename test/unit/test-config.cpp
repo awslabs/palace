@@ -1941,6 +1941,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
   {
     auto config = MakeConfig();
     config["Problem"]["Type"] = "Driven";
+    config["Solver"]["SingularElements"]["Attributes"] = {2};
     config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
                                            {"Attributes", {2}},
                                            {"Direction", "+X"},
@@ -1951,6 +1952,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
 
     config = MakeConfig();
     config["Problem"]["Type"] = "Eigenmode";
+    config["Solver"]["SingularElements"]["Attributes"] = {2};
     config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
                                            {"Attributes", {2}},
                                            {"Direction", "+X"},
@@ -1962,10 +1964,14 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Boundaries"]["LumpedPort"][0].erase("L");
     config["Boundaries"]["LumpedPort"][0].erase("C");
     config["Boundaries"]["LumpedPort"][0]["R"] = 50.0;
-    CHECK_THROWS(IoData(config, false));
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Boundaries"]["LumpedPort"][0].erase("R");
+    config["Boundaries"]["LumpedPort"][0]["Rs"] = 50.0;
+    CHECK_NOTHROW(IoData(config, false));
 
     config["Boundaries"]["LumpedPort"][0]["Active"] = false;
-    CHECK_NOTHROW(IoData(config, false));
+    CHECK_THROWS(IoData(config, false));
   }
 }
 

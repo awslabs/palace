@@ -1101,6 +1101,109 @@ TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
   }
 }
 
+TEST_CASE("singular_wedge_lumped_resistive_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-6;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Error (",
+                           "Relative energy mismatch",
+                           "Relative weak divergence",
+                           "Re{V[1]}",
+                           "Im{V[1]}",
+                           "Re{I[1]}",
+                           "Im{I[1]}",
+                           "p_ind[1]"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_lumped_resistive_eigenmode.json",
+                                  "lumped_resistive_eigenmode", opts);
+
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.push_back("Minimum");
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_lumped_resistive_standard_eigenmode.json",
+                                  "lumped_resistive_standard_eigenmode", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular_mode = LoadRegressionOutputTable("singular_wedge",
+                                                   "lumped_resistive_eigenmode", "eig.csv");
+    auto standard_mode = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_resistive_standard_eigenmode", "eig.csv");
+    auto singular_diagnostics = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_resistive_eigenmode", "singular-eigenmode.csv");
+    auto standard_energy = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_resistive_standard_eigenmode", "domain-E.csv");
+    auto singular_surface = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_resistive_eigenmode", "surface-Q.csv");
+    auto standard_surface = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_resistive_standard_eigenmode", "surface-Q.csv");
+
+    const double singular_frequency_real = GetTableValue(singular_mode, "Re{f} (GHz)");
+    const double singular_frequency_imaginary = GetTableValue(singular_mode, "Im{f} (GHz)");
+    const double singular_quality = GetTableValue(singular_mode, "Q");
+    const double standard_frequency_real = GetTableValue(standard_mode, "Re{f} (GHz)");
+    const double standard_frequency_imaginary = GetTableValue(standard_mode, "Im{f} (GHz)");
+    const double standard_quality = GetTableValue(standard_mode, "Q");
+    CAPTURE(singular_frequency_real, singular_frequency_imaginary, singular_quality,
+            standard_frequency_real, standard_frequency_imaginary, standard_quality);
+    CHECK(singular_frequency_real > 0.0);
+    CHECK(singular_frequency_imaginary > 0.0);
+    CHECK(standard_frequency_real > 0.0);
+    CHECK(standard_frequency_imaginary > 0.0);
+    CHECK(RelativeDifference(
+              singular_quality,
+              0.5 * std::hypot(singular_frequency_real, singular_frequency_imaginary) /
+                  singular_frequency_imaginary) < 1.0e-10);
+    CHECK(RelativeDifference(
+              standard_quality,
+              0.5 * std::hypot(standard_frequency_real, standard_frequency_imaginary) /
+                  standard_frequency_imaginary) < 1.0e-10);
+    CHECK(RelativeDifference(singular_frequency_real, standard_frequency_real) < 1.0e-2);
+    CHECK(RelativeDifference(singular_frequency_imaginary, standard_frequency_imaginary) <
+          2.0e-2);
+    CHECK(RelativeDifference(singular_quality, standard_quality) < 2.0e-2);
+
+    const double singular_backward_error = GetTableValue(singular_mode, "Error (Bkwd.)");
+    const double singular_absolute_error = GetTableValue(singular_mode, "Error (Abs.)");
+    const double standard_backward_error = GetTableValue(standard_mode, "Error (Bkwd.)");
+    const double standard_absolute_error = GetTableValue(standard_mode, "Error (Abs.)");
+    const double energy_mismatch =
+        GetTableValue(singular_diagnostics, "Relative energy mismatch");
+    const double weak_divergence =
+        GetTableValue(singular_diagnostics, "Relative weak divergence");
+    CAPTURE(singular_backward_error, singular_absolute_error, standard_backward_error,
+            standard_absolute_error, energy_mismatch, weak_divergence);
+    CHECK(singular_backward_error < 1.0e-9);
+    CHECK(singular_absolute_error < 1.0e-7);
+    CHECK(standard_backward_error < 1.0e-9);
+    CHECK(standard_absolute_error < 1.0e-7);
+    CHECK(energy_mismatch < 1.0e-9);
+    CHECK(std::isfinite(weak_divergence));
+    CHECK(weak_divergence < 5.0e-1);
+
+    const double singular_electric =
+        GetTableValue(singular_diagnostics, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    const double singular_magnetic =
+        GetTableValue(singular_diagnostics, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard_energy, "E_mag (J)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 1.0e-6);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 1.0e-6);
+
+    const double singular_participation = GetTableValue(singular_surface, "p_surf[1]");
+    const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
+    const double participation_ratio = singular_participation / standard_participation;
+    CAPTURE(singular_participation, standard_participation, participation_ratio);
+    CHECK(participation_ratio > 1.5);
+    CHECK(participation_ratio < 2.5);
+  }
+}
+
 TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

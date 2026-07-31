@@ -99,8 +99,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   if (space_op.HasSingularEnrichment())
   {
-    MFEM_VERIFY(!C, "Eigenmode singular simulations require a lossless undamped operator!");
-    return SolveSingular(space_op, std::move(K), std::move(M));
+    return SolveSingular(space_op, std::move(K), std::move(C), std::move(M));
   }
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
@@ -567,11 +566,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOperator> K,
+                           std::unique_ptr<ComplexOperator> C,
                            std::unique_ptr<ComplexOperator> M) const
 {
-  MFEM_VERIFY(K && M && K->Real() && !K->Imag() && M->Real(),
-              "Eigenmode singular simulations require real stiffness and a complex "
-              "electric mass operator!");
+  MFEM_VERIFY(
+      K && M && K->Real() && !K->Imag() && (!C || (C->Real() && !C->Imag())) && M->Real(),
+      "Eigenmode singular simulations require real stiffness and damping operators and a "
+      "complex electric mass operator!");
+  const bool damped = (C != nullptr);
   auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
   auto K_bulk = space_op.GetBulkStiffnessMatrix(Operator::DIAG_ZERO);
   auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
@@ -587,18 +589,42 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   {
 #if defined(PALACE_WITH_ARPACK)
     Mpi::Print("\nConfiguring ARPACK enriched eigenvalue solver:\n");
-    eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
-                                                      iodata.problem.verbose);
+    if (damped)
+    {
+      eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+    }
+    else
+    {
+      eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+    }
 #endif
   }
   else
   {
 #if defined(PALACE_WITH_SLEPC)
     Mpi::Print("\nConfiguring SLEPc enriched eigenvalue solver:\n");
-    auto slepc =
-        std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(), iodata.problem.verbose);
-    slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-    slepc->SetProblemType(M->Imag()
+    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
+    if (damped && !iodata.solver.eigenmode.pep_linear)
+    {
+      slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
+                                                      iodata.problem.verbose);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+    }
+    else if (damped)
+    {
+      slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
+                                                            iodata.problem.verbose);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    }
+    else
+    {
+      slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
+                                                      iodata.problem.verbose);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    }
+    slepc->SetProblemType(damped || M->Imag()
                               ? slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN
                               : slepc::SlepcEigenvalueSolver::ProblemType::GEN_HERMITIAN);
     slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
@@ -610,10 +636,19 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
 
   const auto scale = iodata.solver.eigenmode.scale ? EigenvalueSolver::ScaleType::NORM_2
                                                    : EigenvalueSolver::ScaleType::NONE;
-  eigen->SetOperators(*K, *M, scale);
+  if (damped)
+  {
+    eigen->SetOperators(*K, *C, *M, scale);
+  }
+  else
+  {
+    eigen->SetOperators(*K, *M, scale);
+  }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
   eigen->SetTol(iodata.solver.eigenmode.tol);
   eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
+  Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
+             eigen->GetScalingDelta());
 
   auto mass_inner_product = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
   if (iodata.solver.eigenmode.mass_orthog)
@@ -623,12 +658,14 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
 
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  const bool has_reactive_boundary =
+  const bool has_impedance_boundary =
       !space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap().empty() ||
+      !space_op.GetLumpedPortOp().GetDampingBdrCoefficientMap().empty() ||
       !space_op.GetLumpedPortOp().GetMassBdrCoefficientMap().empty() ||
       !space_op.GetSurfaceImpedanceOp().GetStiffnessBdrCoefficientMap().empty() ||
+      !space_op.GetSurfaceImpedanceOp().GetDampingBdrCoefficientMap().empty() ||
       !space_op.GetSurfaceImpedanceOp().GetMassBdrCoefficientMap().empty();
-  if (iodata.solver.linear.divfree_max_it > 0 && !has_reactive_boundary)
+  if (iodata.solver.linear.divfree_max_it > 0 && !has_impedance_boundary)
   {
     Mpi::Print(" Configuring enriched divergence-free projection\n");
     auto scalar_diffusion = space_op.GetBulkScalarDiffusionMatrix();
@@ -639,7 +676,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
   else if (iodata.solver.linear.divfree_max_it > 0)
   {
-    Mpi::Print(" Skipping enriched divergence-free projection because reactive "
+    Mpi::Print(" Skipping enriched divergence-free projection because impedance "
                "boundaries lift the curl-gradient nullspace\n");
   }
 
@@ -661,13 +698,21 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     eigen->SetInitialSpace(initial);
   }
 
-  eigen->SetShiftInvert(target * target);
-  eigen->SetWhichEigenpairs(type == EigenSolverBackend::ARPACK
-                                ? EigenvalueSolver::WhichType::LARGEST_REAL
-                                : EigenvalueSolver::WhichType::TARGET_REAL);
-  auto shifted =
-      space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -target * target + 0.0i, K.get(),
-                               static_cast<const ComplexOperator *>(nullptr), M.get());
+  if (damped)
+  {
+    eigen->SetShiftInvert(1i * target);
+    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+  }
+  else
+  {
+    eigen->SetShiftInvert(target * target);
+    eigen->SetWhichEigenpairs(type == EigenSolverBackend::ARPACK
+                                  ? EigenvalueSolver::WhichType::LARGEST_REAL
+                                  : EigenvalueSolver::WhichType::TARGET_REAL);
+  }
+  const std::complex<double> damping_shift = damped ? 1i * target : 0.0;
+  auto shifted = space_op.GetSystemMatrix(
+      1.0 + 0.0i, damping_shift, -target * target + 0.0i, K.get(), C.get(), M.get());
   const auto combined_prolongations = space_op.GetCombinedNDProlongationOperators();
   const auto combined_gradients = space_op.GetCombinedGradientOperators();
   auto ksp = MakeSingularComplexKspSolver(
@@ -675,14 +720,15 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       combined_gradients, space_op.GetCombinedNDDbcTDofLists(),
       space_op.GetCombinedH1DbcTDofLists());
   auto preconditioner = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 0.0 + 0.0i, -target * target + 0.0i, target);
+      1.0 + 0.0i, damping_shift, -target * target + 0.0i, target);
   ksp->SetOperators(*shifted, *preconditioner);
   eigen->SetLinearSolver(*ksp);
 
   {
     const double frequency =
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
-    Mpi::Print(" Shift-and-invert sigma = {:.3e} GHz ({:.3e})\n", frequency, target);
+    Mpi::Print(" Shift-and-invert sigma = {:.3e} GHz ({:.3e}{})\n", frequency, target,
+               damped ? "i" : "^2");
   }
   int num_converged;
   {
@@ -916,7 +962,8 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
                  elapsed / Mpi::Size(space_op.GetComm()));
       stage_start = Timer::Now();
     };
-    const std::complex<double> omega = std::sqrt(eigen->GetEigenvalue(mode));
+    const std::complex<double> eigenvalue = eigen->GetEigenvalue(mode);
+    const std::complex<double> omega = damped ? eigenvalue / 1i : std::sqrt(eigenvalue);
     const double error_backward =
         eigen->GetError(mode, EigenvalueSolver::ErrorType::BACKWARD);
     const double error_absolute =
@@ -1111,6 +1158,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"ElectricEnergy", "0.5 E^H M_bulk E"},
           {"MagneticEnergy", "0.5 E^H K_bulk E / |omega|^2"},
           {"EnergyMismatch", "complete reactive-boundary-augmented eigenproblem"},
+          {"DampedQuadraticEigenproblem", damped},
           {"SurfaceParticipationDenominator", "E_electric_bulk + E_capacitor"},
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},

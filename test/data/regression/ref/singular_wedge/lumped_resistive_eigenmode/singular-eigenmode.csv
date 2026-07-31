@@ -1,0 +1,2 @@
+m,  Electric field energy (J),  Magnetic field energy (J),   Relative energy mismatch,   Relative weak divergence,               Re{V[1]} (V),               Im{V[1]} (V),               Re{I[1]} (A),               Im{I[1]} (A),                   p_ind[1]
+1,        +5.003461427972e-09,        +5.003461428005e-09,        +6.573630528762e-12,        +2.966929522763e-01,        +3.223366916235e-02,        -3.566278757888e-02,        +6.446733832470e-04,        -7.132557515777e-04,        +0.000000000000e+00

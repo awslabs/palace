@@ -299,6 +299,26 @@ void IoData::CheckConfiguration()
                                     impedance.attributes.begin(),
                                     impedance.attributes.end());
       }
+      if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
+      {
+        for (const auto &[idx, port] : boundaries.lumpedport)
+        {
+          const bool has_impedance = std::abs(port.R) + std::abs(port.L) +
+                                         std::abs(port.C) + std::abs(port.Rs) +
+                                         std::abs(port.Ls) + std::abs(port.Cs) >
+                                     0.0;
+          if (!port.active || !has_impedance)
+          {
+            continue;
+          }
+          for (const auto &element : port.elements)
+          {
+            conductor_attributes.insert(conductor_attributes.end(),
+                                        element.attributes.begin(),
+                                        element.attributes.end());
+          }
+        }
+      }
     }
     std::sort(conductor_attributes.begin(), conductor_attributes.end());
     conductor_attributes.erase(
@@ -312,8 +332,8 @@ void IoData::CheckConfiguration()
     MFEM_VERIFY(
         unconstrained_attributes.empty(),
         "Singular-element attributes must also be PEC, auxiliary PEC, electrostatic "
-        "terminal, or supported surface-impedance boundary attributes! Missing conductor "
-        "attributes: "
+        "terminal, supported surface-impedance, or active lumped-port boundary "
+        "attributes! Missing conductor attributes: "
             << fmt::format("{}", fmt::join(unconstrained_attributes, " ")));
     const auto is_isotropic = [](const auto &property)
     {
@@ -382,17 +402,6 @@ void IoData::CheckConfiguration()
       }
       else
       {
-        const bool has_active_resistive_port = std::any_of(
-            boundaries.lumpedport.begin(), boundaries.lumpedport.end(),
-            [](const auto &entry)
-            {
-              const auto &port = entry.second;
-              return port.active && (std::abs(port.R) > 0.0 || std::abs(port.Rs) > 0.0);
-            });
-        MFEM_VERIFY(!has_active_resistive_port,
-                    "Singular eigenmode simulations support inductive and capacitive "
-                    "lumped ports, but resistive ports require the damped quadratic "
-                    "eigenvalue path and are not yet supported!");
         MFEM_VERIFY(solver.eigenmode.n_post == 0,
                     "Eigenmode singular simulations do not yet support saved "
                     "standard-grid fields; set Solver.Eigenmode.Save = 0!");

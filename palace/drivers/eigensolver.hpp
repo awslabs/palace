@@ -27,6 +27,7 @@ private:
 
   std::pair<ErrorIndicator, long long int>
   SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOperator> K,
+                std::unique_ptr<ComplexOperator> C,
                 std::unique_ptr<ComplexOperator> M) const;
 
   std::pair<ErrorIndicator, long long int>
