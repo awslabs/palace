@@ -114,16 +114,22 @@ void SetQuadraticGeometry(mfem::Mesh &mesh, bool curved)
   mesh.GetNodes()->ProjectCoefficient(geometry);
 }
 
-IoData SingularSpaceData(int dimension, int order = 1, int mg_max_levels = 1)
+IoData SingularSpaceData(int dimension, int order = 1, int mg_max_levels = 1,
+                         bool heterogeneous = false)
 {
+  config::json materials = {
+      {{"Attributes", {1}}, {"Permittivity", 2.3}, {"Permeability", 1.7}}};
+  if (heterogeneous)
+  {
+    materials.push_back(
+        {{"Attributes", {2}}, {"Permittivity", 5.1}, {"Permeability", 1.2}});
+  }
   config::json config = {
       {"Problem",
        {{"Type", dimension == 2 ? "BoundaryMode" : "Electrostatic"},
         {"Output", "test_output"}}},
       {"Model", {{"Mesh", "unused.mesh"}}},
-      {"Domains",
-       {{"Materials",
-         {{{"Attributes", {1}}, {"Permittivity", 2.3}, {"Permeability", 1.7}}}}}},
+      {"Domains", {{"Materials", std::move(materials)}}},
       {"Boundaries", {{"PEC", {{"Attributes", {1, 7}}}}}},
       {"Solver",
        {{"Order", 1},
@@ -134,7 +140,8 @@ IoData SingularSpaceData(int dimension, int order = 1, int mg_max_levels = 1)
           {"AbsTol", 1.0e-3},
           {"RelTol", 1.0e-3},
           {"MaxSubdivisions", 6}}},
-        {"Linear", {{"MGMaxLevels", 1}, {"Tol", 1.0e-12}, {"MaxIts", 20}}}}}};
+        {"Linear",
+         {{"Type", "STRUMPACK"}, {"MGMaxLevels", 1}, {"Tol", 1.0e-12}, {"MaxIts", 20}}}}}};
   IoData iodata(config, false);
   iodata.problem.type = ProblemType::EIGENMODE;
   iodata.solver.order = order;
@@ -171,10 +178,17 @@ void CheckSymmetricPositive(const Operator &matrix)
 }
 
 void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent = 0.0,
-                        int order = 1, int mg_max_levels = 1)
+                        int order = 1, int mg_max_levels = 1, bool heterogeneous = false)
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   const int dimension = serial_mesh.Dimension();
+  if (heterogeneous)
+  {
+    for (int element = 0; element < serial_mesh.GetNE(); element++)
+    {
+      serial_mesh.GetElement(element)->SetAttribute(1 + element % 2);
+    }
+  }
   SetQuadraticGeometry(serial_mesh, curved);
   const bool tetrahedral = dimension == 3;
   const auto sheet_features =
@@ -202,8 +216,11 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
-  auto iodata = SingularSpaceData(dimension, order, mg_max_levels);
-  iodata.domains.materials[0].tandelta.s = {loss_tangent, loss_tangent, loss_tangent};
+  auto iodata = SingularSpaceData(dimension, order, mg_max_levels, heterogeneous);
+  for (auto &material : iodata.domains.materials)
+  {
+    material.tandelta.s = {loss_tangent, loss_tangent, loss_tangent};
+  }
   SpaceOperator space_op(iodata, meshes, tetrahedral ? &local_sheet_features : nullptr,
                          tetrahedral ? nullptr : &local_line_features, &source_vertex_ids);
   REQUIRE(space_op.HasSingularEnrichment());
@@ -234,6 +251,7 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   const auto &h1_spaces = space_op.GetH1Spaces();
   const auto &nd_essential = space_op.GetCombinedNDDbcTDofLists();
   const auto &h1_essential = space_op.GetCombinedH1DbcTDofLists();
+  const auto &h1_projector_essential = space_op.GetCombinedH1AuxBdrTDofList();
   REQUIRE(nd_spaces.GetNumLevels() == static_cast<std::size_t>(mg_max_levels));
   REQUIRE(h1_spaces.GetNumLevels() == nd_spaces.GetNumLevels());
   REQUIRE(nd_prolongations.size() + 1 == nd_spaces.GetNumLevels());
@@ -241,6 +259,12 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   REQUIRE(gradients.size() == nd_spaces.GetNumLevels());
   REQUIRE(nd_essential.size() == nd_spaces.GetNumLevels());
   REQUIRE(h1_essential.size() == h1_spaces.GetNumLevels());
+  CHECK(std::is_sorted(h1_projector_essential.begin(), h1_projector_essential.end()));
+  for (const int dof : h1_projector_essential)
+  {
+    CHECK(dof >= 0);
+    CHECK(dof < gradients.back()->Width());
+  }
 
   for (std::size_t level = 0; level < gradients.size(); level++)
   {
@@ -455,9 +479,22 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 
   // The projector must act on both standard and enrichment coordinates.
   auto scalar_diffusion = space_op.GetBulkScalarDiffusionMatrix();
+  Vector scalar(hypre_G->Width()), gradient_mass(hypre_G->Height()),
+      algebraic_diffusion(hypre_G->Width()), assembled_diffusion(hypre_G->Width());
+  FillVector(scalar, 0.65);
+  linalg::SetSubVector(scalar, h1_projector_essential, 0.0);
+  hypre_G->Mult(scalar, gradient);
+  M_bulk->Mult(gradient, gradient_mass);
+  hypre_G->MultTranspose(gradient_mass, algebraic_diffusion);
+  scalar_diffusion->Mult(scalar, assembled_diffusion);
+  linalg::SetSubVector(algebraic_diffusion, h1_projector_essential, 0.0);
+  linalg::SetSubVector(assembled_diffusion, h1_projector_essential, 0.0);
+  linalg::AXPY(-1.0, algebraic_diffusion, assembled_diffusion);
+  CHECK(linalg::Norml2(Mpi::World(), assembled_diffusion) <=
+        2.0e-10 * std::max(1.0, linalg::Norml2(Mpi::World(), algebraic_diffusion)));
+
   DivFreeSolver<ComplexVector> divfree(iodata, Mpi::World(), *M_bulk, *hypre_G,
-                                       std::move(scalar_diffusion),
-                                       space_op.GetCombinedH1DbcTDofList());
+                                       std::move(scalar_diffusion), h1_projector_essential);
   ComplexVector electric(M_zero->Width()), projected(M_zero->Width()),
       mass_electric(M_zero->Height());
   FillVector(electric.Real(), 0.25);
@@ -471,7 +508,7 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   M_bulk->Mult(projected.Imag(), mass_electric.Imag());
   hypre_G->MultTranspose(mass_electric.Real(), weak_divergence.Real());
   hypre_G->MultTranspose(mass_electric.Imag(), weak_divergence.Imag());
-  linalg::SetSubVector(weak_divergence, space_op.GetCombinedH1DbcTDofList(), 0.0);
+  linalg::SetSubVector(weak_divergence, h1_projector_essential, 0.0);
   CHECK(linalg::Norml2(Mpi::World(), weak_divergence) <=
         2.0e-10 * std::max(1.0, linalg::Norml2(Mpi::World(), mass_electric)));
 
@@ -510,6 +547,10 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   SECTION("3D isotropic dielectric loss")
   {
     CheckSpaceOperator(InternalSheetMesh(), false, 0.017);
+  }
+  SECTION("3D heterogeneous dielectric interface")
+  {
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.017, 1, 1, true);
   }
   SECTION("2D p = 2 combined hierarchy")
   {

@@ -109,19 +109,21 @@ void PrintSparseMatrixStatistics(std::string_view label, const mfem::HypreParMat
              statistics.small_12, statistics.nonfinite, statistics.maximum_absolute_value);
 }
 
-std::vector<std::array<fem::singular::GlobalVertexId, 3>> GatherBoundaryTraceExclusionFaces(
-    const mfem::ParMesh &mesh,
-    const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
-    const std::set<int> &boundary_attributes)
+template <std::size_t NumVertices>
+std::vector<std::array<fem::singular::GlobalVertexId, NumVertices>>
+GatherBoundaryEntities(const mfem::ParMesh &mesh,
+                       const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
+                       const std::set<int> &boundary_attributes,
+                       mfem::Geometry::Type geometry)
 {
   if (boundary_attributes.empty())
   {
     return {};
   }
   MFEM_VERIFY(source_vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV()),
-              "Singular boundary-trace exclusions require complete source vertex IDs!");
+              "Singular boundary classification requires complete source vertex IDs!");
 
-  std::set<std::array<fem::singular::GlobalVertexId, 3>> local_faces;
+  std::set<std::array<fem::singular::GlobalVertexId, NumVertices>> local_entities;
   for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
   {
     if (boundary_attributes.count(mesh.GetBdrAttribute(boundary)) == 0)
@@ -129,32 +131,34 @@ std::vector<std::array<fem::singular::GlobalVertexId, 3>> GatherBoundaryTraceExc
       continue;
     }
     const auto &element = *mesh.GetBdrElement(boundary);
-    MFEM_VERIFY(element.GetGeometryType() == mfem::Geometry::TRIANGLE,
-                "Three-dimensional singular boundary-trace exclusions require "
-                "triangular boundary elements!");
-    std::array<fem::singular::GlobalVertexId, 3> face;
-    for (int vertex = 0; vertex < 3; vertex++)
+    MFEM_VERIFY(element.GetGeometryType() == geometry &&
+                    element.GetNVertices() == static_cast<int>(NumVertices),
+                "Singular boundary classification received an unexpected boundary "
+                "element geometry!");
+    std::array<fem::singular::GlobalVertexId, NumVertices> entity;
+    for (std::size_t vertex = 0; vertex < NumVertices; vertex++)
     {
       const int mesh_vertex = element.GetVertices()[vertex];
       MFEM_VERIFY(mesh_vertex >= 0 && mesh_vertex < mesh.GetNV(),
-                  "A singular boundary-trace exclusion face has an invalid vertex!");
-      face[vertex] = source_vertex_ids[mesh_vertex];
+                  "A singular boundary entity has an invalid vertex!");
+      entity[vertex] = source_vertex_ids[mesh_vertex];
     }
-    std::sort(face.begin(), face.end());
-    MFEM_VERIFY(face[0] >= 0 && std::adjacent_find(face.begin(), face.end()) == face.end(),
-                "A singular boundary-trace exclusion face has invalid source vertices!");
-    local_faces.insert(face);
+    std::sort(entity.begin(), entity.end());
+    MFEM_VERIFY(entity[0] >= 0 &&
+                    std::adjacent_find(entity.begin(), entity.end()) == entity.end(),
+                "A singular boundary entity has invalid source vertices!");
+    local_entities.insert(entity);
   }
 
   std::vector<fem::singular::GlobalVertexId> local_data;
-  local_data.reserve(3 * local_faces.size());
-  for (const auto &face : local_faces)
+  local_data.reserve(NumVertices * local_entities.size());
+  for (const auto &entity : local_entities)
   {
-    local_data.insert(local_data.end(), face.begin(), face.end());
+    local_data.insert(local_data.end(), entity.begin(), entity.end());
   }
   MFEM_VERIFY(local_data.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Too many local singular boundary-trace exclusion faces!");
+              "Too many local singular boundary entities!");
   const int local_count = static_cast<int>(local_data.size());
   std::vector<int> counts(Mpi::Size(mesh.GetComm()));
   Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
@@ -162,9 +166,9 @@ std::vector<std::array<fem::singular::GlobalVertexId, 3>> GatherBoundaryTraceExc
   int global_count = 0;
   for (std::size_t rank = 0; rank < counts.size(); rank++)
   {
-    MFEM_VERIFY(counts[rank] >= 0 && counts[rank] % 3 == 0 &&
+    MFEM_VERIFY(counts[rank] >= 0 && counts[rank] % static_cast<int>(NumVertices) == 0 &&
                     counts[rank] <= std::numeric_limits<int>::max() - global_count,
-                "Invalid distributed singular boundary-trace exclusion face count!");
+                "Invalid distributed singular boundary entity count!");
     offsets[rank] = global_count;
     global_count += counts[rank];
   }
@@ -172,17 +176,17 @@ std::vector<std::array<fem::singular::GlobalVertexId, 3>> GatherBoundaryTraceExc
   Mpi::Allgatherv(local_count, local_data.data(), global_data.data(), counts.data(),
                   offsets.data(), mesh.GetComm());
 
-  std::set<std::array<fem::singular::GlobalVertexId, 3>> global_faces;
-  for (int offset = 0; offset < global_count; offset += 3)
+  std::set<std::array<fem::singular::GlobalVertexId, NumVertices>> global_entities;
+  for (int offset = 0; offset < global_count; offset += NumVertices)
   {
-    std::array<fem::singular::GlobalVertexId, 3> face{
-        global_data[offset], global_data[offset + 1], global_data[offset + 2]};
-    MFEM_VERIFY(face[0] >= 0 && std::is_sorted(face.begin(), face.end()) &&
-                    std::adjacent_find(face.begin(), face.end()) == face.end(),
-                "A gathered singular boundary-trace exclusion face is invalid!");
-    global_faces.insert(face);
+    std::array<fem::singular::GlobalVertexId, NumVertices> entity;
+    std::copy_n(global_data.begin() + offset, NumVertices, entity.begin());
+    MFEM_VERIFY(entity[0] >= 0 && std::is_sorted(entity.begin(), entity.end()) &&
+                    std::adjacent_find(entity.begin(), entity.end()) == entity.end(),
+                "A gathered singular boundary entity is invalid!");
+    global_entities.insert(entity);
   }
-  return {global_faces.begin(), global_faces.end()};
+  return {global_entities.begin(), global_entities.end()};
 }
 
 }  // namespace
@@ -246,6 +250,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   CheckBoundaryProperties();
   combined_nd_dbc_tdof_lists = nd_dbc_tdof_lists;
   combined_h1_dbc_tdof_lists = h1_dbc_tdof_lists;
+  combined_h1_aux_bdr_tdof_lists = aux_bdr_tdof_lists;
 
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -336,9 +341,10 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
   collect_lumped_attributes(lumped_port_op.GetDampingBdrCoefficientMap());
   collect_lumped_attributes(lumped_port_op.GetMassBdrCoefficientMap());
   const auto excluded_boundary_trace_faces =
-      tetrahedral ? GatherBoundaryTraceExclusionFaces(GetMesh().Get(), *source_vertex_ids,
-                                                      lumped_boundary_attributes)
-                  : std::vector<std::array<fem::singular::GlobalVertexId, 3>>{};
+      tetrahedral
+          ? GatherBoundaryEntities<3>(GetMesh().Get(), *source_vertex_ids,
+                                      lumped_boundary_attributes, mfem::Geometry::TRIANGLE)
+          : std::vector<std::array<fem::singular::GlobalVertexId, 3>>{};
   if (!excluded_boundary_trace_faces.empty())
   {
     Mpi::Print(" Excluding nonintegrable edge-gradient traces on {:d} lumped-port "
@@ -801,8 +807,31 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
         *singular_numbering, singular_essential_attributes);
   }
 
+  mfem::Array<int> singular_h1_auxiliary_true_dofs;
+  const std::set<int> auxiliary_boundary_attributes(aux_bdr_attr.begin(),
+                                                    aux_bdr_attr.end());
+  if (tetrahedral)
+  {
+    const auto auxiliary_boundary_faces =
+        GatherBoundaryEntities<3>(GetMesh().Get(), *source_vertex_ids,
+                                  auxiliary_boundary_attributes, mfem::Geometry::TRIANGLE);
+    singular_h1_auxiliary_true_dofs = fem::singular::GetEssentialH1TrueDofsOnFaces(
+        GetComm(), auxiliary_boundary_faces, *singular_dofs, *singular_numbering);
+  }
+  else
+  {
+    const auto auxiliary_boundary_segments =
+        GatherBoundaryEntities<2>(GetMesh().Get(), *source_vertex_ids,
+                                  auxiliary_boundary_attributes, mfem::Geometry::SEGMENT);
+    singular_h1_auxiliary_true_dofs =
+        fem::singular::GetEssentialTriangleH1TrueDofsOnSegments(
+            GetComm(), auxiliary_boundary_segments, *triangle_singular_dofs,
+            *singular_numbering);
+  }
+
   combined_nd_dbc_tdof_lists = nd_dbc_tdof_lists;
   combined_h1_dbc_tdof_lists = h1_dbc_tdof_lists;
+  combined_h1_aux_bdr_tdof_lists = aux_bdr_tdof_lists;
   for (std::size_t level = 0; level < number_levels; level++)
   {
     auto &combined_nd = combined_nd_dbc_tdof_lists[level];
@@ -820,9 +849,19 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
       combined_h1.Append(standard_h1_size + dof);
     }
     combined_h1.Sort();
+
+    auto &combined_h1_auxiliary = combined_h1_aux_bdr_tdof_lists[level];
+    for (int dof : singular_h1_auxiliary_true_dofs)
+    {
+      combined_h1_auxiliary.Append(standard_h1_size + dof);
+    }
+    combined_h1_auxiliary.Sort();
     MFEM_VERIFY(
         std::adjacent_find(combined_nd.begin(), combined_nd.end()) == combined_nd.end() &&
-            std::adjacent_find(combined_h1.begin(), combined_h1.end()) == combined_h1.end(),
+            std::adjacent_find(combined_h1.begin(), combined_h1.end()) ==
+                combined_h1.end() &&
+            std::adjacent_find(combined_h1_auxiliary.begin(),
+                               combined_h1_auxiliary.end()) == combined_h1_auxiliary.end(),
         "Full-wave singular essential true DOFs are not unique!");
   }
   report_stage("essential DOF construction");

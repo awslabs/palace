@@ -219,6 +219,13 @@ GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
                        const ParallelDofNumbering &parallel_numbering,
                        const mfem::Array<int> &essential_boundary_attributes);
 
+// Return rank-local owned H1 true DOFs whose scalar enrichment trace is
+// nonzero on any supplied boundary face. Faces use sorted stable source-vertex
+// IDs and need not belong to the attributes selected for singular enrichment.
+mfem::Array<int> GetEssentialH1TrueDofsOnFaces(
+    MPI_Comm comm, const std::vector<std::array<GlobalVertexId, 3>> &boundary_faces,
+    const DofTopology &topology, const ParallelDofNumbering &parallel_numbering);
+
 // Return rank-local owned ND true DOFs whose vector enrichment has nonzero
 // tangential trace on a selected PEC sheet face. As for H1, trace support is
 // classified from stable source vertices, so the result is independent of
@@ -243,6 +250,13 @@ GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &fea
                                const TriangleDofTopology &topology,
                                const ParallelDofNumbering &parallel_numbering,
                                const mfem::Array<int> &essential_boundary_attributes);
+
+// Return rank-local owned H1 true DOFs whose scalar enrichment trace is
+// nonzero on any supplied boundary segment. Segments use sorted stable
+// source-vertex IDs and need not be selected singular line segments.
+mfem::Array<int> GetEssentialTriangleH1TrueDofsOnSegments(
+    MPI_Comm comm, const std::vector<std::array<GlobalVertexId, 2>> &boundary_segments,
+    const TriangleDofTopology &topology, const ParallelDofNumbering &parallel_numbering);
 
 // Return owned enriched ND true DOFs with nonzero tangential trace on a
 // selected zero-thickness PEC line segment. Rotational triangle enrichments

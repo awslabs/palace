@@ -439,29 +439,52 @@ template <typename OperType>
 std::unique_ptr<BaseKspSolver<OperType>>
 MakeSingularDirectKspSolverImpl(const IoData &iodata, MPI_Comm comm)
 {
-#if defined(MFEM_USE_SUPERLU)
-  auto linear = iodata.solver.linear;
-  linear.krylov_solver = KrylovSolver::GMRES;
-  linear.initial_guess = false;
-  if (linear.sym_factorization == SymbolicFactorization::DEFAULT && Mpi::Size(comm) > 1)
+  if constexpr (std::is_same_v<OperType, Operator>)
   {
-    // SuperLU_DIST's default METIS_AT_PLUS_A ordering can produce an inaccurate
-    // distributed factorization for indefinite combined singular-element systems.
-    // Prefer the distributed ordering, while preserving an explicit user choice.
-    linear.sym_factorization = SymbolicFactorization::PARMETIS;
+    auto linear = iodata.solver.linear;
+    linear.krylov_solver = KrylovSolver::CG;
+    linear.initial_guess = false;
+    linear.tol = linear.divfree_tol;
+    linear.max_it = linear.divfree_max_it;
+    if (linear.type == LinearSolver::AMS)
+    {
+      linear.type = LinearSolver::BOOMER_AMG;
+    }
+    auto pc = ConfigureSingularElectrostaticCoarseSolver(linear, MatrixSymmetry::SPD,
+                                                         iodata.problem.verbose, comm);
+    auto result = std::make_unique<BaseKspSolver<OperType>>(
+        ConfigureKrylovSolver<OperType>(linear, iodata.problem.verbose, comm),
+        std::move(pc));
+    result->EnableTimer();
+    return result;
   }
-  auto pc = MakeWrapperSolver<OperType, SuperLUSolver>(
-      linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
-      iodata.problem.verbose - 1);
-  auto result = std::make_unique<BaseKspSolver<OperType>>(
-      ConfigureKrylovSolver<OperType>(linear, iodata.problem.verbose, comm), std::move(pc));
-  result->EnableTimer();
-  return result;
+  else
+  {
+#if defined(MFEM_USE_SUPERLU)
+    auto linear = iodata.solver.linear;
+    linear.krylov_solver = KrylovSolver::GMRES;
+    linear.initial_guess = false;
+    if (linear.sym_factorization == SymbolicFactorization::DEFAULT && Mpi::Size(comm) > 1)
+    {
+      // SuperLU_DIST's default METIS_AT_PLUS_A ordering can produce an inaccurate
+      // distributed factorization for indefinite combined singular-element systems.
+      // Prefer the distributed ordering, while preserving an explicit user choice.
+      linear.sym_factorization = SymbolicFactorization::PARMETIS;
+    }
+    auto pc = MakeWrapperSolver<OperType, SuperLUSolver>(
+        linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
+        iodata.problem.verbose - 1);
+    auto result = std::make_unique<BaseKspSolver<OperType>>(
+        ConfigureKrylovSolver<OperType>(linear, iodata.problem.verbose, comm),
+        std::move(pc));
+    result->EnableTimer();
+    return result;
 #else
-  MFEM_ABORT("Combined singular-element systems require a Palace build with "
-             "SuperLU_DIST!");
-  return nullptr;
+    MFEM_ABORT("Combined singular-element systems require a Palace build with "
+               "SuperLU_DIST!");
+    return nullptr;
 #endif
+  }
 }
 
 }  // namespace

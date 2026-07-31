@@ -120,6 +120,7 @@ private:
   mfem::Array<int> singular_nd_gradient_true_dofs;
   std::vector<mfem::Array<int>> combined_nd_dbc_tdof_lists;
   std::vector<mfem::Array<int>> combined_h1_dbc_tdof_lists;
+  std::vector<mfem::Array<int>> combined_h1_aux_bdr_tdof_lists;
   std::map<int, std::unique_ptr<Vector>> singular_lumped_voltage_functionals;
   std::map<int, std::unique_ptr<Vector>> singular_lumped_sparameter_functionals;
 
@@ -223,6 +224,13 @@ public:
   const std::vector<mfem::Array<int>> &GetCombinedH1DbcTDofLists() const
   {
     return combined_h1_dbc_tdof_lists;
+  }
+  // Scalar-potential constraints for the divergence projector. In addition to PEC
+  // boundaries, these include boundaries whose stiffness or damping terms lift the
+  // unrestricted curl-gradient nullspace.
+  const mfem::Array<int> &GetCombinedH1AuxBdrTDofList() const
+  {
+    return combined_h1_aux_bdr_tdof_lists.back();
   }
   std::vector<const Operator *> GetCombinedNDProlongationOperators() const;
   std::vector<const Operator *> GetCombinedH1ProlongationOperators() const;

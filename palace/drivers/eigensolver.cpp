@@ -3,7 +3,10 @@
 
 #include "eigensolver.hpp"
 
+#include <algorithm>
 #include <complex>
+#include <map>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -658,26 +661,54 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   }
 
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  const bool has_impedance_boundary =
-      !space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap().empty() ||
-      !space_op.GetLumpedPortOp().GetDampingBdrCoefficientMap().empty() ||
-      !space_op.GetLumpedPortOp().GetMassBdrCoefficientMap().empty() ||
-      !space_op.GetSurfaceImpedanceOp().GetStiffnessBdrCoefficientMap().empty() ||
-      !space_op.GetSurfaceImpedanceOp().GetDampingBdrCoefficientMap().empty() ||
-      !space_op.GetSurfaceImpedanceOp().GetMassBdrCoefficientMap().empty();
-  if (iodata.solver.linear.divfree_max_it > 0 && !has_impedance_boundary)
+  const bool has_unconstrained_boundary_mass = [&]()
+  {
+    std::set<int> constrained_attributes;
+    const auto collect_attributes =
+        [&constrained_attributes](const std::map<int, double> &coefficients)
+    {
+      for (const auto &[attribute, coefficient] : coefficients)
+      {
+        if (coefficient != 0.0)
+        {
+          constrained_attributes.insert(attribute);
+        }
+      }
+    };
+    collect_attributes(space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap());
+    collect_attributes(space_op.GetLumpedPortOp().GetDampingBdrCoefficientMap());
+    collect_attributes(space_op.GetSurfaceImpedanceOp().GetStiffnessBdrCoefficientMap());
+    collect_attributes(space_op.GetSurfaceImpedanceOp().GetDampingBdrCoefficientMap());
+
+    const auto has_unconstrained_attribute =
+        [&constrained_attributes](const std::map<int, double> &coefficients)
+    {
+      return std::any_of(coefficients.begin(), coefficients.end(),
+                         [&constrained_attributes](const auto &entry)
+                         {
+                           return entry.second != 0.0 &&
+                                  constrained_attributes.find(entry.first) ==
+                                      constrained_attributes.end();
+                         });
+    };
+    return has_unconstrained_attribute(
+               space_op.GetLumpedPortOp().GetMassBdrCoefficientMap()) ||
+           has_unconstrained_attribute(
+               space_op.GetSurfaceImpedanceOp().GetMassBdrCoefficientMap());
+  }();
+  if (iodata.solver.linear.divfree_max_it > 0 && !has_unconstrained_boundary_mass)
   {
     Mpi::Print(" Configuring enriched divergence-free projection\n");
     auto scalar_diffusion = space_op.GetBulkScalarDiffusionMatrix();
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         iodata, space_op.GetComm(), *M_bulk, space_op.GetGradMatrix(),
-        std::move(scalar_diffusion), space_op.GetCombinedH1DbcTDofList());
+        std::move(scalar_diffusion), space_op.GetCombinedH1AuxBdrTDofList());
     eigen->SetDivFreeProjector(*divfree);
   }
   else if (iodata.solver.linear.divfree_max_it > 0)
   {
-    Mpi::Print(" Skipping enriched divergence-free projection because impedance "
-               "boundaries lift the curl-gradient nullspace\n");
+    Mpi::Print(" Skipping enriched divergence-free projection because a purely capacitive "
+               "boundary requires a bulk-plus-boundary mass metric\n");
   }
 
   if (iodata.solver.eigenmode.init_v0)
@@ -1163,6 +1194,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"DivergenceProjection", divfree != nullptr},
+          {"DivergenceProjectionShiftInvert", divfree != nullptr},
           {"FieldGridOutput", false},
           {"ErrorEstimator", "standard-space smooth remainder on the complete mesh"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3

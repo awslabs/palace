@@ -2,7 +2,7 @@
   "Problem": {
     "Type": "Eigenmode",
     "Verbose": 1,
-    "Output": "postpro/lumped_resistive_standard_eigenmode"
+    "Output": "postpro/lumped_rlc_divfree_eigenmode"
   },
   "Model": {
     "Mesh": "singular_wedge_lumped_refined.mesh",
@@ -29,6 +29,8 @@
       {
         "Index": 1,
         "R": 50.0,
+        "L": 1.0e-6,
+        "C": 2.5e-12,
         "Elements": [
           {
             "Attributes": [9],
@@ -60,12 +62,22 @@
       "Tol": 1.0e-9,
       "Scaling": false
     },
+    "SingularElements": {
+      "Attributes": [7],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 1.0e-3,
+      "RelTol": 1.0e-3,
+      "MaxSubdivisions": 6
+    },
     "Linear": {
       "Type": "STRUMPACK",
       "KSPType": "GMRES",
       "Tol": 1.0e-10,
       "MaxIts": 100,
       "MGMaxLevels": 1,
+      "MGSmoothIts": 2,
+      "PCMatReal": false,
       "DivFreeMaxIts": 10
     }
   }

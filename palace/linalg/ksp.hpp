@@ -106,9 +106,9 @@ MakeSingularPatchKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fe
 bool UsesSingularPatchKspSolver(const IoData &iodata);
 
 // Configure correctness-first solvers for assembled combined standard-plus-singular
-// systems. The exact SuperLU preconditioner acts on the complete operator and therefore
-// does not rely on standard MFEM finite element space dimensions or auxiliary-space
-// interpolation operators.
+// systems. The real scalar path honors the configured coarse solver and divergence-free
+// solver tolerances; the legacy complex path uses an exact SuperLU preconditioner on the
+// complete operator.
 std::unique_ptr<KspSolver> MakeSingularDirectKspSolver(const IoData &iodata, MPI_Comm comm);
 std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(const IoData &iodata,
                                                                MPI_Comm comm);

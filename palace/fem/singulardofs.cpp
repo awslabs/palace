@@ -1067,6 +1067,52 @@ GetSelectedSheetFaces(const FeatureTopology &features,
   return selected_faces;
 }
 
+std::set<EntityKey> GetBoundaryFaceTraceSupport(
+    const std::vector<std::array<GlobalVertexId, 3>> &boundary_faces)
+{
+  std::set<std::array<GlobalVertexId, 3>> unique_faces;
+  std::set<EntityKey> trace_support;
+  for (const auto &face : boundary_faces)
+  {
+    if (face[0] < 0 || !std::is_sorted(face.begin(), face.end()) ||
+        std::adjacent_find(face.begin(), face.end()) != face.end() ||
+        !unique_faces.insert(face).second)
+    {
+      throw std::invalid_argument(
+          "Essential singular H1 classification received invalid boundary faces!");
+    }
+    for (unsigned mask = 1; mask < (1U << face.size()); mask++)
+    {
+      std::vector<GlobalVertexId> vertices;
+      for (std::size_t vertex = 0; vertex < face.size(); vertex++)
+      {
+        if (mask & (1U << vertex))
+        {
+          vertices.push_back(face[vertex]);
+        }
+      }
+      trace_support.insert(MakeEntityKey(std::move(vertices)));
+    }
+  }
+  return trace_support;
+}
+
+std::set<EntityKey> GetBoundarySegmentTraceSupport(
+    const std::vector<std::array<GlobalVertexId, 2>> &boundary_segments)
+{
+  std::set<EntityKey> trace_support;
+  for (const auto &segment : boundary_segments)
+  {
+    if (segment[0] < 0 || segment[0] >= segment[1] ||
+        !trace_support.insert(MakeEntityKey({segment[0], segment[1]})).second)
+    {
+      throw std::invalid_argument(
+          "Essential triangular H1 classification received invalid boundary segments!");
+    }
+  }
+  return trace_support;
+}
+
 template <typename Dof>
 bool HasSheetTrace(const Dof &dof,
                    const std::vector<std::array<GlobalVertexId, 3>> &sheet_faces)
@@ -1627,42 +1673,18 @@ GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
                        const ParallelDofNumbering &parallel_numbering,
                        const mfem::Array<int> &essential_boundary_attributes)
 {
-  const auto &numbering = parallel_numbering.h1;
-  if (numbering.owner.size() != topology.h1_dofs.size() ||
-      numbering.local_to_true.size() != topology.h1_dofs.size() ||
-      numbering.owned_offset < 0 || numbering.owned_size < 0 ||
-      numbering.owned_size > std::numeric_limits<int>::max())
-  {
-    throw std::invalid_argument(
-        "Essential singular H1 classification received inconsistent DOF numbering!");
-  }
-
   const std::set<int> attributes(essential_boundary_attributes.begin(),
                                  essential_boundary_attributes.end());
   const auto sheet_faces = GetSelectedSheetFaces(features, &attributes);
+  return GetEssentialH1TrueDofsOnFaces(comm, sheet_faces, topology, parallel_numbering);
+}
 
-  mfem::Array<int> result;
-  for (std::size_t local = 0; local < topology.h1_dofs.size(); local++)
-  {
-    if (!HasSheetTrace(topology.h1_dofs[local], sheet_faces) ||
-        numbering.owner[local] != Mpi::Rank(comm))
-    {
-      continue;
-    }
-    const HYPRE_BigInt true_dof = numbering.local_to_true[local] - numbering.owned_offset;
-    if (true_dof < 0 || true_dof >= numbering.owned_size)
-    {
-      throw std::invalid_argument(
-          "An essential singular H1 DOF is outside its owner partition!");
-    }
-    result.Append(static_cast<int>(true_dof));
-  }
-  result.Sort();
-  if (std::adjacent_find(result.begin(), result.end()) != result.end())
-  {
-    throw std::logic_error("Essential singular H1 true DOFs are not unique!");
-  }
-  return result;
+mfem::Array<int> GetEssentialH1TrueDofsOnFaces(
+    MPI_Comm comm, const std::vector<std::array<GlobalVertexId, 3>> &boundary_faces,
+    const DofTopology &topology, const ParallelDofNumbering &parallel_numbering)
+{
+  return GetEssentialH1TrueDofsImpl(comm, GetBoundaryFaceTraceSupport(boundary_faces),
+                                    topology, parallel_numbering);
 }
 
 mfem::Array<int> GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &features,
@@ -1741,6 +1763,14 @@ GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &fea
                                  essential_boundary_attributes.end());
   const auto selected_segments = GetSelectedTriangleSegments(features, &attributes);
   return GetEssentialH1TrueDofsImpl(comm, selected_segments, topology, parallel_numbering);
+}
+
+mfem::Array<int> GetEssentialTriangleH1TrueDofsOnSegments(
+    MPI_Comm comm, const std::vector<std::array<GlobalVertexId, 2>> &boundary_segments,
+    const TriangleDofTopology &topology, const ParallelDofNumbering &parallel_numbering)
+{
+  return GetEssentialH1TrueDofsImpl(comm, GetBoundarySegmentTraceSupport(boundary_segments),
+                                    topology, parallel_numbering);
 }
 
 mfem::Array<int>

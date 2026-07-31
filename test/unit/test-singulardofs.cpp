@@ -380,8 +380,12 @@ TEST_CASE("Triangular singular H1 essential DOFs follow selected PEC traces",
       Mpi::World(), features, dofs, numbering, mfem::Array<int>());
   const auto impedance_nd = fem::singular::GetEssentialTriangleNDTrueDofs(
       Mpi::World(), features, dofs, numbering, mfem::Array<int>());
+  const auto auxiliary_h1 = fem::singular::GetEssentialTriangleH1TrueDofsOnSegments(
+      Mpi::World(), std::vector<std::array<fem::singular::GlobalVertexId, 2>>{{0, 4}}, dofs,
+      numbering);
   REQUIRE(essential.Size() == 1);
   REQUIRE(essential_nd.Size() == 1);
+  REQUIRE(auxiliary_h1.Size() == 1);
   CHECK(selected_essential == essential);
   CHECK(selected_essential_nd == essential_nd);
   CHECK(impedance_h1.IsEmpty());
@@ -394,6 +398,10 @@ TEST_CASE("Triangular singular H1 essential DOFs follow selected PEC traces",
   CHECK(key.support_entity.size == 2);
   CHECK(key.support_entity.vertices[0] == 3);
   CHECK(key.support_entity.vertices[1] == 4);
+  const auto &auxiliary_key = dofs.h1_dofs[auxiliary_h1[0]];
+  CHECK(auxiliary_key.support_entity.size == 2);
+  CHECK(auxiliary_key.support_entity.vertices[0] == 0);
+  CHECK(auxiliary_key.support_entity.vertices[1] == 4);
 
   CHECK_THROWS_AS(fem::singular::BuildSerialTriangleDofTopology(mesh, features, 2),
                   std::invalid_argument);
@@ -934,8 +942,15 @@ TEST_CASE("Singular H1 essential DOFs are classified by PEC sheet trace",
         fem::singular::GetEssentialH1TrueDofs(Mpi::World(), features, dofs, numbering);
     const auto essential_nd =
         fem::singular::GetEssentialNDTrueDofs(Mpi::World(), features, dofs, numbering);
+    const std::array<int, 3> auxiliary_face{0, 1, 4};
+    const auto auxiliary_h1 = fem::singular::GetEssentialH1TrueDofsOnFaces(
+        Mpi::World(),
+        std::vector<std::array<fem::singular::GlobalVertexId, 3>>{
+            {auxiliary_face[0], auxiliary_face[1], auxiliary_face[2]}},
+        dofs, numbering);
     std::vector<bool> classified(dofs.h1_dofs.size());
     std::vector<bool> classified_nd(dofs.nd_dofs.size());
+    std::vector<bool> auxiliary_classified(dofs.h1_dofs.size());
     for (int true_dof : essential)
     {
       REQUIRE(true_dof >= 0);
@@ -947,6 +962,17 @@ TEST_CASE("Singular H1 essential DOFs are classified by PEC sheet trace",
       REQUIRE(true_dof >= 0);
       REQUIRE(true_dof < static_cast<int>(classified_nd.size()));
       classified_nd[true_dof] = true;
+    }
+    for (int true_dof : auxiliary_h1)
+    {
+      REQUIRE(true_dof >= 0);
+      REQUIRE(true_dof < static_cast<int>(auxiliary_classified.size()));
+      auxiliary_classified[true_dof] = true;
+    }
+    for (std::size_t dof = 0; dof < dofs.h1_dofs.size(); dof++)
+    {
+      CHECK(auxiliary_classified[dof] ==
+            IsSupportedOnFace(dofs.h1_dofs[dof].support_entity, auxiliary_face));
     }
 
     std::vector<bool> nonzero_sheet_trace(dofs.h1_dofs.size());

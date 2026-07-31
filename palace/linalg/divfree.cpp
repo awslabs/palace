@@ -215,8 +215,22 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
       Grad->MultTranspose(mass_y.Real(), rhs.Real());
       Grad->MultTranspose(mass_y.Imag(), rhs.Imag());
       linalg::SetSubVector(rhs, combined_h1_bdr_tdof_list, 0.0);
-      combined_ksp->Mult(rhs.Real(), psi.Real());
-      combined_ksp->Mult(rhs.Imag(), psi.Imag());
+      if (linalg::Norml2(combined_projection_matrix->GetComm(), rhs.Real()) > 0.0)
+      {
+        combined_ksp->Mult(rhs.Real(), psi.Real());
+      }
+      else
+      {
+        psi.Real() = 0.0;
+      }
+      if (linalg::Norml2(combined_projection_matrix->GetComm(), rhs.Imag()) > 0.0)
+      {
+        combined_ksp->Mult(rhs.Imag(), psi.Imag());
+      }
+      else
+      {
+        psi.Imag() = 0.0;
+      }
       Grad->AddMult(psi.Real(), y.Real(), -1.0);
       Grad->AddMult(psi.Imag(), y.Imag(), -1.0);
     }
@@ -225,7 +239,14 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
       combined_mass->Mult(y, mass_y);
       Grad->MultTranspose(mass_y, rhs);
       linalg::SetSubVector(rhs, combined_h1_bdr_tdof_list, 0.0);
-      combined_ksp->Mult(rhs, psi);
+      if (linalg::Norml2(combined_projection_matrix->GetComm(), rhs) > 0.0)
+      {
+        combined_ksp->Mult(rhs, psi);
+      }
+      else
+      {
+        psi = 0.0;
+      }
       Grad->AddMult(psi, y, -1.0);
     }
     return;

@@ -1011,7 +1011,6 @@ TEST_CASE("singular_wedge_lumped_eigenmode", "[Serial][Parallel][Regression]")
                            "Re{I[1]}",
                            "p_ind[1]"};
   opts.paraview_fields = false;
-  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_lumped_eigenmode.json",
                                   "lumped_eigenmode", opts);
 
@@ -1115,7 +1114,6 @@ TEST_CASE("singular_wedge_lumped_resistive_eigenmode", "[Serial][Parallel][Regre
                            "Im{I[1]}",
                            "p_ind[1]"};
   opts.paraview_fields = false;
-  opts.linear_solver_policy = kForceDefaultSolver;
   opts.eigen_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_wedge",
                                   "singular_wedge_lumped_resistive_eigenmode.json",
@@ -1201,6 +1199,92 @@ TEST_CASE("singular_wedge_lumped_resistive_eigenmode", "[Serial][Parallel][Regre
     CAPTURE(singular_participation, standard_participation, participation_ratio);
     CHECK(participation_ratio > 1.5);
     CHECK(participation_ratio < 2.5);
+  }
+}
+
+TEST_CASE("singular_wedge_lumped_rlc_divfree_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-6;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Error (",
+                           "Relative energy mismatch",
+                           "Relative weak divergence",
+                           "Re{V[1]}",
+                           "Im{V[1]}",
+                           "Re{I[1]}",
+                           "Im{I[1]}",
+                           "p_ind[1]"};
+  opts.paraview_fields = false;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_lumped_rlc_divfree_eigenmode.json",
+                                  "lumped_rlc_divfree_eigenmode", opts);
+  palace::test::RunRegressionCase("singular_wedge",
+                                  "singular_wedge_lumped_rlc_no_divfree_eigenmode.json",
+                                  "lumped_rlc_no_divfree_eigenmode", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto projected_mode = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_rlc_divfree_eigenmode", "eig.csv");
+    auto unprojected_mode = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_rlc_no_divfree_eigenmode", "eig.csv");
+    auto projected_diagnostics = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_rlc_divfree_eigenmode", "singular-eigenmode.csv");
+    auto unprojected_diagnostics = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_rlc_no_divfree_eigenmode", "singular-eigenmode.csv");
+    auto projected_surface = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_rlc_divfree_eigenmode", "surface-Q.csv");
+    auto unprojected_surface = LoadRegressionOutputTable(
+        "singular_wedge", "lumped_rlc_no_divfree_eigenmode", "surface-Q.csv");
+
+    for (const auto header : {"Re{f} (GHz)", "Im{f} (GHz)", "Q"})
+    {
+      const double projected = GetTableValue(projected_mode, header);
+      const double unprojected = GetTableValue(unprojected_mode, header);
+      CAPTURE(header, projected, unprojected);
+      CHECK(RelativeDifference(projected, unprojected) < 2.0e-6);
+    }
+    for (auto *mode : {&projected_mode, &unprojected_mode})
+    {
+      CHECK(GetTableValue(*mode, "Error (Bkwd.)") < 1.0e-8);
+      CHECK(GetTableValue(*mode, "Error (Abs.)") < 1.0e-6);
+    }
+    for (auto *diagnostics : {&projected_diagnostics, &unprojected_diagnostics})
+    {
+      CHECK(GetTableValue(*diagnostics, "Relative energy mismatch") < 1.0e-8);
+      CHECK(std::isfinite(GetTableValue(*diagnostics, "Relative weak divergence")));
+    }
+    for (const auto header : {"Electric field energy (J)", "Magnetic field energy (J)",
+                              "Relative weak divergence"})
+    {
+      const double projected = GetTableValue(projected_diagnostics, header);
+      const double unprojected = GetTableValue(unprojected_diagnostics, header);
+      CAPTURE(header, projected, unprojected);
+      CHECK(RelativeDifference(projected, unprojected) < 2.0e-6);
+    }
+
+    const double projected_voltage =
+        std::hypot(GetTableValue(projected_diagnostics, "Re{V[1]} (V)"),
+                   GetTableValue(projected_diagnostics, "Im{V[1]} (V)"));
+    const double unprojected_voltage =
+        std::hypot(GetTableValue(unprojected_diagnostics, "Re{V[1]} (V)"),
+                   GetTableValue(unprojected_diagnostics, "Im{V[1]} (V)"));
+    const double projected_current =
+        std::hypot(GetTableValue(projected_diagnostics, "Re{I[1]} (A)"),
+                   GetTableValue(projected_diagnostics, "Im{I[1]} (A)"));
+    const double unprojected_current =
+        std::hypot(GetTableValue(unprojected_diagnostics, "Re{I[1]} (A)"),
+                   GetTableValue(unprojected_diagnostics, "Im{I[1]} (A)"));
+    const double projected_participation = GetTableValue(projected_surface, "p_surf[1]");
+    const double unprojected_participation =
+        GetTableValue(unprojected_surface, "p_surf[1]");
+    CAPTURE(projected_voltage, unprojected_voltage, projected_current, unprojected_current,
+            projected_participation, unprojected_participation);
+    CHECK(RelativeDifference(projected_voltage, unprojected_voltage) < 2.0e-6);
+    CHECK(RelativeDifference(projected_current, unprojected_current) < 2.0e-6);
+    CHECK(RelativeDifference(projected_participation, unprojected_participation) < 2.0e-6);
   }
 }
 
