@@ -89,6 +89,16 @@ struct ElementStandardEnrichmentMatrices
 
   std::size_t total_quadrature_leaf_count = 0;
   int maximum_subdivision_depth = 0;
+  std::size_t affine_nd_mass_contraction_count = 0;
+  std::size_t affine_nd_mass_reintegration_count = 0;
+  std::size_t affine_nd_mass_reintegration_batch_count = 0;
+  std::size_t affine_nd_curl_contraction_count = 0;
+  std::size_t affine_nd_curl_reintegration_count = 0;
+  std::size_t affine_nd_curl_reintegration_batch_count = 0;
+  double setup_time = 0.0;
+  double nd_coupling_time = 0.0;
+  double h1_gradient_coupling_time = 0.0;
+  double h1_mass_coupling_time = 0.0;
 };
 
 struct ElementH1EnrichmentMatrices
@@ -111,6 +121,25 @@ struct LocalSparseOperatorBlocks
 
   std::unique_ptr<mfem::SparseMatrix> enrichment_enrichment_estimated_absolute_error;
   std::unique_ptr<mfem::SparseMatrix> standard_enrichment_estimated_absolute_error;
+
+  // Exact diagonal after subtracting the conforming standard-space interpolant
+  // from every enrichment basis. Entries contain assembled element
+  // contributions in the rank-local canonical enrichment ordering.
+  std::unique_ptr<mfem::Vector> transformed_enrichment_diagonal;
+};
+
+// Material-weighted element matrices retained only for coupled Maxwell
+// smoothing. Standard indices use MFEM's signed local-DOF convention;
+// enrichment indices address the rank-local canonical enrichment vector.
+struct LocalNDElementPatchMatrices
+{
+  int element = -1;
+  mfem::Array<int> standard_dofs;
+  mfem::Array<int> enrichment_dofs;
+  mfem::DenseMatrix mass;
+  mfem::DenseMatrix mass_estimated_absolute_error;
+  mfem::DenseMatrix curl_curl;
+  mfem::DenseMatrix curl_curl_estimated_absolute_error;
 };
 
 struct LocalSparseEnrichmentMatrices
@@ -119,11 +148,28 @@ struct LocalSparseEnrichmentMatrices
   LocalSparseOperatorBlocks h1_mass;
   LocalSparseOperatorBlocks nd_mass;
   LocalSparseOperatorBlocks nd_curl_curl;
+  std::vector<LocalNDElementPatchMatrices> nd_element_patches;
 
   std::size_t total_quadrature_leaf_count = 0;
   int maximum_subdivision_depth = 0;
   std::size_t affine_reference_table_entries = 0;
   std::size_t affine_reference_cache_hits = 0;
+  std::size_t affine_nd_mass_contraction_count = 0;
+  std::size_t affine_nd_mass_reintegration_count = 0;
+  std::size_t affine_nd_mass_reintegration_batch_count = 0;
+  std::size_t affine_nd_curl_contraction_count = 0;
+  std::size_t affine_nd_curl_reintegration_count = 0;
+  std::size_t affine_nd_curl_reintegration_batch_count = 0;
+  double enrichment_evaluation_time = 0.0;
+  double standard_enrichment_evaluation_time = 0.0;
+  double standard_reference_generation_time = 0.0;
+  double standard_enrichment_setup_time = 0.0;
+  double nd_coupling_time = 0.0;
+  double h1_gradient_coupling_time = 0.0;
+  double h1_mass_coupling_time = 0.0;
+  double material_transformation_time = 0.0;
+  double sparse_insertion_time = 0.0;
+  double sparse_finalization_time = 0.0;
 };
 
 struct LocalSparseH1EnrichmentMatrices
@@ -144,6 +190,15 @@ struct ParallelSparseOperatorBlocks
 
   std::unique_ptr<mfem::HypreParMatrix> enrichment_enrichment_estimated_absolute_error;
   std::unique_ptr<mfem::HypreParMatrix> standard_enrichment_estimated_absolute_error;
+
+  // True-DOF assembly of LocalSparseOperatorBlocks::transformed_enrichment_diagonal.
+  std::unique_ptr<mfem::Vector> transformed_enrichment_diagonal;
+};
+
+struct LocalInterpolatedNDDiagonals
+{
+  mfem::Vector mass;
+  mfem::Vector curl_curl;
 };
 
 struct ParallelSparseEnrichmentMatrices
@@ -172,6 +227,49 @@ GetAffineTriangleBarycentricGradients(mfem::ElementTransformation &transformatio
 // rank-local canonical enrichment DOFs used by element maps.
 std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichmentProlongation(MPI_Comm comm, const TrueDofMap &dofs);
+
+std::unique_ptr<mfem::Vector> AssembleParallelEnrichmentVector(MPI_Comm comm,
+                                                               const TrueDofMap &dofs,
+                                                               const mfem::Vector &local);
+
+// Pull a true-DOF standard-space interpolant back to the two rank-local
+// vectors used during element assembly. The result maps canonical local
+// enrichment coefficients to standard local finite-element coefficients.
+std::unique_ptr<mfem::SparseMatrix>
+BuildLocalEnrichmentInterpolant(const mfem::HypreParMatrix &true_interpolant,
+                                const mfem::ParFiniteElementSpace &standard_fespace,
+                                const TrueDofMap &enrichment_numbering);
+
+// Assemble d_e^T A_ss d_e elementwise for every column d_e of a local
+// enrichment interpolant. One mass and curl-curl vector is returned for each
+// material batch.
+std::vector<LocalInterpolatedNDDiagonals> AssembleLocalInterpolatedNDDomainDiagonals(
+    const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches);
+std::vector<LocalInterpolatedNDDiagonals> AssembleLocalInterpolatedNDDomainDiagonals(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches);
+
+mfem::Vector AssembleLocalInterpolatedNDBoundaryDiagonal(
+    const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::map<int, double> &boundary_coefficients);
+mfem::Vector AssembleLocalInterpolatedNDBoundaryDiagonal(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::map<int, double> &boundary_coefficients);
+
+// Complete a local transformed diagonal,
+//
+//   diag(A_ee - D^T A_se - A_es D + D^T A_ss D),
+//
+// from an already assembled singular block and the elementwise standard-space
+// energy above.
+void SetLocalTransformedEnrichmentDiagonal(
+    LocalSparseOperatorBlocks &blocks, const mfem::SparseMatrix &local_interpolant,
+    const mfem::Vector &interpolated_standard_diagonal);
 
 // Assemble enrichment-enrichment element matrices on one tetrahedron. The
 // explicit-gradient overload is the affine reference-tensor path. The
@@ -280,18 +378,20 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
 
 // Assemble several material-weighted operators while evaluating each element's
 // nonpolynomial basis tensors and adaptive quadrature only once. The outer result
-// ordering matches material_batches.
+// ordering matches material_batches. If retained_patch_batch is nonnegative,
+// combined standard-plus-enrichment element matrices are retained only in that
+// result entry for use by an overlapping Maxwell smoother.
 std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
     const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     mfem::FiniteElementSpace &nd_fespace,
     const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
-    const AdaptiveAssemblyOptions &options);
+    const AdaptiveAssemblyOptions &options, int retained_patch_batch = -1);
 
 std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
     const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     mfem::FiniteElementSpace &nd_fespace,
     const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
-    const AdaptiveAssemblyOptions &options);
+    const AdaptiveAssemblyOptions &options, int retained_patch_batch = -1);
 
 // Electrostatic specialization of AssembleLocalSparseEnrichmentMatrices. It
 // assembles only the H1 diffusion block and therefore does not evaluate any
@@ -351,6 +451,37 @@ AssembleParallelSparseEnrichmentMatrices(const LocalSparseEnrichmentMatrices &lo
                                          const mfem::ParFiniteElementSpace &h1_fespace,
                                          const mfem::ParFiniteElementSpace &nd_fespace);
 
+// Interpolate the finite scalar singular potentials into the standard nodal H1
+// space. The returned true-DOF map has dimensions
+//
+//   standard H1 true DOFs x enrichment H1 true DOFs.
+//
+// Values on the singular feature are evaluated by their continuous zero limit,
+// rather than by evaluating the singular gradient formula at rho = 0.
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelH1EnrichmentInterpolant(const DofTopology &topology,
+                                     const ParallelDofNumbering &parallel_numbering,
+                                     const mfem::ParFiniteElementSpace &h1_fespace);
+
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelH1EnrichmentInterpolant(const TriangleDofTopology &topology,
+                                     const ParallelDofNumbering &parallel_numbering,
+                                     const mfem::ParFiniteElementSpace &h1_fespace);
+
+// Interpolate only the finite rotational singular vector bases into the
+// standard Nedelec space. Gradient-family columns are exactly zero because
+// their interpolants are built from the H1 potential above to preserve the
+// discrete gradient relation. The returned true-DOF map has dimensions
+//
+//   standard ND true DOFs x enrichment ND true DOFs.
+std::unique_ptr<mfem::HypreParMatrix> BuildParallelNDRotationalEnrichmentInterpolant(
+    const DofTopology &topology, const ParallelDofNumbering &parallel_numbering,
+    const mfem::ParFiniteElementSpace &nd_fespace);
+
+std::unique_ptr<mfem::HypreParMatrix> BuildParallelNDRotationalEnrichmentInterpolant(
+    const TriangleDofTopology &topology, const ParallelDofNumbering &parallel_numbering,
+    const mfem::ParFiniteElementSpace &nd_fespace);
+
 ParallelSparseOperatorBlocks
 AssembleParallelSparseH1EnrichmentMatrices(const LocalSparseH1EnrichmentMatrices &local,
                                            const ParallelDofNumbering &parallel_numbering,
@@ -365,6 +496,30 @@ ParallelSparseOperatorBlocks
 AssembleParallelSparseH1BoundaryMassMatrices(const LocalSparseOperatorBlocks &local,
                                              const ParallelDofNumbering &parallel_numbering,
                                              const mfem::ParFiniteElementSpace &h1_fespace);
+
+// Restrict a fine-level enrichment block through the standard-space
+// prolongation P. The enrichment basis is identical on every polynomial
+// level, so the exact combined transfer is diag(P, I):
+//
+//   A_se,c = P^T A_se,f,  A_es,c = A_se,c^T,  A_ee,c = A_ee,f.
+//
+// Error bounds use |P|^T. An empty input block produces an empty output block.
+ParallelSparseOperatorBlocks
+RestrictParallelSparseOperatorBlocks(const ParallelSparseOperatorBlocks &fine,
+                                     const mfem::HypreParMatrix &standard_prolongation);
+
+ParallelSparseEnrichmentMatrices RestrictParallelSparseEnrichmentMatrices(
+    const ParallelSparseEnrichmentMatrices &fine,
+    const mfem::HypreParMatrix &h1_standard_prolongation,
+    const mfem::HypreParMatrix &nd_standard_prolongation);
+
+// Project the enrichment-containing blocks of a symmetric ND operator through
+// diag(G_standard, G_enrichment). The standard-standard block remains owned by
+// Palace's ordinary auxiliary operator.
+ParallelSparseOperatorBlocks
+ProjectParallelSparseOperatorBlocksToH1(const ParallelSparseOperatorBlocks &nd,
+                                        const mfem::HypreParMatrix &standard_gradient,
+                                        const mfem::HypreParMatrix &enrichment_gradient);
 
 // Assemble the enrichment entries of
 //

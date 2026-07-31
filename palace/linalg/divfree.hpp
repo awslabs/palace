@@ -71,7 +71,9 @@ public:
                 int max_it, int print);
 
   DivFreeSolver(const IoData &iodata, MPI_Comm comm, const Operator &mass,
-                const Operator &gradient, const mfem::Array<int> &h1_bdr_tdof_list);
+                const Operator &gradient,
+                std::unique_ptr<mfem::HypreParMatrix> &&scalar_diffusion,
+                const mfem::Array<int> &h1_bdr_tdof_list);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy

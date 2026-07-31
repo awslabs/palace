@@ -85,6 +85,29 @@ public:
   }
 };
 
+class ScalingSolver : public Solver<Operator>
+{
+private:
+  double scale;
+
+public:
+  explicit ScalingSolver(double scale) : scale(scale) {}
+
+  void SetOperator(const Operator &op) override
+  {
+    REQUIRE(op.Height() == op.Width());
+    height = op.Height();
+    width = op.Width();
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    REQUIRE(x.Size() == width);
+    y = x;
+    y *= scale;
+  }
+};
+
 fem::singular::BarycentricGradients
 AffineBarycentricGradients(const fem::singular::Vector3 &a, const fem::singular::Vector3 &b,
                            const fem::singular::Vector3 &c, double &jacobian_determinant)
@@ -1090,6 +1113,33 @@ CouplingEnergies AssembleSharedFaceCoupling(bool permute_vertices)
 
 }  // namespace
 
+TEST_CASE("Block lower-triangular preconditioner applies the coupling residual",
+          "[singularelements][singularassembly][blockpreconditioner][Serial]")
+{
+  mfem::DenseMatrix block0(2), block1(1), lower(1, 2);
+  block0 = 0.0;
+  block0(0, 0) = 2.0;
+  block0(1, 1) = 2.0;
+  block1 = 4.0;
+  lower(0, 0) = 1.0;
+  lower(0, 1) = -2.0;
+
+  BlockDiagonalPreconditioner<Operator> preconditioner(
+      2, std::make_unique<ScalingSolver>(0.5), std::make_unique<ScalingSolver>(0.25));
+  preconditioner.SetBlockOperators(block0, block1);
+  preconditioner.SetOffDiagonalOperator(&lower);
+
+  Vector rhs(3), solution;
+  rhs[0] = 4.0;
+  rhs[1] = 6.0;
+  rhs[2] = 10.0;
+  preconditioner.Mult(rhs, solution);
+  REQUIRE(solution.Size() == rhs.Size());
+  CHECK(solution[0] == Catch::Approx(2.0));
+  CHECK(solution[1] == Catch::Approx(3.0));
+  CHECK(solution[2] == Catch::Approx(3.5));
+}
+
 TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
           "[singularelements][singularassembly][triangle][Serial]")
 {
@@ -1352,7 +1402,7 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
     }
     mfem::ND_FECollection nd_collection(2, 3);
     mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
-    const auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+    auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
         topology, nd_space, {{11, coefficient}}, options);
     REQUIRE(blocks.standard_enrichment);
     REQUIRE(blocks.enrichment_standard);
@@ -1362,6 +1412,62 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
     CheckExactSparseTranspose(*blocks.standard_enrichment, *blocks.enrichment_standard);
     CheckSparseNonnegative(*blocks.standard_enrichment_estimated_absolute_error);
     CheckSparseNonnegative(*blocks.enrichment_enrichment_estimated_absolute_error);
+
+    if (!curved)
+    {
+      const int old_p_trial = fem::DefaultIntegrationOrder::p_trial;
+      const int old_q_order_extra_pk = fem::DefaultIntegrationOrder::q_order_extra_pk;
+      const int old_q_order_extra_qk = fem::DefaultIntegrationOrder::q_order_extra_qk;
+      fem::DefaultIntegrationOrder::p_trial = 2;
+      fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+      mfem::SparseMatrix interpolant(nd_space.GetVSize(), 1);
+      mfem::Vector interpolant_column(nd_space.GetVSize());
+      for (int standard = 0; standard < interpolant.Height(); standard++)
+      {
+        interpolant_column[standard] = 0.03 * (standard + 1) - 0.17;
+        interpolant.Add(standard, 0, interpolant_column[standard]);
+      }
+      interpolant.Finalize();
+
+      const auto interpolated_diagonal =
+          fem::singular::AssembleLocalInterpolatedNDBoundaryDiagonal(
+              topology, nd_space, interpolant, {{11, coefficient}});
+      REQUIRE(interpolated_diagonal.Size() == 1);
+
+      mfem::Array<int> boundary_marker(mesh.bdr_attributes.Max());
+      boundary_marker = 0;
+      boundary_marker[10] = 1;
+      mfem::ConstantCoefficient boundary_coefficient(coefficient);
+      mfem::BilinearForm standard_form(&nd_space);
+      standard_form.AddBoundaryIntegrator(
+          new mfem::VectorFEMassIntegrator(boundary_coefficient), boundary_marker);
+      standard_form.Assemble();
+      standard_form.Finalize();
+      mfem::Vector standard_action(interpolant_column.Size());
+      standard_form.SpMat().Mult(interpolant_column, standard_action);
+      const double direct_standard_diagonal = interpolant_column * standard_action;
+      CheckClose(interpolated_diagonal[0], direct_standard_diagonal);
+
+      mfem::Vector unit_enrichment({1.0});
+      mfem::Vector coupling_action(interpolant_column.Size());
+      blocks.standard_enrichment->Mult(unit_enrichment, coupling_action);
+      mfem::Vector enrichment_diagonal(1);
+      blocks.enrichment_enrichment->GetDiag(enrichment_diagonal);
+      const double explicit_transformed_diagonal =
+          enrichment_diagonal[0] - 2.0 * (interpolant_column * coupling_action) +
+          direct_standard_diagonal;
+      fem::singular::SetLocalTransformedEnrichmentDiagonal(blocks, interpolant,
+                                                           interpolated_diagonal);
+      REQUIRE(blocks.transformed_enrichment_diagonal);
+      CheckClose((*blocks.transformed_enrichment_diagonal)[0],
+                 explicit_transformed_diagonal);
+
+      fem::DefaultIntegrationOrder::p_trial = old_p_trial;
+      fem::DefaultIntegrationOrder::q_order_extra_pk = old_q_order_extra_pk;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = old_q_order_extra_qk;
+    }
 
     mfem::Vector standard(nd_space.GetVSize());
     for (int i = 0; i < standard.Size(); i++)
@@ -3725,6 +3831,167 @@ TEST_CASE("MFEM standard orientations preserve assembled singular coupling",
         canonical.nd_curl_curl_error + permuted.nd_curl_curl_error + 2.0e-12);
 }
 
+TEST_CASE("Coupled singular element patches preserve orientations and overlap weights",
+          "[singularelements][singularassembly][Serial]")
+{
+  mfem::Mesh serial_mesh(2, 3, 1, 0, 2);
+  serial_mesh.AddVertex(0.0, 0.0);
+  serial_mesh.AddVertex(1.0, 0.0);
+  serial_mesh.AddVertex(0.0, 1.0);
+  serial_mesh.AddTriangle(0, 1, 2, 1);
+  serial_mesh.FinalizeTopology();
+  serial_mesh.Finalize(true, false);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  mfem::ND_FECollection collection(1, 2);
+  mfem::ParFiniteElementSpace fespace(&mesh, &collection);
+  REQUIRE(fespace.GetVSize() == 3);
+  REQUIRE(fespace.GetTrueVSize() == 3);
+
+  fem::singular::TrueDofMap enrichment_numbering;
+  enrichment_numbering.global_local_size = 1;
+  enrichment_numbering.local_size = 1;
+  enrichment_numbering.global_size = 1;
+  enrichment_numbering.owned_size = 1;
+  enrichment_numbering.owner = {0};
+  enrichment_numbering.local_to_true = {0};
+
+  fem::singular::LocalNDElementPatchMatrices patch;
+  patch.element = 0;
+  patch.standard_dofs.Append(0);
+  patch.standard_dofs.Append(-2);
+  patch.enrichment_dofs.Append(0);
+  patch.mass.SetSize(3);
+  patch.mass = 0.0;
+  patch.mass(0, 0) = 4.0;
+  patch.mass(0, 1) = patch.mass(1, 0) = 1.0;
+  patch.mass(0, 2) = patch.mass(2, 0) = 0.5;
+  patch.mass(1, 1) = 3.0;
+  patch.mass(1, 2) = patch.mass(2, 1) = -0.25;
+  patch.mass(2, 2) = 2.0;
+  patch.mass_estimated_absolute_error.SetSize(3);
+  patch.mass_estimated_absolute_error = 0.0;
+  patch.curl_curl.SetSize(3);
+  patch.curl_curl = 0.0;
+  patch.curl_curl_estimated_absolute_error.SetSize(3);
+  patch.curl_curl_estimated_absolute_error = 0.0;
+
+  mfem::Array<int> no_essential;
+  const std::vector<fem::singular::LocalNDElementPatchMatrices> one_patch{patch};
+  fem::singular::ParallelElementPatchInverse inverse(
+      fespace, enrichment_numbering, one_patch, 0.0, 1.0, no_essential, no_essential);
+  REQUIRE(inverse.GetNumPatches() == 1);
+
+  Vector input(inverse.Width()), output(inverse.Height());
+  input = 0.0;
+  input[0] = 0.7;
+  input[1] = -0.4;
+  input[2] = 1.3;
+  input[3] = 0.2;
+  inverse.Mult(input, output);
+
+  mfem::Vector local_rhs({input[0], -input[1], input[3]}), local_correction(3);
+  mfem::DenseMatrixInverse exact_inverse(patch.mass, true);
+  exact_inverse.Mult(local_rhs, local_correction);
+  CHECK(output[0] == Catch::Approx(local_correction[0]).epsilon(2.0e-13));
+  CHECK(output[1] == Catch::Approx(-local_correction[1]).epsilon(2.0e-13));
+  CHECK(output[2] == 0.0);
+  CHECK(output[3] == Catch::Approx(local_correction[2]).epsilon(2.0e-13));
+
+  Vector left(inverse.Width()), right(inverse.Width()), corrected_left, corrected_right;
+  for (int i = 0; i < left.Size(); i++)
+  {
+    left[i] = 0.19 * (i + 1) - 0.37;
+    right[i] = std::sin(0.41 * (i + 1));
+  }
+  inverse.Mult(left, corrected_left);
+  inverse.Mult(right, corrected_right);
+  CheckClose(left * corrected_right, right * corrected_left);
+  CHECK(left * corrected_left > 0.0);
+
+  const std::vector<fem::singular::LocalNDElementPatchMatrices> two_patches{patch, patch};
+  fem::singular::ParallelElementPatchInverse overlapping_inverse(
+      fespace, enrichment_numbering, two_patches, 0.0, 1.0, no_essential, no_essential);
+  Vector overlapping_output;
+  overlapping_inverse.Mult(input, overlapping_output);
+  for (int i = 0; i < output.Size(); i++)
+  {
+    CAPTURE(i);
+    CheckClose(overlapping_output[i], output[i]);
+  }
+
+  mfem::Array<int> standard_essential({1}), enrichment_essential({0});
+  fem::singular::ParallelElementPatchInverse constrained_inverse(
+      fespace, enrichment_numbering, one_patch, 0.0, 1.0, standard_essential,
+      enrichment_essential);
+  Vector constrained_output;
+  constrained_inverse.Mult(input, constrained_output);
+  CHECK(constrained_output[1] == 0.0);
+  CHECK(constrained_output[3] == 0.0);
+}
+
+TEST_CASE("Coupled singular element patches use a certified spectral pseudoinverse",
+          "[singularelements][singularassembly][Serial]")
+{
+  mfem::Mesh serial_mesh(2, 3, 1, 0, 2);
+  serial_mesh.AddVertex(0.0, 0.0);
+  serial_mesh.AddVertex(1.0, 0.0);
+  serial_mesh.AddVertex(0.0, 1.0);
+  serial_mesh.AddTriangle(0, 1, 2, 1);
+  serial_mesh.FinalizeTopology();
+  serial_mesh.Finalize(true, false);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  mfem::ND_FECollection collection(1, 2);
+  mfem::ParFiniteElementSpace fespace(&mesh, &collection);
+
+  fem::singular::TrueDofMap enrichment_numbering;
+  enrichment_numbering.global_local_size = 1;
+  enrichment_numbering.local_size = 1;
+  enrichment_numbering.global_size = 1;
+  enrichment_numbering.owned_size = 1;
+  enrichment_numbering.owner = {0};
+  enrichment_numbering.local_to_true = {0};
+
+  fem::singular::LocalNDElementPatchMatrices patch;
+  patch.element = 0;
+  patch.standard_dofs.Append(0);
+  patch.standard_dofs.Append(1);
+  patch.enrichment_dofs.Append(0);
+  patch.mass.SetSize(3);
+  patch.mass = 0.0;
+  patch.mass(0, 0) = patch.mass(0, 2) = 1.0;
+  patch.mass(2, 0) = patch.mass(2, 2) = 1.0;
+  patch.mass(1, 1) = 2.0;
+  patch.mass_estimated_absolute_error.SetSize(3);
+  patch.mass_estimated_absolute_error = 0.0;
+  patch.curl_curl.SetSize(3);
+  patch.curl_curl = 0.0;
+  patch.curl_curl_estimated_absolute_error.SetSize(3);
+  patch.curl_curl_estimated_absolute_error = 0.0;
+
+  mfem::Array<int> no_essential;
+  const std::vector<fem::singular::LocalNDElementPatchMatrices> patches{patch};
+  fem::singular::ParallelElementPatchInverse inverse(fespace, enrichment_numbering, patches,
+                                                     0.0, 1.0, no_essential, no_essential);
+  Vector input(inverse.Width()), output;
+  input = 0.0;
+  input[0] = 2.0;
+  input[1] = 6.0;
+  input[3] = 4.0;
+  inverse.Mult(input, output);
+  CHECK(output[0] == Catch::Approx(1.5).epsilon(2.0e-13));
+  CHECK(output[1] == Catch::Approx(3.0).epsilon(2.0e-13));
+  CHECK(output[2] == 0.0);
+  CHECK(output[3] == Catch::Approx(1.5).epsilon(2.0e-13));
+
+  auto indefinite = patch;
+  indefinite.mass(0, 0) = -1.0e-3;
+  indefinite.mass(0, 2) = indefinite.mass(2, 0) = 0.0;
+  CHECK_THROWS_AS(fem::singular::ParallelElementPatchInverse(fespace, enrichment_numbering,
+                                                             {indefinite}, 0.0, 1.0,
+                                                             no_essential, no_essential),
+                  std::runtime_error);
+}
+
 TEST_CASE("Additive overlapping patch correction is symmetric positive definite",
           "[singularelements][singularassembly][Serial]")
 {
@@ -3831,12 +4098,26 @@ TEST_CASE("Parallel triangular sparse assembly preserves global operators",
   const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
   const auto serial = fem::singular::AssembleLocalSparseEnrichmentMatrices(
       serial_topology, serial_h1_space, serial_nd_space, serial_materials, options);
-  const auto local = fem::singular::AssembleLocalSparseEnrichmentMatrices(
-      local_topology, parallel_h1_space, parallel_nd_space, local_materials, options);
+  const auto local_batches = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+      local_topology, parallel_h1_space, parallel_nd_space, {local_materials}, options, 0);
+  REQUIRE(local_batches.size() == 1);
+  const auto &local = local_batches.front();
   const auto parallel = fem::singular::AssembleParallelSparseEnrichmentMatrices(
       local, numbering, parallel_h1_space, parallel_nd_space);
   const auto enrichment_gradient =
       fem::singular::BuildParallelEnrichmentGradient(Mpi::World(), numbering);
+  const auto rotational_interpolant =
+      fem::singular::BuildParallelNDRotationalEnrichmentInterpolant(
+          local_topology, numbering, parallel_nd_space);
+  REQUIRE(rotational_interpolant);
+  CHECK(rotational_interpolant->GetGlobalNumRows() == parallel_nd_space.GlobalTrueVSize());
+  CHECK(rotational_interpolant->GetGlobalNumCols() == numbering.nd.global_size);
+  std::unique_ptr<mfem::HypreParMatrix> interpolated_gradient_columns(
+      mfem::ParMult(rotational_interpolant.get(), enrichment_gradient.get(), true));
+  REQUIRE(interpolated_gradient_columns);
+  CHECK(
+      ToEigen(GatherParallelMatrix(*interpolated_gradient_columns)).cwiseAbs().maxCoeff() ==
+      0.0);
 
   CHECK(numbering.h1.global_size == 6);
   CHECK(numbering.nd.global_size == 12);
@@ -3850,6 +4131,40 @@ TEST_CASE("Parallel triangular sparse assembly preserves global operators",
   }
   Mpi::GlobalOr(1, &has_signed_nd_dof, Mpi::World());
   CHECK(has_signed_nd_dof);
+  bool has_shared_standard_dof =
+      parallel_nd_space.GetVSize() > parallel_nd_space.GetTrueVSize();
+  bool has_shared_enrichment_dof =
+      std::any_of(numbering.nd.owner.begin(), numbering.nd.owner.end(),
+                  [](int owner) { return owner != Mpi::Rank(Mpi::World()); });
+  Mpi::GlobalOr(1, &has_shared_standard_dof, Mpi::World());
+  Mpi::GlobalOr(1, &has_shared_enrichment_dof, Mpi::World());
+  CHECK(has_shared_standard_dof);
+  CHECK(has_shared_enrichment_dof);
+
+  mfem::Array<int> no_essential;
+  fem::singular::ParallelElementPatchInverse element_patch_inverse(
+      parallel_nd_space, numbering.nd, local.nd_element_patches, 1.0, 1.0, no_essential,
+      no_essential);
+  HYPRE_BigInt global_element_patches = element_patch_inverse.GetNumPatches();
+  Mpi::GlobalSum(1, &global_element_patches, Mpi::World());
+  CHECK(global_element_patches > 0);
+  Vector patch_left(element_patch_inverse.Width()),
+      patch_right(element_patch_inverse.Width()), corrected_left, corrected_right;
+  for (int i = 0; i < patch_left.Size(); i++)
+  {
+    patch_left[i] = 0.13 * (i + 1) + 0.07 * Mpi::Rank(Mpi::World());
+    patch_right[i] = std::sin(0.31 * (i + 1) + Mpi::Rank(Mpi::World()));
+  }
+  element_patch_inverse.Mult(patch_left, corrected_left);
+  element_patch_inverse.Mult(patch_right, corrected_right);
+  double left_right = patch_left * corrected_right;
+  double right_left = patch_right * corrected_left;
+  double left_positive = patch_left * corrected_left;
+  Mpi::GlobalSum(1, &left_right, Mpi::World());
+  Mpi::GlobalSum(1, &right_left, Mpi::World());
+  Mpi::GlobalSum(1, &left_positive, Mpi::World());
+  CheckClose(left_right, right_left);
+  CHECK(left_positive > 0.0);
 
   const auto key_coefficient = [](const fem::singular::DofKey &key)
   {
@@ -4016,11 +4331,11 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
       serial_topology, serial_h1_space, serial_nd_space, serial_materials, options);
   const auto serial_h1 = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
       serial_topology, serial_h1_space, serial_materials, options);
-  const auto local = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+  auto local = fem::singular::AssembleLocalSparseEnrichmentMatrices(
       local_topology, parallel_h1_space, parallel_nd_space, local_materials, options);
   const auto local_h1 = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
       local_topology, parallel_h1_space, local_materials, options);
-  const auto parallel = fem::singular::AssembleParallelSparseEnrichmentMatrices(
+  auto parallel = fem::singular::AssembleParallelSparseEnrichmentMatrices(
       local, numbering, parallel_h1_space, parallel_nd_space);
   const auto parallel_h1 = fem::singular::AssembleParallelSparseH1EnrichmentMatrices(
       local_h1, numbering, parallel_h1_space);
@@ -4097,10 +4412,15 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
       *standard_h1_matrix, parallel.h1_diffusion);
   const auto combined_nd_mass = fem::singular::BuildParallelEnrichedOperator(
       *standard_nd_mass_matrix, parallel.nd_mass);
+  const auto projected_h1 = fem::singular::ProjectParallelSparseOperatorBlocksToH1(
+      parallel.nd_mass, *standard_gradient_matrix, *enrichment_gradient);
   const auto combined_gradient = fem::singular::BuildParallelEnrichedGradient(
       *standard_gradient_matrix, *enrichment_gradient);
   REQUIRE(combined_h1);
   REQUIRE(combined_nd_mass);
+  REQUIRE(projected_h1.standard_enrichment);
+  REQUIRE(projected_h1.enrichment_standard);
+  REQUIRE(projected_h1.enrichment_enrichment);
   REQUIRE(combined_gradient);
   CHECK(combined_h1->Height() ==
         parallel_h1_space.GetTrueVSize() + numbering.h1.owned_size);
@@ -4122,6 +4442,15 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
       }
     }
   };
+  check_eigen_close(
+      ToEigen(GatherParallelMatrix(*projected_h1.standard_enrichment)),
+      ToEigen(GatherParallelMatrix(*parallel.h1_diffusion.standard_enrichment)));
+  check_eigen_close(
+      ToEigen(GatherParallelMatrix(*projected_h1.enrichment_standard)),
+      ToEigen(GatherParallelMatrix(*parallel.h1_diffusion.enrichment_standard)));
+  check_eigen_close(
+      ToEigen(GatherParallelMatrix(*projected_h1.enrichment_enrichment)),
+      ToEigen(GatherParallelMatrix(*parallel.h1_diffusion.enrichment_enrichment)));
 
   auto transfer_parallel_mesh =
       std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, partition.data());
@@ -4170,6 +4499,139 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
       standard_nd_prolongation_operator.StealParallelAssemble();
   REQUIRE(standard_h1_prolongation_matrix);
   REQUIRE(standard_nd_prolongation_matrix);
+
+  mfem::ParDiscreteLinearOperator fine_standard_gradient(&transfer_fine_h1_space.Get(),
+                                                         &transfer_fine_nd_space.Get());
+  fine_standard_gradient.AddDomainInterpolator(new mfem::GradientInterpolator);
+  fine_standard_gradient.Assemble();
+  fine_standard_gradient.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> fine_standard_gradient_matrix(
+      fine_standard_gradient.ParallelAssemble());
+  REQUIRE(fine_standard_gradient_matrix);
+
+  auto coarse_h1_interpolant = fem::singular::BuildParallelH1EnrichmentInterpolant(
+      local_topology, numbering, transfer_coarse_h1_space.Get());
+  auto fine_h1_interpolant = fem::singular::BuildParallelH1EnrichmentInterpolant(
+      local_topology, numbering, transfer_fine_h1_space.Get());
+  auto coarse_nd_rotational_interpolant =
+      fem::singular::BuildParallelNDRotationalEnrichmentInterpolant(
+          local_topology, numbering, transfer_coarse_nd_space.Get());
+  auto fine_nd_rotational_interpolant =
+      fem::singular::BuildParallelNDRotationalEnrichmentInterpolant(
+          local_topology, numbering, transfer_fine_nd_space.Get());
+  REQUIRE(coarse_h1_interpolant);
+  REQUIRE(fine_h1_interpolant);
+  REQUIRE(coarse_nd_rotational_interpolant);
+  REQUIRE(fine_nd_rotational_interpolant);
+  std::unique_ptr<mfem::HypreParMatrix> prolonged_coarse_h1_interpolant(mfem::ParMult(
+      standard_h1_prolongation_matrix.get(), coarse_h1_interpolant.get(), true));
+  REQUIRE(prolonged_coarse_h1_interpolant);
+  std::unique_ptr<mfem::HypreParMatrix> h1_coordinate_shift(
+      mfem::Add(1.0, *fine_h1_interpolant, -1.0, *prolonged_coarse_h1_interpolant));
+  REQUIRE(h1_coordinate_shift);
+
+  std::unique_ptr<mfem::HypreParMatrix> standard_gradient_shift(
+      mfem::ParMult(fine_standard_gradient_matrix.get(), h1_coordinate_shift.get(), true));
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_gradient_transpose(
+      enrichment_gradient->Transpose());
+  std::unique_ptr<mfem::HypreParMatrix> gradient_nd_coordinate_shift(mfem::ParMult(
+      standard_gradient_shift.get(), enrichment_gradient_transpose.get(), true));
+  REQUIRE(standard_gradient_shift);
+  REQUIRE(gradient_nd_coordinate_shift);
+  std::unique_ptr<mfem::HypreParMatrix> prolonged_coarse_nd_rotational_interpolant(
+      mfem::ParMult(standard_nd_prolongation_matrix.get(),
+                    coarse_nd_rotational_interpolant.get(), true));
+  REQUIRE(prolonged_coarse_nd_rotational_interpolant);
+  std::unique_ptr<mfem::HypreParMatrix> rotational_nd_coordinate_shift(
+      mfem::Add(1.0, *fine_nd_rotational_interpolant, -1.0,
+                *prolonged_coarse_nd_rotational_interpolant));
+  REQUIRE(rotational_nd_coordinate_shift);
+  std::unique_ptr<mfem::HypreParMatrix> nd_coordinate_shift(
+      mfem::Add(1.0, *gradient_nd_coordinate_shift, 1.0, *rotational_nd_coordinate_shift));
+  REQUIRE(nd_coordinate_shift);
+
+  auto local_nd_coordinate_shift = fem::singular::BuildLocalEnrichmentInterpolant(
+      *nd_coordinate_shift, parallel_nd_space, numbering.nd);
+  REQUIRE(local_nd_coordinate_shift);
+  const auto interpolated_nd_diagonals =
+      fem::singular::AssembleLocalInterpolatedNDDomainDiagonals(
+          local_topology, parallel_nd_space, *local_nd_coordinate_shift,
+          std::vector<std::vector<fem::singular::IsotropicMaterialCoefficients>>{
+              local_materials});
+  REQUIRE(interpolated_nd_diagonals.size() == 1);
+  fem::singular::SetLocalTransformedEnrichmentDiagonal(
+      local.nd_mass, *local_nd_coordinate_shift, interpolated_nd_diagonals[0].mass);
+  REQUIRE(local.nd_mass.transformed_enrichment_diagonal);
+  parallel.nd_mass.transformed_enrichment_diagonal =
+      fem::singular::AssembleParallelEnrichmentVector(
+          Mpi::World(), numbering.nd, *local.nd_mass.transformed_enrichment_diagonal);
+  REQUIRE(parallel.nd_mass.transformed_enrichment_diagonal);
+
+  std::unique_ptr<mfem::HypreParMatrix> rotational_gradient_columns(
+      mfem::ParMult(rotational_nd_coordinate_shift.get(), enrichment_gradient.get(), true));
+  REQUIRE(rotational_gradient_columns);
+  CHECK(ToEigen(GatherParallelMatrix(*rotational_gradient_columns)).cwiseAbs().maxCoeff() ==
+        0.0);
+
+  const auto corrected_h1_prolongation = fem::singular::BuildParallelEnrichedProlongation(
+      *standard_h1_prolongation_matrix, *h1_coordinate_shift, numbering.h1);
+  const auto corrected_nd_prolongation = fem::singular::BuildParallelEnrichedProlongation(
+      *standard_nd_prolongation_matrix, *nd_coordinate_shift, numbering.nd);
+  REQUIRE(corrected_h1_prolongation);
+  REQUIRE(corrected_nd_prolongation);
+
+  const auto restricted_nd_mass = fem::singular::RestrictParallelSparseOperatorBlocks(
+      parallel.nd_mass, *standard_nd_prolongation_matrix);
+  REQUIRE(restricted_nd_mass.enrichment_enrichment);
+  REQUIRE(restricted_nd_mass.standard_enrichment);
+  REQUIRE(restricted_nd_mass.enrichment_standard);
+  REQUIRE(restricted_nd_mass.enrichment_enrichment_estimated_absolute_error);
+  REQUIRE(restricted_nd_mass.standard_enrichment_estimated_absolute_error);
+  const Eigen::MatrixXd dense_nd_prolongation =
+      ToEigen(GatherParallelMatrix(*standard_nd_prolongation_matrix));
+  const Eigen::MatrixXd fine_nd_se =
+      ToEigen(GatherParallelMatrix(*parallel.nd_mass.standard_enrichment));
+  const Eigen::MatrixXd coarse_nd_se =
+      ToEigen(GatherParallelMatrix(*restricted_nd_mass.standard_enrichment));
+  const Eigen::MatrixXd coarse_nd_es =
+      ToEigen(GatherParallelMatrix(*restricted_nd_mass.enrichment_standard));
+  const Eigen::MatrixXd fine_nd_se_error = ToEigen(
+      GatherParallelMatrix(*parallel.nd_mass.standard_enrichment_estimated_absolute_error));
+  const Eigen::MatrixXd coarse_nd_se_error = ToEigen(GatherParallelMatrix(
+      *restricted_nd_mass.standard_enrichment_estimated_absolute_error));
+  check_eigen_close(coarse_nd_se, dense_nd_prolongation.transpose() * fine_nd_se);
+  check_eigen_close(coarse_nd_es, coarse_nd_se.transpose());
+  check_eigen_close(
+      ToEigen(GatherParallelMatrix(*restricted_nd_mass.enrichment_enrichment)),
+      ToEigen(GatherParallelMatrix(*parallel.nd_mass.enrichment_enrichment)));
+  check_eigen_close(
+      ToEigen(GatherParallelMatrix(
+          *restricted_nd_mass.enrichment_enrichment_estimated_absolute_error)),
+      ToEigen(GatherParallelMatrix(
+          *parallel.nd_mass.enrichment_enrichment_estimated_absolute_error)));
+  check_eigen_close(coarse_nd_se_error,
+                    dense_nd_prolongation.cwiseAbs().transpose() * fine_nd_se_error);
+
+  const auto restricted_all = fem::singular::RestrictParallelSparseEnrichmentMatrices(
+      parallel, *standard_h1_prolongation_matrix, *standard_nd_prolongation_matrix);
+  CHECK(restricted_all.h1_diffusion.standard_enrichment->Height() ==
+        standard_h1_prolongation_matrix->Width());
+  CHECK(restricted_all.h1_mass.standard_enrichment->Height() ==
+        standard_h1_prolongation_matrix->Width());
+  CHECK(restricted_all.nd_mass.standard_enrichment->Height() ==
+        standard_nd_prolongation_matrix->Width());
+  CHECK(restricted_all.nd_curl_curl.standard_enrichment->Height() ==
+        standard_nd_prolongation_matrix->Width());
+
+  const fem::singular::ParallelSparseOperatorBlocks empty_blocks;
+  const auto restricted_empty = fem::singular::RestrictParallelSparseOperatorBlocks(
+      empty_blocks, *standard_nd_prolongation_matrix);
+  CHECK_FALSE(restricted_empty.enrichment_enrichment);
+  CHECK_FALSE(restricted_empty.standard_enrichment);
+  CHECK_FALSE(restricted_empty.enrichment_standard);
+  CHECK_FALSE(restricted_empty.enrichment_enrichment_estimated_absolute_error);
+  CHECK_FALSE(restricted_empty.standard_enrichment_estimated_absolute_error);
+
   const auto combined_h1_prolongation = fem::singular::BuildParallelEnrichedProlongation(
       *standard_h1_prolongation_matrix, numbering.h1);
   const auto combined_nd_prolongation = fem::singular::BuildParallelEnrichedProlongation(
@@ -4220,6 +4682,47 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
     CHECK(enrichment_output[fine_standard_nd + i] ==
           enrichment_input[coarse_standard_nd + i]);
   }
+
+  Vector stabilized_coarse(corrected_nd_prolongation->Width()),
+      stabilized_fine(corrected_nd_prolongation->Height()),
+      stabilized_fine_physical(corrected_nd_prolongation->Height()),
+      physical_fine(combined_nd_prolongation->Height()), shift_action(fine_standard_nd);
+  for (int i = 0; i < stabilized_coarse.Size(); i++)
+  {
+    stabilized_coarse[i] = std::sin(0.41 * (i + 1) + 0.13 * Mpi::Rank(Mpi::World()));
+  }
+  corrected_nd_prolongation->Mult(stabilized_coarse, stabilized_fine);
+  stabilized_fine_physical = stabilized_fine;
+  Vector stabilized_fine_enrichment(stabilized_fine.GetData() + fine_standard_nd,
+                                    local_enrichment_nd);
+  nd_coordinate_shift->Mult(stabilized_fine_enrichment, shift_action);
+  for (int i = 0; i < fine_standard_nd; i++)
+  {
+    stabilized_fine_physical[i] -= shift_action[i];
+  }
+  combined_nd_prolongation->Mult(stabilized_coarse, physical_fine);
+  stabilized_fine_physical -= physical_fine;
+  CHECK(linalg::Norml2(Mpi::World(), stabilized_fine_physical) < 2.0e-11);
+
+  const auto fine_combined_gradient = fem::singular::BuildParallelEnrichedGradient(
+      *fine_standard_gradient_matrix, *enrichment_gradient);
+  REQUIRE(fine_combined_gradient);
+  Vector stabilized_coarse_h1(corrected_h1_prolongation->Width()),
+      stabilized_fine_h1(corrected_h1_prolongation->Height()),
+      fine_stabilized_gradient(fine_combined_gradient->Height()),
+      coarse_stabilized_gradient(coarse_combined_gradient->Height()),
+      prolonged_stabilized_gradient(corrected_nd_prolongation->Height());
+  for (int i = 0; i < stabilized_coarse_h1.Size(); i++)
+  {
+    stabilized_coarse_h1[i] = std::cos(0.27 * (i + 1) - 0.09 * Mpi::Rank(Mpi::World()));
+  }
+  corrected_h1_prolongation->Mult(stabilized_coarse_h1, stabilized_fine_h1);
+  fine_combined_gradient->Mult(stabilized_fine_h1, fine_stabilized_gradient);
+  coarse_combined_gradient->Mult(stabilized_coarse_h1, coarse_stabilized_gradient);
+  corrected_nd_prolongation->Mult(coarse_stabilized_gradient,
+                                  prolonged_stabilized_gradient);
+  fine_stabilized_gradient -= prolonged_stabilized_gradient;
+  CHECK(linalg::Norml2(Mpi::World(), fine_stabilized_gradient) < 2.0e-11);
 
   Vector coarse_h1(combined_h1_prolongation->Width()),
       fine_h1(combined_h1_prolongation->Height()),
@@ -4347,6 +4850,94 @@ TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operato
     double diagonal_error = reference_diagonal.Normlinf();
     Mpi::GlobalMax(1, &diagonal_error, Mpi::World());
     CHECK(diagonal_error < 2.0e-12);
+  }
+
+  {
+    mfem::Array<int> no_essential;
+    auto hybrid_standard = std::make_unique<mfem::HypreParMatrix>(*standard_nd_mass_matrix);
+    auto hybrid = std::make_unique<fem::singular::ParallelHybridEnrichedOperator>(
+        std::move(hybrid_standard), parallel.nd_mass, no_essential, no_essential,
+        mfem::Matrix::DIAG_ONE);
+    fem::singular::ParallelTransformedHybridEnrichedOperator transformed(
+        std::move(hybrid), *nd_coordinate_shift);
+
+    Vector input(transformed.Width()), transformed_action, transformed_transpose,
+        physical_coefficients(transformed.Width()), physical_action(transformed.Height()),
+        reference_action(transformed.Height()), reference_transpose(transformed.Height()),
+        standard_shift(fine_standard_nd), enrichment_shift(local_enrichment_nd);
+    for (int i = 0; i < input.Size(); i++)
+    {
+      input[i] = std::sin(0.33 * (i + 1) + 0.11 * Mpi::Rank(Mpi::World()));
+    }
+    physical_coefficients = input;
+    Vector input_enrichment(input.GetData() + fine_standard_nd, local_enrichment_nd);
+    nd_coordinate_shift->Mult(input_enrichment, standard_shift);
+    for (int i = 0; i < fine_standard_nd; i++)
+    {
+      physical_coefficients[i] -= standard_shift[i];
+    }
+    combined_nd_mass->Mult(physical_coefficients, physical_action);
+    reference_action = physical_action;
+    Vector physical_standard(physical_action.GetData(), fine_standard_nd);
+    nd_coordinate_shift->MultTranspose(physical_standard, enrichment_shift);
+    for (int i = 0; i < local_enrichment_nd; i++)
+    {
+      reference_action[fine_standard_nd + i] -= enrichment_shift[i];
+    }
+
+    transformed.Mult(input, transformed_action);
+    transformed_action -= reference_action;
+    CHECK(linalg::Norml2(Mpi::World(), transformed_action) < 2.0e-11);
+    transformed.MultTranspose(input, transformed_transpose);
+    transformed_transpose -= reference_action;
+    CHECK(linalg::Norml2(Mpi::World(), transformed_transpose) < 2.0e-11);
+
+    fem::singular::ParallelTransformedEnrichmentOperator transformed_enrichment(
+        transformed);
+    Vector enrichment_action, enrichment_reference(local_enrichment_nd),
+        principal_input(transformed.Width()), principal_action,
+        transformed_diagonal(local_enrichment_nd), action_diagonal(local_enrichment_nd);
+    principal_input = 0.0;
+    linalg::SetSubVector(principal_input, fine_standard_nd, input_enrichment);
+    transformed.Mult(principal_input, principal_action);
+    transformed_enrichment.Mult(input_enrichment, enrichment_action);
+    for (int i = 0; i < local_enrichment_nd; i++)
+    {
+      enrichment_reference[i] = principal_action[fine_standard_nd + i];
+    }
+    enrichment_action -= enrichment_reference;
+    CHECK(linalg::Norml2(Mpi::World(), enrichment_action) < 2.0e-11);
+
+    transformed_enrichment.AssembleDiagonal(transformed_diagonal);
+    Vector original_input_enrichment(input_enrichment);
+    int maximum_local_enrichment_nd = local_enrichment_nd;
+    Mpi::GlobalMax(1, &maximum_local_enrichment_nd, Mpi::World());
+    for (int enrichment = 0; enrichment < maximum_local_enrichment_nd; enrichment++)
+    {
+      input_enrichment = 0.0;
+      if (enrichment < local_enrichment_nd)
+      {
+        input_enrichment[enrichment] = 1.0;
+      }
+      transformed_enrichment.Mult(input_enrichment, enrichment_action);
+      if (enrichment < local_enrichment_nd)
+      {
+        action_diagonal[enrichment] = enrichment_action[enrichment];
+      }
+    }
+    input_enrichment = original_input_enrichment;
+    transformed_diagonal -= action_diagonal;
+    double diagonal_error = transformed_diagonal.Normlinf();
+    Mpi::GlobalMax(1, &diagonal_error, Mpi::World());
+    CHECK(diagonal_error < 2.0e-11);
+
+    reference_transpose = 0.37;
+    reference_transpose.Add(-0.42, reference_action);
+    Vector add_action(transformed.Height());
+    add_action = 0.37;
+    transformed.AddMult(input, add_action, -0.42);
+    add_action -= reference_transpose;
+    CHECK(linalg::Norml2(Mpi::World(), add_action) < 2.0e-11);
   }
 
   auto explicitly_zeroed = std::make_unique<mfem::HypreParMatrix>(*combined_h1);

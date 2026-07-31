@@ -631,9 +631,10 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   if (iodata.solver.linear.divfree_max_it > 0 && !has_reactive_boundary)
   {
     Mpi::Print(" Configuring enriched divergence-free projection\n");
+    auto scalar_diffusion = space_op.GetBulkScalarDiffusionMatrix();
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         iodata, space_op.GetComm(), *M_bulk, space_op.GetGradMatrix(),
-        space_op.GetCombinedH1DbcTDofList());
+        std::move(scalar_diffusion), space_op.GetCombinedH1DbcTDofList());
     eigen->SetDivFreeProjector(*divfree);
   }
   else if (iodata.solver.linear.divfree_max_it > 0)

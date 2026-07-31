@@ -297,11 +297,31 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
 {
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
+  auto construction_stage_start = Timer::Now();
+  const auto report_construction_stage = [&](std::string_view stage)
+  {
+    const auto now = Timer::Now();
+    double elapsed = Timer::Duration(now - construction_stage_start).count();
+    double minimum = elapsed;
+    double maximum = elapsed;
+    Mpi::GlobalMin(1, &minimum, space_op.GetComm());
+    Mpi::GlobalMax(1, &maximum, space_op.GetComm());
+    Mpi::GlobalSum(1, &elapsed, space_op.GetComm());
+    Mpi::Print(" Singular driven construction, {} (s): min. {:.3f}, max. {:.3f}, "
+               "avg. {:.3f}\n",
+               stage, minimum, maximum, elapsed / Mpi::Size(space_op.GetComm()));
+    construction_stage_start = Timer::Now();
+  };
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  report_construction_stage("system stiffness");
   auto K_bulk_energy = space_op.GetBulkStiffnessMatrix(Operator::DIAG_ZERO);
+  report_construction_stage("bulk stiffness");
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  report_construction_stage("system mass");
   auto M_bulk_energy = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
+  report_construction_stage("bulk mass");
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  report_construction_stage("system damping");
   MFEM_VERIFY(K->Real() && !K->Imag() && (!C || (C->Real() && !C->Imag())) && M->Real(),
               "Driven singular simulations require real stiffness and damping with a "
               "complex electric mass operator!");
@@ -312,6 +332,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
       iodata, space_op.GetNDSpaces(), space_op.GetH1Spaces(), combined_prolongations,
       combined_gradients, space_op.GetCombinedNDDbcTDofLists(),
       space_op.GetCombinedH1DbcTDofLists());
+  report_construction_stage("Krylov and multigrid solver objects");
   ComplexVector rhs(space_op.GetNDTrueVSize()), electric_field(space_op.GetNDTrueVSize()),
       residual(space_op.GetNDTrueVSize());
   rhs.UseDevice(true);
@@ -382,6 +403,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
         iodata.boundaries.postpro, space_op.GetMaterialOp(), space_op.GetNDSpace().Get());
   }
   space_op.CacheSingularLumpedPortFunctionals(true);
+  report_construction_stage("field evaluators, surface operators, and port functionals");
 
   TableWithCSVFile output, surface_output;
   if (root)
@@ -455,9 +477,12 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
                   "Driven singular simulations do not support extra boundary operators!");
       auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
                                         K.get(), C.get(), M.get());
+      report_construction_stage("frequency system operator");
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+      report_construction_stage("frequency multigrid hierarchy");
       ksp->SetOperators(*A, *P);
+      report_construction_stage("frequency solver setup");
 
       Mpi::Print("\nIt {:d}/{:d}: omega/2pi = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
                  frequency_index + 1, omega_sample.size(),
@@ -467,6 +492,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
       space_op.GetExcitationVector(excitation_index, omega, rhs);
       ksp->Mult(rhs, electric_field);
 
+      BlockTimer postprocess_timer(Timer::POSTPRO);
       A->Mult(electric_field, residual);
       linalg::AXPY(-1.0, rhs, residual);
       const double relative_residual = linalg::Norml2(space_op.GetComm(), residual) /

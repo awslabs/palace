@@ -156,7 +156,7 @@ double RelativeNorm(const Vector &vector, const Vector &reference)
          std::max(1.0, linalg::Norml2(Mpi::World(), reference));
 }
 
-void CheckSymmetricPositive(const mfem::HypreParMatrix &matrix)
+void CheckSymmetricPositive(const Operator &matrix)
 {
   Vector x(matrix.Width()), y(matrix.Width()), Ax(matrix.Height()), Ay(matrix.Height());
   FillVector(x, 0.2);
@@ -213,18 +213,8 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   auto M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
   auto M_zero = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
   auto M_bulk = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
-  const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(K.get());
-  const auto *hypre_K_zero = dynamic_cast<const mfem::HypreParMatrix *>(K_zero.get());
-  const auto *hypre_M = dynamic_cast<const mfem::HypreParMatrix *>(M.get());
-  const auto *hypre_M_zero = dynamic_cast<const mfem::HypreParMatrix *>(M_zero.get());
-  const auto *hypre_M_bulk = dynamic_cast<const mfem::HypreParMatrix *>(M_bulk.get());
   const auto *hypre_G =
       dynamic_cast<const mfem::HypreParMatrix *>(&space_op.GetGradMatrix());
-  REQUIRE(hypre_K);
-  REQUIRE(hypre_K_zero);
-  REQUIRE(hypre_M);
-  REQUIRE(hypre_M_zero);
-  REQUIRE(hypre_M_bulk);
   REQUIRE(hypre_G);
 
   CHECK(K->Height() == space_op.GetNDTrueVSize());
@@ -233,9 +223,9 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   CHECK(hypre_G->Width() == space_op.GetH1TrueVSize());
   CHECK(K->Height() > space_op.GetNDSpace().GetTrueVSize());
   CHECK(hypre_G->Width() > space_op.GetH1Space().GetTrueVSize());
-  CHECK(space_op.GlobalTrueVSize() == hypre_K->GetGlobalNumRows());
-  CheckSymmetricPositive(*hypre_K);
-  CheckSymmetricPositive(*hypre_M);
+  CHECK(space_op.GlobalTrueVSize() == K->Height());
+  CheckSymmetricPositive(*K);
+  CheckSymmetricPositive(*M);
 
   const auto nd_prolongations = space_op.GetCombinedNDProlongationOperators();
   const auto h1_prolongations = space_op.GetCombinedH1ProlongationOperators();
@@ -361,14 +351,10 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
     }
     for (std::size_t level = 0; level + 1 < gradients.size(); level++)
     {
-      const auto *coarse = dynamic_cast<const mfem::HypreParMatrix *>(
-          hierarchy->GetOperatorAtLevel(level).Real());
-      const auto *fine = dynamic_cast<const mfem::HypreParMatrix *>(
-          hierarchy->GetOperatorAtLevel(level + 1).Real());
-      const auto *coarse_imaginary = dynamic_cast<const mfem::HypreParMatrix *>(
-          hierarchy->GetOperatorAtLevel(level).Imag());
-      const auto *fine_imaginary = dynamic_cast<const mfem::HypreParMatrix *>(
-          hierarchy->GetOperatorAtLevel(level + 1).Imag());
+      const auto *coarse = hierarchy->GetOperatorAtLevel(level).Real();
+      const auto *fine = hierarchy->GetOperatorAtLevel(level + 1).Real();
+      const auto *coarse_imaginary = hierarchy->GetOperatorAtLevel(level).Imag();
+      const auto *fine_imaginary = hierarchy->GetOperatorAtLevel(level + 1).Imag();
       const auto *prolongation =
           dynamic_cast<const mfem::HypreParMatrix *>(nd_prolongations[level]);
       REQUIRE(coarse);
@@ -378,9 +364,9 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
       REQUIRE((fine_imaginary != nullptr) == (loss_tangent > 0.0));
 
       const int standard_size = nd_spaces.GetFESpaceAtLevel(level).GetTrueVSize();
-      const auto galerkin_error = [&](const mfem::HypreParMatrix &coarse_operator,
-                                      const mfem::HypreParMatrix &fine_operator,
-                                      bool include_standard, bool include_enrichment)
+      const auto galerkin_error = [&](const Operator &coarse_operator,
+                                      const Operator &fine_operator, bool include_standard,
+                                      bool include_enrichment)
       {
         Vector coarse_x(coarse_operator.Width()), coarse_action(coarse_operator.Height()),
             fine_x(fine_operator.Width()), fine_action(fine_operator.Height()),
@@ -420,10 +406,8 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 
   auto complex_mass =
       space_op.GetMassMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ZERO);
-  const auto *complex_mass_real =
-      dynamic_cast<const mfem::HypreParMatrix *>(complex_mass->Real());
-  const auto *complex_mass_imag =
-      dynamic_cast<const mfem::HypreParMatrix *>(complex_mass->Imag());
+  const auto *complex_mass_real = complex_mass->Real();
+  const auto *complex_mass_imag = complex_mass->Imag();
   REQUIRE(complex_mass_real);
   CHECK((complex_mass_imag != nullptr) == (loss_tangent > 0.0));
   if (complex_mass_imag)
@@ -441,28 +425,24 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
         std::complex<double>(0.0), std::complex<double>(0.0), coefficient,
         static_cast<const ComplexOperator *>(nullptr),
         static_cast<const ComplexOperator *>(nullptr), complex_mass.get());
-    const auto *system_real = dynamic_cast<const mfem::HypreParMatrix *>(system->Real());
-    const auto *system_imag = dynamic_cast<const mfem::HypreParMatrix *>(system->Imag());
-    REQUIRE(system_real);
-    REQUIRE(system_imag);
-    Vector system_real_action(system->Height()), system_imaginary_action(system->Height()),
-        expected_real(real_action), expected_imag(real_action);
-    system_real->Mult(probe, system_real_action);
-    system_imag->Mult(probe, system_imaginary_action);
+    ComplexVector system_probe(system->Width()), system_action(system->Height());
+    system_probe = 0.0;
+    system_probe.Real() = probe;
+    system->Mult(system_probe, system_action);
+    Vector expected_real(real_action), expected_imag(real_action);
     expected_real *= coefficient.real() + coefficient.imag() * loss_tangent;
     expected_imag *= coefficient.imag() - coefficient.real() * loss_tangent;
-    system_real_action -= expected_real;
-    system_imaginary_action -= expected_imag;
-    CHECK(RelativeNorm(system_real_action, expected_real) < 2.0e-11);
-    CHECK(RelativeNorm(system_imaginary_action, expected_imag) < 2.0e-11);
+    system_action.Real() -= expected_real;
+    system_action.Imag() -= expected_imag;
+    CHECK(RelativeNorm(system_action.Real(), expected_real) < 2.0e-11);
+    CHECK(RelativeNorm(system_action.Imag(), expected_imag) < 2.0e-11);
   }
 
-  Vector h1(hypre_G->Width()), gradient(hypre_G->Height()),
-      curl_gradient(hypre_K_zero->Height());
+  Vector h1(hypre_G->Width()), gradient(hypre_G->Height()), curl_gradient(K_zero->Height());
   FillVector(h1, 0.4);
   linalg::SetSubVector(h1, space_op.GetCombinedH1DbcTDofList(), 0.0);
   hypre_G->Mult(h1, gradient);
-  hypre_K_zero->Mult(gradient, curl_gradient);
+  K_zero->Mult(gradient, curl_gradient);
   CHECK(RelativeNorm(curl_gradient, gradient) < 5.0e-8);
 
   Vector nd(K->Width()), Knd(K->Height());
@@ -474,10 +454,12 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   }
 
   // The projector must act on both standard and enrichment coordinates.
-  DivFreeSolver<ComplexVector> divfree(iodata, Mpi::World(), *hypre_M_bulk, *hypre_G,
+  auto scalar_diffusion = space_op.GetBulkScalarDiffusionMatrix();
+  DivFreeSolver<ComplexVector> divfree(iodata, Mpi::World(), *M_bulk, *hypre_G,
+                                       std::move(scalar_diffusion),
                                        space_op.GetCombinedH1DbcTDofList());
-  ComplexVector electric(hypre_M_zero->Width()), projected(hypre_M_zero->Width()),
-      mass_electric(hypre_M_zero->Height());
+  ComplexVector electric(M_zero->Width()), projected(M_zero->Width()),
+      mass_electric(M_zero->Height());
   FillVector(electric.Real(), 0.25);
   FillVector(electric.Imag(), 0.75);
   linalg::SetSubVector(electric, space_op.GetCombinedNDDbcTDofList(), 0.0);
@@ -485,8 +467,8 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   divfree.Mult(projected);
 
   ComplexVector weak_divergence(hypre_G->Width());
-  hypre_M_bulk->Mult(projected.Real(), mass_electric.Real());
-  hypre_M_bulk->Mult(projected.Imag(), mass_electric.Imag());
+  M_bulk->Mult(projected.Real(), mass_electric.Real());
+  M_bulk->Mult(projected.Imag(), mass_electric.Imag());
   hypre_G->MultTranspose(mass_electric.Real(), weak_divergence.Real());
   hypre_G->MultTranspose(mass_electric.Imag(), weak_divergence.Imag());
   linalg::SetSubVector(weak_divergence, space_op.GetCombinedH1DbcTDofList(), 0.0);

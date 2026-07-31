@@ -4,6 +4,7 @@
 #include "gmg.hpp"
 
 #include <mfem.hpp>
+#include "fem/singularsystem.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
@@ -82,10 +83,24 @@ bool IsAssembledParallelOperator(const Operator &op)
   return dynamic_cast<const mfem::HypreParMatrix *>(&op) != nullptr;
 }
 
+bool IsHybridParallelOperator(const Operator &op)
+{
+  return dynamic_cast<const fem::singular::ParallelHybridEnrichedOperator *>(&op) !=
+         nullptr;
+}
+
 bool IsAssembledParallelOperator(const ComplexOperator &op)
 {
   return (!op.Real() || dynamic_cast<const mfem::HypreParMatrix *>(op.Real())) &&
          (!op.Imag() || dynamic_cast<const mfem::HypreParMatrix *>(op.Imag()));
+}
+
+bool IsHybridParallelOperator(const ComplexOperator &op)
+{
+  return (!op.Real() ||
+          dynamic_cast<const fem::singular::ParallelHybridEnrichedOperator *>(op.Real())) &&
+         (!op.Imag() ||
+          dynamic_cast<const fem::singular::ParallelHybridEnrichedOperator *>(op.Imag()));
 }
 
 }  // namespace
@@ -117,9 +132,10 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 
     const auto &op_l = mg_op->GetOperatorAtLevel(l);
     const auto *PtAP_l = dynamic_cast<const ParOperType *>(&op_l);
-    MFEM_VERIFY(PtAP_l || IsAssembledParallelOperator(op_l),
+    MFEM_VERIFY(PtAP_l || IsAssembledParallelOperator(op_l) ||
+                    IsHybridParallelOperator(op_l),
                 "GeometricMultigridSolver requires finite-element ParOperator or "
-                "assembled parallel level operators!");
+                "compatible assembled/hybrid parallel level operators!");
     if (!dbc_tdof_lists[l] && PtAP_l)
     {
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();

@@ -12,6 +12,8 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include <Eigen/Eigenvalues>
+#include <fmt/format.h>
 #include <mfem/general/forall.hpp>
 
 #include "utils/communication.hpp"
@@ -552,24 +554,457 @@ BuildParallelEnrichedOperator(const mfem::HypreParMatrix &standard_standard,
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
 }
 
+int ParallelElementPatchInverse::DecodeSignedDof(int dof)
+{
+  return dof >= 0 ? dof : -1 - dof;
+}
+
+double ParallelElementPatchInverse::DecodeSignedDofSign(int dof)
+{
+  return dof >= 0 ? 1.0 : -1.0;
+}
+
+namespace
+{
+
+double FrobeniusNorm(const mfem::DenseMatrix &matrix)
+{
+  long double norm_squared = 0.0L;
+  for (int i = 0; i < matrix.Height(); i++)
+  {
+    for (int j = 0; j < matrix.Width(); j++)
+    {
+      const long double value = matrix(i, j);
+      norm_squared += value * value;
+    }
+  }
+  return std::sqrt(static_cast<double>(norm_squared));
+}
+
+struct PatchSpectrum
+{
+  mfem::DenseMatrix inverse;
+  int discarded_modes = 0;
+  double minimum_eigenvalue = std::numeric_limits<double>::infinity();
+  double maximum_eigenvalue = 0.0;
+  double resolution = 0.0;
+  bool materially_indefinite = false;
+};
+
+PatchSpectrum BuildPatchPseudoinverse(mfem::DenseMatrix &matrix,
+                                      const mfem::DenseMatrix &estimated_absolute_error)
+{
+  const int size = matrix.Height();
+  MFEM_VERIFY(size > 0 && matrix.Width() == size &&
+                  estimated_absolute_error.Height() == size &&
+                  estimated_absolute_error.Width() == size,
+              "Invalid matrix for coupled singular element patch pseudoinverse!");
+
+  const Eigen::Map<
+      const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>
+      eigen_matrix(matrix.Data(), size, size);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(eigen_matrix);
+  if (eigensystem.info() != Eigen::Success)
+  {
+    throw std::runtime_error(
+        "Failed to diagonalize a coupled singular element patch matrix!");
+  }
+  const auto &eigenvalues = eigensystem.eigenvalues();
+  const auto &eigenvectors = eigensystem.eigenvectors();
+
+  PatchSpectrum result;
+  result.inverse.SetSize(size);
+  result.inverse = 0.0;
+  result.minimum_eigenvalue = eigenvalues[0];
+  result.maximum_eigenvalue =
+      std::max(std::abs(eigenvalues[0]), std::abs(eigenvalues[size - 1]));
+  const double roundoff =
+      256.0 * std::numeric_limits<double>::epsilon() * size *
+      std::max(std::numeric_limits<double>::min(), result.maximum_eigenvalue);
+  result.resolution = std::max(roundoff, 2.0 * FrobeniusNorm(estimated_absolute_error));
+  result.materially_indefinite = result.minimum_eigenvalue < -result.resolution;
+
+  for (int mode = 0; mode < size; mode++)
+  {
+    const double eigenvalue = eigenvalues[mode];
+    if (eigenvalue <= result.resolution)
+    {
+      result.discarded_modes++;
+      continue;
+    }
+    const double inverse_eigenvalue = 1.0 / eigenvalue;
+    for (int i = 0; i < size; i++)
+    {
+      for (int j = 0; j < size; j++)
+      {
+        result.inverse(i, j) +=
+            inverse_eigenvalue * eigenvectors(i, mode) * eigenvectors(j, mode);
+      }
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
+void ParallelElementPatchInverse::ApplyTrueWeight(const Vector &input, Vector &output) const
+{
+  MFEM_VERIFY(input.Size() == height,
+              "Coupled singular element patches received an invalid true vector!");
+  output.SetSize(height);
+  const auto *input_data = input.HostRead();
+  const auto *weight_data = true_weight.HostRead();
+  auto *output_data = output.HostWrite();
+  for (int i = 0; i < height; i++)
+  {
+    output_data[i] = weight_data[i] * input_data[i];
+  }
+}
+
+ParallelElementPatchInverse::ParallelElementPatchInverse(
+    const mfem::ParFiniteElementSpace &standard_fespace,
+    const TrueDofMap &enrichment_numbering,
+    const std::vector<LocalNDElementPatchMatrices> &element_matrices,
+    double stiffness_coefficient, double mass_coefficient,
+    const mfem::Array<int> &standard_essential_true_dofs,
+    const mfem::Array<int> &enrichment_essential_true_dofs)
+  : Operator(standard_fespace.GetTrueVSize() +
+             static_cast<int>(enrichment_numbering.owned_size)),
+    standard_prolongation(standard_fespace.Dof_TrueDof_Matrix()),
+    enrichment_prolongation(BuildParallelEnrichmentProlongation(standard_fespace.GetComm(),
+                                                                enrichment_numbering)),
+    standard_true_size(standard_fespace.GetTrueVSize()),
+    standard_local_size(standard_fespace.GetVSize()),
+    enrichment_local_size(static_cast<int>(enrichment_numbering.local_size))
+{
+  bool valid = standard_prolongation && !element_matrices.empty() &&
+               std::isfinite(stiffness_coefficient) && std::isfinite(mass_coefficient) &&
+               stiffness_coefficient >= 0.0 && mass_coefficient > 0.0 &&
+               enrichment_numbering.owned_size <= std::numeric_limits<int>::max() &&
+               enrichment_numbering.local_size <= std::numeric_limits<int>::max() &&
+               standard_prolongation->Height() == standard_local_size &&
+               standard_prolongation->Width() == standard_true_size &&
+               enrichment_prolongation->Height() == enrichment_local_size &&
+               enrichment_prolongation->Width() ==
+                   static_cast<int>(enrichment_numbering.owned_size) &&
+               ValidEssentialDofs(standard_essential_true_dofs, standard_true_size) &&
+               ValidEssentialDofs(enrichment_essential_true_dofs,
+                                  static_cast<int>(enrichment_numbering.owned_size));
+  Mpi::GlobalAnd(1, &valid, standard_fespace.GetComm());
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Coupled singular element patches received inconsistent spaces or coefficients!");
+  }
+
+  Vector standard_true_essential(standard_true_size);
+  Vector enrichment_true_essential(static_cast<int>(enrichment_numbering.owned_size));
+  standard_true_essential = 0.0;
+  enrichment_true_essential = 0.0;
+  for (int dof : standard_essential_true_dofs)
+  {
+    standard_true_essential[dof] = 1.0;
+  }
+  for (int dof : enrichment_essential_true_dofs)
+  {
+    enrichment_true_essential[dof] = 1.0;
+  }
+  Vector standard_local_essential, enrichment_local_essential;
+  standard_local_essential.SetSize(standard_local_size);
+  enrichment_local_essential.SetSize(enrichment_local_size);
+  standard_prolongation->Mult(standard_true_essential, standard_local_essential);
+  enrichment_prolongation->Mult(enrichment_true_essential, enrichment_local_essential);
+
+  Vector standard_local_multiplicity(standard_local_size);
+  Vector enrichment_local_multiplicity(enrichment_local_size);
+  standard_local_multiplicity = 0.0;
+  enrichment_local_multiplicity = 0.0;
+  auto *standard_multiplicity = standard_local_multiplicity.HostReadWrite();
+  auto *enrichment_multiplicity = enrichment_local_multiplicity.HostReadWrite();
+  const auto *standard_essential = standard_local_essential.HostRead();
+  const auto *enrichment_essential = enrichment_local_essential.HostRead();
+
+  HYPRE_BigInt local_rank_deficient_patches = 0;
+  HYPRE_BigInt local_discarded_modes = 0;
+  HYPRE_BigInt local_materially_indefinite_patches = 0;
+  double local_minimum_relative_eigenvalue = std::numeric_limits<double>::infinity();
+  double local_maximum_relative_resolution = 0.0;
+  patches.reserve(element_matrices.size());
+  for (const auto &element : element_matrices)
+  {
+    const int standard_size = element.standard_dofs.Size();
+    const int enrichment_size = element.enrichment_dofs.Size();
+    const int patch_size = standard_size + enrichment_size;
+    if (element.element < 0 || patch_size <= 0 || element.mass.Height() != patch_size ||
+        element.mass.Width() != patch_size || element.curl_curl.Height() != patch_size ||
+        element.curl_curl.Width() != patch_size ||
+        element.mass_estimated_absolute_error.Height() != patch_size ||
+        element.mass_estimated_absolute_error.Width() != patch_size ||
+        element.curl_curl_estimated_absolute_error.Height() != patch_size ||
+        element.curl_curl_estimated_absolute_error.Width() != patch_size)
+    {
+      throw std::invalid_argument(
+          "Coupled singular element patch has inconsistent local matrices!");
+    }
+
+    Patch patch;
+    patch.local_dofs.SetSize(patch_size);
+    patch.signs.SetSize(patch_size);
+    std::vector<char> essential(static_cast<std::size_t>(patch_size), false);
+    for (int i = 0; i < standard_size; i++)
+    {
+      const int local = DecodeSignedDof(element.standard_dofs[i]);
+      if (local < 0 || local >= standard_local_size)
+      {
+        throw std::invalid_argument(
+            "Coupled singular element patch has an invalid standard local DOF!");
+      }
+      patch.local_dofs[i] = local;
+      patch.signs[i] = DecodeSignedDofSign(element.standard_dofs[i]);
+      essential[static_cast<std::size_t>(i)] =
+          std::abs(standard_essential[local]) > 1.0e-12;
+      standard_multiplicity[local] += 1.0;
+    }
+    for (int i = 0; i < enrichment_size; i++)
+    {
+      const int local = element.enrichment_dofs[i];
+      if (local < 0 || local >= enrichment_local_size)
+      {
+        throw std::invalid_argument(
+            "Coupled singular element patch has an invalid enrichment local DOF!");
+      }
+      patch.local_dofs[standard_size + i] = standard_local_size + local;
+      patch.signs[standard_size + i] = 1.0;
+      essential[static_cast<std::size_t>(standard_size + i)] =
+          std::abs(enrichment_essential[local]) > 1.0e-12;
+      enrichment_multiplicity[local] += 1.0;
+    }
+
+    mfem::DenseMatrix shifted(patch_size);
+    mfem::DenseMatrix shifted_error(patch_size);
+    for (int i = 0; i < patch_size; i++)
+    {
+      for (int j = 0; j < patch_size; j++)
+      {
+        shifted(i, j) = stiffness_coefficient * element.curl_curl(i, j) +
+                        mass_coefficient * element.mass(i, j);
+        shifted_error(i, j) =
+            stiffness_coefficient * element.curl_curl_estimated_absolute_error(i, j) +
+            mass_coefficient * element.mass_estimated_absolute_error(i, j);
+      }
+    }
+    for (int i = 0; i < patch_size; i++)
+    {
+      for (int j = i + 1; j < patch_size; j++)
+      {
+        const double symmetric = 0.5 * (shifted(i, j) + shifted(j, i));
+        shifted(i, j) = shifted(j, i) = symmetric;
+      }
+      if (essential[static_cast<std::size_t>(i)])
+      {
+        for (int j = 0; j < patch_size; j++)
+        {
+          shifted(i, j) = shifted(j, i) = 0.0;
+          shifted_error(i, j) = shifted_error(j, i) = 0.0;
+        }
+        shifted(i, i) = 1.0;
+      }
+    }
+    auto spectrum = BuildPatchPseudoinverse(shifted, shifted_error);
+    if (spectrum.discarded_modes > 0)
+    {
+      local_rank_deficient_patches++;
+      local_discarded_modes += spectrum.discarded_modes;
+    }
+    if (spectrum.materially_indefinite)
+    {
+      local_materially_indefinite_patches++;
+    }
+    const double spectral_scale =
+        std::max(std::numeric_limits<double>::min(), spectrum.maximum_eigenvalue);
+    local_minimum_relative_eigenvalue = std::min(
+        local_minimum_relative_eigenvalue, spectrum.minimum_eigenvalue / spectral_scale);
+    local_maximum_relative_resolution =
+        std::max(local_maximum_relative_resolution, spectrum.resolution / spectral_scale);
+    patch.inverse = std::move(spectrum.inverse);
+    patches.push_back(std::move(patch));
+  }
+
+  HYPRE_BigInt global_patch_count = static_cast<HYPRE_BigInt>(patches.size());
+  HYPRE_BigInt global_rank_deficient_patches = local_rank_deficient_patches;
+  HYPRE_BigInt global_discarded_modes = local_discarded_modes;
+  HYPRE_BigInt global_materially_indefinite_patches = local_materially_indefinite_patches;
+  double global_minimum_relative_eigenvalue = local_minimum_relative_eigenvalue;
+  double global_maximum_relative_resolution = local_maximum_relative_resolution;
+  Mpi::GlobalSum(1, &global_patch_count, standard_fespace.GetComm());
+  Mpi::GlobalSum(1, &global_rank_deficient_patches, standard_fespace.GetComm());
+  Mpi::GlobalSum(1, &global_discarded_modes, standard_fespace.GetComm());
+  Mpi::GlobalSum(1, &global_materially_indefinite_patches, standard_fespace.GetComm());
+  Mpi::GlobalMin(1, &global_minimum_relative_eigenvalue, standard_fespace.GetComm());
+  Mpi::GlobalMax(1, &global_maximum_relative_resolution, standard_fespace.GetComm());
+  Mpi::Print(" Singular coupled element-patch spectra: {:d}/{:d} rank-deficient patches, "
+             "{:d} discarded modes, min. relative eigenvalue {:.3e}, max. relative "
+             "resolution {:.3e}\n",
+             global_rank_deficient_patches, global_patch_count, global_discarded_modes,
+             global_minimum_relative_eigenvalue, global_maximum_relative_resolution);
+  if (global_materially_indefinite_patches > 0)
+  {
+    throw std::runtime_error(fmt::format(
+        "Found {} materially indefinite coupled singular element patches; the most "
+        "negative eigenvalue exceeds the certified quadrature and roundoff resolution!",
+        global_materially_indefinite_patches));
+  }
+
+  Vector standard_true_multiplicity, enrichment_true_multiplicity;
+  standard_true_multiplicity.SetSize(standard_true_size);
+  enrichment_true_multiplicity.SetSize(static_cast<int>(enrichment_numbering.owned_size));
+  standard_prolongation->AbsMultTranspose(standard_local_multiplicity,
+                                          standard_true_multiplicity);
+  enrichment_prolongation->AbsMultTranspose(enrichment_local_multiplicity,
+                                            enrichment_true_multiplicity);
+  true_weight.SetSize(height);
+  auto *weight = true_weight.HostWrite();
+  const auto *standard_count = standard_true_multiplicity.HostRead();
+  const auto *enrichment_count = enrichment_true_multiplicity.HostRead();
+  for (int i = 0; i < standard_true_size; i++)
+  {
+    weight[i] = standard_count[i] > 0.0 ? 1.0 / std::sqrt(standard_count[i]) : 0.0;
+  }
+  for (int i = 0; i < enrichment_true_multiplicity.Size(); i++)
+  {
+    weight[standard_true_size + i] =
+        enrichment_count[i] > 0.0 ? 1.0 / std::sqrt(enrichment_count[i]) : 0.0;
+  }
+  for (int dof : standard_essential_true_dofs)
+  {
+    weight[dof] = 0.0;
+  }
+  for (int dof : enrichment_essential_true_dofs)
+  {
+    weight[standard_true_size + dof] = 0.0;
+  }
+}
+
+void ParallelElementPatchInverse::Mult(const Vector &input, Vector &output) const
+{
+  MFEM_VERIFY(input.Size() == width,
+              "Coupled singular element patches received an invalid input vector!");
+  ApplyTrueWeight(input, scaled_input);
+  Vector scaled_standard, scaled_enrichment;
+  scaled_standard.MakeRef(scaled_input, 0, standard_true_size);
+  scaled_enrichment.MakeRef(scaled_input, standard_true_size, height - standard_true_size);
+  standard_local_rhs.SetSize(standard_local_size);
+  enrichment_local_rhs.SetSize(enrichment_local_size);
+  standard_prolongation->Mult(scaled_standard, standard_local_rhs);
+  enrichment_prolongation->Mult(scaled_enrichment, enrichment_local_rhs);
+
+  standard_local_correction.SetSize(standard_local_size);
+  enrichment_local_correction.SetSize(enrichment_local_size);
+  standard_local_correction = 0.0;
+  enrichment_local_correction = 0.0;
+  const auto *standard_rhs = standard_local_rhs.HostRead();
+  const auto *enrichment_rhs = enrichment_local_rhs.HostRead();
+  auto *standard_correction = standard_local_correction.HostReadWrite();
+  auto *enrichment_correction = enrichment_local_correction.HostReadWrite();
+  for (auto &patch : patches)
+  {
+    patch.rhs.SetSize(patch.local_dofs.Size());
+    auto *patch_rhs = patch.rhs.HostWrite();
+    const auto *sign = patch.signs.HostRead();
+    for (int i = 0; i < patch.local_dofs.Size(); i++)
+    {
+      const int local = patch.local_dofs[i];
+      patch_rhs[i] = sign[i] * (local < standard_local_size
+                                    ? standard_rhs[local]
+                                    : enrichment_rhs[local - standard_local_size]);
+    }
+    patch.correction.SetSize(patch.local_dofs.Size());
+    patch.inverse.Mult(patch.rhs, patch.correction);
+    const auto *patch_correction = patch.correction.HostRead();
+    for (int i = 0; i < patch.local_dofs.Size(); i++)
+    {
+      const int local = patch.local_dofs[i];
+      if (local < standard_local_size)
+      {
+        standard_correction[local] += sign[i] * patch_correction[i];
+      }
+      else
+      {
+        enrichment_correction[local - standard_local_size] += sign[i] * patch_correction[i];
+      }
+    }
+  }
+
+  output.SetSize(height);
+  Vector output_standard, output_enrichment;
+  output_standard.MakeRef(output, 0, standard_true_size);
+  output_enrichment.MakeRef(output, standard_true_size, height - standard_true_size);
+  standard_prolongation->MultTranspose(standard_local_correction, output_standard);
+  enrichment_prolongation->MultTranspose(enrichment_local_correction, output_enrichment);
+  auto *output_data = output.HostReadWrite();
+  const auto *weight = true_weight.HostRead();
+  for (int i = 0; i < height; i++)
+  {
+    output_data[i] *= weight[i];
+  }
+}
+
+namespace
+{
+
+ParallelSparseOperatorBlocks
+CopyParallelSparseOperatorBlocks(const ParallelSparseOperatorBlocks &source)
+{
+  ParallelSparseOperatorBlocks copy;
+  const auto copy_matrix = [](const std::unique_ptr<mfem::HypreParMatrix> &matrix)
+  { return matrix ? std::make_unique<mfem::HypreParMatrix>(*matrix) : nullptr; };
+  copy.enrichment_enrichment = copy_matrix(source.enrichment_enrichment);
+  copy.standard_enrichment = copy_matrix(source.standard_enrichment);
+  copy.enrichment_standard = copy_matrix(source.enrichment_standard);
+  copy.transformed_enrichment_diagonal =
+      source.transformed_enrichment_diagonal
+          ? std::make_unique<Vector>(*source.transformed_enrichment_diagonal)
+          : nullptr;
+  return copy;
+}
+
+}  // namespace
+
 ParallelHybridEnrichedOperator::ParallelHybridEnrichedOperator(
     std::unique_ptr<Operator> &&standard_standard,
     const ParallelSparseOperatorBlocks &enrichment,
     const mfem::Array<int> &standard_essential_true_dofs,
     const mfem::Array<int> &enrichment_essential_true_dofs,
-    Operator::DiagonalPolicy diagonal_policy)
+    Operator::DiagonalPolicy diagonal_policy,
+    std::shared_ptr<const Operator> coupled_patch_inverse)
+  : ParallelHybridEnrichedOperator(
+        std::move(standard_standard), CopyParallelSparseOperatorBlocks(enrichment),
+        standard_essential_true_dofs, enrichment_essential_true_dofs, diagonal_policy,
+        std::move(coupled_patch_inverse))
+{
+}
+
+ParallelHybridEnrichedOperator::ParallelHybridEnrichedOperator(
+    std::unique_ptr<Operator> &&standard_standard,
+    ParallelSparseOperatorBlocks &&enrichment,
+    const mfem::Array<int> &standard_essential_true_dofs,
+    const mfem::Array<int> &enrichment_essential_true_dofs,
+    Operator::DiagonalPolicy diagonal_policy,
+    std::shared_ptr<const Operator> coupled_patch_inverse)
   : Operator(0), standard_standard(std::move(standard_standard)),
+    enrichment(std::move(enrichment)),
+    coupled_patch_inverse(std::move(coupled_patch_inverse)),
     standard_size(this->standard_standard ? this->standard_standard->Height() : 0)
 {
-  if (!this->standard_standard || !enrichment.standard_enrichment ||
-      !enrichment.enrichment_standard || !enrichment.enrichment_enrichment)
+  if (!this->standard_standard || !this->enrichment.standard_enrichment ||
+      !this->enrichment.enrichment_standard || !this->enrichment.enrichment_enrichment)
   {
     throw std::invalid_argument(
         "A hybrid singular operator requires all four operator blocks!");
   }
-  const auto &se = *enrichment.standard_enrichment;
-  const auto &es = *enrichment.enrichment_standard;
-  const auto &ee = *enrichment.enrichment_enrichment;
+  const auto &se = *this->enrichment.standard_enrichment;
+  const auto &es = *this->enrichment.enrichment_standard;
+  const auto &ee = *this->enrichment.enrichment_enrichment;
   const MPI_Comm comm = ee.GetComm();
   bool valid =
       diagonal_policy == Operator::DIAG_ONE || diagonal_policy == Operator::DIAG_ZERO;
@@ -582,16 +1017,15 @@ ParallelHybridEnrichedOperator::ParallelHybridEnrichedOperator(
           se.GetGlobalNumRows() == es.GetGlobalNumCols() &&
           ValidEssentialDofs(standard_essential_true_dofs, standard_size) &&
           ValidEssentialDofs(enrichment_essential_true_dofs, ee.Height());
+  valid = valid && (!this->coupled_patch_inverse ||
+                    (this->coupled_patch_inverse->Height() == standard_size + ee.Height() &&
+                     this->coupled_patch_inverse->Width() == standard_size + ee.Height()));
   Mpi::GlobalAnd(1, &valid, comm);
   if (!valid)
   {
     throw std::invalid_argument(
         "A hybrid singular operator received inconsistent blocks or essential DOFs!");
   }
-
-  this->enrichment.standard_enrichment = std::make_unique<mfem::HypreParMatrix>(se);
-  this->enrichment.enrichment_standard = std::make_unique<mfem::HypreParMatrix>(es);
-  this->enrichment.enrichment_enrichment = std::make_unique<mfem::HypreParMatrix>(ee);
 
   std::unique_ptr<mfem::HypreParMatrix> discarded;
   this->enrichment.standard_enrichment->EliminateRows(standard_essential_true_dofs);
@@ -602,6 +1036,14 @@ ParallelHybridEnrichedOperator::ParallelHybridEnrichedOperator(
       this->enrichment.standard_enrichment->EliminateCols(enrichment_essential_true_dofs));
   this->enrichment.enrichment_enrichment->EliminateBC(enrichment_essential_true_dofs,
                                                       diagonal_policy);
+  if (this->enrichment.transformed_enrichment_diagonal)
+  {
+    MFEM_VERIFY(this->enrichment.transformed_enrichment_diagonal->Size() == ee.Height(),
+                "A transformed singular diagonal has inconsistent dimensions!");
+    linalg::SetSubVector(*this->enrichment.transformed_enrichment_diagonal,
+                         enrichment_essential_true_dofs,
+                         diagonal_policy == Operator::DIAG_ONE ? 1.0 : 0.0);
+  }
   RemoveExplicitZeros(*this->enrichment.standard_enrichment);
   RemoveExplicitZeros(*this->enrichment.enrichment_standard);
   RemoveExplicitZeros(*this->enrichment.enrichment_enrichment);
@@ -688,6 +1130,142 @@ void ParallelHybridEnrichedOperator::AddMultTranspose(const Vector &input, Vecto
                                                    coefficient);
   enrichment.enrichment_enrichment->AddMultTranspose(input_enriched, output_enriched,
                                                      coefficient);
+}
+
+ParallelTransformedHybridEnrichedOperator::ParallelTransformedHybridEnrichedOperator(
+    std::unique_ptr<ParallelHybridEnrichedOperator> &&untransformed,
+    const mfem::HypreParMatrix &coordinate_shift)
+  : untransformed(std::move(untransformed)), coordinate_shift(&coordinate_shift),
+    standard_size(this->untransformed ? this->untransformed->GetStandardSize() : 0)
+{
+  MFEM_VERIFY(this->untransformed && coordinate_shift.Height() == standard_size &&
+                  coordinate_shift.Width() == this->untransformed->Height() - standard_size,
+              "Stabilized singular coordinate shift has inconsistent dimensions!");
+  height = width = this->untransformed->Height();
+}
+
+void ParallelTransformedHybridEnrichedOperator::ApplyCoordinateTransform(
+    const Vector &input, Vector &output) const
+{
+  MFEM_VERIFY(input.Size() == width,
+              "Stabilized singular coordinate transform received an invalid vector!");
+  output.SetSize(width);
+  output.UseDevice(input.UseDevice());
+  output = input;
+  auto &mutable_input = const_cast<Vector &>(input);
+  Vector input_enrichment, output_standard;
+  input_enrichment.MakeRef(mutable_input, standard_size, width - standard_size);
+  output_standard.MakeRef(output, 0, standard_size);
+  standard_work.SetSize(standard_size);
+  coordinate_shift->Mult(input_enrichment, standard_work);
+  output_standard -= standard_work;
+}
+
+void ParallelTransformedHybridEnrichedOperator::ApplyCoordinateTransformTranspose(
+    const Vector &input, Vector &output) const
+{
+  MFEM_VERIFY(input.Size() == height,
+              "Stabilized singular transpose transform received an invalid vector!");
+  output.SetSize(height);
+  output.UseDevice(input.UseDevice());
+  output = input;
+  auto &mutable_input = const_cast<Vector &>(input);
+  Vector input_standard, output_enrichment;
+  input_standard.MakeRef(mutable_input, 0, standard_size);
+  output_enrichment.MakeRef(output, standard_size, height - standard_size);
+  enrichment_work.SetSize(height - standard_size);
+  coordinate_shift->MultTranspose(input_standard, enrichment_work);
+  output_enrichment -= enrichment_work;
+}
+
+void ParallelTransformedHybridEnrichedOperator::Mult(const Vector &input,
+                                                     Vector &output) const
+{
+  ApplyCoordinateTransform(input, transformed_input);
+  transformed_action.SetSize(height);
+  untransformed->Mult(transformed_input, transformed_action);
+  ApplyCoordinateTransformTranspose(transformed_action, output);
+}
+
+void ParallelTransformedHybridEnrichedOperator::MultTranspose(const Vector &input,
+                                                              Vector &output) const
+{
+  ApplyCoordinateTransform(input, transformed_input);
+  transformed_action.SetSize(height);
+  untransformed->MultTranspose(transformed_input, transformed_action);
+  ApplyCoordinateTransformTranspose(transformed_action, output);
+}
+
+void ParallelTransformedHybridEnrichedOperator::AddMult(const Vector &input, Vector &output,
+                                                        double coefficient) const
+{
+  Mult(input, transformed_action);
+  output.Add(coefficient, transformed_action);
+}
+
+void ParallelTransformedHybridEnrichedOperator::AddMultTranspose(const Vector &input,
+                                                                 Vector &output,
+                                                                 double coefficient) const
+{
+  MultTranspose(input, transformed_action);
+  output.Add(coefficient, transformed_action);
+}
+
+ParallelTransformedEnrichmentOperator::ParallelTransformedEnrichmentOperator(
+    const ParallelTransformedHybridEnrichedOperator &transformed)
+  : transformed(&transformed), standard_size(transformed.GetStandardSize())
+{
+  MFEM_VERIFY(standard_size > 0 && transformed.Height() >= standard_size &&
+                  transformed.GetCoordinateShift().GetGlobalNumCols() > 0,
+              "A transformed enrichment block requires nonempty standard and "
+              "enrichment spaces!");
+  height = width = transformed.Height() - standard_size;
+}
+
+void ParallelTransformedEnrichmentOperator::AssembleDiagonal(Vector &diagonal) const
+{
+  const auto &blocks = transformed->GetUntransformedOperator().GetEnrichmentBlocks();
+  if (blocks.transformed_enrichment_diagonal)
+  {
+    diagonal = *blocks.transformed_enrichment_diagonal;
+  }
+  else
+  {
+    blocks.enrichment_enrichment->AssembleDiagonal(diagonal);
+  }
+}
+
+void ParallelTransformedEnrichmentOperator::Mult(const Vector &input, Vector &output) const
+{
+  MFEM_VERIFY(input.Size() == width,
+              "A transformed enrichment block received an invalid input vector!");
+  combined_input.SetSize(standard_size + width);
+  combined_input.UseDevice(input.UseDevice());
+  combined_input = 0.0;
+  linalg::SetSubVector(combined_input, standard_size, input);
+  transformed->Mult(combined_input, combined_action);
+  output.SetSize(height);
+  output.UseDevice(combined_action.UseDevice());
+  Vector enrichment_action;
+  enrichment_action.MakeRef(combined_action, standard_size, height);
+  output = enrichment_action;
+}
+
+void ParallelTransformedEnrichmentOperator::MultTranspose(const Vector &input,
+                                                          Vector &output) const
+{
+  MFEM_VERIFY(input.Size() == width,
+              "A transformed enrichment block received an invalid transpose input!");
+  combined_input.SetSize(standard_size + width);
+  combined_input.UseDevice(input.UseDevice());
+  combined_input = 0.0;
+  linalg::SetSubVector(combined_input, standard_size, input);
+  transformed->MultTranspose(combined_input, combined_action);
+  output.SetSize(height);
+  output.UseDevice(combined_action.UseDevice());
+  Vector enrichment_action;
+  enrichment_action.MakeRef(combined_action, standard_size, height);
+  output = enrichment_action;
 }
 
 HYPRE_BigInt RemoveExplicitZeros(mfem::HypreParMatrix &matrix)
@@ -810,6 +1388,59 @@ BuildParallelEnrichedProlongation(const mfem::HypreParMatrix &standard_prolongat
   mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
   blocks = nullptr;
   blocks(0, 0) = &standard_prolongation;
+  blocks(1, 1) = identity.get();
+  return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
+}
+
+std::unique_ptr<mfem::HypreParMatrix> BuildParallelEnrichedProlongation(
+    const mfem::HypreParMatrix &standard_prolongation,
+    const mfem::HypreParMatrix &standard_enrichment_correction,
+    const TrueDofMap &enrichment_numbering)
+{
+  const MPI_Comm comm = standard_prolongation.GetComm();
+  bool valid = standard_prolongation.GetGlobalNumRows() > 0 &&
+               standard_prolongation.GetGlobalNumCols() > 0 &&
+               standard_enrichment_correction.GetComm() == comm &&
+               standard_enrichment_correction.Height() == standard_prolongation.Height() &&
+               standard_enrichment_correction.GetGlobalNumRows() ==
+                   standard_prolongation.GetGlobalNumRows() &&
+               standard_enrichment_correction.GetGlobalNumCols() ==
+                   enrichment_numbering.global_size &&
+               enrichment_numbering.global_size > 0 &&
+               enrichment_numbering.owned_offset >= 0 &&
+               enrichment_numbering.owned_size >= 0 &&
+               enrichment_numbering.owned_offset <= enrichment_numbering.global_size &&
+               enrichment_numbering.owned_size <=
+                   enrichment_numbering.global_size - enrichment_numbering.owned_offset &&
+               enrichment_numbering.owned_size <= std::numeric_limits<int>::max();
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Corrected parallel singular prolongation received inconsistent dimensions!");
+  }
+
+  const int local_size = static_cast<int>(enrichment_numbering.owned_size);
+  std::vector<int> rows(local_size + 1);
+  std::vector<HYPRE_BigInt> columns(local_size);
+  std::vector<double> values(local_size, 1.0);
+  for (int i = 0; i < local_size; i++)
+  {
+    rows[i] = i;
+    columns[i] = enrichment_numbering.owned_offset + i;
+  }
+  rows[local_size] = local_size;
+  const auto partition =
+      BuildPartition(comm, enrichment_numbering.owned_offset,
+                     enrichment_numbering.owned_size, enrichment_numbering.global_size);
+  auto identity = std::make_unique<mfem::HypreParMatrix>(
+      comm, local_size, enrichment_numbering.global_size, enrichment_numbering.global_size,
+      rows.data(), columns.data(), values.data(), partition.data(), partition.data());
+
+  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+  blocks = nullptr;
+  blocks(0, 0) = &standard_prolongation;
+  blocks(0, 1) = &standard_enrichment_correction;
   blocks(1, 1) = identity.get();
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::HypreParMatrixFromBlocks(blocks));
 }

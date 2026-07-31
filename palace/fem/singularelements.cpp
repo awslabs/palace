@@ -1203,6 +1203,44 @@ double IntegrateAffineTetrahedron(const AffineTetrahedron &tetrahedron,
   return accumulator.Value();
 }
 
+std::vector<double> IntegrateAffineTetrahedron(const AffineTetrahedron &tetrahedron,
+                                               const mfem::IntegrationRule &rule,
+                                               std::size_t number_components,
+                                               const ReferenceVectorIntegrand &integrand)
+{
+  std::vector<CompensatedAccumulator> accumulators(number_components);
+  std::vector<double> values(number_components);
+  VisitQuadraturePoints(
+      tetrahedron, 0, rule,
+      [&](const BarycentricPoint &lambda, double weight)
+      {
+        std::fill(values.begin(), values.end(), std::numeric_limits<double>::quiet_NaN());
+        integrand(lambda, values);
+        if (values.size() != number_components)
+        {
+          throw std::domain_error(
+              "Singular-element vector integrand changed its output size!");
+        }
+        for (std::size_t component = 0; component < number_components; component++)
+        {
+          if (!std::isfinite(values[component]))
+          {
+            throw std::domain_error(
+                "Singular-element vector integrand returned a non-finite value!");
+          }
+          accumulators[component].Add(static_cast<long double>(weight) *
+                                      static_cast<long double>(values[component]));
+        }
+      });
+
+  std::vector<double> result(number_components);
+  for (std::size_t component = 0; component < number_components; component++)
+  {
+    result[component] = accumulators[component].Value();
+  }
+  return result;
+}
+
 AdaptiveQuadratureResult IntegrateAffineTetrahedronAdaptive(
     const AffineTetrahedron &tetrahedron, const mfem::IntegrationRule &rule,
     const ReferenceIntegrand &integrand, double coarse_value, double absolute_tolerance,
@@ -1250,6 +1288,81 @@ AdaptiveQuadratureResult IntegrateAffineTetrahedronAdaptive(
   }
   return {value_accumulator.Value(), error_accumulator.Value(), leaf_count, maximum_depth,
           converged};
+}
+
+AdaptiveVectorQuadratureResult IntegrateAffineTetrahedronAdaptive(
+    const AffineTetrahedron &tetrahedron, const mfem::IntegrationRule &rule,
+    std::size_t number_components, const ReferenceVectorIntegrand &integrand,
+    const std::vector<double> &coarse_value, double absolute_tolerance,
+    double relative_tolerance, int depth, int max_subdivisions)
+{
+  MFEM_ASSERT(coarse_value.size() == number_components,
+              "Invalid coarse vector quadrature value!");
+  const auto children = Subdivide(tetrahedron);
+  std::array<std::vector<double>, 8> child_values;
+  std::vector<CompensatedAccumulator> fine_accumulators(number_components);
+  for (std::size_t child = 0; child < children.size(); child++)
+  {
+    child_values[child] =
+        IntegrateAffineTetrahedron(children[child], rule, number_components, integrand);
+    for (std::size_t component = 0; component < number_components; component++)
+    {
+      fine_accumulators[component].Add(
+          static_cast<long double>(child_values[child][component]));
+    }
+  }
+
+  std::vector<double> fine_value(number_components);
+  std::vector<double> estimated_error(number_components);
+  const double volume_fraction = std::abs(Determinant(tetrahedron));
+  bool locally_converged = true;
+  for (std::size_t component = 0; component < number_components; component++)
+  {
+    fine_value[component] = fine_accumulators[component].Value();
+    estimated_error[component] = std::abs(fine_value[component] - coarse_value[component]);
+    const double local_tolerance = absolute_tolerance * volume_fraction +
+                                   relative_tolerance * std::abs(fine_value[component]);
+    locally_converged = locally_converged && estimated_error[component] <= local_tolerance;
+  }
+  if (locally_converged || depth + 1 == max_subdivisions)
+  {
+    return {std::move(fine_value), std::move(estimated_error), children.size(), depth + 1,
+            locally_converged};
+  }
+
+  std::vector<CompensatedAccumulator> value_accumulators(number_components);
+  std::vector<CompensatedAccumulator> error_accumulators(number_components);
+  std::size_t leaf_count = 0;
+  int maximum_depth = depth;
+  bool converged = true;
+  for (std::size_t child = 0; child < children.size(); child++)
+  {
+    const auto result = IntegrateAffineTetrahedronAdaptive(
+        children[child], rule, number_components, integrand, child_values[child],
+        absolute_tolerance, relative_tolerance, depth + 1, max_subdivisions);
+    for (std::size_t component = 0; component < number_components; component++)
+    {
+      value_accumulators[component].Add(static_cast<long double>(result.value[component]));
+      error_accumulators[component].Add(
+          static_cast<long double>(result.estimated_absolute_error[component]));
+    }
+    if (leaf_count > std::numeric_limits<std::size_t>::max() - result.leaf_count)
+    {
+      throw std::overflow_error(
+          "Singular-element adaptive vector quadrature leaf count overflow!");
+    }
+    leaf_count += result.leaf_count;
+    maximum_depth = std::max(maximum_depth, result.maximum_subdivision_depth);
+    converged = converged && result.converged;
+  }
+
+  std::vector<double> value(number_components), error(number_components);
+  for (std::size_t component = 0; component < number_components; component++)
+  {
+    value[component] = value_accumulators[component].Value();
+    error[component] = error_accumulators[component].Value();
+  }
+  return {std::move(value), std::move(error), leaf_count, maximum_depth, converged};
 }
 
 template <typename Q>
@@ -2141,7 +2254,13 @@ Vector3 EvaluateHigherOrderBasisValue(const BarycentricPoint &lambda,
     const auto polynomials = EvaluateHigherOrderFacePolynomials(
         lambda, nodes, basis.interpolation_indices, basis.order);
     const double rho = NodeRadialCoordinate(lambda, nodes[0]);
-    ValidateRadialProxy(rho);
+    constexpr double endpoint_tolerance = 128.0 * std::numeric_limits<double>::epsilon();
+    if (rho <= endpoint_tolerance)
+    {
+      // The rotational field vanishes continuously at its singular node even
+      // though its curl is singular there.
+      return {0.0, 0.0, 0.0};
+    }
     const auto edge = StandardEdge(lambda, grad_lambda, nodes[1], nodes[2]);
     const double factor =
         PolynomialProduct(polynomials) * PositivePowerMinusOne(rho, basis.nu);
@@ -2153,7 +2272,13 @@ Vector3 EvaluateHigherOrderBasisValue(const BarycentricPoint &lambda,
     const auto polynomials = EvaluateHigherOrderVolumePolynomials(
         lambda, nodes, basis.interpolation_indices, basis.order);
     const double rho = EdgeRadialCoordinate(lambda, nodes[0], nodes[1]);
-    ValidateRadialProxy(rho);
+    constexpr double endpoint_tolerance = 128.0 * std::numeric_limits<double>::epsilon();
+    if (rho <= endpoint_tolerance)
+    {
+      // The damping and transverse Nedelec factor give a continuous zero
+      // value on the singular edge. Its curl remains singular.
+      return {0.0, 0.0, 0.0};
+    }
     const auto edge = StandardEdge(lambda, grad_lambda, nodes[2], nodes[3]);
     const double factor = PolynomialProduct(polynomials) * lambda[nodes[0]] *
                           lambda[nodes[1]] * PositivePowerMinusOne(rho, basis.nu);
@@ -2518,6 +2643,55 @@ IntegrateReferenceTetrahedronAdaptive(int order, double absolute_tolerance,
     }
     const double tightening =
         std::min(0.9, 0.8 * requested_tolerance / result.estimated_absolute_error);
+    local_absolute_tolerance *= tightening;
+    local_relative_tolerance *= tightening;
+  }
+  return result;
+}
+
+AdaptiveVectorQuadratureResult IntegrateReferenceTetrahedronAdaptive(
+    int order, double absolute_tolerance, double relative_tolerance, int max_subdivisions,
+    std::size_t number_components, const ReferenceVectorIntegrand &integrand)
+{
+  ValidateQuadratureParameters(order, 0);
+  ValidateAdaptiveQuadratureParameters(absolute_tolerance, relative_tolerance,
+                                       max_subdivisions);
+  if (!integrand || number_components == 0)
+  {
+    throw std::invalid_argument(
+        "Singular-element reference vector integrand must be callable and nonempty!");
+  }
+
+  const auto &rule = mfem::IntRules.Get(mfem::Geometry::TETRAHEDRON, order);
+  const auto coarse_value =
+      IntegrateAffineTetrahedron(ReferenceTetrahedron, rule, number_components, integrand);
+  double local_absolute_tolerance = absolute_tolerance;
+  double local_relative_tolerance = relative_tolerance;
+  AdaptiveVectorQuadratureResult result;
+  for (int attempt = 0; attempt <= max_subdivisions; attempt++)
+  {
+    result = IntegrateAffineTetrahedronAdaptive(
+        ReferenceTetrahedron, rule, number_components, integrand, coarse_value,
+        local_absolute_tolerance, local_relative_tolerance, 0, max_subdivisions);
+    result.converged = true;
+    double tightening = 0.9;
+    for (std::size_t component = 0; component < number_components; component++)
+    {
+      const double requested_tolerance =
+          absolute_tolerance + relative_tolerance * std::abs(result.value[component]);
+      const bool component_converged =
+          result.estimated_absolute_error[component] <= requested_tolerance;
+      result.converged = result.converged && component_converged;
+      if (!component_converged)
+      {
+        tightening = std::min(tightening, 0.8 * requested_tolerance /
+                                              result.estimated_absolute_error[component]);
+      }
+    }
+    if (result.converged || result.maximum_subdivision_depth == max_subdivisions)
+    {
+      return result;
+    }
     local_absolute_tolerance *= tightening;
     local_relative_tolerance *= tightening;
   }

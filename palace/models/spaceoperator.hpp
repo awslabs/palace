@@ -99,6 +99,8 @@ private:
   std::vector<fem::singular::ParallelSparseEnrichmentMatrices>
       singular_domain_imag_matrices;
   std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_domain_abs_matrices;
+  std::vector<fem::singular::LocalNDElementPatchMatrices>
+      singular_nd_element_patch_matrices;
   std::vector<fem::singular::ParallelSparseOperatorBlocks>
       singular_lumped_stiffness_matrices;
   std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_lumped_damping_matrices;
@@ -112,8 +114,10 @@ private:
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_gradients;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_prolongations;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_h1_prolongations;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_coordinate_shifts;
   mfem::Array<int> singular_nd_essential_true_dofs;
   mfem::Array<int> singular_h1_essential_true_dofs;
+  mfem::Array<int> singular_nd_gradient_true_dofs;
   std::vector<mfem::Array<int>> combined_nd_dbc_tdof_lists;
   std::vector<mfem::Array<int>> combined_h1_dbc_tdof_lists;
   std::map<int, std::unique_ptr<Vector>> singular_lumped_voltage_functionals;
@@ -222,6 +226,11 @@ public:
   }
   std::vector<const Operator *> GetCombinedNDProlongationOperators() const;
   std::vector<const Operator *> GetCombinedH1ProlongationOperators() const;
+  const mfem::HypreParMatrix *GetFinestSingularNDCoordinateShift() const;
+  const mfem::Array<int> &GetSingularNDGradientTrueDofs() const
+  {
+    return singular_nd_gradient_true_dofs;
+  }
   std::vector<const Operator *> GetCombinedGradientOperators() const;
 
   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary
@@ -327,6 +336,7 @@ public:
   // full-wave system and eigenvector normalization.
   std::unique_ptr<Operator> GetBulkStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
   std::unique_ptr<Operator> GetBulkMassMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<mfem::HypreParMatrix> GetBulkScalarDiffusionMatrix();
 
   template <typename OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,

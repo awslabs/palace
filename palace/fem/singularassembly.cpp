@@ -4,6 +4,7 @@
 #include "singularassembly.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -18,6 +19,7 @@
 #include <fmt/format.h>
 
 #include "fem/coefficient.hpp"
+#include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -355,6 +357,26 @@ EvaluateTriangleBasis(const TriangleBarycentricPoint &lambda,
                                           basis.nodes[1], basis.nodes[2], basis.nu);
   }
   throw std::invalid_argument("Unsupported triangular singular basis family!");
+}
+
+Vector2 EvaluateTriangleBasisValue(const TriangleBarycentricPoint &lambda,
+                                   const TriangleBarycentricGradients &grad_lambda,
+                                   const TriangleBasis &basis)
+{
+  if (basis.family != HigherOrderBasisFamily::NODE_ROTATIONAL)
+  {
+    return EvaluateTriangleBasis(lambda, grad_lambda, basis).value;
+  }
+  constexpr double endpoint_tolerance = 128.0 * std::numeric_limits<double>::epsilon();
+  if (TriangleNodeRadialCoordinate(lambda, basis.nodes[0]) <= endpoint_tolerance)
+  {
+    // The rotational field vanishes continuously at the singular node. Do not
+    // evaluate its singular curl when constructing a value-only interpolant.
+    return {0.0, 0.0};
+  }
+  return EvaluateTriangleNodeRotational(lambda, grad_lambda, basis.nodes[0], basis.nodes[1],
+                                        basis.nodes[2], basis.nu)
+      .value;
 }
 
 int TriangleSingularNode(const TriangleBasis &basis)
@@ -1155,6 +1177,13 @@ void AssembleParallelSparseBlock(MPI_Comm comm, const LocalSparseOperatorBlocks 
   parallel.standard_enrichment_estimated_absolute_error =
       AssembleParallelRAP(comm, *local.standard_enrichment_estimated_absolute_error,
                           absolute_standard_prolongation, enrichment_prolongation);
+  if (local.transformed_enrichment_diagonal)
+  {
+    parallel.transformed_enrichment_diagonal =
+        std::make_unique<mfem::Vector>(enrichment_prolongation.Width());
+    enrichment_prolongation.MultTranspose(*local.transformed_enrichment_diagonal,
+                                          *parallel.transformed_enrichment_diagonal);
+  }
 }
 
 void ValidateStandardFiniteElements(const mfem::FiniteElement &h1_fe,
@@ -1438,86 +1467,42 @@ struct AdaptiveCoefficientTensor
   int maximum_subdivision_depth = 0;
 };
 
-template <typename Integrand>
-AdaptiveCoefficientTensor
-IntegrateAdaptiveCoefficientTensor(const AdaptiveAssemblyOptions &options,
-                                   const HigherOrderBasis &basis, int standard,
-                                   std::string_view quantity, Integrand &&integrand)
+struct AffineGeometryTensors
 {
-  AdaptiveCoefficientTensor result;
+  ReferenceCoefficientTensor mass{};
+  ReferenceCoefficientTensor curl_curl{};
+};
+
+AffineGeometryTensors BuildAffineGeometryTensors(const BarycentricGradients &grad_lambda)
+{
+  AffineGeometryTensors result;
+  const std::array<Vector3, 3> curl_geometry{Cross(grad_lambda[2], grad_lambda[3]),
+                                             Cross(grad_lambda[3], grad_lambda[1]),
+                                             Cross(grad_lambda[1], grad_lambda[2])};
   for (int u = 0; u < 3; u++)
   {
     for (int v = 0; v < 3; v++)
     {
-      const auto entry = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
-          [&](const BarycentricPoint &lambda) { return integrand(lambda, u, v); });
-      if (!entry.converged)
-      {
-        throw std::runtime_error(fmt::format(
-            "Cached affine singular {} tensor did not converge: standard ND DOF = {}, "
-            "family = {}, order = {}, nu = {:.17g}, nodes = [{}, {}, {}, {}], "
-            "interpolation = [{}, {}, {}, {}], component = [{}, {}], value = "
-            "{:.17g}, estimated absolute error = {:.17g}, leaves = {}, maximum depth "
-            "= {}!",
-            quantity, standard, static_cast<int>(basis.family), basis.order, basis.nu,
-            basis.nodes[0], basis.nodes[1], basis.nodes[2], basis.nodes[3],
-            basis.interpolation_indices[0], basis.interpolation_indices[1],
-            basis.interpolation_indices[2], basis.interpolation_indices[3], u, v,
-            entry.value, entry.estimated_absolute_error, entry.leaf_count,
-            entry.maximum_subdivision_depth));
-      }
-      result.value[u][v] = entry.value;
-      result.estimated_absolute_error[u][v] = entry.estimated_absolute_error;
-      if (result.total_leaf_count >
-          std::numeric_limits<std::size_t>::max() - entry.leaf_count)
-      {
-        throw std::overflow_error(
-            "Cached affine singular tensor quadrature leaf count overflow!");
-      }
-      result.total_leaf_count += entry.leaf_count;
-      result.maximum_subdivision_depth =
-          std::max(result.maximum_subdivision_depth, entry.maximum_subdivision_depth);
+      result.mass[u][v] = Dot(grad_lambda[u + 1], grad_lambda[v + 1]);
+      result.curl_curl[u][v] = Dot(curl_geometry[u], curl_geometry[v]);
     }
   }
   return result;
 }
 
-double ContractAffineMassTensor(const ReferenceCoefficientTensor &tensor,
-                                const BarycentricGradients &grad_lambda,
-                                double jacobian_determinant, bool error)
+double ContractAffineTensor(const ReferenceCoefficientTensor &tensor,
+                            const ReferenceCoefficientTensor &geometry,
+                            double jacobian_determinant, bool error)
 {
   long double result = 0.0L;
   for (int u = 0; u < 3; u++)
   {
     for (int v = 0; v < 3; v++)
     {
-      const long double geometry = Dot(grad_lambda[u + 1], grad_lambda[v + 1]);
       result += static_cast<long double>(jacobian_determinant) *
                 static_cast<long double>(tensor[u][v]) *
-                (error ? std::abs(geometry) : geometry);
-    }
-  }
-  return static_cast<double>(result);
-}
-
-double ContractAffineCurlCurlTensor(const ReferenceCoefficientTensor &tensor,
-                                    const BarycentricGradients &grad_lambda,
-                                    double jacobian_determinant, bool error)
-{
-  const std::array<Vector3, 3> curl_geometry{Cross(grad_lambda[2], grad_lambda[3]),
-                                             Cross(grad_lambda[3], grad_lambda[1]),
-                                             Cross(grad_lambda[1], grad_lambda[2])};
-  long double result = 0.0L;
-  for (int u = 0; u < 3; u++)
-  {
-    for (int v = 0; v < 3; v++)
-    {
-      const long double geometry = Dot(curl_geometry[u], curl_geometry[v]);
-      result += static_cast<long double>(jacobian_determinant) *
-                static_cast<long double>(tensor[u][v]) *
-                (error ? std::abs(geometry) : geometry);
+                (error ? std::abs(static_cast<long double>(geometry[u][v]))
+                       : static_cast<long double>(geometry[u][v]));
     }
   }
   return static_cast<double>(result);
@@ -1536,7 +1521,6 @@ private:
   struct Key
   {
     const mfem::FiniteElement *finite_element;
-    int standard;
     HigherOrderBasis basis;
   };
 
@@ -1553,17 +1537,162 @@ private:
       {
         return false;
       }
-      if (a.standard != b.standard)
-      {
-        return a.standard < b.standard;
-      }
       return BasisLess(a.basis, b.basis);
     }
   };
 
+  struct PatternKey
+  {
+    const mfem::FiniteElement *finite_element;
+    std::vector<HigherOrderBasis> bases;
+  };
+
+  struct PatternKeyLess
+  {
+    bool operator()(const PatternKey &a, const PatternKey &b) const
+    {
+      const auto pointer_less = std::less<const mfem::FiniteElement *>{};
+      if (pointer_less(a.finite_element, b.finite_element))
+      {
+        return true;
+      }
+      if (pointer_less(b.finite_element, a.finite_element))
+      {
+        return false;
+      }
+      return std::lexicographical_compare(a.bases.begin(), a.bases.end(), b.bases.begin(),
+                                          b.bases.end(), BasisLess);
+    }
+  };
+
   AdaptiveAssemblyOptions options;
-  std::map<Key, Entry, KeyLess> entries;
+  std::map<Key, std::vector<Entry>, KeyLess> entries;
+  std::map<PatternKey, std::vector<const std::vector<Entry> *>, PatternKeyLess> patterns;
   std::size_t hits = 0;
+  double generation_time = 0.0;
+
+  const std::vector<Entry> &GetEntries(const mfem::FiniteElement &finite_element,
+                                       const HigherOrderBasis &basis)
+  {
+    const int standard_size = finite_element.GetDof();
+    const Key key{&finite_element, basis};
+    const auto cached = entries.find(key);
+    if (cached != entries.end())
+    {
+      hits += static_cast<std::size_t>(standard_size);
+      return cached->second;
+    }
+
+    const auto generation_start = std::chrono::steady_clock::now();
+    mfem::IntegrationPoint point;
+    mfem::DenseMatrix standard_value(standard_size, 3);
+    mfem::DenseMatrix standard_curl(standard_size, 3);
+    const bool has_curl = !IsGradientFamily(basis.family);
+    constexpr int tensor_size = 9;
+    const std::size_t mass_size = static_cast<std::size_t>(standard_size) * tensor_size;
+    const std::size_t number_components = has_curl ? 2 * mass_size : mass_size;
+    const auto component = [standard_size](int standard_dof, int u, int v, bool curl)
+    {
+      constexpr int tensor_size = 9;
+      return static_cast<std::size_t>(curl ? standard_size * tensor_size : 0) +
+             static_cast<std::size_t>(standard_dof * tensor_size + 3 * u + v);
+    };
+    const auto integral = IntegrateReferenceTetrahedronAdaptive(
+        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions, number_components,
+        [&](const BarycentricPoint &lambda, std::vector<double> &value)
+        {
+          point.Set3(lambda[1], lambda[2], lambda[3]);
+          finite_element.CalcVShape(point, standard_value);
+          if (has_curl)
+          {
+            finite_element.CalcCurlShape(point, standard_curl);
+          }
+          const auto singular =
+              EvaluateHigherOrderBasis(lambda, ReferenceBarycentricGradients(), basis);
+          for (int standard_dof = 0; standard_dof < standard_size; standard_dof++)
+          {
+            for (int u = 0; u < 3; u++)
+            {
+              for (int v = 0; v < 3; v++)
+              {
+                value[component(standard_dof, u, v, false)] =
+                    standard_value(standard_dof, u) * singular.value[v];
+                if (has_curl)
+                {
+                  value[component(standard_dof, u, v, true)] =
+                      standard_curl(standard_dof, u) * singular.curl[v];
+                }
+              }
+            }
+          }
+        });
+    if (!integral.converged)
+    {
+      std::size_t failed_component = 0;
+      for (; failed_component < number_components; failed_component++)
+      {
+        const double tolerance =
+            options.absolute_tolerance +
+            options.relative_tolerance * std::abs(integral.value[failed_component]);
+        if (integral.estimated_absolute_error[failed_component] > tolerance)
+        {
+          break;
+        }
+      }
+      const bool failed_curl = failed_component >= mass_size;
+      const std::size_t tensor_component = failed_component - (failed_curl ? mass_size : 0);
+      const int failed_standard = static_cast<int>(tensor_component / tensor_size);
+      const int failed_u = static_cast<int>((tensor_component % tensor_size) / 3);
+      const int failed_v = static_cast<int>(tensor_component % 3);
+      throw std::runtime_error(fmt::format(
+          "Cached affine singular standard-enrichment tensors did not converge: "
+          "standard ND DOF = {}, quantity = {}, component = [{}, {}], "
+          "family = {}, order = {}, nu = {:.17g}, nodes = [{}, {}, {}, {}], "
+          "interpolation = [{}, {}, {}, {}], components = {}, leaves = {}, maximum "
+          "depth = {}!",
+          failed_standard, failed_curl ? "curl-curl" : "mass", failed_u, failed_v,
+          static_cast<int>(basis.family), basis.order, basis.nu, basis.nodes[0],
+          basis.nodes[1], basis.nodes[2], basis.nodes[3], basis.interpolation_indices[0],
+          basis.interpolation_indices[1], basis.interpolation_indices[2],
+          basis.interpolation_indices[3], number_components, integral.leaf_count,
+          integral.maximum_subdivision_depth));
+    }
+
+    std::vector<Entry> basis_entries(standard_size);
+    for (int standard_dof = 0; standard_dof < standard_size; standard_dof++)
+    {
+      auto &entry = basis_entries[standard_dof];
+      entry.mass.total_leaf_count = integral.leaf_count;
+      entry.mass.maximum_subdivision_depth = integral.maximum_subdivision_depth;
+      entry.curl_curl.total_leaf_count = has_curl ? integral.leaf_count : 0;
+      entry.curl_curl.maximum_subdivision_depth =
+          has_curl ? integral.maximum_subdivision_depth : 0;
+      for (int u = 0; u < 3; u++)
+      {
+        for (int v = 0; v < 3; v++)
+        {
+          const auto mass_index = component(standard_dof, u, v, false);
+          entry.mass.value[u][v] = integral.value[mass_index];
+          entry.mass.estimated_absolute_error[u][v] =
+              integral.estimated_absolute_error[mass_index];
+          if (has_curl)
+          {
+            const auto curl_index = component(standard_dof, u, v, true);
+            entry.curl_curl.value[u][v] = integral.value[curl_index];
+            entry.curl_curl.estimated_absolute_error[u][v] =
+                integral.estimated_absolute_error[curl_index];
+          }
+        }
+      }
+    }
+    hits += static_cast<std::size_t>(standard_size - 1);
+    const auto &result = entries.emplace(key, std::move(basis_entries)).first->second;
+    generation_time +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start)
+            .count();
+    return result;
+  }
 
 public:
   explicit AffineStandardReferenceTable(const AdaptiveAssemblyOptions &options_in)
@@ -1571,51 +1700,46 @@ public:
   {
   }
 
-  Entry Get(const mfem::FiniteElement &finite_element, int standard,
-            const HigherOrderBasis &basis)
+  const std::vector<const std::vector<Entry> *> &
+  GetPattern(const mfem::FiniteElement &finite_element,
+             const std::vector<ElementDof> &element_dofs)
   {
-    const Key key{&finite_element, standard, basis};
-    const auto cached = entries.find(key);
-    if (cached != entries.end())
+    const int standard_size = finite_element.GetDof();
+    PatternKey key{&finite_element, {}};
+    key.bases.reserve(element_dofs.size());
+    for (const auto &element_dof : element_dofs)
     {
-      hits++;
+      key.bases.push_back(element_dof.basis);
+    }
+    const auto cached = patterns.find(key);
+    if (cached != patterns.end())
+    {
+      hits += static_cast<std::size_t>(standard_size) * element_dofs.size();
       return cached->second;
     }
 
-    const int standard_size = finite_element.GetDof();
-    mfem::IntegrationPoint point;
-    mfem::DenseMatrix standard_value(standard_size, 3);
-    const auto mass = IntegrateAdaptiveCoefficientTensor(
-        options, basis, standard, "mass",
-        [&](const BarycentricPoint &lambda, int u, int v)
-        {
-          point.Set3(lambda[1], lambda[2], lambda[3]);
-          finite_element.CalcVShape(point, standard_value);
-          const auto singular =
-              EvaluateHigherOrderBasis(lambda, ReferenceBarycentricGradients(), basis);
-          return standard_value(standard, u) * singular.value[v];
-        });
-
-    AdaptiveCoefficientTensor curl_curl;
-    if (!IsGradientFamily(basis.family))
+    std::vector<const std::vector<Entry> *> pattern(element_dofs.size());
+    for (std::size_t enrichment = 0; enrichment < element_dofs.size(); enrichment++)
     {
-      mfem::DenseMatrix standard_curl(standard_size, 3);
-      curl_curl = IntegrateAdaptiveCoefficientTensor(
-          options, basis, standard, "curl-curl",
-          [&](const BarycentricPoint &lambda, int u, int v)
-          {
-            point.Set3(lambda[1], lambda[2], lambda[3]);
-            finite_element.CalcCurlShape(point, standard_curl);
-            const auto singular =
-                EvaluateHigherOrderBasis(lambda, ReferenceBarycentricGradients(), basis);
-            return standard_curl(standard, u) * singular.curl[v];
-          });
+      const auto &basis_entries =
+          GetEntries(finite_element, element_dofs[enrichment].basis);
+      pattern[enrichment] = &basis_entries;
     }
-    return entries.emplace(key, Entry{mass, curl_curl}).first->second;
+    return patterns.emplace(std::move(key), std::move(pattern)).first->second;
   }
 
-  std::size_t Size() const { return entries.size(); }
+  std::size_t Size() const
+  {
+    std::size_t size = 0;
+    for (const auto &[key, basis_entries] : entries)
+    {
+      (void)key;
+      size += basis_entries.size();
+    }
+    return size;
+  }
   std::size_t Hits() const { return hits; }
+  double GenerationTime() const { return generation_time; }
 };
 
 class AffineScalarReferenceTable
@@ -1639,7 +1763,6 @@ private:
   struct StandardKey
   {
     const mfem::FiniteElement *finite_element;
-    int standard;
     HigherOrderBasis basis;
   };
 
@@ -1656,18 +1779,43 @@ private:
       {
         return false;
       }
-      if (a.standard != b.standard)
-      {
-        return a.standard < b.standard;
-      }
       return BasisLess(a.basis, b.basis);
+    }
+  };
+
+  struct StandardPatternKey
+  {
+    const mfem::FiniteElement *finite_element;
+    std::vector<HigherOrderBasis> bases;
+  };
+
+  struct StandardPatternKeyLess
+  {
+    bool operator()(const StandardPatternKey &a, const StandardPatternKey &b) const
+    {
+      const auto pointer_less = std::less<const mfem::FiniteElement *>{};
+      if (pointer_less(a.finite_element, b.finite_element))
+      {
+        return true;
+      }
+      if (pointer_less(b.finite_element, a.finite_element))
+      {
+        return false;
+      }
+      return std::lexicographical_compare(a.bases.begin(), a.bases.end(), b.bases.begin(),
+                                          b.bases.end(), BasisLess);
     }
   };
 
   AdaptiveAssemblyOptions options;
   std::map<PairKey, AdaptiveQuadratureResult, PairKeyLess> pair_entries;
-  std::map<StandardKey, AdaptiveQuadratureResult, StandardKeyLess> standard_entries;
+  std::map<StandardKey, std::vector<AdaptiveQuadratureResult>, StandardKeyLess>
+      standard_entries;
+  std::map<StandardPatternKey, std::vector<const AdaptiveQuadratureResult *>,
+           StandardPatternKeyLess>
+      standard_patterns;
   std::size_t hits = 0;
+  double generation_time = 0.0;
 
   static void Validate(const AdaptiveQuadratureResult &entry, std::string_view quantity)
   {
@@ -1704,6 +1852,7 @@ public:
       hits++;
       return cached->second;
     }
+    const auto generation_start = std::chrono::steady_clock::now();
     const auto entry = IntegrateReferenceTetrahedronAdaptive(
         options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
         options.maximum_subdivisions,
@@ -1713,37 +1862,118 @@ public:
                  EvaluateHigherOrderGradientPotential(lambda, column);
         });
     Validate(entry, "H1 enrichment mass");
-    return pair_entries.emplace(key, entry).first->second;
+    const auto result = pair_entries.emplace(key, entry).first->second;
+    generation_time +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start)
+            .count();
+    return result;
   }
 
-  AdaptiveQuadratureResult GetStandard(const mfem::FiniteElement &finite_element,
-                                       int standard, const HigherOrderBasis &basis)
+private:
+  const std::vector<AdaptiveQuadratureResult> &
+  GetStandardEntries(const mfem::FiniteElement &finite_element,
+                     const HigherOrderBasis &basis)
   {
-    const StandardKey key{&finite_element, standard, basis};
+    const int standard_size = finite_element.GetDof();
+    const StandardKey key{&finite_element, basis};
     const auto cached = standard_entries.find(key);
     if (cached != standard_entries.end())
     {
-      hits++;
+      hits += static_cast<std::size_t>(standard_size);
       return cached->second;
     }
+    const auto generation_start = std::chrono::steady_clock::now();
     mfem::IntegrationPoint point;
-    mfem::Vector standard_shape(finite_element.GetDof());
-    const auto entry = IntegrateReferenceTetrahedronAdaptive(
+    mfem::Vector standard_shape(standard_size);
+    const auto integral = IntegrateReferenceTetrahedronAdaptive(
         options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions,
-        [&](const BarycentricPoint &lambda)
+        options.maximum_subdivisions, static_cast<std::size_t>(standard_size),
+        [&](const BarycentricPoint &lambda, std::vector<double> &value)
         {
           point.Set3(lambda[1], lambda[2], lambda[3]);
           finite_element.CalcShape(point, standard_shape);
-          return standard_shape[standard] *
-                 EvaluateHigherOrderGradientPotential(lambda, basis);
+          const double singular = EvaluateHigherOrderGradientPotential(lambda, basis);
+          for (int standard_dof = 0; standard_dof < standard_size; standard_dof++)
+          {
+            value[standard_dof] = standard_shape[standard_dof] * singular;
+          }
         });
-    Validate(entry, "standard-enrichment H1 mass");
-    return standard_entries.emplace(key, entry).first->second;
+    if (!integral.converged)
+    {
+      throw std::runtime_error(fmt::format(
+          "Cached affine standard-enrichment H1 mass integrals did not converge: "
+          "family = {}, order = {}, nu = {:.17g}, nodes = [{}, {}, {}, {}], "
+          "interpolation = [{}, {}, {}, {}], components = {}, leaves = {}, maximum "
+          "depth = {}!",
+          static_cast<int>(basis.family), basis.order, basis.nu, basis.nodes[0],
+          basis.nodes[1], basis.nodes[2], basis.nodes[3], basis.interpolation_indices[0],
+          basis.interpolation_indices[1], basis.interpolation_indices[2],
+          basis.interpolation_indices[3], standard_size, integral.leaf_count,
+          integral.maximum_subdivision_depth));
+    }
+    std::vector<AdaptiveQuadratureResult> basis_entries(standard_size);
+    for (int standard_dof = 0; standard_dof < standard_size; standard_dof++)
+    {
+      basis_entries[standard_dof] = {
+          integral.value[standard_dof], integral.estimated_absolute_error[standard_dof],
+          integral.leaf_count, integral.maximum_subdivision_depth, true};
+      Validate(basis_entries[standard_dof], "standard-enrichment H1 mass");
+    }
+    hits += static_cast<std::size_t>(standard_size - 1);
+    const auto &result =
+        standard_entries.emplace(key, std::move(basis_entries)).first->second;
+    generation_time +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start)
+            .count();
+    return result;
   }
 
-  std::size_t Size() const { return pair_entries.size() + standard_entries.size(); }
+public:
+  const std::vector<const AdaptiveQuadratureResult *> &
+  GetStandardPattern(const mfem::FiniteElement &finite_element,
+                     const std::vector<ElementDof> &element_dofs)
+  {
+    const int standard_size = finite_element.GetDof();
+    StandardPatternKey key{&finite_element, {}};
+    key.bases.reserve(element_dofs.size());
+    for (const auto &element_dof : element_dofs)
+    {
+      key.bases.push_back(element_dof.basis);
+    }
+    const auto cached = standard_patterns.find(key);
+    if (cached != standard_patterns.end())
+    {
+      hits += static_cast<std::size_t>(standard_size) * element_dofs.size();
+      return cached->second;
+    }
+
+    std::vector<const AdaptiveQuadratureResult *> pattern(
+        static_cast<std::size_t>(standard_size) * element_dofs.size());
+    for (std::size_t enrichment = 0; enrichment < element_dofs.size(); enrichment++)
+    {
+      const auto &basis_entries =
+          GetStandardEntries(finite_element, element_dofs[enrichment].basis);
+      for (int standard = 0; standard < standard_size; standard++)
+      {
+        pattern[static_cast<std::size_t>(standard) * element_dofs.size() + enrichment] =
+            &basis_entries[standard];
+      }
+    }
+    return standard_patterns.emplace(std::move(key), std::move(pattern)).first->second;
+  }
+
+  std::size_t Size() const
+  {
+    std::size_t size = pair_entries.size();
+    for (const auto &[key, basis_entries] : standard_entries)
+    {
+      (void)key;
+      size += basis_entries.size();
+    }
+    return size;
+  }
   std::size_t Hits() const { return hits; }
+  double GenerationTime() const { return generation_time; }
 };
 
 }  // namespace
@@ -1788,8 +2018,364 @@ BuildParallelEnrichmentProlongation(MPI_Comm comm, const TrueDofMap &dofs)
   return BuildEnrichmentProlongation(comm, dofs);
 }
 
+std::unique_ptr<mfem::Vector> AssembleParallelEnrichmentVector(MPI_Comm comm,
+                                                               const TrueDofMap &dofs,
+                                                               const mfem::Vector &local)
+{
+  auto prolongation = BuildParallelEnrichmentProlongation(comm, dofs);
+  if (local.Size() != prolongation->Height())
+  {
+    throw std::invalid_argument(
+        "Cannot parallel-assemble an inconsistent local enrichment vector!");
+  }
+  auto assembled = std::make_unique<mfem::Vector>(prolongation->Width());
+  prolongation->MultTranspose(local, *assembled);
+  return assembled;
+}
+
+std::unique_ptr<mfem::SparseMatrix>
+BuildLocalEnrichmentInterpolant(const mfem::HypreParMatrix &true_interpolant,
+                                const mfem::ParFiniteElementSpace &standard_fespace,
+                                const TrueDofMap &enrichment_numbering)
+{
+  const MPI_Comm comm = standard_fespace.GetComm();
+  const auto *standard_prolongation = standard_fespace.Dof_TrueDof_Matrix();
+  if (!standard_prolongation ||
+      true_interpolant.Height() != standard_prolongation->Width() ||
+      true_interpolant.GetGlobalNumRows() != standard_prolongation->GetGlobalNumCols() ||
+      true_interpolant.GetGlobalNumCols() != enrichment_numbering.global_size)
+  {
+    throw std::invalid_argument(
+        "Cannot localize an inconsistent singular enrichment interpolant!");
+  }
+
+  auto enrichment_prolongation =
+      BuildParallelEnrichmentProlongation(comm, enrichment_numbering);
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_restriction(
+      enrichment_prolongation->Transpose());
+  std::unique_ptr<mfem::HypreParMatrix> local_to_true(
+      mfem::ParMult(standard_prolongation, &true_interpolant, true));
+  std::unique_ptr<mfem::HypreParMatrix> local(
+      mfem::ParMult(local_to_true.get(), enrichment_restriction.get(), true));
+  if (!local || local->Height() != standard_fespace.GetVSize() ||
+      local->Width() != static_cast<int>(enrichment_numbering.local_size))
+  {
+    throw std::runtime_error("Failed to localize a singular enrichment interpolant!");
+  }
+
+  mfem::SparseMatrix diagonal, off_diagonal;
+  HYPRE_BigInt *off_diagonal_columns = nullptr;
+  local->GetDiag(diagonal);
+  local->GetOffd(off_diagonal, off_diagonal_columns);
+  // P_e^T has one column for every rank-local copy of a shared true DOF.
+  // Consequently P_s D P_e^T repeats the same interpolant in off-rank local
+  // columns. Each rank assembles only its own elements and canonical local
+  // enrichment columns; the final P_e^T vector reduction sums those element
+  // contributions into the shared true DOF.
+  return std::make_unique<mfem::SparseMatrix>(diagonal);
+}
+
 namespace
 {
+
+mfem::DenseMatrix
+ExtractElementInterpolant(const mfem::SparseMatrix &local_interpolant,
+                          const mfem::Array<int> &signed_standard_dofs,
+                          const mfem::DofTransformation &standard_dof_transformation,
+                          const mfem::Array<int> &enrichment_dofs)
+{
+  mfem::DenseMatrix element(signed_standard_dofs.Size(), enrichment_dofs.Size());
+  element = 0.0;
+  std::map<int, int> enrichment_column;
+  for (int column = 0; column < enrichment_dofs.Size(); column++)
+  {
+    const auto [entry, inserted] =
+        enrichment_column.emplace(enrichment_dofs[column], column);
+    if (!inserted || entry->first < 0 || entry->first >= local_interpolant.Width())
+    {
+      throw std::invalid_argument(
+          "Element singular interpolant has invalid enrichment DOFs!");
+    }
+  }
+
+  const auto *offsets = local_interpolant.HostReadI();
+  const auto *columns = local_interpolant.HostReadJ();
+  const auto *values = local_interpolant.HostReadData();
+  for (int row = 0; row < signed_standard_dofs.Size(); row++)
+  {
+    const int signed_dof = signed_standard_dofs[row];
+    if (signed_dof == std::numeric_limits<int>::min())
+    {
+      throw std::invalid_argument(
+          "Element singular interpolant has an invalid signed standard DOF!");
+    }
+    const int standard_dof = signed_dof >= 0 ? signed_dof : -1 - signed_dof;
+    const double sign = signed_dof >= 0 ? 1.0 : -1.0;
+    if (standard_dof < 0 || standard_dof >= local_interpolant.Height())
+    {
+      throw std::invalid_argument(
+          "Element singular interpolant has an out-of-range standard DOF!");
+    }
+    for (int entry = offsets[standard_dof]; entry < offsets[standard_dof + 1]; entry++)
+    {
+      const auto column = enrichment_column.find(columns[entry]);
+      if (column != enrichment_column.end())
+      {
+        element(row, column->second) = sign * values[entry];
+      }
+    }
+  }
+
+  for (int column = 0; column < element.Width(); column++)
+  {
+    mfem::Vector coefficients(element.GetColumn(column), element.Height());
+    standard_dof_transformation.InvTransformPrimal(coefficients);
+  }
+  return element;
+}
+
+template <typename Topology>
+std::vector<LocalInterpolatedNDDiagonals> AssembleLocalInterpolatedNDDomainDiagonalsImpl(
+    const Topology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches)
+{
+  auto *mesh = nd_fespace.GetMesh();
+  if (!mesh || topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      local_interpolant.Height() != nd_fespace.GetVSize() ||
+      local_interpolant.Width() != static_cast<int>(topology.nd_dofs.size()) ||
+      material_batches.empty())
+  {
+    throw std::invalid_argument(
+        "Interpolated singular ND diagonal assembly received inconsistent inputs!");
+  }
+  for (const auto &materials : material_batches)
+  {
+    if (materials.size() != static_cast<std::size_t>(mesh->GetNE()))
+    {
+      throw std::invalid_argument(
+          "Interpolated singular ND diagonal materials do not cover the mesh!");
+    }
+    for (const auto &material : materials)
+    {
+      ValidateMaterialCoefficients(material);
+    }
+  }
+
+  std::vector<LocalInterpolatedNDDiagonals> result(material_batches.size());
+  for (auto &diagonal : result)
+  {
+    diagonal.mass.SetSize(local_interpolant.Width());
+    diagonal.curl_curl.SetSize(local_interpolant.Width());
+    diagonal.mass = 0.0;
+    diagonal.curl_curl = 0.0;
+  }
+
+  mfem::VectorFEMassIntegrator mass_integrator;
+  mfem::CurlCurlIntegrator curl_integrator;
+  for (int element = 0; element < mesh->GetNE(); element++)
+  {
+    const auto &element_dofs = topology.elements[element].nd;
+    if (element_dofs.empty())
+    {
+      continue;
+    }
+    const auto enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs, topology.nd_dofs.size());
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    const auto interpolant = ExtractElementInterpolant(local_interpolant, standard_dofs,
+                                                       dof_transformation, enrichment_dofs);
+
+    auto &transformation = *mesh->GetElementTransformation(element);
+    mfem::DenseMatrix mass, curl_curl;
+    mass_integrator.AssembleElementMatrix(*nd_fespace.GetFE(element), transformation, mass);
+    curl_integrator.AssembleElementMatrix(*nd_fespace.GetFE(element), transformation,
+                                          curl_curl);
+    mfem::Vector work(interpolant.Height());
+    for (int column = 0; column < interpolant.Width(); column++)
+    {
+      mfem::Vector coefficients(const_cast<double *>(interpolant.GetColumn(column)),
+                                interpolant.Height());
+      mass.Mult(coefficients, work);
+      const double mass_energy = coefficients * work;
+      curl_curl.Mult(coefficients, work);
+      const double curl_energy = coefficients * work;
+      const int enrichment = enrichment_dofs[column];
+      for (std::size_t batch = 0; batch < material_batches.size(); batch++)
+      {
+        const auto &material = material_batches[batch][element];
+        result[batch].mass[enrichment] += material.electric * mass_energy;
+        result[batch].curl_curl[enrichment] += material.inverse_magnetic * curl_energy;
+      }
+    }
+  }
+  return result;
+}
+
+int SetBoundaryIntegrationPoint(mfem::Mesh &mesh, int boundary,
+                                const mfem::IntegrationPoint &boundary_point,
+                                mfem::FaceElementTransformations &face,
+                                mfem::IsoparametricTransformation &element1,
+                                mfem::IsoparametricTransformation &element2);
+
+template <typename Topology>
+mfem::Vector AssembleLocalInterpolatedNDBoundaryDiagonalImpl(
+    const Topology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::map<int, double> &boundary_coefficients)
+{
+  auto *mesh = nd_fespace.GetMesh();
+  const int dimension = mesh ? mesh->Dimension() : 0;
+  if (!mesh || mesh->SpaceDimension() != dimension || (dimension != 2 && dimension != 3) ||
+      topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      local_interpolant.Height() != nd_fespace.GetVSize() ||
+      local_interpolant.Width() != static_cast<int>(topology.nd_dofs.size()))
+  {
+    throw std::invalid_argument(
+        "Interpolated singular ND boundary diagonal received inconsistent inputs!");
+  }
+  for (const auto &[attribute, coefficient] : boundary_coefficients)
+  {
+    if (attribute <= 0 || !std::isfinite(coefficient))
+    {
+      throw std::invalid_argument(
+          "Interpolated singular ND boundary diagonal requires positive attributes "
+          "and finite coefficients!");
+    }
+  }
+
+  mfem::Vector result(local_interpolant.Width());
+  result = 0.0;
+  for (int boundary = 0; boundary < mesh->GetNBE(); boundary++)
+  {
+    const auto coefficient = boundary_coefficients.find(mesh->GetBdrAttribute(boundary));
+    if (coefficient == boundary_coefficients.end() || coefficient->second == 0.0)
+    {
+      continue;
+    }
+    mfem::FaceElementTransformations face;
+    mfem::IsoparametricTransformation element1, element2, boundary_transformation;
+    mesh->GetBdrElementTransformation(boundary, &boundary_transformation);
+    const auto geometry = boundary_transformation.GetGeometryType();
+    const auto &center = mfem::Geometries.GetCenter(geometry);
+    const int element =
+        SetBoundaryIntegrationPoint(*mesh, boundary, center, face, element1, element2);
+    if (element < 0 || element >= mesh->GetNE())
+    {
+      throw std::runtime_error(
+          "Interpolated singular ND boundary diagonal has no adjacent element!");
+    }
+    const auto &element_dofs = topology.elements[element].nd;
+    if (element_dofs.empty())
+    {
+      continue;
+    }
+
+    const auto enrichment_dofs =
+        GetElementEnrichmentDofs(element_dofs, topology.nd_dofs.size());
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    const auto interpolant = ExtractElementInterpolant(local_interpolant, standard_dofs,
+                                                       dof_transformation, enrichment_dofs);
+    const auto *finite_element = nd_fespace.GetFE(element);
+    if (!finite_element || !face.Elem1 || geometry == mfem::Geometry::INVALID)
+    {
+      throw std::runtime_error(
+          "Interpolated singular ND boundary diagonal has invalid transformations!");
+    }
+
+    const int quadrature_order = fem::DefaultIntegrationOrder::Get(boundary_transformation);
+    const auto &rule = mfem::IntRules.Get(geometry, quadrature_order);
+    mfem::DenseMatrix standard_value(finite_element->GetDof(), dimension);
+    mfem::Vector normal_or_tangent(dimension), value(dimension);
+    for (int q = 0; q < rule.GetNPoints(); q++)
+    {
+      const auto &point = rule.IntPoint(q);
+      const int current =
+          SetBoundaryIntegrationPoint(*mesh, boundary, point, face, element1, element2);
+      if (current != element)
+      {
+        throw std::runtime_error(
+            "Interpolated singular ND boundary diagonal changed adjacent element!");
+      }
+      finite_element->CalcPhysVShape(*face.Elem1, standard_value);
+      boundary_transformation.SetIntPoint(&point);
+      const auto &jacobian = boundary_transformation.Jacobian();
+      const double weight =
+          coefficient->second * point.weight * boundary_transformation.Weight();
+      if (!std::isfinite(weight) || weight < 0.0)
+      {
+        throw std::runtime_error(
+            "Interpolated singular ND boundary diagonal found invalid quadrature!");
+      }
+
+      if (dimension == 3)
+      {
+        mfem::CalcOrtho(jacobian, normal_or_tangent);
+      }
+      else
+      {
+        if (jacobian.Height() != 2 || jacobian.Width() != 1)
+        {
+          throw std::runtime_error(
+              "Interpolated triangular ND boundary diagonal has an invalid tangent!");
+        }
+        normal_or_tangent[0] = jacobian(0, 0);
+        normal_or_tangent[1] = jacobian(1, 0);
+      }
+      normal_or_tangent /= normal_or_tangent.Norml2();
+
+      for (int enrichment = 0; enrichment < interpolant.Width(); enrichment++)
+      {
+        mfem::Vector coefficients(const_cast<double *>(interpolant.GetColumn(enrichment)),
+                                  interpolant.Height());
+        standard_value.MultTranspose(coefficients, value);
+        const double trace = value * normal_or_tangent;
+        const double tangential_norm =
+            dimension == 3 ? value * value - trace * trace : trace * trace;
+        result[enrichment_dofs[enrichment]] += weight * tangential_norm;
+      }
+    }
+  }
+  return result;
+}
+
+double SparseRowInnerProduct(const mfem::SparseMatrix &first, int first_row,
+                             const mfem::SparseMatrix &second, int second_row)
+{
+  const auto *first_offsets = first.HostReadI();
+  const auto *first_columns = first.HostReadJ();
+  const auto *first_values = first.HostReadData();
+  const auto *second_offsets = second.HostReadI();
+  const auto *second_columns = second.HostReadJ();
+  const auto *second_values = second.HostReadData();
+  int i = first_offsets[first_row];
+  int j = second_offsets[second_row];
+  const int i_end = first_offsets[first_row + 1];
+  const int j_end = second_offsets[second_row + 1];
+  double product = 0.0;
+  while (i < i_end && j < j_end)
+  {
+    if (first_columns[i] < second_columns[j])
+    {
+      i++;
+    }
+    else if (second_columns[j] < first_columns[i])
+    {
+      j++;
+    }
+    else
+    {
+      product += first_values[i] * second_values[j];
+      i++;
+      j++;
+    }
+  }
+  return product;
+}
 
 ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
     const ElementDofMap &element_dofs, const BarycentricGradients &grad_lambda,
@@ -2339,6 +2925,10 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
     AffineStandardReferenceTable *standard_reference_table,
     AffineScalarReferenceTable *scalar_reference_table)
 {
+  using Clock = std::chrono::steady_clock;
+  const auto elapsed = [](const Clock::time_point &start)
+  { return std::chrono::duration<double>(Clock::now() - start).count(); };
+  const auto setup_start = Clock::now();
   ValidateStandardFiniteElements(h1_fe, nd_fe, transformation);
   const bool affine_geometry = IsAffineElementTransformation(transformation);
   mfem::IntegrationPoint center;
@@ -2346,6 +2936,7 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
   double center_jacobian_determinant;
   const auto center_grad_lambda =
       GetBarycentricGradients(transformation, center, center_jacobian_determinant);
+  const auto affine_geometry_tensors = BuildAffineGeometryTensors(center_grad_lambda);
   const mfem::DenseMatrix center_jacobian(transformation.Jacobian());
   const mfem::DenseMatrix center_inverse_jacobian(transformation.InverseJacobian());
   ValidateInputs(element_dofs, center_grad_lambda, center_jacobian_determinant, options);
@@ -2375,27 +2966,75 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
   mfem::DenseMatrix reference_standard_value(standard_nd_size, 3);
   mfem::DenseMatrix standard_curl(standard_nd_size, 3);
   mfem::DenseMatrix reference_standard_curl(standard_nd_size, 3);
-  for (int standard = 0; standard < standard_nd_size; standard++)
+  const std::vector<const std::vector<AffineStandardReferenceTable::Entry> *>
+      *affine_nd_pattern =
+          affine_geometry && standard_reference_table
+              ? &standard_reference_table->GetPattern(nd_fe, element_dofs.nd)
+              : nullptr;
+  result.setup_time = elapsed(setup_start);
+  const auto nd_coupling_start = Clock::now();
+  for (int enrichment = 0; enrichment < enrichment_nd_size; enrichment++)
   {
-    for (int enrichment = 0; enrichment < enrichment_nd_size; enrichment++)
+    const auto &basis = element_dofs.nd[enrichment].basis;
+    std::optional<AdaptiveVectorQuadratureResult> affine_mass_reintegration;
+    std::optional<AdaptiveVectorQuadratureResult> affine_curl_reintegration;
+    for (int standard = 0; standard < standard_nd_size; standard++)
     {
-      const auto &basis = element_dofs.nd[enrichment].basis;
+      const AffineStandardReferenceTable::Entry *affine_reference =
+          affine_nd_pattern ? &(*(*affine_nd_pattern)[enrichment])[standard] : nullptr;
       const auto integrate_mass = [&]()
       {
-        if (affine_geometry && standard_reference_table)
+        if (affine_reference)
         {
-          const auto reference = standard_reference_table->Get(nd_fe, standard, basis);
-          const double value = ContractAffineMassTensor(
-              reference.mass.value, center_grad_lambda, center_jacobian_determinant, false);
-          const double error = ContractAffineMassTensor(
-              reference.mass.estimated_absolute_error, center_grad_lambda,
+          const double value = ContractAffineTensor(affine_reference->mass.value,
+                                                    affine_geometry_tensors.mass,
+                                                    center_jacobian_determinant, false);
+          const double error = ContractAffineTensor(
+              affine_reference->mass.estimated_absolute_error, affine_geometry_tensors.mass,
               center_jacobian_determinant, true);
           if (error <=
               options.absolute_tolerance + options.relative_tolerance * std::abs(value))
           {
-            return AdaptiveQuadratureResult{value, error, reference.mass.total_leaf_count,
-                                            reference.mass.maximum_subdivision_depth, true};
+            result.affine_nd_mass_contraction_count++;
+            return AdaptiveQuadratureResult{
+                value, error, affine_reference->mass.total_leaf_count,
+                affine_reference->mass.maximum_subdivision_depth, true};
           }
+          result.affine_nd_mass_reintegration_count++;
+          if (!affine_mass_reintegration)
+          {
+            result.affine_nd_mass_reintegration_batch_count++;
+            affine_mass_reintegration = IntegrateReferenceTetrahedronAdaptive(
+                options.quadrature_order, options.absolute_tolerance,
+                options.relative_tolerance, options.maximum_subdivisions,
+                static_cast<std::size_t>(standard_nd_size),
+                [&](const BarycentricPoint &lambda, std::vector<double> &value)
+                {
+                  point.Set3(lambda[1], lambda[2], lambda[3]);
+                  CalcAffinePhysVShape(nd_fe, point, center_inverse_jacobian,
+                                       reference_standard_value, standard_value);
+                  const auto singular =
+                      EvaluateHigherOrderBasis(lambda, center_grad_lambda, basis);
+                  for (int standard_dof = 0; standard_dof < standard_nd_size;
+                       standard_dof++)
+                  {
+                    value[standard_dof] =
+                        center_jacobian_determinant *
+                        Dot(DenseMatrixRow(standard_value, standard_dof), singular.value);
+                  }
+                });
+          }
+          const double reintegrated_value = affine_mass_reintegration->value[standard];
+          const double reintegrated_error =
+              affine_mass_reintegration->estimated_absolute_error[standard];
+          return AdaptiveQuadratureResult{
+              reintegrated_value, reintegrated_error, affine_mass_reintegration->leaf_count,
+              affine_mass_reintegration->maximum_subdivision_depth,
+              std::isfinite(reintegrated_value) && std::isfinite(reintegrated_error) &&
+                  reintegrated_error >= 0.0 &&
+                  reintegrated_error <=
+                      options.absolute_tolerance +
+                          options.relative_tolerance * std::abs(reintegrated_value)};
         }
         return IntegrateReferenceTetrahedronAdaptive(
             options.quadrature_order, options.absolute_tolerance,
@@ -2439,22 +3078,58 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
 
       const auto integrate_curl_curl = [&]()
       {
-        if (affine_geometry && standard_reference_table)
+        if (affine_reference)
         {
-          const auto reference = standard_reference_table->Get(nd_fe, standard, basis);
-          const double value =
-              ContractAffineCurlCurlTensor(reference.curl_curl.value, center_grad_lambda,
-                                           center_jacobian_determinant, false);
-          const double error = ContractAffineCurlCurlTensor(
-              reference.curl_curl.estimated_absolute_error, center_grad_lambda,
-              center_jacobian_determinant, true);
+          const double value = ContractAffineTensor(affine_reference->curl_curl.value,
+                                                    affine_geometry_tensors.curl_curl,
+                                                    center_jacobian_determinant, false);
+          const double error = ContractAffineTensor(
+              affine_reference->curl_curl.estimated_absolute_error,
+              affine_geometry_tensors.curl_curl, center_jacobian_determinant, true);
           if (error <=
               options.absolute_tolerance + options.relative_tolerance * std::abs(value))
           {
+            result.affine_nd_curl_contraction_count++;
             return AdaptiveQuadratureResult{
-                value, error, reference.curl_curl.total_leaf_count,
-                reference.curl_curl.maximum_subdivision_depth, true};
+                value, error, affine_reference->curl_curl.total_leaf_count,
+                affine_reference->curl_curl.maximum_subdivision_depth, true};
           }
+          result.affine_nd_curl_reintegration_count++;
+          if (!affine_curl_reintegration)
+          {
+            result.affine_nd_curl_reintegration_batch_count++;
+            affine_curl_reintegration = IntegrateReferenceTetrahedronAdaptive(
+                options.quadrature_order, options.absolute_tolerance,
+                options.relative_tolerance, options.maximum_subdivisions,
+                static_cast<std::size_t>(standard_nd_size),
+                [&](const BarycentricPoint &lambda, std::vector<double> &value)
+                {
+                  point.Set3(lambda[1], lambda[2], lambda[3]);
+                  CalcAffinePhysCurlShape(nd_fe, point, center_jacobian,
+                                          center_jacobian_determinant,
+                                          reference_standard_curl, standard_curl);
+                  const auto singular =
+                      EvaluateHigherOrderBasis(lambda, center_grad_lambda, basis);
+                  for (int standard_dof = 0; standard_dof < standard_nd_size;
+                       standard_dof++)
+                  {
+                    value[standard_dof] =
+                        center_jacobian_determinant *
+                        Dot(DenseMatrixRow(standard_curl, standard_dof), singular.curl);
+                  }
+                });
+          }
+          const double reintegrated_value = affine_curl_reintegration->value[standard];
+          const double reintegrated_error =
+              affine_curl_reintegration->estimated_absolute_error[standard];
+          return AdaptiveQuadratureResult{
+              reintegrated_value, reintegrated_error, affine_curl_reintegration->leaf_count,
+              affine_curl_reintegration->maximum_subdivision_depth,
+              std::isfinite(reintegrated_value) && std::isfinite(reintegrated_error) &&
+                  reintegrated_error >= 0.0 &&
+                  reintegrated_error <=
+                      options.absolute_tolerance +
+                          options.relative_tolerance * std::abs(reintegrated_value)};
         }
         return IntegrateReferenceTetrahedronAdaptive(
             options.quadrature_order, options.absolute_tolerance,
@@ -2491,6 +3166,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
     }
   }
 
+  result.nd_coupling_time = elapsed(nd_coupling_start);
+  const auto h1_gradient_coupling_start = Clock::now();
   mfem::DenseMatrix discrete_gradient(standard_nd_size, standard_h1_size);
   nd_fe.ProjectGrad(h1_fe, transformation, discrete_gradient);
   for (int standard_h1 = 0; standard_h1 < standard_h1_size; standard_h1++)
@@ -2528,7 +3205,13 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
     }
   }
 
+  result.h1_gradient_coupling_time = elapsed(h1_gradient_coupling_start);
+  const auto h1_mass_coupling_start = Clock::now();
   mfem::Vector standard_shape(standard_h1_size);
+  const std::vector<const AdaptiveQuadratureResult *> *affine_h1_pattern =
+      affine_geometry && scalar_reference_table
+          ? &scalar_reference_table->GetStandardPattern(h1_fe, element_dofs.h1)
+          : nullptr;
   for (int standard_h1 = 0; standard_h1 < standard_h1_size; standard_h1++)
   {
     for (int enrichment_h1 = 0; enrichment_h1 < enrichment_h1_size; enrichment_h1++)
@@ -2536,9 +3219,11 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
       const auto &basis = element_dofs.h1[enrichment_h1].basis;
       const auto integrate_h1_mass = [&]()
       {
-        if (affine_geometry && scalar_reference_table)
+        if (affine_h1_pattern)
         {
-          auto reference = scalar_reference_table->GetStandard(h1_fe, standard_h1, basis);
+          auto reference = *(*affine_h1_pattern)[static_cast<std::size_t>(standard_h1) *
+                                                     element_dofs.h1.size() +
+                                                 enrichment_h1];
           reference.value *= center_jacobian_determinant;
           reference.estimated_absolute_error *= center_jacobian_determinant;
           if (reference.estimated_absolute_error <=
@@ -2573,6 +3258,7 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
           mass.estimated_absolute_error;
     }
   }
+  result.h1_mass_coupling_time = elapsed(h1_mass_coupling_start);
   return result;
 }
 
@@ -4462,6 +5148,114 @@ AssembleParallelSparseH1BoundaryMassMatrices(const LocalSparseOperatorBlocks &lo
   return result;
 }
 
+ParallelSparseOperatorBlocks
+RestrictParallelSparseOperatorBlocks(const ParallelSparseOperatorBlocks &fine,
+                                     const mfem::HypreParMatrix &standard_prolongation)
+{
+  const bool empty = !fine.enrichment_enrichment && !fine.standard_enrichment &&
+                     !fine.enrichment_standard &&
+                     !fine.enrichment_enrichment_estimated_absolute_error &&
+                     !fine.standard_enrichment_estimated_absolute_error;
+  if (empty)
+  {
+    return {};
+  }
+  if (!fine.enrichment_enrichment || !fine.standard_enrichment ||
+      !fine.enrichment_standard || !fine.enrichment_enrichment_estimated_absolute_error ||
+      !fine.standard_enrichment_estimated_absolute_error ||
+      standard_prolongation.Height() != fine.standard_enrichment->Height())
+  {
+    throw std::invalid_argument(
+        "Cannot restrict an incomplete or incompatible singular sparse block!");
+  }
+
+  auto restriction =
+      std::unique_ptr<mfem::HypreParMatrix>(standard_prolongation.Transpose());
+  auto absolute_prolongation = BuildAbsoluteProlongation(standard_prolongation);
+  auto absolute_restriction =
+      std::unique_ptr<mfem::HypreParMatrix>(absolute_prolongation->Transpose());
+
+  ParallelSparseOperatorBlocks coarse;
+  coarse.enrichment_enrichment =
+      std::make_unique<mfem::HypreParMatrix>(*fine.enrichment_enrichment);
+  coarse.standard_enrichment.reset(
+      mfem::ParMult(restriction.get(), fine.standard_enrichment.get()));
+  coarse.enrichment_standard.reset(coarse.standard_enrichment->Transpose());
+  coarse.enrichment_enrichment_estimated_absolute_error =
+      std::make_unique<mfem::HypreParMatrix>(
+          *fine.enrichment_enrichment_estimated_absolute_error);
+  coarse.standard_enrichment_estimated_absolute_error.reset(mfem::ParMult(
+      absolute_restriction.get(), fine.standard_enrichment_estimated_absolute_error.get()));
+  if (!coarse.standard_enrichment || !coarse.standard_enrichment_estimated_absolute_error)
+  {
+    throw std::runtime_error("Failed to restrict a singular sparse block!");
+  }
+  return coarse;
+}
+
+ParallelSparseEnrichmentMatrices RestrictParallelSparseEnrichmentMatrices(
+    const ParallelSparseEnrichmentMatrices &fine,
+    const mfem::HypreParMatrix &h1_standard_prolongation,
+    const mfem::HypreParMatrix &nd_standard_prolongation)
+{
+  ParallelSparseEnrichmentMatrices coarse;
+  coarse.h1_diffusion =
+      RestrictParallelSparseOperatorBlocks(fine.h1_diffusion, h1_standard_prolongation);
+  coarse.h1_mass =
+      RestrictParallelSparseOperatorBlocks(fine.h1_mass, h1_standard_prolongation);
+  coarse.nd_mass =
+      RestrictParallelSparseOperatorBlocks(fine.nd_mass, nd_standard_prolongation);
+  coarse.nd_curl_curl =
+      RestrictParallelSparseOperatorBlocks(fine.nd_curl_curl, nd_standard_prolongation);
+  return coarse;
+}
+
+ParallelSparseOperatorBlocks
+ProjectParallelSparseOperatorBlocksToH1(const ParallelSparseOperatorBlocks &nd,
+                                        const mfem::HypreParMatrix &standard_gradient,
+                                        const mfem::HypreParMatrix &enrichment_gradient)
+{
+  if (!nd.standard_enrichment || !nd.enrichment_standard || !nd.enrichment_enrichment)
+  {
+    throw std::invalid_argument(
+        "Cannot project incomplete singular ND operator blocks into H1!");
+  }
+  if (standard_gradient.Height() != nd.standard_enrichment->Height() ||
+      enrichment_gradient.Height() != nd.enrichment_enrichment->Height() ||
+      nd.standard_enrichment->Width() != enrichment_gradient.Height() ||
+      nd.enrichment_standard->Width() != standard_gradient.Height())
+  {
+    throw std::invalid_argument(
+        "Cannot project incompatible singular ND operator blocks into H1!");
+  }
+
+  auto standard_restriction =
+      std::unique_ptr<mfem::HypreParMatrix>(standard_gradient.Transpose());
+  auto enrichment_restriction =
+      std::unique_ptr<mfem::HypreParMatrix>(enrichment_gradient.Transpose());
+  auto standard_enrichment_gradient = std::unique_ptr<mfem::HypreParMatrix>(
+      mfem::ParMult(nd.standard_enrichment.get(), &enrichment_gradient, true));
+  auto enrichment_enrichment_gradient = std::unique_ptr<mfem::HypreParMatrix>(
+      mfem::ParMult(nd.enrichment_enrichment.get(), &enrichment_gradient, true));
+  if (!standard_restriction || !enrichment_restriction || !standard_enrichment_gradient ||
+      !enrichment_enrichment_gradient)
+  {
+    throw std::runtime_error("Failed to form singular ND-to-H1 gradient products!");
+  }
+
+  ParallelSparseOperatorBlocks h1;
+  h1.standard_enrichment.reset(
+      mfem::ParMult(standard_restriction.get(), standard_enrichment_gradient.get()));
+  h1.enrichment_enrichment.reset(
+      mfem::ParMult(enrichment_restriction.get(), enrichment_enrichment_gradient.get()));
+  if (!h1.standard_enrichment || !h1.enrichment_enrichment)
+  {
+    throw std::runtime_error("Failed to project singular ND operator blocks into H1!");
+  }
+  h1.enrichment_standard.reset(h1.standard_enrichment->Transpose());
+  return h1;
+}
+
 void AssembleParallelNDBoundaryLinearForm(const DofTopology &topology,
                                           const ParallelDofNumbering &parallel_numbering,
                                           mfem::ParFiniteElementSpace &nd_fespace,
@@ -5023,18 +5817,106 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
 namespace
 {
 
+mfem::DenseMatrix
+BuildCombinedNDElementMatrix(const mfem::DenseMatrix &standard_standard,
+                             double standard_coefficient,
+                             const mfem::DenseMatrix &standard_enrichment,
+                             const mfem::DenseMatrix &enrichment_standard,
+                             const mfem::DenseMatrix &enrichment_enrichment)
+{
+  const int standard_size = standard_standard.Height();
+  const int enrichment_size = enrichment_enrichment.Height();
+  if (standard_standard.Width() != standard_size ||
+      standard_enrichment.Height() != standard_size ||
+      standard_enrichment.Width() != enrichment_size ||
+      enrichment_standard.Height() != enrichment_size ||
+      enrichment_standard.Width() != standard_size ||
+      enrichment_enrichment.Width() != enrichment_size)
+  {
+    throw std::invalid_argument(
+        "Coupled singular element patch received inconsistent matrix dimensions!");
+  }
+
+  mfem::DenseMatrix combined(standard_size + enrichment_size);
+  combined = 0.0;
+  for (int i = 0; i < standard_size; i++)
+  {
+    for (int j = 0; j < standard_size; j++)
+    {
+      combined(i, j) = standard_coefficient * standard_standard(i, j);
+    }
+    for (int j = 0; j < enrichment_size; j++)
+    {
+      combined(i, standard_size + j) = standard_enrichment(i, j);
+      combined(standard_size + j, i) = enrichment_standard(j, i);
+    }
+  }
+  for (int i = 0; i < enrichment_size; i++)
+  {
+    for (int j = 0; j < enrichment_size; j++)
+    {
+      combined(standard_size + i, standard_size + j) = enrichment_enrichment(i, j);
+    }
+  }
+  return combined;
+}
+
+mfem::DenseMatrix
+BuildCombinedNDElementErrorMatrix(int standard_size,
+                                  const mfem::DenseMatrix &standard_enrichment,
+                                  const mfem::DenseMatrix &enrichment_enrichment)
+{
+  const int enrichment_size = enrichment_enrichment.Height();
+  if (standard_size < 0 || standard_enrichment.Height() != standard_size ||
+      standard_enrichment.Width() != enrichment_size ||
+      enrichment_enrichment.Width() != enrichment_size)
+  {
+    throw std::invalid_argument(
+        "Coupled singular element patch received inconsistent error matrix dimensions!");
+  }
+
+  mfem::DenseMatrix combined(standard_size + enrichment_size);
+  combined = 0.0;
+  for (int i = 0; i < standard_size; i++)
+  {
+    for (int j = 0; j < enrichment_size; j++)
+    {
+      const double error = standard_enrichment(i, j);
+      combined(i, standard_size + j) = error;
+      combined(standard_size + j, i) = error;
+    }
+  }
+  for (int i = 0; i < enrichment_size; i++)
+  {
+    for (int j = 0; j < enrichment_size; j++)
+    {
+      combined(standard_size + i, standard_size + j) = enrichment_enrichment(i, j);
+    }
+  }
+  return combined;
+}
+
 template <typename Topology, typename ElementAssembler>
 std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatchImpl(
     const Topology &topology, mfem::FiniteElementSpace &h1_fespace,
     mfem::FiniteElementSpace &nd_fespace,
     const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
-    ElementAssembler &&assemble_element)
+    int retained_patch_batch, ElementAssembler &&assemble_element)
 {
+  using Clock = std::chrono::steady_clock;
+  const auto elapsed = [](const Clock::time_point &start)
+  { return std::chrono::duration<double>(Clock::now() - start).count(); };
   auto *mesh = h1_fespace.GetMesh();
   if (material_batches.empty())
   {
     throw std::invalid_argument(
         "Singular sparse batch assembly requires at least one material field!");
+  }
+  if (retained_patch_batch < -1 ||
+      retained_patch_batch >= static_cast<int>(material_batches.size()))
+  {
+    throw std::invalid_argument(
+        "Singular sparse batch assembly received an invalid retained patch batch!");
   }
   for (const auto &materials : material_batches)
   {
@@ -5071,6 +5953,10 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
                                nd_enrichment_size);
   }
 
+  double material_transformation_time = 0.0;
+  double sparse_insertion_time = 0.0;
+  mfem::VectorFEMassIntegrator standard_mass_integrator;
+  mfem::CurlCurlIntegrator standard_curl_integrator;
   for (int element = 0; element < mesh->GetNE(); element++)
   {
     const auto &element_dofs = topology.elements[element];
@@ -5093,16 +5979,53 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     const auto h1_unsigned_dofs = UnsignedDofs(h1_standard_dofs);
     const auto nd_unsigned_dofs = UnsignedDofs(nd_standard_dofs);
 
+    mfem::DenseMatrix standard_mass, standard_curl_curl;
+    if (retained_patch_batch >= 0)
+    {
+      standard_mass_integrator.AssembleElementMatrix(*nd_fespace.GetFE(element),
+                                                     transformation, standard_mass);
+      standard_curl_integrator.AssembleElementMatrix(*nd_fespace.GetFE(element),
+                                                     transformation, standard_curl_curl);
+      nd_dof_transformation.TransformDual(standard_mass);
+      nd_dof_transformation.TransformDual(standard_curl_curl);
+    }
+
     for (std::size_t batch = 0; batch < material_batches.size(); batch++)
     {
+      const auto material_start = Clock::now();
       auto enrichment = unweighted_enrichment;
       auto coupling = unweighted_coupling;
       ApplyIsotropicMaterialCoefficients(material_batches[batch][element], enrichment);
       ApplyIsotropicMaterialCoefficients(material_batches[batch][element], coupling);
       ApplyStandardDofTransformations(h1_dof_transformation, nd_dof_transformation,
                                       coupling);
+      material_transformation_time += elapsed(material_start);
       auto &result = results[batch];
 
+      if (static_cast<int>(batch) == retained_patch_batch)
+      {
+        const auto &material = material_batches[batch][element];
+        LocalNDElementPatchMatrices patch;
+        patch.element = element;
+        patch.standard_dofs = nd_standard_dofs;
+        patch.enrichment_dofs = nd_enrichment_dofs;
+        patch.mass = BuildCombinedNDElementMatrix(
+            standard_mass, material.electric, coupling.nd_mass_standard_enrichment,
+            coupling.nd_mass_enrichment_standard, enrichment.nd_mass);
+        patch.mass_estimated_absolute_error = BuildCombinedNDElementErrorMatrix(
+            standard_mass.Height(), coupling.nd_mass_estimated_absolute_error,
+            enrichment.nd_mass_estimated_absolute_error);
+        patch.curl_curl = BuildCombinedNDElementMatrix(
+            standard_curl_curl, material.inverse_magnetic,
+            coupling.nd_curl_curl_standard_enrichment,
+            coupling.nd_curl_curl_enrichment_standard, enrichment.nd_curl_curl);
+        patch.curl_curl_estimated_absolute_error = BuildCombinedNDElementErrorMatrix(
+            standard_curl_curl.Height(), coupling.nd_curl_curl_estimated_absolute_error,
+            enrichment.nd_curl_curl_estimated_absolute_error);
+        result.nd_element_patches.push_back(std::move(patch));
+      }
+
+      const auto insertion_start = Clock::now();
       result.h1_diffusion.enrichment_enrichment->AddSubMatrix(
           h1_enrichment_dofs, h1_enrichment_dofs, enrichment.h1_diffusion);
       result.h1_diffusion.standard_enrichment->AddSubMatrix(
@@ -5143,6 +6066,7 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
       result.nd_curl_curl.standard_enrichment_estimated_absolute_error->AddSubMatrix(
           nd_unsigned_dofs, nd_enrichment_dofs,
           coupling.nd_curl_curl_estimated_absolute_error);
+      sparse_insertion_time += elapsed(insertion_start);
 
       AccumulateQuadratureStatistics(enrichment, result.total_quadrature_leaf_count,
                                      result.maximum_subdivision_depth);
@@ -5151,12 +6075,20 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     }
   }
 
+  const auto finalization_start = Clock::now();
   for (auto &result : results)
   {
     FinalizeLocalSparseBlock(result.h1_diffusion);
     FinalizeLocalSparseBlock(result.h1_mass);
     FinalizeLocalSparseBlock(result.nd_mass);
     FinalizeLocalSparseBlock(result.nd_curl_curl);
+  }
+  const double sparse_finalization_time = elapsed(finalization_start);
+  for (auto &result : results)
+  {
+    result.material_transformation_time = material_transformation_time;
+    result.sparse_insertion_time = sparse_insertion_time;
+    result.sparse_finalization_time = sparse_finalization_time;
   }
   return results;
 }
@@ -5167,8 +6099,11 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     mfem::FiniteElementSpace &nd_fespace,
     const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
-    const AdaptiveAssemblyOptions &options)
+    const AdaptiveAssemblyOptions &options, int retained_patch_batch)
 {
+  using Clock = std::chrono::steady_clock;
+  const auto elapsed = [](const Clock::time_point &start)
+  { return std::chrono::duration<double>(Clock::now() - start).count(); };
   ValidateAdaptiveAssemblyOptions(options);
   auto *mesh = h1_fespace.GetMesh();
   if (!mesh || nd_fespace.GetMesh() != mesh ||
@@ -5183,19 +6118,53 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
   AdaptiveReferenceTable reference_table(options);
   AffineStandardReferenceTable standard_reference_table(options);
   AffineScalarReferenceTable scalar_reference_table(options);
+  double enrichment_evaluation_time = 0.0;
+  double standard_enrichment_evaluation_time = 0.0;
+  double standard_reference_generation_time = 0.0;
+  double standard_enrichment_setup_time = 0.0;
+  double nd_coupling_time = 0.0;
+  double h1_gradient_coupling_time = 0.0;
+  double h1_mass_coupling_time = 0.0;
+  std::size_t affine_nd_mass_contraction_count = 0;
+  std::size_t affine_nd_mass_reintegration_count = 0;
+  std::size_t affine_nd_mass_reintegration_batch_count = 0;
+  std::size_t affine_nd_curl_contraction_count = 0;
+  std::size_t affine_nd_curl_reintegration_count = 0;
+  std::size_t affine_nd_curl_reintegration_batch_count = 0;
   auto results = AssembleLocalSparseEnrichmentMatricesBatchImpl(
-      topology, h1_fespace, nd_fespace, material_batches,
+      topology, h1_fespace, nd_fespace, material_batches, retained_patch_batch,
       [&](int element, const ElementDofMap &element_dofs,
           mfem::ElementTransformation &transformation)
       {
         try
         {
+          const auto enrichment_start = Clock::now();
           auto enrichment = AssembleElementEnrichmentMatricesCached(
               element_dofs, transformation, options, reference_table,
               scalar_reference_table);
+          enrichment_evaluation_time += elapsed(enrichment_start);
+          const auto coupling_start = Clock::now();
+          const double generation_start = standard_reference_table.GenerationTime() +
+                                          scalar_reference_table.GenerationTime();
           auto coupling = AssembleElementStandardEnrichmentMatricesCached(
               element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
               transformation, options, standard_reference_table, scalar_reference_table);
+          standard_enrichment_evaluation_time += elapsed(coupling_start);
+          standard_reference_generation_time += standard_reference_table.GenerationTime() +
+                                                scalar_reference_table.GenerationTime() -
+                                                generation_start;
+          standard_enrichment_setup_time += coupling.setup_time;
+          nd_coupling_time += coupling.nd_coupling_time;
+          h1_gradient_coupling_time += coupling.h1_gradient_coupling_time;
+          h1_mass_coupling_time += coupling.h1_mass_coupling_time;
+          affine_nd_mass_contraction_count += coupling.affine_nd_mass_contraction_count;
+          affine_nd_mass_reintegration_count += coupling.affine_nd_mass_reintegration_count;
+          affine_nd_mass_reintegration_batch_count +=
+              coupling.affine_nd_mass_reintegration_batch_count;
+          affine_nd_curl_contraction_count += coupling.affine_nd_curl_contraction_count;
+          affine_nd_curl_reintegration_count += coupling.affine_nd_curl_reintegration_count;
+          affine_nd_curl_reintegration_batch_count +=
+              coupling.affine_nd_curl_reintegration_batch_count;
           return std::make_pair(std::move(enrichment), std::move(coupling));
         }
         catch (const std::exception &error)
@@ -5214,6 +6183,21 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     result.affine_reference_cache_hits = reference_table.Hits() +
                                          standard_reference_table.Hits() +
                                          scalar_reference_table.Hits();
+    result.enrichment_evaluation_time = enrichment_evaluation_time;
+    result.standard_enrichment_evaluation_time = standard_enrichment_evaluation_time;
+    result.standard_reference_generation_time = standard_reference_generation_time;
+    result.standard_enrichment_setup_time = standard_enrichment_setup_time;
+    result.nd_coupling_time = nd_coupling_time;
+    result.h1_gradient_coupling_time = h1_gradient_coupling_time;
+    result.h1_mass_coupling_time = h1_mass_coupling_time;
+    result.affine_nd_mass_contraction_count = affine_nd_mass_contraction_count;
+    result.affine_nd_mass_reintegration_count = affine_nd_mass_reintegration_count;
+    result.affine_nd_mass_reintegration_batch_count =
+        affine_nd_mass_reintegration_batch_count;
+    result.affine_nd_curl_contraction_count = affine_nd_curl_contraction_count;
+    result.affine_nd_curl_reintegration_count = affine_nd_curl_reintegration_count;
+    result.affine_nd_curl_reintegration_batch_count =
+        affine_nd_curl_reintegration_batch_count;
   }
   return results;
 }
@@ -5222,8 +6206,11 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     mfem::FiniteElementSpace &nd_fespace,
     const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
-    const AdaptiveAssemblyOptions &options)
+    const AdaptiveAssemblyOptions &options, int retained_patch_batch)
 {
+  using Clock = std::chrono::steady_clock;
+  const auto elapsed = [](const Clock::time_point &start)
+  { return std::chrono::duration<double>(Clock::now() - start).count(); };
   ValidateAdaptiveAssemblyOptions(options);
   auto *mesh = h1_fespace.GetMesh();
   if (!mesh || nd_fespace.GetMesh() != mesh || mesh->Dimension() != 2 ||
@@ -5237,18 +6224,24 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
         "Triangular singular sparse batch topology and spaces must share one "
         "two-dimensional mesh!");
   }
-  return AssembleLocalSparseEnrichmentMatricesBatchImpl(
-      topology, h1_fespace, nd_fespace, material_batches,
+  double enrichment_evaluation_time = 0.0;
+  double standard_enrichment_evaluation_time = 0.0;
+  auto results = AssembleLocalSparseEnrichmentMatricesBatchImpl(
+      topology, h1_fespace, nd_fespace, material_batches, retained_patch_batch,
       [&](int element, const TriangleElementDofMap &element_dofs,
           mfem::ElementTransformation &transformation)
       {
         try
         {
+          const auto enrichment_start = Clock::now();
           auto enrichment = AssembleTriangleElementEnrichmentMatrices(
               element_dofs, transformation, options);
+          enrichment_evaluation_time += elapsed(enrichment_start);
+          const auto coupling_start = Clock::now();
           auto coupling = AssembleTriangleElementStandardEnrichmentMatrices(
               element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
               transformation, options);
+          standard_enrichment_evaluation_time += elapsed(coupling_start);
           return std::make_pair(std::move(enrichment), std::move(coupling));
         }
         catch (const std::exception &error)
@@ -5263,6 +6256,83 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
               basis.nodes[2], basis.nu, error.what()));
         }
       });
+  for (auto &result : results)
+  {
+    result.enrichment_evaluation_time = enrichment_evaluation_time;
+    result.standard_enrichment_evaluation_time = standard_enrichment_evaluation_time;
+  }
+  return results;
+}
+
+std::vector<LocalInterpolatedNDDiagonals> AssembleLocalInterpolatedNDDomainDiagonals(
+    const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches)
+{
+  return AssembleLocalInterpolatedNDDomainDiagonalsImpl(
+      topology, nd_fespace, local_interpolant, material_batches);
+}
+
+mfem::Vector AssembleLocalInterpolatedNDBoundaryDiagonal(
+    const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::map<int, double> &boundary_coefficients)
+{
+  return AssembleLocalInterpolatedNDBoundaryDiagonalImpl(
+      topology, nd_fespace, local_interpolant, boundary_coefficients);
+}
+
+mfem::Vector AssembleLocalInterpolatedNDBoundaryDiagonal(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::map<int, double> &boundary_coefficients)
+{
+  return AssembleLocalInterpolatedNDBoundaryDiagonalImpl(
+      topology, nd_fespace, local_interpolant, boundary_coefficients);
+}
+
+std::vector<LocalInterpolatedNDDiagonals> AssembleLocalInterpolatedNDDomainDiagonals(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
+    const mfem::SparseMatrix &local_interpolant,
+    const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches)
+{
+  return AssembleLocalInterpolatedNDDomainDiagonalsImpl(
+      topology, nd_fespace, local_interpolant, material_batches);
+}
+
+void SetLocalTransformedEnrichmentDiagonal(
+    LocalSparseOperatorBlocks &blocks, const mfem::SparseMatrix &local_interpolant,
+    const mfem::Vector &interpolated_standard_diagonal)
+{
+  if (!blocks.enrichment_enrichment || !blocks.standard_enrichment ||
+      !blocks.enrichment_standard ||
+      local_interpolant.Height() != blocks.standard_enrichment->Height() ||
+      local_interpolant.Width() != blocks.standard_enrichment->Width() ||
+      interpolated_standard_diagonal.Size() != local_interpolant.Width())
+  {
+    throw std::invalid_argument(
+        "Cannot assemble an inconsistent transformed enrichment diagonal!");
+  }
+  std::unique_ptr<mfem::SparseMatrix> interpolant_transpose(
+      mfem::Transpose(local_interpolant));
+  std::unique_ptr<mfem::SparseMatrix> coupling_transpose(
+      mfem::Transpose(*blocks.standard_enrichment));
+  if (!interpolant_transpose || !coupling_transpose)
+  {
+    throw std::runtime_error("Failed to transpose local transformed-diagonal factors!");
+  }
+
+  auto diagonal = std::make_unique<mfem::Vector>(interpolated_standard_diagonal);
+  mfem::Vector enrichment_diagonal(local_interpolant.Width());
+  blocks.enrichment_enrichment->GetDiag(enrichment_diagonal);
+  *diagonal += enrichment_diagonal;
+  for (int enrichment = 0; enrichment < diagonal->Size(); enrichment++)
+  {
+    (*diagonal)[enrichment] -=
+        2.0 * SparseRowInnerProduct(*interpolant_transpose, enrichment, *coupling_transpose,
+                                    enrichment);
+  }
+  blocks.transformed_enrichment_diagonal = std::move(diagonal);
 }
 
 LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
@@ -5405,6 +6475,430 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
   result.total_quadrature_leaf_count = full.total_quadrature_leaf_count;
   result.maximum_subdivision_depth = full.maximum_subdivision_depth;
   return result;
+}
+
+namespace
+{
+
+double EvaluateH1InterpolationPotential(const BarycentricPoint &lambda,
+                                        const HigherOrderBasis &basis)
+{
+  double rho;
+  switch (basis.family)
+  {
+    case HigherOrderBasisFamily::NODE_GRADIENT:
+      rho = 1.0 - lambda[basis.nodes[0]];
+      break;
+    case HigherOrderBasisFamily::EDGE_GRADIENT:
+      rho = 1.0 - lambda[basis.nodes[0]] - lambda[basis.nodes[1]];
+      break;
+    case HigherOrderBasisFamily::NODE_ROTATIONAL:
+    case HigherOrderBasisFamily::EDGE_ROTATIONAL:
+      throw std::invalid_argument(
+          "An H1 singular interpolant requires a gradient-family basis!");
+    default:
+      throw std::invalid_argument("Unknown singular H1 basis family!");
+  }
+  constexpr double endpoint_tolerance = 128.0 * std::numeric_limits<double>::epsilon();
+  if (rho <= endpoint_tolerance)
+  {
+    // Both node- and edge-gradient scalar potentials have the continuous
+    // limiting behavior O(rho^nu) on their singular feature.
+    return 0.0;
+  }
+  return EvaluateHigherOrderGradientPotential(lambda, basis);
+}
+
+double EvaluateH1InterpolationPotential(const TriangleBarycentricPoint &lambda,
+                                        const TriangleBasis &basis)
+{
+  if (basis.family != HigherOrderBasisFamily::NODE_GRADIENT)
+  {
+    throw std::invalid_argument(
+        "A triangular H1 singular interpolant requires a node-gradient basis!");
+  }
+  const double rho = 1.0 - lambda[basis.nodes[0]];
+  constexpr double endpoint_tolerance = 128.0 * std::numeric_limits<double>::epsilon();
+  if (rho <= endpoint_tolerance)
+  {
+    return 0.0;
+  }
+  return EvaluateTriangleNodeGradientPotential(lambda, basis.nodes[0], basis.nodes[1],
+                                               basis.nu);
+}
+
+template <typename Topology, typename BarycentricPointBuilder>
+mfem::SparseMatrix
+BuildLocalH1EnrichmentInterpolant(const Topology &topology,
+                                  mfem::FiniteElementSpace &h1_fespace,
+                                  BarycentricPointBuilder &&make_barycentric_point)
+{
+  auto *mesh = h1_fespace.GetMesh();
+  if (!mesh || topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.h1_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Singular H1 interpolation topology and finite-element space are inconsistent!");
+  }
+
+  using Entry = std::pair<int, int>;
+  std::map<Entry, double> entries;
+  for (int element = 0; element < mesh->GetNE(); element++)
+  {
+    const auto &element_dofs = topology.elements[element].h1;
+    if (element_dofs.empty())
+    {
+      continue;
+    }
+    const auto &finite_element = *h1_fespace.GetFE(element);
+    const auto &nodes = finite_element.GetNodes();
+    if (nodes.GetNPoints() != finite_element.GetDof())
+    {
+      throw std::runtime_error(
+          "Singular H1 interpolation requires a nodal standard finite element!");
+    }
+
+    mfem::DenseMatrix values(finite_element.GetDof(),
+                             static_cast<int>(element_dofs.size()));
+    for (int row = 0; row < finite_element.GetDof(); row++)
+    {
+      const auto lambda = make_barycentric_point(nodes.IntPoint(row));
+      for (int column = 0; column < static_cast<int>(element_dofs.size()); column++)
+      {
+        values(row, column) =
+            EvaluateH1InterpolationPotential(lambda, element_dofs[column].basis);
+      }
+    }
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    h1_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    if (standard_dofs.Size() != values.Height())
+    {
+      throw std::runtime_error(
+          "Singular H1 interpolation received inconsistent standard element DOFs!");
+    }
+    dof_transformation.TransformPrimalCols(values);
+    for (int row = 0; row < standard_dofs.Size(); row++)
+    {
+      const int signed_dof = standard_dofs[row];
+      if (signed_dof == std::numeric_limits<int>::min())
+      {
+        throw std::runtime_error(
+            "Singular H1 interpolation received an invalid signed standard DOF!");
+      }
+      const int standard_dof = signed_dof >= 0 ? signed_dof : -1 - signed_dof;
+      const double sign = signed_dof >= 0 ? 1.0 : -1.0;
+      for (int column = 0; column < static_cast<int>(element_dofs.size()); column++)
+      {
+        const std::size_t enrichment = element_dofs[column].dof;
+        if (enrichment >= topology.h1_dofs.size())
+        {
+          throw std::runtime_error(
+              "Singular H1 interpolation received an invalid enrichment DOF!");
+        }
+        const double value = sign * values(row, column);
+        const auto [entry, inserted] =
+            entries.emplace(Entry{standard_dof, static_cast<int>(enrichment)}, value);
+        if (!inserted)
+        {
+          const double scale = std::max({1.0, std::abs(value), std::abs(entry->second)});
+          if (std::abs(value - entry->second) >
+              4096.0 * std::numeric_limits<double>::epsilon() * scale)
+          {
+            throw std::runtime_error(fmt::format(
+                "Singular H1 interpolant is not conforming on local standard DOF {} "
+                "for enrichment DOF {}: values {:.17g} and {:.17g} disagree!",
+                standard_dof, enrichment, entry->second, value));
+          }
+        }
+      }
+    }
+  }
+
+  mfem::SparseMatrix interpolation(h1_fespace.GetVSize(),
+                                   static_cast<int>(topology.h1_dofs.size()));
+  for (const auto &[indices, value] : entries)
+  {
+    if (value != 0.0)
+    {
+      interpolation.Set(indices.first, indices.second, value);
+    }
+  }
+  interpolation.Finalize();
+  return interpolation;
+}
+
+class TetrahedronRotationalBasisCoefficient : public mfem::VectorCoefficient
+{
+private:
+  HigherOrderBasis basis;
+
+public:
+  explicit TetrahedronRotationalBasisCoefficient(const HigherOrderBasis &basis)
+    : mfem::VectorCoefficient(3), basis(basis)
+  {
+    if (IsGradientFamily(basis.family))
+    {
+      throw std::invalid_argument(
+          "A rotational Nedelec interpolant received a gradient basis!");
+    }
+  }
+
+  void Eval(mfem::Vector &value, mfem::ElementTransformation &transformation,
+            const mfem::IntegrationPoint &point) override
+  {
+    double jacobian_determinant = 0.0;
+    const auto grad_lambda =
+        GetBarycentricGradients(transformation, point, jacobian_determinant);
+    const BarycentricPoint lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
+                                  point.z};
+    const auto evaluated = EvaluateHigherOrderBasisValue(lambda, grad_lambda, basis);
+    value.SetSize(3);
+    for (int d = 0; d < 3; d++)
+    {
+      value[d] = evaluated[d];
+    }
+  }
+};
+
+class TriangleRotationalBasisCoefficient : public mfem::VectorCoefficient
+{
+private:
+  TriangleBasis basis;
+
+public:
+  explicit TriangleRotationalBasisCoefficient(const TriangleBasis &basis)
+    : mfem::VectorCoefficient(2), basis(basis)
+  {
+    if (IsGradientFamily(basis.family))
+    {
+      throw std::invalid_argument(
+          "A rotational triangular Nedelec interpolant received a gradient basis!");
+    }
+  }
+
+  void Eval(mfem::Vector &value, mfem::ElementTransformation &transformation,
+            const mfem::IntegrationPoint &point) override
+  {
+    double jacobian_determinant = 0.0;
+    const auto grad_lambda =
+        GetTriangleBarycentricGradients(transformation, point, jacobian_determinant);
+    const TriangleBarycentricPoint lambda{1.0 - point.x - point.y, point.x, point.y};
+    const auto evaluated = EvaluateTriangleBasisValue(lambda, grad_lambda, basis);
+    value.SetSize(2);
+    for (int d = 0; d < 2; d++)
+    {
+      value[d] = evaluated[d];
+    }
+  }
+};
+
+template <typename Topology, typename ProjectBasis>
+mfem::SparseMatrix
+BuildLocalNDRotationalEnrichmentInterpolant(const Topology &topology,
+                                            mfem::FiniteElementSpace &nd_fespace,
+                                            ProjectBasis &&project_basis)
+{
+  auto *mesh = nd_fespace.GetMesh();
+  if (!mesh || topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()) ||
+      topology.nd_dofs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::invalid_argument(
+        "Singular rotational interpolation topology and Nedelec space are "
+        "inconsistent!");
+  }
+
+  using Entry = std::pair<int, int>;
+  std::map<Entry, double> entries;
+  for (int element = 0; element < mesh->GetNE(); element++)
+  {
+    const auto &element_dofs = topology.elements[element].nd;
+    if (element_dofs.empty())
+    {
+      continue;
+    }
+    const auto &finite_element = *nd_fespace.GetFE(element);
+    if (finite_element.GetRangeType() != mfem::FiniteElement::VECTOR ||
+        finite_element.GetMapType() != mfem::FiniteElement::H_CURL)
+    {
+      throw std::runtime_error(
+          "Singular rotational interpolation requires a Nedelec finite element!");
+    }
+    auto *transformation = mesh->GetElementTransformation(element);
+    if (!transformation)
+    {
+      throw std::runtime_error(
+          "Singular rotational interpolation could not obtain an element "
+          "transformation!");
+    }
+
+    mfem::DenseMatrix values(finite_element.GetDof(),
+                             static_cast<int>(element_dofs.size()));
+    values = 0.0;
+    for (int column = 0; column < static_cast<int>(element_dofs.size()); column++)
+    {
+      const auto &basis = element_dofs[column].basis;
+      if (IsGradientFamily(basis.family))
+      {
+        continue;
+      }
+      mfem::Vector projected(values.GetColumn(column), values.Height());
+      project_basis(basis, finite_element, *transformation, projected);
+    }
+
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    if (standard_dofs.Size() != values.Height())
+    {
+      throw std::runtime_error(
+          "Singular rotational interpolation received inconsistent standard element "
+          "DOFs!");
+    }
+    dof_transformation.TransformPrimalCols(values);
+    for (int row = 0; row < standard_dofs.Size(); row++)
+    {
+      const int signed_dof = standard_dofs[row];
+      if (signed_dof == std::numeric_limits<int>::min())
+      {
+        throw std::runtime_error(
+            "Singular rotational interpolation received an invalid signed standard "
+            "DOF!");
+      }
+      const int standard_dof = signed_dof >= 0 ? signed_dof : -1 - signed_dof;
+      const double sign = signed_dof >= 0 ? 1.0 : -1.0;
+      for (int column = 0; column < static_cast<int>(element_dofs.size()); column++)
+      {
+        const std::size_t enrichment = element_dofs[column].dof;
+        if (enrichment >= topology.nd_dofs.size())
+        {
+          throw std::runtime_error(
+              "Singular rotational interpolation received an invalid enrichment DOF!");
+        }
+        const double value = sign * values(row, column);
+        const auto [entry, inserted] =
+            entries.emplace(Entry{standard_dof, static_cast<int>(enrichment)}, value);
+        if (!inserted)
+        {
+          const double scale = std::max({1.0, std::abs(value), std::abs(entry->second)});
+          if (std::abs(value - entry->second) > 2.0e-11 * scale)
+          {
+            throw std::runtime_error(fmt::format(
+                "Singular rotational interpolant is not conforming on local standard "
+                "DOF {} for enrichment DOF {}: values {:.17g} and {:.17g} disagree!",
+                standard_dof, enrichment, entry->second, value));
+          }
+        }
+      }
+    }
+  }
+
+  mfem::SparseMatrix interpolation(nd_fespace.GetVSize(),
+                                   static_cast<int>(topology.nd_dofs.size()));
+  for (const auto &[indices, value] : entries)
+  {
+    if (value != 0.0)
+    {
+      interpolation.Set(indices.first, indices.second, value);
+    }
+  }
+  interpolation.Finalize();
+  return interpolation;
+}
+
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelEnrichmentInterpolantImpl(const mfem::SparseMatrix &local,
+                                       const TrueDofMap &enrichment_numbering,
+                                       const mfem::ParFiniteElementSpace &standard_fespace)
+{
+  const MPI_Comm comm = standard_fespace.GetComm();
+  const auto *standard_prolongation = standard_fespace.Dof_TrueDof_Matrix();
+  if (!standard_prolongation || local.Height() != standard_prolongation->Height() ||
+      local.Width() != static_cast<int>(enrichment_numbering.local_size))
+  {
+    throw std::invalid_argument(
+        "Cannot parallelize an inconsistent singular enrichment interpolant!");
+  }
+  auto enrichment_prolongation =
+      BuildParallelEnrichmentProlongation(comm, enrichment_numbering);
+  auto interpolation =
+      AssembleParallelRAP(comm, local, *standard_prolongation, *enrichment_prolongation);
+
+  Vector local_ones(standard_prolongation->Height());
+  Vector true_multiplicity(standard_prolongation->Width());
+  local_ones = 1.0;
+  standard_prolongation->AbsMultTranspose(local_ones, true_multiplicity);
+  for (int i = 0; i < true_multiplicity.Size(); i++)
+  {
+    if (!(true_multiplicity[i] > 0.0) || !std::isfinite(true_multiplicity[i]))
+    {
+      throw std::runtime_error(
+          "Singular enrichment interpolation found an invalid standard true-DOF "
+          "multiplicity!");
+    }
+  }
+  interpolation->InvScaleRows(true_multiplicity);
+  return interpolation;
+}
+
+}  // namespace
+
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelH1EnrichmentInterpolant(const DofTopology &topology,
+                                     const ParallelDofNumbering &parallel_numbering,
+                                     const mfem::ParFiniteElementSpace &h1_fespace)
+{
+  auto local = BuildLocalH1EnrichmentInterpolant(
+      topology, const_cast<mfem::ParFiniteElementSpace &>(h1_fespace),
+      [](const mfem::IntegrationPoint &point)
+      {
+        return BarycentricPoint{1.0 - point.x - point.y - point.z, point.x, point.y,
+                                point.z};
+      });
+  return BuildParallelEnrichmentInterpolantImpl(local, parallel_numbering.h1, h1_fespace);
+}
+
+std::unique_ptr<mfem::HypreParMatrix>
+BuildParallelH1EnrichmentInterpolant(const TriangleDofTopology &topology,
+                                     const ParallelDofNumbering &parallel_numbering,
+                                     const mfem::ParFiniteElementSpace &h1_fespace)
+{
+  auto local = BuildLocalH1EnrichmentInterpolant(
+      topology, const_cast<mfem::ParFiniteElementSpace &>(h1_fespace),
+      [](const mfem::IntegrationPoint &point)
+      { return TriangleBarycentricPoint{1.0 - point.x - point.y, point.x, point.y}; });
+  return BuildParallelEnrichmentInterpolantImpl(local, parallel_numbering.h1, h1_fespace);
+}
+
+std::unique_ptr<mfem::HypreParMatrix> BuildParallelNDRotationalEnrichmentInterpolant(
+    const DofTopology &topology, const ParallelDofNumbering &parallel_numbering,
+    const mfem::ParFiniteElementSpace &nd_fespace)
+{
+  auto local = BuildLocalNDRotationalEnrichmentInterpolant(
+      topology, const_cast<mfem::ParFiniteElementSpace &>(nd_fespace),
+      [](const HigherOrderBasis &basis, const mfem::FiniteElement &finite_element,
+         mfem::ElementTransformation &transformation, mfem::Vector &projected)
+      {
+        TetrahedronRotationalBasisCoefficient coefficient(basis);
+        finite_element.Project(coefficient, transformation, projected);
+      });
+  return BuildParallelEnrichmentInterpolantImpl(local, parallel_numbering.nd, nd_fespace);
+}
+
+std::unique_ptr<mfem::HypreParMatrix> BuildParallelNDRotationalEnrichmentInterpolant(
+    const TriangleDofTopology &topology, const ParallelDofNumbering &parallel_numbering,
+    const mfem::ParFiniteElementSpace &nd_fespace)
+{
+  auto local = BuildLocalNDRotationalEnrichmentInterpolant(
+      topology, const_cast<mfem::ParFiniteElementSpace &>(nd_fespace),
+      [](const TriangleBasis &basis, const mfem::FiniteElement &finite_element,
+         mfem::ElementTransformation &transformation, mfem::Vector &projected)
+      {
+        TriangleRotationalBasisCoefficient coefficient(basis);
+        finite_element.Project(coefficient, transformation, projected);
+      });
+  return BuildParallelEnrichmentInterpolantImpl(local, parallel_numbering.nd, nd_fespace);
 }
 
 ParallelSparseEnrichmentMatrices

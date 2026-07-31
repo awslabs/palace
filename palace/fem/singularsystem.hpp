@@ -20,6 +20,52 @@ namespace fem
 namespace singular
 {
 
+// Symmetric restricted-additive-Schwarz inverse on enriched elements. Each
+// dense patch couples all standard and singular ND basis functions on one
+// element. True-to-local prolongations provide MPI exchange and the standard
+// Nedelec orientation; diagonal overlap weights are applied on both sides.
+class ParallelElementPatchInverse : public Operator
+{
+private:
+  struct Patch
+  {
+    mfem::Array<int> local_dofs;
+    mfem::Vector signs;
+    mfem::DenseMatrix inverse;
+    mutable Vector rhs, correction;
+  };
+
+  const mfem::HypreParMatrix *standard_prolongation;
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_prolongation;
+  int standard_true_size;
+  int standard_local_size;
+  int enrichment_local_size;
+  std::vector<Patch> patches;
+  Vector true_weight;
+  mutable Vector scaled_input, standard_local_rhs, enrichment_local_rhs,
+      standard_local_correction, enrichment_local_correction;
+
+  static int DecodeSignedDof(int dof);
+  static double DecodeSignedDofSign(int dof);
+  void ApplyTrueWeight(const Vector &input, Vector &output) const;
+
+public:
+  ParallelElementPatchInverse(
+      const mfem::ParFiniteElementSpace &standard_fespace,
+      const TrueDofMap &enrichment_numbering,
+      const std::vector<LocalNDElementPatchMatrices> &element_matrices,
+      double stiffness_coefficient, double mass_coefficient,
+      const mfem::Array<int> &standard_essential_true_dofs,
+      const mfem::Array<int> &enrichment_essential_true_dofs);
+
+  std::size_t GetNumPatches() const { return patches.size(); }
+  void Mult(const Vector &input, Vector &output) const override;
+  void MultTranspose(const Vector &input, Vector &output) const override
+  {
+    Mult(input, output);
+  }
+};
+
 // Form the monolithic true-DOF operator
 //
 //   [ A_ss  A_se ]
@@ -45,20 +91,31 @@ class ParallelHybridEnrichedOperator : public Operator
 private:
   std::unique_ptr<Operator> standard_standard;
   ParallelSparseOperatorBlocks enrichment;
+  std::shared_ptr<const Operator> coupled_patch_inverse;
   int standard_size;
 
   void MakeInputBlocks(const Vector &input, Vector &standard, Vector &enriched) const;
   void MakeOutputBlocks(Vector &output, Vector &standard, Vector &enriched) const;
 
 public:
-  ParallelHybridEnrichedOperator(std::unique_ptr<Operator> &&standard_standard,
-                                 const ParallelSparseOperatorBlocks &enrichment,
-                                 const mfem::Array<int> &standard_essential_true_dofs,
-                                 const mfem::Array<int> &enrichment_essential_true_dofs,
-                                 Operator::DiagonalPolicy diagonal_policy);
+  ParallelHybridEnrichedOperator(
+      std::unique_ptr<Operator> &&standard_standard,
+      const ParallelSparseOperatorBlocks &enrichment,
+      const mfem::Array<int> &standard_essential_true_dofs,
+      const mfem::Array<int> &enrichment_essential_true_dofs,
+      Operator::DiagonalPolicy diagonal_policy,
+      std::shared_ptr<const Operator> coupled_patch_inverse = {});
+  ParallelHybridEnrichedOperator(
+      std::unique_ptr<Operator> &&standard_standard,
+      ParallelSparseOperatorBlocks &&enrichment,
+      const mfem::Array<int> &standard_essential_true_dofs,
+      const mfem::Array<int> &enrichment_essential_true_dofs,
+      Operator::DiagonalPolicy diagonal_policy,
+      std::shared_ptr<const Operator> coupled_patch_inverse = {});
 
   const Operator &GetStandardStandard() const { return *standard_standard; }
   const ParallelSparseOperatorBlocks &GetEnrichmentBlocks() const { return enrichment; }
+  const Operator *GetCoupledPatchInverse() const { return coupled_patch_inverse.get(); }
   int GetStandardSize() const { return standard_size; }
 
   void AssembleDiagonal(Vector &diagonal) const override;
@@ -68,6 +125,70 @@ public:
                double coefficient = 1.0) const override;
   void AddMultTranspose(const Vector &input, Vector &output,
                         double coefficient = 1.0) const override;
+};
+
+// Congruence-transformed hybrid operator
+//
+//   A_s = T^T A T,  T = [ I  -D ]
+//                          [ 0   I ],
+//
+// where D is a conforming standard-space interpolant of the high-order part of
+// the gradient enrichment. This is an invertible change of basis: it preserves
+// the represented H(curl) space while reducing the angle between the standard
+// and enrichment subspaces seen by p-multigrid.
+class ParallelTransformedHybridEnrichedOperator : public Operator
+{
+private:
+  std::unique_ptr<ParallelHybridEnrichedOperator> untransformed;
+  const mfem::HypreParMatrix *coordinate_shift;
+  int standard_size;
+  mutable Vector transformed_input, transformed_action, standard_work, enrichment_work;
+
+  void ApplyCoordinateTransform(const Vector &input, Vector &output) const;
+  void ApplyCoordinateTransformTranspose(const Vector &input, Vector &output) const;
+
+public:
+  ParallelTransformedHybridEnrichedOperator(
+      std::unique_ptr<ParallelHybridEnrichedOperator> &&untransformed,
+      const mfem::HypreParMatrix &coordinate_shift);
+
+  const ParallelHybridEnrichedOperator &GetUntransformedOperator() const
+  {
+    return *untransformed;
+  }
+  const mfem::HypreParMatrix &GetCoordinateShift() const { return *coordinate_shift; }
+  int GetStandardSize() const { return standard_size; }
+
+  void Mult(const Vector &input, Vector &output) const override;
+  void MultTranspose(const Vector &input, Vector &output) const override;
+  void AddMult(const Vector &input, Vector &output,
+               double coefficient = 1.0) const override;
+  void AddMultTranspose(const Vector &input, Vector &output,
+                        double coefficient = 1.0) const override;
+};
+
+// Enrichment-enrichment principal block of a transformed hybrid operator:
+//
+//   A'_ee = A_ee - D^T A_se - A_es D + D^T A_ss D.
+//
+// Its action is extracted matrix-free from the complete transformed operator,
+// preserving partial assembly in A_ss. AssembleDiagonal uses an exact
+// elementwise transformed diagonal when all active components provide one,
+// with diag(A_ee) retained as an explicit fallback.
+class ParallelTransformedEnrichmentOperator : public Operator
+{
+private:
+  const ParallelTransformedHybridEnrichedOperator *transformed;
+  int standard_size;
+  mutable Vector combined_input, combined_action;
+
+public:
+  explicit ParallelTransformedEnrichmentOperator(
+      const ParallelTransformedHybridEnrichedOperator &transformed);
+
+  void AssembleDiagonal(Vector &diagonal) const override;
+  void Mult(const Vector &input, Vector &output) const override;
+  void MultTranspose(const Vector &input, Vector &output) const override;
 };
 
 // Compact exact off-diagonal zeros left behind by essential-DOF elimination.
@@ -86,6 +207,19 @@ BuildParallelEnrichedGradient(const mfem::HypreParMatrix &standard_gradient,
 std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichedProlongation(const mfem::HypreParMatrix &standard_prolongation,
                                   const TrueDofMap &enrichment_numbering);
+
+// Form the stabilized-GFEM transfer
+//
+//   [ P_standard  D_fine - P_standard D_coarse ]
+//   [      0                    I                ].
+//
+// The supplied correction is the already-formed top-right block. Together
+// with the matching level coordinate transformations, this transfer represents
+// exactly the same physical coarse functions and preserves Galerkin nesting.
+std::unique_ptr<mfem::HypreParMatrix> BuildParallelEnrichedProlongation(
+    const mfem::HypreParMatrix &standard_prolongation,
+    const mfem::HypreParMatrix &standard_enrichment_correction,
+    const TrueDofMap &enrichment_numbering);
 
 // Independently constrain the four blocks of an enriched SPD operator. The
 // resulting blocks have the same action as symmetric row/column elimination

@@ -154,19 +154,21 @@ DivFreeSolver<VecType>::DivFreeSolver(
 }
 
 template <typename VecType>
-DivFreeSolver<VecType>::DivFreeSolver(const IoData &iodata, MPI_Comm comm,
-                                      const Operator &mass, const Operator &gradient,
-                                      const mfem::Array<int> &h1_bdr_tdof_list)
+DivFreeSolver<VecType>::DivFreeSolver(
+    const IoData &iodata, MPI_Comm comm, const Operator &mass, const Operator &gradient,
+    std::unique_ptr<mfem::HypreParMatrix> &&scalar_diffusion,
+    const mfem::Array<int> &h1_bdr_tdof_list)
   : Grad(&gradient), combined_mass(&mass), combined_h1_bdr_tdof_list(h1_bdr_tdof_list)
 {
   BlockTimer bt(Timer::DIV_FREE);
 
-  const auto *hypre_mass = dynamic_cast<const mfem::HypreParMatrix *>(&mass);
   const auto *hypre_gradient = dynamic_cast<const mfem::HypreParMatrix *>(&gradient);
-  MFEM_VERIFY(hypre_mass && hypre_gradient && mass.Height() == gradient.Height() &&
-                  mass.Width() == gradient.Height(),
-              "Combined divergence-free projection requires compatible assembled mass "
-              "and gradient matrices!");
+  MFEM_VERIFY(hypre_gradient && scalar_diffusion && mass.Height() == gradient.Height() &&
+                  mass.Width() == gradient.Height() &&
+                  scalar_diffusion->Height() == gradient.Width() &&
+                  scalar_diffusion->Width() == gradient.Width(),
+              "Combined divergence-free projection requires compatible mass, gradient, "
+              "and scalar diffusion operators!");
 
   HYPRE_BigInt constrained_dofs = combined_h1_bdr_tdof_list.Size();
   Mpi::GlobalSum(1, &constrained_dofs, comm);
@@ -182,10 +184,7 @@ DivFreeSolver<VecType>::DivFreeSolver(const IoData &iodata, MPI_Comm comm,
     }
   }
 
-  combined_projection_matrix.reset(mfem::RAP(hypre_mass, hypre_gradient));
-  MFEM_VERIFY(combined_projection_matrix &&
-                  combined_projection_matrix->Height() == gradient.Width(),
-              "Failed to assemble the combined G^T M G projection matrix!");
+  combined_projection_matrix = std::move(scalar_diffusion);
   combined_projection_matrix->EliminateBC(combined_h1_bdr_tdof_list,
                                           Operator::DiagonalPolicy::DIAG_ONE);
 

@@ -1360,6 +1360,29 @@ TEST_CASE("Singular element higher-order retained sets match Table I",
                     0.0);
   }
 
+  const auto node_rotational =
+      fem::singular::EnumerateHigherOrderNodeRotationalBases(canonical_nodes, 1, nu)
+          .front();
+  BarycentricPoint singular_node{0.0, 0.0, 0.0, 0.0};
+  singular_node[node_rotational.nodes[0]] = 1.0;
+  CHECK(fem::singular::EvaluateHigherOrderBasisValue(
+            singular_node, grad_lambda, node_rotational) == Vector3{0.0, 0.0, 0.0});
+  CHECK_THROWS_AS(
+      fem::singular::EvaluateHigherOrderBasis(singular_node, grad_lambda, node_rotational),
+      std::domain_error);
+
+  const auto edge_rotational =
+      fem::singular::EnumerateHigherOrderEdgeRotationalBases(canonical_nodes, 1, nu)
+          .front();
+  BarycentricPoint singular_edge{0.0, 0.0, 0.0, 0.0};
+  singular_edge[edge_rotational.nodes[0]] = 0.5;
+  singular_edge[edge_rotational.nodes[1]] = 0.5;
+  CHECK(fem::singular::EvaluateHigherOrderBasisValue(
+            singular_edge, grad_lambda, edge_rotational) == Vector3{0.0, 0.0, 0.0});
+  CHECK_THROWS_AS(
+      fem::singular::EvaluateHigherOrderBasis(singular_edge, grad_lambda, edge_rotational),
+      std::domain_error);
+
   const fem::singular::BarycentricPermutation permutation{2, 0, 3, 1};
   std::array<int, 4> permuted_nodes;
   for (int i = 0; i < 4; i++)
@@ -2221,6 +2244,26 @@ TEST_CASE("Singular element adaptive tetrahedron quadrature", "[singularelements
   CHECK(std::abs(edge.value - edge_reference) <=
         2.0 * edge.estimated_absolute_error + 1.0e-12);
 
+  const auto vector = fem::singular::IntegrateReferenceTetrahedronAdaptive(
+      8, 1.0e-6, 1.0e-6, 9, 3,
+      [&](const BarycentricPoint &lambda, std::vector<double> &value)
+      {
+        value[0] = lambda[0] * lambda[1] * lambda[2];
+        value[1] = node_energy(lambda);
+        value[2] = edge_energy(lambda);
+      });
+  REQUIRE(vector.value.size() == 3);
+  REQUIRE(vector.estimated_absolute_error.size() == 3);
+  CHECK(vector.converged);
+  CHECK(vector.maximum_subdivision_depth >=
+        std::max(node.maximum_subdivision_depth, edge.maximum_subdivision_depth));
+  CHECK_THAT(vector.value[0],
+             WithinAbs(ExactBarycentricMonomialIntegral({1, 1, 1, 0}), 2.0e-15));
+  CHECK(std::abs(vector.value[1] - node_reference) <=
+        2.0 * vector.estimated_absolute_error[1] + 1.0e-12);
+  CHECK(std::abs(vector.value[2] - edge_reference) <=
+        2.0 * vector.estimated_absolute_error[2] + 1.0e-12);
+
   const auto depth_limited =
       fem::singular::IntegrateReferenceTetrahedronAdaptive(8, 1.0e-14, 0.0, 1, edge_energy);
   CHECK_FALSE(depth_limited.converged);
@@ -2367,6 +2410,13 @@ TEST_CASE("Singular element quadrature input validation", "[singularelements][Se
                   std::invalid_argument);
   CHECK_THROWS_AS(fem::singular::IntegrateReferenceTetrahedronAdaptive(
                       8, 1.0e-6, 1.0e-6, 8, fem::singular::ReferenceIntegrand{}),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::IntegrateReferenceTetrahedronAdaptive(
+          8, 1.0e-6, 1.0e-6, 8, 0, [](const BarycentricPoint &, std::vector<double> &) {}),
+      std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::IntegrateReferenceTetrahedronAdaptive(
+                      8, 1.0e-6, 1.0e-6, 8, 2, fem::singular::ReferenceVectorIntegrand{}),
                   std::invalid_argument);
   const auto standard = fem::singular::MakeStandardNedelec(0, 1);
   const auto node_0 = fem::singular::MakeNodeGradient(0, 1, 0.5);

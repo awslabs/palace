@@ -156,6 +156,15 @@ struct AdaptiveQuadratureResult
   bool converged;
 };
 
+struct AdaptiveVectorQuadratureResult
+{
+  std::vector<double> value;
+  std::vector<double> estimated_absolute_error;
+  std::size_t leaf_count;
+  int maximum_subdivision_depth;
+  bool converged;
+};
+
 struct AdaptiveReferenceIntegral
 {
   ReferenceIntegral integral;
@@ -402,12 +411,17 @@ void ForEachReferenceTetrahedronEdgeDuffyQuadraturePoint(
 // integration is repeated. A result is converged only when the global estimate
 // meets the original tolerance.
 using ReferenceIntegrand = std::function<double(const BarycentricPoint &lambda)>;
+using ReferenceVectorIntegrand =
+    std::function<void(const BarycentricPoint &lambda, std::vector<double> &value)>;
 double IntegrateReferenceTetrahedron(int order, int subdivisions,
                                      const ReferenceIntegrand &integrand);
 AdaptiveQuadratureResult
 IntegrateReferenceTetrahedronAdaptive(int order, double absolute_tolerance,
                                       double relative_tolerance, int max_subdivisions,
                                       const ReferenceIntegrand &integrand);
+AdaptiveVectorQuadratureResult IntegrateReferenceTetrahedronAdaptive(
+    int order, double absolute_tolerance, double relative_tolerance, int max_subdivisions,
+    std::size_t number_components, const ReferenceVectorIntegrand &integrand);
 double IntegrateReferenceTetrahedronNodeDuffy(int order, int singular_node,
                                               double radial_power,
                                               const ReferenceIntegrand &integrand);
