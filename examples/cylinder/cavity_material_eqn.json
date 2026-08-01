@@ -1,0 +1,61 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/cavity_material_eqn"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2,  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "PermittivityEqn": "2.08 + 0.0287629*ln((2.53303e22 + f*f)/(8.22935e9 + f*f))",
+        "ConductivityEqn": "1e-12 + 3.20031e-12*f*(atan(f/90715.7) - atan(f/1.59155e11))"
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2,3,4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 15,
+      "Tol": 1.0e-8,
+      "Target": 2.0,  // TE f111 ~ 2.9 GHz
+      "Save": 15
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}
