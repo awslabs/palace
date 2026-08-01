@@ -1941,7 +1941,7 @@ TEST_CASE("Tetrahedral singular sparse domain Gram matrices remain positive",
   }
 }
 
-TEST_CASE("Transmon-like affine mass Gram matrix remains positive at high order",
+TEST_CASE("Transmon-like affine ND Gram matrices remain positive at high order",
           "[singularelements][singularassembly][tetrahedron][transmon][Serial]")
 {
   constexpr double nu = 0.5;
@@ -2021,48 +2021,72 @@ TEST_CASE("Transmon-like affine mass Gram matrix remains positive at high order"
     auto batches = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
         topology, h1_space, nd_space, materials, options);
     REQUIRE(batches.size() == 1);
-    const auto &blocks = batches[0].nd_mass;
-    REQUIRE(blocks.standard_enrichment);
-    REQUIRE(blocks.enrichment_standard);
-    REQUIRE(blocks.enrichment_enrichment);
+    CHECK(batches[0].affine_nd_mass_reintegration_count == 0);
+    CHECK(batches[0].affine_nd_mass_reintegration_batch_count == 0);
+    CHECK(batches[0].affine_nd_curl_contraction_count > 0);
+    CHECK(batches[0].affine_nd_curl_reintegration_count == 0);
+    CHECK(batches[0].affine_nd_curl_reintegration_batch_count == 0);
+    const auto check_completed = [&](std::string_view quantity,
+                                     const mfem::SparseMatrix &standard,
+                                     const fem::singular::LocalSparseOperatorBlocks &blocks)
+    {
+      REQUIRE(blocks.standard_enrichment);
+      REQUIRE(blocks.enrichment_standard);
+      REQUIRE(blocks.enrichment_enrichment);
+      const int standard_size = standard.Height();
+      const int enrichment_size = blocks.enrichment_enrichment->Height();
+      Eigen::MatrixXd completed = Eigen::MatrixXd::Zero(standard_size + enrichment_size,
+                                                        standard_size + enrichment_size);
+      mfem::DenseMatrix standard_dense, standard_enrichment_dense,
+          enrichment_standard_dense, enrichment_enrichment_dense;
+      standard.ToDenseMatrix(standard_dense);
+      blocks.standard_enrichment->ToDenseMatrix(standard_enrichment_dense);
+      blocks.enrichment_standard->ToDenseMatrix(enrichment_standard_dense);
+      blocks.enrichment_enrichment->ToDenseMatrix(enrichment_enrichment_dense);
+      for (int row = 0; row < standard_size; row++)
+      {
+        for (int column = 0; column < standard_size; column++)
+        {
+          completed(row, column) = standard_dense(row, column);
+        }
+        for (int column = 0; column < enrichment_size; column++)
+        {
+          completed(row, standard_size + column) = standard_enrichment_dense(row, column);
+          completed(standard_size + column, row) = enrichment_standard_dense(column, row);
+        }
+      }
+      for (int row = 0; row < enrichment_size; row++)
+      {
+        for (int column = 0; column < enrichment_size; column++)
+        {
+          completed(standard_size + row, standard_size + column) =
+              enrichment_enrichment_dense(row, column);
+        }
+      }
+
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(completed);
+      REQUIRE(solver.info() == Eigen::Success);
+      const double minimum = solver.eigenvalues().minCoeff();
+      const double maximum = solver.eigenvalues().maxCoeff();
+      const double relative_minimum = minimum / std::max(1.0, std::abs(maximum));
+      constexpr double positivity_tolerance =
+          1024.0 * std::numeric_limits<double>::epsilon();
+      CAPTURE(order, quantity, standard_size, enrichment_size, minimum, maximum,
+              relative_minimum);
+      CHECK(relative_minimum >= -positivity_tolerance);
+    };
 
     mfem::BilinearForm standard_mass(&nd_space);
     standard_mass.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
     standard_mass.Assemble();
     standard_mass.Finalize();
-    const int standard_size = standard_mass.SpMat().Height();
-    const int enrichment_size = blocks.enrichment_enrichment->Height();
-    Eigen::MatrixXd completed = Eigen::MatrixXd::Zero(standard_size + enrichment_size,
-                                                      standard_size + enrichment_size);
-    for (int row = 0; row < standard_size; row++)
-    {
-      for (int column = 0; column < standard_size; column++)
-      {
-        completed(row, column) = standard_mass.SpMat()(row, column);
-      }
-      for (int column = 0; column < enrichment_size; column++)
-      {
-        completed(row, standard_size + column) = (*blocks.standard_enrichment)(row, column);
-        completed(standard_size + column, row) = (*blocks.enrichment_standard)(column, row);
-      }
-    }
-    for (int row = 0; row < enrichment_size; row++)
-    {
-      for (int column = 0; column < enrichment_size; column++)
-      {
-        completed(standard_size + row, standard_size + column) =
-            (*blocks.enrichment_enrichment)(row, column);
-      }
-    }
+    check_completed("mass", standard_mass.SpMat(), batches[0].nd_mass);
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(completed);
-    REQUIRE(solver.info() == Eigen::Success);
-    const double minimum = solver.eigenvalues().minCoeff();
-    const double maximum = solver.eigenvalues().maxCoeff();
-    const double relative_minimum = minimum / std::max(1.0, std::abs(maximum));
-    constexpr double positivity_tolerance = 1024.0 * std::numeric_limits<double>::epsilon();
-    CAPTURE(order, standard_size, enrichment_size, minimum, maximum, relative_minimum);
-    CHECK(relative_minimum >= -positivity_tolerance);
+    mfem::BilinearForm standard_curl_curl(&nd_space);
+    standard_curl_curl.AddDomainIntegrator(new mfem::CurlCurlIntegrator);
+    standard_curl_curl.Assemble();
+    standard_curl_curl.Finalize();
+    check_completed("curl-curl", standard_curl_curl.SpMat(), batches[0].nd_curl_curl);
   }
 }
 

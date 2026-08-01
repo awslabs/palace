@@ -2033,6 +2033,327 @@ public:
   double GenerationTime() const { return generation_time; }
 };
 
+struct AffineCommonNDCurlBlocks
+{
+  mfem::DenseMatrix standard_enrichment;
+  mfem::DenseMatrix enrichment_standard;
+  mfem::DenseMatrix enrichment_enrichment;
+  mfem::DenseMatrix standard_enrichment_estimated_absolute_error;
+  mfem::DenseMatrix enrichment_enrichment_estimated_absolute_error;
+  std::size_t leaf_count = 0;
+  int maximum_subdivision_depth = 0;
+};
+
+// The completed curl-curl matrix is another Gram matrix and must use one
+// positive quadrature rule just like the ND mass matrix. Pairwise adaptive
+// integration can make nearly dependent standard and singular curls
+// materially indefinite even when every entry meets its scalar tolerance.
+class AffineCommonNDCurlReferenceTable
+{
+private:
+  struct Key
+  {
+    const mfem::FiniteElement *finite_element;
+    std::vector<HigherOrderBasis> bases;
+  };
+
+  struct KeyLess
+  {
+    bool operator()(const Key &a, const Key &b) const
+    {
+      const auto pointer_less = std::less<const mfem::FiniteElement *>{};
+      if (pointer_less(a.finite_element, b.finite_element))
+      {
+        return true;
+      }
+      if (pointer_less(b.finite_element, a.finite_element))
+      {
+        return false;
+      }
+      return std::lexicographical_compare(a.bases.begin(), a.bases.end(), b.bases.begin(),
+                                          b.bases.end(), BasisLess);
+    }
+  };
+
+  struct Entry
+  {
+    int standard_size = 0;
+    int enrichment_size = 0;
+    std::vector<int> rotational_indices;
+    std::vector<AdaptiveCoefficientTensor> standard_enrichment;
+    std::vector<AdaptiveCoefficientTensor> enrichment_enrichment;
+    std::size_t leaf_count = 0;
+    int maximum_subdivision_depth = 0;
+  };
+
+  AdaptiveAssemblyOptions options;
+  std::map<Key, Entry, KeyLess> entries;
+  std::size_t hits = 0;
+  double generation_time = 0.0;
+
+  static std::size_t EnrichmentPairIndex(int row, int column, int size)
+  {
+    if (row > column)
+    {
+      std::swap(row, column);
+    }
+    return static_cast<std::size_t>(row * size - row * (row - 1) / 2 + column - row);
+  }
+
+  const Entry &GetEntry(const mfem::FiniteElement &finite_element,
+                        const std::vector<ElementDof> &element_dofs)
+  {
+    Key key{&finite_element, {}};
+    key.bases.reserve(element_dofs.size());
+    for (const auto &element_dof : element_dofs)
+    {
+      key.bases.push_back(element_dof.basis);
+    }
+    const auto cached = entries.find(key);
+    if (cached != entries.end())
+    {
+      hits += cached->second.standard_enrichment.size() +
+              cached->second.enrichment_enrichment.size();
+      return cached->second;
+    }
+
+    const auto generation_start = std::chrono::steady_clock::now();
+    Entry entry;
+    entry.standard_size = finite_element.GetDof();
+    entry.enrichment_size = static_cast<int>(element_dofs.size());
+    for (int enrichment = 0; enrichment < entry.enrichment_size; enrichment++)
+    {
+      if (!IsGradientFamily(element_dofs[enrichment].basis.family))
+      {
+        entry.rotational_indices.push_back(enrichment);
+      }
+    }
+    const int rotational_size = static_cast<int>(entry.rotational_indices.size());
+    const std::size_t standard_enrichment_size =
+        static_cast<std::size_t>(entry.standard_size) * rotational_size;
+    const std::size_t enrichment_enrichment_size =
+        static_cast<std::size_t>(rotational_size) * (rotational_size + 1) / 2;
+    const std::size_t number_tensors =
+        standard_enrichment_size + enrichment_enrichment_size;
+    if (number_tensors == 0)
+    {
+      const auto &result = entries.emplace(std::move(key), std::move(entry)).first->second;
+      generation_time +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start)
+              .count();
+      return result;
+    }
+
+    constexpr std::size_t tensor_size = 9;
+    if (number_tensors > std::numeric_limits<std::size_t>::max() / tensor_size)
+    {
+      throw std::overflow_error(
+          "Common affine ND curl quadrature has invalid matrix dimensions!");
+    }
+    const int quadrature_order =
+        std::max(options.quadrature_order, 2 * finite_element.GetOrder());
+    const auto &rule = mfem::IntRules.Get(mfem::Geometry::TETRAHEDRON, quadrature_order);
+    for (int q = 0; q < rule.GetNPoints(); q++)
+    {
+      if (!std::isfinite(rule.IntPoint(q).weight) || !(rule.IntPoint(q).weight > 0.0))
+      {
+        throw std::runtime_error(
+            "Common affine ND curl quadrature requires a positive base rule!");
+      }
+    }
+
+    mfem::IntegrationPoint point;
+    mfem::DenseMatrix standard_curl(entry.standard_size, 3);
+    std::vector<Vector3> enrichment_curl(static_cast<std::size_t>(rotational_size));
+    const auto component = [](std::size_t tensor, int u, int v)
+    { return tensor_size * tensor + static_cast<std::size_t>(3 * u + v); };
+    const auto integral = IntegrateReferenceTetrahedronAdaptive(
+        quadrature_order, options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions, tensor_size * number_tensors,
+        [&](const BarycentricPoint &lambda, std::vector<double> &value)
+        {
+          point.Set3(lambda[1], lambda[2], lambda[3]);
+          finite_element.CalcCurlShape(point, standard_curl);
+          for (int rotational = 0; rotational < rotational_size; rotational++)
+          {
+            enrichment_curl[rotational] =
+                EvaluateHigherOrderBasis(
+                    lambda, ReferenceBarycentricGradients(),
+                    element_dofs[entry.rotational_indices[rotational]].basis)
+                    .curl;
+          }
+
+          std::size_t tensor = 0;
+          for (int standard = 0; standard < entry.standard_size; standard++)
+          {
+            for (int rotational = 0; rotational < rotational_size; rotational++)
+            {
+              for (int u = 0; u < 3; u++)
+              {
+                for (int v = 0; v < 3; v++)
+                {
+                  value[component(tensor, u, v)] =
+                      standard_curl(standard, u) * enrichment_curl[rotational][v];
+                }
+              }
+              tensor++;
+            }
+          }
+          for (int row = 0; row < rotational_size; row++)
+          {
+            for (int column = row; column < rotational_size; column++)
+            {
+              for (int u = 0; u < 3; u++)
+              {
+                for (int v = 0; v < 3; v++)
+                {
+                  value[component(tensor, u, v)] =
+                      enrichment_curl[row][u] * enrichment_curl[column][v];
+                }
+              }
+              tensor++;
+            }
+          }
+          if (tensor != number_tensors)
+          {
+            throw std::logic_error(
+                "Common affine ND curl quadrature filled inconsistent dimensions!");
+          }
+        });
+    if (!integral.converged)
+    {
+      throw std::runtime_error(fmt::format(
+          "Common affine ND curl quadrature did not converge: components = {}, "
+          "leaves = {}, maximum depth = {}!",
+          integral.value.size(), integral.leaf_count, integral.maximum_subdivision_depth));
+    }
+
+    entry.standard_enrichment.resize(standard_enrichment_size);
+    entry.enrichment_enrichment.resize(enrichment_enrichment_size);
+    for (std::size_t tensor = 0; tensor < number_tensors; tensor++)
+    {
+      auto &destination =
+          tensor < standard_enrichment_size
+              ? entry.standard_enrichment[tensor]
+              : entry.enrichment_enrichment[tensor - standard_enrichment_size];
+      destination.total_leaf_count = integral.leaf_count;
+      destination.maximum_subdivision_depth = integral.maximum_subdivision_depth;
+      for (int u = 0; u < 3; u++)
+      {
+        for (int v = 0; v < 3; v++)
+        {
+          const std::size_t index = component(tensor, u, v);
+          destination.value[u][v] = integral.value[index];
+          destination.estimated_absolute_error[u][v] =
+              integral.estimated_absolute_error[index];
+        }
+      }
+    }
+    entry.leaf_count = integral.leaf_count;
+    entry.maximum_subdivision_depth = integral.maximum_subdivision_depth;
+    hits += number_tensors - 1;
+    const auto &result = entries.emplace(std::move(key), std::move(entry)).first->second;
+    generation_time +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start)
+            .count();
+    return result;
+  }
+
+public:
+  explicit AffineCommonNDCurlReferenceTable(const AdaptiveAssemblyOptions &options_in)
+    : options(options_in)
+  {
+  }
+
+  AffineCommonNDCurlBlocks Get(const mfem::FiniteElement &finite_element,
+                               const std::vector<ElementDof> &element_dofs,
+                               const BarycentricGradients &grad_lambda,
+                               double jacobian_determinant)
+  {
+    const auto &entry = GetEntry(finite_element, element_dofs);
+    const auto geometry = BuildAffineGeometryTensors(grad_lambda);
+    AffineCommonNDCurlBlocks result;
+    result.standard_enrichment.SetSize(entry.standard_size, entry.enrichment_size);
+    result.enrichment_standard.SetSize(entry.enrichment_size, entry.standard_size);
+    result.enrichment_enrichment.SetSize(entry.enrichment_size);
+    result.standard_enrichment_estimated_absolute_error.SetSize(entry.standard_size,
+                                                                entry.enrichment_size);
+    result.enrichment_enrichment_estimated_absolute_error.SetSize(entry.enrichment_size);
+    result.standard_enrichment = 0.0;
+    result.enrichment_standard = 0.0;
+    result.enrichment_enrichment = 0.0;
+    result.standard_enrichment_estimated_absolute_error = 0.0;
+    result.enrichment_enrichment_estimated_absolute_error = 0.0;
+
+    const int rotational_size = static_cast<int>(entry.rotational_indices.size());
+    for (int standard = 0; standard < entry.standard_size; standard++)
+    {
+      for (int rotational = 0; rotational < rotational_size; rotational++)
+      {
+        const int enrichment = entry.rotational_indices[rotational];
+        const auto &reference =
+            entry.standard_enrichment[static_cast<std::size_t>(standard) * rotational_size +
+                                      rotational];
+        const double value = ContractAffineTensor(reference.value, geometry.curl_curl,
+                                                  jacobian_determinant, false);
+        const double error =
+            ContractAffineTensor(reference.estimated_absolute_error, geometry.curl_curl,
+                                 jacobian_determinant, true);
+        if (!std::isfinite(value) || !std::isfinite(error) || error < 0.0)
+        {
+          throw std::runtime_error(
+              "Common affine ND curl contraction produced an invalid coupling entry!");
+        }
+        result.standard_enrichment(standard, enrichment) = value;
+        result.enrichment_standard(enrichment, standard) = value;
+        result.standard_enrichment_estimated_absolute_error(standard, enrichment) = error;
+      }
+    }
+    for (int row = 0; row < rotational_size; row++)
+    {
+      for (int column = row; column < rotational_size; column++)
+      {
+        const int enrichment_row = entry.rotational_indices[row];
+        const int enrichment_column = entry.rotational_indices[column];
+        const auto &reference =
+            entry.enrichment_enrichment[EnrichmentPairIndex(row, column, rotational_size)];
+        const double value = ContractAffineTensor(reference.value, geometry.curl_curl,
+                                                  jacobian_determinant, false);
+        const double error =
+            ContractAffineTensor(reference.estimated_absolute_error, geometry.curl_curl,
+                                 jacobian_determinant, true);
+        if (!std::isfinite(value) || !std::isfinite(error) || error < 0.0)
+        {
+          throw std::runtime_error(
+              "Common affine ND curl contraction produced an invalid enrichment entry!");
+        }
+        result.enrichment_enrichment(enrichment_row, enrichment_column) =
+            result.enrichment_enrichment(enrichment_column, enrichment_row) = value;
+        result.enrichment_enrichment_estimated_absolute_error(enrichment_row,
+                                                              enrichment_column) =
+            result.enrichment_enrichment_estimated_absolute_error(enrichment_column,
+                                                                  enrichment_row) = error;
+      }
+    }
+    result.leaf_count = entry.leaf_count;
+    result.maximum_subdivision_depth = entry.maximum_subdivision_depth;
+    return result;
+  }
+
+  std::size_t Size() const
+  {
+    std::size_t size = 0;
+    for (const auto &[key, entry] : entries)
+    {
+      (void)key;
+      size += entry.standard_enrichment.size() + entry.enrichment_enrichment.size();
+    }
+    return size;
+  }
+  std::size_t Hits() const { return hits; }
+  double GenerationTime() const { return generation_time; }
+};
+
 void ApplyCommonAffineNDMassBlocks(const ElementDofMap &element_dofs,
                                    const mfem::FiniteElement &h1_fe,
                                    const mfem::FiniteElement &nd_fe,
@@ -2765,7 +3086,8 @@ ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
     const ElementDofMap &element_dofs, const BarycentricGradients &grad_lambda,
     double jacobian_determinant, const AdaptiveAssemblyOptions &options,
     AdaptiveReferenceTable *reference_table, AffineScalarReferenceTable *scalar_table,
-    const AffineCommonNDMassBlocks *common_mass)
+    const AffineCommonNDMassBlocks *common_mass,
+    const AffineCommonNDCurlBlocks *common_curl)
 {
   ValidateInputs(element_dofs, grad_lambda, jacobian_determinant, options);
   const auto h1_to_nd = BuildH1ToNDMap(element_dofs);
@@ -2796,11 +3118,15 @@ ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
               : std::numeric_limits<double>::quiet_NaN();
       const bool curl_free =
           IsGradientFamily(row_basis.family) || IsGradientFamily(column_basis.family);
-      double curl_curl = 0.0;
-      double curl_curl_error = 0.0;
+      double curl_curl =
+          common_curl ? common_curl->enrichment_enrichment(row, column) : 0.0;
+      double curl_curl_error =
+          common_curl
+              ? common_curl->enrichment_enrichment_estimated_absolute_error(row, column)
+              : 0.0;
       double final_mass = mass;
       double final_mass_error = mass_error;
-      if (!common_mass || !curl_free)
+      if (!common_mass || (!common_curl && !curl_free))
       {
         const auto reference =
             reference_table ? reference_table->Get(ReferenceBasis{row_basis},
@@ -2821,7 +3147,7 @@ ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
           final_mass_error =
               ContractMassError(reference, grad_lambda, jacobian_determinant);
         }
-        if (!curl_free)
+        if (!common_curl && !curl_free)
         {
           curl_curl =
               ContractCurlCurl(reference.integral, grad_lambda, jacobian_determinant);
@@ -2907,9 +3233,9 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
 {
   AdaptiveReferenceTable reference_table(options);
   AffineScalarReferenceTable scalar_table(options);
-  return AssembleAffineElementEnrichmentMatrices(element_dofs, grad_lambda,
-                                                 jacobian_determinant, options,
-                                                 &reference_table, &scalar_table, nullptr);
+  return AssembleAffineElementEnrichmentMatrices(
+      element_dofs, grad_lambda, jacobian_determinant, options, &reference_table,
+      &scalar_table, nullptr, nullptr);
 }
 
 ElementEnrichmentMatrices
@@ -3050,7 +3376,8 @@ namespace
 ElementEnrichmentMatrices AssembleElementEnrichmentMatricesCached(
     const ElementDofMap &element_dofs, mfem::ElementTransformation &transformation,
     const AdaptiveAssemblyOptions &options, AdaptiveReferenceTable &reference_table,
-    AffineScalarReferenceTable &scalar_table, const AffineCommonNDMassBlocks *common_mass)
+    AffineScalarReferenceTable &scalar_table, const AffineCommonNDMassBlocks *common_mass,
+    const AffineCommonNDCurlBlocks *common_curl)
 {
   if (!IsAffineElementTransformation(transformation))
   {
@@ -3061,7 +3388,7 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatricesCached(
       GetAffineBarycentricGradients(transformation, jacobian_determinant);
   return AssembleAffineElementEnrichmentMatrices(
       element_dofs, grad_lambda, jacobian_determinant, options, &reference_table,
-      &scalar_table, common_mass);
+      &scalar_table, common_mass, common_curl);
 }
 
 }  // namespace
@@ -3325,7 +3652,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
     const AdaptiveAssemblyOptions &options,
     AffineStandardReferenceTable *standard_reference_table,
     AffineScalarReferenceTable *scalar_reference_table,
-    const AffineCommonNDMassBlocks *common_mass)
+    const AffineCommonNDMassBlocks *common_mass,
+    const AffineCommonNDCurlBlocks *common_curl)
 {
   using Clock = std::chrono::steady_clock;
   const auto elapsed = [](const Clock::time_point &start)
@@ -3370,7 +3698,7 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
   mfem::DenseMatrix reference_standard_curl(standard_nd_size, 3);
   const std::vector<const std::vector<AffineStandardReferenceTable::Entry> *>
       *affine_nd_pattern =
-          affine_geometry && standard_reference_table
+          affine_geometry && standard_reference_table && (!common_mass || !common_curl)
               ? &standard_reference_table->GetPattern(nd_fe, element_dofs.nd)
               : nullptr;
   result.setup_time = elapsed(setup_start);
@@ -3494,6 +3822,23 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
         result.nd_curl_curl_standard_enrichment(standard, enrichment) = 0.0;
         result.nd_curl_curl_enrichment_standard(enrichment, standard) = 0.0;
         result.nd_curl_curl_estimated_absolute_error(standard, enrichment) = 0.0;
+        continue;
+      }
+
+      if (common_curl)
+      {
+        const double value = common_curl->standard_enrichment(standard, enrichment);
+        const double error =
+            common_curl->standard_enrichment_estimated_absolute_error(standard, enrichment);
+        if (!std::isfinite(value) || !std::isfinite(error) || error < 0.0)
+        {
+          throw std::runtime_error(
+              "Common affine ND curl supplied an invalid coupling entry!");
+        }
+        result.nd_curl_curl_standard_enrichment(standard, enrichment) = value;
+        result.nd_curl_curl_enrichment_standard(enrichment, standard) = value;
+        result.nd_curl_curl_estimated_absolute_error(standard, enrichment) = error;
+        result.affine_nd_curl_contraction_count++;
         continue;
       }
 
@@ -3694,7 +4039,7 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
   AffineScalarReferenceTable scalar_reference_table(options);
   return AssembleElementStandardEnrichmentMatricesImpl(
       element_dofs, h1_fe, nd_fe, transformation, options, &standard_reference_table,
-      &scalar_reference_table, nullptr);
+      &scalar_reference_table, nullptr, nullptr);
 }
 
 namespace
@@ -3706,11 +4051,12 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesCache
     const AdaptiveAssemblyOptions &options,
     AffineStandardReferenceTable &standard_reference_table,
     AffineScalarReferenceTable &scalar_reference_table,
-    const AffineCommonNDMassBlocks *common_mass)
+    const AffineCommonNDMassBlocks *common_mass,
+    const AffineCommonNDCurlBlocks *common_curl)
 {
   return AssembleElementStandardEnrichmentMatricesImpl(
       element_dofs, h1_fe, nd_fe, transformation, options, &standard_reference_table,
-      &scalar_reference_table, common_mass);
+      &scalar_reference_table, common_mass, common_curl);
 }
 
 }  // namespace
@@ -6407,6 +6753,7 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
   AdaptiveReferenceTable reference_table(options);
   AffineStandardReferenceTable standard_reference_table(options);
   AffineCommonNDMassReferenceTable common_mass_reference_table(options);
+  AffineCommonNDCurlReferenceTable common_curl_reference_table(options);
   AffineScalarReferenceTable scalar_reference_table(options);
   double enrichment_evaluation_time = 0.0;
   double standard_enrichment_evaluation_time = 0.0;
@@ -6430,8 +6777,10 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
         {
           const double generation_start = standard_reference_table.GenerationTime() +
                                           common_mass_reference_table.GenerationTime() +
+                                          common_curl_reference_table.GenerationTime() +
                                           scalar_reference_table.GenerationTime();
           std::optional<AffineCommonNDMassBlocks> common_mass;
+          std::optional<AffineCommonNDCurlBlocks> common_curl;
           if (IsAffineElementTransformation(transformation))
           {
             double jacobian_determinant;
@@ -6440,17 +6789,21 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
             common_mass =
                 common_mass_reference_table.Get(*nd_fespace.GetFE(element), element_dofs.nd,
                                                 grad_lambda, jacobian_determinant);
+            common_curl =
+                common_curl_reference_table.Get(*nd_fespace.GetFE(element), element_dofs.nd,
+                                                grad_lambda, jacobian_determinant);
           }
           const auto enrichment_start = Clock::now();
           auto enrichment = AssembleElementEnrichmentMatricesCached(
               element_dofs, transformation, options, reference_table,
-              scalar_reference_table, common_mass ? &*common_mass : nullptr);
+              scalar_reference_table, common_mass ? &*common_mass : nullptr,
+              common_curl ? &*common_curl : nullptr);
           enrichment_evaluation_time += elapsed(enrichment_start);
           const auto coupling_start = Clock::now();
           auto coupling = AssembleElementStandardEnrichmentMatricesCached(
               element_dofs, *h1_fespace.GetFE(element), *nd_fespace.GetFE(element),
               transformation, options, standard_reference_table, scalar_reference_table,
-              common_mass ? &*common_mass : nullptr);
+              common_mass ? &*common_mass : nullptr, common_curl ? &*common_curl : nullptr);
           if (common_mass)
           {
             ApplyCommonAffineNDMassBlocks(element_dofs, *h1_fespace.GetFE(element),
@@ -6461,6 +6814,7 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
           standard_reference_generation_time +=
               standard_reference_table.GenerationTime() +
               common_mass_reference_table.GenerationTime() +
+              common_curl_reference_table.GenerationTime() +
               scalar_reference_table.GenerationTime() - generation_start;
           standard_enrichment_setup_time += coupling.setup_time;
           nd_coupling_time += coupling.nd_coupling_time;
@@ -6488,10 +6842,12 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
   {
     result.affine_reference_table_entries =
         reference_table.Size() + standard_reference_table.Size() +
-        common_mass_reference_table.Size() + scalar_reference_table.Size();
+        common_mass_reference_table.Size() + common_curl_reference_table.Size() +
+        scalar_reference_table.Size();
     result.affine_reference_cache_hits =
         reference_table.Hits() + standard_reference_table.Hits() +
-        common_mass_reference_table.Hits() + scalar_reference_table.Hits();
+        common_mass_reference_table.Hits() + common_curl_reference_table.Hits() +
+        scalar_reference_table.Hits();
     result.enrichment_evaluation_time = enrichment_evaluation_time;
     result.standard_enrichment_evaluation_time = standard_enrichment_evaluation_time;
     result.standard_reference_generation_time = standard_reference_generation_time;
