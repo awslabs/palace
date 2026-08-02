@@ -407,6 +407,62 @@ TEST_CASE("Nonconforming AMR refines and rebuilds a conforming singular patch",
   }
 }
 
+TEST_CASE("Protected nonconforming AMR keeps singular traces conforming",
+          "[singularsolver][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  auto serial_mesh = LongInternalLineMesh();
+  auto serial_features = fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+
+  std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
+  std::vector<fem::singular::GlobalVertexId> source_element_ids;
+  NonconformingVertexIdentity vertex_identity;
+  UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
+                                vertex_identity);
+  auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, mesh, source_vertex_ids, source_element_ids);
+  const auto CountEnrichedElements = [](const auto &features)
+  {
+    return std::count_if(features.elements.begin(), features.elements.end(),
+                         [](const auto &element) { return !element.nodes.empty(); });
+  };
+  const int initial_enriched_elements = CountEnrichedElements(local_features);
+  REQUIRE(initial_enriched_elements > 0);
+
+  for (int iteration = 0; iteration < 3; iteration++)
+  {
+    bool conforming = false;
+    const auto protection = BuildSingularRefinementProtection(
+        mesh, local_features, source_vertex_ids, &conforming);
+    REQUIRE(conforming);
+
+    mfem::Array<int> marked;
+    for (int element = 0; element < protection.Size(); element++)
+    {
+      if (!protection[element])
+      {
+        marked.Append(element);
+      }
+    }
+    REQUIRE(marked.Size() > 0);
+    mesh.GeneralRefinement(marked, -1, 0);
+
+    UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
+                                  vertex_identity);
+    RebuildRefinedSingularFeatures(mesh, {7}, source_vertex_ids, serial_features);
+    local_features = fem::singular::DistributeSerialLineTipFeatures(
+        serial_features, mesh, source_vertex_ids, source_element_ids);
+    CHECK(CountEnrichedElements(local_features) == initial_enriched_elements);
+    CHECK_NOTHROW(BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids,
+                                                    &conforming));
+    CHECK(conforming);
+    CHECK_NOTHROW(fem::singular::BuildLocalTriangleDofTopology(mesh, local_features,
+                                                               source_vertex_ids, 1));
+  }
+}
+
 TEST_CASE("Nonconforming AMR detects and repairs a hanging singular interface",
           "[singularsolver][singularelements][Serial]")
 {
@@ -438,6 +494,10 @@ TEST_CASE("Nonconforming AMR detects and repairs a hanging singular interface",
   {
     auto local_features = fem::singular::DistributeSerialLineTipFeatures(
         serial_line_features, mesh, source_vertex_ids, source_element_ids);
+    const auto initial_closure =
+        BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids);
+    const int initial_closure_size =
+        std::count(initial_closure.begin(), initial_closure.end(), 1);
     mfem::Array<int> marked;
     for (int element = 0; element < mesh.GetNE(); element++)
     {
@@ -448,6 +508,7 @@ TEST_CASE("Nonconforming AMR detects and repairs a hanging singular interface",
       }
     }
     REQUIRE(marked.Size() == 1);
+    REQUIRE(marked.Size() < initial_closure_size);
     mesh.GeneralRefinement(marked, -1, max_nc_levels);
     UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
                                   vertex_identity);
@@ -488,6 +549,10 @@ TEST_CASE("Nonconforming AMR detects and repairs a hanging singular interface",
   {
     auto local_features = fem::singular::DistributeSerialSheetFeatures(
         serial_sheet_features, mesh, source_vertex_ids, source_element_ids);
+    const auto initial_closure =
+        BuildSingularRefinementProtection(mesh, local_features, source_vertex_ids);
+    const int initial_closure_size =
+        std::count(initial_closure.begin(), initial_closure.end(), 1);
     mfem::Array<int> marked;
     for (int element = 0; element < mesh.GetNE(); element++)
     {
@@ -499,6 +564,7 @@ TEST_CASE("Nonconforming AMR detects and repairs a hanging singular interface",
       }
     }
     REQUIRE(marked.Size() == 1);
+    REQUIRE(marked.Size() < initial_closure_size);
     mesh.GeneralRefinement(marked, -1, max_nc_levels);
     UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
                                   vertex_identity);

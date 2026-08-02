@@ -70,9 +70,11 @@ public:
   virtual mesh::PartitionMetadata GetSourceEntityMetadata() const;
 
   // Optional AMR hooks for discretizations with mesh-dependent auxiliary topology.
-  // A nonempty marker identifies a refinement closure. If supplied, "conforming" reports
-  // whether that closure currently satisfies the discretization's interface constraints.
-  // The post-refine hook runs before optional rebalancing and operator reconstruction.
+  // On a nonconforming mesh, a nonempty marker identifies a fixed-h refinement closure and
+  // masks its error indicators. Conforming refinement may pass through that closure. If
+  // supplied, "conforming" reports whether the closure currently satisfies the
+  // discretization's interface constraints. The post-refine hook runs before optional
+  // rebalancing and operator reconstruction.
   virtual mfem::Array<int>
   GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming = nullptr,
                           mfem::Array<int> *repair = nullptr) const;

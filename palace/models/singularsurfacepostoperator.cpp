@@ -144,18 +144,77 @@ std::array<int, 2> GetTriangleEdgeNodes(const std::array<mfem::IntegrationPoint,
   return nodes;
 }
 
-int GetTetrahedronVertex(const mfem::IntegrationPoint &point)
+std::array<double, 4>
+GetTetrahedronBarycentricCoordinates(const mfem::IntegrationPoint &point)
 {
-  const std::array<double, 4> lambda{1.0 - point.x - point.y - point.z, point.x, point.y,
-                                     point.z};
+  return {1.0 - point.x - point.y - point.z, point.x, point.y, point.z};
+}
+
+int FindTetrahedronVertex(const mfem::IntegrationPoint &point)
+{
+  const auto lambda = GetTetrahedronBarycentricCoordinates(point);
   const auto maximum = std::max_element(lambda.begin(), lambda.end());
-  const int vertex = static_cast<int>(std::distance(lambda.begin(), maximum));
   if (*maximum < 1.0 - 256.0 * std::numeric_limits<double>::epsilon())
   {
-    throw std::runtime_error(
-        "Singular surface quadrature could not identify a tetrahedron face vertex!");
+    return -1;
   }
-  return vertex;
+  return static_cast<int>(std::distance(lambda.begin(), maximum));
+}
+
+std::array<int, 3>
+GetContainingTetrahedronFaceNodes(const std::array<mfem::IntegrationPoint, 3> &points)
+{
+  constexpr double tolerance = 1024.0 * std::numeric_limits<double>::epsilon();
+  std::array<std::array<double, 4>, 3> barycentric;
+  for (int point = 0; point < 3; point++)
+  {
+    barycentric[point] = GetTetrahedronBarycentricCoordinates(points[point]);
+    for (double coordinate : barycentric[point])
+    {
+      if (!std::isfinite(coordinate) || coordinate < -tolerance ||
+          coordinate > 1.0 + tolerance)
+      {
+        throw std::runtime_error(
+            "Singular surface quadrature mapped a boundary vertex outside its "
+            "tetrahedron!");
+      }
+    }
+  }
+
+  int opposite = -1;
+  for (int node = 0; node < 4; node++)
+  {
+    if (std::all_of(barycentric.begin(), barycentric.end(),
+                    [node](const auto &lambda)
+                    {
+                      return std::abs(lambda[node]) <=
+                             1024.0 * std::numeric_limits<double>::epsilon();
+                    }))
+    {
+      if (opposite >= 0)
+      {
+        throw std::runtime_error(
+            "Singular surface quadrature mapped a degenerate tetrahedron subface!");
+      }
+      opposite = node;
+    }
+  }
+  if (opposite < 0)
+  {
+    throw std::runtime_error(
+        "Singular surface quadrature could not identify the containing tetrahedron face!");
+  }
+
+  std::array<int, 3> nodes;
+  int face_node = 0;
+  for (int node = 0; node < 4; node++)
+  {
+    if (node != opposite)
+    {
+      nodes[face_node++] = node;
+    }
+  }
+  return nodes;
 }
 
 mfem::DenseMatrix
@@ -1713,7 +1772,8 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
           "Tetrahedral singular surface postprocessing requires triangle boundaries!");
     }
 
-    std::map<int, std::array<int, 3>> element_face_nodes;
+    std::map<int, std::array<mfem::IntegrationPoint, 3>> element_face_points;
+    std::map<int, std::array<bool, 3>> element_face_points_seen;
     std::map<int, int> element_attributes;
     bool has_selected_side = false;
     for (int face_node = 0; face_node < 3; face_node++)
@@ -1732,8 +1792,15 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
           continue;
         }
         has_selected_side = true;
-        auto [entry, inserted] =
-            element_face_nodes.emplace(side.element, std::array<int, 3>{-1, -1, -1});
+        auto [entry, inserted] = element_face_points.emplace(
+            side.element, std::array<mfem::IntegrationPoint, 3>{});
+        auto [seen, seen_inserted] = element_face_points_seen.emplace(
+            side.element, std::array<bool, 3>{false, false, false});
+        if (inserted != seen_inserted)
+        {
+          throw std::logic_error(
+              "Tetrahedral singular surface face-point bookkeeping is inconsistent!");
+        }
         auto [attribute_entry, attribute_inserted] =
             element_attributes.emplace(side.element, side.attribute);
         if (!attribute_inserted && attribute_entry->second != side.attribute)
@@ -1742,21 +1809,26 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
               "Tetrahedral singular surface postprocessing found inconsistent adjacent "
               "element attributes!");
         }
-        const int node = GetTetrahedronVertex(side.point);
-        if (entry->second[face_node] >= 0 && entry->second[face_node] != node)
+        constexpr double tolerance = 256.0 * std::numeric_limits<double>::epsilon();
+        const auto &previous = entry->second[face_node];
+        if (seen->second[face_node] && (std::abs(previous.x - side.point.x) > tolerance ||
+                                        std::abs(previous.y - side.point.y) > tolerance ||
+                                        std::abs(previous.z - side.point.z) > tolerance))
         {
           throw std::runtime_error(
               "Tetrahedral singular surface postprocessing found inconsistent face "
               "orientation!");
         }
-        entry->second[face_node] = node;
+        entry->second[face_node] = side.point;
+        seen->second[face_node] = true;
       }
     }
     if (!has_selected_side)
     {
       continue;
     }
-    if (element_attributes.size() != element_face_nodes.size())
+    if (element_attributes.size() != element_face_points.size() ||
+        element_face_points_seen.size() != element_face_points.size())
     {
       throw std::runtime_error(
           "Tetrahedral singular surface postprocessing found incomplete adjacent "
@@ -1765,23 +1837,58 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
     struct ElementFaceData
     {
       int element;
+      std::array<mfem::IntegrationPoint, 3> points;
       std::array<int, 3> nodes;
+      bool complete_face;
       int attribute;
     };
     std::vector<ElementFaceData> element_faces;
-    element_faces.reserve(element_face_nodes.size());
-    for (const auto &[element, nodes] : element_face_nodes)
+    element_faces.reserve(element_face_points.size());
+    for (const auto &[element, points] : element_face_points)
     {
-      auto sorted = nodes;
-      std::sort(sorted.begin(), sorted.end());
-      if (sorted[0] < 0 || sorted[2] >= 4 ||
-          std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end())
+      const auto seen = element_face_points_seen.find(element);
+      if (seen == element_face_points_seen.end() ||
+          !std::all_of(seen->second.begin(), seen->second.end(),
+                       [](bool value) { return value; }))
       {
         throw std::runtime_error(
-            "Tetrahedral singular surface postprocessing could not map a complete "
-            "adjacent element face!");
+            "Tetrahedral singular surface postprocessing could not map all boundary "
+            "vertices into an adjacent element!");
       }
-      element_faces.push_back({element, nodes, element_attributes.at(element)});
+      const auto containing_face = GetContainingTetrahedronFaceNodes(points);
+      auto mapped_points = points;
+      std::array<int, 3> nodes;
+      bool complete_face = true;
+      for (int face_node = 0; face_node < 3; face_node++)
+      {
+        nodes[face_node] = FindTetrahedronVertex(points[face_node]);
+        complete_face = complete_face && nodes[face_node] >= 0;
+      }
+      if (complete_face)
+      {
+        auto sorted = nodes;
+        std::sort(sorted.begin(), sorted.end());
+        if (sorted != containing_face)
+        {
+          throw std::runtime_error(
+              "Tetrahedral singular surface postprocessing mapped an invalid complete "
+              "element face!");
+        }
+        // Preserve the exact complete-face map used by conforming integration. Near-vertex
+        // transformation roundoff is significant when evaluating a singular basis.
+        for (int face_node = 0; face_node < 3; face_node++)
+        {
+          mapped_points[face_node].Set3(nodes[face_node] == 1 ? 1.0 : 0.0,
+                                        nodes[face_node] == 2 ? 1.0 : 0.0,
+                                        nodes[face_node] == 3 ? 1.0 : 0.0);
+        }
+      }
+      else
+      {
+        nodes = containing_face;
+      }
+      element_faces.push_back(
+          {element, mapped_points, nodes, complete_face, element_attributes.at(element)});
     }
 
     std::vector<TetrahedronFaceSingularity> singularities;
@@ -1816,6 +1923,16 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
               ? field_evaluators.front().first->GetElementFaceSingularities(element,
                                                                             face_nodes)
               : real_gradient_evaluator->GetElementFaceSingularities(element, face_nodes);
+      if (!element_face.complete_face)
+      {
+        if (!local_singularities.empty())
+        {
+          throw std::runtime_error(
+              "Tetrahedral singular surface postprocessing encountered a nonconforming "
+              "subface on an enriched singular trace!");
+        }
+        continue;
+      }
       const auto to_face_node = [&face_nodes](int local_node)
       {
         const auto location = std::find(face_nodes.begin(), face_nodes.end(), local_node);
@@ -2028,14 +2145,15 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
       for (const auto &element_face : element_faces)
       {
         const int element = element_face.element;
-        const auto &face_nodes = element_face.nodes;
-        std::array<double, 4> element_lambda{};
+        const auto &element_points = element_face.points;
+        mfem::IntegrationPoint element_point;
+        element_point.Set3(0.0, 0.0, 0.0);
         for (int face_node = 0; face_node < 3; face_node++)
         {
-          element_lambda[face_nodes[face_node]] = lambda[face_node];
+          element_point.x += lambda[face_node] * element_points[face_node].x;
+          element_point.y += lambda[face_node] * element_points[face_node].y;
+          element_point.z += lambda[face_node] * element_points[face_node].z;
         }
-        mfem::IntegrationPoint element_point;
-        element_point.Set3(element_lambda[1], element_lambda[2], element_lambda[3]);
         if (full_wave)
         {
           field_evaluators.front().first->EvaluateValueClosureBatch(

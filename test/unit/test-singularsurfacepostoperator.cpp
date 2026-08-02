@@ -847,6 +847,61 @@ TEST_CASE("Singular surface postprocessor handles nonconforming interface segmen
   CHECK_THAT(nonconforming, WithinAbs(conforming, 3.0e-13));
 }
 
+TEST_CASE("Tetrahedral singular surface postprocessor handles nonconforming interface "
+          "triangles",
+          "[singularsurface][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const auto measure = [](bool refine)
+  {
+    auto serial_mesh = MakePartitionedTetrahedronSurfaceTestMesh();
+    if (refine)
+    {
+      serial_mesh->EnsureNCMesh(true);
+    }
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    if (refine)
+    {
+      const int initial_boundary_elements = par_mesh->GetNBE();
+      mfem::Array<int> marked(1);
+      marked[0] = 0;
+      par_mesh->GeneralRefinement(marked, -1, 1);
+      REQUIRE(par_mesh->GetNBE() > initial_boundary_elements);
+    }
+    Mesh mesh(std::move(par_mesh));
+    auto material = MakeSubstrateMaterial(mesh);
+
+    mfem::H1_FECollection collection(1, 3);
+    mfem::ParFiniteElementSpace fespace(&mesh.Get(), &collection);
+    mfem::FunctionCoefficient coefficient([](const mfem::Vector &point)
+                                          { return 2.0 * point[2]; });
+    mfem::ParGridFunction potential(&fespace);
+    potential.ProjectCoefficient(coefficient);
+    mfem::Vector true_dofs(fespace.GetTrueVSize());
+    potential.ParallelProject(true_dofs);
+    mfem::Vector zero(true_dofs.Size());
+    zero = 0.0;
+
+    fem::singular::DofTopology topology;
+    topology.elements.resize(fespace.GetNE());
+    const auto numbering = MakeH1Numbering(0);
+    fem::singular::EnrichedH1FieldEvaluator real(topology, numbering, fespace);
+    fem::singular::EnrichedH1FieldEvaluator imaginary(topology, numbering, fespace);
+    real.SetFromTrueDofs(true_dofs);
+    imaginary.SetFromTrueDofs(zero);
+
+    TetrahedronSingularSurfacePostOperator postoperator(MakeMSPostprocessing(), material,
+                                                        fespace);
+    return postoperator.MeasureElectrostatic(real, imaginary, 1.0, {4, 1.0e-12, 1.0e-11, 8})
+        .front()
+        .energy;
+  };
+
+  const double conforming = measure(false);
+  const double nonconforming = measure(true);
+  CHECK_THAT(nonconforming, WithinAbs(conforming, 3.0e-13));
+}
+
 TEST_CASE("Tetrahedral singular electrostatic surface postprocessor reproduces a "
           "constant field",
           "[singularsurface][Serial]")

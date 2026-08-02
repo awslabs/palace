@@ -213,6 +213,30 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
+  const auto ProtectIndicators = [this, &mesh](ErrorIndicator &indicators)
+  {
+    bool closure_conforming = true;
+    auto protection = GetRefinementProtection(mesh.back()->Get(), &closure_conforming);
+    MFEM_VERIFY(protection.Size() == 0 || protection.Size() == mesh.back()->GetNE(),
+                "AMR refinement-protection marker has an invalid size!");
+    MFEM_VERIFY(closure_conforming,
+                "The singular refinement closure is nonconforming before AMR!");
+    if (protection.Size() > 0 && mesh.back()->Get().Nonconforming())
+    {
+      // Custom singular spaces do not yet have coarse/fine trace constraints. Keep the
+      // enriched patch and its one-face buffer fixed in h so all enriched interfaces remain
+      // conforming, and adapt using the smooth-remainder estimator outside that closure.
+      indicators.ZeroElements(protection);
+    }
+    else
+    {
+      // Conforming refinement can pass through enriched elements because it introduces no
+      // coarse/fine singular traces.
+      protection.SetSize(0);
+    }
+    return protection;
+  };
+  auto protection = ProtectIndicators(indicators);
   double err = indicators.Norml2(comm);
 
   // Collection of all tests that might exhaust resources.
@@ -258,15 +282,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                     1 + static_cast<int>(std::log10(refinement.max_it)));
     }
 
-    // Mark. A nonempty driver marker identifies a mesh-dependent refinement closure.
+    // Mark. A nonempty driver marker identifies a fixed-h refinement closure.
     // For singular enrichment this is the enriched patch plus one face-neighbor layer.
-    bool closure_conforming = true;
-    const auto protection =
-        GetRefinementProtection(mesh.back()->Get(), &closure_conforming);
-    MFEM_VERIFY(protection.Size() == 0 || protection.Size() == mesh.back()->GetNE(),
-                "AMR refinement-protection marker has an invalid size!");
-    MFEM_VERIFY(closure_conforming,
-                "The singular refinement closure is nonconforming before AMR!");
     if (protection.Size() > 0)
     {
       int closure_elements = 0;
@@ -278,42 +295,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Print(" Singular refinement closure contains {:d} elements\n", closure_elements);
     }
 
-    const auto marked_elements =
-        [&comm, &refinement, &protection, &mesh](const auto &indicators)
+    const auto marked_elements = [&comm, &refinement, &protection](const auto &indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
           comm, indicators.Local(), refinement.update_fraction);
       auto marked_elements = MarkedElements(indicators.Local(), threshold);
-      if (protection.Size() > 0 && mesh.back()->Get().Nonconforming())
+      for (int element : marked_elements)
       {
-        bool intersects_closure = false;
-        for (int element : marked_elements)
-        {
-          intersects_closure = intersects_closure || protection[element] != 0;
-        }
-        Mpi::GlobalOr(1, &intersects_closure, comm);
-        if (intersects_closure)
-        {
-          mfem::Array<int> expanded;
-          expanded.Reserve(marked_elements.Size() + protection.Size());
-          mfem::Array<int> present(protection.Size());
-          present = 0;
-          for (int element : marked_elements)
-          {
-            expanded.Append(element);
-            present[element] = 1;
-          }
-          for (int element = 0; element < protection.Size(); element++)
-          {
-            if (protection[element] && !present[element])
-            {
-              expanded.Append(element);
-            }
-          }
-          marked_elements = std::move(expanded);
-          Mpi::Print(" Expanded nonconforming marks to the complete singular "
-                     "refinement closure\n");
-        }
+        MFEM_VERIFY(protection.Size() == 0 || !protection[element],
+                    "AMR marked an element in a protected singular refinement closure!");
       }
       const auto [glob_marked_elements, glob_elements] =
           linalg::GlobalSize2(comm, marked_elements, indicators.Local());
@@ -327,7 +317,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     Mpi::GlobalSum(1, &global_marked_elements, comm);
     if (global_marked_elements == 0)
     {
-      Mpi::Warning(comm, "AMR stopped because no elements were marked for refinement.\n");
+      Mpi::Warning(
+          comm,
+          "AMR stopped because no unprotected elements were marked for refinement.\n");
       break;
     }
 
@@ -343,43 +335,14 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                  final_elem_count);
     }
     ProcessRefinedMesh(mesh.back()->Get());
-    constexpr int max_closure_repairs = 16;
-    for (int repair = 0; repair <= max_closure_repairs; repair++)
-    {
-      bool refined_closure_conforming = true;
-      mfem::Array<int> repair_elements;
-      const auto refined_protection = GetRefinementProtection(
-          mesh.back()->Get(), &refined_closure_conforming, &repair_elements);
-      MFEM_VERIFY(refined_protection.Size() == 0 ||
-                      refined_protection.Size() == mesh.back()->GetNE(),
-                  "Refined AMR protection marker has an invalid size!");
-      if (refined_closure_conforming)
-      {
-        break;
-      }
-      MFEM_VERIFY(repair < max_closure_repairs,
-                  "Unable to restore a conforming singular refinement closure!");
-
-      MFEM_VERIFY(repair_elements.Size() == mesh.back()->GetNE(),
-                  "Singular refinement repair marker has an invalid size!");
-      mfem::Array<int> coarse_elements;
-      coarse_elements.Reserve(repair_elements.Size());
-      for (int element = 0; element < repair_elements.Size(); element++)
-      {
-        if (repair_elements[element])
-        {
-          coarse_elements.Append(element);
-        }
-      }
-      int global_coarse_elements = coarse_elements.Size();
-      Mpi::GlobalSum(1, &global_coarse_elements, comm);
-      MFEM_VERIFY(global_coarse_elements > 0,
-                  "A nonconforming singular refinement closure has no coarse side!");
-      Mpi::Print(" Repairing singular refinement closure with {:d} coarse elements\n",
-                 global_coarse_elements);
-      mesh.back()->Get().GeneralRefinement(coarse_elements, -1, refinement.max_nc_levels);
-      ProcessRefinedMesh(mesh.back()->Get());
-    }
+    bool refined_closure_conforming = true;
+    const auto refined_protection =
+        GetRefinementProtection(mesh.back()->Get(), &refined_closure_conforming);
+    MFEM_VERIFY(refined_protection.Size() == 0 ||
+                    refined_protection.Size() == mesh.back()->GetNE(),
+                "Refined AMR protection marker has an invalid size!");
+    MFEM_VERIFY(refined_closure_conforming,
+                "AMR introduced an unsupported coarse/fine singular trace!");
 
     // Optionally rebalance and write the adapted mesh to file.
     if (RebalanceRefinedMesh())
@@ -437,6 +400,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
+    protection = ProtectIndicators(indicators);
     err = indicators.Norml2(comm);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"

@@ -1802,7 +1802,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config = MakeConfig();
     config["Model"]["Refinement"] = {
         {"MaxIts", 1}, {"Nonconformal", true}, {"MaxNCLevels", 1}};
-    CHECK_NOTHROW(IoData(config, false));
+    CHECK_THROWS(IoData(config, false));
 
     config["Model"]["Refinement"]["MaxNCLevels"] = 0;
     CHECK_NOTHROW(IoData(config, false));

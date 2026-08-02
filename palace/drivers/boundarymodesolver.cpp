@@ -1423,8 +1423,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "transverse/normal electric and magnetic energies. Integrable dielectric surface "
         "measurements use the combined field and endpoint-weighted quadrature. Voltage, "
         "impedance, and MFEM grid-function output remain disabled. AMR estimates the "
-        "standard-space smooth remainder; nonconforming refinement expands marks to keep "
-        "the enriched patch conforming. Ideal-sheet surface traces with nu <= 1/2 require "
+        "standard-space smooth remainder; nonconforming refinement keeps the enriched "
+        "patch and its face-neighbor layer fixed in h. Ideal-sheet surface traces with "
+        "nu <= 1/2 require "
         "an explicit physical "
         "cutoff or response model.\n");
   }

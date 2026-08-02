@@ -111,7 +111,9 @@ void RebuildRefinedSingularFeatures(
 // nonconforming mesh this is the refinement closure used to keep all custom enrichment
 // away from hanging interfaces. If supplied, "conforming" reports collectively whether
 // every enriched element currently has only conforming or physical-boundary faces, and
-// "repair" marks the local coarse elements which must be refined to restore that property.
+// "repair" identifies local coarse elements for diagnostics and focused tests. Production
+// nonconforming AMR protects the complete closure and fails closed if it becomes
+// nonconforming.
 mfem::Array<int> BuildSingularRefinementProtection(
     const mfem::ParMesh &mesh, const fem::singular::FeatureTopology &features,
     const std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,

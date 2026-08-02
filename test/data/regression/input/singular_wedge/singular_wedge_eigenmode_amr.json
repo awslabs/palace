@@ -8,10 +8,11 @@
     "Mesh": "singular_wedge_driven.mesh",
     "L0": 1.0,
     "Refinement": {
+      "SerialUniformLevels": 1,
       "MaxIts": 1,
       "Tol": 1.0e-20,
       "Nonconformal": true,
-      "MaxNCLevels": 1,
+      "MaxNCLevels": 0,
       "UpdateFraction": 0.999,
       "MaximumImbalance": 1.01
     }
