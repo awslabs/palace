@@ -123,6 +123,7 @@ jobs:
     concurrency:
       group: palace-develop-buildcache-index
       cancel-in-progress: false
+      queue: max
     steps:
       - name: Install Spack develop
         uses: actions/checkout@v6
