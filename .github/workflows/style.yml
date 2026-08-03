@@ -99,3 +99,13 @@ jobs:
         with:
           config: .github/license-check/config.json
           strict: false
+
+  # Unit tests for the trusted container-publish scripts (.github/publish_containers/).
+  # These guard the publish authorization decision, so they must run on every
+  # change. Stdlib unittest only — no dependencies to install.
+  check-publish-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run publish script tests
+        run: python3 -m unittest discover -s .github/publish_containers -p 'test_*.py' -v
