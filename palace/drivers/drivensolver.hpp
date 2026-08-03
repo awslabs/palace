@@ -46,6 +46,10 @@ public:
   mfem::Array<int>
   GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming = nullptr,
                           mfem::Array<int> *repair = nullptr) const override;
+  void ObserveRefinementAncestry(const mfem::ParMesh &mesh) const override;
+  mfem::Array<int> GetEnrichedElements(const mfem::ParMesh &mesh) const override;
+  void ReportTraceComponents(const mfem::ParMesh &mesh,
+                             const mfem::Array<int> &primary_marks) const override;
   void ProcessRefinedMesh(const mfem::ParMesh &mesh) const override;
 };
 

@@ -219,6 +219,14 @@ RefinementData::RefinementData(const json &refinement)
   max_nc_levels = refinement.value("MaxNCLevels", max_nc_levels);
   update_fraction = refinement.value("UpdateFraction", update_fraction);
   maximum_imbalance = refinement.value("MaximumImbalance", maximum_imbalance);
+  max_growth_factor = refinement.value("MaxGrowthFactor", max_growth_factor);
+  singular_repair = refinement.value("SingularRepair", singular_repair);
+  singular_repair_max_passes =
+      refinement.value("SingularRepairMaxPasses", singular_repair_max_passes);
+  singular_repair_max_amplification =
+      refinement.value("SingularRepairMaxAmplification", singular_repair_max_amplification);
+  singular_repair_max_growth =
+      refinement.value("SingularRepairMaxGrowth", singular_repair_max_growth);
   save_adapt_iterations = refinement.value("SaveAdaptIterations", save_adapt_iterations);
   save_adapt_mesh = refinement.value("SaveAdaptMesh", save_adapt_mesh);
 

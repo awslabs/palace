@@ -79,6 +79,32 @@ mfem::Array<int> EigenSolver::GetRefinementProtection(const mfem::ParMesh &mesh,
   return singular_features.GetRefinementProtection(mesh, conforming, repair);
 }
 
+mfem::Array<int> EigenSolver::GetEnrichedElements(const mfem::ParMesh &mesh) const
+{
+  if (!iodata.solver.singular_elements.Enabled())
+  {
+    return {};
+  }
+  return singular_features.GetEnrichedElements(mesh);
+}
+
+void EigenSolver::ReportTraceComponents(const mfem::ParMesh &mesh,
+                                        const mfem::Array<int> &primary_marks) const
+{
+  if (iodata.solver.singular_elements.Enabled())
+  {
+    singular_features.ReportTraceComponents(iodata, mesh, primary_marks);
+  }
+}
+
+void EigenSolver::ObserveRefinementAncestry(const mfem::ParMesh &mesh) const
+{
+  if (iodata.solver.singular_elements.Enabled())
+  {
+    singular_features.ObserveRefinementAncestry(mesh);
+  }
+}
+
 void EigenSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
 {
   if (iodata.solver.singular_elements.Enabled())

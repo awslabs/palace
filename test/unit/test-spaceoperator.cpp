@@ -6,6 +6,7 @@
 #include <cmath>
 #include <numeric>
 #include <vector>
+#include <Eigen/Eigenvalues>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -115,7 +116,8 @@ void SetQuadraticGeometry(mfem::Mesh &mesh, bool curved)
 }
 
 IoData SingularSpaceData(int dimension, int order = 1, int mg_max_levels = 1,
-                         bool heterogeneous = false)
+                         bool heterogeneous = false, bool lumped_port = false,
+                         bool open_exterior = false)
 {
   config::json materials = {
       {{"Attributes", {1}}, {"Permittivity", 2.3}, {"Permeability", 1.7}}};
@@ -124,13 +126,28 @@ IoData SingularSpaceData(int dimension, int order = 1, int mg_max_levels = 1,
     materials.push_back(
         {{"Attributes", {2}}, {"Permittivity", 5.1}, {"Permeability", 1.2}});
   }
+  config::json boundaries = {
+      {"PEC", {{"Attributes", open_exterior ? config::json{7} : config::json{1, 7}}}}};
+  if (lumped_port)
+  {
+    REQUIRE(dimension == 3);
+    boundaries = {{"PEC", {{"Attributes", {1}}}},
+                  {"LumpedPort",
+                   {{{"Index", 1},
+                     {"Attributes", {7}},
+                     {"R", 50.0},
+                     {"L", 0.7},
+                     {"C", 0.2},
+                     {"Direction", "+X"}}}}};
+  }
   config::json config = {
       {"Problem",
-       {{"Type", dimension == 2 ? "BoundaryMode" : "Electrostatic"},
+       {{"Type",
+         dimension == 2 ? "BoundaryMode" : (lumped_port ? "Eigenmode" : "Electrostatic")},
         {"Output", "test_output"}}},
       {"Model", {{"Mesh", "unused.mesh"}}},
       {"Domains", {{"Materials", std::move(materials)}}},
-      {"Boundaries", {{"PEC", {{"Attributes", {1, 7}}}}}},
+      {"Boundaries", std::move(boundaries)},
       {"Solver",
        {{"Order", 1},
         {"SingularElements",
@@ -163,6 +180,153 @@ double RelativeNorm(const Vector &vector, const Vector &reference)
          std::max(1.0, linalg::Norml2(Mpi::World(), reference));
 }
 
+Eigen::MatrixXd AssembleReducedDenseMatrix(const Operator &matrix,
+                                           const mfem::Array<int> &essential)
+{
+  REQUIRE(matrix.Height() == matrix.Width());
+  std::vector<bool> constrained(matrix.Width(), false);
+  for (int dof : essential)
+  {
+    REQUIRE(dof >= 0);
+    REQUIRE(dof < matrix.Width());
+    constrained[dof] = true;
+  }
+  std::vector<int> free_dofs;
+  for (int dof = 0; dof < matrix.Width(); dof++)
+  {
+    if (!constrained[dof])
+    {
+      free_dofs.push_back(dof);
+    }
+  }
+  REQUIRE_FALSE(free_dofs.empty());
+
+  Eigen::MatrixXd dense(free_dofs.size(), free_dofs.size());
+  Vector input(matrix.Width()), output(matrix.Height());
+  for (std::size_t column = 0; column < free_dofs.size(); column++)
+  {
+    input = 0.0;
+    input[free_dofs[column]] = 1.0;
+    matrix.Mult(input, output);
+    for (std::size_t row = 0; row < free_dofs.size(); row++)
+    {
+      dense(static_cast<Eigen::Index>(row), static_cast<Eigen::Index>(column)) =
+          output[free_dofs[row]];
+    }
+  }
+  return dense;
+}
+
+void CheckLosslessSpectralEmbedding(const Operator &standard_stiffness,
+                                    const Operator &standard_mass,
+                                    const mfem::Array<int> &standard_essential,
+                                    const Operator &combined_stiffness,
+                                    const Operator &combined_mass,
+                                    const mfem::Array<int> &combined_essential)
+{
+  const Eigen::MatrixXd standard_K =
+      AssembleReducedDenseMatrix(standard_stiffness, standard_essential);
+  const Eigen::MatrixXd standard_M =
+      AssembleReducedDenseMatrix(standard_mass, standard_essential);
+  const Eigen::MatrixXd combined_K =
+      AssembleReducedDenseMatrix(combined_stiffness, combined_essential);
+  const Eigen::MatrixXd combined_M =
+      AssembleReducedDenseMatrix(combined_mass, combined_essential);
+  REQUIRE(combined_K.rows() >= standard_K.rows());
+
+  const double standard_scale =
+      std::max({1.0, standard_K.cwiseAbs().maxCoeff(), standard_M.cwiseAbs().maxCoeff()});
+  const double combined_scale =
+      std::max({1.0, combined_K.cwiseAbs().maxCoeff(), combined_M.cwiseAbs().maxCoeff()});
+  CHECK((standard_K - standard_K.transpose()).cwiseAbs().maxCoeff() <=
+        2.0e-12 * standard_scale);
+  CHECK((standard_M - standard_M.transpose()).cwiseAbs().maxCoeff() <=
+        2.0e-12 * standard_scale);
+  CHECK((combined_K - combined_K.transpose()).cwiseAbs().maxCoeff() <=
+        2.0e-12 * combined_scale);
+  CHECK((combined_M - combined_M.transpose()).cwiseAbs().maxCoeff() <=
+        2.0e-12 * combined_scale);
+
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> standard_mass_solver(standard_M);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> combined_mass_solver(combined_M);
+  REQUIRE(standard_mass_solver.info() == Eigen::Success);
+  REQUIRE(combined_mass_solver.info() == Eigen::Success);
+  CHECK(standard_mass_solver.eigenvalues().minCoeff() >
+        256.0 * std::numeric_limits<double>::epsilon() *
+            standard_mass_solver.eigenvalues().maxCoeff());
+  CHECK(combined_mass_solver.eigenvalues().minCoeff() >
+        256.0 * std::numeric_limits<double>::epsilon() *
+            combined_mass_solver.eigenvalues().maxCoeff());
+
+  Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> standard_solver(standard_K,
+                                                                            standard_M);
+  Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> combined_solver(combined_K,
+                                                                            combined_M);
+  REQUIRE(standard_solver.info() == Eigen::Success);
+  REQUIRE(combined_solver.info() == Eigen::Success);
+  const auto &standard_eigenvalues = standard_solver.eigenvalues();
+  const auto &combined_eigenvalues = combined_solver.eigenvalues();
+  const Eigen::Index dimension_difference =
+      combined_eigenvalues.size() - standard_eigenvalues.size();
+  const double spectral_scale = std::max({1.0, standard_eigenvalues.cwiseAbs().maxCoeff(),
+                                          combined_eigenvalues.cwiseAbs().maxCoeff()});
+  const double tolerance = 4096.0 * std::numeric_limits<double>::epsilon() * spectral_scale;
+  for (Eigen::Index i = 0; i < standard_eigenvalues.size(); i++)
+  {
+    CAPTURE(i, dimension_difference, standard_eigenvalues[i], combined_eigenvalues[i],
+            combined_eigenvalues[i + dimension_difference], tolerance);
+    CHECK(combined_eigenvalues[i] <= standard_eigenvalues[i] + tolerance);
+    CHECK(standard_eigenvalues[i] <=
+          combined_eigenvalues[i + dimension_difference] + tolerance);
+  }
+}
+
+void CheckStandardBlockAction(const Operator &combined, const Operator &standard)
+{
+  REQUIRE(combined.Height() >= standard.Height());
+  REQUIRE(combined.Width() >= standard.Width());
+  REQUIRE(standard.Height() == standard.Width());
+
+  Vector standard_input(standard.Width()), standard_action(standard.Height());
+  Vector combined_input(combined.Width()), combined_action(combined.Height());
+  FillVector(standard_input, 0.53);
+  combined_input = 0.0;
+  linalg::SetSubVector(combined_input, 0, standard_input);
+
+  standard.Mult(standard_input, standard_action);
+  combined.Mult(combined_input, combined_action);
+  Vector combined_standard_action;
+  combined_standard_action.MakeRef(combined_action, 0, standard.Height());
+  combined_standard_action -= standard_action;
+  CHECK(RelativeNorm(combined_standard_action, standard_action) < 2.0e-12);
+}
+
+void CheckStandardBlockAction(const ComplexOperator &combined,
+                              const ComplexOperator &standard)
+{
+  REQUIRE(combined.Height() >= standard.Height());
+  REQUIRE(combined.Width() >= standard.Width());
+  REQUIRE(standard.Height() == standard.Width());
+
+  ComplexVector standard_input(standard.Width()), standard_action(standard.Height());
+  ComplexVector combined_input(combined.Width()), combined_action(combined.Height());
+  FillVector(standard_input.Real(), 0.53);
+  FillVector(standard_input.Imag(), 0.79);
+  combined_input = 0.0;
+  linalg::SetSubVector(combined_input.Real(), 0, standard_input.Real());
+  linalg::SetSubVector(combined_input.Imag(), 0, standard_input.Imag());
+
+  standard.Mult(standard_input, standard_action);
+  combined.Mult(combined_input, combined_action);
+  Vector combined_standard_real, combined_standard_imaginary;
+  combined_standard_real.MakeRef(combined_action.Real(), 0, standard.Height());
+  combined_standard_imaginary.MakeRef(combined_action.Imag(), 0, standard.Height());
+  combined_standard_real -= standard_action.Real();
+  combined_standard_imaginary -= standard_action.Imag();
+  CHECK(RelativeNorm(combined_standard_real, standard_action.Real()) < 2.0e-12);
+  CHECK(RelativeNorm(combined_standard_imaginary, standard_action.Imag()) < 2.0e-12);
+}
+
 void CheckSymmetricPositive(const Operator &matrix)
 {
   Vector x(matrix.Width()), y(matrix.Width()), Ax(matrix.Height()), Ay(matrix.Height());
@@ -178,7 +342,8 @@ void CheckSymmetricPositive(const Operator &matrix)
 }
 
 void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent = 0.0,
-                        int order = 1, int mg_max_levels = 1, bool heterogeneous = false)
+                        int order = 1, int mg_max_levels = 1, bool heterogeneous = false,
+                        bool lumped_port = false, bool open_exterior = false)
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   const int dimension = serial_mesh.Dimension();
@@ -216,7 +381,8 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
-  auto iodata = SingularSpaceData(dimension, order, mg_max_levels, heterogeneous);
+  auto iodata = SingularSpaceData(dimension, order, mg_max_levels, heterogeneous,
+                                  lumped_port, open_exterior);
   for (auto &material : iodata.domains.materials)
   {
     material.tandelta.s = {loss_tangent, loss_tangent, loss_tangent};
@@ -229,7 +395,17 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   auto K_zero = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
   auto M_zero = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  auto C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
+  auto K_bulk = space_op.GetBulkStiffnessMatrix(Operator::DIAG_ZERO);
   auto M_bulk = space_op.GetBulkMassMatrix(Operator::DIAG_ZERO);
+  SpaceOperator standard_space_op(iodata.solver, iodata.domains, iodata.boundaries,
+                                  iodata.problem.type, iodata.units, meshes);
+  auto standard_K = standard_space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ONE);
+  auto standard_K_zero =
+      standard_space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
+  auto standard_M = standard_space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
+  auto standard_M_zero = standard_space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  auto standard_C = standard_space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
   const auto *hypre_G =
       dynamic_cast<const mfem::HypreParMatrix *>(&space_op.GetGradMatrix());
   REQUIRE(hypre_G);
@@ -243,6 +419,23 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   CHECK(space_op.GlobalTrueVSize() == K->Height());
   CheckSymmetricPositive(*K);
   CheckSymmetricPositive(*M);
+  CheckStandardBlockAction(*K, *standard_K);
+  CheckStandardBlockAction(*K_zero, *standard_K_zero);
+  CheckStandardBlockAction(*M, *standard_M);
+  CheckStandardBlockAction(*M_zero, *standard_M_zero);
+  REQUIRE((C != nullptr) == lumped_port);
+  REQUIRE((standard_C != nullptr) == lumped_port);
+  if (C)
+  {
+    CheckStandardBlockAction(*C, *standard_C);
+  }
+  if (tetrahedral && !curved && loss_tangent == 0.0 && order == 1 && !heterogeneous &&
+      !lumped_port && open_exterior)
+  {
+    CheckLosslessSpectralEmbedding(*standard_K_zero, *standard_M_zero,
+                                   standard_space_op.GetNDDbcTDofLists().back(), *K_zero,
+                                   *M_zero, space_op.GetCombinedNDDbcTDofList());
+  }
 
   const auto nd_prolongations = space_op.GetCombinedNDProlongationOperators();
   const auto h1_prolongations = space_op.GetCombinedH1ProlongationOperators();
@@ -430,19 +623,39 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 
   auto complex_mass =
       space_op.GetMassMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ZERO);
+  auto complex_stiffness =
+      space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ONE);
+  auto complex_damping =
+      space_op.GetDampingMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ZERO);
+  auto standard_complex_mass =
+      standard_space_op.GetMassMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ZERO);
+  auto standard_complex_stiffness = standard_space_op.GetStiffnessMatrix<ComplexOperator>(
+      Operator::DiagonalPolicy::DIAG_ONE);
+  auto standard_complex_damping = standard_space_op.GetDampingMatrix<ComplexOperator>(
+      Operator::DiagonalPolicy::DIAG_ZERO);
+  REQUIRE(complex_stiffness);
+  REQUIRE(standard_complex_stiffness);
+  REQUIRE((complex_damping != nullptr) == lumped_port);
+  REQUIRE((standard_complex_damping != nullptr) == lumped_port);
   const auto *complex_mass_real = complex_mass->Real();
   const auto *complex_mass_imag = complex_mass->Imag();
   REQUIRE(complex_mass_real);
   CHECK((complex_mass_imag != nullptr) == (loss_tangent > 0.0));
+  REQUIRE(standard_complex_mass->Real());
+  CheckStandardBlockAction(*complex_mass_real, *standard_complex_mass->Real());
+  CHECK((standard_complex_mass->Imag() != nullptr) == (complex_mass_imag != nullptr));
   if (complex_mass_imag)
   {
+    CheckStandardBlockAction(*complex_mass_imag, *standard_complex_mass->Imag());
     Vector probe(complex_mass->Width()), real_action(complex_mass->Height()),
-        imaginary_action(complex_mass->Height());
+        imaginary_action(complex_mass->Height()), bulk_action(complex_mass->Height());
     FillVector(probe, 0.61);
     complex_mass_real->Mult(probe, real_action);
     complex_mass_imag->Mult(probe, imaginary_action);
-    imaginary_action.Add(loss_tangent, real_action);
-    CHECK(RelativeNorm(imaginary_action, real_action) < 2.0e-11);
+    M_bulk->Mult(probe, bulk_action);
+    Vector loss_error(imaginary_action);
+    loss_error.Add(loss_tangent, bulk_action);
+    CHECK(RelativeNorm(loss_error, bulk_action) < 2.0e-11);
 
     constexpr std::complex<double> coefficient(1.3, -0.4);
     auto system = space_op.GetSystemMatrix(
@@ -454,19 +667,31 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
     system_probe.Real() = probe;
     system->Mult(system_probe, system_action);
     Vector expected_real(real_action), expected_imag(real_action);
-    expected_real *= coefficient.real() + coefficient.imag() * loss_tangent;
-    expected_imag *= coefficient.imag() - coefficient.real() * loss_tangent;
+    expected_real *= coefficient.real();
+    expected_real.Add(-coefficient.imag(), imaginary_action);
+    expected_imag *= coefficient.imag();
+    expected_imag.Add(coefficient.real(), imaginary_action);
     system_action.Real() -= expected_real;
     system_action.Imag() -= expected_imag;
     CHECK(RelativeNorm(system_action.Real(), expected_real) < 2.0e-11);
     CHECK(RelativeNorm(system_action.Imag(), expected_imag) < 2.0e-11);
   }
 
+  constexpr std::complex<double> lambda(-0.021, 0.37);
+  auto polynomial = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
+                                             lambda * lambda, complex_stiffness.get(),
+                                             complex_damping.get(), complex_mass.get());
+  auto standard_polynomial = standard_space_op.GetSystemMatrix(
+      std::complex<double>(1.0, 0.0), lambda, lambda * lambda,
+      standard_complex_stiffness.get(), standard_complex_damping.get(),
+      standard_complex_mass.get());
+  CheckStandardBlockAction(*polynomial, *standard_polynomial);
+
   Vector h1(hypre_G->Width()), gradient(hypre_G->Height()), curl_gradient(K_zero->Height());
   FillVector(h1, 0.4);
   linalg::SetSubVector(h1, space_op.GetCombinedH1DbcTDofList(), 0.0);
   hypre_G->Mult(h1, gradient);
-  K_zero->Mult(gradient, curl_gradient);
+  K_bulk->Mult(gradient, curl_gradient);
   CHECK(RelativeNorm(curl_gradient, gradient) < 5.0e-8);
 
   Vector nd(K->Width()), Knd(K->Height());
@@ -536,6 +761,10 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   {
     CheckSpaceOperator(InternalSheetMesh(), false);
   }
+  SECTION("3D lossless spectral embedding")
+  {
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.0, 1, 1, false, false, true);
+  }
   SECTION("3D genuinely curved")
   {
     CheckSpaceOperator(InternalSheetMesh(), true);
@@ -547,6 +776,10 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   SECTION("3D isotropic dielectric loss")
   {
     CheckSpaceOperator(InternalSheetMesh(), false, 0.017);
+  }
+  SECTION("3D resistive and reactive lumped port")
+  {
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.017, 2, 1, false, true);
   }
   SECTION("3D heterogeneous dielectric interface")
   {

@@ -365,6 +365,237 @@ nlohmann::json GetSingularSurfaceIntegrabilityMetadata(
   return MakeSingularSurfaceIntegrabilityMetadata(std::move(exponents));
 }
 
+class ConformingVertexAncestry::Impl
+{
+private:
+  using GlobalVertexId = fem::singular::GlobalVertexId;
+  using EdgeKey = std::array<GlobalVertexId, 2>;
+
+  // Coarse edge endpoint identities indexed by coarse edge number, captured before a
+  // conforming refinement pass. MFEM appends the midpoint of coarse edge e at local
+  // vertex index (coarse GetNV() + e') where e' is that edge's id in the bisection hash
+  // table. The hash table is seeded from the same edge enumeration, so a coarse edge
+  // list plus the coarse vertex count is sufficient to key every appended vertex.
+  std::vector<EdgeKey> coarse_edges;
+  std::vector<GlobalVertexId> coarse_vertex_ids;
+  int coarse_vertices = -1;
+
+  static EdgeKey MakeEdgeKey(GlobalVertexId first, GlobalVertexId second)
+  {
+    if (second < first)
+    {
+      std::swap(first, second);
+    }
+    return {first, second};
+  }
+
+public:
+  void Clear()
+  {
+    coarse_edges.clear();
+    coarse_vertex_ids.clear();
+    coarse_vertices = -1;
+  }
+
+  void Observe(const mfem::ParMesh &mesh, const std::vector<GlobalVertexId> &vertex_ids)
+  {
+    bool valid = vertex_ids.size() == static_cast<std::size_t>(mesh.GetNV());
+    Mpi::GlobalAnd(1, &valid, mesh.GetComm());
+    MFEM_VERIFY(valid, "Observed conforming vertex identities have an invalid local size!");
+
+    coarse_vertices = mesh.GetNV();
+    coarse_vertex_ids = vertex_ids;
+    coarse_edges.assign(mesh.GetNEdges(), EdgeKey{-1, -1});
+    mfem::Array<int> endpoints;
+    for (int edge = 0; edge < mesh.GetNEdges(); edge++)
+    {
+      mesh.GetEdgeVertices(edge, endpoints);
+      MFEM_VERIFY(endpoints.Size() == 2 && endpoints[0] >= 0 && endpoints[1] >= 0 &&
+                      endpoints[0] < coarse_vertices && endpoints[1] < coarse_vertices,
+                  "A coarse mesh edge has invalid endpoints!");
+      const auto first = vertex_ids[endpoints[0]];
+      const auto second = vertex_ids[endpoints[1]];
+      MFEM_VERIFY(first >= 0 && second >= 0 && first != second,
+                  "A coarse mesh edge has invalid persistent endpoint identities!");
+      coarse_edges[edge] = MakeEdgeKey(first, second);
+    }
+  }
+
+  bool Assign(const mfem::ParMesh &mesh, std::vector<GlobalVertexId> &vertex_ids)
+  {
+    if (coarse_vertices < 0)
+    {
+      return false;
+    }
+    const int new_vertices = mesh.GetNV() - coarse_vertices;
+    bool usable = new_vertices >= 0 &&
+                  coarse_vertex_ids.size() == static_cast<std::size_t>(coarse_vertices);
+    Mpi::GlobalAnd(1, &usable, mesh.GetComm());
+    if (!usable)
+    {
+      return false;
+    }
+
+    // Every appended vertex must resolve to exactly one coarse edge. Rather than
+    // reproduce MFEM's internal hash-table ordering, identify each appended vertex by
+    // the coarse edge whose endpoints bound it inside some refined element: the two
+    // coarse endpoints are the only retained vertices adjacent to the midpoint along a
+    // coarse edge. Element-local search is exact and needs no coordinates.
+    std::vector<EdgeKey> keys(new_vertices, EdgeKey{-1, -1});
+    mfem::Array<int> element_vertices;
+    std::map<EdgeKey, int> coarse_lookup;
+    for (const auto &edge : coarse_edges)
+    {
+      coarse_lookup.emplace(edge, 0);
+    }
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      mesh.GetElementVertices(element, element_vertices);
+      for (int i = 0; i < element_vertices.Size(); i++)
+      {
+        const int fine = element_vertices[i];
+        if (fine < coarse_vertices)
+        {
+          continue;
+        }
+        const int slot = fine - coarse_vertices;
+        if (keys[slot][0] >= 0)
+        {
+          continue;
+        }
+        // Candidate parents are retained vertices of this element. A midpoint's parent
+        // edge is the unique coarse edge among those candidates.
+        for (int a = 0; a < element_vertices.Size() && keys[slot][0] < 0; a++)
+        {
+          if (element_vertices[a] >= coarse_vertices)
+          {
+            continue;
+          }
+          for (int b = a + 1; b < element_vertices.Size(); b++)
+          {
+            if (element_vertices[b] >= coarse_vertices)
+            {
+              continue;
+            }
+            const auto candidate = MakeEdgeKey(coarse_vertex_ids[element_vertices[a]],
+                                               coarse_vertex_ids[element_vertices[b]]);
+            if (coarse_lookup.find(candidate) != coarse_lookup.end())
+            {
+              keys[slot] = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Deterministic identities: sort the globally unique new keys lexicographically and
+    // assign contiguous ids above the current maximum. Sorting exact topological keys
+    // makes the assignment independent of rank count and element partitioning.
+    GlobalVertexId maximum_id = -1;
+    for (auto id : coarse_vertex_ids)
+    {
+      maximum_id = std::max(maximum_id, id);
+    }
+    Mpi::GlobalMax(1, &maximum_id, mesh.GetComm());
+
+    bool complete = true;
+    for (const auto &key : keys)
+    {
+      complete = complete && key[0] >= 0 && key[1] >= 0;
+    }
+    Mpi::GlobalAnd(1, &complete, mesh.GetComm());
+    if (!complete)
+    {
+      return false;
+    }
+
+    const auto unique_keys = GatherUniqueEdgeKeys(mesh.GetComm(), keys);
+    vertex_ids.resize(mesh.GetNV());
+    for (int vertex = 0; vertex < coarse_vertices; vertex++)
+    {
+      vertex_ids[vertex] = coarse_vertex_ids[vertex];
+    }
+    for (int local = 0; local < new_vertices; local++)
+    {
+      const auto position = unique_keys.find(keys[local]);
+      MFEM_VERIFY(position != unique_keys.end(),
+                  "A refined conforming vertex key was not globally registered!");
+      vertex_ids[coarse_vertices + local] = maximum_id + 1 + position->second;
+    }
+
+    // The snapshot describes exactly one refinement pass.
+    Clear();
+    return true;
+  }
+
+private:
+  // Collect the globally unique set of new edge keys and give each a deterministic
+  // rank-independent index by lexicographic order. Every rank ends with the same map, so
+  // no root dictionary is retained across AMR iterations.
+  static std::map<EdgeKey, GlobalVertexId>
+  GatherUniqueEdgeKeys(MPI_Comm comm, const std::vector<EdgeKey> &local_keys)
+  {
+    std::set<EdgeKey> local_unique(local_keys.begin(), local_keys.end());
+    std::vector<GlobalVertexId> flat;
+    flat.reserve(2 * local_unique.size());
+    for (const auto &key : local_unique)
+    {
+      flat.push_back(key[0]);
+      flat.push_back(key[1]);
+    }
+    MFEM_VERIFY(flat.size() < static_cast<std::size_t>(std::numeric_limits<int>::max()),
+                "Conforming refined vertex keys exceed MPI integer counts!");
+
+    const int local_count = static_cast<int>(flat.size());
+    std::vector<int> counts(Mpi::Size(comm));
+    Mpi::Allgather(1, &local_count, counts.data(), comm);
+    std::vector<int> offsets(counts.size(), 0);
+    std::partial_sum(counts.begin(), counts.end() - 1, offsets.begin() + 1);
+    const std::size_t total = std::accumulate(counts.begin(), counts.end(), std::size_t{0});
+    MFEM_VERIFY(total <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+                "Conforming refined vertex keys exceed MPI integer counts!");
+
+    std::vector<GlobalVertexId> gathered(total);
+    Mpi::Allgatherv(local_count, flat.data(), gathered.data(), counts.data(),
+                    offsets.data(), comm);
+
+    std::set<EdgeKey> global_unique;
+    for (std::size_t i = 0; i + 1 < gathered.size(); i += 2)
+    {
+      global_unique.insert(EdgeKey{gathered[i], gathered[i + 1]});
+    }
+    std::map<EdgeKey, GlobalVertexId> indices;
+    GlobalVertexId next = 0;
+    for (const auto &key : global_unique)
+    {
+      indices.emplace(key, next++);
+    }
+    return indices;
+  }
+};
+
+ConformingVertexAncestry::ConformingVertexAncestry() : impl(std::make_unique<Impl>()) {}
+
+ConformingVertexAncestry::~ConformingVertexAncestry() = default;
+
+void ConformingVertexAncestry::Clear()
+{
+  impl->Clear();
+}
+
+void ConformingVertexAncestry::Observe(
+    const mfem::ParMesh &mesh, const std::vector<fem::singular::GlobalVertexId> &vertex_ids)
+{
+  impl->Observe(mesh, vertex_ids);
+}
+
+bool ConformingVertexAncestry::Assign(
+    const mfem::ParMesh &mesh, std::vector<fem::singular::GlobalVertexId> &vertex_ids)
+{
+  return impl->Assign(mesh, vertex_ids);
+}
+
 class NonconformingVertexIdentity::Impl
 {
 private:
@@ -580,7 +811,10 @@ public:
       {
         return;
       }
-      MFEM_VERIFY(node >= 0 && node < ncmesh.GetNumNodes(),
+      // NCMesh nodes live in a hash table whose IDs remain sparse after ParNCMesh
+      // prunes remote refinement-tree branches during rebalancing. GetNumNodes()
+      // counts active entries; it is not an upper bound on their IDs.
+      MFEM_VERIFY(node >= 0,
                   "A newly refined NCMesh vertex has an unavailable parent node!");
       unresolved.insert(node);
       const auto &record = ncmesh.GetNode(node);
@@ -679,14 +913,17 @@ void UpdateSingularSourceEntityIds(
     const mfem::ParMesh &mesh,
     std::vector<fem::singular::GlobalVertexId> &source_vertex_ids,
     std::vector<fem::singular::GlobalVertexId> &source_element_ids,
-    NonconformingVertexIdentity &vertex_identity)
+    NonconformingVertexIdentity &vertex_identity,
+    ConformingVertexAncestry *conforming_ancestry)
 {
   using GlobalVertexId = fem::singular::GlobalVertexId;
+  const bool assigned_by_ancestry = !mesh.Nonconforming() && conforming_ancestry &&
+                                    conforming_ancestry->Assign(mesh, source_vertex_ids);
   if (mesh.Nonconforming())
   {
     vertex_identity.Update(mesh, source_vertex_ids);
   }
-  else
+  else if (!assigned_by_ancestry)
   {
     const std::size_t old_vertices = source_vertex_ids.size();
     MFEM_VERIFY(old_vertices <= static_cast<std::size_t>(mesh.GetNV()),
@@ -786,28 +1023,38 @@ void UpdateSingularSourceEntityIds(
                                          gathered_coordinates[3 * occurrence + 2]};
         const auto [record, inserted] = records.emplace(
             gathered_global_vertices[occurrence], VertexRecord{coordinate, -1});
-        if (!inserted && record->second.coordinate != coordinate)
+        if (!inserted)
         {
-          valid = false;
+          double difference = 0.0;
+          double scale = 1.0;
+          for (int d = 0; d < 3; d++)
+          {
+            difference = std::max(difference,
+                                  std::abs(record->second.coordinate[d] - coordinate[d]));
+            scale = std::max(scale, std::max(std::abs(record->second.coordinate[d]),
+                                             std::abs(coordinate[d])));
+          }
+          if (difference > 4096.0 * std::numeric_limits<double>::epsilon() * scale)
+          {
+            valid = false;
+          }
+          record->second.coordinate = std::min(record->second.coordinate, coordinate);
         }
       }
 
-      std::vector<VertexRecord *> ordered;
+      std::vector<std::pair<GlobalVertexId, VertexRecord *>> ordered;
       ordered.reserve(records.size());
       for (auto &[global_vertex, record] : records)
       {
-        ordered.push_back(&record);
+        ordered.emplace_back(global_vertex, &record);
       }
       std::sort(ordered.begin(), ordered.end(),
-                [](const VertexRecord *left, const VertexRecord *right)
-                { return left->coordinate < right->coordinate; });
-      for (std::size_t vertex = 1; vertex < ordered.size(); vertex++)
-      {
-        if (ordered[vertex - 1]->coordinate == ordered[vertex]->coordinate)
-        {
-          valid = false;
-        }
-      }
+                [](const auto &left, const auto &right)
+                {
+                  return left.second->coordinate != right.second->coordinate
+                             ? left.second->coordinate < right.second->coordinate
+                             : left.first < right.first;
+                });
       if (ordered.size() >
           static_cast<std::size_t>(std::numeric_limits<int>::max() - maximum_id))
       {
@@ -817,7 +1064,7 @@ void UpdateSingularSourceEntityIds(
       {
         for (std::size_t vertex = 0; vertex < ordered.size(); vertex++)
         {
-          ordered[vertex]->id = maximum_id + 1 + static_cast<GlobalVertexId>(vertex);
+          ordered[vertex].second->id = maximum_id + 1 + static_cast<GlobalVertexId>(vertex);
         }
         for (std::size_t occurrence = 0; occurrence < gathered_size; occurrence++)
         {
@@ -828,7 +1075,7 @@ void UpdateSingularSourceEntityIds(
     MPI_Bcast(&valid, 1, MPI_C_BOOL, 0, mesh.GetComm());
     MFEM_VERIFY(valid,
                 "Conforming singular refinement could not assign canonical new vertex "
-                "IDs. Distinct refined vertices must not have coincident coordinates!");
+                "IDs!");
 
     source_vertex_ids.resize(mesh.GetNV());
     MPI_Scatterv(gathered_ids.data(), counts.data(), offsets.data(), MPI_INT64_T,
@@ -1574,6 +1821,43 @@ void FullWaveSingularFeatures::ProcessPartitionedMesh(
               "Full-wave singular source-entity metadata is incomplete!");
 }
 
+void FullWaveSingularFeatures::ObserveRefinementAncestry(const mfem::ParMesh &parallel_mesh)
+{
+  if (dimension == 0 || parallel_mesh.Nonconforming())
+  {
+    return;
+  }
+  MFEM_VERIFY(parallel_mesh.Dimension() == dimension,
+              "Unexpected full-wave singular mesh for refinement ancestry!");
+  conforming_ancestry.Observe(parallel_mesh, source_vertex_ids);
+}
+
+void FullWaveSingularFeatures::ReportTraceComponents(
+    const IoData &iodata, const mfem::ParMesh &parallel_mesh,
+    const mfem::Array<int> &primary_marks) const
+{
+  // Rank-local connected components are only meaningful serially; skip rather than print a
+  // partition artifact. Marks must also reach the enriched patch, which they only do when
+  // repair is enabled (otherwise the protection mask zeroes enriched indicators first).
+  if (dimension != 3 || Mpi::Size(parallel_mesh.GetComm()) != 1 ||
+      !iodata.model.refinement.singular_repair ||
+      local_sheet_features.elements.size() !=
+          static_cast<std::size_t>(parallel_mesh.GetNE()))
+  {
+    return;
+  }
+  const auto constrained =
+      GetConstrainedSingularImpedanceAttributes(iodata, local_sheet_features);
+  for (auto policy : {SingularTracePolicy::ND_ONLY, SingularTracePolicy::H1_ONLY,
+                      SingularTracePolicy::SHARED})
+  {
+    const auto report = MeasureSingularTraceComponents(
+        parallel_mesh, local_sheet_features, source_vertex_ids, primary_marks, constrained,
+        policy, iodata.solver.singular_elements.order);
+    PrintSingularTraceComponentReport(report, parallel_mesh.GetComm(), policy);
+  }
+}
+
 void FullWaveSingularFeatures::ProcessRefinedMesh(const IoData &iodata,
                                                   const mfem::ParMesh &parallel_mesh)
 {
@@ -1581,7 +1865,7 @@ void FullWaveSingularFeatures::ProcessRefinedMesh(const IoData &iodata,
                   parallel_mesh.Dimension() == dimension,
               "Unexpected or inconsistent refined full-wave singular mesh!");
   UpdateSingularSourceEntityIds(parallel_mesh, source_vertex_ids, source_element_ids,
-                                vertex_identity);
+                                vertex_identity, &conforming_ancestry);
   if (dimension == 2)
   {
     RebuildRefinedSingularFeatures(parallel_mesh,
@@ -1630,6 +1914,400 @@ mfem::Array<int> FullWaveSingularFeatures::GetRefinementProtection(
                                                  source_vertex_ids, conforming, repair)
              : BuildSingularRefinementProtection(mesh, local_line_features,
                                                  source_vertex_ids, conforming, repair);
+}
+
+int GetTetrahedronSingularFaceMask(const fem::singular::ElementFeatureIncidence &incidence)
+{
+  int mask = 0;
+  // A tetrahedral local face is identified by the local vertex it omits.
+  const auto face_contains = [](int face, int node) { return node != face; };
+  for (const auto &node : incidence.nodes)
+  {
+    const int singular = node.canonical_nodes[0];
+    MFEM_VERIFY(singular >= 0 && singular < 4,
+                "A singular node feature has an invalid canonical node!");
+    for (int face = 0; face < 4; face++)
+    {
+      // Active on every face containing the singular node, i.e. all but the opposite one.
+      if (face_contains(face, singular))
+      {
+        mask |= (1 << face);
+      }
+    }
+  }
+  for (const auto &edge : incidence.edges)
+  {
+    const int first = edge.canonical_nodes[0];
+    const int second = edge.canonical_nodes[1];
+    MFEM_VERIFY(first >= 0 && first < 4 && second >= 0 && second < 4 && first != second,
+                "A singular edge feature has invalid canonical nodes!");
+    for (int face = 0; face < 4; face++)
+    {
+      // Active only where the face contains both endpoints of the singular edge.
+      if (face_contains(face, first) && face_contains(face, second))
+      {
+        mask |= (1 << face);
+      }
+    }
+  }
+  return mask;
+}
+
+namespace
+{
+
+// Face mask restricted to bases that are actually active under a policy and not removed by
+// an essential boundary condition. A node feature contributes its 3 incident faces and an
+// edge feature its 2 containing faces, exactly as in GetTetrahedronSingularFaceMask, but a
+// feature whose DOFs are all constrained contributes nothing.
+//
+// Constraint model, matching the solver: a feature lying on a PEC sheet has its enrichment
+// trace eliminated, and an impedance sheet constrains the trace only where the exponent is
+// itself constrained (ConstrainImpedanceTrace, i.e. nu <= 1/2). Attributes for which that
+// holds are supplied by the caller in constrained_attributes.
+int GetPolicyFaceMask(const fem::singular::FeatureTopology &features,
+                      const fem::singular::ElementFeatureIncidence &incidence,
+                      const std::set<int> &constrained_attributes,
+                      SingularTracePolicy policy)
+{
+  const bool want_h1 =
+      (policy == SingularTracePolicy::H1_ONLY || policy == SingularTracePolicy::SHARED);
+  const bool want_nd =
+      (policy == SingularTracePolicy::ND_ONLY || policy == SingularTracePolicy::SHARED);
+  int mask = 0;
+  for (const auto &node : incidence.nodes)
+  {
+    // A node feature carries both a gradient (H1 and ND) and, at singular order >= 2, a
+    // rotational (ND only) family, so it is active under either policy.
+    if (!(want_h1 || want_nd))
+    {
+      continue;
+    }
+    if (node.vertex < features.vertices.size())
+    {
+      // A vertex carries no attribute of its own; its boundary association comes through
+      // the segments meeting there. The trace is removed only when every incident segment
+      // lies on a constrained attribute and the exponent is itself constrained.
+      const auto &vertex = features.vertices[node.vertex];
+      bool constrained = !vertex.segments.empty() && !(vertex.nu > 0.5);
+      for (std::size_t segment : vertex.segments)
+      {
+        if (segment >= features.segments.size())
+        {
+          constrained = false;
+          break;
+        }
+        const auto &attributes = features.segments[segment].boundary_attributes;
+        constrained = constrained && !attributes.empty();
+        for (int attribute : attributes)
+        {
+          constrained = constrained && constrained_attributes.count(attribute) > 0;
+        }
+      }
+      if (constrained)
+      {
+        continue;
+      }
+    }
+    const int singular = node.canonical_nodes[0];
+    for (int face = 0; face < 4; face++)
+    {
+      if (face != singular)
+      {
+        mask |= (1 << face);
+      }
+    }
+  }
+  for (const auto &edge : incidence.edges)
+  {
+    if (!(want_h1 || want_nd))
+    {
+      continue;
+    }
+    if (edge.segment < features.segments.size())
+    {
+      const auto &segment = features.segments[edge.segment];
+      bool constrained = !segment.boundary_attributes.empty();
+      for (int attribute : segment.boundary_attributes)
+      {
+        constrained = constrained && constrained_attributes.count(attribute) > 0;
+      }
+      if (constrained && edge.feature < features.features.size() &&
+          !(features.features[edge.feature].nu > 0.5))
+      {
+        continue;
+      }
+    }
+    const int first = edge.canonical_nodes[0], second = edge.canonical_nodes[1];
+    for (int face = 0; face < 4; face++)
+    {
+      if (face != first && face != second)
+      {
+        mask |= (1 << face);
+      }
+    }
+  }
+  return mask;
+}
+
+}  // namespace
+
+SingularTraceComponentReport MeasureSingularTraceComponents(
+    const mfem::ParMesh &mesh, const fem::singular::FeatureTopology &features,
+    const std::vector<fem::singular::GlobalVertexId> &vertex_ids,
+    const mfem::Array<int> &primary_marks, const std::set<int> &constrained_attributes,
+    SingularTracePolicy policy, int singular_order)
+{
+  MFEM_CONTRACT_VAR(vertex_ids);
+  MFEM_CONTRACT_VAR(singular_order);
+  MFEM_VERIFY(mesh.Dimension() == 3,
+              "Singular trace-component diagnostics currently require a 3D mesh!");
+  // The union-find below is rank-local, so component sizes on more than one rank are
+  // partition artifacts rather than topology: each rank reports its own slice of the patch.
+  // Refuse to produce a misleading number instead of silently reporting one.
+  MFEM_VERIFY(Mpi::Size(mesh.GetComm()) == 1,
+              "Singular trace-component diagnostics are only meaningful on one rank; the "
+              "connected-component reduction is rank-local. Re-run with -np 1.");
+  MFEM_VERIFY(features.elements.size() == static_cast<std::size_t>(mesh.GetNE()),
+              "Singular trace-component diagnostics received inconsistent incidence!");
+  SingularTraceComponentReport report;
+
+  // Per-element masks and feature multiplicity.
+  std::vector<int> raw_mask(mesh.GetNE(), 0), policy_mask(mesh.GetNE(), 0);
+  std::vector<char> enriched(mesh.GetNE(), 0);
+  std::size_t max_nodes = 0, max_edges = 0;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const auto &incidence = features.elements[element];
+    if (incidence.nodes.empty() && incidence.edges.empty())
+    {
+      continue;
+    }
+    enriched[element] = 1;
+    report.enriched_elements++;
+    max_nodes = std::max(max_nodes, incidence.nodes.size());
+    max_edges = std::max(max_edges, incidence.edges.size());
+    raw_mask[element] = GetTetrahedronSingularFaceMask(incidence);
+    policy_mask[element] =
+        GetPolicyFaceMask(features, incidence, constrained_attributes, policy);
+  }
+  report.node_feature_histogram.assign(max_nodes + 1, 0);
+  report.edge_feature_histogram.assign(max_edges + 1, 0);
+  const auto popcount = [](int mask)
+  {
+    int count = 0;
+    for (int bit = 0; bit < 4; bit++)
+    {
+      count += (mask >> bit) & 1;
+    }
+    return count;
+  };
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    if (!enriched[element])
+    {
+      continue;
+    }
+    const auto &incidence = features.elements[element];
+    report.node_feature_histogram[incidence.nodes.size()]++;
+    report.edge_feature_histogram[incidence.edges.size()]++;
+    report.raw_active_face_histogram[popcount(raw_mask[element])]++;
+    report.unconstrained_active_face_histogram[popcount(policy_mask[element])]++;
+    report.mask_differences += popcount(raw_mask[element] ^ policy_mask[element]);
+  }
+
+  // Union-find over enriched elements joined by a face active on either side. Restricted to
+  // rank-local elements: the component statistics are reported per rank and summed, which
+  // is sufficient to answer "does the component cover the patch" without a parallel
+  // connected components algorithm.
+  std::vector<int> parent(mesh.GetNE());
+  std::iota(parent.begin(), parent.end(), 0);
+  const std::function<int(int)> find = [&](int x) -> int
+  { return parent[x] == x ? x : parent[x] = find(parent[x]); };
+  const auto unite = [&](int a, int b)
+  {
+    const int ra = find(a), rb = find(b);
+    if (ra != rb)
+    {
+      parent[ra] = rb;
+    }
+  };
+
+  mfem::Array<int> element_faces, element_orientations;
+  std::map<int, std::vector<std::pair<int, int>>> face_to_side;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    if (!enriched[element])
+    {
+      continue;
+    }
+    mesh.GetElementFaces(element, element_faces, element_orientations);
+    for (int local = 0; local < element_faces.Size(); local++)
+    {
+      if (policy_mask[element] & (1 << local))
+      {
+        face_to_side[element_faces[local]].emplace_back(element, local);
+      }
+    }
+  }
+  for (const auto &[face, sides] : face_to_side)
+  {
+    MFEM_CONTRACT_VAR(face);
+    for (std::size_t i = 1; i < sides.size(); i++)
+    {
+      unite(sides[0].first, sides[i].first);
+    }
+    if (sides.size() == 1)
+    {
+      // Only one enriched element claims this face as active. If the opposite side exists
+      // and is a local non-enriched element, the active trace abuts unenriched material.
+      int first = -1, second = -1;
+      mesh.GetFaceElements(sides[0].first >= 0 ? face : face, &first, &second);
+      const bool has_other = (second >= 0 && second < mesh.GetNE());
+      if (has_other && !enriched[second == sides[0].first ? first : second])
+      {
+        report.active_faces_adjoining_non_enriched++;
+      }
+    }
+  }
+
+  std::map<int, long long> component_size;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    if (enriched[element])
+    {
+      component_size[find(element)]++;
+    }
+  }
+  for (const auto &[root, size] : component_size)
+  {
+    MFEM_CONTRACT_VAR(root);
+    report.component_sizes.push_back(size);
+    report.largest_component = std::max(report.largest_component, size);
+  }
+  std::sort(report.component_sizes.begin(), report.component_sizes.end(),
+            std::greater<long long>());
+
+  // Components touched by the primary Dörfler marks.
+  std::set<int> marked_roots;
+  for (int mark : primary_marks)
+  {
+    if (mark >= 0 && mark < mesh.GetNE() && enriched[mark])
+    {
+      marked_roots.insert(find(mark));
+    }
+  }
+  report.marked_components = static_cast<long long>(marked_roots.size());
+  for (int root : marked_roots)
+  {
+    report.marked_component_elements += component_size[root];
+  }
+  return report;
+}
+
+void PrintSingularTraceComponentReport(const SingularTraceComponentReport &report,
+                                       MPI_Comm comm, SingularTracePolicy policy)
+{
+  const auto sum = [comm](long long value)
+  {
+    Mpi::GlobalSum(1, &value, comm);
+    return value;
+  };
+  const auto maximum = [comm](long long value)
+  {
+    Mpi::GlobalMax(1, &value, comm);
+    return value;
+  };
+  const char *policy_name = policy == SingularTracePolicy::ND_ONLY   ? "ND only"
+                            : policy == SingularTracePolicy::H1_ONLY ? "H1 only"
+                                                                     : "H1+ND shared";
+  const long long enriched = sum(report.enriched_elements);
+  Mpi::Print("\nSingular trace-connected component report ({}):\n", policy_name);
+  Mpi::Print(" Enriched elements: {:d}\n", enriched);
+
+  const auto print_histogram = [&](const char *label, const std::vector<long long> &data)
+  {
+    std::string text;
+    std::size_t width = data.size();
+    width = static_cast<std::size_t>(maximum(static_cast<long long>(width)));
+    for (std::size_t i = 0; i < width; i++)
+    {
+      const long long value = sum(i < data.size() ? data[i] : 0);
+      text += fmt::format("{}{}:{}", i ? " " : "", i, value);
+    }
+    Mpi::Print("  {}: {}\n", label, text);
+  };
+  print_histogram("node features/element", report.node_feature_histogram);
+  print_histogram("edge features/element", report.edge_feature_histogram);
+
+  const auto print_faces = [&](const char *label, const std::array<long long, 5> &data)
+  {
+    std::string text;
+    for (int i = 0; i < 5; i++)
+    {
+      text += fmt::format("{}{}:{}", i ? " " : "", i, sum(data[i]));
+    }
+    Mpi::Print("  {}: {}\n", label, text);
+  };
+  print_faces("active faces/element (raw incidence)", report.raw_active_face_histogram);
+  print_faces("active faces/element (unconstrained)",
+              report.unconstrained_active_face_histogram);
+  Mpi::Print("  raw vs unconstrained mask bit differences: {:d}\n",
+             sum(report.mask_differences));
+  Mpi::Print("  active faces adjoining a non-enriched element: {:d}\n",
+             sum(report.active_faces_adjoining_non_enriched));
+
+  const long long components = sum(static_cast<long long>(report.component_sizes.size()));
+  const long long largest = maximum(report.largest_component);
+  Mpi::Print("  trace-connected components (rank-local): {:d}, largest {:d} "
+             "({:.1f}% of enriched)\n",
+             components, largest,
+             enriched > 0 ? 100.0 * static_cast<double>(largest) / enriched : 0.0);
+  const long long marked = sum(report.marked_components);
+  const long long marked_elements = sum(report.marked_component_elements);
+  Mpi::Print("  components touched by primary marks: {:d}, covering {:d} elements "
+             "({:.1f}% of enriched)\n",
+             marked, marked_elements,
+             enriched > 0 ? 100.0 * static_cast<double>(marked_elements) / enriched : 0.0);
+  // One conforming bisection of a tetrahedron yields 2 children, and the plan's measured
+  // closure cost was ~7 elements added per marked element, so report both bounds.
+  Mpi::Print("  projected growth if that union is refined once: {:d}..{:d} elements\n",
+             marked_elements, 7 * marked_elements);
+}
+
+mfem::Array<int>
+FullWaveSingularFeatures::GetEnrichedElements(const mfem::ParMesh &mesh) const
+{
+  if (dimension == 0 || mesh.Dimension() != dimension)
+  {
+    return {};
+  }
+  const auto local_size = static_cast<std::size_t>(mesh.GetNE());
+  mfem::Array<int> enriched;
+  if (dimension == 3)
+  {
+    if (local_sheet_features.elements.size() != local_size)
+    {
+      return {};
+    }
+    enriched.SetSize(mesh.GetNE());
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      const auto &incidence = local_sheet_features.elements[element];
+      enriched[element] = (!incidence.nodes.empty() || !incidence.edges.empty()) ? 1 : 0;
+    }
+    return enriched;
+  }
+  if (local_line_features.elements.size() != local_size)
+  {
+    return {};
+  }
+  enriched.SetSize(mesh.GetNE());
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    enriched[element] = local_line_features.elements[element].nodes.empty() ? 0 : 1;
+  }
+  return enriched;
 }
 
 double SingularComplexQuadraticForm(MPI_Comm comm, const mfem::Operator &op,

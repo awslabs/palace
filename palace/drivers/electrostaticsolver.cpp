@@ -1193,6 +1193,15 @@ ElectrostaticSolver::GetRefinementProtection(const mfem::ParMesh &mesh, bool *co
                                                  source_vertex_ids, conforming, repair);
 }
 
+void ElectrostaticSolver::ObserveRefinementAncestry(const mfem::ParMesh &mesh) const
+{
+  if (!iodata.solver.singular_elements.Enabled() || mesh.Nonconforming())
+  {
+    return;
+  }
+  conforming_ancestry.Observe(mesh, source_vertex_ids);
+}
+
 void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
 {
   if (!iodata.solver.singular_elements.Enabled())
@@ -1200,7 +1209,7 @@ void ElectrostaticSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
     return;
   }
   UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
-                                vertex_identity);
+                                vertex_identity, &conforming_ancestry);
   if (mesh.Dimension() == 2)
   {
     RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,

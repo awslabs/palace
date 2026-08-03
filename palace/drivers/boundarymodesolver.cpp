@@ -1220,6 +1220,15 @@ mfem::Array<int> BoundaryModeSolver::GetRefinementProtection(const mfem::ParMesh
                                            conforming, repair);
 }
 
+void BoundaryModeSolver::ObserveRefinementAncestry(const mfem::ParMesh &mesh) const
+{
+  if (!iodata.solver.singular_elements.Enabled() || mesh.Nonconforming())
+  {
+    return;
+  }
+  conforming_ancestry.Observe(mesh, source_vertex_ids);
+}
+
 void BoundaryModeSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
 {
   if (!iodata.solver.singular_elements.Enabled())
@@ -1227,7 +1236,7 @@ void BoundaryModeSolver::ProcessRefinedMesh(const mfem::ParMesh &mesh) const
     return;
   }
   UpdateSingularSourceEntityIds(mesh, source_vertex_ids, source_element_ids,
-                                vertex_identity);
+                                vertex_identity, &conforming_ancestry);
   RebuildRefinedSingularFeatures(mesh, iodata.solver.singular_elements.attributes,
                                  source_vertex_ids, serial_singular_features);
   ProcessPartitionedMesh(mesh, {source_vertex_ids, source_element_ids});

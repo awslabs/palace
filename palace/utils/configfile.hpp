@@ -123,6 +123,34 @@ public:
   // performed.
   double maximum_imbalance = 1.1;
 
+  // Growth budget applied before conforming refinement: abort the AMR loop rather than
+  // apply a refinement projected to multiply the element count by more than this factor in
+  // one iteration. Conforming closure can propagate far beyond the marked set, so a
+  // seemingly small Dörfler threshold can still produce a very large mesh. Values at or
+  // below zero disable the guard.
+  double max_growth_factor = 0.0;
+
+  // Nonconforming refinement with localized conforming repair of the singular subcomplex.
+  // When enabled, singular AMR refines the enriched region like any other element and then
+  // repairs every nonconforming face carrying a singular trace by refining its coarse
+  // side, instead of freezing the enriched closure. Requires singular elements; ignored
+  // otherwise.
+  bool singular_repair = false;
+
+  // Maximum number of localized repair passes per AMR iteration. Repair fails closed when
+  // the subcomplex is still nonconforming after this many passes.
+  int singular_repair_max_passes = 8;
+
+  // Engineering go/no-go budget on repair cost, expressed as
+  // (elements added by repair) / max(elements added by primary refinement, 1). Values at
+  // or below zero disable the check. Exceeding the limit aborts the AMR loop rather than
+  // silently growing the mesh.
+  double singular_repair_max_amplification = 10.0;
+
+  // Fraction of the pre-refinement element count that repair may add in one AMR
+  // iteration. Values at or below zero disable the check.
+  double singular_repair_max_growth = 0.25;
+
   // Whether to save off results of each adaptation iteration as a subfolder within the post
   // processing directory.
   bool save_adapt_iterations = true;

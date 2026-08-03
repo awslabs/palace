@@ -512,6 +512,37 @@
           "default": 1.1,
           "x-palace-advanced": true
         },
+        "MaxGrowthFactor": {
+          "type": "number",
+          "description": "Abort adaptive refinement rather than apply an iteration projected to multiply the element count by more than this factor. Conforming closure can propagate well beyond the marked set, so a small Dorfler threshold does not by itself bound mesh growth. Values at or below zero disable the guard.",
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "SingularRepair": {
+          "type": "boolean",
+          "description": "Use nonconforming refinement with localized conforming repair of the singular subcomplex. Enriched elements are refined like any other element, and every resulting nonconforming face carrying a singular trace is repaired by refining its coarse side. Requires singular elements; ignored otherwise. When false, the enriched closure is frozen in h on nonconforming meshes.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "SingularRepairMaxPasses": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of localized singular repair passes per AMR iteration. Repair fails closed if the singular subcomplex is still nonconforming afterwards.",
+          "default": 8,
+          "x-palace-advanced": true
+        },
+        "SingularRepairMaxAmplification": {
+          "type": "number",
+          "description": "Go/no-go budget on elements added by repair divided by elements added by primary refinement. Values at or below zero disable the check.",
+          "default": 10.0,
+          "x-palace-advanced": true
+        },
+        "SingularRepairMaxGrowth": {
+          "type": "number",
+          "description": "Fraction of the pre-refinement element count that localized repair may add in one AMR iteration. Values at or below zero disable the check.",
+          "default": 0.25,
+          "x-palace-advanced": true
+        },
         "SaveAdaptIterations": {
           "type": "boolean",
           "description": "Save postprocessing results from each AMR iteration in a subdirectory `iterationX`.",

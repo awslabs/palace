@@ -189,6 +189,18 @@ mfem::Array<int> BaseSolver::GetRefinementProtection(const mfem::ParMesh &,
   return {};
 }
 
+void BaseSolver::ObserveRefinementAncestry(const mfem::ParMesh &) const {}
+
+mfem::Array<int> BaseSolver::GetEnrichedElements(const mfem::ParMesh &) const
+{
+  return {};
+}
+
+void BaseSolver::ReportTraceComponents(const mfem::ParMesh &,
+                                       const mfem::Array<int> &) const
+{
+}
+
 void BaseSolver::ProcessRefinedMesh(const mfem::ParMesh &) const {}
 
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -211,17 +223,108 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   }
   MPI_Comm comm = mesh.back()->GetComm();
 
+  // Report the distribution of the raw indicator across the enriched region, its
+  // conservative one-face closure, and the exterior, before any protection mask is
+  // applied. This is diagnostic only: it does not change marking. The enriched region is
+  // where the singular basis is active; the closure is the additional buffer whose
+  // conformity the current implementation requires.
+  const auto ReportIndicatorRegions =
+      [this, &mesh, comm](const ErrorIndicator &indicators,
+                          const mfem::Array<int> &protection, double update_fraction)
+  {
+    if (protection.Size() == 0)
+    {
+      return;
+    }
+    const auto &local = indicators.Local();
+    MFEM_VERIFY(local.Size() == protection.Size(),
+                "Indicator region diagnostics received an inconsistent marker!");
+    const auto enriched = GetEnrichedElements(mesh.back()->Get());
+    const bool have_enriched = (enriched.Size() == protection.Size());
+
+    // Region 0: enriched, 1: closure buffer (protected, not enriched), 2: exterior.
+    constexpr int regions = 3;
+    std::array<long long, regions> counts{};
+    std::array<double, regions> squared{};
+    std::array<double, regions> maximum{};
+    maximum.fill(0.0);
+    const auto region_of = [&](int element)
+    {
+      if (have_enriched && enriched[element])
+      {
+        return 0;
+      }
+      return protection[element] ? 1 : 2;
+    };
+    for (int element = 0; element < local.Size(); element++)
+    {
+      const int region = region_of(element);
+      counts[region]++;
+      squared[region] += local[element] * local[element];
+      maximum[region] = std::max(maximum[region], local[element]);
+    }
+
+    // Dörfler selection on the unmasked indicator, so the report shows where the
+    // refinement budget would go if nothing were protected.
+    const auto [threshold, marked_error] =
+        utils::ComputeDorflerThreshold(comm, local, update_fraction);
+    std::array<long long, regions> selected{};
+    for (int element = 0; element < local.Size(); element++)
+    {
+      if (local[element] >= threshold)
+      {
+        selected[region_of(element)]++;
+      }
+    }
+
+    Mpi::GlobalSum(regions, counts.data(), comm);
+    Mpi::GlobalSum(regions, squared.data(), comm);
+    Mpi::GlobalMax(regions, maximum.data(), comm);
+    Mpi::GlobalSum(regions, selected.data(), comm);
+    const double total_squared = squared[0] + squared[1] + squared[2];
+    const long long total_selected = selected[0] + selected[1] + selected[2];
+    constexpr std::array<const char *, regions> labels{"enriched", "closure buffer",
+                                                       "exterior"};
+    Mpi::Print(" Raw indicator by region (before protection, θ = {:.2f}):\n",
+               update_fraction);
+    for (int region = 0; region < regions; region++)
+    {
+      Mpi::Print("  {:14s}: {:d} elements, {:.2f}% of squared indicator, max. {:.3e}, "
+                 "{:d} of {:d} unmasked Dörfler selections\n",
+                 labels[region], counts[region],
+                 total_squared > 0.0 ? 100.0 * squared[region] / total_squared : 0.0,
+                 maximum[region], selected[region], total_selected);
+    }
+    if (!have_enriched)
+    {
+      Mpi::Print("  (enriched subset unavailable; regions 0 and 1 are reported together as "
+                 "the protected closure)\n");
+    }
+    Mpi::Print("  Unmasked Dörfler would capture {:.2f}% of the error\n",
+               100 * marked_error);
+  };
+
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
-  const auto ProtectIndicators = [this, &mesh](ErrorIndicator &indicators)
+  const auto ProtectIndicators =
+      [this, &mesh, &ReportIndicatorRegions, &refinement](ErrorIndicator &indicators)
   {
     bool closure_conforming = true;
     auto protection = GetRefinementProtection(mesh.back()->Get(), &closure_conforming);
+    ReportIndicatorRegions(indicators, protection, refinement.update_fraction);
     MFEM_VERIFY(protection.Size() == 0 || protection.Size() == mesh.back()->GetNE(),
                 "AMR refinement-protection marker has an invalid size!");
     MFEM_VERIFY(closure_conforming,
                 "The singular refinement closure is nonconforming before AMR!");
-    if (protection.Size() > 0 && mesh.back()->Get().Nonconforming())
+    if (protection.Size() > 0 && mesh.back()->Get().Nonconforming() &&
+        refinement.singular_repair)
+    {
+      // Localized conforming repair keeps every singular trace conforming after the fact,
+      // so the enriched closure participates in refinement like any other element and its
+      // indicators must not be masked.
+      protection.SetSize(0);
+    }
+    else if (protection.Size() > 0 && mesh.back()->Get().Nonconforming())
     {
       // Custom singular spaces do not yet have coarse/fine trace constraints. Keep the
       // enriched patch and its one-face buffer fixed in h so all enriched interfaces remain
@@ -323,18 +426,243 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       break;
     }
 
-    // Refine.
+    ReportTraceComponents(mesh.back()->Get(), marked_elements);
+
+    // Squared-indicator bookkeeping for the seed set, so the closure's effective marking
+    // fraction can be reported after refinement. The Dörfler guarantee applies to the seed;
+    // conforming closure refines a superset, and the interesting question is how much
+    // additional error that superset actually captures versus how many elements it costs.
+    double seed_squared = 0.0, total_squared = 0.0;
+    {
+      const auto &local = indicators.Local();
+      for (int element = 0; element < local.Size(); element++)
+      {
+        total_squared += local[element] * local[element];
+      }
+      for (int element : marked_elements)
+      {
+        seed_squared += local[element] * local[element];
+      }
+      Mpi::GlobalSum(1, &seed_squared, comm);
+      Mpi::GlobalSum(1, &total_squared, comm);
+    }
+
+    // Growth preflight. Conforming closure size is not predictable analytically, so measure
+    // it on a throwaway copy of the mesh and stop the loop cleanly BEFORE the real mesh is
+    // mutated or the oversized spaces are allocated. Only runs when a budget is configured,
+    // because the copy costs a mesh duplication.
+    if (refinement.max_growth_factor > 0.0)
+    {
+      const auto before = mesh.back()->Get().GetGlobalNE();
+      double growth = 1.0;
+      {
+        mfem::ParMesh trial(mesh.back()->Get());
+        trial.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+        growth = before > 0 ? static_cast<double>(trial.GetGlobalNE()) /
+                                  static_cast<double>(before)
+                            : 1.0;
+      }
+      if (growth > refinement.max_growth_factor)
+      {
+        Mpi::Warning(comm,
+                     "Stopping adaptive refinement: this iteration would grow the mesh by "
+                     "{:.3f}x, exceeding Model.Refinement.MaxGrowthFactor of {:.3f}. "
+                     "Conforming closure propagates beyond the marked set; reduce "
+                     "UpdateFraction or raise the budget.\n",
+                     growth, refinement.max_growth_factor);
+        break;
+      }
+      Mpi::Print(" Growth preflight: {:.3f}x (budget {:.3f}x)\n", growth,
+                 refinement.max_growth_factor);
+    }
+
+    // Refine. Capture exact refinement ancestry while the coarse mesh is still intact.
+    const auto elements_before_primary = mesh.back()->Get().GetGlobalNE();
+    long long primary_added = 0;
     {
       mfem::ParMesh &fine_mesh = *mesh.back();
+      ObserveRefinementAncestry(fine_mesh);
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
-      fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+
+      // Count the coarse parents the refinement actually touched, and the squared indicator
+      // they carry. For conforming refinement the closure is a superset of the seed, so
+      // this separates "elements added" (a child count) from "parents refined" (the true
+      // closure size) and gives the effective marking fraction theta_closure.
+      long long refined_parents = 0;
+      double closure_squared = 0.0;
+      {
+        const auto &local = indicators.Local();
+        std::vector<char> seeded(local.Size(), 0);
+        for (int element : marked_elements)
+        {
+          if (element >= 0 && element < local.Size())
+          {
+            seeded[element] = 1;
+          }
+        }
+        fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+        const auto &transforms = fine_mesh.GetRefinementTransforms();
+        std::vector<char> touched(local.Size(), 0);
+        for (int child = 0; child < transforms.embeddings.Size(); child++)
+        {
+          const int parent = transforms.embeddings[child].parent;
+          if (parent >= 0 && parent < local.Size())
+          {
+            touched[parent] = 1;
+          }
+        }
+        // A parent is "refined" when it has more than one child, or when it has one child
+        // that is not the identity embedding. Counting children per parent is the robust
+        // test and avoids relying on point-matrix identity detection.
+        std::vector<int> children(local.Size(), 0);
+        for (int child = 0; child < transforms.embeddings.Size(); child++)
+        {
+          const int parent = transforms.embeddings[child].parent;
+          if (parent >= 0 && parent < local.Size())
+          {
+            children[parent]++;
+          }
+        }
+        for (int element = 0; element < local.Size(); element++)
+        {
+          if (children[element] > 1)
+          {
+            refined_parents++;
+            closure_squared += local[element] * local[element];
+          }
+        }
+        Mpi::GlobalSum(1, &refined_parents, comm);
+        Mpi::GlobalSum(1, &closure_squared, comm);
+      }
       const auto final_elem_count = fine_mesh.GetGlobalNE();
+      const long long seed_count = global_marked_elements;
+      Mpi::Print(
+          " Closure: {:d} seed -> {:d} refined parents (closure ratio {:.1f}), seed error "
+          "{:.2f}% -> closure error {:.2f}% (θ = {:.2f}, θ_closure = {:.3f}, error "
+          "amplification {:.2f})\n",
+          seed_count, refined_parents,
+          seed_count > 0 ? static_cast<double>(refined_parents) / seed_count : 0.0,
+          total_squared > 0.0 ? 100.0 * seed_squared / total_squared : 0.0,
+          total_squared > 0.0 ? 100.0 * closure_squared / total_squared : 0.0,
+          refinement.update_fraction,
+          total_squared > 0.0 ? closure_squared / total_squared : 0.0,
+          seed_squared > 0.0 ? closure_squared / seed_squared : 0.0);
+      primary_added = static_cast<long long>(final_elem_count - initial_elem_count);
+      // Realized growth, for the record. The budget was already enforced by the preflight
+      // above, so this is reporting only.
+      const double growth = initial_elem_count > 0
+                                ? static_cast<double>(final_elem_count) /
+                                      static_cast<double>(initial_elem_count)
+                                : 1.0;
+      Mpi::Print(" Mesh growth this iteration: {:.3f}x\n", growth);
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
                  final_elem_count - initial_elem_count, initial_elem_count,
                  final_elem_count);
     }
     ProcessRefinedMesh(mesh.back()->Get());
+
+    // Localized conforming repair of the singular subcomplex. Every nonconforming face
+    // carrying a singular trace is repaired by refining the coarse side, then identities
+    // and features are rebuilt and detection repeats. Rebalancing deliberately happens
+    // only after the subcomplex is conforming.
+    long long repair_added = 0;
+    {
+      bool conforming = true;
+      mfem::Array<int> repair;
+      GetRefinementProtection(mesh.back()->Get(), &conforming, &repair);
+      const bool use_repair = refinement.singular_repair && !conforming;
+      int pass = 0;
+      // Detect a self-sustaining repair cycle: refining a coarse master can create new
+      // hanging singular faces, so the violation count can plateau instead of decaying.
+      // Stall detection reports that immediately rather than exhausting the pass budget.
+      long long best_marks = -1;
+      int passes_since_improvement = 0;
+      while (refinement.singular_repair && !conforming)
+      {
+        MFEM_VERIFY(pass < refinement.singular_repair_max_passes,
+                    "Localized singular repair did not converge within "
+                        << refinement.singular_repair_max_passes
+                        << " passes; the singular subcomplex is still nonconforming!");
+        mfem::Array<int> repair_marks;
+        for (int element = 0; element < repair.Size(); element++)
+        {
+          if (repair[element])
+          {
+            repair_marks.Append(element);
+          }
+        }
+        long long global_repair_marks = repair_marks.Size();
+        Mpi::GlobalSum(1, &global_repair_marks, comm);
+        // Fail closed: violations remain but no rank can repair anything.
+        MFEM_VERIFY(global_repair_marks > 0,
+                    "The singular subcomplex is nonconforming but no repair candidate "
+                    "exists on any rank!");
+        // Track the violation trajectory so a plateau is visible in the log. Refining a
+        // coarse master can create new hanging singular faces, so the count may decay
+        // geometrically at first and then asymptote. The pass limit and the amplification
+        // and growth budgets below are the go/no-go guards; no progress heuristic is
+        // applied here because a slowly-improving plateau is indistinguishable from
+        // genuine convergence over a short window.
+        if (best_marks < 0 || global_repair_marks < best_marks)
+        {
+          best_marks = global_repair_marks;
+          passes_since_improvement = 0;
+        }
+        else
+        {
+          passes_since_improvement++;
+        }
+
+        mfem::ParMesh &fine_mesh = *mesh.back();
+        ObserveRefinementAncestry(fine_mesh);
+        const auto before = fine_mesh.GetGlobalNE();
+        fine_mesh.GeneralRefinement(repair_marks, -1, refinement.max_nc_levels);
+        const auto after = fine_mesh.GetGlobalNE();
+        repair_added += static_cast<long long>(after - before);
+        ProcessRefinedMesh(fine_mesh);
+        Mpi::Print(" Singular repair pass {:d}: {:d} coarse elements marked (best {:d}, "
+                   "{:d} passes without improvement), {:d} elements added (total = {:d})\n",
+                   pass + 1, global_repair_marks, best_marks, passes_since_improvement,
+                   after - before, after);
+
+        // Respect the DOF/size ceiling before continuing to grow the mesh.
+        MFEM_VERIFY(refinement.max_size <= 0 || after <= refinement.max_size,
+                    "Localized singular repair exceeded Model.Refinement.MaxSize!");
+        GetRefinementProtection(mesh.back()->Get(), &conforming, &repair);
+        pass++;
+      }
+      if (use_repair)
+      {
+        const double amplification =
+            static_cast<double>(repair_added) / std::max(primary_added, 1LL);
+        const double growth = elements_before_primary > 0
+                                  ? static_cast<double>(repair_added) /
+                                        static_cast<double>(elements_before_primary)
+                                  : 0.0;
+        Mpi::Print(" Singular repair summary: {:d} passes, {:d} elements added, "
+                   "amplification {:.2f}, global growth {:.2f}%\n",
+                   pass, repair_added, amplification, 100 * growth);
+        if (amplification > 3.0)
+        {
+          Mpi::Warning(comm,
+                       "Localized singular repair amplification {:.2f} exceeds the "
+                       "advisory limit of 3.\n",
+                       amplification);
+        }
+        MFEM_VERIFY(refinement.singular_repair_max_amplification <= 0.0 ||
+                        amplification <= refinement.singular_repair_max_amplification,
+                    "Localized singular repair amplification "
+                        << amplification << " exceeds the configured budget of "
+                        << refinement.singular_repair_max_amplification << "!");
+        MFEM_VERIFY(refinement.singular_repair_max_growth <= 0.0 ||
+                        growth <= refinement.singular_repair_max_growth,
+                    "Localized singular repair grew the mesh by "
+                        << 100 * growth << "%, exceeding the configured budget of "
+                        << 100 * refinement.singular_repair_max_growth << "%!");
+      }
+    }
+
     bool refined_closure_conforming = true;
     const auto refined_protection =
         GetRefinementProtection(mesh.back()->Get(), &refined_closure_conforming);

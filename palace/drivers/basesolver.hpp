@@ -78,6 +78,16 @@ public:
   virtual mfem::Array<int>
   GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming = nullptr,
                           mfem::Array<int> *repair = nullptr) const;
+  // Runs immediately before the mesh is refined, while the coarse mesh is still intact,
+  // so a discretization can capture exact refinement ancestry.
+  virtual void ObserveRefinementAncestry(const mfem::ParMesh &mesh) const;
+  // Elements on which the discretization's auxiliary (singular) basis is active. Used
+  // only for indicator diagnostics; an empty array means the information is unavailable.
+  virtual mfem::Array<int> GetEnrichedElements(const mfem::ParMesh &mesh) const;
+  // Diagnostic hook: report auxiliary-space trace connectivity for the marks about to be
+  // refined, on the pre-refinement mesh.
+  virtual void ReportTraceComponents(const mfem::ParMesh &mesh,
+                                     const mfem::Array<int> &primary_marks) const;
   virtual void ProcessRefinedMesh(const mfem::ParMesh &mesh) const;
   virtual bool RebalanceRefinedMesh() const { return true; }
 

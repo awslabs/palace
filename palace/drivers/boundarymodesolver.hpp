@@ -22,6 +22,7 @@ private:
   mutable std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
   mutable std::vector<fem::singular::GlobalVertexId> source_element_ids;
   mutable NonconformingVertexIdentity vertex_identity;
+  mutable ConformingVertexAncestry conforming_ancestry;
 
 public:
   BoundaryModeSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
@@ -38,6 +39,7 @@ public:
   mfem::Array<int>
   GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming = nullptr,
                           mfem::Array<int> *repair = nullptr) const override;
+  void ObserveRefinementAncestry(const mfem::ParMesh &mesh) const override;
   void ProcessRefinedMesh(const mfem::ParMesh &mesh) const override;
 
   std::pair<ErrorIndicator, long long int>

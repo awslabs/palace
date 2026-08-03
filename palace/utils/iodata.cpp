@@ -652,12 +652,14 @@ void IoData::CheckConfiguration()
   if (solver.linear.mg_max_levels < 0)
   {
     if (problem.type == ProblemType::BOUNDARYMODE ||
-        (solver.singular_elements.Enabled() && problem.type != ProblemType::ELECTROSTATIC &&
-         !solver.linear.pc_mat_real))
+        (solver.singular_elements.Enabled() && problem.type != ProblemType::ELECTROSTATIC))
     {
-      // Boundary mode and singular Maxwell with a complex preconditioner retain
-      // single-level defaults. Singular electrostatics and real-preconditioned singular
-      // Maxwell use the complete polynomial hierarchy.
+      // Boundary mode retains single-level defaults. So does every singular Maxwell solve,
+      // independently of the preconditioner: geometric multigrid with singular enrichment
+      // is not yet supported and is rejected below, so defaulting to the full hierarchy
+      // here would make an otherwise valid configuration fail validation. Singular
+      // electrostatics keeps the complete polynomial hierarchy, which its own regression
+      // cases exercise.
       solver.linear.mg_max_levels = 1;
     }
     else
@@ -665,17 +667,26 @@ void IoData::CheckConfiguration()
       solver.linear.mg_max_levels = 100;
     }
   }
+  // Geometric multigrid is not yet reliable for singular MAXWELL: MGMaxLevels > 1 has been
+  // observed to fail inside the eigensolve on refined meshes (segfault with a real
+  // preconditioner, abort with a complex one) where the same case succeeds with
+  // MGMaxLevels = 1. Fail here, before any operator construction, rather than crashing
+  // partway through a solve. Singular ELECTROSTATICS keeps its multilevel path, which
+  // remains supported and is exercised by singular_wedge_electrostatic_mg2 and the other
+  // singular electrostatic regression cases.
   MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
-                  problem.type == ProblemType::ELECTROSTATIC ||
-                  problem.type == ProblemType::DRIVEN ||
-                  problem.type == ProblemType::EIGENMODE ||
-                  problem.type == ProblemType::BOUNDARYMODE,
-              "Singular geometric multigrid is currently available for electrostatic, "
-              "BoundaryMode, driven, and eigenmode simulations!");
-  MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1 ||
-                  problem.type == ProblemType::ELECTROSTATIC || solver.linear.pc_mat_real,
-              "Singular Maxwell polynomial multigrid currently requires "
-              "Solver.Linear.PCMatReal = true!");
+                  problem.type == ProblemType::ELECTROSTATIC,
+              "Singular Maxwell currently requires Solver.Linear.MGMaxLevels = 1! "
+              "Geometric multigrid with singular enrichment fails during the solve rather "
+              "than converging for driven, eigenmode and BoundaryMode problems. Singular "
+              "electrostatics is unaffected and still supports multigrid.");
+  // The two checks that previously followed here (restricting singular multigrid to
+  // specific problem types, and requiring PCMatReal for singular Maxwell multigrid) are
+  // now unreachable: both began with the same
+  // "!Enabled() || mg_max_levels == 1 || ELECTROSTATIC" clauses as the guard above, so
+  // any configuration reaching them already satisfies them. Their messages also claimed
+  // singular Maxwell multigrid was available, which the guard contradicts. Removed rather
+  // than left to mislead.
   MFEM_VERIFY(
       !solver.singular_elements.Enabled() ||
           (problem.type != ProblemType::DRIVEN && problem.type != ProblemType::EIGENMODE &&

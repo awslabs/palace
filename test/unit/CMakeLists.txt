@@ -58,6 +58,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularsurfacepostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularfeatures.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularsolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-singularmms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp

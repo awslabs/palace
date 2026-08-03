@@ -13,6 +13,7 @@
 #include <Eigen/Dense>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "fem/singularassembly.hpp"
@@ -3539,6 +3540,206 @@ TEST_CASE("Weighted segment quadrature integrates Jacobi moments",
   CHECK_THROWS_AS(fem::singular::BuildWeightedSegmentQuadrature(
                       4, std::numeric_limits<double>::quiet_NaN(), 0.0),
                   std::invalid_argument);
+}
+
+namespace
+{
+
+// Phase 7 support. Interior points of the tetrahedral face opposite local vertex
+// "opposite", deliberately nonsymmetric and away from both interpolation nodes and the
+// singular loci, so a zero result cannot come from landing on a special point.
+std::vector<BarycentricPoint> AsymmetricFacePoints(int opposite)
+{
+  const std::array<std::array<double, 3>, 4> interior{{{0.5137, 0.2791, 0.2072},
+                                                       {0.1723, 0.6031, 0.2246},
+                                                       {0.2611, 0.1907, 0.5482},
+                                                       {0.3931, 0.3557, 0.2512}}};
+  std::vector<BarycentricPoint> points;
+  points.reserve(interior.size());
+  for (const auto &weights : interior)
+  {
+    BarycentricPoint lambda{0.0, 0.0, 0.0, 0.0};
+    int next = 0;
+    for (int node = 0; node < 4; node++)
+    {
+      if (node != opposite)
+      {
+        lambda[node] = weights[next++];
+      }
+    }
+    points.push_back(lambda);
+  }
+  return points;
+}
+
+// Largest H1 potential magnitude and largest ND tangential-trace magnitude of one basis
+// over the sampled interior points of one face.
+std::pair<double, double> MaximumFaceTrace(const fem::singular::HigherOrderBasis &basis,
+                                           int opposite)
+{
+  const auto &grad_lambda = fem::singular::ReferenceBarycentricGradients();
+  const bool gradient_family =
+      basis.family == fem::singular::HigherOrderBasisFamily::NODE_GRADIENT ||
+      basis.family == fem::singular::HigherOrderBasisFamily::EDGE_GRADIENT;
+  double potential = 0.0, tangential = 0.0;
+  for (const auto &lambda : AsymmetricFacePoints(opposite))
+  {
+    if (gradient_family)
+    {
+      potential = std::max(
+          potential,
+          std::abs(fem::singular::EvaluateHigherOrderGradientPotential(lambda, basis)));
+    }
+    const auto value = fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, basis);
+    tangential =
+        std::max(tangential, Norm(TangentialPart(value.value, grad_lambda[opposite])));
+  }
+  return {potential, tangential};
+}
+
+// Every retained basis of a node feature at canonical_nodes, and of an edge feature on the
+// first two canonical nodes, at one singular order and exponent.
+std::vector<fem::singular::HigherOrderBasis>
+NodeFeatureBases(const std::array<int, 4> &canonical_nodes, int order, double nu)
+{
+  auto bases =
+      fem::singular::EnumerateHigherOrderNodeGradientBases(canonical_nodes, order, nu);
+  if (order >= 2)
+  {
+    const auto rotational =
+        fem::singular::EnumerateHigherOrderNodeRotationalBases(canonical_nodes, order, nu);
+    bases.insert(bases.end(), rotational.begin(), rotational.end());
+  }
+  return bases;
+}
+
+std::vector<fem::singular::HigherOrderBasis>
+EdgeFeatureBases(const std::array<int, 4> &canonical_nodes, int order, double nu)
+{
+  std::vector<fem::singular::HigherOrderBasis> bases;
+  if (order >= 2)
+  {
+    bases =
+        fem::singular::EnumerateHigherOrderEdgeGradientBases(canonical_nodes, order, nu);
+    const auto rotational =
+        fem::singular::EnumerateHigherOrderEdgeRotationalBases(canonical_nodes, order, nu);
+    bases.insert(bases.end(), rotational.begin(), rotational.end());
+  }
+  return bases;
+}
+
+}  // namespace
+
+TEST_CASE("Singular face-trace classification matches direct basis evaluation",
+          "[singularelements][Serial]")
+{
+  // Phase 7 of the singular AMR plan. The basis algebra proves which faces carry zero
+  // trace; this test ensures the classifier used by refinement agrees with that proof for
+  // every retained descriptor. Both directions are asserted: a face the classifier calls
+  // inactive must be numerically zero, and a face it calls active must have at least one
+  // demonstrably nonzero trace somewhere among its bases.
+  const int order = GENERATE(1, 2, 3, 4);
+  // Thin sheet, finite-thickness wedge, and a generic material-derived exponent.
+  const double nu = GENERATE(0.5, 2.0 / 3.0, 0.731);
+  CAPTURE(order, nu);
+
+  constexpr double zero_tolerance = 1.0e-12;
+  // All 24 vertex permutations, so the classification cannot depend on node ordering.
+  std::array<int, 4> permutation{0, 1, 2, 3};
+  std::sort(permutation.begin(), permutation.end());
+  int permutations = 0;
+  do
+  {
+    CAPTURE(permutation);
+    permutations++;
+
+    // Node feature: the singular node is canonical_nodes[0]. Expect exactly the face
+    // opposite that node to be inactive.
+    {
+      const auto bases = NodeFeatureBases(permutation, order, nu);
+      REQUIRE_FALSE(bases.empty());
+      const int singular = permutation[0];
+      for (int opposite = 0; opposite < 4; opposite++)
+      {
+        double potential = 0.0, tangential = 0.0;
+        for (const auto &basis : bases)
+        {
+          const auto [p, t] = MaximumFaceTrace(basis, opposite);
+          potential = std::max(potential, p);
+          tangential = std::max(tangential, t);
+        }
+        CAPTURE(opposite, singular, potential, tangential);
+        if (opposite == singular)
+        {
+          // Face opposite the singular node: both traces must vanish.
+          CHECK(potential <= zero_tolerance);
+          CHECK(tangential <= zero_tolerance);
+        }
+        else
+        {
+          // Face containing the singular node: something must be nonzero, otherwise the
+          // classifier would be needlessly conservative and the test vacuous.
+          CHECK(std::max(potential, tangential) > zero_tolerance);
+        }
+      }
+    }
+
+    // Edge feature on canonical nodes 0 and 1. Expect the two faces which do not contain
+    // both endpoints to be inactive.
+    if (order >= 2)
+    {
+      const auto bases = EdgeFeatureBases(permutation, order, nu);
+      REQUIRE_FALSE(bases.empty());
+      const int first = permutation[0], second = permutation[1];
+      for (int opposite = 0; opposite < 4; opposite++)
+      {
+        const bool contains_edge = (opposite != first) && (opposite != second);
+        double potential = 0.0, tangential = 0.0;
+        for (const auto &basis : bases)
+        {
+          const auto [p, t] = MaximumFaceTrace(basis, opposite);
+          potential = std::max(potential, p);
+          tangential = std::max(tangential, t);
+        }
+        CAPTURE(opposite, first, second, contains_edge, potential, tangential);
+        if (!contains_edge)
+        {
+          CHECK(potential <= zero_tolerance);
+          CHECK(tangential <= zero_tolerance);
+        }
+        else
+        {
+          CHECK(std::max(potential, tangential) > zero_tolerance);
+        }
+      }
+    }
+  } while (std::next_permutation(permutation.begin(), permutation.end()));
+  CHECK(permutations == 24);
+}
+
+TEST_CASE("Edge-rotational singular bases are H(curl) bubbles on every face",
+          "[singularelements][Serial]")
+{
+  // The edge-rotational family must never activate a face on its own: its tangential trace
+  // vanishes on all four faces. This is what lets an edge feature exempt two faces even
+  // though its rotational bases are supported throughout the element.
+  const int order = GENERATE(2, 3, 4);
+  const double nu = GENERATE(0.5, 2.0 / 3.0, 0.731);
+  CAPTURE(order, nu);
+  constexpr std::array<int, 4> Nodes{0, 1, 2, 3};
+  const auto bases =
+      fem::singular::EnumerateHigherOrderEdgeRotationalBases(Nodes, order, nu);
+  REQUIRE_FALSE(bases.empty());
+  for (const auto &basis : bases)
+  {
+    for (int opposite = 0; opposite < 4; opposite++)
+    {
+      const auto [potential, tangential] = MaximumFaceTrace(basis, opposite);
+      MFEM_CONTRACT_VAR(potential);
+      CAPTURE(opposite, tangential);
+      CHECK(tangential <= 1.0e-12);
+    }
+  }
 }
 
 }  // namespace palace

@@ -47,6 +47,7 @@ private:
   mutable std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
   mutable std::vector<fem::singular::GlobalVertexId> source_element_ids;
   mutable NonconformingVertexIdentity vertex_identity;
+  mutable ConformingVertexAncestry conforming_ancestry;
 
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
@@ -72,6 +73,7 @@ public:
   mfem::Array<int>
   GetRefinementProtection(const mfem::ParMesh &mesh, bool *conforming = nullptr,
                           mfem::Array<int> *repair = nullptr) const override;
+  void ObserveRefinementAncestry(const mfem::ParMesh &mesh) const override;
   void ProcessRefinedMesh(const mfem::ParMesh &mesh) const override;
 };
 
