@@ -128,6 +128,49 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
+  if(PALACE_WITH_CUDSS)
+    if("${CUDSS_COMM_LIB}" STREQUAL "")
+      # NVIDIA ships an Open MPI communication layer with cuDSS. Use it only after
+      # positively identifying Open MPI; all other MPI implementations need a
+      # matching layer supplied explicitly.
+      include(CMakePushCheckState)
+      include(CheckCXXSourceCompiles)
+      cmake_push_check_state(RESET)
+      set(CMAKE_REQUIRED_LIBRARIES MPI::MPI_CXX)
+      unset(PALACE_MPI_IS_OPENMPI CACHE)
+      check_cxx_source_compiles([[#include <mpi.h>
+#ifndef OMPI_MAJOR_VERSION
+#error Not Open MPI
+#endif
+int main() { return 0; }
+]] PALACE_MPI_IS_OPENMPI)
+      cmake_pop_check_state()
+      if(NOT PALACE_MPI_IS_OPENMPI)
+        message(FATAL_ERROR
+          "The selected MPI was not positively identified as Open MPI; "
+          "PALACE_WITH_CUDSS requires CUDSS_COMM_LIB to name a matching communication layer"
+        )
+      endif()
+      unset(PALACE_CUDSS_OPENMPI_COMM_LIB CACHE)
+      find_library(PALACE_CUDSS_OPENMPI_COMM_LIB
+        NAMES cudss_commlayer_openmpi
+        HINTS "${CUDSS_DIR}"
+        PATH_SUFFIXES lib lib64
+      )
+      if(NOT PALACE_CUDSS_OPENMPI_COMM_LIB)
+        message(FATAL_ERROR "Could not find the bundled cuDSS Open MPI communication layer")
+      endif()
+      set(CUDSS_COMM_LIB "${PALACE_CUDSS_OPENMPI_COMM_LIB}")
+      message(STATUS "Using bundled cuDSS Open MPI communication layer: ${CUDSS_COMM_LIB}")
+    endif()
+    get_filename_component(CUDSS_COMM_LIB "${CUDSS_COMM_LIB}" ABSOLUTE)
+    if(NOT EXISTS "${CUDSS_COMM_LIB}" OR IS_DIRECTORY "${CUDSS_COMM_LIB}")
+      message(FATAL_ERROR "CUDSS_COMM_LIB is not a library file: ${CUDSS_COMM_LIB}")
+    endif()
+    list(APPEND MFEM_OPTIONS
+      "-DMFEM_CUDSS_COMM_LIB=${CUDSS_COMM_LIB}"
+    )
+  endif()
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     list(APPEND MFEM_OPTIONS
       "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"

@@ -1,0 +1,41 @@
+diff --git a/repos/spack_repo/builtin/packages/cudss/package.py b/repos/spack_repo/builtin/packages/cudss/package.py
+index 2dc0d83..534235b 100644
+--- a/repos/spack_repo/builtin/packages/cudss/package.py
++++ b/repos/spack_repo/builtin/packages/cudss/package.py
+@@ -67,7 +67,34 @@ class Cudss(Package):
+         if pkg:
+             version(ver, sha256=pkg[0], url=pkg[1])
+-
++
++    variant(
++        "mpi",
++        default=False,
++        description="Build a communication layer for the selected MPI implementation",
++    )
++
+     depends_on("cuda@12:")
++    depends_on("mpi", when="+mpi")
+-
++
+     def install(self, spec, prefix):
+         install_tree(".", prefix)
++
++        if "+mpi" in spec:
++            # NVIDIA's source and build script use the name "openmpi", but the
++            # implementation only uses the standard MPI API and can be built against
++            # any MPI provider. Give the result a provider-neutral name so downstream
++            # packages never mistake NVIDIA's prebuilt Open MPI layer for this one.
++            with working_dir("src"):
++                with set_env(
++                    CUDA_PATH=spec["cuda"].prefix,
++                    CUDSS_PATH=self.stage.source_path,
++                    MPI_PATH=spec["mpi"].prefix,
++                    NVCC_PREPEND_FLAGS="-Xlinker=-rpath -Xlinker=%s:%s"
++                    % (spec["mpi"].prefix.lib64, spec["mpi"].prefix.lib),
++                ):
++                    bash = which("bash", required=True)
++                    bash("./cudss_build_commlayer.sh", "openmpi")
++                install(
++                    "libcudss_commlayer_openmpi.so",
++                    join_path(prefix.lib, "libcudss_commlayer_mpi.so"),
++                )
