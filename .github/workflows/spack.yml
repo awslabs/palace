@@ -181,6 +181,7 @@ jobs:
     concurrency:
       group: palace-1.2-buildcache-index
       cancel-in-progress: false
+      queue: max
     steps:
       - name: Install Spack 1.2
         uses: actions/checkout@v6
