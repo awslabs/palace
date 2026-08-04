@@ -492,6 +492,63 @@ spack spec local.palace@develop
 will show you the spec for your most recent `palace` package, which you can
 compare with the one for `builtin.palace@develop`.
 
+## Publishing containers
+
+Palace containers are built by the `Containers` workflow. Publishing is handled
+by a separate `Publish Containers` workflow that runs after a build completes:
+the build only produces artifacts and makes no publishing decision, and the
+publish workflow decides (from the triggering event) whether and what to
+publish. Which channel a build publishes to depends on the event:
+
+| Event                                       | Published channel |
+|:------------------------------------------- |:----------------- |
+| Push to `main`                              | `main` (rolling)  |
+| Push of a release tag `vX.Y.Z`              | `X.Y.Z` (release) |
+| Manual dispatch of `Containers` on a branch | `dev-<branch>`    |
+| Pull request labeled `push-containers`      | `dev-<branch>`    |
+
+### What gets built
+
+Regular builds (push to `main`, pull requests, and manual dispatches) build only
+each runner's native microarchitecture:
+
+  - `sapphirerapids` (x64)
+  - `neoverse_v1` (arm64)
+
+Release tags (`vX.Y.Z`) build the full microarchitecture matrix instead, so
+a release publishes a tuned image for each target:
+
+  - `x86_64_v3`, `x86_64_v4`, `sapphirerapids` (x64)
+  - `aarch64`, `neoverse_v1`, `neoverse_v2` (arm64)
+
+### Publishing a `dev-<branch>` prototype from a branch
+
+To publish a `dev-<branch>` container, trigger the `Containers` workflow. The
+branch must be named `prefix/name`, with exactly one `/`: the prefix may contain
+only letters, numbers, `_`, or `.`, and the name must start with a letter or
+number and may also contain `_`, `.`, or `-` (for example,
+`yourname/my-feature`). Other names build fine but are refused at publication,
+because the `dev-<branch>` selector has to stay collision-free once the name is
+sanitized for ECR. `main` and release-tag publishing are unaffected.
+
+Using the [GitHub CLI](https://cli.github.com/):
+
+```bash
+# Build and publish a dev-<branch> prototype from the current branch.
+branch=$(git branch --show-current)
+gh workflow run containers.yml --ref "$branch"
+
+# Then follow the run (give it a moment to register), and note that publication
+# happens afterward in the separate Publish Containers workflow:
+gh run list --workflow=containers.yml --branch "$branch" --limit 1
+gh run watch <run-id-from-above>
+```
+
+From the web UI the same control is under `Actions → Containers → Run workflow`, where you pick the branch.
+
+Alternatively, apply the `push-containers` label to a pull request to publish
+its `dev-<branch>` prototype and keep it updated as you push new commits.
+
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the

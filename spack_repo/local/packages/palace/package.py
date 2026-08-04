@@ -18,7 +18,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     git = "https://github.com/awslabs/palace.git"
     license("Apache-2.0")
 
-    maintainers("hughcars", "simlap", "cameronrutherford", "sbozzolo", "phdum")
+    maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
@@ -51,11 +51,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "cudss",
         default=False,
         description="Build with cuDSS sparse direct solver",
-        when="@0.17:",
+        when="@0.18:",
     )
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
-    variant("libxsmm", default=True, description="Build with libxsmm backend for libCEED")
+    variant(
+        "libxsmm",
+        default=True,
+        sticky=True,  # Do not silently turn this off
+        description="Build with libxsmm backend for libCEED"
+    )
     variant(
         "gslib",
         default=True,
@@ -79,8 +84,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     depends_on("c", type="build")
     depends_on("cxx", type="build")
-    depends_on("cmake@3.21:", type="build", when="@0.14:0.15")
-    depends_on("cmake@3.24:", type="build", when="@0.16:")
+    depends_on("cmake@3.18.1:", type="build", when="@0.11")
+    depends_on("cmake@3.21:", type="build", when="@0.12:0.14")
+    depends_on("cmake@3.24:", type="build", when="@0.15:")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
     depends_on("blas")
@@ -97,12 +103,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     conflicts(
         "~superlu-dist~strumpack~mumps",
-        when="@:0.16",
+        when="@:0.17",
         msg="Need at least one sparse direct solver",
     )
     conflicts(
         "~superlu-dist~strumpack~mumps~cudss",
-        when="@0.17:",
+        when="@0.18:",
         msg="Need at least one sparse direct solver",
     )
     conflicts(
@@ -231,13 +237,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # depends_on("mfem+exceptions", type="test")
 
         depends_on("mfem+libunwind", when="build_type=Debug")
-        depends_on("mfem+cudss", when="+cudss")
-        depends_on("cudss", when="+cudss")
         depends_on("eigen@3.5:", type="build")
 
+    with when("@0.18:"):
+        depends_on("mfem+cudss", when="+cudss")
+        depends_on("cudss", when="+cudss")
+
     with when("+libxsmm"):
-        # NOTE: @=main != @main since libxsmm has a version main-2023-22
+        # NOTE: @=main != @main since libxsmm has a version main-2023-22, which matches @2:
         depends_on("libxsmm@=main blas=0")
+        # TODO: depends_on("libxsmm@2: blas=0") when spack-package > 2026.06 is relased
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
         # NOTE: libxsmm builds on MacOS have linker issues
@@ -369,7 +378,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.spec.satisfies("+strumpack"):
                 args.append(self.define("STRUMPACK_DIR", self.spec["strumpack"].prefix))
             if self.spec.satisfies("+mumps") or self.spec.satisfies("+strumpack"):
-                args.append(self.define("SCALAPACK_ROOT", self.spec["scalapack"].prefix))
+                args.append(self.define("SCALAPACK_DIR", self.spec["scalapack"].prefix))
             if self.spec.satisfies("+superlu-dist"):
                 args.append(self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix))
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
@@ -525,7 +534,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             )
 
         palace_with_gpu_aware_mpi = any(
-            self.spec.satisfies(f"{var}+cuda") or self.spec.satisfies(f"{var}+rocm")
+            self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
             for var in ["openmpi", "mpich", "mvapich-plus"]
         )
 
