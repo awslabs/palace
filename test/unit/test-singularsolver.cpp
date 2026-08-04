@@ -1198,6 +1198,45 @@ TEST_CASE("Three-dimensional singular refinement survives MPI rebalancing",
   }
 }
 
+TEST_CASE("Conforming refinement ancestry uses the actual bisected parent edge",
+          "[singularsolver][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  mfem::Mesh serial(2, 3, 1, 3, 2);
+  serial.AddVertex(0.0, 0.0);
+  serial.AddVertex(2.0, 0.0);
+  serial.AddVertex(0.0, 2.0);
+  serial.AddTriangle(0, 1, 2, 1);
+  serial.AddBdrSegment(0, 1, 1);
+  serial.AddBdrSegment(1, 2, 1);
+  serial.AddBdrSegment(2, 0, 1);
+  serial.FinalizeTopology();
+  serial.Finalize(true, false);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  std::vector<fem::singular::GlobalVertexId> ids{10, 20, 30};
+  ConformingVertexAncestry ancestry;
+  ancestry.Observe(mesh, ids);
+  mfem::Array<int> marked(1);
+  marked[0] = 0;
+  const int old_vertices = mesh.GetNV();
+  mesh.GeneralRefinement(marked, -1, 1);
+  REQUIRE(mesh.GetNV() == old_vertices + 3);
+  REQUIRE(ancestry.Assign(mesh, ids));
+
+  // Lexicographically sorted parent keys are (10,20), (10,30), (20,30), assigned above
+  // the old maximum. Locate each midpoint geometrically only to make this test independent
+  // of MFEM's appended-vertex order; the production assignment uses refinement topology.
+  const std::map<std::array<double, 2>, fem::singular::GlobalVertexId> expected{
+      {{{1.0, 0.0}}, 31}, {{{0.0, 1.0}}, 32}, {{{1.0, 1.0}}, 33}};
+  for (int vertex = old_vertices; vertex < mesh.GetNV(); vertex++)
+  {
+    const double *point = mesh.GetVertex(vertex);
+    const auto found = expected.find({point[0], point[1]});
+    REQUIRE(found != expected.end());
+    CHECK(ids[vertex] == found->second);
+  }
+}
+
 TEST_CASE("Conforming refinement ancestry keys distinct coincident vertices",
           "[singularsolver][singularelements][Serial]")
 {

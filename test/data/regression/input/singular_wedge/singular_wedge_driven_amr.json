@@ -11,7 +11,7 @@
       "MaxIts": 1,
       "Tol": 1.0e-20,
       "Nonconformal": false,
-      "UpdateFraction": 0.999,
+      "UpdateFraction": 0.5,
       "MaximumImbalance": 1.01
     }
   },
@@ -72,7 +72,7 @@
       "KSPType": "GMRES",
       "Tol": 1.0e-10,
       "MaxIts": 500,
-      "MGMaxLevels": 2,
+      "MGMaxLevels": 1,
       "MGSmoothIts": 2,
       "PCMatReal": true
     }

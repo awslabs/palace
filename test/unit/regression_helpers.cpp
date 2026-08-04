@@ -462,7 +462,8 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   const std::filesystem::path input_path = data_root / "input" / case_dir;
   const std::filesystem::path config_path = input_path / config_json;
   const std::filesystem::path ref_postpro =
-      data_root / "ref" / std::filesystem::path(case_dir) / postpro_subdir;
+      data_root / "ref" / std::filesystem::path(case_dir) /
+      (opts.reference_subdir.empty() ? postpro_subdir : opts.reference_subdir);
 
   INFO("Regression case: " << case_dir << " / " << postpro_subdir
                            << "\ninput:   " << input_path << "\nconfig:  " << config_path

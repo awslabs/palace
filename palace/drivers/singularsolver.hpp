@@ -82,11 +82,10 @@ public:
 };
 
 // Exact topological ancestry for vertices created by conforming refinement. MFEM's
-// conforming bisection appends every new vertex as the midpoint of one coarse edge, at
-// index GetNV() + <edge id in the bisection hash table>. Capturing the coarse edge list
-// as pairs of persistent endpoint identities before refinement therefore yields a
-// complete descriptor for each appended vertex which is independent of MPI
-// decomposition, of transient MFEM global numbering, and of physical coordinates.
+// coarse-to-fine reference embeddings identify the two half-weight barycentric parent
+// vertices of every appended edge midpoint. Combining those parent vertices' persistent
+// identities yields a descriptor independent of child ordering, MPI decomposition,
+// transient global numbering, and physical coordinates.
 // Topologically distinct coincident edges stay distinct because their endpoint
 // identities differ. Repeated refinement composes: each pass keys on the identities its
 // parents already received.

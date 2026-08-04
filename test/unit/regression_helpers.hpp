@@ -70,6 +70,9 @@ struct RegressionOptions
   bool gridfunction_fields = false;
   SolverOverridePolicy linear_solver_policy = SolverOverridePolicy::UseGlobalOverride;
   SolverOverridePolicy eigen_solver_policy = SolverOverridePolicy::UseGlobalOverride;
+  // Optional decomposition-specific reference tree while preserving the live output/staging
+  // name. Empty uses postpro_subdir.
+  std::string reference_subdir;
   // Custom per-file checks keyed by relative path under postpro/ (e.g.
   // "farfield-rE.csv", "iteration1/port-S.csv").
   std::unordered_map<std::string, CustomCheck> custom_checks;

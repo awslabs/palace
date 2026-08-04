@@ -68,7 +68,7 @@
       "KSPType": "GMRES",
       "Tol": 1.0e-10,
       "MaxIts": 500,
-      "MGMaxLevels": 2,
+      "MGMaxLevels": 1,
       "PCMatReal": true
     }
   }

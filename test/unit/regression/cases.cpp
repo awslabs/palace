@@ -572,6 +572,12 @@ TEST_CASE("singular_wedge_eigenmode_amr", "[Serial][Parallel][Regression]")
   opts.paraview_fields = false;
   opts.linear_solver_policy = kForceDefaultSolver;
   opts.eigen_solver_policy = kForceDefaultSolver;
+  if (palace::Mpi::Size(palace::Mpi::World()) > 1)
+  {
+    // Conforming closure is partition-dependent even for identical stable seed IDs. Keep a
+    // decomposition-specific reference instead of weakening one shared tolerance.
+    opts.reference_subdir = "amr_eigenmode_mpi";
+  }
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_eigenmode_amr.json",
                                   "amr_eigenmode", opts);
 
@@ -746,6 +752,10 @@ TEST_CASE("singular_wedge_driven_amr", "[Serial][Parallel][Regression]")
   opts.excluded_columns = {"Relative residual"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = kForceDefaultSolver;
+  if (palace::Mpi::Size(palace::Mpi::World()) > 1)
+  {
+    opts.reference_subdir = "amr_driven_mpi";
+  }
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_driven_amr.json",
                                   "amr_driven", opts);
 

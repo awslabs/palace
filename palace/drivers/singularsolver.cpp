@@ -371,13 +371,12 @@ private:
   using GlobalVertexId = fem::singular::GlobalVertexId;
   using EdgeKey = std::array<GlobalVertexId, 2>;
 
-  // Coarse edge endpoint identities indexed by coarse edge number, captured before a
-  // conforming refinement pass. MFEM appends the midpoint of coarse edge e at local
-  // vertex index (coarse GetNV() + e') where e' is that edge's id in the bisection hash
-  // table. The hash table is seeded from the same edge enumeration, so a coarse edge
-  // list plus the coarse vertex count is sufficient to key every appended vertex.
+  // Coarse edge and element vertex identities captured before one conforming refinement
+  // pass. After refinement, MFEM's exact reference embedding maps each child vertex to its
+  // parent simplex; two half barycentric weights identify the actual bisected edge.
   std::vector<EdgeKey> coarse_edges;
   std::vector<GlobalVertexId> coarse_vertex_ids;
+  std::vector<std::vector<GlobalVertexId>> coarse_element_vertex_ids;
   int coarse_vertices = -1;
 
   static EdgeKey MakeEdgeKey(GlobalVertexId first, GlobalVertexId second)
@@ -394,6 +393,7 @@ public:
   {
     coarse_edges.clear();
     coarse_vertex_ids.clear();
+    coarse_element_vertex_ids.clear();
     coarse_vertices = -1;
   }
 
@@ -406,7 +406,18 @@ public:
     coarse_vertices = mesh.GetNV();
     coarse_vertex_ids = vertex_ids;
     coarse_edges.assign(mesh.GetNEdges(), EdgeKey{-1, -1});
+    coarse_element_vertex_ids.resize(mesh.GetNE());
     mfem::Array<int> endpoints;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      mesh.GetElementVertices(element, endpoints);
+      auto &ids = coarse_element_vertex_ids[element];
+      ids.resize(endpoints.Size());
+      for (int local = 0; local < endpoints.Size(); local++)
+      {
+        ids[local] = vertex_ids[endpoints[local]];
+      }
+    }
     for (int edge = 0; edge < mesh.GetNEdges(); edge++)
     {
       mesh.GetEdgeVertices(edge, endpoints);
@@ -436,70 +447,93 @@ public:
       return false;
     }
 
-    // Every appended vertex must resolve to exactly one coarse edge. Rather than
-    // reproduce MFEM's internal hash-table ordering, identify each appended vertex by
-    // the coarse edge whose endpoints bound it inside some refined element: the two
-    // coarse endpoints are the only retained vertices adjacent to the midpoint along a
-    // coarse edge. Element-local search is exact and needs no coordinates.
+    // Recover each appended midpoint from MFEM's exact coarse-to-fine reference embedding.
+    // A midpoint has exactly two barycentric weights equal to one half in its parent coarse
+    // simplex. Unlike a search among retained child vertices, this identifies the actual
+    // bisected parent edge and is independent of child-element ordering and partitioning.
     std::vector<EdgeKey> keys(new_vertices, EdgeKey{-1, -1});
-    mfem::Array<int> element_vertices;
+    const auto &transforms = mesh.GetRefinementTransforms();
+    bool complete = transforms.embeddings.Size() == mesh.GetNE();
     std::map<EdgeKey, int> coarse_lookup;
     for (const auto &edge : coarse_edges)
     {
       coarse_lookup.emplace(edge, 0);
     }
-    for (int element = 0; element < mesh.GetNE(); element++)
+    mfem::Array<int> element_vertices;
+    constexpr double barycentric_tolerance = 1.0e-12;
+    for (int element = 0; complete && element < mesh.GetNE(); element++)
     {
-      mesh.GetElementVertices(element, element_vertices);
-      for (int i = 0; i < element_vertices.Size(); i++)
+      const auto &embedding = transforms.embeddings[element];
+      if (embedding.parent < 0 ||
+          embedding.parent >= static_cast<int>(coarse_element_vertex_ids.size()))
       {
-        const int fine = element_vertices[i];
+        complete = false;
+        break;
+      }
+      const auto &parent_ids = coarse_element_vertex_ids[embedding.parent];
+      const auto &point_matrix =
+          transforms.point_matrices[embedding.geom](embedding.matrix);
+      mesh.GetElementVertices(element, element_vertices);
+      if (point_matrix.Width() != element_vertices.Size() ||
+          point_matrix.Height() + 1 != static_cast<int>(parent_ids.size()))
+      {
+        complete = false;
+        break;
+      }
+      for (int local = 0; local < element_vertices.Size(); local++)
+      {
+        const int fine = element_vertices[local];
         if (fine < coarse_vertices)
         {
           continue;
         }
         const int slot = fine - coarse_vertices;
-        if (keys[slot][0] >= 0)
+        std::vector<double> barycentric(parent_ids.size());
+        double sum = 0.0;
+        for (int d = 0; d < point_matrix.Height(); d++)
         {
-          continue;
+          barycentric[d + 1] = point_matrix(d, local);
+          sum += barycentric[d + 1];
         }
-        // Candidate parents are retained vertices of this element. A midpoint's parent
-        // edge is the unique coarse edge among those candidates.
-        for (int a = 0; a < element_vertices.Size() && keys[slot][0] < 0; a++)
+        barycentric[0] = 1.0 - sum;
+        std::array<int, 2> parents{-1, -1};
+        int parent_count = 0;
+        bool midpoint = true;
+        for (int i = 0; i < static_cast<int>(barycentric.size()); i++)
         {
-          if (element_vertices[a] >= coarse_vertices)
+          if (std::abs(barycentric[i] - 0.5) <= barycentric_tolerance)
           {
-            continue;
+            if (parent_count < 2)
+            {
+              parents[parent_count] = i;
+            }
+            parent_count++;
           }
-          for (int b = a + 1; b < element_vertices.Size(); b++)
+          else if (std::abs(barycentric[i]) > barycentric_tolerance)
           {
-            if (element_vertices[b] >= coarse_vertices)
-            {
-              continue;
-            }
-            const auto candidate = MakeEdgeKey(coarse_vertex_ids[element_vertices[a]],
-                                               coarse_vertex_ids[element_vertices[b]]);
-            if (coarse_lookup.find(candidate) != coarse_lookup.end())
-            {
-              keys[slot] = candidate;
-              break;
-            }
+            midpoint = false;
           }
         }
+        if (!midpoint || parent_count != 2)
+        {
+          complete = false;
+          break;
+        }
+        const auto key = MakeEdgeKey(parent_ids[parents[0]], parent_ids[parents[1]]);
+        if (coarse_lookup.find(key) == coarse_lookup.end())
+        {
+          complete = false;
+          break;
+        }
+        if (keys[slot][0] >= 0 && keys[slot] != key)
+        {
+          complete = false;
+          break;
+        }
+        keys[slot] = key;
       }
     }
 
-    // Deterministic identities: sort the globally unique new keys lexicographically and
-    // assign contiguous ids above the current maximum. Sorting exact topological keys
-    // makes the assignment independent of rank count and element partitioning.
-    GlobalVertexId maximum_id = -1;
-    for (auto id : coarse_vertex_ids)
-    {
-      maximum_id = std::max(maximum_id, id);
-    }
-    Mpi::GlobalMax(1, &maximum_id, mesh.GetComm());
-
-    bool complete = true;
     for (const auto &key : keys)
     {
       complete = complete && key[0] >= 0 && key[1] >= 0;
@@ -509,6 +543,13 @@ public:
     {
       return false;
     }
+
+    GlobalVertexId maximum_id = -1;
+    for (auto id : coarse_vertex_ids)
+    {
+      maximum_id = std::max(maximum_id, id);
+    }
+    Mpi::GlobalMax(1, &maximum_id, mesh.GetComm());
 
     const auto unique_keys = GatherUniqueEdgeKeys(mesh.GetComm(), keys);
     vertex_ids.resize(mesh.GetNV());

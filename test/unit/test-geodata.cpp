@@ -83,6 +83,27 @@ mfem::Mesh RectangleInternalSheetMesh()
   return mesh;
 }
 
+mfem::Mesh ThreeInternalSheetMesh()
+{
+  mfem::Mesh mesh(3, 15, 6, 3, 3);
+  for (int component = 0; component < 3; component++)
+  {
+    const double x = 3.0 * component;
+    mesh.AddVertex(x, 0.0, 0.0);
+    mesh.AddVertex(x + 1.0, 0.0, 0.0);
+    mesh.AddVertex(x, 1.0, 0.0);
+    mesh.AddVertex(x + 0.3, 0.3, 1.0);
+    mesh.AddVertex(x + 0.3, 0.3, -1.0);
+    const int v = 5 * component;
+    mesh.AddTet(v, v + 1, v + 2, v + 3, 1);
+    mesh.AddTet(v, v + 2, v + 1, v + 4, 1);
+    mesh.AddBdrTriangle(v, v + 1, v + 2, 7 + component);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
 bool ElementContainsEdge(const mfem::Element &el, int v0, int v1)
 {
   bool has_v0 = false, has_v1 = false;
@@ -154,6 +175,52 @@ TEST_CASE("Singular internal sheets remain conforming during mesh loading",
     CHECK(mesh->GetNBE() == 4);
     CHECK(iodata.boundaries.cracked_attributes.count(7) == 1);
   }
+  CHECK(fs::remove(mesh_path));
+}
+
+TEST_CASE("Mesh loading cracks only ordinary internal sheets",
+          "[geodata][singularfeatures][Serial]")
+{
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  const fs::path mesh_path =
+      fs::temp_directory_path() / fmt::format("palace-selective-crack-{}.mesh", nonce);
+  {
+    auto mesh = ThreeInternalSheetMesh();
+    std::ofstream output(mesh_path);
+    REQUIRE(output.good());
+    output.precision(std::numeric_limits<double>::max_digits10);
+    mesh.Print(output);
+  }
+
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", mesh_path.string()}, {"AddInterfaceBoundaryElements", false}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {7, 8}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"Attributes", {9}},
+           {"R", 50.0},
+           {"Direction", "+Z"},
+           {"Excitation", true}}}}}},
+      {"Solver", {{"SingularElements", {{"Attributes", {7}}}}}}};
+  IoData iodata(config, false);
+  auto mesh = mesh::Load(iodata, Mpi::World());
+  REQUIRE(mesh);
+  CAPTURE(mesh->GetNV(), mesh->GetNBE(), iodata.boundaries.cracked_attributes);
+  CHECK(iodata.boundaries.cracked_attributes.size() == 1);
+  CHECK(iodata.boundaries.cracked_attributes.count(8) == 1);
+  CHECK(iodata.boundaries.cracked_attributes.count(7) == 0);
+  CHECK(iodata.boundaries.cracked_attributes.count(9) == 0);
+  CHECK(mesh->GetNV() > 15);
+  CHECK(mesh->GetNBE() == 4);
+
+  // The singular sheet remains two-sided and conforming after the unrelated sheet cracks.
+  const auto features = fem::singular::ExtractSerialSheetFeatures(*mesh, {7});
+  CHECK_FALSE(features.Empty());
+  REQUIRE(features.sheet_faces.size() == 1);
+  CHECK(features.sheet_faces.front().boundary_attribute == 7);
   CHECK(fs::remove(mesh_path));
 }
 

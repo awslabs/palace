@@ -32,6 +32,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fem/hierarchicalerrorestimator.hpp"
 #include "fem/singularassembly.hpp"
 #include "fem/singulardofs.hpp"
 #include "fem/singularelements.hpp"
@@ -200,6 +201,132 @@ mfem::Mesh MmsLShapeMesh(int n)
   return mesh;
 }
 
+// Affine tetrahedral extrusion of the L-shape through z in [-1,1]. Each Cartesian cube is
+// split by the same Freudenthal diagonal, so all shared quadrilateral faces agree. Only
+// vertices touched by the three retained square columns are inserted.
+mfem::Mesh MmsExtrudedLShapeMesh(int n, int nz)
+{
+  REQUIRE(n > 0);
+  REQUIRE(nz > 0);
+  const int grid_vertices = (2 * n + 1) * (2 * n + 1) * (nz + 1);
+  const int active_vertices = grid_vertices - n * n * (nz + 1);
+  const int elements = 18 * n * n * nz;
+  mfem::Mesh mesh(3, active_vertices, elements, 0, 3);
+  std::vector<int> vertex_ids(grid_vertices, -1);
+  const auto flat = [n, nz](int i, int j, int k)
+  {
+    (void)nz;
+    return (k * (2 * n + 1) + j) * (2 * n + 1) + i;
+  };
+  const auto vertex = [&](int i, int j, int k)
+  {
+    const int index = flat(i, j, k);
+    if (vertex_ids[index] >= 0)
+    {
+      return vertex_ids[index];
+    }
+    const double point[3]{-1.0 + static_cast<double>(i) / n,
+                          -1.0 + static_cast<double>(j) / n,
+                          -1.0 + 2.0 * static_cast<double>(k) / nz};
+    vertex_ids[index] = mesh.AddVertex(point);
+    return vertex_ids[index];
+  };
+  const auto add_oriented_tet = [&](std::array<int, 4> tet)
+  {
+    const double *a = mesh.GetVertex(tet[0]);
+    const double *b = mesh.GetVertex(tet[1]);
+    const double *c = mesh.GetVertex(tet[2]);
+    const double *d = mesh.GetVertex(tet[3]);
+    const double determinant =
+        (b[0] - a[0]) * ((c[1] - a[1]) * (d[2] - a[2]) - (c[2] - a[2]) * (d[1] - a[1])) -
+        (b[1] - a[1]) * ((c[0] - a[0]) * (d[2] - a[2]) - (c[2] - a[2]) * (d[0] - a[0])) +
+        (b[2] - a[2]) * ((c[0] - a[0]) * (d[1] - a[1]) - (c[1] - a[1]) * (d[0] - a[0]));
+    REQUIRE(std::abs(determinant) > 1.0e-14);
+    if (determinant < 0.0)
+    {
+      std::swap(tet[1], tet[2]);
+    }
+    mesh.AddTet(tet.data(), 1);
+  };
+
+  for (int k = 0; k < nz; k++)
+  {
+    for (int j = 0; j < 2 * n; j++)
+    {
+      for (int i = 0; i < 2 * n; i++)
+      {
+        // Remove [0,1] x [-1,0], preserving the same 3 pi / 2 cross-section as the 2D MMS.
+        if (i >= n && j < n)
+        {
+          continue;
+        }
+        const int p000 = vertex(i, j, k), p100 = vertex(i + 1, j, k);
+        const int p010 = vertex(i, j + 1, k), p110 = vertex(i + 1, j + 1, k);
+        const int p001 = vertex(i, j, k + 1), p101 = vertex(i + 1, j, k + 1);
+        const int p011 = vertex(i, j + 1, k + 1), p111 = vertex(i + 1, j + 1, k + 1);
+        for (const auto &tet :
+             std::array<std::array<int, 4>, 6>{std::array<int, 4>{p000, p100, p110, p111},
+                                               std::array<int, 4>{p000, p100, p101, p111},
+                                               std::array<int, 4>{p000, p010, p110, p111},
+                                               std::array<int, 4>{p000, p010, p011, p111},
+                                               std::array<int, 4>{p000, p001, p101, p111},
+                                               std::array<int, 4>{p000, p001, p011, p111}})
+        {
+          add_oriented_tet(tet);
+        }
+      }
+    }
+  }
+  mesh.FinalizeTopology(true);
+
+  // Attribute one selects only the two vertical faces bounding the reentrant wedge.
+  mfem::Array<int> face_vertices;
+  for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+  {
+    mesh.GetBdrElementVertices(boundary, face_vertices);
+    bool on_x_reentrant = true, on_y_reentrant = true;
+    for (int v : face_vertices)
+    {
+      const double *point = mesh.GetVertex(v);
+      on_x_reentrant = on_x_reentrant && std::abs(point[0]) < 1.0e-13 &&
+                       point[1] <= 1.0e-13 && point[1] >= -1.0 - 1.0e-13;
+      on_y_reentrant = on_y_reentrant && std::abs(point[1]) < 1.0e-13 &&
+                       point[0] >= -1.0e-13 && point[0] <= 1.0 + 1.0e-13;
+    }
+    mesh.GetBdrElement(boundary)->SetAttribute(
+        (on_x_reentrant || on_y_reentrant) ? MmsReentrantAttribute : MmsOuterAttribute);
+  }
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
+double MmsAxial(double z)
+{
+  return (1.0 - z * z) * (1.0 + 0.25 * z);
+}
+
+double MmsAxialDerivative(double z)
+{
+  return 0.25 - 2.0 * z - 0.75 * z * z;
+}
+
+double MmsU3(double x, double y, double z)
+{
+  return MmsU(x, y) * MmsAxial(z);
+}
+
+std::array<double, 3> MmsGradU3(double x, double y, double z)
+{
+  const auto gradient = MmsGradU(x, y);
+  return {MmsAxial(z) * gradient[0], MmsAxial(z) * gradient[1],
+          MmsAxialDerivative(z) * MmsU(x, y)};
+}
+
+double MmsF3(double x, double y, double z)
+{
+  return MmsAxial(z) * MmsF(x, y) + (2.0 + 1.5 * z) * MmsU(x, y);
+}
+
 // Coefficient wrapper so MFEM can integrate the manufactured source.
 class MmsSourceCoefficient : public mfem::Coefficient
 {
@@ -212,6 +339,836 @@ public:
     return MmsF(point(0), point(1));
   }
 };
+
+class MmsSource3Coefficient : public mfem::Coefficient
+{
+public:
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    double data[3];
+    mfem::Vector point(data, 3);
+    T.Transform(ip, point);
+    return MmsF3(point(0), point(1), point(2));
+  }
+};
+
+struct Mms3DSolveReport
+{
+  long long dofs = 0;
+  long long enrichment_dofs = 0;
+  long long constrained_enrichment_dofs = 0;
+  long long free_enrichment_dofs = 0;
+  double algebraic_residual = 0.0;
+  double rhs_quadrature_difference = 0.0;
+  double error = 0.0;
+  double error_quadrature_difference = 0.0;
+  double axial_error = 0.0;
+  std::vector<double> element_error;
+  mfem::Vector standard_coefficients;
+  mfem::Vector enrichment_coefficients;
+  std::shared_ptr<mfem::SparseMatrix> combined_matrix;
+  mfem::Vector combined_rhs;
+  mfem::Vector combined_solution;
+  std::vector<bool> essential_mask;
+};
+
+Mms3DSolveReport MmsSolve3D(mfem::Mesh &mesh, int order, bool enriched)
+{
+  mfem::H1_FECollection collection(order, 3);
+  mfem::FiniteElementSpace space(&mesh, &collection);
+  REQUIRE(space.GetVSize() == space.GetTrueVSize());
+  const int standard_size = space.GetVSize();
+
+  fem::singular::FeatureTopology features;
+  fem::singular::DofTopology topology;
+  fem::singular::LocalSparseH1EnrichmentMatrices enrichment;
+  int enrichment_size = 0;
+  if (enriched)
+  {
+    features = fem::singular::ExtractSerialSheetFeatures(
+        mesh, {MmsReentrantAttribute},
+        std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+    REQUIRE(features.features.size() == 1);
+    REQUIRE_THAT(features.features.front().nu, WithinRel(MmsNu, 1.0e-12));
+    topology = fem::singular::BuildSerialDofTopology(mesh, features, 1);
+    enrichment_size = static_cast<int>(topology.h1_dofs.size());
+    REQUIRE(enrichment_size > 0);
+    const std::vector<fem::singular::IsotropicMaterialCoefficients> materials(mesh.GetNE(),
+                                                                              {1.0, 1.0});
+    const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-7, 1.0e-6, 8};
+    enrichment = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(topology, space,
+                                                                        materials, options);
+  }
+  const int combined_size = standard_size + enrichment_size;
+
+  mfem::SparseMatrix combined(combined_size, combined_size);
+  {
+    mfem::BilinearForm standard(&space);
+    standard.AddDomainIntegrator(new mfem::DiffusionIntegrator());
+    standard.Assemble();
+    standard.Finalize();
+    const auto &block = standard.SpMat();
+    for (int row = 0; row < block.Height(); row++)
+    {
+      for (int entry = block.GetI()[row]; entry < block.GetI()[row + 1]; entry++)
+      {
+        combined.Add(row, block.GetJ()[entry], block.GetData()[entry]);
+      }
+    }
+  }
+  if (enriched)
+  {
+    const auto add_block =
+        [&combined](const mfem::SparseMatrix &block, int row_offset, int column_offset)
+    {
+      for (int row = 0; row < block.Height(); row++)
+      {
+        for (int entry = block.GetI()[row]; entry < block.GetI()[row + 1]; entry++)
+        {
+          combined.Add(row_offset + row, column_offset + block.GetJ()[entry],
+                       block.GetData()[entry]);
+        }
+      }
+    };
+    add_block(*enrichment.diffusion.standard_enrichment, 0, standard_size);
+    add_block(*enrichment.diffusion.enrichment_standard, standard_size, 0);
+    add_block(*enrichment.diffusion.enrichment_enrichment, standard_size, standard_size);
+  }
+  combined.Finalize();
+
+  mfem::Vector rhs(combined_size);
+  rhs = 0.0;
+  double rhs_quadrature_difference = 0.0;
+  {
+    const auto assemble_standard_rhs = [&](int quadrature_order)
+    {
+      MmsSource3Coefficient source;
+      auto *integrator = new mfem::DomainLFIntegrator(source);
+      integrator->SetIntRule(
+          &mfem::IntRules.Get(mfem::Geometry::TETRAHEDRON, quadrature_order));
+      mfem::LinearForm standard(&space);
+      standard.AddDomainIntegrator(integrator);
+      standard.Assemble();
+      return mfem::Vector(standard);
+    };
+    const auto reference = assemble_standard_rhs(16);
+    const auto lower_order = assemble_standard_rhs(12);
+    mfem::Vector difference(reference);
+    difference -= lower_order;
+    rhs_quadrature_difference = difference.Norml2() / std::max(reference.Norml2(), 1.0e-30);
+    for (int i = 0; i < standard_size; i++)
+    {
+      rhs(i) = reference(i);
+    }
+  }
+  if (enriched)
+  {
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      const auto &element_dofs = topology.elements[element].h1;
+      if (element_dofs.empty())
+      {
+        continue;
+      }
+      auto &T = *mesh.GetElementTransformation(element);
+      double jacobian_determinant;
+      fem::singular::GetAffineBarycentricGradients(T, jacobian_determinant);
+      const auto local = fem::singular::IntegrateReferenceTetrahedronAdaptive(
+          8, 1.0e-8, 1.0e-7, 8, element_dofs.size(),
+          [&](const fem::singular::BarycentricPoint &lambda, std::vector<double> &value)
+          {
+            mfem::IntegrationPoint ip;
+            ip.Set3(lambda[1], lambda[2], lambda[3]);
+            T.SetIntPoint(&ip);
+            double data[3];
+            mfem::Vector point(data, 3);
+            T.Transform(ip, point);
+            const double source = MmsF3(point(0), point(1), point(2));
+            for (std::size_t i = 0; i < element_dofs.size(); i++)
+            {
+              value[i] = jacobian_determinant * source *
+                         fem::singular::EvaluateHigherOrderGradientPotential(
+                             lambda, element_dofs[i].basis);
+            }
+          });
+      REQUIRE(local.converged);
+      for (std::size_t i = 0; i < element_dofs.size(); i++)
+      {
+        rhs(standard_size + static_cast<int>(element_dofs[i].dof)) += local.value[i];
+      }
+    }
+  }
+
+  std::vector<bool> essential(combined_size, false);
+  mfem::Array<int> standard_essential;
+  space.GetBoundaryTrueDofs(standard_essential);
+  for (int dof : standard_essential)
+  {
+    essential[dof] = true;
+  }
+  if (enriched)
+  {
+    const auto numbering = fem::singular::BuildParallelDofNumbering(Mpi::World(), topology);
+    REQUIRE(numbering.h1.owned_offset == 0);
+    REQUIRE(numbering.h1.owned_size == enrichment_size);
+    std::vector<std::array<fem::singular::GlobalVertexId, 3>> boundary_faces;
+    mfem::Array<int> vertices;
+    for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+    {
+      mesh.GetBdrElementVertices(boundary, vertices);
+      REQUIRE(vertices.Size() == 3);
+      std::array<fem::singular::GlobalVertexId, 3> face{vertices[0], vertices[1],
+                                                        vertices[2]};
+      std::sort(face.begin(), face.end());
+      boundary_faces.push_back(face);
+    }
+    const auto enrichment_essential = fem::singular::GetEssentialH1TrueDofsOnFaces(
+        Mpi::World(), boundary_faces, topology, numbering);
+    for (int dof : enrichment_essential)
+    {
+      essential[standard_size + dof] = true;
+    }
+  }
+
+  std::vector<int> free_dofs, combined_to_free(combined_size, -1);
+  for (int dof = 0; dof < combined_size; dof++)
+  {
+    if (!essential[dof])
+    {
+      combined_to_free[dof] = static_cast<int>(free_dofs.size());
+      free_dofs.push_back(dof);
+    }
+  }
+  mfem::SparseMatrix system(static_cast<int>(free_dofs.size()),
+                            static_cast<int>(free_dofs.size()));
+  mfem::Vector reduced_rhs(static_cast<int>(free_dofs.size()));
+  for (int row = 0; row < static_cast<int>(free_dofs.size()); row++)
+  {
+    const int combined_row = free_dofs[row];
+    reduced_rhs(row) = rhs(combined_row);
+    for (int entry = combined.GetI()[combined_row];
+         entry < combined.GetI()[combined_row + 1]; entry++)
+    {
+      const int column = combined_to_free[combined.GetJ()[entry]];
+      if (column >= 0)
+      {
+        system.Add(row, column, combined.GetData()[entry]);
+      }
+    }
+  }
+  system.Finalize();
+
+  mfem::Vector reduced_solution(static_cast<int>(free_dofs.size()));
+  reduced_solution = 0.0;
+  mfem::GSSmoother preconditioner(system);
+  mfem::CGSolver cg;
+  cg.SetOperator(system);
+  cg.SetPreconditioner(preconditioner);
+  cg.SetRelTol(1.0e-14);
+  cg.SetAbsTol(1.0e-30);
+  cg.SetMaxIter(50000);
+  cg.SetPrintLevel(-1);
+  cg.Mult(reduced_rhs, reduced_solution);
+  REQUIRE(cg.GetConverged());
+
+  mfem::Vector combined_solution(combined_size);
+  combined_solution = 0.0;
+  for (int row = 0; row < static_cast<int>(free_dofs.size()); row++)
+  {
+    combined_solution(free_dofs[row]) = reduced_solution(row);
+  }
+  Mms3DSolveReport report;
+  report.dofs = combined_size;
+  report.enrichment_dofs = enrichment_size;
+  report.rhs_quadrature_difference = rhs_quadrature_difference;
+  for (int dof = 0; dof < enrichment_size; dof++)
+  {
+    report.constrained_enrichment_dofs += essential[standard_size + dof];
+    report.free_enrichment_dofs += !essential[standard_size + dof];
+  }
+  {
+    mfem::Vector algebraic(static_cast<int>(free_dofs.size()));
+    system.Mult(reduced_solution, algebraic);
+    algebraic -= reduced_rhs;
+    report.algebraic_residual =
+        algebraic.Norml2() / std::max(reduced_rhs.Norml2(), 1.0e-30);
+  }
+
+  mfem::GridFunction standard_solution(&space);
+  for (int i = 0; i < standard_size; i++)
+  {
+    standard_solution(i) = combined_solution(i);
+  }
+  report.element_error.assign(mesh.GetNE(), 0.0);
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &T = *mesh.GetElementTransformation(element);
+    double jacobian_determinant;
+    const auto grad_lambda =
+        fem::singular::GetAffineBarycentricGradients(T, jacobian_determinant);
+    const auto error_at = [&](const fem::singular::BarycentricPoint &lambda)
+    {
+      mfem::IntegrationPoint ip;
+      ip.Set3(lambda[1], lambda[2], lambda[3]);
+      T.SetIntPoint(&ip);
+      double data[3];
+      mfem::Vector point(data, 3), gradient(3);
+      T.Transform(ip, point);
+      standard_solution.GetGradient(T, gradient);
+      if (enriched)
+      {
+        for (const auto &dof : topology.elements[element].h1)
+        {
+          const double coefficient =
+              combined_solution(standard_size + static_cast<int>(dof.dof));
+          const auto basis =
+              fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, dof.basis);
+          for (int d = 0; d < 3; d++)
+          {
+            gradient(d) += coefficient * basis.value[d];
+          }
+        }
+      }
+      const auto exact = MmsGradU3(point(0), point(1), point(2));
+      const double dx = exact[0] - gradient(0), dy = exact[1] - gradient(1);
+      const double dz = exact[2] - gradient(2);
+      return std::array<double, 2>{jacobian_determinant * (dx * dx + dy * dy + dz * dz),
+                                   jacobian_determinant * dz * dz};
+    };
+
+    // Feature-aligned Duffy quadrature resolves r^{-2/3} exactly enough for the direct
+    // energy error. Tetrahedra containing only a feature endpoint use the node map; those
+    // containing a feature segment use the edge map. Ordinary elements need no grading.
+    mfem::Array<int> element_vertices;
+    mesh.GetElementVertices(element, element_vertices);
+    std::vector<int> singular_nodes;
+    for (int local = 0; local < element_vertices.Size(); local++)
+    {
+      const double *point = mesh.GetVertex(element_vertices[local]);
+      if (std::hypot(point[0], point[1]) < 1.0e-13)
+      {
+        singular_nodes.push_back(local);
+      }
+    }
+    const auto integrate_component = [&](int component, int quadrature_order)
+    {
+      const auto integrand = [&](const fem::singular::BarycentricPoint &lambda)
+      { return error_at(lambda)[component]; };
+      if (singular_nodes.size() >= 2)
+      {
+        return fem::singular::IntegrateReferenceTetrahedronEdgeDuffy(
+            quadrature_order, singular_nodes[0], singular_nodes[1], 6.0, integrand);
+      }
+      if (singular_nodes.size() == 1)
+      {
+        return fem::singular::IntegrateReferenceTetrahedronNodeDuffy(
+            quadrature_order, singular_nodes[0], 6.0, integrand);
+      }
+      return fem::singular::IntegrateReferenceTetrahedron(quadrature_order, 1, integrand);
+    };
+    const double error = integrate_component(0, 20);
+    const double lower_order_error = integrate_component(0, 18);
+    const double axial_error = integrate_component(1, 20);
+    report.element_error[element] = error;
+    report.error += error;
+    report.error_quadrature_difference += std::abs(error - lower_order_error);
+    report.axial_error += axial_error;
+  }
+  report.standard_coefficients.SetSize(standard_size);
+  for (int i = 0; i < standard_size; i++)
+  {
+    report.standard_coefficients(i) = combined_solution(i);
+  }
+  report.enrichment_coefficients.SetSize(enrichment_size);
+  for (int i = 0; i < enrichment_size; i++)
+  {
+    report.enrichment_coefficients(i) = combined_solution(standard_size + i);
+  }
+  report.combined_matrix = std::make_shared<mfem::SparseMatrix>(combined);
+  report.combined_rhs = rhs;
+  report.combined_solution = combined_solution;
+  report.essential_mask = essential;
+  return report;
+}
+
+std::vector<double> Mms3DCorrectionIndicator(mfem::Mesh &mesh, int order,
+                                             const mfem::Vector &correction,
+                                             int enrichment_size)
+{
+  mfem::H1_FECollection collection(order, 3);
+  mfem::FiniteElementSpace space(&mesh, &collection);
+  const int standard_size = space.GetVSize();
+  REQUIRE(correction.Size() == standard_size + enrichment_size);
+  const auto features = fem::singular::ExtractSerialSheetFeatures(
+      mesh, {MmsReentrantAttribute},
+      std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  const auto topology = fem::singular::BuildSerialDofTopology(mesh, features, 1);
+  REQUIRE(static_cast<int>(topology.h1_dofs.size()) == enrichment_size);
+  mfem::GridFunction standard(&space);
+  for (int i = 0; i < standard_size; i++)
+  {
+    standard(i) = correction(i);
+  }
+
+  std::vector<double> indicator(mesh.GetNE(), 0.0);
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &T = *mesh.GetElementTransformation(element);
+    double jacobian_determinant;
+    const auto grad_lambda =
+        fem::singular::GetAffineBarycentricGradients(T, jacobian_determinant);
+    const auto energy = [&](const fem::singular::BarycentricPoint &lambda)
+    {
+      mfem::IntegrationPoint ip;
+      ip.Set3(lambda[1], lambda[2], lambda[3]);
+      T.SetIntPoint(&ip);
+      mfem::Vector gradient(3);
+      standard.GetGradient(T, gradient);
+      for (const auto &dof : topology.elements[element].h1)
+      {
+        const double coefficient = correction(standard_size + static_cast<int>(dof.dof));
+        const auto basis =
+            fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda, dof.basis);
+        for (int d = 0; d < 3; d++)
+        {
+          gradient(d) += coefficient * basis.value[d];
+        }
+      }
+      return jacobian_determinant * mfem::InnerProduct(gradient, gradient);
+    };
+    mfem::Array<int> vertices;
+    mesh.GetElementVertices(element, vertices);
+    std::vector<int> singular_nodes;
+    for (int local = 0; local < vertices.Size(); local++)
+    {
+      const double *point = mesh.GetVertex(vertices[local]);
+      if (std::hypot(point[0], point[1]) < 1.0e-13)
+      {
+        singular_nodes.push_back(local);
+      }
+    }
+    if (singular_nodes.size() >= 2)
+    {
+      indicator[element] = fem::singular::IntegrateReferenceTetrahedronEdgeDuffy(
+          18, singular_nodes[0], singular_nodes[1], 6.0, energy);
+    }
+    else if (singular_nodes.size() == 1)
+    {
+      indicator[element] = fem::singular::IntegrateReferenceTetrahedronNodeDuffy(
+          18, singular_nodes[0], 6.0, energy);
+    }
+    else
+    {
+      indicator[element] = fem::singular::IntegrateReferenceTetrahedron(14, 1, energy);
+    }
+  }
+  return indicator;
+}
+
+struct Mms3DHierarchicalReport
+{
+  std::vector<double> element_error;
+  std::vector<double> indicator_global;
+  std::vector<double> indicator_local;
+  long long coarse_dofs = 0;
+  double coarse_error = 0.0;
+  double global_energy = 0.0;
+  double local_energy = 0.0;
+  double captured_fraction = 0.0;
+  double global_residual = 0.0;
+  double maximum_patch_residual = 0.0;
+  double maximum_patch_condition = 0.0;
+  double overlap_error = 0.0;
+  int edge_patches = 0;
+  int face_patches = 0;
+  int interior_patches = 0;
+  int owned_modes = 0;
+  int maximum_patch_dimension = 0;
+};
+
+Mms3DHierarchicalReport Mms3DHierarchicalBenchmark(mfem::Mesh &mesh, int order)
+{
+  Mms3DHierarchicalReport report;
+  const auto coarse = MmsSolve3D(mesh, order, true);
+  const auto fine = MmsSolve3D(mesh, order + 1, true);
+  report.element_error = coarse.element_error;
+  report.coarse_dofs = coarse.dofs;
+  report.coarse_error = coarse.error;
+  REQUIRE(coarse.enrichment_dofs == fine.enrichment_dofs);
+  const int enrichment = static_cast<int>(coarse.enrichment_dofs);
+  mfem::H1_FECollection coarse_collection(order, 3), fine_collection(order + 1, 3);
+  mfem::FiniteElementSpace coarse_space(&mesh, &coarse_collection);
+  mfem::FiniteElementSpace fine_space(&mesh, &fine_collection);
+  const int coarse_standard = coarse_space.GetVSize();
+  const int fine_standard = fine_space.GetVSize();
+  const int fine_combined = fine_standard + enrichment;
+
+  mfem::DenseMatrix injection(fine_combined, coarse_standard + enrichment);
+  injection = 0.0;
+  {
+    mfem::PRefinementTransferOperator transfer(coarse_space, fine_space);
+    mfem::GridFunction unit(&coarse_space), image(&fine_space);
+    for (int column = 0; column < coarse_standard; column++)
+    {
+      unit = 0.0;
+      unit(column) = 1.0;
+      transfer.Mult(unit, image);
+      for (int row = 0; row < fine_standard; row++)
+      {
+        injection(row, column) = image(row);
+      }
+    }
+    for (int e = 0; e < enrichment; e++)
+    {
+      injection(fine_standard + e, coarse_standard + e) = 1.0;
+    }
+  }
+  mfem::Vector coarse_combined(coarse_standard + enrichment);
+  for (int i = 0; i < coarse_standard; i++)
+  {
+    coarse_combined(i) = coarse.standard_coefficients(i);
+  }
+  for (int e = 0; e < enrichment; e++)
+  {
+    coarse_combined(coarse_standard + e) = coarse.enrichment_coefficients(e);
+  }
+  mfem::Vector injected(fine_combined);
+  injection.Mult(coarse_combined, injected);
+  mfem::Vector residual(fine.combined_rhs);
+  mfem::Vector applied(fine_combined);
+  fine.combined_matrix->Mult(injected, applied);
+  residual -= applied;
+  mfem::Vector global(fine.combined_solution);
+  global -= injected;
+  fine.combined_matrix->Mult(global, applied);
+  report.global_energy = mfem::InnerProduct(global, applied);
+  mfem::Vector global_residual(applied);
+  global_residual -= residual;
+  for (int i = 0; i < fine_combined; i++)
+  {
+    if (fine.essential_mask[i])
+    {
+      global_residual(i) = 0.0;
+    }
+  }
+  double free_residual_norm2 = 0.0;
+  for (int i = 0; i < fine_combined; i++)
+  {
+    if (!fine.essential_mask[i])
+    {
+      free_residual_norm2 += residual(i) * residual(i);
+    }
+  }
+  report.global_residual =
+      global_residual.Norml2() / std::max(std::sqrt(free_residual_norm2), 1.0e-30);
+  report.indicator_global = Mms3DCorrectionIndicator(mesh, order + 1, global, enrichment);
+
+  const auto features = fem::singular::ExtractSerialSheetFeatures(
+      mesh, {MmsReentrantAttribute},
+      std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  const auto topology = fem::singular::BuildSerialDofTopology(mesh, features, 1);
+  struct Patch
+  {
+    int owned = 0;
+    std::vector<mfem::Vector> basis;
+    std::vector<int> coarse_guests;
+    std::vector<int> singular_guests;
+    mfem::Vector coefficients;
+  };
+  std::vector<Patch> patches;
+
+  const auto entity_complement =
+      [&](mfem::Array<int> fine_entity, mfem::Array<int> coarse_entity)
+  {
+    mfem::FiniteElementSpace::AdjustVDofs(fine_entity);
+    mfem::FiniteElementSpace::AdjustVDofs(coarse_entity);
+    std::vector<int> rows, columns;
+    for (int dof : fine_entity)
+    {
+      if (!fine.essential_mask[dof])
+      {
+        rows.push_back(dof);
+      }
+    }
+    for (int dof : coarse_entity)
+    {
+      if (!coarse.essential_mask[dof])
+      {
+        columns.push_back(dof);
+      }
+    }
+    std::vector<mfem::Vector> range;
+    for (int column : columns)
+    {
+      mfem::Vector vector(static_cast<int>(rows.size()));
+      for (int row = 0; row < vector.Size(); row++)
+      {
+        vector(row) = injection(rows[row], column);
+      }
+      for (int repeat = 0; repeat < 2; repeat++)
+      {
+        for (const auto &basis : range)
+        {
+          vector.Add(-mfem::InnerProduct(vector, basis), basis);
+        }
+      }
+      const double norm = vector.Norml2();
+      if (norm > 1.0e-12)
+      {
+        vector /= norm;
+        range.push_back(vector);
+      }
+    }
+    std::vector<mfem::Vector> complement;
+    for (int direction = 0; direction < static_cast<int>(rows.size()); direction++)
+    {
+      mfem::Vector vector(static_cast<int>(rows.size()));
+      vector = 0.0;
+      vector(direction) = 1.0;
+      for (int repeat = 0; repeat < 2; repeat++)
+      {
+        for (const auto &basis : range)
+        {
+          vector.Add(-mfem::InnerProduct(vector, basis), basis);
+        }
+        for (const auto &basis : complement)
+        {
+          vector.Add(-mfem::InnerProduct(vector, basis), basis);
+        }
+      }
+      const double norm = vector.Norml2();
+      if (norm > 1.0e-10)
+      {
+        vector /= norm;
+        complement.push_back(vector);
+      }
+    }
+    std::vector<mfem::Vector> expanded;
+    for (const auto &local : complement)
+    {
+      mfem::Vector vector(fine_combined);
+      vector = 0.0;
+      for (int row = 0; row < static_cast<int>(rows.size()); row++)
+      {
+        vector(rows[row]) = local(row);
+      }
+      expanded.push_back(vector);
+    }
+    return expanded;
+  };
+
+  const auto add_patch = [&](std::vector<mfem::Vector> owned,
+                             const std::vector<int> &elements, int entity_type)
+  {
+    if (owned.empty())
+    {
+      return;
+    }
+    Patch patch;
+    patch.owned = static_cast<int>(owned.size());
+    patch.basis = std::move(owned);
+    report.owned_modes += patch.owned;
+    report.edge_patches += entity_type == 0;
+    report.face_patches += entity_type == 1;
+    report.interior_patches += entity_type == 2;
+    std::set<int> coarse_guests, singular_guests;
+    mfem::Array<int> element_dofs;
+    for (int element : elements)
+    {
+      coarse_space.GetElementDofs(element, element_dofs);
+      mfem::FiniteElementSpace::AdjustVDofs(element_dofs);
+      for (int dof : element_dofs)
+      {
+        if (!coarse.essential_mask[dof])
+        {
+          coarse_guests.insert(dof);
+        }
+      }
+      for (const auto &dof : topology.elements[element].h1)
+      {
+        if (!fine.essential_mask[fine_standard + static_cast<int>(dof.dof)])
+        {
+          singular_guests.insert(static_cast<int>(dof.dof));
+        }
+      }
+    }
+    for (int dof : coarse_guests)
+    {
+      mfem::Vector column(fine_combined);
+      for (int row = 0; row < fine_combined; row++)
+      {
+        column(row) = injection(row, dof);
+      }
+      patch.coarse_guests.push_back(dof);
+      patch.basis.push_back(column);
+    }
+    for (int dof : singular_guests)
+    {
+      mfem::Vector column(fine_combined);
+      column = 0.0;
+      column(fine_standard + dof) = 1.0;
+      patch.singular_guests.push_back(dof);
+      patch.basis.push_back(column);
+    }
+    const int size = static_cast<int>(patch.basis.size());
+    report.maximum_patch_dimension = std::max(report.maximum_patch_dimension, size);
+    mfem::DenseMatrix matrix(size);
+    mfem::Vector patch_rhs(size);
+    std::vector<mfem::Vector> images(size);
+    for (int column = 0; column < size; column++)
+    {
+      images[column].SetSize(fine_combined);
+      fine.combined_matrix->Mult(patch.basis[column], images[column]);
+      patch_rhs(column) = mfem::InnerProduct(patch.basis[column], residual);
+    }
+    for (int row = 0; row < size; row++)
+    {
+      for (int column = 0; column < size; column++)
+      {
+        matrix(row, column) = mfem::InnerProduct(patch.basis[row], images[column]);
+      }
+    }
+    mfem::DenseMatrixInverse inverse(matrix, true);
+    mfem::DenseMatrix inverse_matrix;
+    inverse.GetInverseMatrix(inverse_matrix);
+    report.maximum_patch_condition =
+        std::max(report.maximum_patch_condition, matrix.FNorm() * inverse_matrix.FNorm());
+    patch.coefficients.SetSize(size);
+    inverse.Mult(patch_rhs, patch.coefficients);
+    mfem::Vector check(size);
+    matrix.Mult(patch.coefficients, check);
+    check -= patch_rhs;
+    report.maximum_patch_residual =
+        std::max(report.maximum_patch_residual,
+                 check.Norml2() / std::max(patch_rhs.Norml2(), 1.0e-30));
+    patches.push_back(std::move(patch));
+  };
+
+  std::vector<std::vector<int>> edge_elements(mesh.GetNEdges());
+  std::vector<std::vector<int>> face_elements(mesh.GetNumFaces());
+  mfem::Array<int> entities, orientations;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    mesh.GetElementEdges(element, entities, orientations);
+    for (int edge : entities)
+    {
+      edge_elements[edge].push_back(element);
+    }
+    mesh.GetElementFaces(element, entities, orientations);
+    for (int face : entities)
+    {
+      face_elements[face].push_back(element);
+    }
+  }
+  for (int edge = 0; edge < mesh.GetNEdges(); edge++)
+  {
+    mfem::Array<int> fine_dofs, coarse_dofs;
+    fine_space.GetEdgeInteriorDofs(edge, fine_dofs);
+    coarse_space.GetEdgeInteriorDofs(edge, coarse_dofs);
+    add_patch(entity_complement(fine_dofs, coarse_dofs), edge_elements[edge], 0);
+  }
+  for (int face = 0; face < mesh.GetNumFaces(); face++)
+  {
+    mfem::Array<int> fine_dofs, coarse_dofs;
+    fine_space.GetFaceInteriorDofs(face, fine_dofs);
+    coarse_space.GetFaceInteriorDofs(face, coarse_dofs);
+    add_patch(entity_complement(fine_dofs, coarse_dofs), face_elements[face], 1);
+  }
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    mfem::Array<int> fine_dofs, coarse_dofs;
+    fine_space.GetElementInteriorDofs(element, fine_dofs);
+    coarse_space.GetElementInteriorDofs(element, coarse_dofs);
+    add_patch(entity_complement(fine_dofs, coarse_dofs), {element}, 2);
+  }
+  int coarse_free = 0, fine_free = 0;
+  for (int i = 0; i < coarse_standard; i++)
+  {
+    coarse_free += !coarse.essential_mask[i];
+  }
+  for (int i = 0; i < fine_standard; i++)
+  {
+    fine_free += !fine.essential_mask[i];
+  }
+  REQUIRE(report.owned_modes == fine_free - coarse_free);
+
+  mfem::Vector raw(fine_combined);
+  raw = 0.0;
+  std::vector<double> coarse_sum(coarse_standard, 0.0), singular_sum(enrichment, 0.0);
+  std::vector<int> coarse_count(coarse_standard, 0), singular_count(enrichment, 0);
+  for (const auto &patch : patches)
+  {
+    for (int i = 0; i < patch.owned; i++)
+    {
+      raw.Add(patch.coefficients(i), patch.basis[i]);
+    }
+    int coefficient = patch.owned;
+    for (int dof : patch.coarse_guests)
+    {
+      coarse_sum[dof] += patch.coefficients(coefficient++);
+      coarse_count[dof]++;
+    }
+    for (int dof : patch.singular_guests)
+    {
+      singular_sum[dof] += patch.coefficients(coefficient++);
+      singular_count[dof]++;
+    }
+  }
+  for (int dof = 0; dof < coarse_standard; dof++)
+  {
+    if (!coarse.essential_mask[dof])
+    {
+      REQUIRE(coarse_count[dof] > 0);
+    }
+    if (coarse_count[dof] == 0)
+    {
+      continue;
+    }
+    const double coefficient = coarse_sum[dof] / coarse_count[dof];
+    for (int row = 0; row < fine_combined; row++)
+    {
+      raw(row) += coefficient * injection(row, dof);
+    }
+    double weight_sum = 0.0;
+    for (const auto &patch : patches)
+    {
+      weight_sum += static_cast<double>(std::count(patch.coarse_guests.begin(),
+                                                   patch.coarse_guests.end(), dof)) /
+                    coarse_count[dof];
+    }
+    report.overlap_error = std::max(report.overlap_error, std::abs(weight_sum - 1.0));
+  }
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    if (!coarse.essential_mask[coarse_standard + dof])
+    {
+      REQUIRE(singular_count[dof] > 0);
+    }
+    if (singular_count[dof] > 0)
+    {
+      raw(fine_standard + dof) += singular_sum[dof] / singular_count[dof];
+      double weight_sum = 0.0;
+      for (const auto &patch : patches)
+      {
+        weight_sum += static_cast<double>(std::count(patch.singular_guests.begin(),
+                                                     patch.singular_guests.end(), dof)) /
+                      singular_count[dof];
+      }
+      report.overlap_error = std::max(report.overlap_error, std::abs(weight_sum - 1.0));
+    }
+  }
+  mfem::Vector raw_applied(fine_combined);
+  fine.combined_matrix->Mult(raw, raw_applied);
+  const double raw_energy = mfem::InnerProduct(raw, raw_applied);
+  const double alpha =
+      raw_energy > 0.0 ? mfem::InnerProduct(raw, residual) / raw_energy : 0.0;
+  raw *= alpha;
+  fine.combined_matrix->Mult(raw, raw_applied);
+  report.local_energy = mfem::InnerProduct(raw, raw_applied);
+  report.captured_fraction = report.local_energy / report.global_energy;
+  report.indicator_local = Mms3DCorrectionIndicator(mesh, order + 1, raw, enrichment);
+  return report;
+}
 
 }  // namespace
 
@@ -275,6 +1232,140 @@ TEST_CASE("Manufactured L-shape source and solution are self-consistent",
                         graded_square(-1.0, -1.0, 20, 30);
   CAPTURE(energy, MmsReferenceEnergy);
   CHECK_THAT(energy, WithinRel(MmsReferenceEnergy, 1.0e-6));
+}
+
+TEST_CASE("Manufactured extruded L-shape is a genuine 3D singular-edge MMS",
+          "[singularmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int n = GENERATE(1, 2);
+  constexpr int nz = 2;
+  CAPTURE(n, nz);
+  auto mesh = MmsExtrudedLShapeMesh(n, nz);
+  CHECK(mesh.Dimension() == 3);
+  CHECK(mesh.SpaceDimension() == 3);
+  CHECK(mesh.Conforming());
+  CHECK(mesh.GetNE() == 18 * n * n * nz);
+  CHECK_THAT(mesh.GetElementVolume(0), WithinAbs(1.0 / (3.0 * n * n * nz), 1.0e-13));
+  double volume = 0.0;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    CHECK(mesh.GetElementBaseGeometry(element) == mfem::Geometry::TETRAHEDRON);
+    CHECK(mesh.GetElementVolume(element) > 0.0);
+    volume += mesh.GetElementVolume(element);
+  }
+  CHECK_THAT(volume, WithinAbs(6.0, 1.0e-12));
+
+  int reentrant_faces = 0, outer_faces = 0;
+  for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+  {
+    const int attribute = mesh.GetBdrAttribute(boundary);
+    reentrant_faces += attribute == MmsReentrantAttribute;
+    outer_faces += attribute == MmsOuterAttribute;
+  }
+  CHECK(reentrant_faces == 4 * n * nz);
+  CHECK(outer_faces > 0);
+
+  const auto features = fem::singular::ExtractSerialSheetFeatures(
+      mesh, {MmsReentrantAttribute},
+      std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  REQUIRE(features.features.size() == 1);
+  const auto &feature = features.features.front();
+  CHECK_FALSE(feature.closed);
+  CHECK_THAT(feature.nu, WithinRel(MmsNu, 1.0e-12));
+  CHECK(feature.segments.size() == static_cast<std::size_t>(nz));
+  double feature_length = 0.0;
+  for (std::size_t segment_index : feature.segments)
+  {
+    REQUIRE(segment_index < features.segments.size());
+    const auto &segment = features.segments[segment_index];
+    CHECK(segment.type == fem::singular::FeatureSegmentType::TRANSMISSION_WEDGE);
+    const double *a = mesh.GetVertex(segment.mesh_vertices[0]);
+    const double *b = mesh.GetVertex(segment.mesh_vertices[1]);
+    CHECK(std::hypot(a[0], a[1]) < 1.0e-13);
+    CHECK(std::hypot(b[0], b[1]) < 1.0e-13);
+    feature_length += std::abs(b[2] - a[2]);
+  }
+  CHECK_THAT(feature_length, WithinAbs(2.0, 1.0e-13));
+  const auto topology = fem::singular::BuildSerialDofTopology(mesh, features, 1);
+  CHECK_FALSE(topology.h1_dofs.empty());
+
+  // The axial factor makes this more than a 2D solve embedded in a 3D mesh: it vanishes on
+  // the caps but has a nonzero z-gradient and the exact source includes -Z'' v.
+  for (const auto &point : std::vector<std::array<double, 3>>{{-0.4, 0.3, -1.0},
+                                                              {-0.4, 0.3, 1.0},
+                                                              {0.0, -0.5, 0.2},
+                                                              {0.5, 0.0, -0.3},
+                                                              {-1.0, 0.2, 0.4},
+                                                              {0.2, 1.0, -0.4}})
+  {
+    CHECK_THAT(MmsU3(point[0], point[1], point[2]), WithinAbs(0.0, 1.0e-13));
+  }
+  const auto gradient = MmsGradU3(-0.4, 0.3, 0.2);
+  CHECK(std::abs(gradient[2]) > 1.0e-4);
+
+  // Independent finite-difference check of -Delta u = f away from the singular edge.
+  constexpr double h = 2.0e-4;
+  for (const auto &point : std::vector<std::array<double, 3>>{
+           {-0.4, 0.3, 0.2}, {-0.7, -0.4, -0.3}, {0.4, 0.6, 0.5}})
+  {
+    double laplacian = 0.0;
+    for (int axis = 0; axis < 3; axis++)
+    {
+      auto plus = point, minus = point;
+      plus[axis] += h;
+      minus[axis] -= h;
+      laplacian +=
+          (MmsU3(plus[0], plus[1], plus[2]) - 2.0 * MmsU3(point[0], point[1], point[2]) +
+           MmsU3(minus[0], minus[1], minus[2])) /
+          (h * h);
+    }
+    CHECK_THAT(-laplacian, WithinAbs(MmsF3(point[0], point[1], point[2]), 2.0e-6));
+  }
+
+  const auto &line_rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 12);
+  double axial_mass = 0.0, axial_energy = 0.0;
+  for (int q = 0; q < line_rule.GetNPoints(); q++)
+  {
+    const auto &ip = line_rule.IntPoint(q);
+    const double z = 2.0 * ip.x - 1.0;
+    axial_mass += 2.0 * ip.weight * MmsAxial(z) * MmsAxial(z);
+    axial_energy += 2.0 * ip.weight * MmsAxialDerivative(z) * MmsAxialDerivative(z);
+  }
+  CHECK_THAT(axial_mass, WithinRel(113.0 / 105.0, 1.0e-13));
+  CHECK_THAT(axial_energy, WithinRel(83.0 / 30.0, 1.0e-13));
+}
+
+TEST_CASE("Manufactured extruded L-shape singular electrostatics improves the 3D solve",
+          "[singularmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  auto mesh = MmsExtrudedLShapeMesh(1, 2);
+  const auto standard = MmsSolve3D(mesh, order, false);
+  const auto enriched = MmsSolve3D(mesh, order, true);
+  CAPTURE(standard.dofs, enriched.dofs, enriched.enrichment_dofs,
+          enriched.constrained_enrichment_dofs, enriched.free_enrichment_dofs,
+          standard.algebraic_residual, enriched.algebraic_residual,
+          standard.rhs_quadrature_difference, enriched.rhs_quadrature_difference,
+          standard.error, enriched.error, standard.error_quadrature_difference,
+          enriched.error_quadrature_difference, standard.axial_error, enriched.axial_error);
+  CHECK(standard.algebraic_residual < 1.0e-10);
+  CHECK(enriched.algebraic_residual < 1.0e-10);
+  CHECK(enriched.enrichment_dofs > 0);
+  CHECK(enriched.constrained_enrichment_dofs > 0);
+  CHECK(enriched.free_enrichment_dofs > 0);
+  CHECK(enriched.constrained_enrichment_dofs + enriched.free_enrichment_dofs ==
+        enriched.enrichment_dofs);
+  CHECK(standard.rhs_quadrature_difference < 1.0e-4);
+  CHECK(enriched.rhs_quadrature_difference < 1.0e-4);
+  // Orders 18 and 20 agree to one percent, while enrichment reduces the error by at
+  // least 25 percent. The improvement is therefore far larger than quadrature uncertainty.
+  CHECK(standard.error_quadrature_difference < 1.0e-2 * standard.error);
+  CHECK(enriched.error_quadrature_difference < 1.0e-2 * enriched.error);
+  CHECK(enriched.error < 0.75 * standard.error);
+  CHECK(enriched.axial_error > 0.01 * enriched.error);
 }
 
 TEST_CASE("Manufactured L-shape mesh resolves the reentrant corner",
@@ -820,6 +1911,12 @@ MmsAugmentedRecovery MmsAugmentedFluxIndicator(mfem::Mesh &mesh, int order,
   return result;
 }
 
+// Test-local operation counters make candidate independence observable. The sparse local
+// builder snapshots them; any future call into this global assembly/solve path will fail
+// its zero-delta regression instead of being hidden behind a hard-coded report value.
+long long MmsGlobalFineMatrixAssemblies = 0;
+long long MmsGlobalFineSolves = 0;
+
 // `frozen_enrichment`, when non-null, holds the singular coefficients FIXED at the supplied
 // values instead of solving for them. Used by the hierarchical ablations to suppress the
 // singular part of the coarse response dc = -A_cc^{-1} A_cn dn.
@@ -827,7 +1924,8 @@ MmsSolveReport MmsSolveOnMesh(mfem::Mesh &mesh, int order, int quadrature_order 
                               bool enriched = false,
                               MmsCornerQuadrature scheme = MmsCornerQuadrature::GRADED,
                               double override_nu = 0.0,
-                              const mfem::Vector *frozen_enrichment = nullptr)
+                              const mfem::Vector *frozen_enrichment = nullptr,
+                              bool solve_system = true)
 {
   mfem::H1_FECollection collection(order, 2);
   mfem::FiniteElementSpace space(&mesh, &collection);
@@ -902,6 +2000,7 @@ MmsSolveReport MmsSolveOnMesh(mfem::Mesh &mesh, int order, int quadrature_order 
     add_block(*enrichment.diffusion.enrichment_enrichment, standard_size, standard_size);
   }
   combined.Finalize();
+  MmsGlobalFineMatrixAssemblies++;
 
   // Right-hand side. The standard part is an ordinary MFEM linear form at high order; the
   // enrichment part is integrated against the singular basis with the same corner-resolving
@@ -1015,6 +2114,21 @@ MmsSolveReport MmsSolveOnMesh(mfem::Mesh &mesh, int order, int quadrature_order 
     }
   }
 
+  // Candidate construction needs only the fine test-space operator, load, and constraints.
+  // Returning here makes the absence of a global p+1 solve measurable rather than merely a
+  // data-flow observation inside the global benchmark.
+  if (!solve_system)
+  {
+    MmsSolveReport report;
+    report.elements = mesh.GetNE();
+    report.dofs = combined_size;
+    report.enrichment_dofs = enrichment_size;
+    report.combined_matrix = std::make_shared<mfem::SparseMatrix>(combined);
+    report.combined_rhs = rhs;
+    report.essential_mask = essential;
+    return report;
+  }
+
   // Reduce to the free DOFs. Essential values are zero except for a frozen enrichment,
   // whose nonzero prescription is moved to the right-hand side.
   std::vector<int> free_dofs, combined_to_free(combined_size, -1);
@@ -1056,6 +2170,7 @@ MmsSolveReport MmsSolveOnMesh(mfem::Mesh &mesh, int order, int quadrature_order 
   // solver contributes far less than the discretization error.
   mfem::Vector reduced_solution(free_size);
   reduced_solution = 0.0;
+  MmsGlobalFineSolves++;
   {
     mfem::GSSmoother preconditioner(system);
     mfem::CGSolver cg;
@@ -1430,6 +2545,70 @@ std::vector<std::size_t> MmsDorflerMark(const std::vector<double> &value, double
   return marked;
 }
 
+struct MmsOracleComparison
+{
+  double rank = 0.0;
+  double extend = 0.0;
+  double concentration = 0.0;
+  double true_capture = 0.0;
+  double correction_capture = 0.0;
+  std::size_t marked = 0;
+  std::size_t oracle_marked = 0;
+};
+
+// Compare one candidate ordering to exact-error Dörfler marking at identical theta and on
+// the identical mesh. RANK holds the candidate's own cardinality fixed; EXTEND holds the
+// oracle cardinality fixed. correction_capture is the share of an independently supplied
+// global hierarchical correction lying in the candidate's marked set.
+MmsOracleComparison MmsCompareToOracle(const std::vector<double> &indicator,
+                                       const std::vector<double> &exact,
+                                       const std::vector<double> &global_correction,
+                                       double theta)
+{
+  REQUIRE(indicator.size() == exact.size());
+  REQUIRE(global_correction.size() == exact.size());
+  const auto marked = MmsDorflerMark(indicator, theta);
+  const auto oracle = MmsDorflerMark(exact, theta);
+  REQUIRE(!marked.empty());
+  REQUIRE(!oracle.empty());
+  const auto top_k = [](const std::vector<double> &value, std::size_t count)
+  {
+    std::vector<std::size_t> index(value.size());
+    std::iota(index.begin(), index.end(), std::size_t{0});
+    count = std::min(count, value.size());
+    std::partial_sort(index.begin(), index.begin() + count, index.end(),
+                      [&value](std::size_t a, std::size_t b)
+                      { return value[a] > value[b]; });
+    return std::vector<std::size_t>(index.begin(), index.begin() + count);
+  };
+  const auto sum_on =
+      [](const std::vector<double> &value, const std::vector<std::size_t> &indices)
+  {
+    double sum = 0.0;
+    for (std::size_t index : indices)
+    {
+      sum += value[index];
+    }
+    return sum;
+  };
+  const double exact_total = std::accumulate(exact.begin(), exact.end(), 0.0);
+  const double correction_total =
+      std::accumulate(global_correction.begin(), global_correction.end(), 0.0);
+  const double marked_capture = sum_on(exact, marked);
+  const double oracle_capture = sum_on(exact, oracle);
+
+  MmsOracleComparison comparison;
+  comparison.marked = marked.size();
+  comparison.oracle_marked = oracle.size();
+  comparison.true_capture = marked_capture / exact_total;
+  comparison.rank = marked_capture / sum_on(exact, top_k(exact, marked.size()));
+  comparison.extend = sum_on(exact, top_k(indicator, oracle.size())) / oracle_capture;
+  comparison.concentration =
+      static_cast<double>(marked.size()) / static_cast<double>(oracle.size());
+  comparison.correction_capture = sum_on(global_correction, marked) / correction_total;
+  return comparison;
+}
+
 MmsRankingMetrics MmsComputeRanking(const mfem::Mesh &mesh,
                                     const std::vector<double> &indicator,
                                     const std::vector<double> &exact, double theta = 0.3)
@@ -1671,6 +2850,63 @@ TEST_CASE("Manufactured L-shape indicator degrades when the enrichment is sliced
   CHECK(sliced.top_decile_overlap <= full.top_decile_overlap + 1.0e-12);
 }
 
+template <typename CandidateFactory>
+std::vector<double> MmsSelectSingularOnlyIndicator(const MmsSolveReport &report,
+                                                   const CandidateFactory &candidate)
+{
+  // Preserve the production estimator and avoid even constructing hierarchical patch data
+  // unless the solved system actually contains singular enrichment DOFs.
+  if (report.enrichment_dofs == 0)
+  {
+    return report.indicator_standard;
+  }
+  auto indicator = candidate();
+  REQUIRE(indicator.size() == report.indicator_standard.size());
+  return indicator;
+}
+
+TEST_CASE("Manufactured L-shape test selector is lazy on standard systems",
+          "[singularmms][singularelements][Serial]")
+{
+  // This is a harness-level dispatch invariant: candidate construction is lazy and returns
+  // the already-computed production indicator when no singular DOFs exist. Production
+  // estimator regression is supplied separately by the unchanged ordinary regression suite.
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  const int n = GENERATE(2, 4);
+  CAPTURE(order, n);
+  auto mesh = MmsLShapeMesh(n);
+  const auto report = MmsSolveOnMesh(mesh, order, 20, false, MmsCornerQuadrature::GRADED);
+  REQUIRE(report.enrichment_dofs == 0);
+  bool candidate_constructed = false;
+  const auto selected = MmsSelectSingularOnlyIndicator(
+      report,
+      [&]()
+      {
+        candidate_constructed = true;
+        return std::vector<double>(report.indicator_standard.size(), -1.0);
+      });
+  CHECK_FALSE(candidate_constructed);
+  REQUIRE(selected.size() == report.indicator_standard.size());
+  double worst = 0.0, scale = 0.0;
+  for (std::size_t element = 0; element < selected.size(); element++)
+  {
+    worst =
+        std::max(worst, std::abs(selected[element] - report.indicator_standard[element]));
+    scale = std::max(scale, std::abs(report.indicator_standard[element]));
+  }
+  CAPTURE(worst, scale);
+  CHECK(worst <= 1.0e-12 * std::max(scale, 1.0));
+
+  const auto selected_ranking = MmsComputeRanking(mesh, selected, report.element_error);
+  const auto production =
+      MmsComputeRanking(mesh, report.indicator_standard, report.element_error);
+  CHECK_THAT(selected_ranking.effectivity, WithinAbs(production.effectivity, 1.0e-13));
+  CHECK_THAT(selected_ranking.dorfler_true_capture,
+             WithinAbs(production.dorfler_true_capture, 1.0e-13));
+  CHECK(selected_ranking.marked == production.marked);
+}
+
 namespace
 {
 
@@ -1726,27 +2962,22 @@ struct MmsAmrPass
   double marked_true_capture = 0.0;
 };
 
-std::vector<MmsAmrPass> MmsRunAmr(MmsAmrVariant variant, int order, int passes,
-                                  double theta)
+template <typename IndicatorSelector>
+std::vector<MmsAmrPass> MmsRunAmrWithIndicator(bool enriched, int order, int passes,
+                                               double theta,
+                                               const IndicatorSelector &select_indicator)
 {
-  const bool enriched = variant != MmsAmrVariant::STANDARD;
   auto mesh = MmsLShapeMesh(2);
   std::vector<MmsAmrPass> history;
   for (int pass = 0; pass < passes; pass++)
   {
     const auto report =
         MmsSolveOnMesh(mesh, order, 20, enriched, MmsCornerQuadrature::GRADED);
-    // Which indicator drives marking is the whole point of the comparison. The sliced
-    // variant reproduces production exactly: electrostaticsolver.cpp:1592 hands
-    // AddErrorIndicator only the standard block of the field.
-    // The oracle marks with the EXACT element errors. If even the oracle cannot beat
-    // quasi-uniform refinement, the estimator is not the limiting factor and no amount of
-    // estimator work would help.
-    const auto &indicator =
-        (variant == MmsAmrVariant::ENRICHED_ORACLE)
-            ? report.element_error
-            : ((variant == MmsAmrVariant::ENRICHED_FULL) ? report.indicator_full
-                                                         : report.indicator_standard);
+    // Which indicator drives marking is supplied explicitly so candidate estimators use
+    // this exact same conforming AMR loop and algebra certification as the production,
+    // full-field, and oracle references.
+    const std::vector<double> indicator = select_indicator(mesh, report);
+    REQUIRE(indicator.size() == report.element_error.size());
 
     MmsAmrPass record;
     record.elements = report.elements;
@@ -1828,6 +3059,28 @@ std::vector<MmsAmrPass> MmsRunAmr(MmsAmrVariant variant, int order, int passes,
     REQUIRE(mesh.Conforming());
   }
   return history;
+}
+
+std::vector<MmsAmrPass> MmsRunAmr(MmsAmrVariant variant, int order, int passes,
+                                  double theta)
+{
+  const bool enriched = variant != MmsAmrVariant::STANDARD;
+  return MmsRunAmrWithIndicator(enriched, order, passes, theta,
+                                [variant](mfem::Mesh &, const MmsSolveReport &report)
+                                {
+                                  // The sliced variant reproduces production exactly. The
+                                  // oracle is the exact-error upper reference, and the full
+                                  // variant measures the complete recovered field.
+                                  if (variant == MmsAmrVariant::ENRICHED_ORACLE)
+                                  {
+                                    return report.element_error;
+                                  }
+                                  if (variant == MmsAmrVariant::ENRICHED_FULL)
+                                  {
+                                    return report.indicator_full;
+                                  }
+                                  return report.indicator_standard;
+                                });
 }
 
 // Does `candidate` Pareto-dominate `reference`, i.e. no more DOFs AND less error?
@@ -2538,6 +3791,638 @@ namespace
 //
 // Unlike flux recovery this benchmark sees BOTH unresolved smooth error and an incorrect
 // singular AMPLITUDE, because delta u is free to adjust the singular coefficient.
+
+using MmsSparseColumn = fem::hierarchical::SparseColumn;
+using MmsLocalElementData = fem::hierarchical::LocalOperatorContribution;
+
+struct MmsLocalFineSystem
+{
+  int standard_size = 0;
+  int enrichment_size = 0;
+  std::vector<bool> essential;
+  fem::singular::TriangleDofTopology topology;
+  std::vector<MmsLocalElementData> elements;
+};
+
+MmsLocalFineSystem MmsAssembleLocalFineSystem(mfem::Mesh &mesh, int order,
+                                              int quadrature_order)
+{
+  MmsLocalFineSystem system;
+  mfem::H1_FECollection collection(order, 2);
+  mfem::FiniteElementSpace space(&mesh, &collection);
+  mfem::ND_FECollection nd_collection(order, 2);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  system.standard_size = space.GetVSize();
+  const auto features =
+      fem::singular::ExtractSerialLineFeatures(mesh, {MmsReentrantAttribute}, {{1, 1.0}});
+  system.topology = fem::singular::BuildSerialTriangleDofTopology(mesh, features, 1);
+  system.enrichment_size = static_cast<int>(system.topology.h1_dofs.size());
+  const int combined_size = system.standard_size + system.enrichment_size;
+  system.essential.assign(combined_size, false);
+  mfem::Array<int> standard_essential;
+  space.GetBoundaryTrueDofs(standard_essential);
+  for (int dof : standard_essential)
+  {
+    system.essential[dof] = true;
+  }
+  const auto numbering =
+      fem::singular::BuildParallelDofNumbering(Mpi::World(), system.topology);
+  std::set<std::array<fem::singular::GlobalVertexId, 2>> boundary_segments;
+  mfem::Array<int> vertices;
+  for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+  {
+    mesh.GetBdrElementVertices(boundary, vertices);
+    std::array<fem::singular::GlobalVertexId, 2> segment{vertices[0], vertices[1]};
+    std::sort(segment.begin(), segment.end());
+    boundary_segments.insert(segment);
+  }
+  const auto singular_essential = fem::singular::GetEssentialTriangleH1TrueDofsOnSegments(
+      Mpi::World(),
+      std::vector<std::array<fem::singular::GlobalVertexId, 2>>(boundary_segments.begin(),
+                                                                boundary_segments.end()),
+      system.topology, numbering);
+  for (int dof : singular_essential)
+  {
+    system.essential[system.standard_size + dof] = true;
+  }
+
+  mfem::DiffusionIntegrator diffusion;
+  MmsSourceCoefficient source;
+  mfem::DomainLFIntegrator load(source);
+  load.SetIntRule(&mfem::IntRules.Get(mfem::Geometry::TRIANGLE, quadrature_order));
+  const fem::singular::AdaptiveAssemblyOptions options{8, 1.0e-10, 1.0e-10, 8};
+  system.elements.resize(mesh.GetNE());
+  mfem::Array<int> standard_dofs;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &data = system.elements[element];
+    data.support_element = element;
+    const auto &singular_dofs = system.topology.elements[element].h1;
+    space.GetElementDofs(element, standard_dofs);
+    mfem::FiniteElementSpace::AdjustVDofs(standard_dofs);
+    for (int dof : standard_dofs)
+    {
+      data.dofs.push_back(dof);
+    }
+    for (const auto &dof : singular_dofs)
+    {
+      data.dofs.push_back(system.standard_size + static_cast<int>(dof.dof));
+    }
+    const int standard_count = standard_dofs.Size();
+    const int local_size = static_cast<int>(data.dofs.size());
+    data.matrix.SetSize(local_size);
+    data.matrix = 0.0;
+    data.rhs.SetSize(local_size);
+    data.rhs = 0.0;
+    mfem::DenseMatrix standard_matrix;
+    mfem::Vector standard_rhs;
+    const auto &fe = *space.GetFE(element);
+    auto &T = *mesh.GetElementTransformation(element);
+    diffusion.AssembleElementMatrix(fe, T, standard_matrix);
+    load.AssembleRHSElementVect(fe, T, standard_rhs);
+    for (int row = 0; row < standard_count; row++)
+    {
+      data.rhs(row) = standard_rhs(row);
+      for (int column = 0; column < standard_count; column++)
+      {
+        data.matrix(row, column) = standard_matrix(row, column);
+      }
+    }
+    if (!singular_dofs.empty())
+    {
+      const auto singular = fem::singular::AssembleTriangleElementEnrichmentMatrices(
+          system.topology.elements[element], T, options);
+      const auto coupling =
+          fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+              system.topology.elements[element], fe, *nd_space.GetFE(element), T, options);
+      REQUIRE(coupling.h1_standard_enrichment.Height() == standard_count);
+      REQUIRE(coupling.h1_standard_enrichment.Width() ==
+              static_cast<int>(singular_dofs.size()));
+      for (int row = 0; row < standard_count; row++)
+      {
+        for (int column = 0; column < static_cast<int>(singular_dofs.size()); column++)
+        {
+          data.matrix(row, standard_count + column) =
+              coupling.h1_standard_enrichment(row, column);
+          data.matrix(standard_count + column, row) =
+              coupling.h1_enrichment_standard(column, row);
+        }
+      }
+      for (int row = 0; row < static_cast<int>(singular_dofs.size()); row++)
+      {
+        for (int column = 0; column < static_cast<int>(singular_dofs.size()); column++)
+        {
+          data.matrix(standard_count + row, standard_count + column) =
+              singular.h1_diffusion(row, column);
+        }
+      }
+      mfem::Vector point(3);
+      MmsForEachQuadraturePoint(
+          mesh, element, quadrature_order, MmsCornerQuadrature::GRADED,
+          [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight_ref)
+          {
+            mfem::IntegrationPoint ip;
+            ip.Set2(lambda[1], lambda[2]);
+            T.SetIntPoint(&ip);
+            T.Transform(ip, point);
+            const double weight = weight_ref * T.Weight();
+            const double value = MmsF(point(0), point(1));
+            for (int local = 0; local < static_cast<int>(singular_dofs.size()); local++)
+            {
+              const auto &basis = singular_dofs[local].basis;
+              data.rhs(standard_count + local) +=
+                  weight * value *
+                  fem::singular::EvaluateTriangleNodeGradientPotential(
+                      lambda, basis.nodes[0], basis.nodes[1], basis.nu);
+            }
+          });
+    }
+  }
+  return system;
+}
+
+struct MmsSparseLocalReport
+{
+  std::vector<double> indicator;
+  double energy = 0.0;
+  double work = 0.0;
+  double maximum_patch_residual = 0.0;
+  double maximum_patch_condition = 0.0;
+  double maximum_actual_to_owner_support = 0.0;
+  int edge_patches = 0;
+  int interior_patches = 0;
+  int owned_modes = 0;
+  int maximum_patch_dimension = 0;
+  int maximum_owner_elements = 0;
+  int maximum_actual_support_elements = 0;
+  int maximum_element_overlap = 0;
+  double mean_element_overlap = 0.0;
+  long long sparse_basis_nonzeros = 0;
+  long long dense_basis_entries_avoided = 0;
+  long long touched_matrix_nonzeros = 0;
+  long long sum_patch_dimension_squared = 0;
+  long long sum_patch_dimension_cubed = 0;
+  long long fine_global_solves = 0;
+  long long fine_global_matrix_assemblies = 0;
+};
+
+std::vector<double>
+Mms2DCorrectionIndicator(mfem::Mesh &mesh, int order, int quadrature_order,
+                         const mfem::Vector &correction, int enrichment_size,
+                         MmsCornerQuadrature scheme = MmsCornerQuadrature::GRADED)
+{
+  mfem::H1_FECollection collection(order, 2);
+  mfem::FiniteElementSpace space(&mesh, &collection);
+  const int standard_size = space.GetVSize();
+  REQUIRE(correction.Size() == standard_size + enrichment_size);
+  const auto features =
+      fem::singular::ExtractSerialLineFeatures(mesh, {MmsReentrantAttribute}, {{1, 1.0}});
+  const auto topology = fem::singular::BuildSerialTriangleDofTopology(mesh, features, 1);
+  REQUIRE(static_cast<int>(topology.h1_dofs.size()) == enrichment_size);
+  mfem::GridFunction standard(&space);
+  for (int i = 0; i < standard_size; i++)
+  {
+    standard(i) = correction(i);
+  }
+  mfem::Vector singular(std::max(enrichment_size, 1));
+  singular = 0.0;
+  for (int i = 0; i < enrichment_size; i++)
+  {
+    singular(i) = correction(standard_size + i);
+  }
+  std::vector<double> indicator(mesh.GetNE(), 0.0);
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &T = *mesh.GetElementTransformation(element);
+    MmsForEachQuadraturePoint(
+        mesh, element, quadrature_order, scheme,
+        [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight_ref)
+        {
+          mfem::IntegrationPoint ip;
+          ip.Set2(lambda[1], lambda[2]);
+          T.SetIntPoint(&ip);
+          mfem::Vector gradient(2);
+          standard.GetGradient(T, gradient);
+          double gx = gradient(0), gy = gradient(1);
+          if (!topology.elements[element].h1.empty())
+          {
+            double determinant;
+            const auto grad_lambda =
+                fem::singular::GetAffineTriangleBarycentricGradients(T, determinant);
+            const auto value = fem::singular::EvaluateElementTriangleH1Enrichment(
+                topology.elements[element], singular, lambda, grad_lambda);
+            gx += value.gradient[0];
+            gy += value.gradient[1];
+          }
+          indicator[element] += weight_ref * T.Weight() * (gx * gx + gy * gy);
+        });
+  }
+  return indicator;
+}
+
+MmsSparseLocalReport MmsBuildSparseLocalCandidate(mfem::Mesh &mesh, int order,
+                                                  int quadrature_order,
+                                                  const MmsSolveReport &coarse)
+{
+  const long long assemblies_before = MmsGlobalFineMatrixAssemblies;
+  const long long solves_before = MmsGlobalFineSolves;
+  // Assemble uneliminated element contributions only. The candidate API has no fine
+  // solution or global fine matrix, and both zero counters are regression invariants.
+  const auto fine = MmsAssembleLocalFineSystem(mesh, order + 1, quadrature_order);
+  MmsSparseLocalReport report;
+  const int enrichment = static_cast<int>(coarse.enrichment_dofs);
+  REQUIRE(fine.enrichment_size == coarse.enrichment_dofs);
+  mfem::H1_FECollection coarse_collection(order, 2), fine_collection(order + 1, 2);
+  mfem::FiniteElementSpace coarse_space(&mesh, &coarse_collection);
+  mfem::FiniteElementSpace fine_space(&mesh, &fine_collection);
+  const int coarse_standard = coarse_space.GetVSize();
+  const int fine_standard = fine_space.GetVSize();
+  const int fine_combined = fine_standard + enrichment;
+
+  // Assemble the p-injection from element transfer matrices. Duplicate element writes to a
+  // conforming global row must agree; no global unit-vector transfer applications are used.
+  std::vector<std::map<int, double>> injection_map(coarse_standard);
+  mfem::IsoparametricTransformation identity;
+  identity.SetIdentityTransformation(mfem::Geometry::TRIANGLE);
+  mfem::DenseMatrix local_transfer;
+  mfem::Array<int> coarse_dofs, fine_dofs;
+  double maximum_transfer_mismatch = 0.0;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    coarse_space.GetElementDofs(element, coarse_dofs);
+    fine_space.GetElementDofs(element, fine_dofs);
+    mfem::FiniteElementSpace::AdjustVDofs(coarse_dofs);
+    mfem::FiniteElementSpace::AdjustVDofs(fine_dofs);
+    fine_space.GetFE(element)->GetTransferMatrix(*coarse_space.GetFE(element), identity,
+                                                 local_transfer);
+    REQUIRE(local_transfer.Height() == fine_dofs.Size());
+    REQUIRE(local_transfer.Width() == coarse_dofs.Size());
+    for (int local_column = 0; local_column < coarse_dofs.Size(); local_column++)
+    {
+      auto &column = injection_map[coarse_dofs[local_column]];
+      for (int local_row = 0; local_row < fine_dofs.Size(); local_row++)
+      {
+        const double value = local_transfer(local_row, local_column);
+        if (std::abs(value) <= 1.0e-14)
+        {
+          continue;
+        }
+        const int row = fine_dofs[local_row];
+        const auto [it, inserted] = column.emplace(row, value);
+        if (!inserted)
+        {
+          maximum_transfer_mismatch =
+              std::max(maximum_transfer_mismatch, std::abs(it->second - value));
+        }
+      }
+    }
+  }
+  CHECK(maximum_transfer_mismatch < 1.0e-12);
+  std::vector<MmsSparseColumn> injection(coarse_standard);
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (const auto &[row, value] : injection_map[column])
+    {
+      injection[column].dofs.push_back(row);
+      injection[column].values.push_back(value);
+    }
+  }
+
+  mfem::Vector injected(fine_combined);
+  injected = 0.0;
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (std::size_t entry = 0; entry < injection[column].dofs.size(); entry++)
+    {
+      injected(injection[column].dofs[entry]) +=
+          coarse.standard_coefficients(column) * injection[column].values[entry];
+    }
+  }
+  for (int e = 0; e < enrichment; e++)
+  {
+    injected(fine_standard + e) = coarse.enrichment_block(e);
+  }
+
+  // Full combined residual assembled from uneliminated element contributions, including
+  // standard-singular coupling. This is linear work and constructs no global fine matrix.
+  mfem::Vector residual = fem::hierarchical::AssembleResidual(fine_combined, fine.elements,
+                                                              injected, fine.essential);
+  std::vector<std::set<int>> dof_elements(fine_combined);
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    for (int dof : fine.elements[element].dofs)
+    {
+      dof_elements[dof].insert(element);
+    }
+  }
+
+  const auto &topology = fine.topology;
+  mfem::Array<int> element_dofs;
+
+  const auto sparse_entity_complement =
+      [&](mfem::Array<int> fine_entity, mfem::Array<int> coarse_entity)
+  {
+    mfem::FiniteElementSpace::AdjustVDofs(fine_entity);
+    mfem::FiniteElementSpace::AdjustVDofs(coarse_entity);
+    std::vector<int> rows, columns;
+    for (int dof : fine_entity)
+    {
+      if (!fine.essential[dof])
+      {
+        rows.push_back(dof);
+      }
+    }
+    for (int dof : coarse_entity)
+    {
+      if (!coarse.essential_mask[dof])
+      {
+        columns.push_back(dof);
+      }
+    }
+    std::vector<mfem::Vector> range;
+    for (int column : columns)
+    {
+      mfem::Vector vector(static_cast<int>(rows.size()));
+      vector = 0.0;
+      for (int local_row = 0; local_row < static_cast<int>(rows.size()); local_row++)
+      {
+        const auto found = injection_map[column].find(rows[local_row]);
+        if (found != injection_map[column].end())
+        {
+          vector(local_row) = found->second;
+        }
+      }
+      for (int repeat = 0; repeat < 2; repeat++)
+      {
+        for (const auto &basis : range)
+        {
+          vector.Add(-mfem::InnerProduct(vector, basis), basis);
+        }
+      }
+      const double norm = vector.Norml2();
+      if (norm > 1.0e-12)
+      {
+        vector /= norm;
+        range.push_back(vector);
+      }
+    }
+    std::vector<mfem::Vector> complement;
+    for (int direction = 0; direction < static_cast<int>(rows.size()); direction++)
+    {
+      mfem::Vector vector(static_cast<int>(rows.size()));
+      vector = 0.0;
+      vector(direction) = 1.0;
+      for (int repeat = 0; repeat < 2; repeat++)
+      {
+        for (const auto &basis : range)
+        {
+          vector.Add(-mfem::InnerProduct(vector, basis), basis);
+        }
+        for (const auto &basis : complement)
+        {
+          vector.Add(-mfem::InnerProduct(vector, basis), basis);
+        }
+      }
+      const double norm = vector.Norml2();
+      if (norm > 1.0e-10)
+      {
+        vector /= norm;
+        complement.push_back(vector);
+      }
+    }
+    std::vector<MmsSparseColumn> result;
+    for (const auto &local : complement)
+    {
+      MmsSparseColumn column;
+      for (int row = 0; row < static_cast<int>(rows.size()); row++)
+      {
+        if (std::abs(local(row)) > 1.0e-14)
+        {
+          column.dofs.push_back(rows[row]);
+          column.values.push_back(local(row));
+        }
+      }
+      result.push_back(std::move(column));
+    }
+    return result;
+  };
+
+  struct Patch
+  {
+    int owned = 0;
+    std::vector<MmsSparseColumn> basis;
+    std::vector<int> coarse_guests;
+    std::vector<int> singular_guests;
+    mfem::Vector coefficients;
+    std::set<int> support_elements;
+  };
+  std::vector<Patch> patches;
+  std::vector<int> element_overlap(mesh.GetNE(), 0);
+
+  const auto add_patch = [&](std::vector<MmsSparseColumn> owned,
+                             const std::vector<int> &owner_elements, bool edge_patch)
+  {
+    if (owned.empty())
+    {
+      return;
+    }
+    Patch patch;
+    patch.owned = static_cast<int>(owned.size());
+    patch.basis = std::move(owned);
+    report.owned_modes += patch.owned;
+    report.edge_patches += edge_patch;
+    report.interior_patches += !edge_patch;
+    report.maximum_owner_elements =
+        std::max(report.maximum_owner_elements, static_cast<int>(owner_elements.size()));
+    std::set<int> coarse_guests, singular_guests;
+    for (int element : owner_elements)
+    {
+      coarse_space.GetElementDofs(element, element_dofs);
+      mfem::FiniteElementSpace::AdjustVDofs(element_dofs);
+      for (int dof : element_dofs)
+      {
+        if (!coarse.essential_mask[dof])
+        {
+          coarse_guests.insert(dof);
+        }
+      }
+      for (const auto &dof : topology.elements[element].h1)
+      {
+        if (!fine.essential[fine_standard + static_cast<int>(dof.dof)])
+        {
+          singular_guests.insert(static_cast<int>(dof.dof));
+        }
+      }
+    }
+    for (int dof : coarse_guests)
+    {
+      patch.coarse_guests.push_back(dof);
+      patch.basis.push_back(injection[dof]);
+    }
+    for (int dof : singular_guests)
+    {
+      MmsSparseColumn column;
+      column.dofs.push_back(fine_standard + dof);
+      column.values.push_back(1.0);
+      patch.singular_guests.push_back(dof);
+      patch.basis.push_back(std::move(column));
+    }
+    const int dimension = static_cast<int>(patch.basis.size());
+    report.maximum_patch_dimension = std::max(report.maximum_patch_dimension, dimension);
+    report.sum_patch_dimension_squared += 1LL * dimension * dimension;
+    report.sum_patch_dimension_cubed += 1LL * dimension * dimension * dimension;
+    bool touches_essential = false;
+    for (const auto &column : patch.basis)
+    {
+      report.sparse_basis_nonzeros += column.dofs.size();
+      report.dense_basis_entries_avoided += fine_combined - column.dofs.size();
+      for (int dof : column.dofs)
+      {
+        touches_essential = touches_essential || fine.essential[dof];
+        patch.support_elements.insert(dof_elements[dof].begin(), dof_elements[dof].end());
+      }
+    }
+    REQUIRE_FALSE(touches_essential);
+    report.maximum_actual_support_elements =
+        std::max(report.maximum_actual_support_elements,
+                 static_cast<int>(patch.support_elements.size()));
+    report.maximum_actual_to_owner_support =
+        std::max(report.maximum_actual_to_owner_support,
+                 static_cast<double>(patch.support_elements.size()) /
+                     std::max<std::size_t>(owner_elements.size(), 1));
+    for (int element : patch.support_elements)
+    {
+      element_overlap[element]++;
+    }
+
+    // Element-local congruence assembly Q_K^T A_K Q_K over the complete measured support
+    // union. Complete conforming guests are never truncated to the nominal owner star.
+    mfem::DenseMatrix restricted;
+    mfem::Vector patch_rhs;
+    report.touched_matrix_nonzeros += fem::hierarchical::AssembleRestrictedOperator(
+        fine.elements, patch.support_elements, patch.basis, residual, restricted,
+        patch_rhs);
+    mfem::DenseMatrixInverse inverse(restricted, true);
+    mfem::DenseMatrix inverse_matrix;
+    inverse.GetInverseMatrix(inverse_matrix);
+    report.maximum_patch_condition = std::max(report.maximum_patch_condition,
+                                              restricted.FNorm() * inverse_matrix.FNorm());
+    patch.coefficients.SetSize(dimension);
+    inverse.Mult(patch_rhs, patch.coefficients);
+    mfem::Vector solve_residual(dimension);
+    restricted.Mult(patch.coefficients, solve_residual);
+    solve_residual -= patch_rhs;
+    report.maximum_patch_residual =
+        std::max(report.maximum_patch_residual,
+                 solve_residual.Norml2() / std::max(patch_rhs.Norml2(), 1.0e-30));
+    patches.push_back(std::move(patch));
+  };
+
+  std::vector<std::vector<int>> edge_elements(mesh.GetNEdges());
+  mfem::Array<int> edges, orientations;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    mesh.GetElementEdges(element, edges, orientations);
+    for (int edge : edges)
+    {
+      edge_elements[edge].push_back(element);
+    }
+  }
+  for (int edge = 0; edge < mesh.GetNEdges(); edge++)
+  {
+    mfem::Array<int> fine_entity, coarse_entity;
+    fine_space.GetEdgeInteriorDofs(edge, fine_entity);
+    coarse_space.GetEdgeInteriorDofs(edge, coarse_entity);
+    add_patch(sparse_entity_complement(fine_entity, coarse_entity), edge_elements[edge],
+              true);
+  }
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    mfem::Array<int> fine_entity, coarse_entity;
+    fine_space.GetElementInteriorDofs(element, fine_entity);
+    coarse_space.GetElementInteriorDofs(element, coarse_entity);
+    add_patch(sparse_entity_complement(fine_entity, coarse_entity), {element}, false);
+  }
+  int coarse_free = 0, fine_free = 0;
+  for (int i = 0; i < coarse_standard; i++)
+  {
+    coarse_free += !coarse.essential_mask[i];
+  }
+  for (int i = 0; i < fine_standard; i++)
+  {
+    fine_free += !fine.essential[i];
+  }
+  REQUIRE(report.owned_modes == fine_free - coarse_free);
+  long long overlap_sum = 0;
+  for (int overlap : element_overlap)
+  {
+    report.maximum_element_overlap = std::max(report.maximum_element_overlap, overlap);
+    overlap_sum += overlap;
+  }
+  report.mean_element_overlap =
+      static_cast<double>(overlap_sum) / std::max(mesh.GetNE(), 1);
+
+  // Hierarchical-key reconstruction: own new modes once and average repeated guest
+  // coefficients. A constant number of global-length vectors is used for the injected
+  // coarse field, assembled residual, and final correction; patch storage remains sparse.
+  mfem::Vector raw(fine_combined);
+  raw = 0.0;
+  std::vector<double> coarse_sum(coarse_standard, 0.0), singular_sum(enrichment, 0.0);
+  std::vector<int> coarse_count(coarse_standard, 0), singular_count(enrichment, 0);
+  for (const auto &patch : patches)
+  {
+    for (int basis = 0; basis < patch.owned; basis++)
+    {
+      for (std::size_t entry = 0; entry < patch.basis[basis].dofs.size(); entry++)
+      {
+        raw(patch.basis[basis].dofs[entry]) +=
+            patch.coefficients(basis) * patch.basis[basis].values[entry];
+      }
+    }
+    int coefficient = patch.owned;
+    for (int dof : patch.coarse_guests)
+    {
+      coarse_sum[dof] += patch.coefficients(coefficient++);
+      coarse_count[dof]++;
+    }
+    for (int dof : patch.singular_guests)
+    {
+      singular_sum[dof] += patch.coefficients(coefficient++);
+      singular_count[dof]++;
+    }
+  }
+  for (int dof = 0; dof < coarse_standard; dof++)
+  {
+    if (coarse_count[dof] == 0)
+    {
+      continue;
+    }
+    const double coefficient = coarse_sum[dof] / coarse_count[dof];
+    for (std::size_t entry = 0; entry < injection[dof].dofs.size(); entry++)
+    {
+      raw(injection[dof].dofs[entry]) += coefficient * injection[dof].values[entry];
+    }
+  }
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    if (singular_count[dof] > 0)
+    {
+      raw(fine_standard + dof) += singular_sum[dof] / singular_count[dof];
+    }
+  }
+  const double raw_energy = fem::hierarchical::Energy(fine.elements, raw);
+  const double raw_work = mfem::InnerProduct(raw, residual);
+  const double alpha = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
+  raw *= alpha;
+  report.energy = alpha * alpha * raw_energy;
+  report.work = alpha * raw_work;
+  report.indicator =
+      Mms2DCorrectionIndicator(mesh, order + 1, quadrature_order, raw, enrichment);
+  report.fine_global_matrix_assemblies = MmsGlobalFineMatrixAssemblies - assemblies_before;
+  report.fine_global_solves = MmsGlobalFineSolves - solves_before;
+  return report;
+}
+
 struct MmsTwoLevelReport
 {
   std::vector<double> indicator;   // eta_K^2 = int_K |grad(delta u)|^2
@@ -2567,6 +4452,32 @@ struct MmsTwoLevelReport
   std::vector<double> indicator_new_dofs_only;
   double frozen_enrichment_energy = 0.0;
   double new_dofs_only_energy = 0.0;
+
+  // Practical candidate: independent edge/interior hierarchical patches. Each patch owns
+  // its entity's new polynomial modes and includes the incident coarse standard and
+  // singular basis functions as local response directions. The patch residual is always
+  // restricted from the FULL combined residual, including standard-singular coupling.
+  std::vector<double> indicator_local_patches;
+  double algebraic_delta_energy = 0.0;
+  double global_correction_residual = 0.0;
+  double global_correction_energy_identity = 0.0;
+  double maximum_patch_residual = 0.0;
+  double maximum_patch_energy_identity = 0.0;
+  double maximum_patch_energy_ratio = 0.0;
+  double overlap_partition_error = 0.0;
+  int minimum_overlap = 0;
+  int maximum_overlap = 0;
+  int edge_patches = 0;
+  int interior_patches = 0;
+  int owned_hierarchical_modes = 0;
+  int maximum_patch_dimension = 0;
+  int maximum_patch_elements = 0;
+  int uncovered_coarse_guests = 0;
+  int uncovered_singular_guests = 0;
+  double maximum_patch_condition = 0.0;
+  double local_patch_energy = 0.0;
+  double local_patch_captured_fraction = 0.0;
+  double local_indicator_energy_identity = 0.0;
 };
 
 MmsTwoLevelReport MmsTwoLevelBenchmark(mfem::Mesh &mesh, int order, int quadrature_order)
@@ -2802,6 +4713,43 @@ MmsTwoLevelReport MmsTwoLevelBenchmark(mfem::Mesh &mesh, int order, int quadratu
       residual(i) = fine.combined_rhs(i) - residual(i);
     }
 
+    // Algebraic global correction. This is the reference for every restricted-space energy
+    // bound below. Unlike report.delta_energy, both sides here use the SAME assembled
+    // operator, so the variational bound is an exact algebraic statement rather than a
+    // comparison between assembly and independent quadrature.
+    mfem::Vector global_correction(fine.combined_solution_vector);
+    global_correction -= injected_combined;
+    {
+      mfem::Vector applied(fine_combined), solve_residual(fine_combined);
+      fine.combined_matrix->Mult(global_correction, applied);
+      solve_residual = applied;
+      solve_residual -= residual;
+      for (int i = 0; i < fine_combined; i++)
+      {
+        if (fine.essential_mask[i])
+        {
+          // Essential rows are not part of the variational problem.
+          solve_residual(i) = 0.0;
+        }
+      }
+      const double residual_norm = [&]()
+      {
+        double sum = 0.0;
+        for (int i : free_fine)
+        {
+          sum += residual(i) * residual(i);
+        }
+        return std::sqrt(sum);
+      }();
+      report.global_correction_residual =
+          solve_residual.Norml2() / std::max(residual_norm, 1.0e-30);
+      report.algebraic_delta_energy = mfem::InnerProduct(global_correction, applied);
+      const double work = mfem::InnerProduct(global_correction, residual);
+      report.global_correction_energy_identity =
+          std::abs(report.algebraic_delta_energy - work) /
+          std::max({std::abs(report.algebraic_delta_energy), std::abs(work), 1.0e-30});
+    }
+
     // Explicit complement Q of range(P_c) within the free block, by Gram-Schmidt: project
     // the free coordinate directions against an orthonormal basis of the injected range and
     // keep whatever survives.
@@ -2961,6 +4909,475 @@ MmsTwoLevelReport MmsTwoLevelBenchmark(mfem::Mesh &mesh, int order, int quadratu
           });
       report.indicator_new_dofs_only[element] = local;
     }
+
+    // LOCAL EDGE/INTERIOR HIERARCHICAL PATCHES. The genuinely new p+1 modes are owned once
+    // by their mesh entity. Each patch also contains all free coarse standard basis
+    // functions incident on the owning entity's elements, plus incident singular basis
+    // functions. Including those guest directions approximates the coarse response which
+    // the new-DOFs-only ablation drops.
+    struct LocalPatch
+    {
+      std::vector<mfem::Vector> basis;
+      int owned_modes = 0;
+      std::vector<int> guest_coarse_dofs;
+      std::vector<int> guest_singular_dofs;
+      mfem::Vector coefficients;
+      mfem::Vector correction;
+      double energy = 0.0;
+    };
+    std::vector<LocalPatch> patches;
+
+    // Build an entity-local Euclidean complement of the injected coarse entity-interior
+    // range inside the fine entity-interior coordinates. For p -> p+1 this gives exactly
+    // one new mode per free edge and p-1 new modes per element interior. Modified
+    // Gram-Schmidt is repeated because these tiny nodal trace blocks can be poorly scaled.
+    const auto entity_complement =
+        [&](mfem::Array<int> fine_entity, mfem::Array<int> coarse_entity)
+    {
+      mfem::FiniteElementSpace::AdjustVDofs(fine_entity);
+      mfem::FiniteElementSpace::AdjustVDofs(coarse_entity);
+      std::vector<int> fine_rows, coarse_columns;
+      for (int dof : fine_entity)
+      {
+        if (!fine.essential_mask[dof])
+        {
+          fine_rows.push_back(dof);
+        }
+      }
+      for (int dof : coarse_entity)
+      {
+        if (!coarse.essential_mask[dof])
+        {
+          coarse_columns.push_back(dof);
+        }
+      }
+      std::vector<mfem::Vector> range;
+      for (int column : coarse_columns)
+      {
+        mfem::Vector vector(static_cast<int>(fine_rows.size()));
+        for (int row = 0; row < vector.Size(); row++)
+        {
+          vector(row) = injection(fine_rows[row], column);
+        }
+        for (int repeat = 0; repeat < 2; repeat++)
+        {
+          for (const auto &basis : range)
+          {
+            vector.Add(-mfem::InnerProduct(vector, basis), basis);
+          }
+        }
+        const double norm = vector.Norml2();
+        if (norm > 1.0e-12)
+        {
+          vector /= norm;
+          range.push_back(vector);
+        }
+      }
+      std::vector<mfem::Vector> complement;
+      for (int direction = 0; direction < static_cast<int>(fine_rows.size()); direction++)
+      {
+        mfem::Vector vector(static_cast<int>(fine_rows.size()));
+        vector = 0.0;
+        vector(direction) = 1.0;
+        for (int repeat = 0; repeat < 2; repeat++)
+        {
+          for (const auto &basis : range)
+          {
+            vector.Add(-mfem::InnerProduct(vector, basis), basis);
+          }
+          for (const auto &basis : complement)
+          {
+            vector.Add(-mfem::InnerProduct(vector, basis), basis);
+          }
+        }
+        const double norm = vector.Norml2();
+        if (norm > 1.0e-10)
+        {
+          vector /= norm;
+          complement.push_back(vector);
+        }
+      }
+      std::vector<mfem::Vector> expanded;
+      for (const auto &local : complement)
+      {
+        mfem::Vector vector(fine_combined);
+        vector = 0.0;
+        for (int row = 0; row < static_cast<int>(fine_rows.size()); row++)
+        {
+          vector(fine_rows[row]) = local(row);
+        }
+        expanded.push_back(vector);
+      }
+      return expanded;
+    };
+
+    // Element incidence of every global edge.
+    std::vector<std::vector<int>> edge_elements(mesh.GetNEdges());
+    {
+      mfem::Array<int> edges, orientations;
+      for (int element = 0; element < mesh.GetNE(); element++)
+      {
+        mesh.GetElementEdges(element, edges, orientations);
+        for (int edge : edges)
+        {
+          edge_elements[edge].push_back(element);
+        }
+      }
+    }
+
+    const auto add_patch = [&](std::vector<mfem::Vector> owned_modes,
+                               const std::vector<int> &elements, bool edge_patch)
+    {
+      if (owned_modes.empty())
+      {
+        return;
+      }
+      LocalPatch patch;
+      patch.basis = std::move(owned_modes);
+      patch.owned_modes = static_cast<int>(patch.basis.size());
+      report.owned_hierarchical_modes += patch.owned_modes;
+      if (edge_patch)
+      {
+        report.edge_patches++;
+      }
+      else
+      {
+        report.interior_patches++;
+      }
+
+      // Guest coarse standard directions: complete conforming injected basis columns, not
+      // element-truncated copies. Truncation would invalidate the restricted-space bound.
+      std::set<int> incident_coarse;
+      std::set<int> incident_enrichment;
+      mfem::Array<int> element_dofs;
+      for (int element : elements)
+      {
+        coarse_space.GetElementDofs(element, element_dofs);
+        mfem::FiniteElementSpace::AdjustVDofs(element_dofs);
+        for (int dof : element_dofs)
+        {
+          if (!coarse.essential_mask[dof])
+          {
+            incident_coarse.insert(dof);
+          }
+        }
+        for (const auto &dof : topology.elements[element].h1)
+        {
+          const int index = fine_standard + static_cast<int>(dof.dof);
+          if (!fine.essential_mask[index])
+          {
+            incident_enrichment.insert(static_cast<int>(dof.dof));
+          }
+        }
+      }
+      for (int coarse_dof : incident_coarse)
+      {
+        mfem::Vector column(fine_combined);
+        for (int row = 0; row < fine_combined; row++)
+        {
+          column(row) = injection(row, coarse_dof);
+        }
+        patch.guest_coarse_dofs.push_back(coarse_dof);
+        patch.basis.push_back(column);
+      }
+      for (int singular_dof : incident_enrichment)
+      {
+        mfem::Vector column(fine_combined);
+        column = 0.0;
+        column(fine_standard + singular_dof) = 1.0;
+        patch.guest_singular_dofs.push_back(singular_dof);
+        patch.basis.push_back(column);
+      }
+
+      // Essential constraints are imposed on the patch SPACE, before solving. Every basis
+      // column must vanish there; overwriting a solved correction afterwards would solve a
+      // different variational problem.
+      double essential_maximum = 0.0;
+      for (const auto &column : patch.basis)
+      {
+        for (int row = 0; row < fine_combined; row++)
+        {
+          if (fine.essential_mask[row])
+          {
+            essential_maximum = std::max(essential_maximum, std::abs(column(row)));
+          }
+        }
+      }
+      CHECK(essential_maximum < 1.0e-13);
+
+      const int patch_size = static_cast<int>(patch.basis.size());
+      report.maximum_patch_dimension = std::max(report.maximum_patch_dimension, patch_size);
+      report.maximum_patch_elements =
+          std::max(report.maximum_patch_elements, static_cast<int>(elements.size()));
+      mfem::DenseMatrix restricted(patch_size);
+      restricted = 0.0;
+      mfem::Vector restricted_rhs(patch_size);
+      restricted_rhs = 0.0;
+      std::vector<mfem::Vector> applied(patch_size);
+      for (int column = 0; column < patch_size; column++)
+      {
+        applied[column].SetSize(fine_combined);
+        fine.combined_matrix->Mult(patch.basis[column], applied[column]);
+        restricted_rhs(column) = mfem::InnerProduct(patch.basis[column], residual);
+      }
+      for (int row = 0; row < patch_size; row++)
+      {
+        for (int column = 0; column < patch_size; column++)
+        {
+          restricted(row, column) = mfem::InnerProduct(patch.basis[row], applied[column]);
+        }
+      }
+      // Every restricted operator must remain SPD and reasonably conditioned. Requesting
+      // Cholesky factors (spd=true) catches a rank-deficient entity complement or duplicate
+      // guest key. ||A||_F ||A^{-1}||_F is an inexpensive condition-number upper proxy that
+      // is available in this no-LAPACK unit-test build.
+      mfem::DenseMatrixInverse inverse(restricted, true);
+      mfem::DenseMatrix inverse_matrix;
+      inverse.GetInverseMatrix(inverse_matrix);
+      report.maximum_patch_condition = std::max(
+          report.maximum_patch_condition, restricted.FNorm() * inverse_matrix.FNorm());
+      patch.coefficients.SetSize(patch_size);
+      inverse.Mult(restricted_rhs, patch.coefficients);
+
+      mfem::Vector patch_residual(patch_size);
+      restricted.Mult(patch.coefficients, patch_residual);
+      patch_residual -= restricted_rhs;
+      const double relative_residual =
+          patch_residual.Norml2() / std::max(restricted_rhs.Norml2(), 1.0e-30);
+      report.maximum_patch_residual =
+          std::max(report.maximum_patch_residual, relative_residual);
+
+      patch.correction.SetSize(fine_combined);
+      patch.correction = 0.0;
+      for (int column = 0; column < patch_size; column++)
+      {
+        patch.correction.Add(patch.coefficients(column), patch.basis[column]);
+      }
+      mfem::Vector applied_correction(fine_combined);
+      fine.combined_matrix->Mult(patch.correction, applied_correction);
+      patch.energy = mfem::InnerProduct(patch.correction, applied_correction);
+      const double work = mfem::InnerProduct(patch.correction, residual);
+      // The 1e-4 denominator floor makes a 1e-10 normalized check equivalent to the
+      // scale-aware identity |E-W| <= 1e-10 max(|E|,|W|) + 1e-14. Nearly inactive
+      // patches otherwise turn harmless roundoff into a large relative error.
+      const double identity = std::abs(patch.energy - work) /
+                              (std::max(std::abs(patch.energy), std::abs(work)) + 1.0e-4);
+      report.maximum_patch_energy_identity =
+          std::max(report.maximum_patch_energy_identity, identity);
+      report.maximum_patch_energy_ratio =
+          std::max(report.maximum_patch_energy_ratio,
+                   patch.energy / std::max(report.algebraic_delta_energy, 1.0e-30));
+      CHECK(patch.energy >= -1.0e-14);
+      CHECK(patch.energy <= report.algebraic_delta_energy * (1.0 + 1.0e-8) + 1.0e-14);
+
+      REQUIRE(patch.owned_modes + static_cast<int>(patch.guest_coarse_dofs.size()) +
+                  static_cast<int>(patch.guest_singular_dofs.size()) ==
+              patch_size);
+      patches.push_back(std::move(patch));
+    };
+
+    // Edge patches own trace modes; boundary-edge modes disappear when essential fine
+    // coordinates are filtered. Element patches own only interior modes, so ownership is
+    // disjoint by construction.
+    for (int edge = 0; edge < mesh.GetNEdges(); edge++)
+    {
+      mfem::Array<int> fine_edge, coarse_edge;
+      fine_space.GetEdgeInteriorDofs(edge, fine_edge);
+      coarse_space.GetEdgeInteriorDofs(edge, coarse_edge);
+      add_patch(entity_complement(fine_edge, coarse_edge), edge_elements[edge], true);
+    }
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      mfem::Array<int> fine_interior, coarse_interior;
+      fine_space.GetElementInteriorDofs(element, fine_interior);
+      coarse_space.GetElementInteriorDofs(element, coarse_interior);
+      add_patch(entity_complement(fine_interior, coarse_interior), {element}, false);
+    }
+
+    int coarse_free_standard = 0, fine_free_standard = 0;
+    for (int dof = 0; dof < coarse_standard; dof++)
+    {
+      coarse_free_standard += !coarse.essential_mask[dof];
+    }
+    for (int dof = 0; dof < fine_standard; dof++)
+    {
+      fine_free_standard += !fine.essential_mask[dof];
+    }
+    CAPTURE(report.edge_patches, report.interior_patches, report.owned_hierarchical_modes,
+            coarse_free_standard, fine_free_standard);
+    CHECK(report.owned_hierarchical_modes == fine_free_standard - coarse_free_standard);
+    REQUIRE(!patches.empty());
+
+    // Partition of unity in HIERARCHICAL COORDINATES, not fine nodal rows. Each owned
+    // edge/interior complement coefficient is inserted exactly once. Repeated response
+    // coefficients are averaged by their stable coarse/singular DOF key and only then
+    // reconstructed through diag(P,I). This distinction matters: an injected coarse guest
+    // column can be nonzero on the fine rows used by another patch's owned mode, so
+    // nodal-row averaging would incorrectly attenuate the uniquely owned hierarchical
+    // contribution.
+    std::vector<int> coarse_multiplicity(coarse_standard, 0);
+    std::vector<int> singular_multiplicity(enrichment, 0);
+    std::vector<double> coarse_sum(coarse_standard, 0.0);
+    std::vector<double> singular_sum(enrichment, 0.0);
+    mfem::Vector raw_correction(fine_combined);
+    raw_correction = 0.0;
+    for (const auto &patch : patches)
+    {
+      REQUIRE(patch.coefficients.Size() == static_cast<int>(patch.basis.size()));
+      for (int owned = 0; owned < patch.owned_modes; owned++)
+      {
+        raw_correction.Add(patch.coefficients(owned), patch.basis[owned]);
+      }
+      int coefficient = patch.owned_modes;
+      for (int coarse_dof : patch.guest_coarse_dofs)
+      {
+        coarse_sum[coarse_dof] += patch.coefficients(coefficient++);
+        coarse_multiplicity[coarse_dof]++;
+      }
+      for (int singular_dof : patch.guest_singular_dofs)
+      {
+        singular_sum[singular_dof] += patch.coefficients(coefficient++);
+        singular_multiplicity[singular_dof]++;
+      }
+      REQUIRE(coefficient == patch.coefficients.Size());
+    }
+
+    report.minimum_overlap = std::numeric_limits<int>::max();
+    report.maximum_overlap = 0;
+    for (int coarse_dof = 0; coarse_dof < coarse_standard; coarse_dof++)
+    {
+      const int count = coarse_multiplicity[coarse_dof];
+      if (count == 0)
+      {
+        continue;
+      }
+      report.minimum_overlap = std::min(report.minimum_overlap, count);
+      report.maximum_overlap = std::max(report.maximum_overlap, count);
+      const double coefficient = coarse_sum[coarse_dof] / static_cast<double>(count);
+      for (int row = 0; row < fine_combined; row++)
+      {
+        raw_correction(row) += coefficient * injection(row, coarse_dof);
+      }
+      double weight_sum = 0.0;
+      for (const auto &patch : patches)
+      {
+        weight_sum +=
+            static_cast<double>(std::count(patch.guest_coarse_dofs.begin(),
+                                           patch.guest_coarse_dofs.end(), coarse_dof)) /
+            static_cast<double>(count);
+      }
+      report.overlap_partition_error =
+          std::max(report.overlap_partition_error, std::abs(weight_sum - 1.0));
+    }
+    for (int coarse_dof = 0; coarse_dof < coarse_standard; coarse_dof++)
+    {
+      if (!coarse.essential_mask[coarse_dof] && coarse_multiplicity[coarse_dof] == 0)
+      {
+        report.uncovered_coarse_guests++;
+      }
+    }
+    for (int singular_dof = 0; singular_dof < enrichment; singular_dof++)
+    {
+      if (!coarse.essential_mask[coarse_standard + singular_dof] &&
+          singular_multiplicity[singular_dof] == 0)
+      {
+        report.uncovered_singular_guests++;
+      }
+      const int count = singular_multiplicity[singular_dof];
+      if (count == 0)
+      {
+        continue;
+      }
+      report.minimum_overlap = std::min(report.minimum_overlap, count);
+      report.maximum_overlap = std::max(report.maximum_overlap, count);
+      raw_correction(fine_standard + singular_dof) +=
+          singular_sum[singular_dof] / static_cast<double>(count);
+      double weight_sum = 0.0;
+      for (const auto &patch : patches)
+      {
+        weight_sum +=
+            static_cast<double>(std::count(patch.guest_singular_dofs.begin(),
+                                           patch.guest_singular_dofs.end(), singular_dof)) /
+            static_cast<double>(count);
+      }
+      report.overlap_partition_error =
+          std::max(report.overlap_partition_error, std::abs(weight_sum - 1.0));
+    }
+    REQUIRE(report.minimum_overlap != std::numeric_limits<int>::max());
+
+    // The partition-of-unity sum is an admissible direction, not itself a Galerkin solve.
+    // An exact scalar line search gives the best correction along that direction and a
+    // certified captured energy in [0, E_global]. The scalar does not change element
+    // ranking.
+    mfem::Vector raw_applied(fine_combined);
+    fine.combined_matrix->Mult(raw_correction, raw_applied);
+    const double raw_energy = mfem::InnerProduct(raw_correction, raw_applied);
+    const double raw_work = mfem::InnerProduct(raw_correction, residual);
+    const double alpha = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
+    mfem::Vector local_correction(raw_correction);
+    local_correction *= alpha;
+    mfem::Vector local_applied(fine_combined);
+    fine.combined_matrix->Mult(local_correction, local_applied);
+    report.local_patch_energy = mfem::InnerProduct(local_correction, local_applied);
+    const double local_work = mfem::InnerProduct(local_correction, residual);
+    report.local_patch_captured_fraction =
+        report.local_patch_energy / std::max(report.algebraic_delta_energy, 1.0e-30);
+    CHECK(report.local_patch_energy >= -1.0e-14);
+    CHECK(report.local_patch_energy <=
+          report.algebraic_delta_energy * (1.0 + 1.0e-8) + 1.0e-14);
+    CHECK_THAT(
+        report.local_patch_energy,
+        WithinAbs(local_work, 1.0e-10 * std::max({std::abs(report.local_patch_energy),
+                                                  std::abs(local_work), 1.0}) +
+                                  1.0e-14));
+
+    mfem::GridFunction local_standard(&fine_space);
+    for (int i = 0; i < fine_standard; i++)
+    {
+      local_standard(i) = local_correction(i);
+    }
+    mfem::Vector local_enrichment(std::max(enrichment, 1));
+    local_enrichment = 0.0;
+    for (int e = 0; e < enrichment; e++)
+    {
+      local_enrichment(e) = local_correction(fine_standard + e);
+    }
+    report.indicator_local_patches.assign(mesh.GetNE(), 0.0);
+    double integrated_local_energy = 0.0;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      auto &T = *mesh.GetElementTransformation(element);
+      double local = 0.0;
+      MmsForEachQuadraturePoint(
+          mesh, element, quadrature_order, MmsCornerQuadrature::GRADED,
+          [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight_ref)
+          {
+            mfem::IntegrationPoint ip;
+            ip.Set2(lambda[1], lambda[2]);
+            T.SetIntPoint(&ip);
+            const double weight = weight_ref * T.Weight();
+            mfem::Vector standard(2);
+            local_standard.GetGradient(T, standard);
+            double gx = standard(0), gy = standard(1);
+            if (!topology.elements[element].h1.empty())
+            {
+              double jacobian_determinant;
+              const auto grad_lambda = fem::singular::GetAffineTriangleBarycentricGradients(
+                  T, jacobian_determinant);
+              T.SetIntPoint(&ip);
+              const auto singular = fem::singular::EvaluateElementTriangleH1Enrichment(
+                  topology.elements[element], local_enrichment, lambda, grad_lambda);
+              gx += singular.gradient[0];
+              gy += singular.gradient[1];
+            }
+            local += weight * (gx * gx + gy * gy);
+          });
+      report.indicator_local_patches[element] = local;
+      integrated_local_energy += local;
+    }
+    report.local_indicator_energy_identity =
+        std::abs(integrated_local_energy - report.local_patch_energy) /
+        std::max(report.local_patch_energy, 1.0e-30);
   }
 
   // (a) Galerkin orthogonality a(delta u, v_p) = 0 for every coarse basis function. Because
@@ -3040,8 +5457,17 @@ TEST_CASE(
   auto mesh = MmsLShapeMesh(n);
 
   const auto report = MmsTwoLevelBenchmark(mesh, 1, 20);
-  CAPTURE(report.delta_energy, report.coarse_error, report.fine_error,
-          report.galerkin_residual, report.energy_identity);
+  CAPTURE(report.delta_energy, report.algebraic_delta_energy, report.coarse_error,
+          report.fine_error, report.galerkin_residual, report.energy_identity,
+          report.global_correction_residual, report.global_correction_energy_identity,
+          report.maximum_patch_residual, report.maximum_patch_energy_identity,
+          report.maximum_patch_energy_ratio, report.overlap_partition_error,
+          report.minimum_overlap, report.maximum_overlap, report.edge_patches,
+          report.interior_patches, report.owned_hierarchical_modes,
+          report.maximum_patch_dimension, report.maximum_patch_elements,
+          report.maximum_patch_condition, report.uncovered_coarse_guests,
+          report.uncovered_singular_guests, report.local_patch_energy,
+          report.local_patch_captured_fraction, report.local_indicator_energy_identity);
 
   // The p increment must actually reduce the error, or the identity below is vacuous.
   CHECK(report.fine_error < report.coarse_error);
@@ -3056,6 +5482,34 @@ TEST_CASE(
   const double summed =
       std::accumulate(report.indicator.begin(), report.indicator.end(), 0.0);
   CHECK_THAT(summed, WithinRel(report.delta_energy, 1.0e-12));
+
+  // Patch correctness invariants. The full and every restricted solve use the same
+  // assembled operator and full combined residual, so these are algebraic requirements,
+  // not estimator-quality claims.
+  CHECK(report.global_correction_residual < 1.0e-10);
+  CHECK(report.global_correction_energy_identity < 1.0e-10);
+  CHECK(report.maximum_patch_residual < 1.0e-10);
+  CHECK(report.maximum_patch_energy_identity < 1.0e-10);
+  CHECK(report.maximum_patch_energy_ratio <= 1.0 + 1.0e-8);
+  CHECK(report.overlap_partition_error < 1.0e-14);
+  CHECK(report.minimum_overlap >= 1);
+  CHECK(report.maximum_overlap >= report.minimum_overlap);
+  CHECK(report.edge_patches > 0);
+  // This p=1 -> p=2 triangle increment gains no interior modes.
+  CHECK(report.interior_patches == 0);
+  CHECK(report.owned_hierarchical_modes > 0);
+  CHECK(report.maximum_patch_dimension > 0);
+  CHECK(report.maximum_patch_elements <= 2);
+  CHECK(std::isfinite(report.maximum_patch_condition));
+  CHECK(report.uncovered_coarse_guests == 0);
+  CHECK(report.uncovered_singular_guests == 0);
+  CHECK(report.local_patch_energy >= 0.0);
+  CHECK(report.local_patch_captured_fraction >= 0.0);
+  CHECK(report.local_patch_captured_fraction <= 1.0 + 1.0e-8);
+  CHECK(report.local_indicator_energy_identity < 1.0e-7);
+  const double local_summed = std::accumulate(report.indicator_local_patches.begin(),
+                                              report.indicator_local_patches.end(), 0.0);
+  CHECK_THAT(local_summed, WithinRel(report.local_patch_energy, 1.0e-7));
 }
 
 TEST_CASE(
@@ -3267,6 +5721,481 @@ TEST_CASE(
   CHECK(mean_rank_h > 0.95);
   CHECK(mean_extend_h > 0.95);
   CHECK(mean_conc_h > 0.8);
+}
+
+TEST_CASE("Manufactured L-shape sparse local candidate is independent and support-bounded",
+          "[singularmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  constexpr int order = 2;
+  auto mesh = MmsLShapeMesh(2);
+  const auto coarse = MmsSolveOnMesh(mesh, order, 20, true, MmsCornerQuadrature::GRADED);
+
+  // Build before the global benchmark: the candidate sees a coarse solution and an
+  // assembly-only p+1 system, never a fine solution.
+  const auto sparse = MmsBuildSparseLocalCandidate(mesh, order, 20, coarse);
+  CAPTURE(sparse.energy, sparse.maximum_patch_residual, sparse.maximum_patch_condition,
+          sparse.maximum_owner_elements, sparse.maximum_actual_support_elements,
+          sparse.maximum_actual_to_owner_support, sparse.maximum_element_overlap,
+          sparse.mean_element_overlap, sparse.maximum_patch_dimension,
+          sparse.sparse_basis_nonzeros, sparse.dense_basis_entries_avoided,
+          sparse.touched_matrix_nonzeros, sparse.sum_patch_dimension_squared,
+          sparse.sum_patch_dimension_cubed);
+  CHECK(sparse.fine_global_solves == 0);
+  CHECK(sparse.fine_global_matrix_assemblies == 0);
+  CHECK(sparse.maximum_patch_residual < 1.0e-10);
+  CHECK(sparse.maximum_patch_condition < 1.0e5);
+  CHECK(sparse.maximum_owner_elements <= 2);
+  CHECK(sparse.maximum_actual_support_elements > sparse.maximum_owner_elements);
+  CHECK(sparse.maximum_actual_support_elements < 20);
+  CHECK(sparse.maximum_element_overlap < 100);
+  CHECK(sparse.maximum_patch_dimension < 20);
+  CHECK(sparse.dense_basis_entries_avoided > 5 * sparse.sparse_basis_nonzeros);
+  CHECK(sparse.touched_matrix_nonzeros > 0);
+  CHECK_THAT(sparse.energy, WithinRel(sparse.work, 1.0e-10));
+  CHECK_THAT(std::accumulate(sparse.indicator.begin(), sparse.indicator.end(), 0.0),
+             WithinRel(sparse.energy, 1.0e-7));
+
+  // Tiny-oracle congruence: independently scatter the element-local p+1 assembly and
+  // compare every matrix/load/constraint entry with the established global assembly path.
+  const auto local_system = MmsAssembleLocalFineSystem(mesh, order + 1, 20);
+  const auto global_system = MmsSolveOnMesh(
+      mesh, order + 1, 20, true, MmsCornerQuadrature::GRADED, 0.0, nullptr, false);
+  const int combined_size = local_system.standard_size + local_system.enrichment_size;
+  REQUIRE(global_system.combined_matrix->Height() == combined_size);
+  mfem::DenseMatrix local_matrix(combined_size), global_matrix(combined_size);
+  local_matrix = 0.0;
+  global_matrix = 0.0;
+  mfem::Vector local_rhs(combined_size);
+  local_rhs = 0.0;
+  for (const auto &data : local_system.elements)
+  {
+    for (int row = 0; row < static_cast<int>(data.dofs.size()); row++)
+    {
+      local_rhs(data.dofs[row]) += data.rhs(row);
+      for (int column = 0; column < static_cast<int>(data.dofs.size()); column++)
+      {
+        local_matrix(data.dofs[row], data.dofs[column]) += data.matrix(row, column);
+      }
+    }
+  }
+  for (int row = 0; row < combined_size; row++)
+  {
+    for (int entry = global_system.combined_matrix->GetI()[row];
+         entry < global_system.combined_matrix->GetI()[row + 1]; entry++)
+    {
+      global_matrix(row, global_system.combined_matrix->GetJ()[entry]) =
+          global_system.combined_matrix->GetData()[entry];
+    }
+  }
+  double maximum_matrix_difference = 0.0, maximum_rhs_difference = 0.0;
+  for (int row = 0; row < combined_size; row++)
+  {
+    REQUIRE(local_system.essential[row] == global_system.essential_mask[row]);
+    maximum_rhs_difference = std::max(
+        maximum_rhs_difference, std::abs(local_rhs(row) - global_system.combined_rhs(row)));
+    for (int column = 0; column < combined_size; column++)
+    {
+      maximum_matrix_difference =
+          std::max(maximum_matrix_difference,
+                   std::abs(local_matrix(row, column) - global_matrix(row, column)));
+    }
+  }
+  CAPTURE(maximum_matrix_difference, maximum_rhs_difference);
+  CHECK(maximum_matrix_difference < 1.0e-11);
+  CHECK(maximum_rhs_difference < 1.0e-11);
+
+  const auto global = MmsTwoLevelBenchmark(mesh, order, 20);
+  const auto comparison =
+      MmsCompareToOracle(sparse.indicator, coarse.element_error, global.indicator, 0.5);
+  CAPTURE(comparison.rank, comparison.extend, comparison.concentration,
+          comparison.correction_capture);
+  CHECK(comparison.rank > 0.9);
+  CHECK(comparison.extend > 0.9);
+  CHECK(comparison.correction_capture > 0.4);
+
+  // Rebuilding after the fine oracle solve must be bitwise-independent of that solution.
+  const auto rebuilt = MmsBuildSparseLocalCandidate(mesh, order, 20, coarse);
+  REQUIRE(rebuilt.indicator.size() == sparse.indicator.size());
+  CHECK_THAT(rebuilt.energy, WithinAbs(sparse.energy, 1.0e-14));
+  for (std::size_t element = 0; element < sparse.indicator.size(); element++)
+  {
+    CHECK_THAT(rebuilt.indicator[element], WithinAbs(sparse.indicator[element], 1.0e-14));
+  }
+}
+
+TEST_CASE("Manufactured L-shape sparse local work scales at fixed order",
+          "[singularmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  constexpr int order = 2;
+  std::vector<int> elements, maximum_support, maximum_overlap, maximum_dimension;
+  std::vector<double> basis_per_element, matrix_touches_per_element, cubic_work_per_element;
+  for (int n : {2, 3, 4, 6})
+  {
+    auto mesh = MmsLShapeMesh(n);
+    const auto coarse = MmsSolveOnMesh(mesh, order, 20, true, MmsCornerQuadrature::GRADED);
+    const auto local = MmsBuildSparseLocalCandidate(mesh, order, 20, coarse);
+    elements.push_back(mesh.GetNE());
+    maximum_support.push_back(local.maximum_actual_support_elements);
+    maximum_overlap.push_back(local.maximum_element_overlap);
+    maximum_dimension.push_back(local.maximum_patch_dimension);
+    basis_per_element.push_back(static_cast<double>(local.sparse_basis_nonzeros) /
+                                mesh.GetNE());
+    matrix_touches_per_element.push_back(
+        static_cast<double>(local.touched_matrix_nonzeros) / mesh.GetNE());
+    cubic_work_per_element.push_back(static_cast<double>(local.sum_patch_dimension_cubed) /
+                                     mesh.GetNE());
+    CHECK(local.fine_global_solves == 0);
+    CHECK(local.fine_global_matrix_assemblies == 0);
+  }
+  CAPTURE(elements, maximum_support, maximum_overlap, maximum_dimension, basis_per_element,
+          matrix_touches_per_element, cubic_work_per_element);
+  CHECK(*std::max_element(maximum_support.begin(), maximum_support.end()) <= 20);
+  CHECK(*std::max_element(maximum_overlap.begin(), maximum_overlap.end()) <= 45);
+  CHECK(*std::max_element(maximum_dimension.begin(), maximum_dimension.end()) <= 12);
+  CHECK(*std::max_element(basis_per_element.begin(), basis_per_element.end()) < 200.0);
+  CHECK(*std::max_element(matrix_touches_per_element.begin(),
+                          matrix_touches_per_element.end()) < 1600.0);
+  CHECK(*std::max_element(cubic_work_per_element.begin(), cubic_work_per_element.end()) <
+        1400.0);
+}
+
+TEST_CASE("Manufactured extruded L-shape 3D edge-face patches capture the hierarchy",
+          "[.singularmms3d][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  auto mesh = MmsExtrudedLShapeMesh(1, 2);
+  const auto hierarchical = Mms3DHierarchicalBenchmark(mesh, 2);
+  CAPTURE(hierarchical.global_energy, hierarchical.local_energy,
+          hierarchical.captured_fraction, hierarchical.global_residual,
+          hierarchical.maximum_patch_residual, hierarchical.maximum_patch_condition,
+          hierarchical.overlap_error, hierarchical.edge_patches, hierarchical.face_patches,
+          hierarchical.interior_patches, hierarchical.owned_modes,
+          hierarchical.maximum_patch_dimension);
+  CHECK(hierarchical.global_residual < 1.0e-10);
+  CHECK(hierarchical.maximum_patch_residual < 1.0e-10);
+  CHECK(hierarchical.maximum_patch_condition < 1.0e7);
+  CHECK(hierarchical.overlap_error < 1.0e-14);
+  CHECK(hierarchical.edge_patches > 0);
+  CHECK(hierarchical.face_patches > 0);
+  CHECK(hierarchical.interior_patches == 0);
+  CHECK(hierarchical.owned_modes > 0);
+  CHECK(hierarchical.maximum_patch_dimension < 40);
+  CHECK(hierarchical.local_energy >= 0.0);
+  CHECK(hierarchical.local_energy <= hierarchical.global_energy * (1.0 + 1.0e-8));
+  CHECK(hierarchical.captured_fraction > 0.5);
+  const double global_integrated = std::accumulate(
+      hierarchical.indicator_global.begin(), hierarchical.indicator_global.end(), 0.0);
+  const double local_integrated = std::accumulate(hierarchical.indicator_local.begin(),
+                                                  hierarchical.indicator_local.end(), 0.0);
+  CHECK_THAT(global_integrated, WithinRel(hierarchical.global_energy, 2.0e-2));
+  CHECK_THAT(local_integrated, WithinRel(hierarchical.local_energy, 2.0e-2));
+
+  const auto local =
+      MmsCompareToOracle(hierarchical.indicator_local, hierarchical.element_error,
+                         hierarchical.indicator_global, 0.5);
+  const auto global =
+      MmsCompareToOracle(hierarchical.indicator_global, hierarchical.element_error,
+                         hierarchical.indicator_global, 0.5);
+  CAPTURE(local.rank, local.extend, local.concentration, local.correction_capture,
+          global.rank, global.extend, global.concentration, global.correction_capture);
+  CHECK(local.rank > 0.7);
+  CHECK(local.extend > 0.7);
+  CHECK(local.correction_capture > 0.3);
+  CHECK(local.rank <= global.rank + 1.0e-12);
+}
+
+TEST_CASE("Manufactured extruded L-shape 3D local hierarchical AMR beats uniform",
+          "[.singularmms3d][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  // Use p=1 -> p=2 in the repeated loop to keep this serial qualification bounded; the
+  // separate fixed-mesh p=2 -> p=3 test above explicitly exercises 3D face ownership.
+  constexpr int order = 1, passes = 3;
+  constexpr double theta = 0.5;
+  auto mesh = MmsExtrudedLShapeMesh(1, 2);
+  std::vector<long long> dofs;
+  std::vector<double> errors, capture;
+  for (int pass = 0; pass < passes; pass++)
+  {
+    const auto hierarchical = Mms3DHierarchicalBenchmark(mesh, order);
+    dofs.push_back(hierarchical.coarse_dofs);
+    errors.push_back(hierarchical.coarse_error);
+    capture.push_back(hierarchical.captured_fraction);
+    if (pass + 1 < passes)
+    {
+      mfem::Array<mfem::Refinement> refinements;
+      for (std::size_t element : MmsDorflerMark(hierarchical.indicator_local, theta))
+      {
+        refinements.Append(mfem::Refinement(static_cast<int>(element)));
+      }
+      REQUIRE(refinements.Size() > 0);
+      mesh.GeneralRefinement(refinements, -1, 1);
+      REQUIRE(mesh.Conforming());
+    }
+  }
+
+  std::vector<std::pair<long long, double>> uniform;
+  for (int n : {1, 2, 3})
+  {
+    auto uniform_mesh = MmsExtrudedLShapeMesh(n, 2 * n);
+    const auto solve = MmsSolve3D(uniform_mesh, order, true);
+    uniform.emplace_back(solve.dofs, solve.error);
+  }
+  const auto envelope_at = [&uniform](long long at_dofs)
+  {
+    for (std::size_t i = 0; i + 1 < uniform.size(); i++)
+    {
+      if (uniform[i].first <= at_dofs && at_dofs <= uniform[i + 1].first)
+      {
+        const double t = (std::log(static_cast<double>(at_dofs)) -
+                          std::log(static_cast<double>(uniform[i].first))) /
+                         (std::log(static_cast<double>(uniform[i + 1].first)) -
+                          std::log(static_cast<double>(uniform[i].first)));
+        return std::exp(std::log(uniform[i].second) + t * (std::log(uniform[i + 1].second) -
+                                                           std::log(uniform[i].second)));
+      }
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+  std::vector<double> ratios;
+  for (std::size_t pass = 0; pass < errors.size(); pass++)
+  {
+    const double envelope = envelope_at(dofs[pass]);
+    REQUIRE(std::isfinite(envelope));
+    ratios.push_back(errors[pass] / envelope);
+    if (pass > 0)
+    {
+      CHECK(errors[pass] < errors[pass - 1]);
+    }
+  }
+  CAPTURE(dofs, errors, capture, uniform, ratios);
+  CHECK(ratios.back() < 1.0);
+  CHECK(*std::min_element(capture.begin(), capture.end()) > 0.5);
+}
+
+TEST_CASE("Manufactured L-shape local hierarchical patches approach the global benchmark",
+          "[singularmms][singularelements][Serial]")
+{
+  // Identical oracle meshes isolate estimator quality from path dependence. The global
+  // p+1 difference is the upper benchmark; the candidate consists of overlapping
+  // edge/interior corrections with incident coarse response and explicit hierarchical-key
+  // PoU weighting.
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  constexpr int order = 2, passes = 3;
+  constexpr double theta = 0.5;
+
+  auto mesh = MmsLShapeMesh(2);
+  std::vector<double> production_rank, local_rank, global_rank, production_extend,
+      local_extend, global_extend, production_concentration, local_concentration,
+      global_concentration, production_correction_capture, local_correction_capture,
+      global_correction_capture, aggregate_captured_fraction;
+  for (int pass = 0; pass < passes; pass++)
+  {
+    const auto solve = MmsSolveOnMesh(mesh, order, 20, true, MmsCornerQuadrature::GRADED);
+    const auto hierarchical = MmsTwoLevelBenchmark(mesh, order, 20);
+    REQUIRE(hierarchical.indicator_local_patches.size() == solve.element_error.size());
+
+    const auto production = MmsCompareToOracle(
+        solve.indicator_standard, solve.element_error, hierarchical.indicator, theta);
+    const auto local =
+        MmsCompareToOracle(hierarchical.indicator_local_patches, solve.element_error,
+                           hierarchical.indicator, theta);
+    const auto global = MmsCompareToOracle(hierarchical.indicator, solve.element_error,
+                                           hierarchical.indicator, theta);
+    CAPTURE(pass, solve.elements, production.rank, local.rank, global.rank,
+            production.extend, local.extend, global.extend, production.concentration,
+            local.concentration, global.concentration, production.correction_capture,
+            local.correction_capture, global.correction_capture,
+            hierarchical.local_patch_captured_fraction, hierarchical.maximum_patch_residual,
+            hierarchical.maximum_patch_energy_identity,
+            hierarchical.maximum_patch_energy_ratio, hierarchical.overlap_partition_error,
+            hierarchical.minimum_overlap, hierarchical.maximum_overlap,
+            hierarchical.maximum_patch_dimension, hierarchical.maximum_patch_elements,
+            hierarchical.maximum_patch_condition, hierarchical.uncovered_coarse_guests,
+            hierarchical.uncovered_singular_guests);
+
+    // Algebraic patch invariants remain mandatory on every adapted oracle mesh.
+    CHECK(hierarchical.global_correction_residual < 1.0e-10);
+    CHECK(hierarchical.global_correction_energy_identity < 1.0e-10);
+    CHECK(hierarchical.maximum_patch_residual < 1.0e-10);
+    CHECK(hierarchical.maximum_patch_energy_identity < 1.0e-10);
+    CHECK(hierarchical.maximum_patch_energy_ratio <= 1.0 + 1.0e-8);
+    CHECK(hierarchical.overlap_partition_error < 1.0e-14);
+    CHECK(hierarchical.edge_patches > 0);
+    CHECK(hierarchical.interior_patches == mesh.GetNE());
+    CHECK(hierarchical.maximum_patch_dimension <= 20);
+    CHECK(hierarchical.maximum_patch_elements <= 2);
+    CHECK(hierarchical.maximum_patch_condition < 1.0e5);
+    CHECK(hierarchical.uncovered_coarse_guests == 0);
+    CHECK(hierarchical.uncovered_singular_guests == 0);
+    CHECK(hierarchical.local_patch_captured_fraction >= 0.0);
+    CHECK(hierarchical.local_patch_captured_fraction <= 1.0 + 1.0e-8);
+    CHECK(hierarchical.local_indicator_energy_identity < 1.0e-7);
+
+    for (const auto *comparison : {&production, &local, &global})
+    {
+      CHECK(comparison->rank >= 0.0);
+      CHECK(comparison->rank <= 1.0 + 1.0e-12);
+      CHECK(comparison->extend >= 0.0);
+      CHECK(comparison->extend <= 1.0 + 1.0e-12);
+      CHECK(comparison->concentration > 0.0);
+      // Dörfler controls candidate-indicator mass, not exact-error mass. True capture is a
+      // quality metric and need only remain a valid fraction here.
+      CHECK(comparison->true_capture >= 0.0);
+      CHECK(comparison->true_capture <= 1.0 + 1.0e-12);
+      CHECK(comparison->correction_capture >= 0.0);
+      CHECK(comparison->correction_capture <= 1.0 + 1.0e-12);
+    }
+
+    production_rank.push_back(production.rank);
+    local_rank.push_back(local.rank);
+    global_rank.push_back(global.rank);
+    production_extend.push_back(production.extend);
+    local_extend.push_back(local.extend);
+    global_extend.push_back(global.extend);
+    production_concentration.push_back(production.concentration);
+    local_concentration.push_back(local.concentration);
+    global_concentration.push_back(global.concentration);
+    production_correction_capture.push_back(production.correction_capture);
+    local_correction_capture.push_back(local.correction_capture);
+    global_correction_capture.push_back(global.correction_capture);
+    aggregate_captured_fraction.push_back(hierarchical.local_patch_captured_fraction);
+
+    if (pass + 1 < passes)
+    {
+      mfem::Array<mfem::Refinement> refinements;
+      for (std::size_t element : MmsDorflerMark(solve.element_error, theta))
+      {
+        refinements.Append(mfem::Refinement(static_cast<int>(element)));
+      }
+      mesh.GeneralRefinement(refinements);
+      REQUIRE(mesh.Conforming());
+    }
+  }
+
+  const auto mean = [](const std::vector<double> &value)
+  { return std::accumulate(value.begin(), value.end(), 0.0) / value.size(); };
+  CAPTURE(production_rank, local_rank, global_rank, production_extend, local_extend,
+          global_extend, production_concentration, local_concentration,
+          global_concentration, production_correction_capture, local_correction_capture,
+          global_correction_capture, aggregate_captured_fraction);
+
+  // MEASURED on the three oracle meshes at theta=0.5 after hierarchical-key PoU:
+  //
+  //   metric                  production    local patches    global hierarchical
+  //   RANK mean                  0.679           0.987              0.9999
+  //   EXTEND mean                0.595           0.980              1.0000
+  //   concentration mean         0.444           1.174              1.199
+  //   marked correction share    0.149           0.508              0.532
+  //
+  // The PoU-assembled local correction itself captures 0.886 to 0.923 (mean 0.900) of the
+  // global correction energy. Candidate-quality gates are comparisons, not assumptions of
+  // equality with the global solve.
+  CHECK(mean(local_rank) > 0.95);
+  CHECK(mean(local_extend) > 0.95);
+  CHECK(mean(local_concentration) > mean(production_concentration));
+  CHECK(mean(local_correction_capture) > 3.0 * mean(production_correction_capture));
+  CHECK(mean(local_rank) <= mean(global_rank) + 1.0e-12);
+  CHECK(mean(local_extend) <= mean(global_extend) + 1.0e-12);
+  CHECK(mean(local_concentration) < mean(global_concentration));
+  CHECK(mean(aggregate_captured_fraction) > 0.85);
+}
+
+TEST_CASE("Manufactured L-shape local hierarchical AMR beats the dense uniform envelope",
+          "[singularmms][singularelements][Serial]")
+{
+  // Qualification uses the existing production theta without tuning. The candidate performs
+  // no global p+1 solve or global p+1 matrix assembly, stores sparse support-sized basis
+  // columns, and assembles every restricted operator from complete element support unions.
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  constexpr int order = 2, passes = 5;
+  constexpr double theta = 0.5;
+
+  std::vector<std::pair<long long, double>> uniform;
+  for (int n : {2, 3, 4, 5, 6, 8})
+  {
+    const auto report = MmsSolve(n, order, 20, true);
+    uniform.emplace_back(report.dofs, report.error_direct);
+  }
+  const auto envelope_at = [&uniform](long long at_dofs)
+  {
+    for (std::size_t i = 0; i + 1 < uniform.size(); i++)
+    {
+      if (uniform[i].first <= at_dofs && at_dofs <= uniform[i + 1].first)
+      {
+        const double t = (std::log(static_cast<double>(at_dofs)) -
+                          std::log(static_cast<double>(uniform[i].first))) /
+                         (std::log(static_cast<double>(uniform[i + 1].first)) -
+                          std::log(static_cast<double>(uniform[i].first)));
+        return std::exp(std::log(uniform[i].second) + t * (std::log(uniform[i + 1].second) -
+                                                           std::log(uniform[i].second)));
+      }
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+
+  std::vector<int> maximum_support, maximum_overlap, maximum_dimension;
+  std::vector<long long> sparse_nonzeros, avoided_dense_entries, touched_matrix_nonzeros;
+  const auto history = MmsRunAmrWithIndicator(
+      true, order, passes, theta,
+      [&](mfem::Mesh &mesh, const MmsSolveReport &report)
+      {
+        return MmsSelectSingularOnlyIndicator(
+            report,
+            [&]()
+            {
+              const auto local = MmsBuildSparseLocalCandidate(mesh, order, 20, report);
+              REQUIRE(local.fine_global_solves == 0);
+              REQUIRE(local.fine_global_matrix_assemblies == 0);
+              maximum_support.push_back(local.maximum_actual_support_elements);
+              maximum_overlap.push_back(local.maximum_element_overlap);
+              maximum_dimension.push_back(local.maximum_patch_dimension);
+              sparse_nonzeros.push_back(local.sparse_basis_nonzeros);
+              avoided_dense_entries.push_back(local.dense_basis_entries_avoided);
+              touched_matrix_nonzeros.push_back(local.touched_matrix_nonzeros);
+              return local.indicator;
+            });
+      });
+  REQUIRE(history.size() == static_cast<std::size_t>(passes));
+  REQUIRE(maximum_support.size() == history.size());
+
+  std::vector<long long> dofs;
+  std::vector<double> errors, ratios;
+  for (const auto &pass : history)
+  {
+    dofs.push_back(pass.dofs);
+    errors.push_back(pass.error);
+    const double envelope = envelope_at(pass.dofs);
+    REQUIRE(std::isfinite(envelope));
+    ratios.push_back(pass.error / envelope);
+  }
+  CAPTURE(dofs, errors, ratios, maximum_support, maximum_overlap, maximum_dimension,
+          sparse_nonzeros, avoided_dense_entries, touched_matrix_nonzeros, uniform);
+  for (std::size_t pass = 0; pass + 1 < errors.size(); pass++)
+  {
+    CHECK(errors[pass + 1] < errors[pass]);
+  }
+
+  // MEASURED final point: 673 solution DOFs, e^2 = 2.974e-4, 0.408x the dense uniform
+  // envelope. Production previously reached 2.178e-3 at 345 DOFs (1.54x uniform), while
+  // the exact-error oracle reached 4.322e-4 at 576 DOFs (0.51x uniform). The local sequence
+  // therefore reaches the oracle-quality envelope without retuning theta. Its cost-matched
+  // ratios after the common initial mesh are 1.24, 0.848, 0.689, and 0.408; it beats dense
+  // uniform from the third solve onward rather than only at a cherry-picked final pass.
+  CHECK(ratios.back() < 0.5);
+  CHECK(ratios.back() < ratios.front());
+  CHECK(ratios[2] < 1.0);
+  CHECK(ratios[3] < 1.0);
+  CHECK(*std::max_element(maximum_support.begin(), maximum_support.end()) < 25);
+  CHECK(*std::max_element(maximum_overlap.begin(), maximum_overlap.end()) < 100);
+  CHECK(*std::max_element(maximum_dimension.begin(), maximum_dimension.end()) < 20);
+  for (std::size_t pass = 0; pass < history.size(); pass++)
+  {
+    CHECK(avoided_dense_entries[pass] > 5 * sparse_nonzeros[pass]);
+    CHECK(touched_matrix_nonzeros[pass] > 0);
+  }
 }
 
 TEST_CASE("Manufactured L-shape free-coefficient augmentation barely changes the marking",

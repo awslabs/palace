@@ -3,7 +3,11 @@
 
 #include "basesolver.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
+#include <sstream>
+#include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -126,6 +130,84 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
     }
   }
   return ind;
+}
+
+void ReportStableSeedIds(MPI_Comm comm, const mfem::ParMesh &mesh,
+                         const mfem::Array<int> &marked,
+                         const mesh::PartitionMetadata &metadata)
+{
+  // Element numbers may be reassigned after refinement/repartitioning. A simplex key made
+  // from sorted persistent vertex ancestry IDs remains decomposition-independent across all
+  // AMR passes.
+  int ranks_with_metadata = !metadata.source_vertex_ids.empty();
+  Mpi::GlobalSum(1, &ranks_with_metadata, comm);
+  if (ranks_with_metadata == 0)
+  {
+    return;
+  }
+  MFEM_VERIFY(mesh.GetNV() == 0 || metadata.source_vertex_ids.size() ==
+                                       static_cast<std::size_t>(mesh.GetNV()),
+              "AMR stable seed diagnostics received an incomplete vertex identity map!");
+  constexpr int record_size = 5;  // vertex count followed by at most four simplex vertices
+  std::vector<std::int64_t> local(record_size * marked.Size(), -1);
+  mfem::Array<int> vertices;
+  for (int i = 0; i < marked.Size(); i++)
+  {
+    mesh.GetElementVertices(marked[i], vertices);
+    MFEM_VERIFY(vertices.Size() >= 2 && vertices.Size() <= 4,
+                "AMR stable seed diagnostics require simplex elements!");
+    local[record_size * i] = vertices.Size();
+    std::vector<std::int64_t> key(vertices.Size());
+    for (int j = 0; j < vertices.Size(); j++)
+    {
+      key[j] = metadata.source_vertex_ids[vertices[j]];
+    }
+    std::sort(key.begin(), key.end());
+    std::copy(key.begin(), key.end(), local.begin() + record_size * i + 1);
+  }
+  const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  const int local_size = static_cast<int>(local.size());
+  std::vector<int> counts(size), offsets(size + 1);
+  MPI_Gather(&local_size, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+  std::vector<std::int64_t> gathered;
+  if (rank == 0)
+  {
+    for (int r = 0; r < size; r++)
+    {
+      offsets[r + 1] = offsets[r] + counts[r];
+    }
+    gathered.resize(offsets.back());
+  }
+  MPI_Gatherv(local.data(), local_size, MPI_INT64_T, gathered.data(), counts.data(),
+              offsets.data(), MPI_INT64_T, 0, comm);
+  if (rank == 0)
+  {
+    MFEM_VERIFY(gathered.size() % record_size == 0,
+                "AMR stable seed diagnostics gathered malformed simplex keys!");
+    std::vector<std::array<std::int64_t, record_size>> keys(gathered.size() / record_size);
+    for (std::size_t i = 0; i < keys.size(); i++)
+    {
+      std::copy_n(gathered.begin() + record_size * i, record_size, keys[i].begin());
+    }
+    std::sort(keys.begin(), keys.end());
+    std::ostringstream ids;
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (std::size_t i = 0; i < keys.size(); i++)
+    {
+      ids << (i == 0 ? "" : ",") << "{";
+      for (int j = 0; j < keys[i][0]; j++)
+      {
+        ids << (j == 0 ? "" : ":") << keys[i][j + 1];
+      }
+      ids << "}";
+      for (const auto value : keys[i])
+      {
+        hash ^= static_cast<std::uint64_t>(value);
+        hash *= 1099511628211ULL;
+      }
+    }
+    Mpi::Print(comm, " Stable AMR seed simplices (hash {:016x}): [{}]\n", hash, ids.str());
+  }
 }
 
 }  // namespace
@@ -426,6 +508,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       break;
     }
 
+    ReportStableSeedIds(comm, mesh.back()->Get(), marked_elements,
+                        GetSourceEntityMetadata());
     ReportTraceComponents(mesh.back()->Get(), marked_elements);
 
     // Squared-indicator bookkeeping for the seed set, so the closure's effective marking

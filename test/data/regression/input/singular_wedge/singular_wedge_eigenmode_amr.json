@@ -11,9 +11,8 @@
       "SerialUniformLevels": 1,
       "MaxIts": 1,
       "Tol": 1.0e-20,
-      "Nonconformal": true,
-      "MaxNCLevels": 0,
-      "UpdateFraction": 0.999,
+      "Nonconformal": false,
+      "UpdateFraction": 0.5,
       "MaximumImbalance": 1.01
     }
   },

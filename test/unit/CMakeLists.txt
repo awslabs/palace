@@ -37,6 +37,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-hierarchicalerrorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-laplaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
@@ -59,6 +60,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularfeatures.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularmms.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-singularmaxwellmms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
