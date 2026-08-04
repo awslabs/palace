@@ -14,6 +14,9 @@ spack:
     targets:         # Compile for the local microarchitecture
       granularity: microarchitectures
   config:       
+    # Some upstream source mirrors are selected through redirects and can fail
+    # transiently. Let curl retry 5xx responses before failing the full build.
+    url_fetch_method: "curl --retry 10 --retry-delay 2 --retry-max-time 120"
     # Padding is needed to ensure that the binaries can be relocated. Without
     # padding, RPATH might be to short to allow for arbitrary relocation (so
     # that the package has to be recompiled).
@@ -54,7 +57,7 @@ spack:
         secret_variable: GITHUB_TOKEN
   specs:
     # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
-    # underlying Spack spec-groups bug is fixed; gcc-16 is currently apt-
+    # underlying Spack spec-groups bug is fixed; gcc-15 is currently apt-
     # installed in PalaceDockerfile.
     #
     # - group: compilers
@@ -64,7 +67,7 @@ spack:
     #   specs:
     #     # If you change this, you might need to change PalaceDockerfile so
     #     # that we remove the compiler from the container
-    #     - gcc@16
+    #     - gcc@15
     #   override:
     #     concretizer:
     #       # Do not force the target to be specific, let it generic, so that
@@ -75,7 +78,7 @@ spack:
     # FIXME(awslabs/palace#731): re-enable with `compilers` group above.
     # needs: [compilers]
     specs:
-    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@16 ^openblas ^openmpi schedulers=none fabrics=ofi
+    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
     override:
       packages:
         # Enable AWS EFA

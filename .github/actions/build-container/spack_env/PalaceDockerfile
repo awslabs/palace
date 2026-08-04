@@ -1,31 +1,27 @@
 {% extends "container/Dockerfile" %}
 {% block build_stage %}
-# Build args for binary cache authentication
-# Use ARG (not ENV) to avoid baking credentials into image layers
-ARG GITHUB_USER=""
-ARG GITHUB_TOKEN=""
+ARG SPACK_PACKAGES_COMMIT
 
 # FIXME(awslabs/palace#731): workaround for a Spack spec-groups bug that
 # prevents the gcc compiler from being installed. Build-stage only, so the
 # runtime image is unaffected. Remove with the spack.yaml `compilers` group
 # fix.
 #
-# noble's default archive does not carry gcc-16 yet; pull it from the
+# noble's default archive does not carry gcc-15 yet; pull it from the
 # ubuntu-toolchain-r/test PPA.
 RUN apt-get -yqq update && \
     apt-get -yqq install --no-install-recommends software-properties-common && \
     add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
-    apt-get -yqq install --no-install-recommends gcc-16 g++-16 gfortran-16 && \
+    apt-get -yqq install --no-install-recommends gcc-15 g++-15 gfortran-15 && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the Palace source tree
-COPY . /opt/palace
+RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
+    test "$(git -C "$(spack location --repo builtin)" rev-parse HEAD)" = \
+      "$SPACK_PACKAGES_COMMIT"
 
-# Verify that the Palace source tree was copied correctly
-RUN test -f /opt/palace/CMakeLists.txt || \
-    (echo "ERROR: Palace source tree not found in /opt/palace." && \
-     echo "Run 'docker build' from the palace repository root." && \
-     exit 1)
+# Copy inputs needed to install dependencies before the Palace source tree.
+COPY spack_repo /opt/palace/spack_repo
+COPY extern/patch/mfem /opt/palace/extern/patch/mfem
 
 # Set up spack repo and apply patches to builtin spack packages
 RUN mkdir -p /opt/spack-environment && \
@@ -42,8 +38,11 @@ RUN mkdir -p /opt/spack-environment && \
         if git apply --check "$patch" 2>/dev/null; then \
           echo "Applying patch: $patch"; \
           git apply "$patch"; \
+        elif git apply --reverse --check "$patch" 2>/dev/null; then \
+          echo "Patch already applied: $patch"; \
         else \
-          echo "Cannot apply $patch (may already be merged)"; \
+          echo "Patch does not apply cleanly: $patch" >&2; \
+          exit 1; \
         fi; \
       fi; \
     done
@@ -58,64 +57,111 @@ set -o noclobber \
 RUN cd {{ paths.environment }} && spack env activate . && \
     spack compiler find
 
-# Check if the binary cache is reachable
-RUN cd {{ paths.environment }} && spack env activate . && \
+# Keep dependency installation before `COPY .` so Palace source changes can
+# reuse this layer. If installation fails partway through, save the exit status,
+# push every dependency that did install, perform the usual cleanup, and then
+# return the original failure to the workflow.
+#
+# After pushing the Spack buildcache, remove package tests/provenance, generated
+# Python bytecode, documentation, and localization that Palace does not need
+# to compile. The final pipeline then finds executables (`-perm /111`) and shared
+# libraries in the Spack view, resolves and deduplicates their symlink targets,
+# and strips batches of 32 files (`-n 32`) in up to one process per CPU
+# (`-P "$(nproc)"`). Doing this here reduces the reusable Podman dependency
+# layer and final image. It does not reduce the Spack buildcache archives,
+# which are pushed first.
+RUN --mount=type=secret,id=github_user \
+    --mount=type=secret,id=github_token \
+    set -e; \
+    GITHUB_USER="$(cat /run/secrets/github_user)"; \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token)"; \
+    export GITHUB_USER GITHUB_TOKEN; \
+    cd {{ paths.environment }}; \
+    spack env activate .; \
     if spack buildcache list -L 2>/dev/null; then \
       echo "Binary cache is reachable"; \
     else \
       echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
-    fi
+    fi; \
+    install_status=0; \
+    spack install --include-build-deps --only dependencies \
+      -j$(nproc) --fail-fast || install_status=$?; \
+    spack buildcache push --allow-missing --with-build-dependencies \
+      --only dependencies --unsigned local-buildcache || true; \
+    spack clean --stage --downloads --misc-cache --failures || true; \
+    find /opt/software -type d \
+      \( -iname doc -o -iname docs -o -iname documentation \
+      -o -iname example -o -iname examples -o -iname sample \
+      -o -iname samples -o -name __pycache__ \
+      -o -path "*/share/man" -o -path "*/share/info" \
+      -o -path "*/share/locale" -o -path "*/share/cmake-*/Help" \
+      -o -path "*/.spack/test" -o -path "*/.spack/archived-files" \) \
+      -prune \
+      -exec rm -rf {} + 2>/dev/null || true; \
+    find -L {{ paths.view }}/* -type f \
+      \( -perm /111 -o -name "*.so" -o -name "*.so.*" \) \
+      -exec readlink -zf '{}' \; | \
+      sort -zu | \
+      xargs -0 -r -n 32 -P "$(nproc)" strip 2>/dev/null || true; \
+    exit "$install_status"
+
+# Copy the Palace source tree
+COPY . /opt/palace
 
 # palace@develop is pinned to branch="main", so every branch shares a spec
-# hash with different source. Build Palace --no-cache and push only deps.
-RUN cd {{ paths.environment }} && spack env activate . && \
-    spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
-    spack install --only package --no-cache -j$(nproc) --fail-fast
-
-# Push deps only; Palace itself is branch-specific (see above).
-RUN cd {{ paths.environment }} && spack env activate . && \
-    spack buildcache push --only dependencies --unsigned local-buildcache
-
-# Remove unnecessary deps
-# TODO: Remove gcc and build-only dependencies to reduce image size.
-# spack remove does not support grouped specs yet.
-RUN cd {{ paths.environment }} && spack env activate . && spack gc -y
-
-# Remove build-only artifacts that aren't needed at runtime
-# Remove static libraries that have corresponding shared library
-RUN find /opt/software -type d \( -name examples -o -name doc -o -name docs \) -exec rm -rf {} + 2>/dev/null; \
-    find /opt/software -name "*.a" -print0 | while IFS= read -r -d '' a; do \
+# hash with different source. Build Palace --no-cache and never push it to the
+# dependency buildcache.
+#
+# A source change invalidates everything after `COPY .`, so Palace installation
+# and all runtime cleanup stay in one layer. This avoids retaining intermediate
+# unstripped files in the Podman cache without sacrificing a reusable boundary.
+# Cleanup removes unused dependencies, docs/examples, redundant static archives,
+# headers except those libCEED needs for runtime JIT, debug symbols, and Spack
+# metadata. The final strip pass handles Palace and any archives left after
+# static-library cleanup. `set -e` keeps failures in required build steps from
+# being hidden by the best-effort cleanup commands.
+RUN set -e; \
+    if [ ! -f /opt/palace/CMakeLists.txt ]; then \
+      echo "ERROR: Palace source tree not found in /opt/palace."; \
+      echo "Run 'docker build' from the palace repository root."; \
+      exit 1; \
+    fi; \
+    cd {{ paths.environment }}; \
+    spack env activate .; \
+    spack install --only package --no-cache -j$(nproc) --fail-fast; \
+    spack gc -y; \
+    find /opt/software -type d \
+      \( -iname doc -o -iname docs -o -iname documentation \
+      -o -iname example -o -iname examples -o -iname sample \
+      -o -iname samples -o -path "*/share/man" \
+      -o -path "*/share/info" -o -path "*/share/locale" \) \
+      -prune \
+      -exec rm -rf {} + 2>/dev/null || true; \
+    find /opt/software -name "*.a" -print | while IFS= read -r a; do \
       base="${a%.a}"; \
       if ls "${base}".so* >/dev/null 2>&1; then \
         rm -f "$a"; \
       fi; \
-    done; \
-    true
-
-# Remove header files not needed at runtime (keep libCEED headers for JIT compilation)
-RUN find /opt/software -type d -name include \
+    done || true; \
+    find /opt/software -type d -name include \
       -not -path "*/libceed-*/include" \
-      -exec rm -rf {} + 2>/dev/null; \
-    true
-{% if strip %}
-
-# Strip all the binaries
-RUN find -L {{ paths.view }}/* -type f -exec readlink -f '{}' \; | \
-    xargs file -i | \
-    grep 'charset=binary' | \
-    grep 'x-executable\|x-archive\|x-sharedlib' | \
-    awk -F: '{print $1}' | xargs strip
-{% endif %}
-
-# Modifications to the environment that are necessary to run
-RUN cd {{ paths.environment }} && \
-    spack env activate --sh -d . > activate.sh
+      -not -path "*/palace-*/include" \
+      -exec rm -rf {} + 2>/dev/null || true; \
+    find -L {{ paths.view }}/* -type f \
+      \( -perm /111 -o -name "*.so" -o -name "*.so.*" -o -name "*.a" \) \
+      -exec readlink -zf '{}' \; | \
+      sort -zu | \
+      xargs -0 -r -n 32 -P "$(nproc)" strip 2>/dev/null || true; \
+    spack env activate --sh -d . > activate.sh && \
+    find /opt/software -type d -name .spack -prune -exec rm -rf {} + && \
+    find {{ paths.environment }} -mindepth 1 -maxdepth 1 \
+      ! -name activate.sh -exec rm -rf {} +
 
 {% endblock %}
 
 {% block final_stage %}
 # FIXME(awslabs/palace#731): mirror the build-stage PPA install in the final
-# image so libstdc++6 there is gcc-16's, matching what palace was built
+# image so libstdc++6 there is gcc-15's, matching what palace was built
 # against. Remove with the spack.yaml `compilers` group fix.
 RUN apt-get -yqq update && \
     apt-get -yqq install --no-install-recommends software-properties-common && \

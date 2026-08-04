@@ -2,6 +2,10 @@ name: Build Palace Containers
 description: Build a Palace container image from the stored Spack environment
 
 inputs:
+  spack-packages-commit:
+    description: 'spack-packages commit used by the builtin Spack repository'
+    required: false
+    default: '3dcad5bb860184c91c17b97a9f3b13252d26d309'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -30,7 +34,6 @@ runs:
         start_timer
 
         sudo add-apt-repository -y ppa:apptainer/ppa
-        sudo apt update
 
         sudo apt install -y podman apptainer
 
@@ -93,16 +96,65 @@ runs:
       run: |
         podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < $GITHUB_WORKSPACE/Dockerfile
 
+    - name: Authenticate to build cache
+      shell: bash
+      run: |
+        printf '%s' "$GITHUB_TOKEN" | sudo podman login ghcr.io \
+          --username "$GITHUB_USER" \
+          --password-stdin
+
     - name: Build OCI image
       shell: bash
+      env:
+        CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
+        CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+        SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
         source /tmp/timing_functions.sh
         start_timer
 
-        sudo podman build --format docker \
-          --build-arg GITHUB_USER=$GITHUB_USER \
-          --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
-          -t ${{ steps.name.outputs.image_name }} .
+        # TODO: Ubuntu 26 provides Podman 5.4+; use environment-backed secrets
+        # once the runners upgrade.
+        GITHUB_USER_FILE="$RUNNER_TEMP/palace-github-user"
+        GITHUB_TOKEN_FILE="$RUNNER_TEMP/palace-github-token"
+        BUILD_LOG="$RUNNER_TEMP/palace-podman-build.log"
+        umask 077
+        printf '%s' "$GITHUB_USER" > "$GITHUB_USER_FILE"
+        printf '%s' "$GITHUB_TOKEN" > "$GITHUB_TOKEN_FILE"
+        trap 'rm -f "$GITHUB_USER_FILE" "$GITHUB_TOKEN_FILE" "$BUILD_LOG"' EXIT
+
+        build_image() {
+          sudo podman build --format docker --layers "$@" \
+            --secret "id=github_user,src=$GITHUB_USER_FILE" \
+            --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
+            --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
+            -t "$IMAGE_NAME" .
+        }
+
+        if [ "$CACHE_WRITE_ENABLED" = "true" ]; then
+          set +e
+          build_image \
+            --cache-from "$CACHE_REPOSITORY" \
+            --cache-to "$CACHE_REPOSITORY" 2>&1 | tee "$BUILD_LOG"
+          build_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$build_status" -ne 0 ]; then
+            # Podman exports each cache layer while building. A transient registry
+            # error should not discard an otherwise reproducible container build.
+            if grep -q '^Error: failed pushing cache to ' "$BUILD_LOG"; then
+              echo "::warning::Podman cache export failed; retrying without cache writes"
+              build_image --cache-from "$CACHE_REPOSITORY"
+            else
+              exit "$build_status"
+            fi
+          fi
+        else
+          # Fork PR tokens can pull package caches but cannot write GHCR packages.
+          echo "Cache export disabled because this job cannot write GHCR packages."
+          build_image --cache-from "$CACHE_REPOSITORY"
+        fi
 
         end_timer "Build OCI container"
 
@@ -130,6 +182,9 @@ runs:
         name: ${{ steps.name.outputs.image_name }}-oci
         path: ${{ steps.name.outputs.image_name }}.tar
         retention-days: 1
+        # podman save emits an uncompressed Docker archive. Keep the action's
+        # default compression level, made explicit here, to reduce upload size.
+        compression-level: 6
 
     - name: Upload SIF image
       uses: actions/upload-artifact@v7
@@ -137,6 +192,9 @@ runs:
         name: ${{ steps.name.outputs.image_name }}-sif
         path: ${{ steps.name.outputs.image_name }}.sif
         retention-days: 1
+        # SIF stores its filesystem as compressed SquashFS. Recompressing it in
+        # the artifact ZIP costs CPU without meaningfully reducing transfer size.
+        compression-level: 0
 
     - name: Upload config schema
       # Bundle the exact config-schema.json this image was built from, so the
