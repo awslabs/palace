@@ -403,12 +403,19 @@ message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 
 # A number of patches to MFEM for our use cases
 set(MFEM_PATCH_FILES
+  # https://github.com/mfem/mfem/pull/3847
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
+  # https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
+  # https://github.com/mfem/mfem/pull/5246
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
+  # https://github.com/mfem/mfem/pull/5124
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5124_cudss.diff"
+  # https://github.com/mfem/mfem/pull/5353
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5353.diff"
+  # https://github.com/mfem/mfem/pull/4983
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr4983.diff"
+  # https://github.com/mfem/mfem/pull/5415
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5415.diff"
 )
 
