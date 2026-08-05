@@ -1090,82 +1090,21 @@ std::vector<MaxwellSparseColumn> MaxwellBuildSparseTransfer(
     int *signed_coarse_dofs = nullptr, int *signed_fine_dofs = nullptr,
     int *nonidentity_transformations = nullptr)
 {
-  std::vector<std::map<int, double>> entries(coarse_space.GetVSize());
-  mfem::IsoparametricTransformation identity;
-  identity.SetIdentityTransformation(mfem::Geometry::TRIANGLE);
-  mfem::DenseMatrix local_transfer;
-  mfem::Array<int> coarse_dofs, fine_dofs;
-  maximum_consistency_error = 0.0;
-  for (int element = 0; element < mesh.GetNE(); element++)
+  auto injection = fem::hierarchical::BuildSparsePInjection(mesh, coarse_space, fine_space);
+  maximum_consistency_error = injection.consistency_error;
+  if (signed_coarse_dofs)
   {
-    mfem::DofTransformation coarse_transformation, fine_transformation;
-    coarse_space.GetElementVDofs(element, coarse_dofs, coarse_transformation);
-    fine_space.GetElementVDofs(element, fine_dofs, fine_transformation);
-    if (signed_coarse_dofs)
-    {
-      *signed_coarse_dofs += std::count_if(coarse_dofs.begin(), coarse_dofs.end(),
-                                           [](int dof) { return dof < 0; });
-    }
-    if (signed_fine_dofs)
-    {
-      *signed_fine_dofs += std::count_if(fine_dofs.begin(), fine_dofs.end(),
-                                         [](int dof) { return dof < 0; });
-    }
-    if (nonidentity_transformations)
-    {
-      *nonidentity_transformations += !coarse_transformation.IsIdentity();
-      *nonidentity_transformations += !fine_transformation.IsIdentity();
-    }
-    fine_space.GetFE(element)->GetTransferMatrix(*coarse_space.GetFE(element), identity,
-                                                 local_transfer);
-    std::set<int> element_coarse;
-    for (int dof : coarse_dofs)
-    {
-      element_coarse.insert(MaxwellUnsignedDof(dof));
-    }
-    for (int global_coarse : element_coarse)
-    {
-      mfem::Vector local_coarse(coarse_dofs.Size());
-      local_coarse = 0.0;
-      for (int i = 0; i < coarse_dofs.Size(); i++)
-      {
-        if (MaxwellUnsignedDof(coarse_dofs[i]) == global_coarse)
-        {
-          local_coarse(i) = MaxwellDofSign(coarse_dofs[i]);
-        }
-      }
-      coarse_transformation.InvTransformPrimal(local_coarse);
-      mfem::Vector local_fine(fine_dofs.Size());
-      local_transfer.Mult(local_coarse, local_fine);
-      fine_transformation.TransformPrimal(local_fine);
-      auto &column = entries[global_coarse];
-      for (int i = 0; i < fine_dofs.Size(); i++)
-      {
-        const double value = MaxwellDofSign(fine_dofs[i]) * local_fine(i);
-        if (std::abs(value) <= 1.0e-13)
-        {
-          continue;
-        }
-        const int row = MaxwellUnsignedDof(fine_dofs[i]);
-        const auto [found, inserted] = column.emplace(row, value);
-        if (!inserted)
-        {
-          maximum_consistency_error =
-              std::max(maximum_consistency_error, std::abs(found->second - value));
-        }
-      }
-    }
+    *signed_coarse_dofs += injection.signed_coarse_dofs;
   }
-  std::vector<MaxwellSparseColumn> result(entries.size());
-  for (std::size_t column = 0; column < entries.size(); column++)
+  if (signed_fine_dofs)
   {
-    for (const auto &[row, value] : entries[column])
-    {
-      result[column].dofs.push_back(row);
-      result[column].values.push_back(value);
-    }
+    *signed_fine_dofs += injection.signed_fine_dofs;
   }
-  return result;
+  if (nonidentity_transformations)
+  {
+    *nonidentity_transformations += injection.nonidentity_transformations;
+  }
+  return std::move(injection.columns);
 }
 
 struct MaxwellPatchReport
@@ -1222,12 +1161,13 @@ MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order, const MaxwellSolveReport &
   const int coarse_standard = coarse_space.GetVSize();
   const int fine_standard = fine_space.GetVSize();
   const int enrichment = fine.enrichment_size;
-  const int combined_size = fine_standard + enrichment;
   REQUIRE(coarse.enrichment_dofs == enrichment);
-  auto injection = MaxwellBuildSparseTransfer(
-      mesh, coarse_space, fine_space, report.transfer_consistency_error,
-      &report.signed_coarse_dofs, &report.signed_fine_dofs,
-      &report.nonidentity_transformations);
+  const auto injection =
+      fem::hierarchical::BuildSparsePInjection(mesh, coarse_space, fine_space);
+  report.transfer_consistency_error = injection.consistency_error;
+  report.signed_coarse_dofs = injection.signed_coarse_dofs;
+  report.signed_fine_dofs = injection.signed_fine_dofs;
+  report.nonidentity_transformations = injection.nonidentity_transformations;
 
   // Independent orientation/reference check against MFEM's p-transfer.
   mfem::Vector probe(coarse_standard), sparse_image(fine_standard),
@@ -1239,10 +1179,10 @@ MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order, const MaxwellSolveReport &
   sparse_image = 0.0;
   for (int column = 0; column < coarse_standard; column++)
   {
-    for (std::size_t entry = 0; entry < injection[column].dofs.size(); entry++)
+    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
     {
-      sparse_image(injection[column].dofs[entry]) +=
-          probe(column) * injection[column].values[entry];
+      sparse_image(injection.columns[column].dofs[entry]) +=
+          probe(column) * injection.columns[column].values[entry];
     }
   }
   mfem::PRefinementTransferOperator transfer(coarse_space, fine_space);
@@ -1250,441 +1190,69 @@ MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order, const MaxwellSolveReport &
   sparse_image -= reference;
   report.transfer_reference_error = sparse_image.Normlinf();
 
-  mfem::Vector injected(combined_size);
-  injected = 0.0;
-  for (int column = 0; column < coarse_standard; column++)
+  // Combined coarse solution and per-element enrichment guest lists, including the
+  // optional rotational-family ablation filter.
+  mfem::Vector coarse_combined(coarse_standard + enrichment);
+  for (int i = 0; i < coarse_standard; i++)
   {
-    for (std::size_t entry = 0; entry < injection[column].dofs.size(); entry++)
-    {
-      injected(injection[column].dofs[entry]) +=
-          coarse.standard_coefficients(column) * injection[column].values[entry];
-    }
+    coarse_combined(i) = coarse.standard_coefficients(i);
   }
   for (int dof = 0; dof < enrichment; dof++)
   {
-    injected(fine_standard + dof) = coarse.enrichment_coefficients(dof);
+    coarse_combined(coarse_standard + dof) = coarse.enrichment_coefficients(dof);
   }
-  mfem::Vector residual = fem::hierarchical::AssembleResidual(combined_size, residual_all,
-                                                              injected, fine.essential);
-  std::vector<std::set<int>> dof_elements(combined_size);
-  for (const auto &data : metric_all)
-  {
-    for (int dof : data.dofs)
-    {
-      dof_elements[dof].insert(data.support_element);
-    }
-  }
-
-  const auto entity_complement =
-      [&](mfem::Array<int> fine_entity, mfem::Array<int> coarse_entity)
-  {
-    mfem::FiniteElementSpace::AdjustVDofs(fine_entity);
-    mfem::FiniteElementSpace::AdjustVDofs(coarse_entity);
-    std::vector<int> rows, columns;
-    for (int dof : fine_entity)
-    {
-      if (!fine.essential[dof])
-      {
-        rows.push_back(dof);
-      }
-    }
-    for (int dof : coarse_entity)
-    {
-      if (!coarse.essential_mask[dof])
-      {
-        columns.push_back(dof);
-      }
-    }
-    std::vector<mfem::Vector> range;
-    for (int column : columns)
-    {
-      mfem::Vector vector(static_cast<int>(rows.size()));
-      vector = 0.0;
-      for (int i = 0; i < static_cast<int>(rows.size()); i++)
-      {
-        for (std::size_t entry = 0; entry < injection[column].dofs.size(); entry++)
-        {
-          if (injection[column].dofs[entry] == rows[i])
-          {
-            vector(i) = injection[column].values[entry];
-          }
-        }
-      }
-      for (int repeat = 0; repeat < 2; repeat++)
-      {
-        for (const auto &basis : range)
-        {
-          vector.Add(-mfem::InnerProduct(vector, basis), basis);
-        }
-      }
-      const double norm = vector.Norml2();
-      if (norm > 1.0e-12)
-      {
-        vector /= norm;
-        range.push_back(vector);
-      }
-    }
-    std::vector<mfem::Vector> complement;
-    for (int direction = 0; direction < static_cast<int>(rows.size()); direction++)
-    {
-      mfem::Vector vector(static_cast<int>(rows.size()));
-      vector = 0.0;
-      vector(direction) = 1.0;
-      for (int repeat = 0; repeat < 2; repeat++)
-      {
-        for (const auto &basis : range)
-        {
-          vector.Add(-mfem::InnerProduct(vector, basis), basis);
-        }
-        for (const auto &basis : complement)
-        {
-          vector.Add(-mfem::InnerProduct(vector, basis), basis);
-        }
-      }
-      const double norm = vector.Norml2();
-      if (norm > 1.0e-10)
-      {
-        vector /= norm;
-        complement.push_back(vector);
-      }
-    }
-    std::vector<MaxwellSparseColumn> result;
-    for (const auto &local : complement)
-    {
-      MaxwellSparseColumn column;
-      for (int i = 0; i < static_cast<int>(rows.size()); i++)
-      {
-        if (std::abs(local(i)) > 1.0e-13)
-        {
-          column.dofs.push_back(rows[i]);
-          column.values.push_back(local(i));
-        }
-      }
-      result.push_back(std::move(column));
-    }
-    return result;
-  };
-
-  struct Patch
-  {
-    int owned = 0;
-    std::vector<MaxwellSparseColumn> basis;
-    std::vector<int> coarse_guests;
-    std::vector<int> singular_guests;
-    mfem::Vector coefficients;
-    mfem::DenseMatrix restricted;
-    std::set<int> support;
-  };
-  std::vector<Patch> patches;
-  std::vector<int> overlap(mesh.GetNE(), 0);
-  mfem::Array<int> element_dofs;
-  const auto add_patch = [&](std::vector<MaxwellSparseColumn> owned,
-                             const std::vector<int> &owner_elements, bool edge)
-  {
-    if (owned.empty())
-    {
-      return;
-    }
-    Patch patch;
-    patch.owned = static_cast<int>(owned.size());
-    patch.basis = std::move(owned);
-    report.owned_modes += patch.owned;
-    report.edge_patches += edge;
-    report.interior_patches += !edge;
-    std::set<int> coarse_guests, singular_guests;
-    for (int element : owner_elements)
-    {
-      mfem::DofTransformation transformation;
-      coarse_space.GetElementVDofs(element, element_dofs, transformation);
-      for (int dof : element_dofs)
-      {
-        dof = MaxwellUnsignedDof(dof);
-        if (!coarse.essential_mask[dof])
-        {
-          coarse_guests.insert(dof);
-        }
-      }
-      for (const auto &dof : fine.topology.elements[element].nd)
-      {
-        const bool rotational = fine.topology.nd_dofs[dof.dof].family ==
-                                fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
-        if (!fine.essential[fine_standard + static_cast<int>(dof.dof)] &&
-            (include_rotational_guests || !rotational))
-        {
-          singular_guests.insert(static_cast<int>(dof.dof));
-        }
-      }
-    }
-    for (int dof : coarse_guests)
-    {
-      patch.coarse_guests.push_back(dof);
-      patch.basis.push_back(injection[dof]);
-    }
-    for (int dof : singular_guests)
-    {
-      MaxwellSparseColumn column;
-      column.dofs.push_back(fine_standard + dof);
-      column.values.push_back(1.0);
-      patch.singular_guests.push_back(dof);
-      patch.basis.push_back(column);
-      report.covered_gradient_guests +=
-          fine.topology.nd_dofs[dof].family ==
-          fem::singular::HigherOrderBasisFamily::NODE_GRADIENT;
-      report.covered_rotational_guests +=
-          fine.topology.nd_dofs[dof].family ==
-          fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
-    }
-    const int dimension = static_cast<int>(patch.basis.size());
-    report.maximum_patch_dimension = std::max(report.maximum_patch_dimension, dimension);
-    std::map<int, std::vector<std::pair<int, double>>> row_basis;
-    bool touches_essential = false;
-    for (int basis = 0; basis < dimension; basis++)
-    {
-      for (std::size_t entry = 0; entry < patch.basis[basis].dofs.size(); entry++)
-      {
-        const int dof = patch.basis[basis].dofs[entry];
-        touches_essential = touches_essential || fine.essential[dof];
-        row_basis[dof].push_back({basis, patch.basis[basis].values[entry]});
-        patch.support.insert(dof_elements[dof].begin(), dof_elements[dof].end());
-      }
-    }
-    REQUIRE_FALSE(touches_essential);
-    report.maximum_support_elements =
-        std::max(report.maximum_support_elements, static_cast<int>(patch.support.size()));
-    for (int element : patch.support)
-    {
-      overlap[element]++;
-    }
-    mfem::DenseMatrix restricted;
-    mfem::Vector patch_rhs;
-    fem::hierarchical::AssembleRestrictedOperator(metric_all, patch.support, patch.basis,
-                                                  residual, restricted, patch_rhs);
-    patch.restricted = restricted;
-    mfem::DenseMatrixInverse inverse(restricted, true);
-    mfem::DenseMatrix inverse_matrix;
-    inverse.GetInverseMatrix(inverse_matrix);
-    report.maximum_patch_condition = std::max(report.maximum_patch_condition,
-                                              restricted.FNorm() * inverse_matrix.FNorm());
-    patch.coefficients.SetSize(dimension);
-    inverse.Mult(patch_rhs, patch.coefficients);
-    mfem::Vector solve_residual(dimension);
-    restricted.Mult(patch.coefficients, solve_residual);
-    solve_residual -= patch_rhs;
-    report.maximum_patch_residual =
-        std::max(report.maximum_patch_residual,
-                 solve_residual.Norml2() / std::max(patch_rhs.Norml2(), 1.0e-30));
-    patches.push_back(std::move(patch));
-  };
-
-  std::vector<std::vector<int>> edge_elements(mesh.GetNEdges());
-  mfem::Array<int> edges, orientations;
+  std::vector<std::vector<int>> element_enrichment_guests(mesh.GetNE());
   for (int element = 0; element < mesh.GetNE(); element++)
   {
-    mesh.GetElementEdges(element, edges, orientations);
-    for (int edge : edges)
+    for (const auto &dof : fine.topology.elements[element].nd)
     {
-      edge_elements[edge].push_back(element);
-    }
-  }
-  for (int edge = 0; edge < mesh.GetNEdges(); edge++)
-  {
-    mfem::Array<int> coarse_entity, fine_entity;
-    coarse_space.GetEdgeDofs(edge, coarse_entity);
-    fine_space.GetEdgeDofs(edge, fine_entity);
-    add_patch(entity_complement(fine_entity, coarse_entity), edge_elements[edge], true);
-  }
-  for (int element = 0; element < mesh.GetNE(); element++)
-  {
-    mfem::Array<int> coarse_entity, fine_entity;
-    coarse_space.GetElementInteriorDofs(element, coarse_entity);
-    fine_space.GetElementInteriorDofs(element, fine_entity);
-    add_patch(entity_complement(fine_entity, coarse_entity), {element}, false);
-  }
-  int coarse_free = 0, fine_free = 0;
-  for (int dof = 0; dof < coarse_standard; dof++)
-  {
-    coarse_free += !coarse.essential_mask[dof];
-  }
-  for (int dof = 0; dof < fine_standard; dof++)
-  {
-    fine_free += !fine.essential[dof];
-  }
-  REQUIRE(report.owned_modes == fine_free - coarse_free);
-  report.maximum_element_overlap = *std::max_element(overlap.begin(), overlap.end());
-
-  mfem::Vector raw(combined_size);
-  raw = 0.0;
-  std::vector<double> coarse_sum(coarse_standard, 0.0), singular_sum(enrichment, 0.0);
-  std::vector<int> coarse_count(coarse_standard, 0), singular_count(enrichment, 0);
-  for (const auto &patch : patches)
-  {
-    for (int basis = 0; basis < patch.owned; basis++)
-    {
-      for (std::size_t entry = 0; entry < patch.basis[basis].dofs.size(); entry++)
+      const bool rotational = fine.topology.nd_dofs[dof.dof].family ==
+                              fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
+      if (include_rotational_guests || !rotational)
       {
-        raw(patch.basis[basis].dofs[entry]) +=
-            patch.coefficients(basis) * patch.basis[basis].values[entry];
+        element_enrichment_guests[element].push_back(static_cast<int>(dof.dof));
       }
     }
-    int coefficient = patch.owned;
-    for (int dof : patch.coarse_guests)
-    {
-      coarse_sum[dof] += patch.coefficients(coefficient++);
-      coarse_count[dof]++;
-    }
-    for (int dof : patch.singular_guests)
-    {
-      singular_sum[dof] += patch.coefficients(coefficient++);
-      singular_count[dof]++;
-    }
   }
+
+  const auto lifting = fem::hierarchical::EstimateByPatchLifting(
+      mesh, coarse_space, fine_space, injection, residual_all, metric_all, fine.essential,
+      coarse.essential_mask, coarse_combined, element_enrichment_guests);
+  REQUIRE(lifting.face_patches == 0);
+  report.indicator = lifting.indicator;
+  report.energy = lifting.energy;
+  report.work = lifting.work;
+  report.maximum_patch_residual = lifting.maximum_patch_residual;
+  report.maximum_patch_condition = lifting.maximum_patch_condition;
+  report.edge_patches = lifting.edge_patches;
+  report.interior_patches = lifting.interior_patches;
+  report.owned_modes = lifting.owned_modes;
+  report.maximum_support_elements = lifting.maximum_support_elements;
+  report.maximum_patch_dimension = lifting.maximum_patch_dimension;
+  report.maximum_element_overlap = lifting.maximum_element_overlap;
   for (int dof = 0; dof < coarse_standard; dof++)
   {
     if (!coarse.essential_mask[dof])
     {
-      REQUIRE(coarse_count[dof] > 0);
+      REQUIRE(lifting.coarse_guest_counts[dof] > 0);
       report.unique_coarse_guests++;
-    }
-    if (coarse_count[dof] > 0)
-    {
-      const double coefficient = coarse_sum[dof] / coarse_count[dof];
-      for (std::size_t entry = 0; entry < injection[dof].dofs.size(); entry++)
-      {
-        raw(injection[dof].dofs[entry]) += coefficient * injection[dof].values[entry];
-      }
     }
   }
   for (int dof = 0; dof < enrichment; dof++)
   {
+    const bool gradient = fine.topology.nd_dofs[dof].family ==
+                          fem::singular::HigherOrderBasisFamily::NODE_GRADIENT;
     const bool rotational = fine.topology.nd_dofs[dof].family ==
                             fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
+    report.covered_gradient_guests += gradient ? lifting.enrichment_guest_counts[dof] : 0;
+    report.covered_rotational_guests +=
+        rotational ? lifting.enrichment_guest_counts[dof] : 0;
     if (!fine.essential[fine_standard + dof] && (include_rotational_guests || !rotational))
     {
-      REQUIRE(singular_count[dof] > 0);
-      report.unique_gradient_guests += fine.topology.nd_dofs[dof].family ==
-                                       fem::singular::HigherOrderBasisFamily::NODE_GRADIENT;
-      report.unique_rotational_guests +=
-          fine.topology.nd_dofs[dof].family ==
-          fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
+      REQUIRE(lifting.enrichment_guest_counts[dof] > 0);
+      report.unique_gradient_guests += gradient;
+      report.unique_rotational_guests += rotational;
     }
-    if (singular_count[dof] > 0)
-    {
-      raw(fine_standard + dof) += singular_sum[dof] / singular_count[dof];
-    }
-  }
-  double raw_energy = fem::hierarchical::Energy(metric_all, raw);
-  double raw_work = mfem::InnerProduct(raw, residual);
-  const double alpha = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
-  raw *= alpha;
-
-  // Additional additive-Schwarz defect-correction sweeps. These remain patch-local and are
-  // especially important for p1, where one independent patch response poorly approximates
-  // the long-range coarse Schur relaxation. The sweeps relax the metric equation
-  // A_metric e = r, whose right-hand side is the (possibly indefinite) combined residual.
-  for (int sweep = 1; sweep < 4; sweep++)
-  {
-    mfem::Vector current_residual(residual);
-    for (const auto &data : metric_all)
-    {
-      mfem::Vector local(static_cast<int>(data.dofs.size()));
-      for (int i = 0; i < local.Size(); i++)
-      {
-        local(i) = raw(data.dofs[i]);
-      }
-      mfem::Vector action(local.Size());
-      data.matrix.Mult(local, action);
-      for (int i = 0; i < local.Size(); i++)
-      {
-        current_residual(data.dofs[i]) -= action(i);
-      }
-    }
-    for (auto &patch : patches)
-    {
-      mfem::Vector patch_rhs(static_cast<int>(patch.basis.size()));
-      for (int basis = 0; basis < static_cast<int>(patch.basis.size()); basis++)
-      {
-        patch_rhs(basis) = 0.0;
-        for (std::size_t entry = 0; entry < patch.basis[basis].dofs.size(); entry++)
-        {
-          patch_rhs(basis) += patch.basis[basis].values[entry] *
-                              current_residual(patch.basis[basis].dofs[entry]);
-        }
-      }
-      mfem::DenseMatrixInverse inverse(patch.restricted, true);
-      inverse.Mult(patch_rhs, patch.coefficients);
-    }
-    mfem::Vector delta(combined_size);
-    delta = 0.0;
-    std::fill(coarse_sum.begin(), coarse_sum.end(), 0.0);
-    std::fill(singular_sum.begin(), singular_sum.end(), 0.0);
-    std::fill(coarse_count.begin(), coarse_count.end(), 0);
-    std::fill(singular_count.begin(), singular_count.end(), 0);
-    for (const auto &patch : patches)
-    {
-      for (int basis = 0; basis < patch.owned; basis++)
-      {
-        for (std::size_t entry = 0; entry < patch.basis[basis].dofs.size(); entry++)
-        {
-          delta(patch.basis[basis].dofs[entry]) +=
-              patch.coefficients(basis) * patch.basis[basis].values[entry];
-        }
-      }
-      int coefficient = patch.owned;
-      for (int dof : patch.coarse_guests)
-      {
-        coarse_sum[dof] += patch.coefficients(coefficient++);
-        coarse_count[dof]++;
-      }
-      for (int dof : patch.singular_guests)
-      {
-        singular_sum[dof] += patch.coefficients(coefficient++);
-        singular_count[dof]++;
-      }
-    }
-    for (int dof = 0; dof < coarse_standard; dof++)
-    {
-      if (coarse_count[dof] > 0)
-      {
-        const double coefficient = coarse_sum[dof] / coarse_count[dof];
-        for (std::size_t entry = 0; entry < injection[dof].dofs.size(); entry++)
-        {
-          delta(injection[dof].dofs[entry]) += coefficient * injection[dof].values[entry];
-        }
-      }
-    }
-    for (int dof = 0; dof < enrichment; dof++)
-    {
-      if (singular_count[dof] > 0)
-      {
-        delta(fine_standard + dof) += singular_sum[dof] / singular_count[dof];
-      }
-    }
-    const double delta_energy = fem::hierarchical::Energy(metric_all, delta);
-    const double delta_work = mfem::InnerProduct(delta, current_residual);
-    if (delta_energy > 0.0)
-    {
-      raw.Add(delta_work / delta_energy, delta);
-    }
-  }
-
-  // A final scalar projection restores the energy/work identity without changing ranking.
-  raw_energy = fem::hierarchical::Energy(metric_all, raw);
-  raw_work = mfem::InnerProduct(raw, residual);
-  const double final_scale = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
-  raw *= final_scale;
-  report.energy = final_scale * final_scale * raw_energy;
-  report.work = final_scale * raw_work;
-  report.indicator.assign(mesh.GetNE(), 0.0);
-  for (const auto &data : metric_all)
-  {
-    mfem::Vector local(static_cast<int>(data.dofs.size()));
-    for (int i = 0; i < local.Size(); i++)
-    {
-      local(i) = raw(data.dofs[i]);
-    }
-    mfem::Vector action(local.Size());
-    data.matrix.Mult(local, action);
-    report.indicator[data.support_element] += mfem::InnerProduct(local, action);
   }
   return report;
 }

@@ -10,7 +10,6 @@
 
 namespace palace::fem::hierarchical
 {
-
 // Sparse coefficients of one complete conforming patch direction in a combined standard
 // plus singular true-DOF numbering. The owning estimator is responsible for orientation and
 // constraint transformations before constructing this column.
@@ -50,6 +49,77 @@ AssembleRestrictedOperator(const std::vector<LocalOperatorContribution> &contrib
 // searches and element indicators.
 double Energy(const std::vector<LocalOperatorContribution> &contributions,
               const mfem::Vector &vector);
+
+// Sparse signed p -> p+1 injection between two spaces on the same mesh, assembled
+// element-by-element with MFEM DOF transformations applied on both sides. Columns are
+// indexed by unsigned coarse VDof; entries address unsigned fine VDofs. The consistency
+// error is the largest disagreement between elements that share a coarse basis function
+// and is an orientation-covariance diagnostic: it vanishes when signed VDofs and DOF
+// transformations are handled correctly.
+struct SparseInjection
+{
+  std::vector<SparseColumn> columns;
+  double consistency_error = 0.0;
+  int signed_coarse_dofs = 0;
+  int signed_fine_dofs = 0;
+  int nonidentity_transformations = 0;
+};
+
+SparseInjection BuildSparsePInjection(mfem::Mesh &mesh,
+                                      mfem::FiniteElementSpace &coarse_space,
+                                      mfem::FiniteElementSpace &fine_space);
+
+struct PatchLiftingOptions
+{
+  // Total additive-Schwarz defect-correction passes, including the first patch solve.
+  int sweeps = 4;
+  // Sparse entries below this magnitude are dropped from complement basis columns.
+  double drop_tolerance = 1.0e-13;
+};
+
+struct PatchLiftingReport
+{
+  std::vector<double> indicator;
+  double energy = 0.0;
+  double work = 0.0;
+  double maximum_patch_residual = 0.0;
+  double maximum_patch_condition = 0.0;
+  int edge_patches = 0;
+  int face_patches = 0;
+  int interior_patches = 0;
+  int owned_modes = 0;
+  int maximum_support_elements = 0;
+  int maximum_patch_dimension = 0;
+  int maximum_element_overlap = 0;
+  // Number of patches hosting each coarse standard DOF (by unsigned coarse VDof) or
+  // enrichment DOF as an averaged partition-of-unity guest. A zero count for a free DOF
+  // means that direction is not covered by any patch.
+  std::vector<int> coarse_guest_counts;
+  std::vector<int> enrichment_guest_counts;
+};
+
+// Element-local hierarchical residual lifting on the combined
+// [fine standard, enrichment] layout. Every conforming p -> p+1 complement direction is
+// owned by exactly one edge, face (3D), or element-interior patch; incident coarse
+// standard and enrichment DOFs join their owner patches as partition-of-unity guests
+// averaged by stable DOF identity. Patch corrections solve the restriction of the
+// coercive metric contributions by dense Cholesky over measured complete support unions;
+// the (possibly indefinite) residual contributions only define the lifted right-hand
+// side. No global fine matrix is assembled and no global fine solve is performed.
+//
+// The coarse combined vector uses the [coarse standard, enrichment] layout, and both
+// essential masks cover their full combined ranges. element_enrichment_guests lists, for
+// every mesh element, the enrichment DOFs a patch owning that element must host; family
+// filtering (for example excluding rotational guests) is the caller's responsibility.
+PatchLiftingReport EstimateByPatchLifting(
+    mfem::Mesh &mesh, mfem::FiniteElementSpace &coarse_space,
+    mfem::FiniteElementSpace &fine_space, const SparseInjection &injection,
+    const std::vector<LocalOperatorContribution> &residual_contributions,
+    const std::vector<LocalOperatorContribution> &metric_contributions,
+    const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
+    const mfem::Vector &coarse_combined,
+    const std::vector<std::vector<int>> &element_enrichment_guests,
+    const PatchLiftingOptions &options = {});
 
 }  // namespace palace::fem::hierarchical
 
