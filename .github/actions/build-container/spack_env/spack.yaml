@@ -71,11 +71,10 @@ spack:
       %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
   - when: env.get("PALACE_CUDA")
     palace:
-    # NVIDIA's 13.1.2 runfile references a missing CUPTI static archive.
-    # MFEM's cuDSS dependency constraint selects a compatible 0.7 CUDA 13 build.
+    # Hypre 3.1 caps CUDA at 13.1; MFEM selects a compatible cuDSS 0.7 build.
     - >-
       palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
-      +cuda+cudss cuda_arch=80,86,89,90 %gcc@15 ^cuda@=13.0.2 ^openblas
+      +cuda+cudss cuda_arch=80,86,89,90 %gcc@15 ^cuda@13 ^openblas
       ^openmpi+cuda cuda_arch=80,86,89,90 schedulers=none fabrics=ofi
       ^libfabric+cuda+cuda_dlopen cuda_arch=80,86,89,90
   specs:
