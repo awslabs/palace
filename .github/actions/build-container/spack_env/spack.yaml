@@ -61,6 +61,23 @@ spack:
       access_pair:
         id_variable: GITHUB_USER
         secret_variable: GITHUB_TOKEN
+  # PALACE_CUDA selects one complete root spec. Keep CUDA dependency settings
+  # here so local containerization and the generated build use the same profile.
+  definitions:
+  - when: not env.get("PALACE_CUDA")
+    palace:
+    - >-
+      palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
+      %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
+  - when: env.get("PALACE_CUDA")
+    palace:
+    # NVIDIA's 13.1.2 runfile references a missing CUPTI static archive.
+    # MFEM's cuDSS dependency constraint selects a compatible 0.7 CUDA 13 build.
+    - >-
+      palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
+      +cuda+cudss cuda_arch=80,86,89,90 %gcc@15 ^cuda@=13.0.2 ^openblas
+      ^openmpi+cuda cuda_arch=80,86,89,90 schedulers=none fabrics=ofi
+      ^libfabric+cuda+cuda_dlopen cuda_arch=80,86,89,90
   specs:
     # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
     # underlying Spack spec-groups bug is fixed; gcc-15 is currently apt-
@@ -84,7 +101,7 @@ spack:
     # FIXME(awslabs/palace#731): re-enable with `compilers` group above.
     # needs: [compilers]
     specs:
-    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
+    - $palace
     override:
       develop:
         palace:
