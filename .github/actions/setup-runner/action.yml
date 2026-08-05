@@ -177,5 +177,6 @@ runs:
         done
 
         # Workaround for https://github.com/spack/spack/issues/51505
+        ln -s "$(spack location --repo builtin)"/packages/libceed "$PALACE_DIR"/spack_repo/local/packages/
         ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
 

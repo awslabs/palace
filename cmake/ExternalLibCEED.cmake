@@ -81,9 +81,12 @@ if(PALACE_WITH_CUDA)
     "CUDA_DIR=${CUDAToolkit_LIBRARY_ROOT}"
   )
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(GET CMAKE_CUDA_ARCHITECTURES 0 LIBCEED_CUDA_ARCH)
+    palace_cuda_gencode_flags(
+      LIBCEED_CUDA_GENCODE_FLAGS "${CMAKE_CUDA_ARCHITECTURES}"
+    )
     list(APPEND LIBCEED_OPTIONS
-      "CUDA_ARCH=sm_${LIBCEED_CUDA_ARCH}"
+      "CUDA_ARCH="
+      "NVCCFLAGS=-ccbin $(CXX) -Xcompiler '$(OPT)' -Xcompiler -fPIC ${LIBCEED_CUDA_GENCODE_FLAGS}"
     )
   endif()
 endif()

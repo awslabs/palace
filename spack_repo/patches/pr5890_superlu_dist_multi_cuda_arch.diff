@@ -1,0 +1,13 @@
+diff --git a/repos/spack_repo/builtin/packages/superlu_dist/package.py b/repos/spack_repo/builtin/packages/superlu_dist/package.py
+index 22194de2b02..00ce568441b 100644
+--- a/repos/spack_repo/builtin/packages/superlu_dist/package.py
++++ b/repos/spack_repo/builtin/packages/superlu_dist/package.py
+@@ -138,7 +138,7 @@ def append_from_variant(*args):
+             append_define("TPL_ENABLE_CUDALIB", True)
+             cuda_arch = spec.variants["cuda_arch"].value
+             if cuda_arch[0] != "none":
+-                append_define("CMAKE_CUDA_ARCHITECTURES", cuda_arch[0])
++                append_define("CMAKE_CUDA_ARCHITECTURES", ";".join(cuda_arch))
+             if spec.satisfies("^cuda@13:"):
+                 append_define("CMAKE_CXX_STANDARD", "17")
+ 

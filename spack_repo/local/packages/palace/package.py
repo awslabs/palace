@@ -301,7 +301,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     with when("@0.14:"):
-        depends_on("libceed@0.13:")
+        depends_on(
+            "libceed@0.13:",
+            patches=[
+                # libCEED PR #2001; remove once merged and libCEED is bumped.
+                patch(
+                    "https://github.com/CEED/libCEED/commit/"
+                    "39f259f89332e936122f7e02d6088a1dae3fb628.diff",
+                    sha256="d892e70630ddb911a8caf6beae0bebc6ed326dd8163c13b714813ca5f6294cef",
+                )
+            ],
+        )
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")

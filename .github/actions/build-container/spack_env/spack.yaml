@@ -32,6 +32,12 @@ spack:
   packages:
     all:
       require: ~openmp       # We don't want any package with OpenMP
+    # Enable AWS EFA
+    libfabric:
+      require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+    # We do not want to include the full Python stack in the container
+    rdma-core:
+      require: ~pyverbs
   container:
     format: docker
     template: PalaceDockerfile
@@ -80,13 +86,6 @@ spack:
     specs:
     - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
     override:
-      packages:
-        # Enable AWS EFA
-        libfabric:
-          require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
-        # We do not want to include the full Python stack in the container
-        rdma-core:
-          require: ~pyverbs
       develop:
         palace:
           spec: palace@=develop
