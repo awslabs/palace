@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -705,6 +706,177 @@ TEST_CASE("Singular H1 DOFs have deterministic overlapping feature membership",
   dofs.h1_dofs.front().singular_entity.size = 3;
   CHECK_THROWS_AS(fem::singular::BuildH1DofFeatureMembership(features, dofs),
                   std::invalid_argument);
+}
+
+TEST_CASE("Fixed finite-metal junctions share node DOFs across edge features",
+          "[singulardofs][Serial]")
+{
+  const auto mesh_path = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" /
+                         "input" / "singular_finite_metal_fixed" /
+                         "singular_finite_metal_fixed.msh2";
+  mfem::Mesh mesh(mesh_path.c_str(), 1, 1);
+  fem::singular::SheetFeatureExtractionOptions options;
+  options.fixed_wedge_edge_superposition = true;
+  const auto features = fem::singular::ExtractSerialSheetFeatures(
+      mesh, {5}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}}, options);
+  CHECK(features.fixed_wedge_classification.candidate_edges == 18);
+  CHECK(features.fixed_wedge_classification.enriched_270_edges == 12);
+  CHECK(features.fixed_wedge_classification.smooth_180_edges == 6);
+  CHECK(features.fixed_wedge_classification.ignored_other_edges == 0);
+  CHECK(features.fixed_wedge_classification.unmatched_selected_edges == 0);
+  CHECK(std::count_if(
+            features.vertices.begin(), features.vertices.end(), [](const auto &vertex)
+            { return vertex.type == fem::singular::FeatureVertexType::JUNCTION; }) == 8);
+  for (int order = 1; order <= 3; order++)
+  {
+    CAPTURE(order);
+    const auto dofs = fem::singular::BuildSerialDofTopology(mesh, features, order);
+    const auto membership = fem::singular::BuildH1DofFeatureMembership(features, dofs);
+    REQUIRE(dofs.h1_to_nd.size() == dofs.h1_dofs.size());
+    REQUIRE(membership.size() == dofs.h1_dofs.size());
+    std::set<fem::singular::GlobalVertexId> junction_ids;
+    for (const auto &vertex : features.vertices)
+    {
+      if (vertex.type == fem::singular::FeatureVertexType::JUNCTION)
+      {
+        junction_ids.insert(vertex.mesh_vertex);
+      }
+    }
+    int junction_node_dofs = 0;
+    for (std::size_t i = 0; i < dofs.h1_dofs.size(); i++)
+    {
+      const auto &key = dofs.h1_dofs[i];
+      REQUIRE(dofs.h1_to_nd[i] < dofs.nd_dofs.size());
+      if (key.family == fem::singular::HigherOrderBasisFamily::NODE_GRADIENT &&
+          junction_ids.count(key.singular_entity.vertices[0]))
+      {
+        CHECK(membership[i].size() == 3);
+        junction_node_dofs++;
+      }
+      else if (key.family == fem::singular::HigherOrderBasisFamily::EDGE_GRADIENT)
+      {
+        CHECK(membership[i].size() == 1);
+      }
+    }
+    CHECK(junction_node_dofs > 0);
+  }
+}
+
+TEST_CASE("One tetrahedron superposes a junction node and three fixed-wedge edges",
+          "[singulardofs][Serial]")
+{
+  mfem::Mesh mesh(3, 4, 1, 0, 3);
+  mesh.AddVertex(0.0, 0.0, 0.0);
+  mesh.AddVertex(1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, 1.0, 0.0);
+  mesh.AddVertex(0.0, 0.0, 1.0);
+  mesh.AddTet(0, 1, 2, 3, 1);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+
+  fem::singular::FeatureTopology features;
+  features.elements.resize(1);
+  mfem::Array<int> mesh_edges, orientations, edge_vertices;
+  mesh.GetElementEdges(0, mesh_edges, orientations);
+  std::map<std::array<int, 2>, int> edge_ids;
+  for (int edge : mesh_edges)
+  {
+    mesh.GetEdgeVertices(edge, edge_vertices);
+    std::array<int, 2> key{edge_vertices[0], edge_vertices[1]};
+    std::sort(key.begin(), key.end());
+    edge_ids.emplace(key, edge);
+  }
+  const int *tetrahedron_vertices = mesh.GetElement(0)->GetVertices();
+  const auto canonical_node = [tetrahedron_vertices](int singular_vertex)
+  {
+    int singular_local = -1;
+    std::vector<std::pair<int, int>> remaining;
+    for (int local = 0; local < 4; local++)
+    {
+      if (tetrahedron_vertices[local] == singular_vertex)
+      {
+        singular_local = local;
+      }
+      else
+      {
+        remaining.emplace_back(tetrahedron_vertices[local], local);
+      }
+    }
+    std::sort(remaining.begin(), remaining.end());
+    return std::array<int, 4>{singular_local, remaining[0].second, remaining[1].second,
+                              remaining[2].second};
+  };
+  const auto canonical_edge = [tetrahedron_vertices](std::array<int, 2> singular_edge)
+  {
+    std::sort(singular_edge.begin(), singular_edge.end());
+    std::array<int, 2> singular_local{-1, -1};
+    std::vector<std::pair<int, int>> remaining;
+    for (int local = 0; local < 4; local++)
+    {
+      if (tetrahedron_vertices[local] == singular_edge[0])
+      {
+        singular_local[0] = local;
+      }
+      else if (tetrahedron_vertices[local] == singular_edge[1])
+      {
+        singular_local[1] = local;
+      }
+      else
+      {
+        remaining.emplace_back(tetrahedron_vertices[local], local);
+      }
+    }
+    std::sort(remaining.begin(), remaining.end());
+    return std::array<int, 4>{singular_local[0], singular_local[1], remaining[0].second,
+                              remaining[1].second};
+  };
+  for (int branch = 0; branch < 3; branch++)
+  {
+    const int endpoint = branch + 1;
+    const std::array<int, 2> edge{0, endpoint};
+    features.segments.push_back(
+        {edge_ids.at(edge),
+         edge,
+         static_cast<std::size_t>(branch),
+         {5},
+         fem::singular::FeatureSegmentType::FIXED_FINITE_METAL_WEDGE});
+    features.features.push_back({static_cast<std::size_t>(branch),
+                                 {static_cast<std::size_t>(branch)},
+                                 {0, endpoint},
+                                 2.0 / 3.0,
+                                 false});
+    features.vertices.push_back({static_cast<std::size_t>(endpoint),
+                                 endpoint,
+                                 fem::singular::FeatureVertexType::ENDPOINT,
+                                 {static_cast<std::size_t>(branch)},
+                                 {static_cast<std::size_t>(branch)},
+                                 2.0 / 3.0});
+    features.elements[0].edges.push_back({static_cast<std::size_t>(branch),
+                                          static_cast<std::size_t>(branch),
+                                          edge_ids.at(edge), canonical_edge(edge)});
+  }
+  features.vertices.insert(
+      features.vertices.begin(),
+      {0, 0, fem::singular::FeatureVertexType::JUNCTION, {0, 1, 2}, {0, 1, 2}, 2.0 / 3.0});
+  features.elements[0].nodes = {{0, 0, canonical_node(0)},
+                                {1, 1, canonical_node(1)},
+                                {2, 2, canonical_node(2)},
+                                {3, 3, canonical_node(3)}};
+
+  for (int order = 1; order <= 3; order++)
+  {
+    CAPTURE(order);
+    const auto dofs = fem::singular::BuildSerialDofTopology(mesh, features, order);
+    const auto membership = fem::singular::BuildH1DofFeatureMembership(features, dofs);
+    REQUIRE(dofs.elements.size() == 1);
+    CHECK(dofs.elements[0].h1.size() > 3);
+    CHECK(dofs.elements[0].nd.size() > dofs.elements[0].h1.size());
+    CHECK(std::any_of(membership.begin(), membership.end(),
+                      [](const auto &entry) { return entry.size() == 3; }));
+    CHECK(std::count_if(membership.begin(), membership.end(),
+                        [](const auto &entry) { return entry.size() == 1; }) > 0);
+    CHECK(dofs.h1_to_nd.size() == dofs.h1_dofs.size());
+  }
 }
 
 TEST_CASE("Singular DOF numbering ignores element traversal order",

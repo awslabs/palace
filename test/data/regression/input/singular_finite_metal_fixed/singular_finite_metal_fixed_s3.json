@@ -1,0 +1,65 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/singular_finite_metal_fixed_s3"
+  },
+  "Model": {
+    "Mesh": "singular_finite_metal_fixed.msh2",
+    "L0": 0.001,
+    "Refinement": {
+      "MaxIts": 0,
+      "SerialUniformLevels": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        3,
+        5
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 2,
+      "Save": 0,
+      "Target": 30.0,
+      "Tol": 1e-08,
+      "Type": "ARPACK"
+    },
+    "SingularElements": {
+      "Attributes": [
+        5
+      ],
+      "Order": 3,
+      "FiniteMetalModel": "FixedWedgeEdgeSuperposition",
+      "FixedExponent": 0.6666666666666666,
+      "QuadratureOrder": 8,
+      "AbsTol": 0.005,
+      "RelTol": 0.001,
+      "MaxSubdivisions": 9
+    },
+    "Linear": {
+      "Type": "STRUMPACK",
+      "KSPType": "GMRES",
+      "Tol": 1e-10,
+      "MaxIts": 500,
+      "DivFreeMaxIts": 0,
+      "MGMaxLevels": 1
+    }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2843,6 +2843,22 @@
           "minimum": 1,
           "maximum": 4,
           "default": 1
+        },
+        "FiniteMetalModel": {
+          "type": "string",
+          "description": "Finite-metal edge model used in three dimensions. TransmissionWedge preserves the material-sector-derived exponent and strict junction behavior. FixedWedgeEdgeSuperposition enriches only 270-degree dielectric openings with FixedExponent and permits multi-edge fixed-wedge junctions as an approximate superposition of wedge fields.",
+          "enum": [
+            "TransmissionWedge",
+            "FixedWedgeEdgeSuperposition"
+          ],
+          "default": "TransmissionWedge"
+        },
+        "FixedExponent": {
+          "type": "number",
+          "description": "Real exponent assigned to 270-degree finite-metal edges by FixedWedgeEdgeSuperposition. The default 2/3 matches the approximation of Elkin et al. This value is ignored by TransmissionWedge.",
+          "exclusiveMinimum": 0.0,
+          "exclusiveMaximum": 1.0,
+          "default": 0.6666666666666666
         },
         "QuadratureOrder": {
           "type": "integer",

@@ -548,6 +548,21 @@ TEST_CASE("singular_wedge_electrostatic_multigrid", "[Serial][Parallel][Regressi
                                   "electrostatic_p2", opts);
 }
 
+TEST_CASE("singular_finite_metal_fixed_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 5.0e-12;
+  opts.excluded_columns = {"Error ("};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_finite_metal_fixed",
+                                  "singular_finite_metal_fixed_regression.json",
+                                  "eigenmode", opts);
+}
+
 TEST_CASE("singular_wedge_eigenmode", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;

@@ -456,6 +456,8 @@ void ConcretizeSingularElements(const config::SingularElementsData &singular,
 {
   ApplyEntries(j_singular, {{"Attributes", singular.attributes},
                             {"Order", singular.order},
+                            {"FiniteMetalModel", ToString(singular.finite_metal_model)},
+                            {"FixedExponent", singular.fixed_exponent},
                             {"QuadratureOrder", singular.quadrature_order},
                             {"AbsTol", singular.abs_tol},
                             {"RelTol", singular.rel_tol},

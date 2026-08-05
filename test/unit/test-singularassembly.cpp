@@ -2019,10 +2019,10 @@ TEST_CASE("Tetrahedral singular sparse domain Gram matrices remain positive",
   }
 }
 
-TEST_CASE("Transmon-like affine ND Gram matrices remain positive at high order",
+TEST_CASE("Finite-metal junction affine Gram matrices have the expected nullspace",
           "[singularelements][singularassembly][tetrahedron][transmon][Serial]")
 {
-  constexpr double nu = 0.5;
+  constexpr double nu = 2.0 / 3.0;
   fem::singular::ElementDofMap element_dofs;
   std::vector<std::size_t> h1_to_nd;
   const auto append_gradients =
@@ -2049,15 +2049,13 @@ TEST_CASE("Transmon-like affine ND Gram matrices remain positive at high order",
       std::array<int, 4>{3, 0, 2, 1}, 1, nu));
   append_rotations(fem::singular::EnumerateHigherOrderNodeRotationalBases(
       std::array<int, 4>{3, 0, 2, 1}, 1, nu));
-  append_gradients(fem::singular::EnumerateHigherOrderNodeGradientBases(
-      std::array<int, 4>{2, 0, 3, 1}, 1, nu));
-  append_rotations(fem::singular::EnumerateHigherOrderNodeRotationalBases(
-      std::array<int, 4>{2, 0, 3, 1}, 1, nu));
-  append_gradients(fem::singular::EnumerateHigherOrderEdgeGradientBases(
-      std::array<int, 4>{3, 2, 0, 1}, 1, nu));
-  append_rotations(fem::singular::EnumerateHigherOrderEdgeRotationalBases(
-      std::array<int, 4>{3, 2, 0, 1}, 1, nu));
-  REQUIRE(element_dofs.h1.size() == 8);
+  for (const auto &edge : {std::array<int, 4>{3, 2, 0, 1}, std::array<int, 4>{3, 1, 0, 2},
+                           std::array<int, 4>{3, 0, 1, 2}})
+  {
+    append_gradients(fem::singular::EnumerateHigherOrderEdgeGradientBases(edge, 1, nu));
+    append_rotations(fem::singular::EnumerateHigherOrderEdgeRotationalBases(edge, 1, nu));
+  }
+  REQUIRE(element_dofs.h1.size() == 9);
   REQUIRE(element_dofs.nd.size() == 15);
 
   fem::singular::DofTopology topology;

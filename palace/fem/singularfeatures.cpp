@@ -41,6 +41,19 @@ struct SelectedEdge
   std::vector<int> boundary_attributes;
 };
 
+bool IsValidFeatureVertexType(FeatureVertexType type)
+{
+  return type == FeatureVertexType::REGULAR || type == FeatureVertexType::CORNER ||
+         type == FeatureVertexType::ENDPOINT || type == FeatureVertexType::JUNCTION;
+}
+
+bool IsValidFeatureSegmentType(FeatureSegmentType type)
+{
+  return type == FeatureSegmentType::SHEET_EDGE ||
+         type == FeatureSegmentType::TRANSMISSION_WEDGE ||
+         type == FeatureSegmentType::FIXED_FINITE_METAL_WEDGE;
+}
+
 FaceKey GetFaceKey(const mfem::Mesh &mesh, int face)
 {
   mfem::Array<int> vertices;
@@ -344,7 +357,8 @@ void ValidateSerialFeatureBlueprint(const mfem::Mesh &mesh, const FeatureTopolog
   {
     const auto &vertex = features.vertices[i];
     if (vertex.id != i || vertex.mesh_vertex < 0 || vertex.mesh_vertex >= mesh.GetNV() ||
-        !std::isfinite(vertex.nu) || vertex.nu <= 0.0 || vertex.nu >= 1.0)
+        !IsValidFeatureVertexType(vertex.type) || !std::isfinite(vertex.nu) ||
+        vertex.nu <= 0.0 || vertex.nu >= 1.0)
     {
       throw std::invalid_argument(
           "Singular-feature blueprint contains an invalid node record!");
@@ -365,8 +379,7 @@ void ValidateSerialFeatureBlueprint(const mfem::Mesh &mesh, const FeatureTopolog
     const auto &segment = features.segments[i];
     if (segment.mesh_edge < 0 || segment.mesh_edge >= mesh.GetNEdges() ||
         segment.feature >= features.features.size() ||
-        (segment.type != FeatureSegmentType::SHEET_EDGE &&
-         segment.type != FeatureSegmentType::TRANSMISSION_WEDGE) ||
+        !IsValidFeatureSegmentType(segment.type) ||
         GetEdgeKey(mesh, segment.mesh_edge) != segment.mesh_vertices)
     {
       throw std::invalid_argument(
@@ -450,7 +463,8 @@ void ValidateFeatureBlueprintStructure(const FeatureTopology &features)
   {
     const auto &vertex = features.vertices[i];
     if (vertex.id != i || vertex.mesh_vertex < 0 ||
-        !feature_vertices.insert(vertex.mesh_vertex).second || !std::isfinite(vertex.nu) ||
+        !feature_vertices.insert(vertex.mesh_vertex).second ||
+        !IsValidFeatureVertexType(vertex.type) || !std::isfinite(vertex.nu) ||
         vertex.nu <= 0.0 || vertex.nu >= 1.0)
     {
       throw std::invalid_argument(
@@ -470,6 +484,23 @@ void ValidateFeatureBlueprintStructure(const FeatureTopology &features)
         throw std::invalid_argument(
             "Singular-feature node references an invalid straight feature!");
       }
+    }
+    const bool valid_degree =
+        (vertex.type == FeatureVertexType::ENDPOINT && vertex.segments.size() == 1) ||
+        ((vertex.type == FeatureVertexType::REGULAR ||
+          vertex.type == FeatureVertexType::CORNER) &&
+         vertex.segments.size() == 2) ||
+        (vertex.type == FeatureVertexType::JUNCTION && vertex.segments.size() >= 3);
+    if (!valid_degree || (vertex.type == FeatureVertexType::JUNCTION &&
+                          std::any_of(vertex.segments.begin(), vertex.segments.end(),
+                                      [&features](std::size_t segment)
+                                      {
+                                        return features.segments[segment].type !=
+                                               FeatureSegmentType::FIXED_FINITE_METAL_WEDGE;
+                                      })))
+    {
+      throw std::invalid_argument(
+          "Singular-feature node has inconsistent type, degree, or segment provenance!");
     }
   }
   for (std::size_t i = 0; i < features.features.size(); i++)
@@ -496,8 +527,7 @@ void ValidateFeatureBlueprintStructure(const FeatureTopology &features)
     if (segment.mesh_edge < 0 || segment.mesh_vertices[0] < 0 ||
         segment.mesh_vertices[0] >= segment.mesh_vertices[1] ||
         segment.feature >= features.features.size() ||
-        (segment.type != FeatureSegmentType::SHEET_EDGE &&
-         segment.type != FeatureSegmentType::TRANSMISSION_WEDGE) ||
+        !IsValidFeatureSegmentType(segment.type) ||
         std::find(features.features[segment.feature].segments.begin(),
                   features.features[segment.feature].segments.end(),
                   i) == features.features[segment.feature].segments.end())
@@ -547,12 +577,18 @@ void ValidateFeatureBlueprintStructure(const FeatureTopology &features)
 
 json PackFeatureTopology(const FeatureTopology &features)
 {
-  json packed{{"num_elements", features.elements.size()},
-              {"vertices", json::array()},
-              {"segments", json::array()},
-              {"features", json::array()},
-              {"sheet_faces", json::array()},
-              {"elements", json::array()}};
+  const auto &classification = features.fixed_wedge_classification;
+  json packed{
+      {"num_elements", features.elements.size()},
+      {"fixed_wedge_classification",
+       {classification.candidate_edges, classification.enriched_270_edges,
+        classification.nonsingular_90_edges, classification.smooth_180_edges,
+        classification.ignored_other_edges, classification.unmatched_selected_edges}},
+      {"vertices", json::array()},
+      {"segments", json::array()},
+      {"features", json::array()},
+      {"sheet_faces", json::array()},
+      {"elements", json::array()}};
   for (const auto &vertex : features.vertices)
   {
     packed["vertices"].push_back({vertex.id, vertex.mesh_vertex,
@@ -600,6 +636,14 @@ FeatureTopology UnpackFeatureTopology(const json &packed)
 {
   FeatureTopology features;
   features.elements.resize(packed.at("num_elements").get<std::size_t>());
+  if (packed.contains("fixed_wedge_classification"))
+  {
+    const auto &entry = packed.at("fixed_wedge_classification");
+    features.fixed_wedge_classification = {
+        entry.at(0).get<std::size_t>(), entry.at(1).get<std::size_t>(),
+        entry.at(2).get<std::size_t>(), entry.at(3).get<std::size_t>(),
+        entry.at(4).get<std::size_t>(), entry.at(5).get<std::size_t>()};
+  }
   for (const auto &entry : packed.at("vertices"))
   {
     features.vertices.push_back({entry.at(0).get<std::size_t>(), entry.at(1).get<int>(),
@@ -1287,7 +1331,8 @@ std::vector<TriangleWedgeSector>
 BuildTetrahedronEdgeSectors(const mfem::Mesh &mesh, int mesh_edge,
                             const EdgeKey &edge_vertices,
                             const std::vector<int> &selected_boundary_elements,
-                            const std::map<int, double> &permittivity)
+                            const std::map<int, double> &permittivity,
+                            const std::vector<std::vector<int>> *edge_elements = nullptr)
 {
   if (selected_boundary_elements.size() != 2)
   {
@@ -1305,14 +1350,14 @@ BuildTetrahedronEdgeSectors(const mfem::Mesh &mesh, int mesh_edge,
   };
   std::vector<FanTetrahedron> fan;
   std::map<FaceKey, std::vector<std::size_t>> face_tetrahedra;
-  for (int element = 0; element < mesh.GetNE(); element++)
+  const auto add_element = [&](int element)
   {
     const auto *tetrahedron = mesh.GetElement(element);
     const int *vertices = tetrahedron->GetVertices();
     if (std::find(vertices, vertices + 4, edge_vertices[0]) == vertices + 4 ||
         std::find(vertices, vertices + 4, edge_vertices[1]) == vertices + 4)
     {
-      continue;
+      return;
     }
     if (!IsGeometricallyStraightElementEdge(mesh, element, mesh_edge))
     {
@@ -1353,6 +1398,24 @@ BuildTetrahedronEdgeSectors(const mfem::Mesh &mesh, int mesh_edge,
                    material->second});
     face_tetrahedra[radial_faces[0]].push_back(index);
     face_tetrahedra[radial_faces[1]].push_back(index);
+  };
+  if (edge_elements)
+  {
+    if (mesh_edge < 0 || mesh_edge >= static_cast<int>(edge_elements->size()))
+    {
+      throw std::invalid_argument("A PEC wedge references an invalid mesh edge!");
+    }
+    for (int element : (*edge_elements)[mesh_edge])
+    {
+      add_element(element);
+    }
+  }
+  else
+  {
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      add_element(element);
+    }
   }
   if (fan.empty())
   {
@@ -1974,11 +2037,26 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                            const std::vector<TriangleMaterial> &materials,
                                            double nu)
 {
+  SheetFeatureExtractionOptions options;
+  options.sheet_exponent = nu;
+  return ExtractSerialSheetFeatures(mesh, boundary_attributes, materials, options);
+}
+
+FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
+                                           const std::vector<int> &boundary_attributes,
+                                           const std::vector<TriangleMaterial> &materials,
+                                           const SheetFeatureExtractionOptions &options)
+{
   ValidateMesh(mesh);
-  if (!std::isfinite(nu) || nu <= 0.0 || nu >= 1.0)
+  if (!std::isfinite(options.sheet_exponent) || options.sheet_exponent <= 0.0 ||
+      options.sheet_exponent >= 1.0 || !std::isfinite(options.fixed_wedge_exponent) ||
+      options.fixed_wedge_exponent <= 0.0 || options.fixed_wedge_exponent >= 1.0 ||
+      !std::isfinite(options.fixed_wedge_angle_tolerance) ||
+      options.fixed_wedge_angle_tolerance <= 0.0)
   {
     throw std::invalid_argument(
-        "Singular-feature exponent must be finite and satisfy 0 < nu < 1!");
+        "Singular-feature exponents and angle tolerance must be finite and positive, "
+        "with exponents satisfying 0 < nu < 1!");
   }
   std::map<int, double> material_permittivity;
   for (const auto &material : materials)
@@ -1991,6 +2069,16 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       throw std::invalid_argument(
           "Singular sheet/wedge extraction received invalid or duplicate isotropic "
           "material data!");
+    }
+  }
+  if (options.fixed_wedge_edge_superposition)
+  {
+    // Fixed-wedge classification is geometric. Populate neutral material entries only
+    // for attributes absent from optional caller data so the existing certified fan walk
+    // can be reused without making material sectors affect the opening angle.
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      material_permittivity.try_emplace(mesh.GetAttribute(element), 1.0);
     }
   }
 
@@ -2101,6 +2189,23 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     }
   }
 
+  // Build edge-to-element incidence once for complete fixed-metal shells. Preserve the
+  // legacy transmission-wedge scan path bit-for-bit for backward compatibility.
+  std::vector<std::vector<int>> edge_elements;
+  if (options.fixed_wedge_edge_superposition)
+  {
+    edge_elements.resize(mesh.GetNEdges());
+    mfem::Array<int> adjacent_edges, adjacent_edge_orientations;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      mesh.GetElementEdges(element, adjacent_edges, adjacent_edge_orientations);
+      for (int edge : adjacent_edges)
+      {
+        edge_elements[edge].push_back(element);
+      }
+    }
+  }
+
   std::vector<double> segment_exponents;
   for (auto &[key, edge] : selected_edges)
   {
@@ -2122,13 +2227,14 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     }
 
     double edge_nu = 1.0;
+    FeatureSegmentType segment_type = FeatureSegmentType::SHEET_EDGE;
     if (has_internal_face)
     {
       if (edge.boundary_elements.size() != 1)
       {
         continue;
       }
-      edge_nu = nu;
+      edge_nu = options.sheet_exponent;
     }
     else
     {
@@ -2136,15 +2242,62 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       {
         // A single selected one-sided face ends at an unselected boundary
         // condition. That mixed-condition edge is outside the selected finite
-        // conductor wedge.
+        // conductor wedge. Fixed mode records these edges so incomplete shell or
+        // deliberate port exclusions remain visible in diagnostics.
+        if (options.fixed_wedge_edge_superposition)
+        {
+          result.fixed_wedge_classification.unmatched_selected_edges++;
+        }
         continue;
       }
       const auto sectors = BuildTetrahedronEdgeSectors(
-          mesh, edge.mesh_edge, key, edge.boundary_elements, material_permittivity);
-      edge_nu = ComputeDirichletWedgeExponent(sectors);
-      if (!(edge_nu < 1.0))
+          mesh, edge.mesh_edge, key, edge.boundary_elements, material_permittivity,
+          options.fixed_wedge_edge_superposition ? &edge_elements : nullptr);
+      if (options.fixed_wedge_edge_superposition)
       {
-        continue;
+        double opening_angle = 0.0;
+        for (const auto &sector : sectors)
+        {
+          opening_angle += sector.angle;
+        }
+        constexpr double right_angle = 1.57079632679489661923;
+        constexpr double smooth_angle = 3.14159265358979323846;
+        constexpr double target_opening_angle = 4.71238898038468985769;
+        auto &classification = result.fixed_wedge_classification;
+        classification.candidate_edges++;
+        if (std::abs(opening_angle - target_opening_angle) <=
+            options.fixed_wedge_angle_tolerance)
+        {
+          classification.enriched_270_edges++;
+          edge_nu = options.fixed_wedge_exponent;
+          segment_type = FeatureSegmentType::FIXED_FINITE_METAL_WEDGE;
+        }
+        else
+        {
+          if (std::abs(opening_angle - right_angle) <= options.fixed_wedge_angle_tolerance)
+          {
+            classification.nonsingular_90_edges++;
+          }
+          else if (std::abs(opening_angle - smooth_angle) <=
+                   options.fixed_wedge_angle_tolerance)
+          {
+            classification.smooth_180_edges++;
+          }
+          else
+          {
+            classification.ignored_other_edges++;
+          }
+          continue;
+        }
+      }
+      else
+      {
+        edge_nu = ComputeDirichletWedgeExponent(sectors);
+        if (!(edge_nu < 1.0))
+        {
+          continue;
+        }
+        segment_type = FeatureSegmentType::TRANSMISSION_WEDGE;
       }
     }
 
@@ -2167,9 +2320,8 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       throw std::invalid_argument(
           "Selected PEC sheet or wedge edges must be geometrically straight!");
     }
-    result.segments.push_back({edge.mesh_edge, key, 0, std::move(edge.boundary_attributes),
-                               has_internal_face ? FeatureSegmentType::SHEET_EDGE
-                                                 : FeatureSegmentType::TRANSMISSION_WEDGE});
+    result.segments.push_back(
+        {edge.mesh_edge, key, 0, std::move(edge.boundary_attributes), segment_type});
     segment_exponents.push_back(edge_nu);
   }
 
@@ -2221,6 +2373,16 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       {
         dot += direction_0[d] * direction_1[d];
       }
+      const auto type_0 = result.segments[vertex.segments[0]].type;
+      const auto type_1 = result.segments[vertex.segments[1]].type;
+      if ((type_0 == FeatureSegmentType::FIXED_FINITE_METAL_WEDGE ||
+           type_1 == FeatureSegmentType::FIXED_FINITE_METAL_WEDGE) &&
+          type_0 != type_1)
+      {
+        throw std::invalid_argument(
+            "A fixed finite-metal edge cannot join a sheet or transmission-wedge "
+            "feature at one vertex!");
+      }
       const double nu_0 = segment_exponents[vertex.segments[0]];
       const double nu_1 = segment_exponents[vertex.segments[1]];
       constexpr double straight_tolerance = 1.0e-10;
@@ -2237,8 +2399,26 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                                      : FeatureVertexType::CORNER;
       continue;
     }
-    throw std::invalid_argument(
-        "Selected PEC sheet or wedge edges contain an unsupported junction!");
+    const double reference_nu = segment_exponents[vertex.segments.front()];
+    constexpr double exponent_tolerance = 1.0e-12;
+    const bool fixed_wedge_junction = std::all_of(
+        vertex.segments.begin(), vertex.segments.end(),
+        [&result, &segment_exponents, reference_nu](std::size_t segment)
+        {
+          return result.segments[segment].type ==
+                     FeatureSegmentType::FIXED_FINITE_METAL_WEDGE &&
+                 std::abs(segment_exponents[segment] - reference_nu) <=
+                     exponent_tolerance *
+                         std::max({1.0, segment_exponents[segment], reference_nu});
+        });
+    if (!fixed_wedge_junction)
+    {
+      throw std::invalid_argument(
+          "Selected PEC sheet or transmission-wedge edges contain an unsupported "
+          "junction!");
+    }
+    vertex.nu = reference_nu;
+    vertex.type = FeatureVertexType::JUNCTION;
   }
 
   std::vector<int> segment_feature(result.segments.size(), -1);
@@ -2348,6 +2528,8 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
         { return std::tie(a.vertex, a.mesh_vertex) < std::tie(b.vertex, b.mesh_vertex); });
   }
 
+  ValidateFeatureBlueprintStructure(result);
+  ValidateSerialFeatureBlueprint(mesh, result);
   return result;
 }
 

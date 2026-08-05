@@ -934,6 +934,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                     {{"SingularElements",
                       {{"Attributes", {7, 8}},
                        {"Order", 3},
+                       {"FiniteMetalModel", "FixedWedgeEdgeSuperposition"},
+                       {"FixedExponent", 2.0 / 3.0},
                        {"QuadratureOrder", 10},
                        {"AbsTol", 1.0e-8},
                        {"RelTol", 2.0e-8},
@@ -944,6 +946,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(singular.Enabled());
     CHECK(singular.attributes == std::vector<int>{7, 8});
     CHECK(singular.order == 3);
+    CHECK(singular.finite_metal_model == FiniteMetalModel::FIXED_WEDGE_EDGE_SUPERPOSITION);
+    CHECK(singular.fixed_exponent == 2.0 / 3.0);
     CHECK(singular.quadrature_order == 10);
     CHECK(singular.abs_tol == 1.0e-8);
     CHECK(singular.rel_tol == 2.0e-8);
@@ -955,6 +959,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     const auto &j_singular = config["Solver"]["SingularElements"];
     CHECK(j_singular["Attributes"] == json::array({7, 8}));
     CHECK(j_singular["Order"].get<int>() == 3);
+    CHECK(j_singular["FiniteMetalModel"].get<std::string>() ==
+          "FixedWedgeEdgeSuperposition");
+    CHECK(j_singular["FixedExponent"].get<double>() == 2.0 / 3.0);
     CHECK(j_singular["QuadratureOrder"].get<int>() == 10);
     CHECK(j_singular["AbsTol"].get<double>() == 1.0e-8);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-8);
@@ -979,6 +986,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     config = IoData::ConcretizeDefaults(iodata, config);
     const auto &j_singular = config["Solver"]["SingularElements"];
     CHECK(j_singular["Order"].get<int>() == 1);
+    CHECK(j_singular["FiniteMetalModel"].get<std::string>() == "TransmissionWedge");
+    CHECK(j_singular["FixedExponent"].get<double>() == 2.0 / 3.0);
     CHECK(j_singular["QuadratureOrder"].get<int>() == 8);
     CHECK(j_singular["AbsTol"].get<double>() == 2.0e-6);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-6);
@@ -1739,6 +1748,14 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config = MakeConfig();
     config["Solver"]["SingularElements"]["MaxSubdivisions"] = 13;
     CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["FiniteMetalModel"] = "Unknown";
+    CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["FixedExponent"] = 1.0;
+    CHECK_FALSE(ValidateConfig(config).empty());
   }
 
   SECTION("At least one quadrature tolerance is positive")
@@ -1747,6 +1764,16 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Solver"]["SingularElements"]["AbsTol"] = 0.0;
     config["Solver"]["SingularElements"]["RelTol"] = 0.0;
     CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Fixed-wedge mode initially requires a lossless field solve")
+  {
+    auto config = MakeConfig();
+    config["Solver"]["SingularElements"]["FiniteMetalModel"] =
+        "FixedWedgeEdgeSuperposition";
+    config["Domains"]["Materials"][0]["LossTan"] = 1.0e-7;
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("zero bulk loss tangent"));
   }
 
   SECTION("Supported simulation types")

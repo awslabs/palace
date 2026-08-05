@@ -140,6 +140,22 @@ mfem::Mesh PerimeterJunctionMesh()
   return mesh;
 }
 
+mfem::Mesh FiniteMetalRightAngleMesh(bool unsupported_angle = false)
+{
+  mfem::Mesh mesh(3, 4, 1, 2, 3);
+  mesh.AddVertex(0.0, 0.0, -1.0);
+  mesh.AddVertex(0.0, 0.0, 1.0);
+  mesh.AddVertex(1.0, 0.0, 0.0);
+  const double angle = unsupported_angle ? 2.0 : 1.57079632679489661923;
+  mesh.AddVertex(std::cos(angle), std::sin(angle), 0.0);
+  mesh.AddTet(0, 1, 2, 3, 1);
+  mesh.AddBdrTriangle(0, 1, 2, 7);
+  mesh.AddBdrTriangle(0, 3, 1, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
 mfem::Mesh FiniteMetalWedgeMesh(bool heterogeneous = false)
 {
   // Three right-angle tetrahedral sectors fill a 3*pi/2 dielectric fan around
@@ -157,6 +173,44 @@ mfem::Mesh FiniteMetalWedgeMesh(bool heterogeneous = false)
   mesh.AddTet(0, 1, 4, 5, heterogeneous ? 2 : 1);
   mesh.AddBdrTriangle(0, 1, 2, 7);
   mesh.AddBdrTriangle(0, 5, 1, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
+mfem::Mesh FiniteMetalJunctionMesh()
+{
+  // Three independent 3*pi/2 finite-metal fans share only the origin. Their
+  // singular axes point along +x, +y, and +z, producing one degree-three junction.
+  mfem::Mesh mesh(3, 16, 9, 6, 3);
+  mesh.AddVertex(0.0, 0.0, 0.0);
+  const std::array<std::array<double, 3>, 3> axes{std::array<double, 3>{1.0, 0.0, 0.0},
+                                                  std::array<double, 3>{0.0, 1.0, 0.0},
+                                                  std::array<double, 3>{0.0, 0.0, 1.0}};
+  const std::array<std::array<std::array<double, 3>, 4>, 3> radial{
+      std::array<std::array<double, 3>, 4>{
+          std::array<double, 3>{0.0, 1.0, 0.0}, std::array<double, 3>{0.0, 0.0, 1.0},
+          std::array<double, 3>{0.0, -1.0, 0.0}, std::array<double, 3>{0.0, 0.0, -1.0}},
+      std::array<std::array<double, 3>, 4>{
+          std::array<double, 3>{0.0, 0.0, 1.0}, std::array<double, 3>{1.0, 0.0, 0.0},
+          std::array<double, 3>{0.0, 0.0, -1.0}, std::array<double, 3>{-1.0, 0.0, 0.0}},
+      std::array<std::array<double, 3>, 4>{
+          std::array<double, 3>{1.0, 0.0, 0.0}, std::array<double, 3>{0.0, 1.0, 0.0},
+          std::array<double, 3>{-1.0, 0.0, 0.0}, std::array<double, 3>{0.0, -1.0, 0.0}}};
+  for (int branch = 0; branch < 3; branch++)
+  {
+    const int endpoint = 1 + 5 * branch;
+    mesh.AddVertex(axes[branch].data());
+    for (const auto &point : radial[branch])
+    {
+      mesh.AddVertex(point.data());
+    }
+    mesh.AddTet(0, endpoint, endpoint + 1, endpoint + 2, 1);
+    mesh.AddTet(0, endpoint, endpoint + 2, endpoint + 3, 1);
+    mesh.AddTet(0, endpoint, endpoint + 3, endpoint + 4, 1);
+    mesh.AddBdrTriangle(0, endpoint, endpoint + 1, 7);
+    mesh.AddBdrTriangle(0, endpoint + 4, endpoint, 7);
+  }
   mesh.FinalizeTopology();
   mesh.Finalize(true, false);
   return mesh;
@@ -919,6 +973,70 @@ TEST_CASE("Finite-metal wedge features infer homogeneous and transmission expone
                         transition_mesh, {7},
                         std::vector<fem::singular::TriangleMaterial>{{1, 11.47}, {2, 1.0}}),
                     Catch::Matchers::ContainsSubstring("point-transition enrichment"));
+
+  fem::singular::SheetFeatureExtractionOptions fixed_options;
+  fixed_options.fixed_wedge_edge_superposition = true;
+  fixed_options.fixed_wedge_exponent = 2.0 / 3.0;
+  auto right_angle_mesh = FiniteMetalRightAngleMesh();
+  const auto right_angle = fem::singular::ExtractSerialSheetFeatures(
+      right_angle_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}},
+      fixed_options);
+  CHECK(right_angle.segments.empty());
+  CHECK(right_angle.fixed_wedge_classification.candidate_edges == 1);
+  CHECK(right_angle.fixed_wedge_classification.nonsingular_90_edges == 1);
+  CHECK(right_angle.fixed_wedge_classification.enriched_270_edges == 0);
+
+  auto unsupported_angle_mesh = FiniteMetalRightAngleMesh(true);
+  const auto unsupported_angle = fem::singular::ExtractSerialSheetFeatures(
+      unsupported_angle_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}},
+      fixed_options);
+  CHECK(unsupported_angle.segments.empty());
+  CHECK(unsupported_angle.fixed_wedge_classification.ignored_other_edges == 1);
+
+  const auto fixed_heterogeneous = fem::singular::ExtractSerialSheetFeatures(
+      heterogeneous_mesh, {7}, materials, fixed_options);
+  REQUIRE(fixed_heterogeneous.segments.size() == 1);
+  CHECK(fixed_heterogeneous.segments[0].type ==
+        fem::singular::FeatureSegmentType::FIXED_FINITE_METAL_WEDGE);
+  CHECK(fixed_heterogeneous.features[0].nu == 2.0 / 3.0);
+
+  const auto fixed_transition = fem::singular::ExtractSerialSheetFeatures(
+      transition_mesh, {7}, materials, fixed_options);
+  REQUIRE(fixed_transition.segments.size() == 2);
+  REQUIRE(fixed_transition.features.size() == 1);
+  CHECK(fixed_transition.features[0].segments == std::vector<std::size_t>{0, 1});
+  CHECK(fixed_transition.features[0].nu == 2.0 / 3.0);
+
+  auto junction_mesh = FiniteMetalJunctionMesh();
+  const auto junction = fem::singular::ExtractSerialSheetFeatures(
+      junction_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}},
+      fixed_options);
+  REQUIRE(junction.segments.size() == 3);
+  REQUIRE(junction.features.size() == 3);
+  const auto center =
+      std::find_if(junction.vertices.begin(), junction.vertices.end(),
+                   [](const auto &vertex) { return vertex.mesh_vertex == 0; });
+  REQUIRE(center != junction.vertices.end());
+  CHECK(center->type == fem::singular::FeatureVertexType::JUNCTION);
+  CHECK(center->segments.size() == 3);
+  CHECK(center->features.size() == 3);
+  CHECK(center->nu == 2.0 / 3.0);
+  for (const auto &segment : junction.segments)
+  {
+    CHECK(segment.type == fem::singular::FeatureSegmentType::FIXED_FINITE_METAL_WEDGE);
+  }
+
+  junction_mesh.UniformRefinement();
+  const auto refined_junction = fem::singular::ExtractSerialSheetFeatures(
+      junction_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}},
+      fixed_options);
+  const auto refined_center =
+      std::find_if(refined_junction.vertices.begin(), refined_junction.vertices.end(),
+                   [](const auto &vertex) { return vertex.mesh_vertex == 0; });
+  REQUIRE(refined_center != refined_junction.vertices.end());
+  CHECK(refined_center->type == fem::singular::FeatureVertexType::JUNCTION);
+  CHECK(refined_center->segments.size() == 3);
+  CHECK(refined_center->features.size() == 3);
 }
 
 TEST_CASE("Singular sheet feature IDs and basis tuples ignore element ordering",
@@ -1028,6 +1146,34 @@ TEST_CASE("Serial singular sheet extraction rejects a multi-rank ParMesh",
   }
   CHECK_THROWS_AS(fem::singular::ExtractSerialSheetFeatures(parallel_mesh, {7, 8}),
                   std::invalid_argument);
+}
+
+TEST_CASE("Fixed finite-metal junction blueprints broadcast sparsely",
+          "[singularfeatures][Parallel]")
+{
+  auto mesh = FiniteMetalJunctionMesh();
+  fem::singular::SheetFeatureExtractionOptions options;
+  options.fixed_wedge_edge_superposition = true;
+  const auto expected = fem::singular::ExtractSerialSheetFeatures(
+      mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}}, options);
+  auto broadcast = Mpi::Root(Mpi::World()) ? expected : fem::singular::FeatureTopology{};
+  fem::singular::BroadcastSerialSheetFeatures(broadcast, Mpi::World());
+
+  CHECK(broadcast.segments.size() == 3);
+  CHECK(broadcast.features.size() == 3);
+  CHECK(broadcast.fixed_wedge_classification.candidate_edges == 3);
+  CHECK(broadcast.fixed_wedge_classification.enriched_270_edges == 3);
+  const auto junction =
+      std::find_if(broadcast.vertices.begin(), broadcast.vertices.end(),
+                   [](const auto &vertex) { return vertex.mesh_vertex == 0; });
+  REQUIRE(junction != broadcast.vertices.end());
+  CHECK(junction->type == fem::singular::FeatureVertexType::JUNCTION);
+  CHECK(junction->segments.size() == 3);
+  CHECK(junction->features.size() == 3);
+  for (const auto &segment : broadcast.segments)
+  {
+    CHECK(segment.type == fem::singular::FeatureSegmentType::FIXED_FINITE_METAL_WEDGE);
+  }
 }
 
 TEST_CASE("Serial singular feature blueprints broadcast sparsely",

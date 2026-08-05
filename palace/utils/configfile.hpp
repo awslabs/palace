@@ -1163,6 +1163,18 @@ public:
   // Polynomial interpolation order of the additive singular basis.
   int order = 1;
 
+  // Finite-metal extraction model. The default preserves material-derived transmission
+  // wedges; the fixed model follows the edge-superposition approximation of Elkin et al.
+  FiniteMetalModel finite_metal_model = FiniteMetalModel::TRANSMISSION_WEDGE;
+
+  // Real exponent assigned to 270-degree finite-metal edges in the fixed model.
+  double fixed_exponent = 2.0 / 3.0;
+
+  bool UsesFixedWedgeEdgeSuperposition() const
+  {
+    return finite_metal_model == FiniteMetalModel::FIXED_WEDGE_EDGE_SUPERPOSITION;
+  }
+
   // Entrywise adaptive quadrature controls for singular element matrices.
   int quadrature_order = 8;
   double abs_tol = 2.0e-6;

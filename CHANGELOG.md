@@ -19,6 +19,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added opt-in paper-compatible finite-metal singular extraction with
+    `Solver.SingularElements.FiniteMetalModel = "FixedWedgeEdgeSuperposition"`. The mode
+    enriches geometric 270-degree dielectric openings with a fixed real exponent, supports
+    multi-edge finite-metal junctions by superposing existing edge features around one
+    shared node basis, and explicitly approximates rather than solves trihedral point
+    asymptotics. The existing material-derived `"TransmissionWedge"` model remains the
+    default. SchemaVer 1-6-0.
   - Added an experimental `config["Solver"]["SingularElements"]` interface for additive
     singular-element enrichment of selected internal zero-thickness PEC sheets in
     electrostatic simulations. SchemaVer 1-4-0.

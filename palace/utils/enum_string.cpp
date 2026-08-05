@@ -135,6 +135,11 @@ PALACE_ENUM_STRING_DEFINE(SparseCompression,
                            {SparseCompression::BLR_HODLR, "BLR-HODLR"},
                            {SparseCompression::ZFP_BLR_HODLR, "ZFP-BLR-HODLR"}})
 
+PALACE_ENUM_STRING_DEFINE(FiniteMetalModel,
+                          {{FiniteMetalModel::TRANSMISSION_WEDGE, "TransmissionWedge"},
+                           {FiniteMetalModel::FIXED_WEDGE_EDGE_SUPERPOSITION,
+                            "FixedWedgeEdgeSuperposition"}})
+
 PALACE_ENUM_STRING_DEFINE(Orthogonalization, {{Orthogonalization::MGS, "MGS"},
                                               {Orthogonalization::CGS, "CGS"},
                                               {Orthogonalization::CGS2, "CGS2"}})

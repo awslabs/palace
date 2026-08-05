@@ -350,6 +350,29 @@ void IoData::CheckConfiguration()
       return std::all_of(property.s.begin(), property.s.end(),
                          [](double value) { return value == 0.0; });
     };
+    if (solver.singular_elements.UsesFixedWedgeEdgeSuperposition())
+    {
+      MFEM_VERIFY(problem.type != ProblemType::BOUNDARYMODE,
+                  "FixedWedgeEdgeSuperposition is initially supported only for "
+                  "three-dimensional electrostatic, driven, and eigenmode problems!");
+      MFEM_VERIFY(boundaries.impedance.empty() && boundaries.rational_impedance.empty() &&
+                      boundaries.conductivity.empty() && boundaries.farfield.empty(),
+                  "FixedWedgeEdgeSuperposition initially requires a lossless field "
+                  "solve without impedance, conductivity, or far-field boundaries!");
+      for (const auto &material : domains.materials)
+      {
+        MFEM_VERIFY(is_zero(material.tandelta) && is_zero(material.sigma),
+                    "FixedWedgeEdgeSuperposition initially requires zero bulk loss "
+                    "tangent and conductivity; apply dielectric loss in "
+                    "postprocessing!");
+      }
+      for (const auto &[idx, port] : boundaries.lumpedport)
+      {
+        MFEM_VERIFY(port.R == 0.0 && port.Rs == 0.0,
+                    "FixedWedgeEdgeSuperposition initially requires lossless lumped "
+                    "ports with R = Rs = 0!");
+      }
+    }
     if (problem.type == ProblemType::BOUNDARYMODE)
     {
       MFEM_VERIFY(boundaries.conductivity.empty() &&

@@ -1667,6 +1667,7 @@ void RebuildRefinedSingularFeatures(
   }
 
   fem::singular::FeatureTopology updated;
+  updated.fixed_wedge_classification = features.fixed_wedge_classification;
   updated.features = features.features;
   for (auto &feature : updated.features)
   {
@@ -1794,14 +1795,48 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
     dimension = serial_mesh->Dimension();
     if (dimension == 3)
     {
+      fem::singular::SheetFeatureExtractionOptions options;
+      options.fixed_wedge_edge_superposition =
+          iodata.solver.singular_elements.UsesFixedWedgeEdgeSuperposition();
+      options.fixed_wedge_exponent = iodata.solver.singular_elements.fixed_exponent;
       serial_sheet_features = fem::singular::ExtractSerialSheetFeatures(
           *serial_mesh, iodata.solver.singular_elements.attributes,
-          GetSingularTriangleMaterials(iodata));
-      ValidateSingularLossTangents(iodata, *serial_mesh, serial_sheet_features);
+          GetSingularTriangleMaterials(iodata), options);
+      if (!options.fixed_wedge_edge_superposition)
+      {
+        ValidateSingularLossTangents(iodata, *serial_mesh, serial_sheet_features);
+      }
+      else
+      {
+        const auto fixed_segments = std::count_if(
+            serial_sheet_features.segments.begin(), serial_sheet_features.segments.end(),
+            [](const auto &segment)
+            {
+              return segment.type ==
+                     fem::singular::FeatureSegmentType::FIXED_FINITE_METAL_WEDGE;
+            });
+        const auto junctions = std::count_if(
+            serial_sheet_features.vertices.begin(), serial_sheet_features.vertices.end(),
+            [](const auto &vertex)
+            { return vertex.type == fem::singular::FeatureVertexType::JUNCTION; });
+        const auto &classification = serial_sheet_features.fixed_wedge_classification;
+        Mpi::Print(" Fixed-wedge extraction: {:d} enriched 270-degree segments, {:d} "
+                   "junctions, nu = {:.12g}; exact trihedral point modes = no\n",
+                   fixed_segments, junctions, options.fixed_wedge_exponent);
+        Mpi::Print(" Fixed-wedge candidates: {:d} total, {:d} at 270 degrees, {:d} at "
+                   "90 degrees, {:d} smooth, {:d} other ignored, {:d} unmatched\n",
+                   classification.candidate_edges, classification.enriched_270_edges,
+                   classification.nonsingular_90_edges, classification.smooth_180_edges,
+                   classification.ignored_other_edges,
+                   classification.unmatched_selected_edges);
+      }
       ValidateSingularImpedanceFeatures(iodata, serial_sheet_features);
     }
     else
     {
+      MFEM_VERIFY(!iodata.solver.singular_elements.UsesFixedWedgeEdgeSuperposition(),
+                  "FixedWedgeEdgeSuperposition requires a three-dimensional "
+                  "tetrahedral mesh!");
       MFEM_VERIFY(dimension == 2 && serial_mesh->SpaceDimension() == 2,
                   "Full-wave singular enrichment requires a 2D triangular or 3D "
                   "tetrahedral mesh!");

@@ -166,6 +166,13 @@ enum class SparseCompression : char
   ZFP_BLR_HODLR
 };
 
+// Finite-metal model used for three-dimensional singular-feature extraction.
+enum class FiniteMetalModel : char
+{
+  TRANSMISSION_WEDGE,
+  FIXED_WEDGE_EDGE_SUPERPOSITION
+};
+
 // Variations of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative solvers and SLEPc
 // eigenvalue solver.
 enum class Orthogonalization : char

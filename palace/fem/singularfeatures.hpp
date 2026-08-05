@@ -25,13 +25,23 @@ enum class FeatureVertexType
 {
   REGULAR,
   CORNER,
-  ENDPOINT
+  ENDPOINT,
+  JUNCTION
 };
 
 enum class FeatureSegmentType
 {
   SHEET_EDGE,
-  TRANSMISSION_WEDGE
+  TRANSMISSION_WEDGE,
+  FIXED_FINITE_METAL_WEDGE
+};
+
+struct SheetFeatureExtractionOptions
+{
+  double sheet_exponent = 0.5;
+  bool fixed_wedge_edge_superposition = false;
+  double fixed_wedge_exponent = 2.0 / 3.0;
+  double fixed_wedge_angle_tolerance = 1.0e-3;
 };
 
 struct FeatureSegment
@@ -101,6 +111,16 @@ struct ElementFeatureIncidence
   std::vector<ElementEdgeFeature> edges;
 };
 
+struct FixedWedgeClassification
+{
+  std::size_t candidate_edges = 0;
+  std::size_t enriched_270_edges = 0;
+  std::size_t nonsingular_90_edges = 0;
+  std::size_t smooth_180_edges = 0;
+  std::size_t ignored_other_edges = 0;
+  std::size_t unmatched_selected_edges = 0;
+};
+
 struct FeatureTopology
 {
   // The records below form a decomposition-independent blueprint. Their mesh
@@ -112,6 +132,7 @@ struct FeatureTopology
   std::vector<StraightFeature> features;
   std::vector<SheetFace> sheet_faces;
   std::vector<ElementFeatureIncidence> elements;
+  FixedWedgeClassification fixed_wedge_classification;
 
   bool Empty() const { return features.empty(); }
 };
@@ -193,6 +214,15 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                            const std::vector<int> &boundary_attributes,
                                            const std::vector<TriangleMaterial> &materials,
                                            double sheet_nu = 0.5);
+
+// Extract fixed-exponent finite-metal edges using the geometric dielectric opening. In
+// fixed mode, only openings within fixed_wedge_angle_tolerance of 3*pi/2 are enriched;
+// other one-sided selected-surface edges remain standard FEM. Multi-edge junctions are
+// accepted only for fixed-wedge segments with one common exponent.
+FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
+                                           const std::vector<int> &boundary_attributes,
+                                           const std::vector<TriangleMaterial> &materials,
+                                           const SheetFeatureExtractionOptions &options);
 
 // Backward-compatible internal-line extractor. This intentionally supplies no
 // material data, so selected one-sided boundaries remain unsupported.
