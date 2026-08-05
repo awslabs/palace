@@ -1902,4 +1902,592 @@ TEST_CASE("Manufactured driven Maxwell wedge sparse ND AMR beats uniform",
   CHECK(ratios.back() < 1.0);
 }
 
+namespace
+{
+
+// Extruded three-dimensional L-shaped wedge: the reentrant vertical sheet faces meet at
+// the singular edge x = y = 0 with the same 3 pi / 2 opening as the two-dimensional
+// fixture. Every prism is split by the same Freudenthal diagonal so shared faces agree.
+mfem::Mesh MaxwellExtrudedLShapeMesh(int n, int nz)
+{
+  REQUIRE(n > 0);
+  REQUIRE(nz > 0);
+  const int grid_vertices = (2 * n + 1) * (2 * n + 1) * (nz + 1);
+  const int active_vertices = grid_vertices - n * n * (nz + 1);
+  const int elements = 18 * n * n * nz;
+  mfem::Mesh mesh(3, active_vertices, elements, 0, 3);
+  std::vector<int> vertex_ids(grid_vertices, -1);
+  const auto flat = [n](int i, int j, int k)
+  { return (k * (2 * n + 1) + j) * (2 * n + 1) + i; };
+  const auto vertex = [&](int i, int j, int k)
+  {
+    const int index = flat(i, j, k);
+    if (vertex_ids[index] >= 0)
+    {
+      return vertex_ids[index];
+    }
+    const double point[3]{-1.0 + static_cast<double>(i) / n,
+                          -1.0 + static_cast<double>(j) / n,
+                          -1.0 + 2.0 * static_cast<double>(k) / nz};
+    vertex_ids[index] = mesh.AddVertex(point);
+    return vertex_ids[index];
+  };
+  const auto add_oriented_tet = [&](std::array<int, 4> tet)
+  {
+    const double *a = mesh.GetVertex(tet[0]);
+    const double *b = mesh.GetVertex(tet[1]);
+    const double *c = mesh.GetVertex(tet[2]);
+    const double *d = mesh.GetVertex(tet[3]);
+    const double determinant =
+        (b[0] - a[0]) * ((c[1] - a[1]) * (d[2] - a[2]) - (c[2] - a[2]) * (d[1] - a[1])) -
+        (b[1] - a[1]) * ((c[0] - a[0]) * (d[2] - a[2]) - (c[2] - a[2]) * (d[0] - a[0])) +
+        (b[2] - a[2]) * ((c[0] - a[0]) * (d[1] - a[1]) - (c[1] - a[1]) * (d[0] - a[0]));
+    REQUIRE(std::abs(determinant) > 1.0e-14);
+    if (determinant < 0.0)
+    {
+      std::swap(tet[1], tet[2]);
+    }
+    mesh.AddTet(tet.data(), 1);
+  };
+  for (int k = 0; k < nz; k++)
+  {
+    for (int j = 0; j < 2 * n; j++)
+    {
+      for (int i = 0; i < 2 * n; i++)
+      {
+        if (i >= n && j < n)
+        {
+          continue;
+        }
+        const int p000 = vertex(i, j, k), p100 = vertex(i + 1, j, k);
+        const int p010 = vertex(i, j + 1, k), p110 = vertex(i + 1, j + 1, k);
+        const int p001 = vertex(i, j, k + 1), p101 = vertex(i + 1, j, k + 1);
+        const int p011 = vertex(i, j + 1, k + 1), p111 = vertex(i + 1, j + 1, k + 1);
+        for (const auto &tet :
+             std::array<std::array<int, 4>, 6>{std::array<int, 4>{p000, p100, p110, p111},
+                                               std::array<int, 4>{p000, p100, p101, p111},
+                                               std::array<int, 4>{p000, p010, p110, p111},
+                                               std::array<int, 4>{p000, p010, p011, p111},
+                                               std::array<int, 4>{p000, p001, p101, p111},
+                                               std::array<int, 4>{p000, p001, p011, p111}})
+        {
+          add_oriented_tet(tet);
+        }
+      }
+    }
+  }
+  mesh.FinalizeTopology(true);
+  mfem::Array<int> face_vertices;
+  for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+  {
+    mesh.GetBdrElementVertices(boundary, face_vertices);
+    bool on_x_reentrant = true, on_y_reentrant = true;
+    for (int v : face_vertices)
+    {
+      const double *point = mesh.GetVertex(v);
+      on_x_reentrant = on_x_reentrant && std::abs(point[0]) < 1.0e-13 &&
+                       point[1] <= 1.0e-13 && point[1] >= -1.0 - 1.0e-13;
+      on_y_reentrant = on_y_reentrant && std::abs(point[1]) < 1.0e-13 &&
+                       point[0] >= -1.0e-13 && point[0] <= 1.0 + 1.0e-13;
+    }
+    mesh.GetBdrElement(boundary)->SetAttribute((on_x_reentrant || on_y_reentrant)
+                                                   ? MaxwellReentrantAttribute
+                                                   : MaxwellOuterAttribute);
+  }
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
+struct MaxwellTetSystem
+{
+  int standard_size = 0;
+  int enrichment_size = 0;
+  std::vector<bool> essential;
+  fem::singular::FeatureTopology features;
+  fem::singular::DofTopology topology;
+  std::vector<MaxwellLocalElementData> elements;
+};
+
+// Assemble the coercive combined graph system curl-curl plus mass on tetrahedra from the
+// production retained element patch matrices for enriched elements and standard MFEM
+// element assembly elsewhere. This is exactly the data path a driver-level estimator
+// consumes from SpaceOperator.
+MaxwellTetSystem MaxwellAssembleTetLocalSystem(mfem::Mesh &mesh, int order)
+{
+  MaxwellTetSystem system;
+  mfem::ND_FECollection nd_collection(order, 3);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  mfem::H1_FECollection h1_collection(order, 3);
+  mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+  system.standard_size = nd_space.GetVSize();
+  system.features = fem::singular::ExtractSerialSheetFeatures(
+      mesh, {MaxwellReentrantAttribute},
+      std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  REQUIRE(!system.features.features.empty());
+  system.topology = fem::singular::BuildSerialDofTopology(mesh, system.features, 1);
+  system.enrichment_size = static_cast<int>(system.topology.nd_dofs.size());
+  REQUIRE(system.enrichment_size > 0);
+  const int combined_size = system.standard_size + system.enrichment_size;
+
+  system.essential.assign(combined_size, false);
+  mfem::Array<int> standard_essential;
+  nd_space.GetBoundaryTrueDofs(standard_essential);
+  for (int dof : standard_essential)
+  {
+    system.essential[dof] = true;
+  }
+  const auto numbering =
+      fem::singular::BuildParallelDofNumbering(Mpi::World(), system.topology);
+  mfem::Array<int> attributes(2);
+  attributes[0] = MaxwellReentrantAttribute;
+  attributes[1] = MaxwellOuterAttribute;
+  const auto singular_essential = fem::singular::GetEssentialNDTrueDofs(
+      Mpi::World(), system.features, system.topology, numbering, attributes);
+  for (int dof : singular_essential)
+  {
+    system.essential[system.standard_size + dof] = true;
+  }
+
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> materials(mesh.GetNE(),
+                                                                            {1.0, 1.0});
+  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-7, 1.0e-6, 8};
+  const auto batches = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+      system.topology, h1_space, nd_space, {materials}, options, 0);
+  const auto &retained = batches.front().nd_element_patches;
+  REQUIRE(!retained.empty());
+  std::vector<int> retained_index(mesh.GetNE(), -1);
+  for (std::size_t patch = 0; patch < retained.size(); patch++)
+  {
+    retained_index[retained[patch].element] = static_cast<int>(patch);
+  }
+
+  mfem::CurlCurlIntegrator curl_curl;
+  mfem::VectorFEMassIntegrator mass;
+  system.elements.resize(mesh.GetNE());
+  mfem::Array<int> nd_dofs;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &data = system.elements[element];
+    data.support_element = element;
+    if (retained_index[element] >= 0)
+    {
+      const auto &patch = retained[retained_index[element]];
+      const int standard_count = patch.standard_dofs.Size();
+      const int local_size = standard_count + patch.enrichment_dofs.Size();
+      for (int dof : patch.standard_dofs)
+      {
+        data.dofs.push_back(MaxwellUnsignedDof(dof));
+      }
+      for (int dof : patch.enrichment_dofs)
+      {
+        data.dofs.push_back(system.standard_size + dof);
+      }
+      data.matrix.SetSize(local_size);
+      data.rhs.SetSize(local_size);
+      data.rhs = 0.0;
+      for (int row = 0; row < local_size; row++)
+      {
+        const double row_sign =
+            row < standard_count ? MaxwellDofSign(patch.standard_dofs[row]) : 1.0;
+        for (int column = 0; column < local_size; column++)
+        {
+          const double column_sign =
+              column < standard_count ? MaxwellDofSign(patch.standard_dofs[column]) : 1.0;
+          data.matrix(row, column) =
+              row_sign * column_sign *
+              (patch.curl_curl(row, column) + patch.mass(row, column));
+        }
+      }
+    }
+    else
+    {
+      mfem::DofTransformation transformation;
+      nd_space.GetElementVDofs(element, nd_dofs, transformation);
+      const int standard_count = nd_dofs.Size();
+      for (int dof : nd_dofs)
+      {
+        data.dofs.push_back(MaxwellUnsignedDof(dof));
+      }
+      mfem::DenseMatrix local_curl, local_mass;
+      auto &T = *mesh.GetElementTransformation(element);
+      const auto &fe = *nd_space.GetFE(element);
+      curl_curl.AssembleElementMatrix(fe, T, local_curl);
+      mass.AssembleElementMatrix(fe, T, local_mass);
+      local_curl += local_mass;
+      transformation.TransformDual(local_curl);
+      data.matrix.SetSize(standard_count);
+      data.rhs.SetSize(standard_count);
+      data.rhs = 0.0;
+      for (int row = 0; row < standard_count; row++)
+      {
+        for (int column = 0; column < standard_count; column++)
+        {
+          data.matrix(row, column) = MaxwellDofSign(nd_dofs[row]) *
+                                     MaxwellDofSign(nd_dofs[column]) *
+                                     local_curl(row, column);
+        }
+      }
+    }
+  }
+  return system;
+}
+
+// Conjugate-gradient solve of the reduced coercive combined system scattered from the
+// element contributions.
+mfem::Vector MaxwellTetReducedSolve(const MaxwellTetSystem &system, const mfem::Vector &rhs)
+{
+  const int combined_size = system.standard_size + system.enrichment_size;
+  std::vector<int> free, combined_to_free(combined_size, -1);
+  for (int dof = 0; dof < combined_size; dof++)
+  {
+    if (!system.essential[dof])
+    {
+      combined_to_free[dof] = static_cast<int>(free.size());
+      free.push_back(dof);
+    }
+  }
+  mfem::SparseMatrix reduced(static_cast<int>(free.size()), static_cast<int>(free.size()));
+  for (const auto &data : system.elements)
+  {
+    for (int row = 0; row < static_cast<int>(data.dofs.size()); row++)
+    {
+      const int reduced_row = combined_to_free[data.dofs[row]];
+      if (reduced_row < 0)
+      {
+        continue;
+      }
+      for (int column = 0; column < static_cast<int>(data.dofs.size()); column++)
+      {
+        const int reduced_column = combined_to_free[data.dofs[column]];
+        if (reduced_column >= 0 && data.matrix(row, column) != 0.0)
+        {
+          reduced.Add(reduced_row, reduced_column, data.matrix(row, column));
+        }
+      }
+    }
+  }
+  reduced.Finalize();
+  mfem::Vector reduced_rhs(static_cast<int>(free.size()));
+  for (int row = 0; row < static_cast<int>(free.size()); row++)
+  {
+    reduced_rhs(row) = rhs(free[row]);
+  }
+  mfem::Vector reduced_solution(static_cast<int>(free.size()));
+  reduced_solution = 0.0;
+  mfem::GSSmoother preconditioner(reduced);
+  mfem::CGSolver cg;
+  cg.SetOperator(reduced);
+  cg.SetPreconditioner(preconditioner);
+  cg.SetRelTol(1.0e-12);
+  cg.SetAbsTol(1.0e-30);
+  cg.SetMaxIter(50000);
+  cg.SetPrintLevel(-1);
+  cg.Mult(reduced_rhs, reduced_solution);
+  REQUIRE(cg.GetConverged());
+  mfem::Vector solution(combined_size);
+  solution = 0.0;
+  for (int row = 0; row < static_cast<int>(free.size()); row++)
+  {
+    solution(free[row]) = reduced_solution(row);
+  }
+  return solution;
+}
+
+}  // namespace
+
+TEST_CASE("Extruded Maxwell wedge sparse ND patches certify the 3D engine",
+          "[.][singularmaxwellmms3d][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  auto mesh = MaxwellExtrudedLShapeMesh(1, 2);
+  auto coarse = MaxwellAssembleTetLocalSystem(mesh, order);
+  auto fine = MaxwellAssembleTetLocalSystem(mesh, order + 1);
+  REQUIRE(coarse.enrichment_size == fine.enrichment_size);
+  const int enrichment = fine.enrichment_size;
+  const int combined_size = fine.standard_size + enrichment;
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    REQUIRE(coarse.essential[coarse.standard_size + dof] ==
+            fine.essential[fine.standard_size + dof]);
+  }
+
+  mfem::ND_FECollection coarse_collection(order, 3), fine_collection(order + 1, 3);
+  mfem::FiniteElementSpace coarse_space(&mesh, &coarse_collection);
+  mfem::FiniteElementSpace fine_space(&mesh, &fine_collection);
+  const int coarse_standard = coarse_space.GetVSize();
+  const int fine_standard = fine_space.GetVSize();
+  REQUIRE(coarse_standard == coarse.standard_size);
+  REQUIRE(fine_standard == fine.standard_size);
+
+  // Tetrahedral signed injection against MFEM's p-transfer; three-dimensional ND spaces
+  // must exercise genuine nonidentity DOF transformations.
+  const auto injection =
+      fem::hierarchical::BuildSparsePInjection(mesh, coarse_space, fine_space);
+  mfem::Vector probe(coarse_standard), sparse_image(fine_standard),
+      reference(fine_standard);
+  for (int i = 0; i < coarse_standard; i++)
+  {
+    probe(i) = std::sin(0.37 * i + 0.2);
+  }
+  sparse_image = 0.0;
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+    {
+      sparse_image(injection.columns[column].dofs[entry]) +=
+          probe(column) * injection.columns[column].values[entry];
+    }
+  }
+  mfem::PRefinementTransferOperator transfer(coarse_space, fine_space);
+  transfer.Mult(probe, reference);
+  sparse_image -= reference;
+  CAPTURE(order, injection.consistency_error, injection.signed_coarse_dofs,
+          injection.signed_fine_dofs, injection.nonidentity_transformations,
+          sparse_image.Normlinf());
+  CHECK(injection.consistency_error < 1.0e-12);
+  CHECK(sparse_image.Normlinf() < 1.0e-12);
+  CHECK(injection.signed_coarse_dofs > 0);
+  CHECK(injection.signed_fine_dofs > 0);
+  CHECK(injection.nonidentity_transformations > 0);
+
+  // Galerkin consistency of the injected fine operator against the coarse assembly.
+  {
+    mfem::Vector coarse_probe(coarse_standard + enrichment), injected_probe(combined_size);
+    for (int i = 0; i < coarse_probe.Size(); i++)
+    {
+      coarse_probe(i) = std::cos(0.23 * i + 0.11);
+    }
+    injected_probe = 0.0;
+    for (int column = 0; column < coarse_standard; column++)
+    {
+      for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+      {
+        injected_probe(injection.columns[column].dofs[entry]) +=
+            coarse_probe(column) * injection.columns[column].values[entry];
+      }
+    }
+    for (int dof = 0; dof < enrichment; dof++)
+    {
+      injected_probe(fine_standard + dof) = coarse_probe(coarse_standard + dof);
+    }
+    const double coarse_form = fem::hierarchical::Energy(coarse.elements, coarse_probe);
+    const double fine_form = fem::hierarchical::Energy(fine.elements, injected_probe);
+    CAPTURE(coarse_form, fine_form);
+    CHECK_THAT(fine_form, WithinRel(coarse_form, 1.0e-5));
+  }
+
+  // Synthetic fine truth: a smooth projected standard field plus explicit free gradient
+  // and rotational singular coefficients. The manufactured load is its exact fine action.
+  mfem::Vector truth(combined_size);
+  truth = 0.0;
+  {
+    mfem::GridFunction smooth(&fine_space);
+    mfem::VectorFunctionCoefficient smooth_field(
+        3,
+        [](const mfem::Vector &x, mfem::Vector &value)
+        {
+          value(0) = x(1) * x(2) + 0.3 * x(0);
+          value(1) = x(0) - 0.5 * x(2) * x(2);
+          value(2) = x(0) * x(1) + 0.25 * x(2);
+        });
+    smooth.ProjectCoefficient(smooth_field);
+    for (int i = 0; i < fine_standard; i++)
+    {
+      truth(i) = smooth(i);
+    }
+  }
+  int free_gradient = -1, free_rotational = -1;
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    if (fine.essential[fine_standard + dof])
+    {
+      continue;
+    }
+    const bool gradient =
+        fem::singular::IsGradientFamily(fine.topology.nd_dofs[dof].family);
+    if (gradient && free_gradient < 0)
+    {
+      free_gradient = dof;
+    }
+    if (!gradient && free_rotational < 0)
+    {
+      free_rotational = dof;
+    }
+  }
+  CAPTURE(order, enrichment, free_gradient, free_rotational);
+  REQUIRE(free_gradient >= 0);
+  REQUIRE(free_rotational >= 0);
+  truth(fine_standard + free_gradient) = 0.3;
+  truth(fine_standard + free_rotational) = -0.2;
+  for (int dof = 0; dof < combined_size; dof++)
+  {
+    if (fine.essential[dof])
+    {
+      truth(dof) = 0.0;
+    }
+  }
+  mfem::Vector fine_rhs(combined_size);
+  fine_rhs = 0.0;
+  for (const auto &data : fine.elements)
+  {
+    mfem::Vector local(static_cast<int>(data.dofs.size()));
+    for (int i = 0; i < local.Size(); i++)
+    {
+      local(i) = truth(data.dofs[i]);
+    }
+    mfem::Vector action(local.Size());
+    data.matrix.Mult(local, action);
+    for (int i = 0; i < local.Size(); i++)
+    {
+      fine_rhs(data.dofs[i]) += action(i);
+    }
+  }
+  for (int dof = 0; dof < combined_size; dof++)
+  {
+    if (fine.essential[dof])
+    {
+      fine_rhs(dof) = 0.0;
+    }
+  }
+
+  // Coarse Galerkin problem for the same load, solved on the coarse combined layout.
+  mfem::Vector coarse_rhs(coarse_standard + enrichment);
+  coarse_rhs = 0.0;
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+    {
+      coarse_rhs(column) += injection.columns[column].values[entry] *
+                            fine_rhs(injection.columns[column].dofs[entry]);
+    }
+  }
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    coarse_rhs(coarse_standard + dof) = fine_rhs(fine_standard + dof);
+  }
+  const auto coarse_solution = MaxwellTetReducedSolve(coarse, coarse_rhs);
+
+  // Attach the manufactured load to the fine contributions so the engine sees b - A x.
+  auto fine_loaded = fine.elements;
+  {
+    std::vector<bool> assigned(combined_size, false);
+    for (auto &data : fine_loaded)
+    {
+      for (int i = 0; i < static_cast<int>(data.dofs.size()); i++)
+      {
+        if (!assigned[data.dofs[i]])
+        {
+          data.rhs(i) = fine_rhs(data.dofs[i]);
+          assigned[data.dofs[i]] = true;
+        }
+      }
+    }
+  }
+
+  // Global hierarchical benchmark: the exact fine correction energy per element.
+  mfem::Vector injected_coarse(combined_size);
+  injected_coarse = 0.0;
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+    {
+      injected_coarse(injection.columns[column].dofs[entry]) +=
+          coarse_solution(column) * injection.columns[column].values[entry];
+    }
+  }
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    injected_coarse(fine_standard + dof) = coarse_solution(coarse_standard + dof);
+  }
+  const auto residual = fem::hierarchical::AssembleResidual(
+      combined_size, fine_loaded, injected_coarse, fine.essential);
+  const auto global_correction = MaxwellTetReducedSolve(fine, residual);
+  std::vector<double> global_indicator(mesh.GetNE(), 0.0);
+  double global_energy = 0.0;
+  for (const auto &data : fine.elements)
+  {
+    mfem::Vector local(static_cast<int>(data.dofs.size()));
+    for (int i = 0; i < local.Size(); i++)
+    {
+      local(i) = global_correction(data.dofs[i]);
+    }
+    mfem::Vector action(local.Size());
+    data.matrix.Mult(local, action);
+    global_indicator[data.support_element] += mfem::InnerProduct(local, action);
+    global_energy += mfem::InnerProduct(local, action);
+  }
+  REQUIRE(global_energy > 0.0);
+
+  // Element-local sparse lifting through the shared engine.
+  std::vector<std::vector<int>> element_enrichment_guests(mesh.GetNE());
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    for (const auto &dof : fine.topology.elements[element].nd)
+    {
+      element_enrichment_guests[element].push_back(static_cast<int>(dof.dof));
+    }
+  }
+  const auto lifting = fem::hierarchical::EstimateByPatchLifting(
+      mesh, coarse_space, fine_space, injection, fine_loaded, fine_loaded, fine.essential,
+      coarse.essential, coarse_solution, element_enrichment_guests);
+  CAPTURE(lifting.energy, lifting.work, lifting.edge_patches, lifting.face_patches,
+          lifting.interior_patches, lifting.owned_modes, lifting.maximum_support_elements,
+          lifting.maximum_patch_dimension, lifting.maximum_element_overlap,
+          lifting.maximum_patch_residual, lifting.maximum_patch_condition, global_energy);
+  CHECK(lifting.energy > 0.0);
+  CHECK_THAT(lifting.energy, WithinRel(lifting.work, 1.0e-10));
+  CHECK_THAT(std::accumulate(lifting.indicator.begin(), lifting.indicator.end(), 0.0),
+             WithinRel(lifting.energy, 1.0e-12));
+  CHECK(lifting.edge_patches > 0);
+  CHECK(lifting.face_patches > 0);
+  if (order >= 2)
+  {
+    CHECK(lifting.interior_patches > 0);
+  }
+  CHECK(lifting.maximum_patch_residual < 1.0e-10);
+  for (int dof = 0; dof < coarse_standard; dof++)
+  {
+    if (!coarse.essential[dof])
+    {
+      REQUIRE(lifting.coarse_guest_counts[dof] > 0);
+    }
+  }
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    if (!fine.essential[fine_standard + dof])
+    {
+      REQUIRE(lifting.enrichment_guest_counts[dof] > 0);
+    }
+  }
+
+  // Marking effectivity against the global hierarchical correction.
+  const auto marked = MaxwellDorfler(lifting.indicator, 0.5);
+  const auto oracle = MaxwellDorfler(global_indicator, 0.5);
+  const auto top_k = [](const std::vector<double> &value, std::size_t count)
+  {
+    std::vector<std::size_t> indices(value.size());
+    std::iota(indices.begin(), indices.end(), std::size_t{0});
+    std::partial_sort(indices.begin(), indices.begin() + std::min(count, indices.size()),
+                      indices.end(),
+                      [&](std::size_t a, std::size_t b) { return value[a] > value[b]; });
+    indices.resize(std::min(count, indices.size()));
+    return indices;
+  };
+  const double rank =
+      MaxwellSumOn(global_indicator, marked) /
+      MaxwellSumOn(global_indicator, top_k(global_indicator, marked.size()));
+  const double extend =
+      MaxwellSumOn(global_indicator, top_k(lifting.indicator, oracle.size())) /
+      MaxwellSumOn(global_indicator, oracle);
+  const double capture = lifting.energy / global_energy;
+  CAPTURE(rank, extend, capture, marked.size(), oracle.size());
+  // Measured: p1 rank 1.0, extend 1.0, capture 0.713; p2 rank 0.9995, extend 0.942,
+  // capture 0.929.
+  CHECK(rank > 0.95);
+  CHECK(extend > 0.9);
+  CHECK(capture > 0.6);
+  CHECK(capture < 1.5);
+}
+
 }  // namespace palace

@@ -486,8 +486,8 @@ PatchLiftingReport EstimateByPatchLifting(
   for (int edge = 0; edge < mesh.GetNEdges(); edge++)
   {
     mfem::Array<int> coarse_entity, fine_entity;
-    coarse_space.GetEdgeDofs(edge, coarse_entity);
-    fine_space.GetEdgeDofs(edge, fine_entity);
+    coarse_space.GetEdgeInteriorDofs(edge, coarse_entity);
+    fine_space.GetEdgeInteriorDofs(edge, fine_entity);
     add_patch(entity_complement(fine_entity, coarse_entity), edge_elements[edge],
               PatchEntity::EDGE);
   }
@@ -495,9 +495,11 @@ PatchLiftingReport EstimateByPatchLifting(
   {
     for (int face = 0; face < mesh.GetNFaces(); face++)
     {
+      // Interior-only entity DOFs: the face closure returned by GetFaceDofs would double
+      // own the edge modes already covered by edge patches.
       mfem::Array<int> coarse_entity, fine_entity;
-      coarse_space.GetFaceDofs(face, coarse_entity);
-      fine_space.GetFaceDofs(face, fine_entity);
+      coarse_space.GetFaceInteriorDofs(face, coarse_entity);
+      fine_space.GetFaceInteriorDofs(face, fine_entity);
       int first, second;
       mesh.GetFaceElements(face, &first, &second);
       std::vector<int> owner_elements{first};
