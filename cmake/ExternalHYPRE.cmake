@@ -81,7 +81,12 @@ if(PALACE_WITH_CUDA)
     -DCUDAToolkit_ROOT=${CUDAToolkit_LIBRARY_ROOT}
   )
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(APPEND HYPRE_OPTIONS -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES})
+    # ExternalProject_Add splits its command on ";", so a multi-architecture
+    # list has to be escaped or only the first entry survives.
+    palace_escape_external_project_list(
+      HYPRE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+    )
+    list(APPEND HYPRE_OPTIONS -DCMAKE_CUDA_ARCHITECTURES=${HYPRE_CUDA_ARCHITECTURES})
   endif()
 endif()
 if(PALACE_WITH_HIP)

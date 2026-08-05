@@ -76,8 +76,17 @@ endif()
 if(PALACE_WITH_CUDA)
   list(APPEND PETSC_OPTIONS "--with-cuda")
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(GET CMAKE_CUDA_ARCHITECTURES 0 PETSC_CUDA_ARCH)
+    palace_cuda_gencode_flags(
+      PETSC_CUDA_GENCODE_FLAGS "${CMAKE_CUDA_ARCHITECTURES}"
+    )
+    list(GET CMAKE_CUDA_ARCHITECTURES 0 PETSC_CUDA_ARCH_RAW)
+    palace_parse_cuda_architecture(
+      "${PETSC_CUDA_ARCH_RAW}" PETSC_CUDA_ARCH PETSC_CUDA_ARCH_KIND
+    )
     list(APPEND PETSC_OPTIONS
+      "CUDAFLAGS=${PETSC_CUDA_GENCODE_FLAGS}"
+      # PETSc 3.24 needs one architecture to avoid probing for a local GPU.
+      # CUDAFLAGS above controls the complete set of generated device code.
       "--with-cuda-arch=${PETSC_CUDA_ARCH}"
     )
   endif()

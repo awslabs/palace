@@ -30,6 +30,7 @@ RUN mkdir -p /opt/spack-environment && \
     # Add it to spack
     spack repo add /opt/palace/spack_repo/local && \
     # Workaround for https://github.com/spack/spack/issues/51505
+    ln -sf $(spack location --repo builtin)/packages/libceed /opt/palace/spack_repo/local/packages/libceed && \
     ln -sf $(spack location --repo builtin)/packages/mfem /opt/palace/spack_repo/local/packages/mfem && \
     # Apply patches to builtin repo
     cd $(cd $(spack location --repo builtin) && git rev-parse --show-toplevel) && \
@@ -64,12 +65,14 @@ RUN cd {{ paths.environment }} && spack env activate . && \
 #
 # After pushing the Spack buildcache, remove package tests/provenance, generated
 # Python bytecode, documentation, and localization that Palace does not need
-# to compile. The final pipeline then finds executables (`-perm /111`) and shared
-# libraries in the Spack view, resolves and deduplicates their symlink targets,
-# and strips batches of 32 files (`-n 32`) in up to one process per CPU
-# (`-P "$(nproc)"`). Doing this here reduces the reusable Podman dependency
-# layer and final image. It does not reduce the Spack buildcache archives,
-# which are pushed first.
+# to compile. For CUDA builds, also discard profiling/debugging tools and static
+# copies of CUDA libraries that have shared equivalents; nvcc still needs the
+# static CUDA runtime while compiling Palace. The final pipeline then finds
+# executables (`-perm /111`) and shared libraries in the Spack view, resolves
+# and deduplicates their symlink targets, and strips batches of 32 files
+# (`-n 32`) in up to one process per CPU (`-P "$(nproc)"`). Doing this here
+# reduces the reusable Podman dependency layer and final image. It does not
+# reduce the Spack buildcache archives, which are pushed first.
 RUN --mount=type=secret,id=github_user \
     --mount=type=secret,id=github_token \
     set -e; \
@@ -98,6 +101,31 @@ RUN --mount=type=secret,id=github_user \
       -o -path "*/.spack/test" -o -path "*/.spack/archived-files" \) \
       -prune \
       -exec rm -rf {} + 2>/dev/null || true; \
+    if cuda_prefix="$(spack location -i cuda 2>/dev/null)"; then \
+      cuda_size_before="$(du -sh "$cuda_prefix" | cut -f1)"; \
+      find "$cuda_prefix" -mindepth 1 -maxdepth 1 \
+        \( -name "nsight-compute-*" -o -name "nsight-systems-*" \
+        -o -name nsightee_plugins -o -name compute-sanitizer \
+        -o -name extras -o -name gds -o -name nvml -o -name share \
+        -o -name src -o -name tools \) \
+        -exec rm -rf {} + 2>/dev/null || true; \
+      cuda_lib="$(readlink -f "$cuda_prefix/lib64")"; \
+      find "$cuda_lib" -maxdepth 1 -type f \
+        \( -name "*_static.a" -o -name "*_static.alt.a" \) \
+        ! -name libcudart_static.a -print | \
+        while IFS= read -r archive; do \
+          case "$archive" in \
+            *_static.alt.a) shared="${archive%_static.alt.a}" ;; \
+            *) shared="${archive%_static.a}" ;; \
+          esac; \
+          if ls "${shared}".so* >/dev/null 2>&1; then \
+            rm -f "$archive"; \
+          fi; \
+        done; \
+      find {{ paths.view }}/* -type l ! -exec test -e {} \; -delete; \
+      cuda_size_after="$(du -sh "$cuda_prefix" | cut -f1)"; \
+      echo "Pruned CUDA build toolkit from ${cuda_size_before} to ${cuda_size_after}"; \
+    fi; \
     find -L {{ paths.view }}/* -type f \
       \( -perm /111 -o -name "*.so" -o -name "*.so.*" \) \
       -exec readlink -zf '{}' \; | \
@@ -116,10 +144,9 @@ COPY . /opt/palace
 # and all runtime cleanup stay in one layer. This avoids retaining intermediate
 # unstripped files in the Podman cache without sacrificing a reusable boundary.
 # Cleanup removes unused dependencies, docs/examples, redundant static archives,
-# headers except those libCEED needs for runtime JIT, debug symbols, and Spack
-# metadata. The final strip pass handles Palace and any archives left after
-# static-library cleanup. `set -e` keeps failures in required build steps from
-# being hidden by the best-effort cleanup commands.
+# headers except those libCEED and Palace need for runtime JIT, unused CUDA
+# toolkit components, debug symbols, and Spack metadata. `set -e` keeps failures
+# in required build steps from being hidden by best-effort cleanup commands.
 RUN set -e; \
     if [ ! -f /opt/palace/CMakeLists.txt ]; then \
       echo "ERROR: Palace source tree not found in /opt/palace."; \
@@ -147,6 +174,34 @@ RUN set -e; \
       -not -path "*/libceed-*/include" \
       -not -path "*/palace-*/include" \
       -exec rm -rf {} + 2>/dev/null || true; \
+    if cuda_prefix="$(spack location -i cuda 2>/dev/null)"; then \
+      cuda_size_before="$(du -sh "$cuda_prefix" | cut -f1)"; \
+      cuda_lib="$(readlink -f "$cuda_prefix/lib64")"; \
+      find "$cuda_prefix" -mindepth 1 -maxdepth 1 \
+        ! -name ".spack" \
+        ! -name "targets" \
+        ! -name "lib64" \
+        ! -iname "eula*" \
+        ! -iname "license*" \
+        ! -iname "notice*" \
+        ! -name "version*.json" \
+        -exec rm -rf {} +; \
+      find "$cuda_lib" -mindepth 1 -maxdepth 1 -print | \
+        while IFS= read -r path; do \
+          base="${path##*/}"; \
+          case "$base" in \
+            libcublas.so*|libcublasLt.so*|libcudart.so*|libcurand.so*|\
+            libcusolver.so*|libcusparse.so*|libnvJitLink.so*|libnvrtc.so*|\
+            libnvrtc-builtins.so*) ;; \
+            *) rm -rf "$path" ;; \
+          esac; \
+        done; \
+      find "$cuda_prefix" -type l ! -exec test -e {} \; -delete; \
+      find "$cuda_prefix" -depth -type d -empty -delete; \
+      find {{ paths.view }}/* -type l ! -exec test -e {} \; -delete; \
+      cuda_size_after="$(du -sh "$cuda_prefix" | cut -f1)"; \
+      echo "Pruned CUDA toolkit from ${cuda_size_before} to ${cuda_size_after}"; \
+    fi; \
     find -L {{ paths.view }}/* -type f \
       \( -perm /111 -o -name "*.so" -o -name "*.so.*" -o -name "*.a" \) \
       -exec readlink -zf '{}' \; | \
