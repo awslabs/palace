@@ -192,21 +192,28 @@ void ReportStableSeedIds(MPI_Comm comm, const mfem::ParMesh &mesh,
     std::sort(keys.begin(), keys.end());
     std::ostringstream ids;
     std::uint64_t hash = 1469598103934665603ULL;
+    constexpr std::size_t maximum_printed_keys = 64;
     for (std::size_t i = 0; i < keys.size(); i++)
     {
-      ids << (i == 0 ? "" : ",") << "{";
-      for (int j = 0; j < keys[i][0]; j++)
+      if (i < maximum_printed_keys)
       {
-        ids << (j == 0 ? "" : ":") << keys[i][j + 1];
+        ids << (i == 0 ? "" : ",") << "{";
+        for (int j = 0; j < keys[i][0]; j++)
+        {
+          ids << (j == 0 ? "" : ":") << keys[i][j + 1];
+        }
+        ids << "}";
       }
-      ids << "}";
       for (const auto value : keys[i])
       {
         hash ^= static_cast<std::uint64_t>(value);
         hash *= 1099511628211ULL;
       }
     }
-    Mpi::Print(comm, " Stable AMR seed simplices (hash {:016x}): [{}]\n", hash, ids.str());
+    Mpi::Print(comm,
+               " Stable AMR seed simplices: {:d} keys, hash {:016x}, sample [{}{}]\n",
+               keys.size(), hash, ids.str(),
+               keys.size() > maximum_printed_keys ? ",..." : "");
   }
 }
 
@@ -548,12 +555,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       }
       if (growth > refinement.max_growth_factor)
       {
-        Mpi::Warning(comm,
-                     "Stopping adaptive refinement: this iteration would grow the mesh by "
-                     "{:.3f}x, exceeding Model.Refinement.MaxGrowthFactor of {:.3f}. "
-                     "Conforming closure propagates beyond the marked set; reduce "
-                     "UpdateFraction or raise the budget.\n",
-                     growth, refinement.max_growth_factor);
+        Mpi::Warning(
+            comm,
+            "Stopping adaptive refinement: this iteration would grow the mesh by "
+            "{:.3f}x, exceeding Model.Refinement.MaxGrowthFactor of {:.3f}. "
+            "Conforming closure propagates beyond the marked set; inspect estimator "
+            "locality/closure or explicitly raise the budget.\n",
+            growth, refinement.max_growth_factor);
         break;
       }
       Mpi::Print(" Growth preflight: {:.3f}x (budget {:.3f}x)\n", growth,
