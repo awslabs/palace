@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <limits>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -82,6 +83,66 @@ TEST_CASE("MaterialOperator IsIsotropic", "[materialoperator][Serial]")
                               palace_mesh);
       REQUIRE(mat_op.IsIsotropic(1) == false);
     }
+  }
+}
+
+TEST_CASE("MaterialPropertyCoefficient exact-zero predicate", "[materialoperator][Serial]")
+{
+  mfem::Array<int> attr_mat(2);
+  attr_mat = 0;
+
+  SECTION("Empty storage is mathematically zero")
+  {
+    MaterialPropertyCoefficient coeff(2);
+    CHECK(coeff.empty());
+    CHECK(coeff.IsExactlyZero());
+  }
+
+  SECTION("Allocated scalar and tensor zeros are exactly zero")
+  {
+    mfem::DenseTensor scalar(1, 1, 1);
+    scalar = 0.0;
+    MaterialPropertyCoefficient scalar_coeff(attr_mat, scalar);
+    CHECK_FALSE(scalar_coeff.empty());
+    CHECK(scalar_coeff.IsExactlyZero());
+
+    mfem::DenseTensor tensor(2, 2, 1);
+    tensor = 0.0;
+    MaterialPropertyCoefficient tensor_coeff(attr_mat, tensor);
+    CHECK_FALSE(tensor_coeff.empty());
+    CHECK(tensor_coeff.IsExactlyZero());
+  }
+
+  SECTION("Zero-scaled coefficient additions retain exact-zero storage")
+  {
+    mfem::DenseTensor tensor(2, 2, 1);
+    tensor = 0.0;
+    tensor(0, 0, 0) = 3.0;
+    tensor(1, 1, 0) = -2.0;
+
+    MaterialPropertyCoefficient from_coefficient(2);
+    from_coefficient.AddCoefficient(attr_mat, tensor, 0.0);
+    CHECK_FALSE(from_coefficient.empty());
+    CHECK(from_coefficient.IsExactlyZero());
+
+    MaterialPropertyCoefficient from_property(2);
+    from_property.AddMaterialProperty(1, 7.0, 0.0);
+    CHECK_FALSE(from_property.empty());
+    CHECK(from_property.IsExactlyZero());
+  }
+
+  SECTION("Mixed and tiny nonzero values are not exactly zero")
+  {
+    mfem::DenseTensor mixed(2, 2, 1);
+    mixed = 0.0;
+    mixed(0, 1, 0) = -4.0;
+    MaterialPropertyCoefficient mixed_coeff(attr_mat, mixed);
+    CHECK_FALSE(mixed_coeff.IsExactlyZero());
+
+    mfem::DenseTensor tiny(1, 1, 1);
+    tiny = std::numeric_limits<double>::min();
+    MaterialPropertyCoefficient tiny_coeff(attr_mat, tiny);
+    CHECK_FALSE(tiny_coeff.IsExactlyZero());
   }
 }
 
