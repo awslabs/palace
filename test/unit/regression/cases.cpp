@@ -1762,6 +1762,28 @@ TEST_CASE("singular_corner_electrostatic_amr", "[Serial][Parallel][Regression]")
                                   "singular_corner_electrostatic_amr.json", "amr", opts);
 }
 
+TEST_CASE("singular_corner_electrostatic_amr_nonconforming",
+          "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-5;
+  opts.atol = 1.0e-18;
+  opts.excluded_columns = {"true_dof"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  for (const std::string prefix : {"", "iteration1/", "iteration2/"})
+  {
+    opts.custom_checks[prefix + "singular-coefficients.csv"] =
+        CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+    opts.custom_checks[prefix + "singular-tip-slopes.csv"] =
+        CompareCanonicalRows(8, {"source_element"}, opts.rtol, opts.atol);
+  }
+  palace::test::RunRegressionCase("singular_corner_electrostatic",
+                                  "singular_corner_electrostatic_amr_nc.json", "amr_nc",
+                                  opts);
+}
+
 TEST_CASE("standard_corner_electrostatic_amr", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;

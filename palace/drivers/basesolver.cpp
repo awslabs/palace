@@ -210,8 +210,7 @@ void ReportStableSeedIds(MPI_Comm comm, const mfem::ParMesh &mesh,
         hash *= 1099511628211ULL;
       }
     }
-    Mpi::Print(comm,
-               " Stable AMR seed simplices: {:d} keys, hash {:016x}, sample [{}{}]\n",
+    Mpi::Print(comm, " Stable AMR seed simplices: {:d} keys, hash {:016x}, sample [{}{}]\n",
                keys.size(), hash, ids.str(),
                keys.size() > maximum_printed_keys ? ",..." : "");
   }
@@ -311,6 +310,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
   MPI_Comm comm = mesh.back()->GetComm();
+  if (use_amr && iodata.solver.singular_elements.Enabled() &&
+      mesh.back()->Get().Dimension() == 3 && refinement.nonconformal &&
+      refinement.max_nc_levels > 0 && !refinement.singular_repair)
+  {
+    MFEM_ABORT("Three-dimensional nonconforming singular-element AMR requires "
+               "Model.Refinement.MaxNCLevels = 0 or SingularRepair = true. "
+               "Two-dimensional electrostatic line-tip AMR supports bounded hanging-node "
+               "levels through closure expansion and localized repair.");
+  }
 
   // Report the distribution of the raw indicator across the enriched region, its
   // conservative one-face closure, and the exterior, before any protection mask is
@@ -405,6 +413,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                 "AMR refinement-protection marker has an invalid size!");
     MFEM_VERIFY(closure_conforming,
                 "The singular refinement closure is nonconforming before AMR!");
+    const bool legacy_2d_nonconforming =
+        protection.Size() > 0 && iodata.problem.type == ProblemType::ELECTROSTATIC &&
+        mesh.back()->Get().Dimension() == 2 && mesh.back()->Get().Nonconforming() &&
+        !refinement.singular_repair;
     if (protection.Size() > 0 && mesh.back()->Get().Nonconforming() &&
         refinement.singular_repair)
     {
@@ -413,12 +425,19 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       // indicators must not be masked.
       protection.SetSize(0);
     }
-    else if (protection.Size() > 0 && mesh.back()->Get().Nonconforming())
+    else if (protection.Size() > 0 && mesh.back()->Get().Nonconforming() &&
+             !legacy_2d_nonconforming)
     {
-      // Custom singular spaces do not yet have coarse/fine trace constraints. Keep the
-      // enriched patch and its one-face buffer fixed in h so all enriched interfaces remain
-      // conforming, and adapt using the smooth-remainder estimator outside that closure.
+      // Three-dimensional custom singular spaces do not yet have coarse/fine trace
+      // constraints. Keep the enriched patch and its one-face buffer fixed in h.
       indicators.ZeroElements(protection);
+    }
+    else if (legacy_2d_nonconforming)
+    {
+      // Preserve the established 2D electrostatic line-tip AMR behavior: do not erase the
+      // dominant near-conductor indicators. If any selected seed intersects this closure,
+      // marking expands to the complete closure below and repairs its coarse side after
+      // refinement.
     }
     else
     {
@@ -487,15 +506,54 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Print(" Singular refinement closure contains {:d} elements\n", closure_elements);
     }
 
-    const auto marked_elements = [&comm, &refinement, &protection](const auto &indicators)
+    const auto marked_elements =
+        [this, &comm, &refinement, &protection, &mesh](const auto &indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
           comm, indicators.Local(), refinement.update_fraction);
       auto marked_elements = MarkedElements(indicators.Local(), threshold);
-      for (int element : marked_elements)
+      const bool legacy_2d_nonconforming =
+          protection.Size() > 0 && iodata.problem.type == ProblemType::ELECTROSTATIC &&
+          mesh.back()->Get().Dimension() == 2 && mesh.back()->Get().Nonconforming() &&
+          !refinement.singular_repair;
+      if (legacy_2d_nonconforming)
       {
-        MFEM_VERIFY(protection.Size() == 0 || !protection[element],
-                    "AMR marked an element in a protected singular refinement closure!");
+        bool intersects_closure = false;
+        for (int element : marked_elements)
+        {
+          intersects_closure = intersects_closure || protection[element] != 0;
+        }
+        Mpi::GlobalOr(1, &intersects_closure, comm);
+        if (intersects_closure)
+        {
+          mfem::Array<int> expanded;
+          expanded.Reserve(marked_elements.Size() + protection.Size());
+          mfem::Array<int> present(protection.Size());
+          present = 0;
+          for (int element : marked_elements)
+          {
+            expanded.Append(element);
+            present[element] = 1;
+          }
+          for (int element = 0; element < protection.Size(); element++)
+          {
+            if (protection[element] && !present[element])
+            {
+              expanded.Append(element);
+            }
+          }
+          marked_elements = std::move(expanded);
+          Mpi::Print(" Expanded 2D nonconforming marks to the complete singular "
+                     "refinement closure\n");
+        }
+      }
+      else
+      {
+        for (int element : marked_elements)
+        {
+          MFEM_VERIFY(protection.Size() == 0 || !protection[element],
+                      "AMR marked an element in a protected singular refinement closure!");
+        }
       }
       const auto [glob_marked_elements, glob_elements] =
           linalg::GlobalSize2(comm, marked_elements, indicators.Local());
@@ -663,18 +721,24 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       bool conforming = true;
       mfem::Array<int> repair;
       GetRefinementProtection(mesh.back()->Get(), &conforming, &repair);
-      const bool use_repair = refinement.singular_repair && !conforming;
+      const bool legacy_2d_repair = iodata.problem.type == ProblemType::ELECTROSTATIC &&
+                                    mesh.back()->Get().Dimension() == 2 &&
+                                    refinement.nonconformal && !refinement.singular_repair;
+      const bool repair_requested = refinement.singular_repair || legacy_2d_repair;
+      const bool use_repair = repair_requested && !conforming;
       int pass = 0;
       // Detect a self-sustaining repair cycle: refining a coarse master can create new
       // hanging singular faces, so the violation count can plateau instead of decaying.
       // Stall detection reports that immediately rather than exhausting the pass budget.
       long long best_marks = -1;
       int passes_since_improvement = 0;
-      while (refinement.singular_repair && !conforming)
+      while (repair_requested && !conforming)
       {
-        MFEM_VERIFY(pass < refinement.singular_repair_max_passes,
+        const int maximum_passes =
+            legacy_2d_repair ? 16 : refinement.singular_repair_max_passes;
+        MFEM_VERIFY(pass < maximum_passes,
                     "Localized singular repair did not converge within "
-                        << refinement.singular_repair_max_passes
+                        << maximum_passes
                         << " passes; the singular subcomplex is still nonconforming!");
         mfem::Array<int> repair_marks;
         for (int element = 0; element < repair.Size(); element++)
@@ -742,16 +806,19 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                        "advisory limit of 3.\n",
                        amplification);
         }
-        MFEM_VERIFY(refinement.singular_repair_max_amplification <= 0.0 ||
-                        amplification <= refinement.singular_repair_max_amplification,
-                    "Localized singular repair amplification "
-                        << amplification << " exceeds the configured budget of "
-                        << refinement.singular_repair_max_amplification << "!");
-        MFEM_VERIFY(refinement.singular_repair_max_growth <= 0.0 ||
-                        growth <= refinement.singular_repair_max_growth,
-                    "Localized singular repair grew the mesh by "
-                        << 100 * growth << "%, exceeding the configured budget of "
-                        << 100 * refinement.singular_repair_max_growth << "%!");
+        if (refinement.singular_repair)
+        {
+          MFEM_VERIFY(refinement.singular_repair_max_amplification <= 0.0 ||
+                          amplification <= refinement.singular_repair_max_amplification,
+                      "Localized singular repair amplification "
+                          << amplification << " exceeds the configured budget of "
+                          << refinement.singular_repair_max_amplification << "!");
+          MFEM_VERIFY(refinement.singular_repair_max_growth <= 0.0 ||
+                          growth <= refinement.singular_repair_max_growth,
+                      "Localized singular repair grew the mesh by "
+                          << 100 * growth << "%, exceeding the configured budget of "
+                          << 100 * refinement.singular_repair_max_growth << "%!");
+        }
       }
     }
 

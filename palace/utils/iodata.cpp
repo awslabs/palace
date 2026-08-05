@@ -282,11 +282,6 @@ void IoData::CheckConfiguration()
     MFEM_VERIFY(solver.device == Device::CPU,
                 "Singular elements are initially supported only with Solver.Device = "
                 "\"CPU\"!");
-    MFEM_VERIFY(model.refinement.max_it == 0 || !model.refinement.nonconformal ||
-                    model.refinement.max_nc_levels == 0,
-                "Nonconforming singular-element AMR currently requires "
-                "Model.Refinement.MaxNCLevels = 0 so MFEM cannot refine the protected "
-                "singular closure while enforcing a bounded hanging-node level!");
     std::vector<int> conductor_attributes = boundaries.pec.attributes;
     for (const auto &[idx, terminal] : boundaries.terminal)
     {

@@ -1829,7 +1829,10 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config = MakeConfig();
     config["Model"]["Refinement"] = {
         {"MaxIts", 1}, {"Nonconformal", true}, {"MaxNCLevels", 1}};
-    CHECK_THROWS(IoData(config, false));
+    // Mesh dimension is unknown during JSON parsing. Two-dimensional singular AMR supports
+    // bounded hanging-node levels through legacy closure expansion/repair; unsupported 3D
+    // combinations are rejected after the mesh is loaded.
+    CHECK_NOTHROW(IoData(config, false));
 
     config["Model"]["Refinement"]["MaxNCLevels"] = 0;
     CHECK_NOTHROW(IoData(config, false));
@@ -1846,7 +1849,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("GPU execution is rejected and polynomial multigrid is accepted")
+  SECTION("GPU execution is rejected and full-wave singular solves remain single-level")
   {
     auto config = MakeConfig();
     config["Solver"]["Device"] = "GPU";
@@ -1854,13 +1857,13 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
 
     config = MakeConfig();
     config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", true}};
-    CHECK_NOTHROW(IoData(config, false));
+    CHECK_NOTHROW(IoData(config, false));  // Electrostatic remains multigrid-capable.
 
     config = MakeConfig();
     config["Problem"]["Type"] = "BoundaryMode";
     config["Solver"]["BoundaryMode"] = {
         {"Freq", 1.0}, {"N", 1}, {"Save", 0}, {"Target", 1.0}};
-    config["Solver"]["Linear"] = {{"MGMaxLevels", 2}, {"PCMatReal", true}};
+    config["Solver"]["Linear"] = {{"MGMaxLevels", 1}, {"PCMatReal", true}};
     CHECK_NOTHROW(IoData(config, false));
 
     config = MakeConfig();
@@ -1888,7 +1891,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_THROWS(IoData(config, false));
 
     config["Solver"]["Linear"]["PCMatReal"] = true;
-    CHECK_NOTHROW(IoData(config, false));
+    CHECK_THROWS(IoData(config, false));  // MGMaxLevels > 1 is rejected for full wave.
   }
 
   SECTION("Singular AMS uses a real coarse correction")
@@ -1899,7 +1902,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
         {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
     config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
     config["Solver"]["Linear"] = {{"Type", "AMS"},
-                                  {"MGMaxLevels", 2},
+                                  {"MGMaxLevels", 1},
                                   {"PCMatReal", true},
                                   {"ComplexCoarseSolve", false}};
     CHECK_NOTHROW(IoData(config, false));
@@ -1911,7 +1914,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Problem"]["Type"] = "Eigenmode";
     config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
     config["Solver"]["Linear"] = {{"Type", "AMS"},
-                                  {"MGMaxLevels", 2},
+                                  {"MGMaxLevels", 1},
                                   {"PCMatReal", true},
                                   {"ComplexCoarseSolve", true}};
     CHECK_THROWS(IoData(config, false));
@@ -1923,7 +1926,7 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config["Problem"]["Type"] = "Eigenmode";
     config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
     config["Solver"]["Linear"] = {
-        {"Type", "AMS"}, {"KSPType", "GMRES"}, {"MGMaxLevels", 2}, {"PCMatReal", true}};
+        {"Type", "AMS"}, {"KSPType", "GMRES"}, {"MGMaxLevels", 1}, {"PCMatReal", true}};
     IoData iodata(config, false);
     CHECK(iodata.solver.linear.pc_mat_shifted == 1);
     CHECK(iodata.solver.linear.pc_side == PreconditionerSide::RIGHT);
