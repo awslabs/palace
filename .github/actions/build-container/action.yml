@@ -17,6 +17,23 @@ inputs:
       build-time binaries remain executable on the host.
     required: false
     default: ''
+  cuda_arch:
+    description: >-
+      Comma-separated CUDA compute capabilities to build Palace for (e.g.
+      80,86,90 for Ampere through Hopper). Empty means a CPU-only build. Device
+      code is cross-compiled by nvcc, so the build host needs no GPU of these
+      capabilities (and needs no GPU at all); only a CUDA toolkit that supports
+      the targets. CUDA images use the stable x86_64_v3_cuda-style label.
+    required: false
+    default: ''
+  cuda_version:
+    description: >-
+      Spack-managed CUDA toolkit version for CUDA builds. Ignored when
+      cuda_arch is empty.
+    required: false
+    # NVIDIA's 13.1.2 runfile aborts because its manifest references a missing
+    # CUPTI static archive. Keep this explicit for reproducible container builds.
+    default: '13.0.2'
 
 runs:
   using: composite
@@ -52,17 +69,21 @@ runs:
       env:
         # Requested Spack microarchitecture; empty means build native.
         TARGET: ${{ inputs.target }}
+        # Requested CUDA architecture list; empty means a CPU-only build.
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
         # The commit being built. Only makes the image name unique/readable —
         # not load-bearing (the publish workflow takes the authoritative sha
         # from the workflow_run payload, not this name).
         SOURCE_SHA: ${{ github.sha }}
       run: |
-        # Build for the requested target if given, else the runner's native
-        # microarchitecture. A target must be <= the host's native ISA (the
-        # workflow matrix guarantees this) so build-time binaries can run here.
-        # The arch label names the image, from which the publish workflow later
-        # recovers it to tag/key this build's artifacts.
-        ARCH_LABEL="${TARGET:-$(spack arch -t)}"
+        # CUDA images retain the CPU ISA compatibility dimension. The publish
+        # workflow recovers this label to tag and key the build artifacts.
+        if [ -n "$CUDA_ARCH" ]; then
+          CPU_LABEL="${TARGET:-$(spack arch -t)}"
+          ARCH_LABEL="${CPU_LABEL}_cuda"
+        else
+          ARCH_LABEL="${TARGET:-$(spack arch -t)}"
+        fi
         IMAGE_NAME="palace-${ARCH_LABEL}-${SOURCE_SHA:0:7}"
         echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
         echo "Image name: ${IMAGE_NAME}"
@@ -90,6 +111,44 @@ runs:
           echo "No target pin requested; building for native microarchitecture."
         fi
 
+    - name: Enable CUDA
+      # Turn the CPU-only environment into a CUDA build for the requested compute
+      # capabilities. Skipped when cuda_arch is empty (the default CPU-only build).
+      # Bound to an env var (not interpolated into the script) to keep untrusted
+      # input off the command line.
+      #
+      # Applied via `require` on the palace root spec only: Palace's Spack package
+      # forwards +cuda/cuda_arch to its CUDA-enabled dependencies (mfem, hypre,
+      # petsc, slepc, ...), mirroring how the palace-ci action puts cuda_arch on
+      # the root spec. The cuda toolkit itself is a normal build dependency Spack
+      # installs in-container, so the build host needs no CUDA install and no GPU:
+      # nvcc cross-compiles device code for the target capability.
+      shell: bash
+      env:
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
+        CUDA_VERSION: ${{ inputs.cuda_version }}
+      run: |
+        if [ -n "$CUDA_ARCH" ]; then
+          cd .github/actions/build-container/spack_env
+          if [[ ! "$CUDA_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "Invalid CUDA toolkit version: $CUDA_VERSION" >&2
+            exit 1
+          fi
+          spack -e . config add "packages:palace:require:'+cuda+cudss cuda_arch:=${CUDA_ARCH}'"
+          spack -e . config add "packages:cuda:require:'@=${CUDA_VERSION}'"
+          # MFEM's cuDSS integration currently targets the 0.7 API. PR 5823
+          # provides this CUDA 13 build as well as the incompatible 0.8 API.
+          spack -e . config add "packages:cudss:require:'@=0.7.1-13'"
+          spack -e . config add \
+            "packages:openmpi:require:'+cuda cuda_arch:=${CUDA_ARCH}'"
+          spack -e . config add \
+            "packages:libfabric:require:'fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp +cuda +cuda_dlopen cuda_arch:=${CUDA_ARCH}'"
+          echo "Enabled CUDA ${CUDA_VERSION} build for compute capabilities ${CUDA_ARCH}:"
+          spack -e . config get packages
+        else
+          echo "No CUDA arch requested; CPU-only build."
+        fi
+
     - name: Generate Dockerfile
       shell: bash
       run: |
@@ -112,11 +171,19 @@ runs:
       env:
         CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
         CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
         IMAGE_NAME: ${{ steps.name.outputs.image_name }}
         SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
         source /tmp/timing_functions.sh
         start_timer
+
+        LABEL_ARGS=()
+        if [ -n "$CUDA_ARCH" ]; then
+          LABEL_ARGS+=(
+            --label "com.amazonaws.palace.cuda.architectures=${CUDA_ARCH}"
+          )
+        fi
 
         # TODO: Ubuntu 26 provides Podman 5.4+; use environment-backed secrets
         # once the runners upgrade.
@@ -132,6 +199,7 @@ runs:
           sudo podman build --format docker --layers "$@" \
             --secret "id=github_user,src=$GITHUB_USER_FILE" \
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
+            "${LABEL_ARGS[@]}" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             -t "$IMAGE_NAME" .
         }

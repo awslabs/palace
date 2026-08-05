@@ -116,8 +116,13 @@ if(PALACE_WITH_CUDA)
     "-DCMAKE_CUDA_FLAGS=${CMAKE_CUDA_FLAGS}"
   )
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    # ExternalProject_Add splits its command on ";", so a multi-architecture
+    # list has to be escaped or only the first entry survives.
+    palace_escape_external_project_list(
+      PALACE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+    )
     list(APPEND PALACE_OPTIONS
-      "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
+      "-DCMAKE_CUDA_ARCHITECTURES=${PALACE_CUDA_ARCHITECTURES}"
     )
   endif()
 else()
