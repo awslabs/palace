@@ -1,6 +1,8 @@
 {% extends "container/Dockerfile" %}
 {% block build_stage %}
 ARG SPACK_PACKAGES_COMMIT
+ARG PALACE_CUDA
+ENV PALACE_CUDA=$PALACE_CUDA
 
 # FIXME(awslabs/palace#731): workaround for a Spack spec-groups bug that
 # prevents the gcc compiler from being installed. Build-stage only, so the
