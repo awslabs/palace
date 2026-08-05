@@ -30,6 +30,8 @@ namespace
 constexpr double MaxwellNu = 2.0 / 3.0;
 constexpr double MaxwellBeta = 0.35;
 constexpr double MaxwellGamma = 1.0;
+constexpr double MaxwellOmega2 = 0.36;
+constexpr double MaxwellBoundaryConductance = 0.75;
 constexpr int MaxwellReentrantAttribute = 1;
 constexpr int MaxwellOuterAttribute = 2;
 
@@ -169,6 +171,25 @@ std::array<double, 2> MaxwellSource(double x, double y)
   return {curl_curl_x + MaxwellGamma * field[0], curl_curl_y + MaxwellGamma * field[1]};
 }
 
+// Indefinite frequency-domain source: f = curl curl E - omega^2 E for the same
+// manufactured field.
+std::array<double, 2> MaxwellDrivenSource(double x, double y)
+{
+  const auto field = MaxwellField(x, y);
+  const double curl_curl_x = 6.0 * MaxwellBeta * x * y * (1.0 - x * x);
+  const double curl_curl_y = MaxwellBeta * (1.0 - 3.0 * x * x) * (1.0 - 3.0 * y * y);
+  return {curl_curl_x - MaxwellOmega2 * field[0], curl_curl_y - MaxwellOmega2 * field[1]};
+}
+
+// Manufactured impedance data on the outer boundary: the exact field satisfies
+// curl E = -g (E . t) + h with E . t = 0 there, so h is the exact scalar curl trace. It is
+// nonzero on the y = +-1 segments, which makes the facet load an active oracle for the
+// boundary-contribution orientation.
+double MaxwellFacetData(double x, double y)
+{
+  return MaxwellCurl(x, y);
+}
+
 int MaxwellCornerNode(const mfem::Mesh &mesh, int element)
 {
   mfem::Array<int> vertices;
@@ -237,6 +258,67 @@ struct MaxwellSolveReport
   std::shared_ptr<mfem::SparseMatrix> combined_matrix;
   mfem::Vector combined_rhs;
 };
+
+// Measure the graph-norm error of a combined standard-plus-singular solution against the
+// manufactured field, with edge-aligned Duffy quadrature at the corner. The solution vector
+// uses the [standard, enrichment] combined layout.
+void MaxwellMeasureGraphError(mfem::Mesh &mesh, mfem::FiniteElementSpace &nd_space,
+                              const fem::singular::TriangleDofTopology *topology,
+                              const mfem::Vector &solution, MaxwellSolveReport &report)
+{
+  const int standard_size = nd_space.GetVSize();
+  mfem::GridFunction standard_solution(&nd_space);
+  for (int i = 0; i < standard_size; i++)
+  {
+    standard_solution(i) = solution(i);
+  }
+  mfem::Vector point(3), discrete(2), discrete_curl;
+  report.graph_error = 0.0;
+  report.exact_mass_energy = 0.0;
+  report.exact_curl_energy = 0.0;
+  report.element_error.assign(mesh.GetNE(), 0.0);
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &T = *mesh.GetElementTransformation(element);
+    double determinant;
+    const auto grad_lambda =
+        fem::singular::GetAffineTriangleBarycentricGradients(T, determinant);
+    MaxwellQuadrature(
+        mesh, element,
+        [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight_ref)
+        {
+          mfem::IntegrationPoint ip;
+          ip.Set2(lambda[1], lambda[2]);
+          T.SetIntPoint(&ip);
+          T.Transform(ip, point);
+          standard_solution.GetVectorValue(T, ip, discrete);
+          standard_solution.GetCurl(T, discrete_curl);
+          double curl = discrete_curl(0);
+          if (topology)
+          {
+            for (const auto &dof : topology->elements[element].nd)
+            {
+              const double coefficient =
+                  solution(standard_size + static_cast<int>(dof.dof));
+              const auto basis = MaxwellSingularBasis(lambda, grad_lambda, dof.basis);
+              discrete(0) += coefficient * basis.value[0];
+              discrete(1) += coefficient * basis.value[1];
+              curl += coefficient * basis.curl;
+            }
+          }
+          const auto exact = MaxwellField(point(0), point(1));
+          const double exact_curl = MaxwellCurl(point(0), point(1));
+          const double dx = exact[0] - discrete(0), dy = exact[1] - discrete(1);
+          const double dc = exact_curl - curl;
+          const double weight = weight_ref * T.Weight();
+          const double error = weight * (dc * dc + MaxwellGamma * (dx * dx + dy * dy));
+          report.element_error[element] += error;
+          report.graph_error += error;
+          report.exact_mass_energy += weight * (exact[0] * exact[0] + exact[1] * exact[1]);
+          report.exact_curl_energy += weight * exact_curl * exact_curl;
+        });
+  }
+}
 
 MaxwellSolveReport MaxwellSolve(mfem::Mesh &mesh, int order, bool enriched,
                                 bool include_rotational = true,
@@ -506,59 +588,50 @@ MaxwellSolveReport MaxwellSolve(mfem::Mesh &mesh, int order, bool enriched,
     return report;
   }
 
-  mfem::GridFunction standard_solution(&nd_space);
-  for (int i = 0; i < standard_size; i++)
-  {
-    standard_solution(i) = solution(i);
-  }
-  mfem::Vector discrete(2), discrete_curl;
-  report.element_error.assign(mesh.GetNE(), 0.0);
-  for (int element = 0; element < mesh.GetNE(); element++)
-  {
-    auto &T = *mesh.GetElementTransformation(element);
-    double determinant;
-    const auto grad_lambda =
-        fem::singular::GetAffineTriangleBarycentricGradients(T, determinant);
-    MaxwellQuadrature(
-        mesh, element,
-        [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight_ref)
-        {
-          mfem::IntegrationPoint ip;
-          ip.Set2(lambda[1], lambda[2]);
-          T.SetIntPoint(&ip);
-          T.Transform(ip, point);
-          standard_solution.GetVectorValue(T, ip, discrete);
-          standard_solution.GetCurl(T, discrete_curl);
-          double curl = discrete_curl(0);
-          if (enriched)
-          {
-            for (const auto &dof : topology.elements[element].nd)
-            {
-              const double coefficient =
-                  solution(standard_size + static_cast<int>(dof.dof));
-              const auto basis = MaxwellSingularBasis(lambda, grad_lambda, dof.basis);
-              discrete(0) += coefficient * basis.value[0];
-              discrete(1) += coefficient * basis.value[1];
-              curl += coefficient * basis.curl;
-            }
-          }
-          const auto exact = MaxwellField(point(0), point(1));
-          const double exact_curl = MaxwellCurl(point(0), point(1));
-          const double dx = exact[0] - discrete(0), dy = exact[1] - discrete(1);
-          const double dc = exact_curl - curl;
-          const double weight = weight_ref * T.Weight();
-          const double error = weight * (dc * dc + MaxwellGamma * (dx * dx + dy * dy));
-          report.element_error[element] += error;
-          report.graph_error += error;
-          report.exact_mass_energy += weight * (exact[0] * exact[0] + exact[1] * exact[1]);
-          report.exact_curl_energy += weight * exact_curl * exact_curl;
-        });
-  }
+  MaxwellMeasureGraphError(mesh, nd_space, enriched ? &topology : nullptr, solution,
+                           report);
   return report;
 }
 
 using MaxwellSparseColumn = fem::hierarchical::SparseColumn;
 using MaxwellLocalElementData = fem::hierarchical::LocalOperatorContribution;
+
+// Assembly options for the local uneliminated system. The defaults reproduce the coercive
+// manufactured fixture. Driven variants flip the mass sign, activate outer-boundary facet
+// contributions, and restrict the essential set to the reentrant conductor; the metric
+// variant is the coercive graph operator used for patch solves and element energies.
+struct MaxwellSystemOptions
+{
+  double mass_coefficient = MaxwellGamma;
+  double boundary_conductance = 0.0;
+  bool boundary_rhs = false;
+  bool pec_everywhere = true;
+  bool driven_source = false;
+  bool enriched = true;
+  int boundary_quadrature_bump = 0;
+};
+
+MaxwellSystemOptions MaxwellDrivenResidualOptions()
+{
+  MaxwellSystemOptions options;
+  options.mass_coefficient = -MaxwellOmega2;
+  options.boundary_conductance = MaxwellBoundaryConductance;
+  options.boundary_rhs = true;
+  options.pec_everywhere = false;
+  options.driven_source = true;
+  return options;
+}
+
+MaxwellSystemOptions MaxwellDrivenMetricOptions()
+{
+  MaxwellSystemOptions options;
+  options.mass_coefficient = MaxwellOmega2;
+  options.boundary_conductance = MaxwellBoundaryConductance;
+  options.boundary_rhs = false;
+  options.pec_everywhere = false;
+  options.driven_source = false;
+  return options;
+}
 
 struct MaxwellLocalSystem
 {
@@ -567,7 +640,16 @@ struct MaxwellLocalSystem
   std::vector<bool> essential;
   fem::singular::TriangleDofTopology topology;
   std::vector<MaxwellLocalElementData> elements;
+  std::vector<MaxwellLocalElementData> facets;
 };
+
+std::vector<MaxwellLocalElementData>
+MaxwellAllContributions(const MaxwellLocalSystem &system)
+{
+  auto contributions = system.elements;
+  contributions.insert(contributions.end(), system.facets.begin(), system.facets.end());
+  return contributions;
+}
 
 int MaxwellUnsignedDof(int dof)
 {
@@ -579,7 +661,8 @@ double MaxwellDofSign(int dof)
   return dof >= 0 ? 1.0 : -1.0;
 }
 
-MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
+MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order,
+                                              const MaxwellSystemOptions &options = {})
 {
   MaxwellLocalSystem system;
   mfem::ND_FECollection nd_collection(order, 2);
@@ -587,34 +670,58 @@ MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
   mfem::H1_FECollection h1_collection(order, 2);
   mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
   system.standard_size = nd_space.GetVSize();
-  const auto features = fem::singular::ExtractSerialLineFeatures(
-      mesh, {MaxwellReentrantAttribute}, {{1, 1.0}});
-  system.topology = fem::singular::BuildSerialTriangleDofTopology(mesh, features, 1);
-  system.enrichment_size = static_cast<int>(system.topology.nd_dofs.size());
+  fem::singular::TriangleFeatureTopology features;
+  if (options.enriched)
+  {
+    features = fem::singular::ExtractSerialLineFeatures(mesh, {MaxwellReentrantAttribute},
+                                                        {{1, 1.0}});
+    system.topology = fem::singular::BuildSerialTriangleDofTopology(mesh, features, 1);
+    system.enrichment_size = static_cast<int>(system.topology.nd_dofs.size());
+  }
   const int combined_size = system.standard_size + system.enrichment_size;
   system.essential.assign(combined_size, false);
   mfem::Array<int> standard_essential;
-  nd_space.GetBoundaryTrueDofs(standard_essential);
+  if (options.pec_everywhere)
+  {
+    nd_space.GetBoundaryTrueDofs(standard_essential);
+  }
+  else
+  {
+    mfem::Array<int> marker(mesh.bdr_attributes.Max());
+    marker = 0;
+    marker[MaxwellReentrantAttribute - 1] = 1;
+    nd_space.GetEssentialTrueDofs(marker, standard_essential);
+  }
   for (int dof : standard_essential)
   {
     system.essential[dof] = true;
   }
-  const auto numbering =
-      fem::singular::BuildParallelDofNumbering(Mpi::World(), system.topology);
-  mfem::Array<int> attributes(2);
-  attributes[0] = MaxwellReentrantAttribute;
-  attributes[1] = MaxwellOuterAttribute;
-  const auto singular_essential = fem::singular::GetEssentialTriangleNDTrueDofs(
-      Mpi::World(), features, system.topology, numbering, attributes);
-  for (int dof : singular_essential)
+  if (options.enriched)
   {
-    system.essential[system.standard_size + dof] = true;
+    const auto numbering =
+        fem::singular::BuildParallelDofNumbering(Mpi::World(), system.topology);
+    mfem::Array<int> attributes(options.pec_everywhere ? 2 : 1);
+    attributes[0] = MaxwellReentrantAttribute;
+    if (options.pec_everywhere)
+    {
+      attributes[1] = MaxwellOuterAttribute;
+    }
+    const auto singular_essential = fem::singular::GetEssentialTriangleNDTrueDofs(
+        Mpi::World(), features, system.topology, numbering, attributes);
+    for (int dof : singular_essential)
+    {
+      system.essential[system.standard_size + dof] = true;
+    }
   }
+  static const std::vector<fem::singular::TriangleElementDof> no_singular_dofs;
+  const auto element_singular_dofs =
+      [&](int element) -> const std::vector<fem::singular::TriangleElementDof> &
+  { return options.enriched ? system.topology.elements[element].nd : no_singular_dofs; };
 
   mfem::CurlCurlIntegrator curl_curl;
-  mfem::ConstantCoefficient gamma(MaxwellGamma);
-  mfem::VectorFEMassIntegrator mass(gamma);
-  const fem::singular::AdaptiveAssemblyOptions options{8, 1.0e-9, 1.0e-9, 8};
+  mfem::ConstantCoefficient mass_coefficient(options.mass_coefficient);
+  mfem::VectorFEMassIntegrator mass(mass_coefficient);
+  const fem::singular::AdaptiveAssemblyOptions assembly_options{8, 1.0e-9, 1.0e-9, 8};
   system.elements.resize(mesh.GetNE());
   mfem::Array<int> nd_dofs, h1_dofs;
   mfem::DenseMatrix shape;
@@ -623,7 +730,7 @@ MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
   {
     auto &data = system.elements[element];
     data.support_element = element;
-    const auto &singular_dofs = system.topology.elements[element].nd;
+    const auto &singular_dofs = element_singular_dofs(element);
     mfem::DofTransformation nd_transformation, h1_transformation;
     nd_space.GetElementVDofs(element, nd_dofs, nd_transformation);
     h1_space.GetElementVDofs(element, h1_dofs, h1_transformation);
@@ -674,7 +781,9 @@ MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
           T.SetIntPoint(&ip);
           T.Transform(ip, point);
           nd_fe.CalcPhysVShape(T, shape);
-          const auto source = MaxwellSource(point(0), point(1));
+          const auto source = options.driven_source
+                                  ? MaxwellDrivenSource(point(0), point(1))
+                                  : MaxwellSource(point(0), point(1));
           const double weight = weight_ref * T.Weight();
           for (int i = 0; i < standard_count; i++)
           {
@@ -697,9 +806,9 @@ MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
     if (!singular_dofs.empty())
     {
       const auto singular = fem::singular::AssembleTriangleElementEnrichmentMatrices(
-          system.topology.elements[element], T, options);
+          system.topology.elements[element], T, assembly_options);
       auto coupling = fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
-          system.topology.elements[element], h1_fe, nd_fe, T, options);
+          system.topology.elements[element], h1_fe, nd_fe, T, assembly_options);
       fem::singular::ApplyStandardDofTransformations(h1_transformation, nd_transformation,
                                                      coupling);
       for (int row = 0; row < standard_count; row++)
@@ -709,11 +818,13 @@ MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
           data.matrix(row, standard_count + column) =
               MaxwellDofSign(nd_dofs[row]) *
               (coupling.nd_curl_curl_standard_enrichment(row, column) +
-               MaxwellGamma * coupling.nd_mass_standard_enrichment(row, column));
+               options.mass_coefficient *
+                   coupling.nd_mass_standard_enrichment(row, column));
           data.matrix(standard_count + column, row) =
               MaxwellDofSign(nd_dofs[row]) *
               (coupling.nd_curl_curl_enrichment_standard(column, row) +
-               MaxwellGamma * coupling.nd_mass_enrichment_standard(column, row));
+               options.mass_coefficient *
+                   coupling.nd_mass_enrichment_standard(column, row));
         }
       }
       for (int row = 0; row < static_cast<int>(singular_dofs.size()); row++)
@@ -722,12 +833,255 @@ MaxwellLocalSystem MaxwellAssembleLocalSystem(mfem::Mesh &mesh, int order)
         {
           data.matrix(standard_count + row, standard_count + column) =
               singular.nd_curl_curl(row, column) +
-              MaxwellGamma * singular.nd_mass(row, column);
+              options.mass_coefficient * singular.nd_mass(row, column);
+        }
+      }
+    }
+  }
+
+  if (options.boundary_conductance != 0.0 || options.boundary_rhs)
+  {
+    const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT,
+                                          2 * order + 4 + options.boundary_quadrature_bump);
+    mfem::Vector normal(2), tangent(2);
+    for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+    {
+      if (mesh.GetBdrAttribute(boundary) != MaxwellOuterAttribute)
+      {
+        continue;
+      }
+      auto *face = mesh.GetBdrFaceTransformations(boundary);
+      MFEM_VERIFY(face && face->Elem1No >= 0,
+                  "Manufactured boundary facet has no interior neighbor!");
+      const int element = face->Elem1No;
+      mfem::DofTransformation nd_transformation;
+      nd_space.GetElementVDofs(element, nd_dofs, nd_transformation);
+      const int standard_count = nd_dofs.Size();
+      const auto &singular_dofs = element_singular_dofs(element);
+      const int singular_count = static_cast<int>(singular_dofs.size());
+      auto &data = system.facets.emplace_back();
+      data.support_element = element;
+      for (int dof : nd_dofs)
+      {
+        data.dofs.push_back(MaxwellUnsignedDof(dof));
+      }
+      for (const auto &dof : singular_dofs)
+      {
+        data.dofs.push_back(system.standard_size + static_cast<int>(dof.dof));
+      }
+      const int local_size = standard_count + singular_count;
+      data.matrix.SetSize(local_size);
+      data.matrix = 0.0;
+      data.rhs.SetSize(local_size);
+      data.rhs = 0.0;
+      const auto &nd_fe = *nd_space.GetFE(element);
+      auto &element_transformation = *mesh.GetElementTransformation(element);
+      double determinant;
+      const auto grad_lambda = fem::singular::GetAffineTriangleBarycentricGradients(
+          element_transformation, determinant);
+      mfem::Vector centroid(2);
+      {
+        mfem::Array<int> vertices;
+        mesh.GetElementVertices(element, vertices);
+        centroid = 0.0;
+        for (int vertex : vertices)
+        {
+          centroid(0) += mesh.GetVertex(vertex)[0] / vertices.Size();
+          centroid(1) += mesh.GetVertex(vertex)[1] / vertices.Size();
+        }
+      }
+      mfem::DenseMatrix facet_standard(standard_count);
+      facet_standard = 0.0;
+      mfem::DenseMatrix facet_coupling(standard_count, singular_count);
+      facet_coupling = 0.0;
+      mfem::Vector facet_rhs(standard_count);
+      facet_rhs = 0.0;
+      shape.SetSize(standard_count, 2);
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &ip = rule.IntPoint(q);
+        face->SetAllIntPoints(&ip);
+        const auto &eip = face->GetElement1IntPoint();
+        mfem::CalcOrtho(face->Jacobian(), normal);
+        face->Transform(ip, point);
+        // The counterclockwise boundary tangent is the +90 degree rotation of the outward
+        // normal. Verify outwardness directly instead of assuming an orientation.
+        const bool outward =
+            normal(0) * (point(0) - centroid(0)) + normal(1) * (point(1) - centroid(1)) >
+            0.0;
+        REQUIRE(outward);
+        tangent(0) = -normal(1);
+        tangent(1) = normal(0);
+        tangent /= tangent.Norml2();
+        const double weight = ip.weight * face->Weight();
+        auto &T1 = *face->Elem1;
+        nd_fe.CalcPhysVShape(T1, shape);
+        const double facet_data =
+            options.boundary_rhs ? MaxwellFacetData(point(0), point(1)) : 0.0;
+        std::vector<double> singular_trace(singular_count, 0.0);
+        if (singular_count > 0)
+        {
+          const fem::singular::TriangleBarycentricPoint lambda{1.0 - eip.x - eip.y, eip.x,
+                                                               eip.y};
+          for (int k = 0; k < singular_count; k++)
+          {
+            const auto basis =
+                MaxwellSingularBasis(lambda, grad_lambda, singular_dofs[k].basis);
+            singular_trace[k] = basis.value[0] * tangent(0) + basis.value[1] * tangent(1);
+          }
+        }
+        for (int i = 0; i < standard_count; i++)
+        {
+          const double trace_i = shape(i, 0) * tangent(0) + shape(i, 1) * tangent(1);
+          facet_rhs(i) += weight * facet_data * trace_i;
+          for (int j = 0; j < standard_count; j++)
+          {
+            const double trace_j = shape(j, 0) * tangent(0) + shape(j, 1) * tangent(1);
+            facet_standard(i, j) +=
+                options.boundary_conductance * weight * trace_i * trace_j;
+          }
+          for (int k = 0; k < singular_count; k++)
+          {
+            facet_coupling(i, k) +=
+                options.boundary_conductance * weight * trace_i * singular_trace[k];
+          }
+        }
+        for (int k = 0; k < singular_count; k++)
+        {
+          data.rhs(standard_count + k) += weight * facet_data * singular_trace[k];
+          for (int l = 0; l < singular_count; l++)
+          {
+            data.matrix(standard_count + k, standard_count + l) +=
+                options.boundary_conductance * weight * singular_trace[k] *
+                singular_trace[l];
+          }
+        }
+      }
+      nd_transformation.TransformDual(facet_standard);
+      nd_transformation.TransformDual(facet_rhs);
+      for (int k = 0; k < singular_count; k++)
+      {
+        mfem::Vector column;
+        facet_coupling.GetColumnReference(k, column);
+        nd_transformation.TransformDual(column);
+      }
+      for (int i = 0; i < standard_count; i++)
+      {
+        data.rhs(i) = MaxwellDofSign(nd_dofs[i]) * facet_rhs(i);
+        for (int j = 0; j < standard_count; j++)
+        {
+          data.matrix(i, j) = MaxwellDofSign(nd_dofs[i]) * MaxwellDofSign(nd_dofs[j]) *
+                              facet_standard(i, j);
+        }
+        for (int k = 0; k < singular_count; k++)
+        {
+          const double value = MaxwellDofSign(nd_dofs[i]) * facet_coupling(i, k);
+          data.matrix(i, standard_count + k) = value;
+          data.matrix(standard_count + k, i) = value;
         }
       }
     }
   }
   return system;
+}
+
+// Solve the (possibly indefinite) manufactured system assembled from the element-local
+// uneliminated contributions, including outer-boundary facet terms, with a dense LU on the
+// reduced free equations. The scattered operator equals the certified global assembly for
+// the coercive options, so this doubles as an assembly-path oracle.
+MaxwellSolveReport MaxwellDrivenSolve(mfem::Mesh &mesh, int order,
+                                      const MaxwellSystemOptions &options)
+{
+  auto system = MaxwellAssembleLocalSystem(mesh, order, options);
+  const int combined_size = system.standard_size + system.enrichment_size;
+  const auto contributions = MaxwellAllContributions(system);
+  mfem::Vector rhs(combined_size);
+  rhs = 0.0;
+  std::vector<int> free, combined_to_free(combined_size, -1);
+  for (int dof = 0; dof < combined_size; dof++)
+  {
+    if (!system.essential[dof])
+    {
+      combined_to_free[dof] = static_cast<int>(free.size());
+      free.push_back(dof);
+    }
+  }
+  mfem::DenseMatrix reduced(static_cast<int>(free.size()));
+  reduced = 0.0;
+  for (const auto &data : contributions)
+  {
+    for (int row = 0; row < static_cast<int>(data.dofs.size()); row++)
+    {
+      rhs(data.dofs[row]) += data.rhs(row);
+      const int reduced_row = combined_to_free[data.dofs[row]];
+      if (reduced_row < 0)
+      {
+        continue;
+      }
+      for (int column = 0; column < static_cast<int>(data.dofs.size()); column++)
+      {
+        const int reduced_column = combined_to_free[data.dofs[column]];
+        if (reduced_column >= 0)
+        {
+          reduced(reduced_row, reduced_column) += data.matrix(row, column);
+        }
+      }
+    }
+  }
+  mfem::Vector reduced_rhs(static_cast<int>(free.size()));
+  for (int row = 0; row < static_cast<int>(free.size()); row++)
+  {
+    reduced_rhs(row) = rhs(free[row]);
+  }
+  mfem::Vector reduced_solution(static_cast<int>(free.size()));
+  mfem::DenseMatrixInverse inverse(reduced);
+  inverse.Mult(reduced_rhs, reduced_solution);
+  mfem::Vector algebraic(static_cast<int>(free.size()));
+  reduced.Mult(reduced_solution, algebraic);
+  algebraic -= reduced_rhs;
+  mfem::Vector solution(combined_size);
+  solution = 0.0;
+  for (int row = 0; row < static_cast<int>(free.size()); row++)
+  {
+    solution(free[row]) = reduced_solution(row);
+  }
+
+  MaxwellSolveReport report;
+  report.dofs = combined_size;
+  report.enrichment_dofs = system.enrichment_size;
+  report.residual = algebraic.Norml2() / std::max(reduced_rhs.Norml2(), 1.0e-30);
+  REQUIRE(report.residual < 1.0e-9);
+  for (int dof = 0; dof < system.enrichment_size; dof++)
+  {
+    const bool is_free = !system.essential[system.standard_size + dof];
+    report.free_enrichment_dofs += is_free;
+    if (is_free && system.topology.nd_dofs[dof].family ==
+                       fem::singular::HigherOrderBasisFamily::NODE_GRADIENT)
+    {
+      report.free_gradient_dofs++;
+    }
+    if (is_free && system.topology.nd_dofs[dof].family ==
+                       fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL)
+    {
+      report.free_rotational_dofs++;
+    }
+  }
+  report.standard_coefficients.SetSize(system.standard_size);
+  for (int i = 0; i < system.standard_size; i++)
+  {
+    report.standard_coefficients(i) = solution(i);
+  }
+  report.enrichment_coefficients.SetSize(system.enrichment_size);
+  for (int i = 0; i < system.enrichment_size; i++)
+  {
+    report.enrichment_coefficients(i) = solution(system.standard_size + i);
+  }
+  report.essential_mask = system.essential;
+  mfem::ND_FECollection nd_collection(order, 2);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  MaxwellMeasureGraphError(mesh, nd_space, options.enriched ? &system.topology : nullptr,
+                           solution, report);
+  return report;
 }
 
 std::vector<MaxwellSparseColumn> MaxwellBuildSparseTransfer(
@@ -839,12 +1193,29 @@ struct MaxwellPatchReport
   int nonidentity_transformations = 0;
 };
 
-MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
-                                            const MaxwellSolveReport &coarse,
-                                            bool include_rotational_guests = true)
+MaxwellPatchReport
+MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order, const MaxwellSolveReport &coarse,
+                         bool include_rotational_guests = true,
+                         const MaxwellSystemOptions &residual_options = {},
+                         const MaxwellSystemOptions *metric_options = nullptr)
 {
   MaxwellPatchReport report;
-  auto fine = MaxwellAssembleLocalSystem(mesh, order + 1);
+  auto fine = MaxwellAssembleLocalSystem(mesh, order + 1, residual_options);
+  const auto residual_all = MaxwellAllContributions(fine);
+  // Patch solves, defect sweeps, and element energies use a coercive graph metric. For the
+  // certified coercive fixture the metric is the residual operator itself; the driven
+  // variant lifts the indefinite residual in the positive graph metric instead.
+  std::vector<MaxwellLocalElementData> metric_all;
+  if (metric_options)
+  {
+    auto metric_system = MaxwellAssembleLocalSystem(mesh, order + 1, *metric_options);
+    REQUIRE(metric_system.essential == fine.essential);
+    metric_all = MaxwellAllContributions(metric_system);
+  }
+  else
+  {
+    metric_all = residual_all;
+  }
   mfem::ND_FECollection coarse_collection(order, 2), fine_collection(order + 1, 2);
   mfem::FiniteElementSpace coarse_space(&mesh, &coarse_collection);
   mfem::FiniteElementSpace fine_space(&mesh, &fine_collection);
@@ -893,14 +1264,14 @@ MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
   {
     injected(fine_standard + dof) = coarse.enrichment_coefficients(dof);
   }
-  mfem::Vector residual = fem::hierarchical::AssembleResidual(combined_size, fine.elements,
+  mfem::Vector residual = fem::hierarchical::AssembleResidual(combined_size, residual_all,
                                                               injected, fine.essential);
   std::vector<std::set<int>> dof_elements(combined_size);
-  for (int element = 0; element < mesh.GetNE(); element++)
+  for (const auto &data : metric_all)
   {
-    for (int dof : fine.elements[element].dofs)
+    for (int dof : data.dofs)
     {
-      dof_elements[dof].insert(element);
+      dof_elements[dof].insert(data.support_element);
     }
   }
 
@@ -1086,7 +1457,7 @@ MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
     }
     mfem::DenseMatrix restricted;
     mfem::Vector patch_rhs;
-    fem::hierarchical::AssembleRestrictedOperator(fine.elements, patch.support, patch.basis,
+    fem::hierarchical::AssembleRestrictedOperator(metric_all, patch.support, patch.basis,
                                                   residual, restricted, patch_rhs);
     patch.restricted = restricted;
     mfem::DenseMatrixInverse inverse(restricted, true);
@@ -1201,18 +1572,19 @@ MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
       raw(fine_standard + dof) += singular_sum[dof] / singular_count[dof];
     }
   }
-  double raw_energy = fem::hierarchical::Energy(fine.elements, raw);
+  double raw_energy = fem::hierarchical::Energy(metric_all, raw);
   double raw_work = mfem::InnerProduct(raw, residual);
   const double alpha = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
   raw *= alpha;
 
   // Additional additive-Schwarz defect-correction sweeps. These remain patch-local and are
   // especially important for p1, where one independent patch response poorly approximates
-  // the long-range coarse Schur relaxation.
+  // the long-range coarse Schur relaxation. The sweeps relax the metric equation
+  // A_metric e = r, whose right-hand side is the (possibly indefinite) combined residual.
   for (int sweep = 1; sweep < 4; sweep++)
   {
     mfem::Vector current_residual(residual);
-    for (const auto &data : fine.elements)
+    for (const auto &data : metric_all)
     {
       mfem::Vector local(static_cast<int>(data.dofs.size()));
       for (int i = 0; i < local.Size(); i++)
@@ -1287,7 +1659,7 @@ MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
         delta(fine_standard + dof) += singular_sum[dof] / singular_count[dof];
       }
     }
-    const double delta_energy = fem::hierarchical::Energy(fine.elements, delta);
+    const double delta_energy = fem::hierarchical::Energy(metric_all, delta);
     const double delta_work = mfem::InnerProduct(delta, current_residual);
     if (delta_energy > 0.0)
     {
@@ -1296,16 +1668,15 @@ MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
   }
 
   // A final scalar projection restores the energy/work identity without changing ranking.
-  raw_energy = fem::hierarchical::Energy(fine.elements, raw);
+  raw_energy = fem::hierarchical::Energy(metric_all, raw);
   raw_work = mfem::InnerProduct(raw, residual);
   const double final_scale = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
   raw *= final_scale;
   report.energy = final_scale * final_scale * raw_energy;
   report.work = final_scale * raw_work;
   report.indicator.assign(mesh.GetNE(), 0.0);
-  for (int element = 0; element < mesh.GetNE(); element++)
+  for (const auto &data : metric_all)
   {
-    const auto &data = fine.elements[element];
     mfem::Vector local(static_cast<int>(data.dofs.size()));
     for (int i = 0; i < local.Size(); i++)
     {
@@ -1313,7 +1684,7 @@ MaxwellPatchReport MaxwellBuildLocalPatches(mfem::Mesh &mesh, int order,
     }
     mfem::Vector action(local.Size());
     data.matrix.Mult(local, action);
-    report.indicator[element] = mfem::InnerProduct(local, action);
+    report.indicator[data.support_element] += mfem::InnerProduct(local, action);
   }
   return report;
 }
@@ -1700,6 +2071,267 @@ TEST_CASE("Manufactured Maxwell wedge singular enrichment improves the graph err
   // the nonzero-curl remainder.
   CHECK(gradient_only.graph_error < 0.9 * standard.graph_error);
   CHECK(enriched.graph_error <= gradient_only.graph_error * (1.0 + 1.0e-10));
+}
+
+TEST_CASE("Manufactured driven Maxwell wedge reduces to the coercive oracle",
+          "[singularmaxwellmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  auto mesh = MaxwellLShapeMesh(2);
+  const auto reference = MaxwellSolve(mesh, order, true);
+  // Default options reproduce the certified coercive fixture: same operator, source, and
+  // essential set, assembled from element-local contributions and solved by dense LU.
+  const auto scattered = MaxwellDrivenSolve(mesh, order, MaxwellSystemOptions{});
+  REQUIRE(scattered.dofs == reference.dofs);
+  double coefficient_difference = 0.0;
+  for (int i = 0; i < reference.standard_coefficients.Size(); i++)
+  {
+    coefficient_difference =
+        std::max(coefficient_difference, std::abs(scattered.standard_coefficients(i) -
+                                                  reference.standard_coefficients(i)));
+  }
+  for (int i = 0; i < reference.enrichment_coefficients.Size(); i++)
+  {
+    coefficient_difference =
+        std::max(coefficient_difference, std::abs(scattered.enrichment_coefficients(i) -
+                                                  reference.enrichment_coefficients(i)));
+  }
+  CAPTURE(order, coefficient_difference, scattered.residual, reference.residual,
+          scattered.graph_error, reference.graph_error);
+  CHECK(coefficient_difference < 1.0e-6);
+  CHECK_THAT(scattered.graph_error, WithinRel(reference.graph_error, 1.0e-8));
+}
+
+TEST_CASE("Manufactured driven Maxwell wedge boundary facets are consistent",
+          "[singularmaxwellmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  auto mesh = MaxwellLShapeMesh(2);
+  const auto options = MaxwellDrivenResidualOptions();
+  const auto system = MaxwellAssembleLocalSystem(mesh, order, options);
+  int outer_boundary_elements = 0;
+  for (int boundary = 0; boundary < mesh.GetNBE(); boundary++)
+  {
+    outer_boundary_elements += mesh.GetBdrAttribute(boundary) == MaxwellOuterAttribute;
+  }
+  REQUIRE(outer_boundary_elements > 0);
+  REQUIRE(static_cast<int>(system.facets.size()) == outer_boundary_elements);
+
+  // Facet matrices are symmetric and positive semidefinite; the manufactured facet load is
+  // active on the y = +-1 segments.
+  double asymmetry = 0.0, maximum_rhs = 0.0, minimum_quadratic_form = 0.0;
+  for (const auto &facet : system.facets)
+  {
+    for (int i = 0; i < facet.matrix.Height(); i++)
+    {
+      maximum_rhs = std::max(maximum_rhs, std::abs(facet.rhs(i)));
+      for (int j = 0; j < facet.matrix.Width(); j++)
+      {
+        asymmetry = std::max(asymmetry, std::abs(facet.matrix(i, j) - facet.matrix(j, i)));
+      }
+    }
+    mfem::Vector probe(facet.matrix.Height()), action(facet.matrix.Height());
+    for (int trial = 0; trial < 3; trial++)
+    {
+      for (int i = 0; i < probe.Size(); i++)
+      {
+        probe(i) = std::sin(0.61 * i + 0.17 * trial + 0.4);
+      }
+      facet.matrix.Mult(probe, action);
+      minimum_quadratic_form =
+          std::min(minimum_quadratic_form, mfem::InnerProduct(probe, action));
+    }
+  }
+  CAPTURE(order, asymmetry, maximum_rhs, minimum_quadratic_form);
+  CHECK(asymmetry < 1.0e-14);
+  CHECK(maximum_rhs > 1.0e-3);
+  CHECK(minimum_quadratic_form > -1.0e-13);
+
+  // Independent quadrature-refinement oracle for every facet entry.
+  auto refined_options = options;
+  refined_options.boundary_quadrature_bump = 8;
+  const auto refined = MaxwellAssembleLocalSystem(mesh, order, refined_options);
+  REQUIRE(refined.facets.size() == system.facets.size());
+  double matrix_difference = 0.0, rhs_difference = 0.0;
+  for (std::size_t facet = 0; facet < system.facets.size(); facet++)
+  {
+    const auto &base = system.facets[facet];
+    const auto &bumped = refined.facets[facet];
+    REQUIRE(base.dofs == bumped.dofs);
+    for (int i = 0; i < base.matrix.Height(); i++)
+    {
+      rhs_difference = std::max(rhs_difference, std::abs(base.rhs(i) - bumped.rhs(i)));
+      for (int j = 0; j < base.matrix.Width(); j++)
+      {
+        matrix_difference =
+            std::max(matrix_difference, std::abs(base.matrix(i, j) - bumped.matrix(i, j)));
+      }
+    }
+  }
+  CAPTURE(matrix_difference, rhs_difference);
+  CHECK(matrix_difference < 1.0e-12);
+  CHECK(rhs_difference < 1.0e-12);
+
+  // The driven essential set frees the outer boundary while keeping the reentrant PEC
+  // conductor constrained.
+  const auto coercive = MaxwellAssembleLocalSystem(mesh, order, MaxwellSystemOptions{});
+  const int driven_essential =
+      static_cast<int>(std::count(system.essential.begin(), system.essential.end(), true));
+  const int coercive_essential = static_cast<int>(
+      std::count(coercive.essential.begin(), coercive.essential.end(), true));
+  CAPTURE(driven_essential, coercive_essential);
+  CHECK(driven_essential > 0);
+  CHECK(driven_essential < coercive_essential);
+}
+
+TEST_CASE("Manufactured driven Maxwell wedge converges to the manufactured field",
+          "[singularmaxwellmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  const auto options = MaxwellDrivenResidualOptions();
+  auto coarse_mesh = MaxwellLShapeMesh(2);
+  auto fine_mesh = MaxwellLShapeMesh(4);
+  const auto coarse = MaxwellDrivenSolve(coarse_mesh, order, options);
+  const auto fine = MaxwellDrivenSolve(fine_mesh, order, options);
+  auto standard_options = options;
+  standard_options.enriched = false;
+  const auto standard = MaxwellDrivenSolve(coarse_mesh, order, standard_options);
+  CAPTURE(order, coarse.dofs, fine.dofs, coarse.graph_error, fine.graph_error,
+          standard.graph_error, coarse.free_gradient_dofs, coarse.free_rotational_dofs);
+  CHECK(coarse.free_gradient_dofs > 0);
+  CHECK(coarse.free_rotational_dofs > 0);
+  CHECK(coarse.graph_error < 0.9 * standard.graph_error);
+  CHECK(fine.graph_error < 0.5 * coarse.graph_error);
+}
+
+TEST_CASE("Manufactured driven Maxwell wedge local patches rank the true error",
+          "[singularmaxwellmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  const int order = GENERATE(1, 2);
+  auto mesh = MaxwellLShapeMesh(2);
+  const auto residual_options = MaxwellDrivenResidualOptions();
+  const auto metric_options = MaxwellDrivenMetricOptions();
+  const auto coarse = MaxwellDrivenSolve(mesh, order, residual_options);
+  const auto local = MaxwellBuildLocalPatches(mesh, order, coarse, true, residual_options,
+                                              &metric_options);
+  CAPTURE(order, local.energy, local.work, local.transfer_consistency_error,
+          local.transfer_reference_error, local.maximum_patch_residual,
+          local.maximum_patch_condition, local.edge_patches, local.interior_patches,
+          local.owned_modes, local.maximum_support_elements, local.maximum_patch_dimension,
+          local.maximum_element_overlap, local.unique_coarse_guests,
+          local.unique_gradient_guests, local.unique_rotational_guests);
+  CHECK(local.transfer_consistency_error < 1.0e-12);
+  CHECK(local.transfer_reference_error < 1.0e-12);
+  CHECK(local.maximum_patch_residual < 1.0e-10);
+  CHECK(local.edge_patches > 0);
+  CHECK(local.interior_patches > 0);
+  CHECK(local.energy > 0.0);
+  CHECK_THAT(local.energy, WithinRel(local.work, 1.0e-10));
+  CHECK_THAT(std::accumulate(local.indicator.begin(), local.indicator.end(), 0.0),
+             WithinRel(local.energy, 1.0e-12));
+
+  const auto marked = MaxwellDorfler(local.indicator, 0.5);
+  const auto oracle = MaxwellDorfler(coarse.element_error, 0.5);
+  const auto top_k = [](const std::vector<double> &value, std::size_t count)
+  {
+    std::vector<std::size_t> indices(value.size());
+    std::iota(indices.begin(), indices.end(), std::size_t{0});
+    std::partial_sort(indices.begin(), indices.begin() + std::min(count, indices.size()),
+                      indices.end(),
+                      [&](std::size_t a, std::size_t b) { return value[a] > value[b]; });
+    indices.resize(std::min(count, indices.size()));
+    return indices;
+  };
+  const double rank =
+      MaxwellSumOn(coarse.element_error, marked) /
+      MaxwellSumOn(coarse.element_error, top_k(coarse.element_error, marked.size()));
+  const double extend =
+      MaxwellSumOn(coarse.element_error, top_k(local.indicator, oracle.size())) /
+      MaxwellSumOn(coarse.element_error, oracle);
+  CAPTURE(rank, extend, marked.size(), oracle.size());
+  if (order == 1)
+  {
+    // The p1 first iterate is the known weaker case (see the coercive fixture, which also
+    // gates p1 below p2). Measured driven values: rank 0.798, extend 0.837.
+    CHECK(rank > 0.75);
+    CHECK(extend > 0.8);
+  }
+  else
+  {
+    // Measured driven values: rank 0.904, extend 0.874.
+    CHECK(rank > 0.85);
+    CHECK(extend > 0.8);
+  }
+}
+
+TEST_CASE("Manufactured driven Maxwell wedge sparse ND AMR beats uniform",
+          "[singularmaxwellmms][singularelements][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  constexpr int order = 2, passes = 3;
+  const auto residual_options = MaxwellDrivenResidualOptions();
+  const auto metric_options = MaxwellDrivenMetricOptions();
+  auto mesh = MaxwellLShapeMesh(2);
+  std::vector<long long> dofs;
+  std::vector<double> errors;
+  for (int pass = 0; pass < passes; pass++)
+  {
+    const auto solve = MaxwellDrivenSolve(mesh, order, residual_options);
+    const auto local = MaxwellBuildLocalPatches(mesh, order, solve, true, residual_options,
+                                                &metric_options);
+    dofs.push_back(solve.dofs);
+    errors.push_back(solve.graph_error);
+    if (pass + 1 < passes)
+    {
+      mfem::Array<mfem::Refinement> refinements;
+      for (std::size_t element : MaxwellDorfler(local.indicator, 0.5))
+      {
+        refinements.Append(mfem::Refinement(static_cast<int>(element)));
+      }
+      mesh.GeneralRefinement(refinements, -1, 1);
+      REQUIRE(mesh.Conforming());
+    }
+  }
+  std::vector<std::pair<long long, double>> uniform;
+  for (int n : {2, 3, 4, 6})
+  {
+    auto uniform_mesh = MaxwellLShapeMesh(n);
+    const auto solve = MaxwellDrivenSolve(uniform_mesh, order, residual_options);
+    uniform.emplace_back(solve.dofs, solve.graph_error);
+  }
+  const auto envelope = [&](long long at_dofs)
+  {
+    for (std::size_t i = 0; i + 1 < uniform.size(); i++)
+    {
+      if (uniform[i].first <= at_dofs && at_dofs <= uniform[i + 1].first)
+      {
+        const double t = (std::log(static_cast<double>(at_dofs)) -
+                          std::log(static_cast<double>(uniform[i].first))) /
+                         (std::log(static_cast<double>(uniform[i + 1].first)) -
+                          std::log(static_cast<double>(uniform[i].first)));
+        return std::exp(std::log(uniform[i].second) + t * (std::log(uniform[i + 1].second) -
+                                                           std::log(uniform[i].second)));
+      }
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+  std::vector<double> ratios;
+  for (std::size_t pass = 0; pass < errors.size(); pass++)
+  {
+    const double reference = envelope(dofs[pass]);
+    REQUIRE(std::isfinite(reference));
+    ratios.push_back(errors[pass] / reference);
+    if (pass > 0)
+    {
+      CHECK(errors[pass] < errors[pass - 1]);
+    }
+  }
+  CAPTURE(dofs, errors, uniform, ratios);
+  CHECK(ratios.back() < 1.0);
 }
 
 }  // namespace palace
