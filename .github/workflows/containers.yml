@@ -87,7 +87,7 @@ jobs:
         include:
           - {runner: arm64}
           - {runner: x64}
-          - {runner: gpu, target: x86_64_v3, cuda_arch: '80,86,89,90'}
+          - {runner: gpu, target: x86_64_v3, cuda: 'true'}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       # Two events bypass the paths-filter:
@@ -110,7 +110,7 @@ jobs:
       - uses: ./.github/actions/build-container
         with:
           target: ${{ matrix.target }}
-          cuda_arch: ${{ matrix.cuda_arch }}
+          cuda: ${{ matrix.cuda || 'false' }}
 
   # Release tags (vX.Y.Z): build the full microarchitecture matrix. No paths-
   # filter — a tag is usually cut on a commit already on main, so the diff is
@@ -128,7 +128,7 @@ jobs:
           - {runner: arm64-8g, target: aarch64}
           - {runner: arm64,    target: neoverse_v1}
           - {runner: arm64-8g, target: neoverse_v2}
-          - {runner: gpu,      target: x86_64_v3, cuda_arch: '80,86,89,90'}
+          - {runner: gpu,      target: x86_64_v3, cuda: 'true'}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       - uses: actions/checkout@v6
@@ -138,4 +138,4 @@ jobs:
       - uses: ./.github/actions/build-container
         with:
           target: ${{ matrix.target }}
-          cuda_arch: ${{ matrix.cuda_arch }}
+          cuda: ${{ matrix.cuda || 'false' }}
