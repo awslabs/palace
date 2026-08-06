@@ -156,6 +156,26 @@ mfem::Mesh FiniteMetalRightAngleMesh(bool unsupported_angle = false)
   return mesh;
 }
 
+mfem::Mesh FiniteMetalNearSmoothMesh()
+{
+  // Two sectors form a dielectric opening pi + 5e-4 around edge (0, 1). The default
+  // geometric tolerance should classify this as a smooth triangulation edge.
+  mfem::Mesh mesh(3, 5, 2, 2, 3);
+  mesh.AddVertex(0.0, 0.0, -1.0);
+  mesh.AddVertex(0.0, 0.0, 1.0);
+  mesh.AddVertex(1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, 1.0, 0.0);
+  constexpr double angle = 3.14159265358979323846 + 5.0e-4;
+  mesh.AddVertex(std::cos(angle), std::sin(angle), 0.0);
+  mesh.AddTet(0, 1, 2, 3, 1);
+  mesh.AddTet(0, 1, 3, 4, 1);
+  mesh.AddBdrTriangle(0, 1, 2, 7);
+  mesh.AddBdrTriangle(0, 4, 1, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
 mfem::Mesh FiniteMetalWedgeMesh(bool heterogeneous = false)
 {
   // Three right-angle tetrahedral sectors fill a 3*pi/2 dielectric fan around
@@ -992,6 +1012,18 @@ TEST_CASE("Finite-metal wedge features infer homogeneous and transmission expone
       fixed_options);
   CHECK(unsupported_angle.segments.empty());
   CHECK(unsupported_angle.fixed_wedge_classification.ignored_other_edges == 1);
+
+  auto near_smooth_mesh = FiniteMetalNearSmoothMesh();
+  const auto near_smooth = fem::singular::ExtractSerialSheetFeatures(
+      near_smooth_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}});
+  CHECK(near_smooth.segments.empty());
+  fem::singular::SheetFeatureExtractionOptions strict_options;
+  strict_options.fixed_wedge_angle_tolerance = 1.0e-4;
+  const auto weak_wedge = fem::singular::ExtractSerialSheetFeatures(
+      near_smooth_mesh, {7}, std::vector<fem::singular::TriangleMaterial>{{1, 1.0}},
+      strict_options);
+  REQUIRE(weak_wedge.segments.size() == 1);
+  CHECK(weak_wedge.features[0].nu < 1.0);
 
   const auto fixed_heterogeneous = fem::singular::ExtractSerialSheetFeatures(
       heterogeneous_mesh, {7}, materials, fixed_options);

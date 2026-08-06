@@ -2250,15 +2250,15 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       const auto sectors =
           BuildTetrahedronEdgeSectors(mesh, edge.mesh_edge, key, edge.boundary_elements,
                                       material_permittivity, &edge_elements);
+      double opening_angle = 0.0;
+      for (const auto &sector : sectors)
+      {
+        opening_angle += sector.angle;
+      }
+      constexpr double right_angle = 1.57079632679489661923;
+      constexpr double smooth_angle = 3.14159265358979323846;
       if (options.fixed_wedge_edge_superposition)
       {
-        double opening_angle = 0.0;
-        for (const auto &sector : sectors)
-        {
-          opening_angle += sector.angle;
-        }
-        constexpr double right_angle = 1.57079632679489661923;
-        constexpr double smooth_angle = 3.14159265358979323846;
         constexpr double target_opening_angle = 4.71238898038468985769;
         auto &classification = result.fixed_wedge_classification;
         classification.candidate_edges++;
@@ -2289,6 +2289,14 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       }
       else
       {
+        // A triangulated smooth selected surface can accumulate roundoff in its
+        // tetrahedral fan angle and otherwise appear as an arbitrarily weak reentrant
+        // wedge with nu just below one. Apply the same geometric smooth-angle tolerance
+        // used by fixed-wedge classification before solving the material eigenproblem.
+        if (opening_angle <= smooth_angle + options.fixed_wedge_angle_tolerance)
+        {
+          continue;
+        }
         edge_nu = ComputeDirichletWedgeExponent(sectors);
         if (!(edge_nu < 1.0))
         {
