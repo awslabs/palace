@@ -50,7 +50,7 @@ runs:
             exit 1
           fi
           cd .github/actions/build-container/spack_env || exit 1
-          sed -i "s/cuda_arch==80 /cuda_arch==${CUDA_ARCH} /" spack.yaml
+          sed -i "s/cuda_arch=80 /cuda_arch=${CUDA_ARCH} /" spack.yaml
           echo "Selected CUDA build profile for compute capabilities ${CUDA_ARCH}."
         fi
 

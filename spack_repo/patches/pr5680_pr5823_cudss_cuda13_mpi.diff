@@ -1,10 +1,18 @@
 diff --git a/repos/spack_repo/builtin/packages/cudss/package.py b/repos/spack_repo/builtin/packages/cudss/package.py
-index a34f0b90a4..02f1712cb8 100644
+index 2dc0d83..02f1712 100644
 --- a/repos/spack_repo/builtin/packages/cudss/package.py
 +++ b/repos/spack_repo/builtin/packages/cudss/package.py
-@@ -10,7 +10,38 @@ from spack_repo.builtin.build_systems.generic import Package
+@@ -2,6 +2,7 @@
+ #
+ # SPDX-License-Identifier: (Apache-2.0 OR MIT)
+
++import os
+ import platform
+
+ from spack_repo.builtin.build_systems.generic import Package
+@@ -9,7 +10,38 @@ from spack_repo.builtin.build_systems.generic import Package
  from spack.package import *
- 
+
  _versions = {
 -    "0.7.1": {
 +    # Have both CUDA 12 and CUDA 13 precompiled binary versions
@@ -42,7 +50,7 @@ index a34f0b90a4..02f1712cb8 100644
          "Linux-x86_64": (
              "946571d9ea164f948e402dd97a14541cb90fbec800336cfa7ae644af5937632f",
              "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-x86_64/libcudss-linux-x86_64-0.7.1.4_cuda12-archive.tar.xz",
-@@ -20,7 +51,17 @@ _versions = {
+@@ -19,7 +51,17 @@ _versions = {
              "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-aarch64/libcudss-linux-aarch64-0.7.1.4_cuda12-archive.tar.xz",
          ),
      },
@@ -61,7 +69,7 @@ index a34f0b90a4..02f1712cb8 100644
          "Linux-x86_64": (
              "c98d5ef87e8b6a356b21a678715033b19620ce58b5fa64c97e25e6d3e76e42dc",
              "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-x86_64/libcudss-linux-x86_64-0.7.0.20_cuda12-archive.tar.xz",
-@@ -30,6 +71,7 @@ _versions = {
+@@ -29,6 +71,7 @@ _versions = {
              "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-aarch64/libcudss-linux-aarch64-0.7.0.20_cuda12-archive.tar.xz",
          ),
      },
@@ -69,21 +77,22 @@ index a34f0b90a4..02f1712cb8 100644
      "0.6.0": {
          "Linux-x86_64": (
              "159ce1d4e3e4bba13b0bd15cf943e44b869c53b7a94f9bac980768c927f02e75",
-@@ -59,22 +101,34 @@ class Cudss(Package):
- 
+@@ -58,16 +101,64 @@ class Cudss(Package):
+
      homepage = "https://developer.nvidia.com/cudss"
- 
+
 -    maintainers("ddement")
 +    maintainers("ddement", "imciner2")
- 
+
      skip_version_audit = ["platform=darwin", "platform=windows"]
- 
+
      for ver, packages in _versions.items():
          pkg = packages.get(f"{platform.system()}-{platform.machine()}")
 +
          if pkg:
              version(ver, sha256=pkg[0], url=pkg[1])
- 
+
+-    depends_on("cuda@12:")
 +            ver_parts = ver.split("-")
 +
 +            if len(ver_parts) > 1:
@@ -93,16 +102,45 @@ index a34f0b90a4..02f1712cb8 100644
 +                long_ver = f"{cudss_ver}-{cuda_ver}"
 +                depends_on(f"cuda@{cuda_ver}", when=f"@{long_ver}")
 +
-     variant(
-         "mpi",
-         default=False,
-         description="Build a communication layer for the selected MPI implementation",
-     )
- 
--    depends_on("cuda@12:")
++    variant(
++        "mpi",
++        default=False,
++        description="Build a communication layer for the selected MPI implementation",
++    )
++
 +    # No CUDA 13 versions
 +    depends_on("cuda@12", when="@0.6")
 +    depends_on("cuda@12", when="@0.5")
-     depends_on("mpi", when="+mpi")
- 
-     conflicts(
++    depends_on("mpi", when="+mpi")
++
++    conflicts(
++        "+mpi",
++        when="@:0.6 target=aarch64:",
++        msg="cuDSS aarch64 archives provide communication-layer sources starting at 0.7.0",
++    )
+
+     def install(self, spec, prefix):
+         install_tree(".", prefix)
++
++        if "+mpi" in spec:
++            # NVIDIA calls this source and build target "openmpi", but it uses
++            # the standard MPI API and can be built against any MPI provider.
++            # Use a provider-neutral installed name because the concrete MPI
++            # dependency, rather than the filename, identifies its ABI.
++            with working_dir("src"):
++                with set_env(
++                    CUDA_PATH=spec["cuda"].prefix,
++                    CUDSS_PATH=self.stage.source_path,
++                    MPI_PATH=spec["mpi"].prefix,
++                    NVCC_PREPEND_FLAGS="-Xlinker=-rpath -Xlinker=%s:%s"
++                    % (spec["mpi"].prefix.lib64, spec["mpi"].prefix.lib),
++                ):
++                    bash = which("bash", required=True)
++                    bash("./cudss_build_commlayer.sh", "openmpi")
++
++                comm_layer = "libcudss_commlayer_openmpi.so"
++                if not os.path.isfile(comm_layer):
++                    raise InstallError(
++                        "cuDSS did not produce the requested MPI communication layer"
++                    )
++                install(comm_layer, join_path(prefix.lib, "libcudss_commlayer_mpi.so"))
