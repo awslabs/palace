@@ -1,9 +1,6 @@
 {% extends "container/Dockerfile" %}
 {% block build_stage %}
 ARG SPACK_PACKAGES_COMMIT
-ARG PALACE_CUDA
-ENV PALACE_CUDA=$PALACE_CUDA
-
 # FIXME(awslabs/palace#731): workaround for a Spack spec-groups bug that
 # prevents the gcc compiler from being installed. Build-stage only, so the
 # runtime image is unaffected. Remove with the spack.yaml `compilers` group
@@ -49,6 +46,11 @@ RUN mkdir -p /opt/spack-environment && \
       fi; \
     done
 
+# Select the CPU or CUDA root spec only after the shared compiler, package
+# repository, and patch layers have been prepared.
+ARG PALACE_CUDA_ARCH
+ENV PALACE_CUDA_ARCH=$PALACE_CUDA_ARCH
+
 # What we want to install and how we want to install it
 # is specified in a manifest file (spack.yaml)
 RUN mkdir -p {{ paths.environment }} && \
@@ -82,11 +84,6 @@ RUN --mount=type=secret,id=github_user \
     export GITHUB_USER GITHUB_TOKEN; \
     cd {{ paths.environment }}; \
     spack env activate .; \
-    if spack buildcache list -L 2>/dev/null; then \
-      echo "Binary cache is reachable"; \
-    else \
-      echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
-    fi; \
     install_status=0; \
     spack install --include-build-deps --only dependencies \
       -j$(nproc) --fail-fast || install_status=$?; \
