@@ -17,13 +17,14 @@ inputs:
       build-time binaries remain executable on the host.
     required: false
     default: ''
-  cuda:
+  cuda_arch:
     description: >-
-      Enable the CUDA build profile defined in spack.yaml. Device code is
-      cross-compiled by nvcc, so the build host needs no GPU. CUDA images use
-      the stable x86_64_v3_cuda-style label.
+      Comma-separated CUDA compute capabilities to build Palace for (e.g.
+      80,86,90 for Ampere through Hopper). Empty means a CPU-only build. Device
+      code is cross-compiled by nvcc, so the build host needs no GPU. CUDA
+      images use the stable x86_64_v3_cuda-style label.
     required: false
-    default: 'false'
+    default: ''
 
 runs:
   using: composite
@@ -41,22 +42,19 @@ runs:
     - name: Select build profile
       shell: bash
       env:
-        CUDA_ENABLED: ${{ inputs.cuda }}
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
       run: |
-        case "$CUDA_ENABLED" in
-          true)
-            echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
-            echo "Selected CUDA build profile."
-            ;;
-          false)
-            echo "PALACE_CUDA=" >> "$GITHUB_ENV"
-            echo "Selected CPU build profile."
-            ;;
-          *)
-            echo "Invalid cuda input: $CUDA_ENABLED (expected true or false)" >&2
+        if [ -n "$CUDA_ARCH" ]; then
+          if [[ ! "$CUDA_ARCH" =~ ^[0-9]+[a-z]?(,[0-9]+[a-z]?)*$ ]]; then
+            echo "Invalid CUDA architecture list: $CUDA_ARCH" >&2
             exit 1
-            ;;
-        esac
+          fi
+          echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
+          echo "Selected CUDA build profile for compute capabilities ${CUDA_ARCH}."
+        else
+          echo "PALACE_CUDA=" >> "$GITHUB_ENV"
+          echo "Selected CPU build profile."
+        fi
 
     - name: Install Podman
       shell: bash
@@ -79,7 +77,8 @@ runs:
       env:
         # Requested Spack microarchitecture; empty means build native.
         TARGET: ${{ inputs.target }}
-        CUDA_ENABLED: ${{ inputs.cuda }}
+        # Requested CUDA architecture list; empty means a CPU-only build.
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
         # The commit being built. Only makes the image name unique/readable —
         # not load-bearing (the publish workflow takes the authoritative sha
         # from the workflow_run payload, not this name).
@@ -87,7 +86,7 @@ runs:
       run: |
         # CUDA images retain the CPU ISA compatibility dimension. The publish
         # workflow recovers this label to tag and key the build artifacts.
-        if [ "$CUDA_ENABLED" = true ]; then
+        if [ -n "$CUDA_ARCH" ]; then
           CPU_LABEL="${TARGET:-$(spack arch -t)}"
           ARCH_LABEL="${CPU_LABEL}_cuda"
         else
@@ -120,6 +119,23 @@ runs:
           echo "No target pin requested; building for native microarchitecture."
         fi
 
+    - name: Pin CUDA architectures
+      shell: bash
+      env:
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
+      run: |
+        if [ -n "$CUDA_ARCH" ]; then
+          cd .github/actions/build-container/spack_env
+          spack -e . config add \
+            "packages:palace:require:'cuda_arch:=${CUDA_ARCH}'"
+          spack -e . config add \
+            "packages:openmpi:require:'cuda_arch:=${CUDA_ARCH}'"
+          spack -e . config add \
+            "packages:libfabric:require:'cuda_arch:=${CUDA_ARCH}'"
+          echo "Set CUDA compute capabilities to ${CUDA_ARCH}:"
+          spack -e . config get packages
+        fi
+
     - name: Generate Dockerfile
       shell: bash
       run: |
@@ -142,7 +158,7 @@ runs:
       env:
         CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
         CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        CUDA_ENABLED: ${{ inputs.cuda }}
+        CUDA_ARCH: ${{ inputs.cuda_arch }}
         IMAGE_NAME: ${{ steps.name.outputs.image_name }}
         SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
@@ -150,9 +166,9 @@ runs:
         start_timer
 
         LABEL_ARGS=()
-        if [ "$CUDA_ENABLED" = true ]; then
+        if [ -n "$CUDA_ARCH" ]; then
           LABEL_ARGS+=(
-            --label "com.amazonaws.palace.cuda.architectures=80,86,89,90"
+            --label "com.amazonaws.palace.cuda.architectures=${CUDA_ARCH}"
           )
         fi
 

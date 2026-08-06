@@ -34,7 +34,8 @@ spack:
       require: ~openmp       # We don't want any package with OpenMP
     # Enable AWS EFA
     libfabric:
-      require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+      require:
+      - fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
     # We do not want to include the full Python stack in the container
     rdma-core:
       require: ~pyverbs
@@ -61,19 +62,17 @@ spack:
       access_pair:
         id_variable: GITHUB_USER
         secret_variable: GITHUB_TOKEN
-  # PALACE_CUDA adds the CUDA constraints to the common Palace root spec. Keep
-  # these settings here so local containerization and generated builds agree.
+  # PALACE_CUDA adds the CUDA constraints to the common Palace root spec.
   definitions:
   - palace_base:
     - >-
       palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
       %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
   - cuda_constraints:
-    # Hypre 3.1 caps CUDA at 13.1; MFEM selects a compatible cuDSS 0.7 build.
     - >-
-      +cuda+cudss cuda_arch=80,86,89,90 ^cuda@13
-      ^openmpi+cuda cuda_arch=80,86,89,90
-      ^libfabric+cuda+cuda_dlopen cuda_arch=80,86,89,90
+      +cuda+cudss ^cuda@13
+      ^openmpi+cuda
+      ^libfabric+cuda+cuda_dlopen
   - when: not env.get("PALACE_CUDA")
     palace:
     - $palace_base
