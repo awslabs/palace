@@ -2189,20 +2189,17 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     }
   }
 
-  // Build edge-to-element incidence once for complete fixed-metal shells. Preserve the
-  // legacy transmission-wedge scan path bit-for-bit for backward compatibility.
-  std::vector<std::vector<int>> edge_elements;
-  if (options.fixed_wedge_edge_superposition)
+  // Build edge-to-element incidence once. Scanning every tetrahedron independently for
+  // every selected surface edge is prohibitive when a complete finite-metal shell is
+  // selected, for both fixed and material-derived transmission wedges.
+  std::vector<std::vector<int>> edge_elements(mesh.GetNEdges());
+  mfem::Array<int> adjacent_edges, adjacent_edge_orientations;
+  for (int element = 0; element < mesh.GetNE(); element++)
   {
-    edge_elements.resize(mesh.GetNEdges());
-    mfem::Array<int> adjacent_edges, adjacent_edge_orientations;
-    for (int element = 0; element < mesh.GetNE(); element++)
+    mesh.GetElementEdges(element, adjacent_edges, adjacent_edge_orientations);
+    for (int edge : adjacent_edges)
     {
-      mesh.GetElementEdges(element, adjacent_edges, adjacent_edge_orientations);
-      for (int edge : adjacent_edges)
-      {
-        edge_elements[edge].push_back(element);
-      }
+      edge_elements[edge].push_back(element);
     }
   }
 
@@ -2250,9 +2247,9 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
         }
         continue;
       }
-      const auto sectors = BuildTetrahedronEdgeSectors(
-          mesh, edge.mesh_edge, key, edge.boundary_elements, material_permittivity,
-          options.fixed_wedge_edge_superposition ? &edge_elements : nullptr);
+      const auto sectors =
+          BuildTetrahedronEdgeSectors(mesh, edge.mesh_edge, key, edge.boundary_elements,
+                                      material_permittivity, &edge_elements);
       if (options.fixed_wedge_edge_superposition)
       {
         double opening_angle = 0.0;
