@@ -14,18 +14,13 @@ list(APPEND UMPIRE_OPTIONS
 )
 
 # Configure GPU support.
-# ExternalProject_Add splits its command on ";", so a multi-architecture list
-# has to be escaped or only the first entry survives.
 if(PALACE_WITH_CUDA)
-  palace_escape_external_project_list(
-    UMPIRE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
-  )
   list(APPEND UMPIRE_OPTIONS
     "-DENABLE_CUDA=ON"
     "-DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
-    "-DCMAKE_CUDA_ARCHITECTURES=${UMPIRE_CUDA_ARCHITECTURES}"
     "-DCUDA_TOOLKIT_ROOT_DIR=${CUDAToolkit_LIBRARY_ROOT}"
   )
+  palace_append_cuda_architectures(UMPIRE_OPTIONS)
 elseif(PALACE_WITH_HIP)
   list(APPEND UMPIRE_OPTIONS
     "-DENABLE_HIP=ON"

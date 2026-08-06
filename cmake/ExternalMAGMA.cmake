@@ -43,15 +43,10 @@ if(PALACE_WITH_CUDA)
       list(APPEND MAGMA_CUDA_ARCH sm_${ARCH})
     endforeach()
     string(REPLACE ";" " " MAGMA_CUDA_ARCH "${MAGMA_CUDA_ARCH}")
-    # ExternalProject_Add splits its command on ";", so a multi-architecture
-    # list has to be escaped or only the first entry survives.
-    palace_escape_external_project_list(
-      MAGMA_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
-    )
     list(APPEND MAGMA_OPTIONS
       "-DGPU_TARGET=${MAGMA_CUDA_ARCH}"
-      "-DCMAKE_CUDA_ARCHITECTURES=${MAGMA_CUDA_ARCHITECTURES}"
     )
+    palace_append_cuda_architectures(MAGMA_OPTIONS)
     set(MAKE_GENERATE_INC "${MAKE_GENERATE_INC}GPU_TARGET = ${MAGMA_CUDA_ARCH}\\n")
   endif()
 endif()

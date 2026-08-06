@@ -128,16 +128,7 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
-  if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    # ExternalProject_Add splits its command on ";", so a multi-architecture
-    # list has to be escaped or only the first entry survives.
-    palace_escape_external_project_list(
-      MFEM_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
-    )
-    list(APPEND MFEM_OPTIONS
-      "-DCMAKE_CUDA_ARCHITECTURES=${MFEM_CUDA_ARCHITECTURES}"
-    )
-  endif()
+  palace_append_cuda_architectures(MFEM_OPTIONS)
 else()
   list(APPEND MFEM_OPTIONS
     "-DMFEM_USE_CUDA=NO"
