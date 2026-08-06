@@ -1181,6 +1181,13 @@ public:
   double rel_tol = 2.0e-6;
   int max_subdivisions = 9;
 
+  // Use the hierarchical p+1 polynomial residual lifting as the three-dimensional AMR
+  // error estimator instead of the sliced standard-space flux recovery. The current
+  // element-patch lifting under-resolves the singular region on the wedge qualification
+  // problem, so this remains opt-in for estimator development until the certified
+  // edge/face/interior patch shapes are available in parallel.
+  bool hierarchical_estimator = false;
+
   bool Enabled() const { return !attributes.empty(); }
 
   SingularElementsData() = default;

@@ -2888,6 +2888,12 @@
           "maximum": 12,
           "default": 9,
           "x-palace-advanced": true
+        },
+        "HierarchicalEstimator": {
+          "type": "boolean",
+          "description": "Use the hierarchical p+1 polynomial residual lifting as the three-dimensional adaptive-refinement error estimator instead of the sliced standard-space flux recovery. Experimental: the current element-patch lifting under-resolves the singular region on the wedge qualification problem and remains opt-in for estimator development.",
+          "default": false,
+          "x-palace-advanced": true
         }
       }
     },

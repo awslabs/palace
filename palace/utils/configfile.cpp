@@ -1433,6 +1433,8 @@ SingularElementsData::SingularElementsData(const json &singular_elements)
   abs_tol = singular_elements.value("AbsTol", abs_tol);
   rel_tol = singular_elements.value("RelTol", rel_tol);
   max_subdivisions = singular_elements.value("MaxSubdivisions", max_subdivisions);
+  hierarchical_estimator =
+      singular_elements.value("HierarchicalEstimator", hierarchical_estimator);
   MFEM_VERIFY(abs_tol > 0.0 || rel_tol > 0.0,
               "Singular-element quadrature requires AbsTol or RelTol to be positive!");
   MFEM_VERIFY(std::isfinite(fixed_exponent) && fixed_exponent > 0.0 && fixed_exponent < 1.0,

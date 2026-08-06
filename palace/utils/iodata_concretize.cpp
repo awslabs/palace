@@ -223,6 +223,11 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"MaxSize", ref.max_size},
                 {"Nonconformal", ref.nonconformal},
                 {"MaxNCLevels", ref.max_nc_levels},
+                {"MaxGrowthFactor", ref.max_growth_factor},
+                {"SingularRepair", ref.singular_repair},
+                {"SingularRepairMaxPasses", ref.singular_repair_max_passes},
+                {"SingularRepairMaxAmplification", ref.singular_repair_max_amplification},
+                {"SingularRepairMaxGrowth", ref.singular_repair_max_growth},
                 {"UpdateFraction", ref.update_fraction},
                 {"MaximumImbalance", ref.maximum_imbalance},
                 {"SaveAdaptIterations", ref.save_adapt_iterations},
@@ -461,7 +466,8 @@ void ConcretizeSingularElements(const config::SingularElementsData &singular,
                             {"QuadratureOrder", singular.quadrature_order},
                             {"AbsTol", singular.abs_tol},
                             {"RelTol", singular.rel_tol},
-                            {"MaxSubdivisions", singular.max_subdivisions}});
+                            {"MaxSubdivisions", singular.max_subdivisions},
+                            {"HierarchicalEstimator", singular.hierarchical_estimator}});
 }
 
 }  // namespace

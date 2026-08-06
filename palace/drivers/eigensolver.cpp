@@ -23,6 +23,7 @@
 #include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
+#include "models/hierarchicalmaxwellestimator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/singularsurfacepostoperator.hpp"
@@ -933,6 +934,19 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
         iodata.solver.linear.estimator_mg);
   }
   ErrorIndicator indicator;
+  // Hierarchical p+1 residual estimation for three-dimensional singular AMR, opt-in while
+  // the element-patch lifting is qualified. Measured on the wedge eigenmode qualification
+  // problem, this lifting marks too little of the singular region: it reaches mode-1
+  // frequency 1.0359e-1 GHz at 1413 elements after three theta = 0.5 passes, while the
+  // sliced flux recovery reaches 1.0318e-1 at 4433 elements against a uniform-refinement
+  // trend of about 1.0303e-1. The certified edge/face/interior patch engine must replace
+  // the element-patch shapes in parallel before this becomes the default estimator.
+  std::unique_ptr<HierarchicalMaxwellDomainData> hierarchy;
+  if (!is_2d && iodata.model.refinement.max_it > 0 &&
+      iodata.solver.singular_elements.hierarchical_estimator)
+  {
+    hierarchy = std::make_unique<HierarchicalMaxwellDomainData>(space_op);
+  }
   const auto &gradient = space_op.GetGradMatrix();
   std::vector<std::unique_ptr<fem::singular::EnrichedNDFieldEvaluator>>
       tetrahedral_real_evaluators, tetrahedral_imaginary_evaluators;
@@ -1162,6 +1176,27 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
         estimator_2d->AddErrorIndicator(standard_electric, standard_magnetic,
                                         total_field_energy, indicator);
       }
+      else if (hierarchy)
+      {
+        const auto estimate =
+            hierarchy->EstimatePolynomialEigenResidual(omega, electric_field);
+        Vector local_indicator(estimate.indicator_energy.Size());
+        const double scale = total_field_energy > 0.0 ? 0.5 / total_field_energy : 1.0;
+        for (int element = 0; element < local_indicator.Size(); element++)
+        {
+          local_indicator(element) =
+              std::sqrt(scale * std::max(estimate.indicator_energy(element), 0.0));
+        }
+        indicator.AddIndicator(local_indicator);
+        ErrorIndicator sliced_diagnostic;
+        estimator_3d->AddErrorIndicator(standard_electric, standard_magnetic,
+                                        total_field_energy, sliced_diagnostic);
+        Mpi::Print(" Mode {:d} hierarchical residual: energy = {:.3e}, indicator = "
+                   "{:.3e} (sliced recovery {:.3e})\n",
+                   mode + 1, estimate.total_energy,
+                   std::sqrt(scale * std::max(estimate.total_energy, 0.0)),
+                   sliced_diagnostic.Norml2(space_op.GetComm()));
+      }
       else
       {
         estimator_3d->AddErrorIndicator(standard_electric, standard_magnetic,
@@ -1238,7 +1273,9 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"DivergenceProjection", divfree != nullptr},
           {"DivergenceProjectionShiftInvert", divfree != nullptr},
           {"FieldGridOutput", false},
-          {"ErrorEstimator", "standard-space smooth remainder on the complete mesh"},
+          {"ErrorEstimator", hierarchy
+                                 ? "hierarchical p+1 polynomial residual lifting"
+                                 : "standard-space smooth remainder on the complete mesh"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
                                        ? GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetSheetFeatures())

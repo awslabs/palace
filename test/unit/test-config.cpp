@@ -939,7 +939,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                        {"QuadratureOrder", 10},
                        {"AbsTol", 1.0e-8},
                        {"RelTol", 2.0e-8},
-                       {"MaxSubdivisions", 11}}}}}};
+                       {"MaxSubdivisions", 11},
+                       {"HierarchicalEstimator", true}}}}}};
 
     IoData iodata(config, false);
     const auto &singular = iodata.solver.singular_elements;
@@ -952,6 +953,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(singular.abs_tol == 1.0e-8);
     CHECK(singular.rel_tol == 2.0e-8);
     CHECK(singular.max_subdivisions == 11);
+    CHECK(singular.hierarchical_estimator);
     CHECK(iodata.solver.device == Device::CPU);
     CHECK(iodata.solver.linear.mg_max_levels == 100);
 
@@ -966,6 +968,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_singular["AbsTol"].get<double>() == 1.0e-8);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-8);
     CHECK(j_singular["MaxSubdivisions"].get<int>() == 11);
+    CHECK(j_singular["HierarchicalEstimator"].get<bool>());
     CHECK(ValidateConfig(config).empty());
 
     auto gaps =
@@ -992,6 +995,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_singular["AbsTol"].get<double>() == 2.0e-6);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-6);
     CHECK(j_singular["MaxSubdivisions"].get<int>() == 9);
+    CHECK_FALSE(j_singular["HierarchicalEstimator"].get<bool>());
     CHECK(ValidateConfig(config).empty());
   }
 
