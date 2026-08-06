@@ -45,15 +45,19 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
 endif()
 
 if(PALACE_WITH_CUDA)
-  # ExternalProject_Add splits its command on ";", so a multi-architecture list
-  # has to be escaped or only the first entry survives.
-  palace_escape_external_project_list(
-    SUNDIALS_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
-  )
   list(APPEND SUNDIALS_OPTIONS
-    "-DCMAKE_CUDA_ARCHITECTURES=${SUNDIALS_CUDA_ARCHITECTURES}"
     "-DENABLE_CUDA=ON"
   )
+  if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    # ExternalProject_Add splits its command on ";", so a multi-architecture
+    # list has to be escaped or only the first entry survives.
+    palace_escape_external_project_list(
+      SUNDIALS_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+    )
+    list(APPEND SUNDIALS_OPTIONS
+      "-DCMAKE_CUDA_ARCHITECTURES=${SUNDIALS_CUDA_ARCHITECTURES}"
+    )
+  endif()
 endif()
 
 string(REPLACE ";" "; " SUNDIALS_OPTIONS_PRINT "${SUNDIALS_OPTIONS}")

@@ -217,7 +217,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "https://github.com/mfem/mfem/commit/"
                     "e4a2b9568c40f20e24612066d155cc6a9973b247.diff",
                     sha256="6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e",
-                    when="@:4.9",
+                    when="@4.9.0",
                 ),
                 # Curated snapshots retain only the parts of these PRs that
                 # apply cleanly to MFEM 4.9.
@@ -227,7 +227,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
                     "mfem_pr5246.diff",
                     sha256="d5227c18768369b8fa3a20f4457dd378a360346850329ab1970d18ed5a73b0d6",
-                    when="@:4.9",
+                    when="@4.9.0",
                 ),
                 # https://github.com/mfem/mfem/pull/5353
                 # Remove once merged upstream and MFEM is bumped.
@@ -250,7 +250,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
                     "mfem_pr5124_cudss.diff",
                     sha256="d0b5893ec7925cbc8a70cc5eba2abe037754b99b5bb366c4bae90f0583d22290",
-                    when="@:4.9 +cudss",
+                    when="@4.9.0 +cudss",
                 ),
                 # https://github.com/mfem/mfem/pull/5415
                 # Pulled directly from the PR head commit. Remove once merged
@@ -258,7 +258,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 patch(
                     "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
-                    when="@:4.9",
+                    when="@4.9.0",
                 ),
             ],
         )

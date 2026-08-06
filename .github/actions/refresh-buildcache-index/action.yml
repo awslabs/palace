@@ -1,0 +1,50 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Refresh buildcache index'
+description: >-
+  Rebuild the index of a GHCR OCI Spack buildcache mirror. The producing job's
+  Spack environment is not on this runner, so synthesize a minimal one carrying
+  just the mirror definition and run `buildcache update-index`.
+
+inputs:
+  spack-version:
+    description: 'Spack git ref to check out (e.g. releases/v1.2, develop)'
+    required: true
+  mirror-url:
+    description: 'OCI URL of the buildcache mirror (oci://ghcr.io/...)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Spack
+      uses: actions/checkout@v6
+      with:
+        repository: spack/spack
+        path: spack
+        ref: ${{ inputs.spack-version }}
+
+    - name: Refresh GHCR buildcache index
+      shell: bash
+      env:
+        MIRROR_URL: ${{ inputs.mirror-url }}
+      run: |
+        START_TIME=${SECONDS}
+        INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
+        mkdir -p "${INDEX_ENV}"
+        cat > "${INDEX_ENV}/spack.yaml" << EOF
+        spack:
+          specs: []
+          mirrors:
+            local-buildcache:
+              binary: true
+              url: ${MIRROR_URL}
+              signed: false
+              access_pair:
+                id_variable: GITHUB_USER
+                secret_variable: GITHUB_TOKEN
+        EOF
+        SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
+          buildcache update-index local-buildcache
+        echo "Buildcache index refresh: $((SECONDS - START_TIME))s"
