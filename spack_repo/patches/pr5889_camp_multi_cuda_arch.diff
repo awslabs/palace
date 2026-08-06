@@ -6,14 +6,15 @@ index e93ec305b21..b766dd1780b 100644
  
      with when("+cuda"):
          depends_on("cub", when="^cuda@:10")
-+        depends_on("cmake@3.18:", type="build")
++        depends_on("cmake@3.21:", type="build")
  
      depends_on("blt", type="build")
      depends_on("blt@0.7.1:", type="build", when="@2025.09.0:")
-@@ -138,10 +139,7 @@ def cmake_args(self):
+@@ -138,10 +139,8 @@ def cmake_args(self):
  
              if not spec.satisfies("cuda_arch=none"):
                  cuda_arch = spec.variants["cuda_arch"].value
++                cuda_arch = ["{0}-real".format(arch) for arch in cuda_arch]
 -                options.append("-DCMAKE_CUDA_ARCHITECTURES={0}".format(cuda_arch[0]))
 -                options.append("-DCUDA_ARCH=sm_{0}".format(cuda_arch[0]))
 -                flag = "-arch sm_{0}".format(cuda_arch[0])

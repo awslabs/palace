@@ -15,17 +15,17 @@ function(palace_parse_cuda_architecture architecture output_number output_kind)
 endfunction()
 
 function(palace_cuda_gencode_flags output architectures)
+  # Unqualified targets generate cubins only; request -virtual explicitly for PTX.
   set(flags)
   foreach(arch IN LISTS architectures)
     palace_parse_cuda_architecture("${arch}" arch_number arch_kind)
-    if(NOT arch_kind STREQUAL "virtual")
-      string(APPEND flags
-        " --generate-code arch=compute_${arch_number},code=sm_${arch_number}"
-      )
-    endif()
-    if(NOT arch_kind STREQUAL "real")
+    if(arch_kind STREQUAL "virtual")
       string(APPEND flags
         " --generate-code arch=compute_${arch_number},code=compute_${arch_number}"
+      )
+    else()
+      string(APPEND flags
+        " --generate-code arch=compute_${arch_number},code=sm_${arch_number}"
       )
     endif()
   endforeach()
