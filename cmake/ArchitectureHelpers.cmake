@@ -22,8 +22,16 @@ function(palace_append_cuda_architectures options_var)
 endfunction()
 
 function(palace_parse_cuda_architecture architecture output_number output_kind)
-  if(NOT architecture MATCHES "^([0-9]+)(-(real|virtual))?$")
-    message(FATAL_ERROR "Unsupported CUDA architecture: ${architecture}")
+  # Accept bare compute capabilities (80), the arch-conditional feature suffixes
+  # nvcc uses for Hopper/Blackwell (90a, 100f), and CMake's -real/-virtual
+  # qualifiers. Special values such as native/all/all-major are intentionally
+  # rejected here: they cannot be expanded into explicit gencode flags without a
+  # GPU at configure time, which the Makefile-based dependencies require.
+  if(NOT architecture MATCHES "^([0-9]+[af]?)(-(real|virtual))?$")
+    message(FATAL_ERROR
+      "Unsupported CUDA architecture: ${architecture}. Expected forms like "
+      "80, 90a, 90-real, or 100f-virtual."
+    )
   endif()
   set(${output_number} "${CMAKE_MATCH_1}" PARENT_SCOPE)
   set(${output_kind} "${CMAKE_MATCH_3}" PARENT_SCOPE)
