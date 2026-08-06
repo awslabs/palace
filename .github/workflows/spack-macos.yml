@@ -59,6 +59,10 @@ jobs:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: macos-15-xlarge
+    env:
+      # Catch2 discovery launches the MPI unit-test binary with 8 ranks, more
+      # than the runner's slots. OpenMPI 5 delegates mapping to PRRTE.
+      PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
     steps:
       - uses: actions/checkout@v6
         with:
