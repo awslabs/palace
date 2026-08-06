@@ -41,6 +41,13 @@ if(NOT cuda_arch STREQUAL "90" OR NOT cuda_kind STREQUAL "virtual")
   message(FATAL_ERROR "Unexpected parsed CUDA architecture: ${cuda_arch} ${cuda_kind}")
 endif()
 
+# Arch-conditional feature suffixes (Hopper/Blackwell) must parse, keeping the
+# suffix as part of the number so gencode flags target the exact architecture.
+palace_parse_cuda_architecture("90a" cuda_arch cuda_kind)
+if(NOT cuda_arch STREQUAL "90a" OR NOT cuda_kind STREQUAL "")
+  message(FATAL_ERROR "Unexpected parsed CUDA architecture: ${cuda_arch} ${cuda_kind}")
+endif()
+
 # palace_append_cuda_architectures forwards the escaped list when set...
 set(CMAKE_CUDA_ARCHITECTURES "80;90")
 set(options "-DFOO=bar")
