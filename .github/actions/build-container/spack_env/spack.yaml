@@ -61,22 +61,27 @@ spack:
       access_pair:
         id_variable: GITHUB_USER
         secret_variable: GITHUB_TOKEN
-  # PALACE_CUDA selects one complete root spec. Keep CUDA dependency settings
-  # here so local containerization and the generated build use the same profile.
+  # PALACE_CUDA adds the CUDA constraints to the common Palace root spec. Keep
+  # these settings here so local containerization and generated builds agree.
   definitions:
-  - when: not env.get("PALACE_CUDA")
-    palace:
+  - palace_base:
     - >-
       palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
       %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
-  - when: env.get("PALACE_CUDA")
-    palace:
+  - cuda_constraints:
     # Hypre 3.1 caps CUDA at 13.1; MFEM selects a compatible cuDSS 0.7 build.
     - >-
-      palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
-      +cuda+cudss cuda_arch=80,86,89,90 %gcc@15 ^cuda@13 ^openblas
-      ^openmpi+cuda cuda_arch=80,86,89,90 schedulers=none fabrics=ofi
+      +cuda+cudss cuda_arch=80,86,89,90 ^cuda@13
+      ^openmpi+cuda cuda_arch=80,86,89,90
       ^libfabric+cuda+cuda_dlopen cuda_arch=80,86,89,90
+  - when: not env.get("PALACE_CUDA")
+    palace:
+    - $palace_base
+  - when: env.get("PALACE_CUDA")
+    palace:
+    - matrix:
+      - [$palace_base]
+      - [$cuda_constraints]
   specs:
     # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
     # underlying Spack spec-groups bug is fixed; gcc-15 is currently apt-
