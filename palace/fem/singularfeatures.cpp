@@ -1243,11 +1243,15 @@ double GetTetrahedronEdgeAngle(const mfem::Mesh &mesh, int element,
   const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * invariant_order + 2);
   double invariant_scale = std::max(BernsteinCoefficientScale(dot_control),
                                     BernsteinCoefficientScale(area_control));
+  bool polynomial_recovered = true;
+  double maximum_sampled_angle_deviation = 0.0;
   for (int q = -2; q < rule.GetNPoints(); q++)
   {
     const double coordinate = q < 0 ? (q == -2 ? 0.0 : 1.0) : rule.IntPoint(q).x;
     const auto data =
         GetTetrahedronEdgeAngleDataAt(mesh, element, edge_vertices, coordinate);
+    maximum_sampled_angle_deviation =
+        std::max(maximum_sampled_angle_deviation, std::abs(data.angle - midpoint.angle));
     mfem::Poly_1D::CalcBernstein(invariant_order, coordinate, bernstein_shape);
     double reconstructed_dot = 0.0;
     double reconstructed_area = 0.0;
@@ -1264,10 +1268,24 @@ double GetTetrahedronEdgeAngle(const mfem::Mesh &mesh, int element,
     if (std::abs(reconstructed_dot - data.dot) > representation_tolerance ||
         std::abs(reconstructed_area - actual_area) > representation_tolerance)
     {
-      throw std::invalid_argument(
-          "A curved PEC edge wedge could not certify its cross-sectional angle "
-          "polynomial!");
+      polynomial_recovered = false;
     }
+  }
+  if (!polynomial_recovered)
+  {
+    // MFEM periodic identification can collapse the two ends of a high-order edge while
+    // retaining a discontinuous covering-space nodal geometry. The resulting local angle
+    // data need not admit the nominal Bernstein polynomial even when the physical wedge
+    // opening is constant. Accept only a tightly sampled constant-angle fallback; genuine
+    // curved-angle variation remains rejected.
+    const double sampled_tolerance = 1.0e-8 * std::max(1.0, midpoint.angle);
+    if (maximum_sampled_angle_deviation <= sampled_tolerance)
+    {
+      return midpoint.angle;
+    }
+    throw std::invalid_argument(
+        "A curved PEC edge wedge could not certify its cross-sectional angle "
+        "polynomial!");
   }
 
   const double area_tolerance =
