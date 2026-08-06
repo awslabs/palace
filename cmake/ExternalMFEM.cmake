@@ -450,7 +450,6 @@ download_mfem_patch(
 )
 if(PALACE_WITH_CUDSS)
   # https://github.com/mfem/mfem/pull/5124
-  # https://github.com/mfem/mfem/pull/5389
   download_mfem_patch(
     mfem_pr5124_cudss.diff
     "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5124_cudss.diff"
