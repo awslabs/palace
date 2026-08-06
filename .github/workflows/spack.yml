@@ -183,32 +183,11 @@ jobs:
       cancel-in-progress: false
       queue: max
     steps:
-      - name: Install Spack 1.2
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/refresh-buildcache-index
         with:
-          repository: spack/spack
-          path: spack
-          ref: releases/v1.2
-
-      - name: Refresh GHCR buildcache index
-        shell: bash
-        run: |
-          INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
-          mkdir -p "${INDEX_ENV}"
-          cat > "${INDEX_ENV}/spack.yaml" << 'EOF'
-          spack:
-            specs: []
-            mirrors:
-              local-buildcache:
-                binary: true
-                url: oci://ghcr.io/awslabs/palace-1.2
-                signed: false
-                access_pair:
-                  id_variable: GITHUB_USER
-                  secret_variable: GITHUB_TOKEN
-          EOF
-          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
-            buildcache update-index local-buildcache
+          spack-version: releases/v1.2
+          mirror-url: oci://ghcr.io/awslabs/palace-1.2
 
   # Test jobs
   test-x64-gcc:

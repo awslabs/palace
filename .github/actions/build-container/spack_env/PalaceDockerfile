@@ -100,14 +100,14 @@ RUN --mount=type=secret,id=github_user \
       -prune \
       -exec rm -rf {} + 2>/dev/null || true; \
     if cuda_prefix="$(spack location -i cuda 2>/dev/null)"; then \
-      cuda_size_before="$(du -sh "$cuda_prefix" | cut -f1)"; \
+      cuda_size_before="$(du -sh "$cuda_prefix" | cut -f1)" || true; \
       find "$cuda_prefix" -mindepth 1 -maxdepth 1 \
         \( -name "nsight-compute-*" -o -name "nsight-systems-*" \
         -o -name nsightee_plugins -o -name compute-sanitizer \
         -o -name extras -o -name gds -o -name nvml -o -name share \
         -o -name src -o -name tools \) \
         -exec rm -rf {} + 2>/dev/null || true; \
-      cuda_lib="$(readlink -f "$cuda_prefix/lib64")"; \
+      cuda_lib="$(readlink -f "$cuda_prefix/lib64")" || true; \
       find "$cuda_lib" -maxdepth 1 -type f \
         \( -name "*_static.a" -o -name "*_static.alt.a" \) \
         ! -name libcudart_static.a -print | \
@@ -119,11 +119,14 @@ RUN --mount=type=secret,id=github_user \
           if ls "${shared}".so* >/dev/null 2>&1; then \
             rm -f "$archive"; \
           fi; \
-        done; \
-      find {{ paths.view }}/* -type l ! -exec test -e {} \; -delete; \
-      cuda_size_after="$(du -sh "$cuda_prefix" | cut -f1)"; \
+        done || true; \
+      cuda_size_after="$(du -sh "$cuda_prefix" | cut -f1)" || true; \
       echo "Pruned CUDA build toolkit from ${cuda_size_before} to ${cuda_size_after}"; \
     fi; \
+    # The prunes above remove files (docs, static archives, CUDA components)
+    # that the Spack view symlinks into, on both the CPU and CUDA paths, so drop
+    # the now-dangling links regardless of whether CUDA is installed.
+    find {{ paths.view }}/* -type l ! -exec test -e {} \; -delete || true; \
     find -L {{ paths.view }}/* -type f \
       \( -perm /111 -o -name "*.so" -o -name "*.so.*" \) \
       -exec readlink -zf '{}' \; | \
@@ -196,10 +199,12 @@ RUN set -e; \
         done; \
       find "$cuda_prefix" -type l ! -exec test -e {} \; -delete; \
       find "$cuda_prefix" -depth -type d -empty -delete; \
-      find {{ paths.view }}/* -type l ! -exec test -e {} \; -delete; \
       cuda_size_after="$(du -sh "$cuda_prefix" | cut -f1)"; \
       echo "Pruned CUDA toolkit from ${cuda_size_before} to ${cuda_size_after}"; \
     fi; \
+    # The include/static-archive/CUDA prunes above orphan Spack view symlinks on
+    # both the CPU and CUDA paths, so drop the dangling links unconditionally.
+    find {{ paths.view }}/* -type l ! -exec test -e {} \; -delete || true; \
     find -L {{ paths.view }}/* -type f \
       \( -perm /111 -o -name "*.so" -o -name "*.so.*" -o -name "*.a" \) \
       -exec readlink -zf '{}' \; | \
