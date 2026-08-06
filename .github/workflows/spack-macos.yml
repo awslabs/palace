@@ -232,16 +232,6 @@ jobs:
           done
 
       - name: Build Palace
-        env:
-          # Palace's CMake enumerates its test cases at build time with
-          # `catch_discover_tests`, which launches the test binary under mpirun
-          # -- including the regression group at 8 ranks. macOS runners have
-          # fewer physical cores, so OpenMPI 5.x aborts discovery with "not
-          # enough slots available". Allow oversubscription for the discovery
-          # launches (PRRTE for 5.x + the legacy OMPI MCA name for robustness);
-          # actual test execution still uses a core-appropriate rank count.
-          PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
-          OMPI_MCA_rmaps_base_oversubscribe: "1"
         run: |
           NPROC=$(sysctl -n hw.ncpu)
           # palace@develop is pinned to a branch, so every branch shares a spec
@@ -263,9 +253,6 @@ jobs:
           # during parallel test execution (PRRTE + legacy OMPI MCA vars).
           export PRTE_MCA_hwloc_default_binding_policy=none
           export OMPI_MCA_hwloc_base_binding_policy=none
-          # Allow more ranks than physical cores (macOS runners are small).
-          export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
-          export OMPI_MCA_rmaps_base_oversubscribe=1
 
           # [Regression] and [Long] cases run elsewhere; skip them here.
           ctest -j "$NUM_PROC_TEST" --output-on-failure -LE "^(regression|long)$"
