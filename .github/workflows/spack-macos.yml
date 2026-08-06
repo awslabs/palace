@@ -76,8 +76,6 @@ jobs:
       # still built by Spack from the spec/cache for reproducibility (the same
       # way palace-ci builds them on Linux instead of apt-installing).
       - name: Install build tools from Homebrew
-        env:
-          GCC_MAJOR: '15'
         run: |
           # GitHub's runner image includes this tap, but none of the formulas
           # below use it. Remove it rather than weakening Homebrew's tap trust
@@ -87,7 +85,7 @@ jobs:
           fi
 
           brew install \
-            "gcc@${GCC_MAJOR}" \
+            gcc \
             autoconf \
             automake \
             cmake \
@@ -97,8 +95,6 @@ jobs:
             perl \
             pkgconf \
             python
-          echo "GCC_MAJOR=${GCC_MAJOR}" >> "${GITHUB_ENV}"
-          echo "Pinning Spack compilers to gcc@${GCC_MAJOR}"
 
       - name: Install Spack
         uses: actions/checkout@v6
@@ -146,8 +142,6 @@ jobs:
 
           # CI-specific settings stay out of the developer environment.
           spack -e . repo add --scope="env:$(pwd)" "$(pwd)/spack_repo/local"
-          spack -e . config add "config:install_tree:root:${HOME}/opt/spack"
-          spack -e . config add "config:install_tree:padded_length:256"
           spack -e . mirror add --type binary \
             spack https://binaries.spack.io/develop
           spack -e . mirror add --type binary --unsigned \
@@ -158,8 +152,7 @@ jobs:
 
       - name: Configure Compilers
         run: |
-          GCC_PREFIX=$(brew --prefix "gcc@${GCC_MAJOR}")
-          spack -e . compiler find "${GCC_PREFIX}/bin"
+          spack -e . compiler find "$(brew --prefix gcc)/bin"
           spack -e . compiler list
 
           # Register build tools as externals so Spack does not rebuild them

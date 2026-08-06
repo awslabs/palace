@@ -33,7 +33,7 @@ the Homebrew packages used by the macOS CI build:
 ```sh
 xcode-select --install
 brew install \
-  gcc@15 \
+  gcc \
   autoconf \
   automake \
   cmake \
@@ -76,7 +76,7 @@ Markdown.parse("```yaml\n$(read(path, String))\n```")
 Register the Homebrew compiler and build tools using their formula prefixes:
 
 ```sh
-spack -e . compiler find "$(brew --prefix gcc@15)/bin"
+spack -e . compiler find "$(brew --prefix gcc)/bin"
 
 spack -e . external find --not-buildable \
   --path "$(brew --prefix autoconf)/bin" \

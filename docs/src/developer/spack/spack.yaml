@@ -5,17 +5,22 @@ spack:
   specs:
   - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+gslib
   view: false
+  config:
+    install_tree:
+      root: $HOME/opt/spack
+      # Padding supports buildcache relocation.
+      padded_length: 256
   concretizer:
     reuse: false
     unify: true
   packages:
     # Build the entire library DAG with one C++ ABI and Fortran runtime.
     c:
-      require: ["gcc@15"]
+      require: ["gcc"]
     cxx:
-      require: ["gcc@15"]
+      require: ["gcc"]
     fortran:
-      require: ["gcc@15"]
+      require: ["gcc"]
     petsc:
       require: ~hdf5
     mpi:
@@ -33,7 +38,7 @@ spack:
       require: cflags=-fPIC cppflags=-fPIC
     # Homebrew provides gmake and gsed, while Spack expects make and sed. Let
     # Spack build both tools instead of adding links or changing PATH. GNU Make
-    # also needs C17 with GCC 15 because C23 breaks its bundled fnmatch.c.
+    # also needs C17 because C23 breaks its bundled fnmatch.c.
     gmake:
       require: cflags=-std=gnu17
     mfem:
