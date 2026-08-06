@@ -195,12 +195,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # are great for GPU profiling with Nsight.
 
     with when("@0.16:"):
-        # +lapack means: use external lapack.
-        #
-        # CUDA multi-architecture support for the mfem makefile build is not
-        # applied here; it comes from the builtin mfem recipe patch
-        # spack_repo/patches/pr5895_mfem_multi_cuda_arch.diff, which adds mfem
-        # PR #5440 and the comma-separated CUDA_ARCH generation together.
+        # +lapack means: use external lapack
         depends_on(
             "mfem+mpi+metis+lapack@4.9:",
             patches=[
