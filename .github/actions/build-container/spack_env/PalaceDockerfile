@@ -48,8 +48,8 @@ RUN mkdir -p /opt/spack-environment && \
 
 # Select the CPU or CUDA root spec only after the shared compiler, package
 # repository, and patch layers have been prepared.
-ARG PALACE_CUDA_ARCH
-ENV PALACE_CUDA_ARCH=$PALACE_CUDA_ARCH
+ARG PALACE_CUDA
+ENV PALACE_CUDA=$PALACE_CUDA
 
 # What we want to install and how we want to install it
 # is specified in a manifest file (spack.yaml)

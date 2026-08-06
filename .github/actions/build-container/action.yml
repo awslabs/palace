@@ -17,15 +17,6 @@ inputs:
       build-time binaries remain executable on the host.
     required: false
     default: ''
-  cuda_arch:
-    description: >-
-      Set to any non-empty value to build the CUDA profile; empty builds
-      CPU-only. The CUDA compute capabilities themselves are fixed in
-      spack.yaml (cuda_constraints). Device code is cross-compiled by nvcc, so
-      the build host needs no GPU. CUDA images use the stable
-      x86_64_v3_cuda-style image name.
-    required: false
-    default: ''
 
 runs:
   using: composite
@@ -39,6 +30,22 @@ runs:
         spack-packages-commit: ${{ inputs.spack-packages-commit }}
         llvm-version: 'dont-install'
         setup-intel: 'false'
+
+    - name: Detect CUDA build
+      shell: bash
+      run: |
+        # Build the CUDA profile on runners that actually have an NVIDIA GPU,
+        # detected with nvidia-smi; everything else builds CPU-only. The CUDA
+        # architectures themselves are fixed in spack.yaml (cuda_constraints);
+        # this step only selects which profile spack.yaml concretizes. Exported
+        # via $GITHUB_ENV so every later step (and the podman build-arg) sees it.
+        if nvidia-smi >/dev/null 2>&1; then
+          echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
+          echo "NVIDIA GPU detected: building the CUDA profile."
+        else
+          echo "PALACE_CUDA=" >> "$GITHUB_ENV"
+          echo "No NVIDIA GPU detected: building CPU-only."
+        fi
 
     - name: Install Podman
       shell: bash
@@ -61,8 +68,6 @@ runs:
       env:
         # Requested Spack microarchitecture; empty means build native.
         TARGET: ${{ inputs.target }}
-        # Requested CUDA architecture list; empty means a CPU-only build.
-        CUDA_ARCH: ${{ inputs.cuda_arch }}
         PUBLISH_ARTIFACTS: >-
           ${{
             github.event_name != 'pull_request' ||
@@ -76,7 +81,8 @@ runs:
       run: |
         # CUDA images retain the CPU ISA compatibility dimension. The publish
         # workflow recovers this label to tag and key the build artifacts.
-        if [ -n "$CUDA_ARCH" ]; then
+        # PALACE_CUDA is set by the Detect CUDA build step above.
+        if [ -n "$PALACE_CUDA" ]; then
           CPU_LABEL="${TARGET:-$(spack arch -t)}"
           ARCH_LABEL="${CPU_LABEL}_cuda"
         else
@@ -101,7 +107,6 @@ runs:
       # node_target for package glibc/gcc").
       shell: bash
       env:
-        PALACE_CUDA_ARCH: ${{ inputs.cuda_arch }}
         TARGET: ${{ inputs.target }}
       run: |
         if [ -n "$TARGET" ]; then
@@ -115,8 +120,6 @@ runs:
 
     - name: Generate Dockerfile
       shell: bash
-      env:
-        PALACE_CUDA_ARCH: ${{ inputs.cuda_arch }}
       run: |
         cd .github/actions/build-container/spack_env || exit 1
         spack -e . containerize > "$GITHUB_WORKSPACE/Dockerfile"
@@ -139,7 +142,6 @@ runs:
         # Podman 4 cache repositories cannot contain a tag or digest.
         CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
         CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        CUDA_ARCH: ${{ inputs.cuda_arch }}
         IMAGE_NAME: ${{ steps.name.outputs.image_name }}
         SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
@@ -160,7 +162,7 @@ runs:
           sudo podman build --format docker --layers "$@" \
             --secret "id=github_user,src=$GITHUB_USER_FILE" \
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
-            --build-arg "PALACE_CUDA_ARCH=$CUDA_ARCH" \
+            --build-arg "PALACE_CUDA=$PALACE_CUDA" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             -t "$IMAGE_NAME" .
         }
