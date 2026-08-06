@@ -19,10 +19,11 @@ inputs:
     default: ''
   cuda_arch:
     description: >-
-      Comma-separated CUDA compute capabilities to build Palace for (e.g.
-      80,86,90 for Ampere through Hopper). Empty means a CPU-only build. Device
-      code is cross-compiled by nvcc, so the build host needs no GPU. CUDA
-      images use the stable x86_64_v3_cuda-style label.
+      Set to any non-empty value to build the CUDA profile; empty builds
+      CPU-only. The CUDA compute capabilities themselves are fixed in
+      spack.yaml (cuda_constraints). Device code is cross-compiled by nvcc, so
+      the build host needs no GPU. CUDA images use the stable
+      x86_64_v3_cuda-style image name.
     required: false
     default: ''
 
@@ -38,21 +39,6 @@ runs:
         spack-packages-commit: ${{ inputs.spack-packages-commit }}
         llvm-version: 'dont-install'
         setup-intel: 'false'
-
-    - name: Configure CUDA architectures
-      shell: bash
-      env:
-        CUDA_ARCH: ${{ inputs.cuda_arch }}
-      run: |
-        if [ -n "$CUDA_ARCH" ]; then
-          if [[ ! "$CUDA_ARCH" =~ ^[0-9]+[a-z]?(,[0-9]+[a-z]?)*$ ]]; then
-            echo "Invalid CUDA architecture list: $CUDA_ARCH" >&2
-            exit 1
-          fi
-          cd .github/actions/build-container/spack_env || exit 1
-          sed -i "s/cuda_arch=80 /cuda_arch=${CUDA_ARCH} /" spack.yaml
-          echo "Selected CUDA build profile for compute capabilities ${CUDA_ARCH}."
-        fi
 
     - name: Install Podman
       shell: bash
@@ -160,13 +146,6 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
 
-        LABEL_ARGS=()
-        if [ -n "$CUDA_ARCH" ]; then
-          LABEL_ARGS+=(
-            --label "com.amazonaws.palace.cuda.architectures=${CUDA_ARCH}"
-          )
-        fi
-
         # TODO: Ubuntu 26 provides Podman 5.4+; use environment-backed secrets
         # once the runners upgrade.
         GITHUB_USER_FILE="$RUNNER_TEMP/palace-github-user"
@@ -181,7 +160,6 @@ runs:
           sudo podman build --format docker --layers "$@" \
             --secret "id=github_user,src=$GITHUB_USER_FILE" \
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
-            "${LABEL_ARGS[@]}" \
             --build-arg "PALACE_CUDA_ARCH=$CUDA_ARCH" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             -t "$IMAGE_NAME" .
