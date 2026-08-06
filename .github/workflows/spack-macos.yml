@@ -19,7 +19,6 @@ on:
     branches:
       - main
   pull_request:
-  workflow_dispatch:
 
 permissions:
   packages: write
@@ -57,10 +56,7 @@ jobs:
 
   build-test-macos-spack:
     needs: filter
-    # A manual dispatch always builds: dorny/paths-filter has no reliable base
-    # to diff against on workflow_dispatch, so don't let it skip an explicit
-    # manual run.
-    if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch'
+    if: needs.filter.outputs.test == 'true'
     runs-on: macos-15-xlarge
     steps:
       - uses: actions/checkout@v6
@@ -137,10 +133,6 @@ jobs:
           ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
 
       - name: Prepare spack.yaml
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          REPOSITORY: ${{ github.repository }}
         run: |
           # Isolate GHCR buildcaches by Spack version (see palace-ci). Darwin
           # binaries carry platform=darwin + the microarch in their DAG hash, so
@@ -148,17 +140,6 @@ jobs:
           PALACE_BUILD_CACHE_NAME="palace-1.2"
           echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
           echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
-
-          # Only same-repo runs can reach the repo's GITHUB_TOKEN with
-          # packages:write. Fork PRs must never attempt the push.
-          if [[ "${EVENT_NAME}" != "pull_request" || \
-                "${HEAD_REPOSITORY}" == "${REPOSITORY}" ]]; then
-            echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
-            echo "GHCR buildcache access: read/write"
-          else
-            echo "PALACE_BUILD_CACHE_WRITE=false" >> "${GITHUB_ENV}"
-            echo "GHCR buildcache access: read-only (fork PR)"
-          fi
 
           # +gslib is on by default in the recipe, but request it explicitly:
           # under the constrained macOS DAG the concretizer would otherwise
@@ -321,11 +302,7 @@ jobs:
           # non-redistributable specs; skip --update-index since installs probe
           # OCI tags directly.
           bank_progress() {
-            if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
-              spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
-            else
-              echo "Skipping buildcache publish (fork PR / read-only cache)."
-            fi
+            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
           }
           # No --fail-fast: build (and bank) everything possible; retry to ride
           # out transient source-fetch failures.
@@ -388,8 +365,4 @@ jobs:
           # Push deps only; Palace itself is branch-specific (see Build Palace).
           # Do not force-overwrite existing spec tags: OCI installs probe tags
           # directly and replacing a tag can invalidate consumers.
-          if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
-            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
-          else
-            echo "Skipping buildcache publish (fork PR / read-only cache)."
-          fi
+          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
