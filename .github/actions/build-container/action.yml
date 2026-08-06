@@ -49,6 +49,8 @@ runs:
             echo "Invalid CUDA architecture list: $CUDA_ARCH" >&2
             exit 1
           fi
+          cd .github/actions/build-container/spack_env
+          sed -i "s/cuda_arch=none/cuda_arch=${CUDA_ARCH}/g" spack.yaml
           echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
           echo "Selected CUDA build profile for compute capabilities ${CUDA_ARCH}."
         else
@@ -117,23 +119,6 @@ runs:
           spack -e . config get packages
         else
           echo "No target pin requested; building for native microarchitecture."
-        fi
-
-    - name: Pin CUDA architectures
-      shell: bash
-      env:
-        CUDA_ARCH: ${{ inputs.cuda_arch }}
-      run: |
-        if [ -n "$CUDA_ARCH" ]; then
-          cd .github/actions/build-container/spack_env
-          spack -e . config add \
-            "packages:palace:require:'cuda_arch:=${CUDA_ARCH}'"
-          spack -e . config add \
-            "packages:openmpi:require:'cuda_arch:=${CUDA_ARCH}'"
-          spack -e . config add \
-            "packages:libfabric:require:'cuda_arch:=${CUDA_ARCH}'"
-          echo "Set CUDA compute capabilities to ${CUDA_ARCH}:"
-          spack -e . config get packages
         fi
 
     - name: Generate Dockerfile
