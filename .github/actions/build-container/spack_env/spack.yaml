@@ -69,11 +69,10 @@ spack:
       palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
       %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
   - cuda_constraints:
-    # `==` propagates the architecture to every CUDA-capable dependency. For
-    # direct use, replace 80 with the desired comma-separated capabilities;
-    # the build-container action performs this replacement from its input.
+    # Palace and its CUDA-capable dependencies receive the same multi-valued
+    # architecture constraint. The action replaces 80 with its requested list.
     - >-
-      +cuda+cudss cuda_arch==80 ^cuda@13
+      +cuda+cudss cuda_arch=80 ^cuda@13.0
       ^openmpi+cuda
       ^libfabric+cuda+cuda_dlopen
   - when: not env.get("PALACE_CUDA_ARCH")

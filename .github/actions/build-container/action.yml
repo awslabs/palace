@@ -5,7 +5,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: '3dcad5bb860184c91c17b97a9f3b13252d26d309'
+    default: 'd4f7c711a6a42f1c4d551c8fd10fce9a11340a81'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -46,7 +46,7 @@ runs:
             exit 1
           fi
           cd .github/actions/build-container/spack_env || exit 1
-          sed -i "s/cuda_arch==80 /cuda_arch==${CUDA_ARCH} /" spack.yaml
+          sed -i "s/cuda_arch=80 /cuda_arch=${CUDA_ARCH} /" spack.yaml
           echo "Selected CUDA build profile for compute capabilities ${CUDA_ARCH}."
         fi
 
