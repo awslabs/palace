@@ -48,10 +48,12 @@ export SPACK_DISABLE_LOCAL_CONFIG=true
 !!! warning "Pre-existing Spack configuration"
 
     Spack normally merges an environment with configuration from `~/.spack`
-    and `/etc/spack`. Existing compiler, provider, package, or repository
-    settings can conflict with this environment or change its concretization.
-    Keep `SPACK_DISABLE_LOCAL_CONFIG=true` exported in every shell used with
-    this environment.
+    and `/etc/spack`. Do not use this setup with global Spack configuration:
+    existing compiler, provider, package, or repository settings can conflict
+    with the environment or change its concretization. Either remove those
+    configuration files or, as shown above, export
+    `SPACK_DISABLE_LOCAL_CONFIG=true` before running any `spack` command. Keep
+    it exported in every shell used with this environment.
 
 Copy the macOS environment used by CI into a development directory:
 
