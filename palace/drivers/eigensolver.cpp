@@ -1178,8 +1178,13 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       }
       else if (hierarchy)
       {
+        // The certified edge/face/interior lifting is used whenever available (currently
+        // one rank); the element-patch shape is the MPI-capable interim.
+        const auto patch_shape = hierarchy->EntityPatchesAvailable()
+                                     ? HierarchicalMaxwellDomainData::PatchShape::ENTITY
+                                     : HierarchicalMaxwellDomainData::PatchShape::ELEMENT;
         const auto estimate =
-            hierarchy->EstimatePolynomialEigenResidual(omega, electric_field);
+            hierarchy->EstimatePolynomialEigenResidual(omega, electric_field, patch_shape);
         Vector local_indicator(estimate.indicator_energy.Size());
         const double scale = total_field_energy > 0.0 ? 0.5 / total_field_energy : 1.0;
         for (int element = 0; element < local_indicator.Size(); element++)

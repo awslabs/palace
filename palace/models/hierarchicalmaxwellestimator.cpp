@@ -183,6 +183,7 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
       fine_nd_space->GetVSize() == fine_nd_space->GetTrueVSize() &&
       static_cast<int>(space_op.GetSingularParallelNumbering().nd.owned_size) ==
           enrichment_size;
+  entity_patches_available = serial_identity_layout;
   if (serial_identity_layout)
   {
     coarse_essential.assign(coarse_standard_size + enrichment_size, false);
@@ -528,7 +529,8 @@ HierarchicalMaxwellDomainData::BuildPolynomialMetricElementPatches(
 
 HierarchicalMaxwellDomainData::ParallelEstimate
 HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
-    std::complex<double> omega, const ComplexVector &coarse_field) const
+    std::complex<double> omega, const ComplexVector &coarse_field,
+    PatchShape patch_shape) const
 {
   auto &coarse_fespace = space_op->GetNDSpace().Get();
   auto &fine_fespace = fine_nd_space->Get();
@@ -574,6 +576,31 @@ HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
   inject_component(coarse_field.Real(), injected_real);
   inject_component(coarse_field.Imag(), injected_imag);
   const auto physical = BuildComplexPolynomialContributions(omega);
+
+  if (patch_shape == PatchShape::ENTITY)
+  {
+    // Certified edge/face/interior lifting through the shared engine, currently limited
+    // to one rank with identity local-to-true layouts. On that layout the local residual
+    // is complete, so essential elimination can happen directly in local coordinates.
+    MFEM_VERIFY(entity_patches_available,
+                "Entity-patch hierarchical lifting requires one rank with identity "
+                "local-to-true layouts; use the element-patch shape instead!");
+    const auto residual = fem::hierarchical::AssembleComplexResidual(
+        injected_real.Size(), physical, injected_real, injected_imag, fine_essential);
+    const auto metric = BuildPolynomialMetricContributions(omega);
+    const auto lifting = fem::hierarchical::LiftComplexResidualByPatches(
+        space_op->GetMesh().Get(), coarse_fespace, fine_fespace, injection, metric,
+        fine_essential, coarse_essential, residual, element_enrichment_guests);
+    ParallelEstimate estimate;
+    estimate.indicator_energy.SetSize(static_cast<int>(lifting.indicator.size()));
+    for (std::size_t element = 0; element < lifting.indicator.size(); element++)
+    {
+      estimate.indicator_energy(static_cast<int>(element)) = lifting.indicator[element];
+    }
+    estimate.total_energy = lifting.energy;
+    return estimate;
+  }
+
   const std::vector<bool> no_local_essential(injected_real.Size(), false);
   const auto local_residual = fem::hierarchical::AssembleComplexResidual(
       injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);

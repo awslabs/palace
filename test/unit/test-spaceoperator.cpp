@@ -521,6 +521,14 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
     CHECK(parallel_estimate.total_energy > 0.0);
     CHECK_THAT(parallel_estimate.indicator_energy.Sum(),
                Catch::Matchers::WithinRel(parallel_estimate.total_energy, 1.0e-12));
+    // The certified entity-patch shape is available on one rank and reproduces the
+    // engine's summed real/imaginary lifting energies through the adapter.
+    REQUIRE(hierarchy.EntityPatchesAvailable());
+    const auto entity_estimate = hierarchy.EstimatePolynomialEigenResidual(
+        omega, coarse_field, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+    CHECK(entity_estimate.total_energy > 0.0);
+    CHECK_THAT(entity_estimate.indicator_energy.Sum(),
+               Catch::Matchers::WithinRel(entity_estimate.total_energy, 1.0e-12));
   }
 
   auto K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ONE);

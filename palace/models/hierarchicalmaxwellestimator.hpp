@@ -58,6 +58,7 @@ private:
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_damping_abs;
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_mass_abs;
   bool unsupported_polynomial_boundary = false;
+  bool entity_patches_available = false;
   mfem::Array<int> fine_standard_essential_true_dofs;
   mfem::Array<int> enrichment_essential_true_dofs;
 
@@ -106,12 +107,26 @@ public:
     double total_energy = 0.0;
   };
 
+  // Patch shape used to lift the exact complex residual. ELEMENT is the MPI-capable
+  // production smoother shape; ENTITY is the certified edge/face/interior engine, which
+  // measures far stronger marking but is currently available only on one rank with
+  // identity local-to-true layouts.
+  enum class PatchShape
+  {
+    ELEMENT,
+    ENTITY
+  };
+  bool EntityPatchesAvailable() const { return entity_patches_available; }
+
   // Parallel exact polynomial eigen-residual estimate (zero RHS). The coarse combined true
   // field is injected to the local p+1 standard/singular layout, all local element/facet
-  // residuals are summed to parallel true DOFs, and one fixed additive element-Schwarz
-  // inverse lifts both complex components. No global p+1 matrix or solve is constructed.
-  ParallelEstimate EstimatePolynomialEigenResidual(std::complex<double> omega,
-                                                   const ComplexVector &coarse_field) const;
+  // residuals are summed to parallel true DOFs, and one fixed lifting map (of the selected
+  // patch shape) is applied identically to both complex components. No global p+1 matrix
+  // or solve is constructed.
+  ParallelEstimate
+  EstimatePolynomialEigenResidual(std::complex<double> omega,
+                                  const ComplexVector &coarse_field,
+                                  PatchShape patch_shape = PatchShape::ELEMENT) const;
 };
 
 }  // namespace palace
