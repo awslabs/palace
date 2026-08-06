@@ -11,9 +11,8 @@ name: Spack (macOS)
 # palace-ci / setup-runner are Linux-only (apt, sudo, LLVM/Intel PPAs, lscpu),
 # so this workflow inlines everything, the same way build-and-test-macos.yml
 # does. It borrows the shape of palace-ci's spack.yaml generation, adapted for
-# macOS: GNU (gcc/g++/gfortran) is preferred for C/C++/Fortran, with apple-clang
-# left available as a fallback for packages that cannot build with GNU (e.g.
-# python).
+# macOS: GNU (gcc/g++/gfortran) builds the library DAG, while build tools that
+# should not be compiled with GNU are provided by Homebrew.
 
 on:
   push:
@@ -102,37 +101,29 @@ jobs:
       # would test a machine configuration nobody actually has.
       #
       # gcc (with g++/gfortran) compiles the whole build; see the packages:
-      # block in "Prepare spack.yaml" for why. openmpi/openblas are built by
-      # Spack from the spec/cache for reproducibility (the same way palace-ci
-      # builds them on Linux instead of apt-installing).
+      # block in "Prepare spack.yaml" for why. Build-only tools are provided by
+      # Homebrew so Spack can focus on the library DAG. openmpi/openblas are
+      # still built by Spack from the spec/cache for reproducibility (the same
+      # way palace-ci builds them on Linux instead of apt-installing).
       - name: Install build tools from Homebrew
         env:
           GCC_MAJOR: '15'
         run: |
           source /tmp/timing_functions.sh
           start_timer
-          # `make` is GNU make, installed as `gmake` to avoid shadowing the
-          # system one; the shim below gives Spack the layout it expects.
-          brew install "gcc@${GCC_MAJOR}" cmake python make
+          brew install \
+            "gcc@${GCC_MAJOR}" \
+            autoconf \
+            automake \
+            cmake \
+            libtool \
+            m4 \
+            perl \
+            pkgconf \
+            python
           echo "GCC_MAJOR=${GCC_MAJOR}" >> "${GITHUB_ENV}"
           echo "Pinning Spack compilers to gcc@${GCC_MAJOR}"
           end_timer "Install build tools from Homebrew"
-
-      # Spack detects gmake by scanning for an executable matching `^make$` and
-      # then resolves it as <prefix>/bin/make. Homebrew's `make` formula
-      # installs only `bin/gmake` (its `make` lives in libexec/gnubin, whose
-      # prefix has no bin/ at all), so pointing Spack at either directory fails:
-      # the first has no name that matches, the second yields a prefix where
-      # <prefix>/bin/make does not exist. Build a small prefix with a proper
-      # bin/ so detection and resolution both succeed.
-      - name: Create Homebrew gmake shim prefix
-        run: |
-          BREW_GMAKE_PREFIX="${RUNNER_TEMP}/brew-gmake"
-          mkdir -p "${BREW_GMAKE_PREFIX}/bin"
-          ln -sf "$(brew --prefix make)/bin/gmake" "${BREW_GMAKE_PREFIX}/bin/make"
-          ln -sf "$(brew --prefix make)/bin/gmake" "${BREW_GMAKE_PREFIX}/bin/gmake"
-          echo "BREW_GMAKE_PREFIX=${BREW_GMAKE_PREFIX}" >> "${GITHUB_ENV}"
-          "${BREW_GMAKE_PREFIX}/bin/make" --version | head -1
 
       - name: Install Spack
         uses: actions/checkout@v6
@@ -218,10 +209,10 @@ jobs:
               # GNU (gcc/g++/gfortran) compiles the whole library DAG, so every
               # built package shares one C++ ABI (libstdc++) and one Fortran
               # runtime. Build tools that cannot (or should not) be built with
-              # gcc on macOS -- python, cmake, gmake -- are taken as externals
-              # from Homebrew instead (see the "Configure Compilers" step); they
-              # are not compiled here, so the requirement below applies only to
-              # real libraries.
+              # gcc on macOS -- cmake, python, perl, autotools, and other GNU
+              # build utilities -- are taken as externals from Homebrew instead
+              # (see the "Configure Compilers" step). They are not compiled
+              # here, so the requirement below applies only to real libraries.
               #
               # The version is pinned (gcc@${GCC_MAJOR}, installed above)
               # because macOS runners ship several gcc versions; an unpinned gcc
@@ -252,6 +243,11 @@ jobs:
               # metis always compiles some shared objects, so it needs -fPIC.
               metis:
                 require: cflags=-fPIC cppflags=-fPIC
+              # Keep GNU Make Spack-built: Homebrew installs it as bin/gmake,
+              # while Spack expects bin/make. Avoid a symlink/PATH workaround;
+              # gcc@15 needs C17 because C23 breaks gmake's bundled fnmatch.c.
+              gmake:
+                require: cflags=-std=gnu17
               mfem:
                 require: "+exceptions"
             repos:
@@ -274,36 +270,46 @@ jobs:
         run: |
           source /tmp/timing_functions.sh
           start_timer
-          spack -e . compiler find && spack -e . compiler list
-          # Register build tools as externals so Spack never rebuilds them with
-          # gcc, which the global gcc requirement would otherwise force:
+          GCC_PREFIX=$(brew --prefix "gcc@${GCC_MAJOR}")
+          spack -e . compiler find "${GCC_PREFIX}/bin"
+          spack -e . compiler list
+
+          # Register build tools as externals so Spack does not rebuild them
+          # with gcc, which the global gcc requirement would otherwise force:
           #   - python: CPython has a hard "platform=darwin %gcc" conflict (it
           #     does not build with gcc on macOS) and is a build dep of
           #     petsc/libxsmm.
           #   - cmake: its macOS source uses __builtin_available, an
           #     apple-clang-only builtin that gcc cannot compile.
-          #   - gmake: avoids compiling gmake with gcc@15's C23 default, which
-          #     breaks its bundled fnmatch.c.
+          #   - perl and autotools: together they pull in a large build-only
+          #     dependency chain and are used to regenerate OpenMPI's build
+          #     system.
+          #   - pkgconf: a build-only dependency used by Palace and OpenMPI.
           # Taking them as externals keeps the compiled DAG entirely gcc.
           #
           # Search only the Homebrew prefixes, never the whole PATH: `--path`
           # replaces the default PATH scan rather than adding to it, so this
           # pins each external to the brew copy installed above instead of
           # silently picking up a runner-preinstalled tool a developer would not
-          # have. gmake comes from the shim prefix (see its step for why).
-          spack -e . external find \
+          # have.
+          spack -e . external find --not-buildable \
+            --path "$(brew --prefix autoconf)/bin" \
+            --path "$(brew --prefix automake)/bin" \
             --path "$(brew --prefix cmake)/bin" \
+            --path "$(brew --prefix libtool)/bin" \
+            --path "$(brew --prefix m4)/bin" \
+            --path "$(brew --prefix perl)/bin" \
+            --path "$(brew --prefix pkgconf)/bin" \
             --path "$(brew --prefix python)/bin" \
-            --path "${BREW_GMAKE_PREFIX}/bin" \
-            python cmake gmake
+            autoconf automake cmake libtool m4 perl pkgconf python
 
           # `external find` reports nothing and exits 0 when a package is not
           # found, which would silently fall back to building the tool with gcc
           # (or, for python, hitting its %gcc conflict) much later in the run.
           # Fail here instead, where the cause is obvious.
-          for tool in python cmake gmake; do
+          for tool in autoconf automake cmake libtool m4 perl pkgconf python; do
             if ! spack -e . config get packages | grep -q "^  ${tool}:"; then
-              echo "::error::Expected external '${tool}' was not detected in the Homebrew prefixes"
+              echo "::error::Expected external '${tool}' was not detected"
               exit 1
             fi
           done
