@@ -273,6 +273,70 @@ public:
   std::size_t Hits() const { return hits; }
 };
 
+std::size_t FixedSubdivisionLeafCount(int subdivisions)
+{
+  std::size_t leaves = 1;
+  for (int level = 0; level < subdivisions; level++)
+  {
+    leaves *= 8;
+  }
+  return leaves;
+}
+
+AdaptiveQuadratureResult IntegrateConfigured(int order,
+                                             const AdaptiveAssemblyOptions &options,
+                                             const ReferenceIntegrand &integrand)
+{
+  if (!options.fixed_subdivision)
+  {
+    return IntegrateReferenceTetrahedronAdaptive(order, options.absolute_tolerance,
+                                                 options.relative_tolerance,
+                                                 options.maximum_subdivisions, integrand);
+  }
+  return {IntegrateReferenceTetrahedron(order, options.subdivisions, integrand), 0.0,
+          FixedSubdivisionLeafCount(options.subdivisions), options.subdivisions, true};
+}
+
+AdaptiveVectorQuadratureResult
+IntegrateConfigured(int order, const AdaptiveAssemblyOptions &options,
+                    std::size_t number_components,
+                    const ReferenceVectorIntegrand &integrand)
+{
+  if (!options.fixed_subdivision)
+  {
+    return IntegrateReferenceTetrahedronAdaptive(
+        order, options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions, number_components, integrand);
+  }
+  return {IntegrateReferenceTetrahedron(order, options.subdivisions, number_components,
+                                        integrand),
+          std::vector<double>(number_components),
+          FixedSubdivisionLeafCount(options.subdivisions), options.subdivisions, true};
+}
+
+AdaptiveReferenceIntegral
+ComputeReferenceIntegralConfigured(const ReferenceBasis &row_basis,
+                                   const ReferenceBasis &column_basis,
+                                   const AdaptiveAssemblyOptions &options)
+{
+  if (!options.fixed_subdivision)
+  {
+    return ComputeAdaptiveReferenceIntegral(
+        row_basis, column_basis, options.quadrature_order, options.absolute_tolerance,
+        options.relative_tolerance, options.maximum_subdivisions);
+  }
+  constexpr std::size_t tensor_entries = 18;
+  return {ComputeReferenceIntegral(row_basis, column_basis, options.quadrature_order,
+                                   options.subdivisions),
+          0.0,
+          0.0,
+          {},
+          {},
+          tensor_entries * FixedSubdivisionLeafCount(options.subdivisions),
+          options.subdivisions,
+          true};
+}
+
 class AdaptiveReferenceTable
 {
 private:
@@ -309,10 +373,8 @@ public:
       }
     }
 
-    auto reference = ComputeAdaptiveReferenceIntegral(
-        canonical.row_basis, canonical.column_basis, options.quadrature_order,
-        options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions);
+    auto reference = ComputeReferenceIntegralConfigured(canonical.row_basis,
+                                                        canonical.column_basis, options);
     if (!SameBasis(reference.integral.row_basis, canonical.row_basis) ||
         !SameBasis(reference.integral.column_basis, canonical.column_basis))
     {
@@ -330,14 +392,19 @@ public:
 
 void ValidateAdaptiveAssemblyOptions(const AdaptiveAssemblyOptions &options)
 {
-  if (options.quadrature_order < 1 || !std::isfinite(options.absolute_tolerance) ||
-      options.absolute_tolerance < 0.0 || !std::isfinite(options.relative_tolerance) ||
-      options.relative_tolerance < 0.0 ||
-      !(options.absolute_tolerance > 0.0 || options.relative_tolerance > 0.0) ||
-      options.maximum_subdivisions < 1)
+  const bool valid_fixed = options.fixed_subdivision && options.quadrature_order >= 1 &&
+                           options.quadrature_order <= 21 && options.subdivisions >= 0 &&
+                           options.subdivisions <= 8;
+  const bool valid_adaptive =
+      !options.fixed_subdivision && options.quadrature_order >= 1 &&
+      std::isfinite(options.absolute_tolerance) && options.absolute_tolerance >= 0.0 &&
+      std::isfinite(options.relative_tolerance) && options.relative_tolerance >= 0.0 &&
+      (options.absolute_tolerance > 0.0 || options.relative_tolerance > 0.0) &&
+      options.maximum_subdivisions >= 1;
+  if (!valid_fixed && !valid_adaptive)
   {
     throw std::invalid_argument(
-        "Singular element assembly has invalid adaptive quadrature options!");
+        "Singular element assembly has invalid quadrature options!");
   }
 }
 
@@ -1597,9 +1664,8 @@ private:
       return static_cast<std::size_t>(curl ? standard_size * tensor_size : 0) +
              static_cast<std::size_t>(standard_dof * tensor_size + 3 * u + v);
     };
-    const auto integral = IntegrateReferenceTetrahedronAdaptive(
-        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions, number_components,
+    const auto integral = IntegrateConfigured(
+        options.quadrature_order, options, number_components,
         [&](const BarycentricPoint &lambda, std::vector<double> &value)
         {
           point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -1860,9 +1926,8 @@ private:
     std::vector<Vector3> enrichment_value(static_cast<std::size_t>(entry.enrichment_size));
     const auto component = [](std::size_t tensor, int u, int v)
     { return tensor_size * tensor + static_cast<std::size_t>(3 * u + v); };
-    const auto integral = IntegrateReferenceTetrahedronAdaptive(
-        quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions, tensor_size * number_tensors,
+    const auto integral = IntegrateConfigured(
+        quadrature_order, options, tensor_size * number_tensors,
         [&](const BarycentricPoint &lambda, std::vector<double> &value)
         {
           point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -2167,9 +2232,8 @@ private:
     std::vector<Vector3> enrichment_curl(static_cast<std::size_t>(rotational_size));
     const auto component = [](std::size_t tensor, int u, int v)
     { return tensor_size * tensor + static_cast<std::size_t>(3 * u + v); };
-    const auto integral = IntegrateReferenceTetrahedronAdaptive(
-        quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions, tensor_size * number_tensors,
+    const auto integral = IntegrateConfigured(
+        quadrature_order, options, tensor_size * number_tensors,
         [&](const BarycentricPoint &lambda, std::vector<double> &value)
         {
           point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -2558,14 +2622,13 @@ public:
       return cached->second;
     }
     const auto generation_start = std::chrono::steady_clock::now();
-    const auto entry = IntegrateReferenceTetrahedronAdaptive(
-        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions,
-        [&](const BarycentricPoint &lambda)
-        {
-          return EvaluateHigherOrderGradientPotential(lambda, row) *
-                 EvaluateHigherOrderGradientPotential(lambda, column);
-        });
+    const auto entry =
+        IntegrateConfigured(options.quadrature_order, options,
+                            [&](const BarycentricPoint &lambda)
+                            {
+                              return EvaluateHigherOrderGradientPotential(lambda, row) *
+                                     EvaluateHigherOrderGradientPotential(lambda, column);
+                            });
     Validate(entry, "H1 enrichment mass");
     const auto result = pair_entries.emplace(key, entry).first->second;
     generation_time +=
@@ -2590,9 +2653,8 @@ private:
     const auto generation_start = std::chrono::steady_clock::now();
     mfem::IntegrationPoint point;
     mfem::Vector standard_shape(standard_size);
-    const auto integral = IntegrateReferenceTetrahedronAdaptive(
-        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-        options.maximum_subdivisions, static_cast<std::size_t>(standard_size),
+    const auto integral = IntegrateConfigured(
+        options.quadrature_order, options, static_cast<std::size_t>(standard_size),
         [&](const BarycentricPoint &lambda, std::vector<double> &value)
         {
           point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -3129,12 +3191,11 @@ ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
       if (!common_mass || (!common_curl && !curl_free))
       {
         const auto reference =
-            reference_table ? reference_table->Get(ReferenceBasis{row_basis},
-                                                   ReferenceBasis{column_basis})
-                            : ComputeAdaptiveReferenceIntegral(
-                                  ReferenceBasis{row_basis}, ReferenceBasis{column_basis},
-                                  options.quadrature_order, options.absolute_tolerance,
-                                  options.relative_tolerance, options.maximum_subdivisions);
+            reference_table
+                ? reference_table->Get(ReferenceBasis{row_basis},
+                                       ReferenceBasis{column_basis})
+                : ComputeReferenceIntegralConfigured(ReferenceBasis{row_basis},
+                                                     ReferenceBasis{column_basis}, options);
         if (!reference.converged)
         {
           throw std::runtime_error(
@@ -3196,9 +3257,8 @@ ElementEnrichmentMatrices AssembleAffineElementEnrichmentMatrices(
           reference.estimated_absolute_error *= jacobian_determinant;
           return reference;
         }
-        return IntegrateReferenceTetrahedronAdaptive(
-            options.quadrature_order, options.absolute_tolerance,
-            options.relative_tolerance, options.maximum_subdivisions,
+        return IntegrateConfigured(
+            options.quadrature_order, options,
             [&](const BarycentricPoint &lambda)
             {
               return jacobian_determinant *
@@ -3279,9 +3339,8 @@ AssembleElementEnrichmentMatrices(const ElementDofMap &element_dofs,
     {
       const auto &row_basis = element_dofs.nd[row].basis;
       const auto &column_basis = element_dofs.nd[column].basis;
-      const auto mass = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
+      const auto mass = IntegrateConfigured(
+          options.quadrature_order, options,
           [&](const BarycentricPoint &lambda)
           {
             point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -3309,9 +3368,8 @@ AssembleElementEnrichmentMatrices(const ElementDofMap &element_dofs,
             result.nd_curl_curl_estimated_absolute_error(column, row) = 0.0;
         continue;
       }
-      const auto curl_curl = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
+      const auto curl_curl = IntegrateConfigured(
+          options.quadrature_order, options,
           [&](const BarycentricPoint &lambda)
           {
             point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -3347,9 +3405,8 @@ AssembleElementEnrichmentMatrices(const ElementDofMap &element_dofs,
     {
       const auto &row_basis = element_dofs.h1[row].basis;
       const auto &column_basis = element_dofs.h1[column].basis;
-      const auto mass = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
+      const auto mass = IntegrateConfigured(
+          options.quadrature_order, options,
           [&](const BarycentricPoint &lambda)
           {
             point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -3751,9 +3808,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
             if (!affine_mass_reintegration)
             {
               result.affine_nd_mass_reintegration_batch_count++;
-              affine_mass_reintegration = IntegrateReferenceTetrahedronAdaptive(
-                  options.quadrature_order, options.absolute_tolerance,
-                  options.relative_tolerance, options.maximum_subdivisions,
+              affine_mass_reintegration = IntegrateConfigured(
+                  options.quadrature_order, options,
                   static_cast<std::size_t>(standard_nd_size),
                   [&](const BarycentricPoint &lambda, std::vector<double> &value)
                   {
@@ -3784,9 +3840,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
                         options.absolute_tolerance +
                             options.relative_tolerance * std::abs(reintegrated_value)};
           }
-          return IntegrateReferenceTetrahedronAdaptive(
-              options.quadrature_order, options.absolute_tolerance,
-              options.relative_tolerance, options.maximum_subdivisions,
+          return IntegrateConfigured(
+              options.quadrature_order, options,
               [&](const BarycentricPoint &lambda)
               {
                 point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -3864,9 +3919,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
           if (!affine_curl_reintegration)
           {
             result.affine_nd_curl_reintegration_batch_count++;
-            affine_curl_reintegration = IntegrateReferenceTetrahedronAdaptive(
-                options.quadrature_order, options.absolute_tolerance,
-                options.relative_tolerance, options.maximum_subdivisions,
+            affine_curl_reintegration = IntegrateConfigured(
+                options.quadrature_order, options,
                 static_cast<std::size_t>(standard_nd_size),
                 [&](const BarycentricPoint &lambda, std::vector<double> &value)
                 {
@@ -3897,9 +3951,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
                       options.absolute_tolerance +
                           options.relative_tolerance * std::abs(reintegrated_value)};
         }
-        return IntegrateReferenceTetrahedronAdaptive(
-            options.quadrature_order, options.absolute_tolerance,
-            options.relative_tolerance, options.maximum_subdivisions,
+        return IntegrateConfigured(
+            options.quadrature_order, options,
             [&](const BarycentricPoint &lambda)
             {
               point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -3999,9 +4052,8 @@ ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatricesImpl(
             return reference;
           }
         }
-        return IntegrateReferenceTetrahedronAdaptive(
-            options.quadrature_order, options.absolute_tolerance,
-            options.relative_tolerance, options.maximum_subdivisions,
+        return IntegrateConfigured(
+            options.quadrature_order, options,
             [&](const BarycentricPoint &lambda)
             {
               point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -4334,9 +4386,8 @@ ElementH1EnrichmentMatrices AssembleElementH1EnrichmentMatricesImpl(
           continue;
         }
       }
-      const auto integral = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
+      const auto integral = IntegrateConfigured(
+          options.quadrature_order, options,
           [&](const BarycentricPoint &lambda)
           {
             mfem::IntegrationPoint point;
@@ -4398,9 +4449,8 @@ ElementH1EnrichmentMatrices AssembleElementH1EnrichmentMatricesImpl(
         result.standard_enrichment_estimated_absolute_error(standard, enrichment) = error;
         continue;
       }
-      const auto integral = IntegrateReferenceTetrahedronAdaptive(
-          options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-          options.maximum_subdivisions,
+      const auto integral = IntegrateConfigured(
+          options.quadrature_order, options,
           [&](const BarycentricPoint &lambda)
           {
             point.Set3(lambda[1], lambda[2], lambda[3]);
@@ -4441,7 +4491,7 @@ ElementH1EnrichmentMatrices AssembleElementH1EnrichmentMatrices(
   DuffyH1ReferenceTable duffy_table;
   return AssembleElementH1EnrichmentMatricesImpl(
       element_dofs, h1_fe, transformation, options,
-      (h1_fe.GetOrder() == 1) ? &duffy_table : nullptr);
+      (!options.fixed_subdivision && h1_fe.GetOrder() == 1) ? &duffy_table : nullptr);
 }
 
 void ApplyStandardDofTransformations(const mfem::DofTransformation &h1_dof_transformation,
@@ -4839,6 +4889,12 @@ IntegrateTetrahedronBoundaryTrace(const TetrahedronFaceTracePowers &powers, int 
                    [](long double value) { return static_cast<double>(value); });
     return result;
   };
+
+  if (options.fixed_subdivision)
+  {
+    return {integrate(std::max(4, options.quadrature_order)),
+            std::vector<double>(static_cast<std::size_t>(value_size))};
+  }
 
   constexpr int order_increment = 2;
   int comparison_order = std::max(4, options.quadrature_order);
@@ -7174,7 +7230,7 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
       const auto &h1_fe = *h1_fespace.GetFE(element);
       matrices = AssembleElementH1EnrichmentMatricesImpl(
           element_dofs, h1_fe, transformation, options,
-          (h1_fe.GetOrder() == 1) ? &duffy_table : nullptr);
+          (!options.fixed_subdivision && h1_fe.GetOrder() == 1) ? &duffy_table : nullptr);
     }
     catch (const std::exception &error)
     {

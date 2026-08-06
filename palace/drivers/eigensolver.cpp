@@ -812,8 +812,11 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
 
   const fem::singular::AdaptiveAssemblyOptions surface_options{
       iodata.solver.singular_elements.quadrature_order,
-      iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
-      iodata.solver.singular_elements.max_subdivisions};
+      iodata.solver.singular_elements.abs_tol,
+      iodata.solver.singular_elements.rel_tol,
+      iodata.solver.singular_elements.max_subdivisions,
+      iodata.solver.singular_elements.UsesFixedSubdivision(),
+      iodata.solver.singular_elements.subdivisions};
   std::unique_ptr<fem::singular::TriangleEnrichedNDFieldEvaluator>
       triangular_real_evaluator, triangular_imaginary_evaluator;
   std::unique_ptr<TetrahedronSingularSurfacePostOperator> tetrahedral_surface_postoperator;

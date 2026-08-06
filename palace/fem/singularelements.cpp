@@ -2611,6 +2611,44 @@ double IntegrateReferenceTetrahedron(int order, int subdivisions,
       integrand);
 }
 
+std::vector<double> IntegrateReferenceTetrahedron(int order, int subdivisions,
+                                                  std::size_t number_components,
+                                                  const ReferenceVectorIntegrand &integrand)
+{
+  ValidateQuadratureParameters(order, subdivisions);
+  if (!integrand || number_components == 0)
+  {
+    throw std::invalid_argument(
+        "Singular-element reference vector integrand must be callable and nonempty!");
+  }
+  std::vector<CompensatedAccumulator> accumulators(number_components);
+  std::vector<double> values(number_components);
+  ForEachReferenceTetrahedronQuadraturePoint(
+      order, subdivisions,
+      [&](const BarycentricPoint &lambda, double weight)
+      {
+        std::fill(values.begin(), values.end(), std::numeric_limits<double>::quiet_NaN());
+        integrand(lambda, values);
+        if (values.size() != number_components ||
+            std::any_of(values.begin(), values.end(),
+                        [](double value) { return !std::isfinite(value); }))
+        {
+          throw std::domain_error(
+              "Singular-element reference vector integrand returned invalid values!");
+        }
+        for (std::size_t component = 0; component < number_components; component++)
+        {
+          accumulators[component].Add(static_cast<long double>(weight) * values[component]);
+        }
+      });
+  std::vector<double> result(number_components);
+  for (std::size_t component = 0; component < number_components; component++)
+  {
+    result[component] = accumulators[component].Value();
+  }
+  return result;
+}
+
 AdaptiveQuadratureResult
 IntegrateReferenceTetrahedronAdaptive(int order, double absolute_tolerance,
                                       double relative_tolerance, int max_subdivisions,

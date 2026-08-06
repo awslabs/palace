@@ -484,8 +484,12 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
   }
 
   const fem::singular::AdaptiveAssemblyOptions options{
-      solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
-      solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions};
+      solver.singular_elements.quadrature_order,
+      solver.singular_elements.abs_tol,
+      solver.singular_elements.rel_tol,
+      solver.singular_elements.max_subdivisions,
+      solver.singular_elements.UsesFixedSubdivision(),
+      solver.singular_elements.subdivisions};
   singular_constrained_impedance_attributes =
       tetrahedral
           ? GetConstrainedSingularImpedanceAttributes(iodata, *singular_features)

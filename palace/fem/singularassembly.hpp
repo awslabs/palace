@@ -38,6 +38,8 @@ struct AdaptiveAssemblyOptions
   double absolute_tolerance;
   double relative_tolerance;
   int maximum_subdivisions;
+  bool fixed_subdivision = false;
+  int subdivisions = 6;
 };
 
 // Real, piecewise-constant isotropic operator coefficients for one element.

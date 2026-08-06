@@ -370,6 +370,9 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::BOUNDARYMODE)
     {
+      MFEM_VERIFY(!solver.singular_elements.UsesFixedSubdivision(),
+                  "FixedSubdivision singular quadrature requires a three-dimensional "
+                  "tetrahedral mesh!");
       MFEM_VERIFY(boundaries.conductivity.empty() &&
                       boundaries.rational_impedance.empty() && boundaries.farfield.empty(),
                   "Singular BoundaryMode simulations currently support PEC, auxiliary "

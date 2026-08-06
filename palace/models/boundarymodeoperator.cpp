@@ -630,8 +630,11 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
   }
   const fem::singular::AdaptiveAssemblyOptions options{
       iodata.solver.singular_elements.quadrature_order,
-      iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
-      iodata.solver.singular_elements.max_subdivisions};
+      iodata.solver.singular_elements.abs_tol,
+      iodata.solver.singular_elements.rel_tol,
+      iodata.solver.singular_elements.max_subdivisions,
+      iodata.solver.singular_elements.UsesFixedSubdivision(),
+      iodata.solver.singular_elements.subdivisions};
   const auto constrained_impedance_attributes =
       GetConstrainedSingularImpedanceAttributes(iodata, *singular_features);
   const auto filter_impedance_coefficients = [&](std::map<int, double> coefficients)

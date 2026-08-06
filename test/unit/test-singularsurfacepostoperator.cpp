@@ -1555,7 +1555,7 @@ TEST_CASE("Tetrahedral singular surface postprocessor uses edge-aligned quadratu
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   const auto measure = [](double nu, int quadrature_order, double edge_cutoff = 0.0,
-                          bool complete_set = false)
+                          bool complete_set = false, bool fixed_subdivision = false)
   {
     auto serial_mesh = MakeTetrahedronSurfaceTestMesh();
     auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
@@ -1627,7 +1627,8 @@ TEST_CASE("Tetrahedral singular surface postprocessor uses edge-aligned quadratu
     TetrahedronSingularSurfacePostOperator postoperator(MakeMSPostprocessing(edge_cutoff),
                                                         material, fespace);
     return postoperator
-        .MeasureElectrostatic(real, imaginary, 1.0, {quadrature_order, 1.0e-12, 2.0e-9, 12})
+        .MeasureElectrostatic(real, imaginary, 1.0,
+                              {quadrature_order, 1.0e-12, 2.0e-9, 12, fixed_subdivision, 6})
         .front()
         .energy;
   };
@@ -1654,6 +1655,8 @@ TEST_CASE("Tetrahedral singular surface postprocessor uses edge-aligned quadratu
   CHECK(std::isfinite(complete_integrable_order8));
   CHECK(complete_integrable_order8 > 0.0);
   CHECK_THAT(complete_integrable_order4, WithinRel(complete_integrable_order8, 5.0e-8));
+  const double complete_integrable_fixed = measure(2.0 / 3.0, 8, 0.0, true, true);
+  CHECK_THAT(complete_integrable_fixed, WithinRel(complete_integrable_order8, 2.0e-7));
   CHECK_THROWS_AS(measure(0.5, 8, 0.0, true), std::domain_error);
   const double complete_cutoff_large = measure(0.5, 8, 1.0e-2, true);
   const double complete_cutoff_small = measure(0.5, 8, 1.0e-3, true);

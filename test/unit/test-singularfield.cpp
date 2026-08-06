@@ -441,6 +441,20 @@ TEST_CASE("Combined singular H1 energy uses exact quadrature away from enrichmen
   CHECK_THROWS_AS(evaluator.IntegrateElementGradientEnergy(1, 3.25, options),
                   std::logic_error);
   evaluator.SetFromTrueDofs(combined_true_dofs);
+  const fem::singular::AdaptiveAssemblyOptions fixed_options{8, 0.0, 0.0, 4, true, 2};
+  const fem::singular::AdaptiveAssemblyOptions fixed_reference_options{8, 0.0,  0.0,
+                                                                       4, true, 3};
+  const auto enriched_fixed =
+      evaluator.IntegrateElementGradientEnergy(0, 3.25, fixed_options);
+  const auto enriched_fixed_reference =
+      evaluator.IntegrateElementGradientEnergy(0, 3.25, fixed_reference_options);
+  REQUIRE(enriched_fixed.converged);
+  REQUIRE(enriched_fixed_reference.converged);
+  CHECK(enriched_fixed.estimated_absolute_error == 0.0);
+  CHECK(enriched_fixed.leaf_count == 64);
+  CHECK(enriched_fixed.maximum_subdivision_depth == 2);
+  CHECK_THAT(enriched_fixed.value, WithinRel(enriched_fixed_reference.value, 2.0e-4));
+
   const auto integral = evaluator.IntegrateElementGradientEnergy(1, 3.25, options);
   CHECK(integral.converged);
   CHECK(integral.estimated_absolute_error == 0.0);

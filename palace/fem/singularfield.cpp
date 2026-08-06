@@ -1315,14 +1315,18 @@ AdaptiveQuadratureResult EnrichedH1FieldEvaluator::IntegrateElementGradientEnerg
     throw std::invalid_argument(
         "Singular H1 energy integration requires a positive electric coefficient!");
   }
-  if (options.quadrature_order < 1 || !std::isfinite(options.absolute_tolerance) ||
-      options.absolute_tolerance < 0.0 || !std::isfinite(options.relative_tolerance) ||
-      options.relative_tolerance < 0.0 ||
-      !(options.absolute_tolerance > 0.0 || options.relative_tolerance > 0.0) ||
-      options.maximum_subdivisions < 1)
+  const bool valid_fixed = options.fixed_subdivision && options.quadrature_order >= 1 &&
+                           options.subdivisions >= 0 && options.subdivisions <= 8;
+  const bool valid_adaptive =
+      !options.fixed_subdivision && options.quadrature_order >= 1 &&
+      std::isfinite(options.absolute_tolerance) && options.absolute_tolerance >= 0.0 &&
+      std::isfinite(options.relative_tolerance) && options.relative_tolerance >= 0.0 &&
+      (options.absolute_tolerance > 0.0 || options.relative_tolerance > 0.0) &&
+      options.maximum_subdivisions >= 1;
+  if (!valid_fixed && !valid_adaptive)
   {
     throw std::invalid_argument(
-        "Singular H1 energy integration has invalid adaptive quadrature options!");
+        "Singular H1 energy integration has invalid quadrature options!");
   }
   if (element < 0 || element >= fespace.GetNE())
   {
@@ -1359,18 +1363,29 @@ AdaptiveQuadratureResult EnrichedH1FieldEvaluator::IntegrateElementGradientEnerg
   }
 
   mfem::IntegrationPoint point;
-  return IntegrateReferenceTetrahedronAdaptive(
-      options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
-      options.maximum_subdivisions,
-      [&](const BarycentricPoint &lambda)
-      {
-        point.Set3(lambda[1], lambda[2], lambda[3]);
-        double jacobian_determinant;
-        (void)GetBarycentricGradients(*transformation, point, jacobian_determinant);
-        const auto value = Evaluate(element, point);
-        return electric_coefficient * jacobian_determinant *
-               Dot(value.gradient, value.gradient);
-      });
+  const auto integrand = [&](const BarycentricPoint &lambda)
+  {
+    point.Set3(lambda[1], lambda[2], lambda[3]);
+    double jacobian_determinant;
+    (void)GetBarycentricGradients(*transformation, point, jacobian_determinant);
+    const auto value = Evaluate(element, point);
+    return electric_coefficient * jacobian_determinant *
+           Dot(value.gradient, value.gradient);
+  };
+  if (!options.fixed_subdivision)
+  {
+    return IntegrateReferenceTetrahedronAdaptive(
+        options.quadrature_order, options.absolute_tolerance, options.relative_tolerance,
+        options.maximum_subdivisions, integrand);
+  }
+  std::size_t leaves = 1;
+  for (int level = 0; level < options.subdivisions; level++)
+  {
+    leaves *= 8;
+  }
+  return {IntegrateReferenceTetrahedron(options.quadrature_order, options.subdivisions,
+                                        integrand),
+          0.0, leaves, options.subdivisions, true};
 }
 
 void EnrichedH1FieldEvaluator::ProjectToDiscontinuousGridFunctions(

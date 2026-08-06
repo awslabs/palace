@@ -397,8 +397,11 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
 
   const fem::singular::AdaptiveAssemblyOptions surface_options{
       iodata.solver.singular_elements.quadrature_order,
-      iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
-      iodata.solver.singular_elements.max_subdivisions};
+      iodata.solver.singular_elements.abs_tol,
+      iodata.solver.singular_elements.rel_tol,
+      iodata.solver.singular_elements.max_subdivisions,
+      iodata.solver.singular_elements.UsesFixedSubdivision(),
+      iodata.solver.singular_elements.subdivisions};
   std::unique_ptr<fem::singular::EnrichedNDFieldEvaluator> tetrahedral_real_evaluator,
       tetrahedral_imaginary_evaluator;
   std::unique_ptr<fem::singular::TriangleEnrichedNDFieldEvaluator>

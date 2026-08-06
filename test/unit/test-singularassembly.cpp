@@ -2129,7 +2129,7 @@ TEST_CASE("Finite-metal junction affine Gram matrices have the expected nullspac
   }
   topology.elements.push_back(element_dofs);
 
-  const fem::singular::AdaptiveAssemblyOptions options{8, 5.0e-3, 1.0e-3, 9};
+  const fem::singular::AdaptiveAssemblyOptions options{8, 0.0, 0.0, 9, true, 2};
   for (int order : {3, 4, 5, 6})
   {
     auto mesh =
@@ -2149,6 +2149,8 @@ TEST_CASE("Finite-metal junction affine Gram matrices have the expected nullspac
     CHECK(batches[0].affine_nd_curl_contraction_count > 0);
     CHECK(batches[0].affine_nd_curl_reintegration_count == 0);
     CHECK(batches[0].affine_nd_curl_reintegration_batch_count == 0);
+    CHECK(batches[0].maximum_subdivision_depth == 2);
+    CHECK(batches[0].total_quadrature_leaf_count > 0);
     const auto check_completed = [&](std::string_view quantity,
                                      const mfem::SparseMatrix &standard,
                                      const fem::singular::LocalSparseOperatorBlocks &blocks)

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-6-0",
+  "$id": "urn:palace:schema:1-7-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2860,11 +2860,28 @@
           "exclusiveMaximum": 1.0,
           "default": 0.6666666666666666
         },
+        "QuadratureStrategy": {
+          "type": "string",
+          "description": "Tetrahedral singular-element matrix integration strategy. Adaptive uses entrywise error estimates and local recursive refinement controlled by AbsTol, RelTol, and MaxSubdivisions. FixedSubdivision applies one Gaussian rule uniformly on every leaf after Subdivisions one-to-eight refinements, matching the integration strategy used by Elkin et al. The triangular Duffy implementation remains unchanged.",
+          "enum": [
+            "Adaptive",
+            "FixedSubdivision"
+          ],
+          "default": "Adaptive"
+        },
         "QuadratureOrder": {
           "type": "integer",
           "description": "Base quadrature order used to select singular-element matrix integration rules.",
           "minimum": 1,
           "default": 8,
+          "x-palace-advanced": true
+        },
+        "Subdivisions": {
+          "type": "integer",
+          "description": "Number of uniform recursive one-to-eight tetrahedral subdivisions used by FixedSubdivision. Six matches the reference paper.",
+          "minimum": 0,
+          "maximum": 8,
+          "default": 6,
           "x-palace-advanced": true
         },
         "AbsTol": {

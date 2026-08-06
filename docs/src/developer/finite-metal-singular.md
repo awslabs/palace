@@ -40,5 +40,11 @@ boundaries, and resistive lumped-port terms are rejected. Interface dielectric l
 remain available for SA/MS/MA participation and Q postprocessing. Low-loss complex-material
 support requires a separate validated extension.
 
+Tetrahedral singular matrices support two integration strategies. `Adaptive` uses entrywise
+`AbsTol`, `RelTol`, and `MaxSubdivisions`. `FixedSubdivision` applies `QuadratureOrder`
+uniformly after `Subdivisions` recursive one-to-eight refinements; order 8 and six
+subdivisions reproduce the strategy described by Elkin et al. Fixed subdivision is 3D-only
+and ignores adaptive tolerances.
+
 `TransmissionWedge` remains the default finite-metal model and preserves the existing
 material-dependent exponent, loss-tangent validation, and strict junction behavior.

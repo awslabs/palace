@@ -1974,6 +1974,16 @@ TEST_CASE("Singular element reference tetrahedron quadrature", "[singularelement
     CHECK_THAT(fem::singular::IntegrateReferenceTetrahedron(
                    order, subdivisions, [](const BarycentricPoint &) { return 1.0; }),
                WithinAbs(1.0 / 6.0, 2.0e-15));
+    const auto vector_integral = fem::singular::IntegrateReferenceTetrahedron(
+        order, subdivisions, 2,
+        [](const BarycentricPoint &lambda, std::vector<double> &value)
+        {
+          value[0] = 1.0;
+          value[1] = lambda[0];
+        });
+    REQUIRE(vector_integral.size() == 2);
+    CHECK_THAT(vector_integral[0], WithinAbs(1.0 / 6.0, 2.0e-15));
+    CHECK_THAT(vector_integral[1], WithinAbs(1.0 / 24.0, 2.0e-15));
   }
 
   std::array<double, 8> leaf_weights{};

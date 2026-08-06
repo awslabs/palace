@@ -1711,18 +1711,28 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
         "Tetrahedral singular surface postprocessing received a null full-wave "
         "evaluator!");
   }
-  if (options.quadrature_order < 1 || !std::isfinite(options.absolute_tolerance) ||
-      options.absolute_tolerance < 0.0 || !std::isfinite(options.relative_tolerance) ||
-      options.relative_tolerance < 0.0 ||
-      !(options.absolute_tolerance > 0.0 || options.relative_tolerance > 0.0) ||
-      options.maximum_subdivisions < 1)
+  const bool valid_fixed = options.fixed_subdivision && options.quadrature_order >= 1 &&
+                           options.subdivisions >= 0 && options.subdivisions <= 8;
+  const bool valid_adaptive =
+      !options.fixed_subdivision && options.quadrature_order >= 1 &&
+      std::isfinite(options.absolute_tolerance) && options.absolute_tolerance >= 0.0 &&
+      std::isfinite(options.relative_tolerance) && options.relative_tolerance >= 0.0 &&
+      (options.absolute_tolerance > 0.0 || options.relative_tolerance > 0.0) &&
+      options.maximum_subdivisions >= 1;
+  if (!valid_fixed && !valid_adaptive)
   {
     throw std::invalid_argument(
-        "Tetrahedral singular surface postprocessing received invalid adaptive "
-        "quadrature options!");
+        "Tetrahedral singular surface postprocessing received invalid quadrature "
+        "options!");
   }
 
   const auto &geometry = *interfaces.front();
+  if (options.fixed_subdivision && geometry.edge_cutoff > 0.0)
+  {
+    throw std::invalid_argument(
+        "FixedSubdivision singular surface postprocessing currently requires "
+        "EdgeCutoff = 0!");
+  }
   bool requires_vacuum = false;
   bool requires_substrate = false;
   for (const auto *interface : interfaces)
@@ -2661,6 +2671,16 @@ std::vector<double> TetrahedronSingularSurfacePostOperator::IntegrateInterfaces(
       }
       return value;
     };
+
+    if (options.fixed_subdivision)
+    {
+      const auto value = integrate(std::max(4, 2 * options.quadrature_order));
+      for (std::size_t component = 0; component < local_energy.size(); component++)
+      {
+        local_energy[component] += value[component];
+      }
+      continue;
+    }
 
     constexpr int order_increment = 4;
     int comparison_order = std::max(4, 2 * options.quadrature_order);

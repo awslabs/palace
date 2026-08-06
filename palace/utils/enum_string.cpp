@@ -140,6 +140,11 @@ PALACE_ENUM_STRING_DEFINE(FiniteMetalModel,
                            {FiniteMetalModel::FIXED_WEDGE_EDGE_SUPERPOSITION,
                             "FixedWedgeEdgeSuperposition"}})
 
+PALACE_ENUM_STRING_DEFINE(SingularQuadratureStrategy,
+                          {{SingularQuadratureStrategy::ADAPTIVE, "Adaptive"},
+                           {SingularQuadratureStrategy::FIXED_SUBDIVISION,
+                            "FixedSubdivision"}})
+
 PALACE_ENUM_STRING_DEFINE(Orthogonalization, {{Orthogonalization::MGS, "MGS"},
                                               {Orthogonalization::CGS, "CGS"},
                                               {Orthogonalization::CGS2, "CGS2"}})

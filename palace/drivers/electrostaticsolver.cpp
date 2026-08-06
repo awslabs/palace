@@ -731,8 +731,11 @@ MeasureSingularDomainEnergy(const IoData &iodata, const LaplaceOperator &laplace
 {
   const fem::singular::AdaptiveAssemblyOptions options{
       iodata.solver.singular_elements.quadrature_order,
-      iodata.solver.singular_elements.abs_tol, iodata.solver.singular_elements.rel_tol,
-      iodata.solver.singular_elements.max_subdivisions};
+      iodata.solver.singular_elements.abs_tol,
+      iodata.solver.singular_elements.rel_tol,
+      iodata.solver.singular_elements.max_subdivisions,
+      iodata.solver.singular_elements.UsesFixedSubdivision(),
+      iodata.solver.singular_elements.subdivisions};
   const auto &configured_domains = iodata.domains.postpro.energy;
   std::vector<double> reductions(2 + configured_domains.size(), 0.0);
 
@@ -1102,6 +1105,13 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
   {
     MFEM_VERIFY(smesh, "Root rank has no serial mesh for singular feature extraction!");
     mesh_dimension = smesh->Dimension();
+    if (iodata.solver.singular_elements.UsesFixedSubdivision())
+    {
+      Mpi::Print(" Singular quadrature: fixed order {:d}, uniform subdivision depth "
+                 "{:d}\n",
+                 iodata.solver.singular_elements.quadrature_order,
+                 iodata.solver.singular_elements.subdivisions);
+    }
     if (mesh_dimension == 3)
     {
       fem::singular::SheetFeatureExtractionOptions options;
@@ -1141,6 +1151,9 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
     {
       MFEM_VERIFY(!iodata.solver.singular_elements.UsesFixedWedgeEdgeSuperposition(),
                   "FixedWedgeEdgeSuperposition requires a three-dimensional "
+                  "tetrahedral mesh!");
+      MFEM_VERIFY(!iodata.solver.singular_elements.UsesFixedSubdivision(),
+                  "FixedSubdivision singular quadrature requires a three-dimensional "
                   "tetrahedral mesh!");
       MFEM_VERIFY(smesh->Dimension() == 2 && smesh->SpaceDimension() == 2,
                   "Singular electrostatic enrichment requires a 2D triangular or 3D "
@@ -1330,7 +1343,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {"H1EnrichmentDegreesOfFreedom", singular_diagnostics.h1_enrichment_dofs},
         {"NDEnrichmentDegreesOfFreedom", singular_diagnostics.nd_enrichment_dofs},
         {"Quadrature",
-         {{"Rule", "cached feature-aligned and partitioned Duffy reference tables"},
+         {{"Strategy", singular_diagnostics.quadrature_fixed_subdivision
+                           ? "FixedSubdivision"
+                           : "Adaptive"},
+          {"Rule", singular_diagnostics.quadrature_fixed_subdivision
+                       ? "uniform recursive tetrahedron"
+                       : "cached feature-aligned and partitioned Duffy reference tables"},
           {"AssemblyScope", "H1 electrostatic diffusion"},
           {"DuffyReferenceOrder", fem::singular::H1DuffyReferenceOrder},
           {"DuffyComparisonOrder", fem::singular::H1DuffyComparisonOrder},
@@ -1341,6 +1359,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
            singular_diagnostics.duffy_reference_table_maximum_entries},
           {"DuffyTotalCacheHits", singular_diagnostics.duffy_reference_cache_hits},
           {"Order", singular_diagnostics.quadrature_order},
+          {"Subdivisions", singular_diagnostics.quadrature_subdivisions},
           {"AbsoluteTolerance", singular_diagnostics.quadrature_absolute_tolerance},
           {"RelativeTolerance", singular_diagnostics.quadrature_relative_tolerance},
           {"MaximumSubdivisions", singular_diagnostics.quadrature_maximum_subdivisions},
@@ -1602,7 +1621,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         {iodata.solver.singular_elements.quadrature_order,
                          iodata.solver.singular_elements.abs_tol,
                          iodata.solver.singular_elements.rel_tol,
-                         iodata.solver.singular_elements.max_subdivisions})});
+                         iodata.solver.singular_elements.max_subdivisions,
+                         iodata.solver.singular_elements.UsesFixedSubdivision(),
+                         iodata.solver.singular_elements.subdivisions})});
         }
       }
       else
@@ -1618,7 +1639,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         {iodata.solver.singular_elements.quadrature_order,
                          iodata.solver.singular_elements.abs_tol,
                          iodata.solver.singular_elements.rel_tol,
-                         iodata.solver.singular_elements.max_subdivisions})});
+                         iodata.solver.singular_elements.max_subdivisions,
+                         iodata.solver.singular_elements.UsesFixedSubdivision(),
+                         iodata.solver.singular_elements.subdivisions})});
         }
       }
       Vector standard_e;

@@ -173,6 +173,13 @@ enum class FiniteMetalModel : char
   FIXED_WEDGE_EDGE_SUPERPOSITION
 };
 
+// Singular tetrahedron matrix integration strategy.
+enum class SingularQuadratureStrategy : char
+{
+  ADAPTIVE,
+  FIXED_SUBDIVISION
+};
+
 // Variations of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative solvers and SLEPc
 // eigenvalue solver.
 enum class Orthogonalization : char

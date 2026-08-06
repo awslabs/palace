@@ -1793,6 +1793,13 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
     MFEM_VERIFY(serial_mesh,
                 "Root rank has no serial mesh for full-wave singular feature extraction!");
     dimension = serial_mesh->Dimension();
+    if (iodata.solver.singular_elements.UsesFixedSubdivision())
+    {
+      Mpi::Print(" Singular quadrature: fixed order {:d}, uniform subdivision depth "
+                 "{:d}\n",
+                 iodata.solver.singular_elements.quadrature_order,
+                 iodata.solver.singular_elements.subdivisions);
+    }
     if (dimension == 3)
     {
       fem::singular::SheetFeatureExtractionOptions options;
@@ -1836,6 +1843,9 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
     {
       MFEM_VERIFY(!iodata.solver.singular_elements.UsesFixedWedgeEdgeSuperposition(),
                   "FixedWedgeEdgeSuperposition requires a three-dimensional "
+                  "tetrahedral mesh!");
+      MFEM_VERIFY(!iodata.solver.singular_elements.UsesFixedSubdivision(),
+                  "FixedSubdivision singular quadrature requires a three-dimensional "
                   "tetrahedral mesh!");
       MFEM_VERIFY(dimension == 2 && serial_mesh->SpaceDimension() == 2,
                   "Full-wave singular enrichment requires a 2D triangular or 3D "

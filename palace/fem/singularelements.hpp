@@ -415,6 +415,9 @@ using ReferenceVectorIntegrand =
     std::function<void(const BarycentricPoint &lambda, std::vector<double> &value)>;
 double IntegrateReferenceTetrahedron(int order, int subdivisions,
                                      const ReferenceIntegrand &integrand);
+std::vector<double>
+IntegrateReferenceTetrahedron(int order, int subdivisions, std::size_t number_components,
+                              const ReferenceVectorIntegrand &integrand);
 AdaptiveQuadratureResult
 IntegrateReferenceTetrahedronAdaptive(int order, double absolute_tolerance,
                                       double relative_tolerance, int max_subdivisions,

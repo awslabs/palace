@@ -1175,11 +1175,22 @@ public:
     return finite_metal_model == FiniteMetalModel::FIXED_WEDGE_EDGE_SUPERPOSITION;
   }
 
-  // Entrywise adaptive quadrature controls for singular element matrices.
+  // Tetrahedral singular matrix integration strategy. FixedSubdivision follows the
+  // reference paper's order-eight rule on six uniform one-to-eight subdivisions.
+  SingularQuadratureStrategy quadrature_strategy = SingularQuadratureStrategy::ADAPTIVE;
+
   int quadrature_order = 8;
+  int subdivisions = 6;
+
+  // Entrywise adaptive quadrature controls. Ignored by FixedSubdivision.
   double abs_tol = 2.0e-6;
   double rel_tol = 2.0e-6;
   int max_subdivisions = 9;
+
+  bool UsesFixedSubdivision() const
+  {
+    return quadrature_strategy == SingularQuadratureStrategy::FIXED_SUBDIVISION;
+  }
 
   // Use the hierarchical p+1 polynomial residual lifting as the three-dimensional AMR
   // error estimator instead of the sliced standard-space flux recovery. The current

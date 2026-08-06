@@ -1483,7 +1483,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  {iodata.solver.singular_elements.quadrature_order,
                   iodata.solver.singular_elements.abs_tol,
                   iodata.solver.singular_elements.rel_tol,
-                  iodata.solver.singular_elements.max_subdivisions},
+                  iodata.solver.singular_elements.max_subdivisions,
+                  iodata.solver.singular_elements.UsesFixedSubdivision(),
+                  iodata.solver.singular_elements.subdivisions},
                  singular_en_real_evaluator.get(), singular_en_imag_evaluator.get())});
       }
       const auto &numbering = mode_op.GetSingularDofNumbering();

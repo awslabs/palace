@@ -49,9 +49,12 @@ LaplaceOperator::LaplaceOperator(
     triangle_singular_features(triangle_singular_features),
     source_vertex_ids(source_vertex_ids), standard_order(solver.order),
     singular_order(solver.singular_elements.order),
-    singular_assembly_options{
-        solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
-        solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions}
+    singular_assembly_options{solver.singular_elements.quadrature_order,
+                              solver.singular_elements.abs_tol,
+                              solver.singular_elements.rel_tol,
+                              solver.singular_elements.max_subdivisions,
+                              solver.singular_elements.UsesFixedSubdivision(),
+                              solver.singular_elements.subdivisions}
 {
   const bool has_tetrahedral_features = singular_features != nullptr;
   const bool has_triangular_features = triangle_singular_features != nullptr;
@@ -299,6 +302,8 @@ SingularOperatorDiagnostics BuildSingularOperatorDiagnostics(
           standard_order,
           singular_order,
           options.quadrature_order,
+          options.fixed_subdivision,
+          options.subdivisions,
           options.absolute_tolerance,
           options.relative_tolerance,
           options.maximum_subdivisions,
@@ -557,6 +562,14 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                  "quadrature point evaluations\n",
                  singular_numbering->h1.global_size,
                  singular_diagnostics->quadrature_leaf_count);
+    }
+    else if (singular_diagnostics->quadrature_fixed_subdivision)
+    {
+      Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} fixed "
+                 "quadrature leaves (uniform depth = {:d})\n",
+                 singular_numbering->h1.global_size,
+                 singular_diagnostics->quadrature_leaf_count,
+                 singular_diagnostics->quadrature_subdivisions);
     }
     else
     {

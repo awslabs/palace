@@ -25,7 +25,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     multi-edge finite-metal junctions by superposing existing edge features around one
     shared node basis, and explicitly approximates rather than solves trihedral point
     asymptotics. The existing material-derived `"TransmissionWedge"` model remains the
-    default. SchemaVer 1-6-0.
+    default. Added `QuadratureStrategy = "FixedSubdivision"` with configurable uniform
+    one-to-eight subdivision depth, allowing the paper's order-eight/six-subdivision rule
+    to be selected instead of tolerance-driven adaptive integration. SchemaVer 1-7-0.
   - Added an experimental `config["Solver"]["SingularElements"]` interface for additive
     singular-element enrichment of selected internal zero-thickness PEC sheets in
     electrostatic simulations. SchemaVer 1-4-0.

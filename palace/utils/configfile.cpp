@@ -55,6 +55,7 @@ PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
 PALACE_JSON_SERIALIZE_ENUM(FiniteMetalModel)
+PALACE_JSON_SERIALIZE_ENUM(SingularQuadratureStrategy)
 PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
@@ -1429,16 +1430,21 @@ SingularElementsData::SingularElementsData(const json &singular_elements)
   order = singular_elements.value("Order", order);
   finite_metal_model = singular_elements.value("FiniteMetalModel", finite_metal_model);
   fixed_exponent = singular_elements.value("FixedExponent", fixed_exponent);
+  quadrature_strategy = singular_elements.value("QuadratureStrategy", quadrature_strategy);
   quadrature_order = singular_elements.value("QuadratureOrder", quadrature_order);
+  subdivisions = singular_elements.value("Subdivisions", subdivisions);
   abs_tol = singular_elements.value("AbsTol", abs_tol);
   rel_tol = singular_elements.value("RelTol", rel_tol);
   max_subdivisions = singular_elements.value("MaxSubdivisions", max_subdivisions);
   hierarchical_estimator =
       singular_elements.value("HierarchicalEstimator", hierarchical_estimator);
-  MFEM_VERIFY(abs_tol > 0.0 || rel_tol > 0.0,
-              "Singular-element quadrature requires AbsTol or RelTol to be positive!");
+  MFEM_VERIFY(UsesFixedSubdivision() || abs_tol > 0.0 || rel_tol > 0.0,
+              "Adaptive singular-element quadrature requires AbsTol or RelTol to be "
+              "positive!");
   MFEM_VERIFY(std::isfinite(fixed_exponent) && fixed_exponent > 0.0 && fixed_exponent < 1.0,
               "FixedExponent must be finite and satisfy 0 < FixedExponent < 1!");
+  MFEM_VERIFY(subdivisions >= 0 && subdivisions <= 8,
+              "Singular fixed quadrature Subdivisions must be in [0, 8]!");
 }
 
 SolverData::SolverData(const json &solver)

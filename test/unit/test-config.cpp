@@ -936,7 +936,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                        {"Order", 3},
                        {"FiniteMetalModel", "FixedWedgeEdgeSuperposition"},
                        {"FixedExponent", 2.0 / 3.0},
+                       {"QuadratureStrategy", "FixedSubdivision"},
                        {"QuadratureOrder", 10},
+                       {"Subdivisions", 6},
                        {"AbsTol", 1.0e-8},
                        {"RelTol", 2.0e-8},
                        {"MaxSubdivisions", 11},
@@ -949,7 +951,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(singular.order == 3);
     CHECK(singular.finite_metal_model == FiniteMetalModel::FIXED_WEDGE_EDGE_SUPERPOSITION);
     CHECK(singular.fixed_exponent == 2.0 / 3.0);
+    CHECK(singular.quadrature_strategy == SingularQuadratureStrategy::FIXED_SUBDIVISION);
     CHECK(singular.quadrature_order == 10);
+    CHECK(singular.subdivisions == 6);
     CHECK(singular.abs_tol == 1.0e-8);
     CHECK(singular.rel_tol == 2.0e-8);
     CHECK(singular.max_subdivisions == 11);
@@ -964,7 +968,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_singular["FiniteMetalModel"].get<std::string>() ==
           "FixedWedgeEdgeSuperposition");
     CHECK(j_singular["FixedExponent"].get<double>() == 2.0 / 3.0);
+    CHECK(j_singular["QuadratureStrategy"].get<std::string>() == "FixedSubdivision");
     CHECK(j_singular["QuadratureOrder"].get<int>() == 10);
+    CHECK(j_singular["Subdivisions"].get<int>() == 6);
     CHECK(j_singular["AbsTol"].get<double>() == 1.0e-8);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-8);
     CHECK(j_singular["MaxSubdivisions"].get<int>() == 11);
@@ -991,7 +997,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_singular["Order"].get<int>() == 1);
     CHECK(j_singular["FiniteMetalModel"].get<std::string>() == "TransmissionWedge");
     CHECK(j_singular["FixedExponent"].get<double>() == 2.0 / 3.0);
+    CHECK(j_singular["QuadratureStrategy"].get<std::string>() == "Adaptive");
     CHECK(j_singular["QuadratureOrder"].get<int>() == 8);
+    CHECK(j_singular["Subdivisions"].get<int>() == 6);
     CHECK(j_singular["AbsTol"].get<double>() == 2.0e-6);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-6);
     CHECK(j_singular["MaxSubdivisions"].get<int>() == 9);
@@ -1760,14 +1768,25 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     config = MakeConfig();
     config["Solver"]["SingularElements"]["FixedExponent"] = 1.0;
     CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["QuadratureStrategy"] = "Unknown";
+    CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["Subdivisions"] = 9;
+    CHECK_FALSE(ValidateConfig(config).empty());
   }
 
-  SECTION("At least one quadrature tolerance is positive")
+  SECTION("At least one adaptive quadrature tolerance is positive")
   {
     auto config = MakeConfig();
     config["Solver"]["SingularElements"]["AbsTol"] = 0.0;
     config["Solver"]["SingularElements"]["RelTol"] = 0.0;
     CHECK_THROWS(IoData(config, false));
+
+    config["Solver"]["SingularElements"]["QuadratureStrategy"] = "FixedSubdivision";
+    CHECK_NOTHROW(IoData(config, false));
   }
 
   SECTION("Fixed-wedge mode initially requires a lossless field solve")

@@ -42,6 +42,8 @@ struct SingularOperatorDiagnostics
   int standard_order;
   int singular_order;
   int quadrature_order;
+  bool quadrature_fixed_subdivision;
+  int quadrature_subdivisions;
   double quadrature_absolute_tolerance;
   double quadrature_relative_tolerance;
   int quadrature_maximum_subdivisions;
