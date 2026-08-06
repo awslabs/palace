@@ -36,6 +36,10 @@ if [[ ! -f spack.yaml ]]; then
   exit 1
 fi
 
+# Spack otherwise merges the environment with configuration from ~/.spack and
+# /etc/spack.
+export SPACK_DISABLE_LOCAL_CONFIG=true
+
 # This is idempotent and upgrades installed formulae when they are outdated.
 brew install "${BREW_PACKAGES[@]}"
 
