@@ -52,6 +52,7 @@ jobs:
               - 'test/unit/**'
               - 'test/data/**'
               - 'spack_repo/**'
+              - 'docs/src/developer/spack/spack.yaml'
               - '.github/workflows/spack-macos.yml'
 
   build-test-macos-spack:
@@ -134,6 +135,8 @@ jobs:
 
       - name: Prepare spack.yaml
         run: |
+          cp docs/src/developer/spack/spack.yaml spack.yaml
+
           # Isolate GHCR buildcaches by Spack version (see palace-ci). Darwin
           # binaries carry platform=darwin + the microarch in their DAG hash, so
           # they never collide with the Linux OCI tags in the same cache.
@@ -141,86 +144,17 @@ jobs:
           echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
           echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
 
-          # +gslib is on by default in the recipe, but request it explicitly:
-          # under the constrained macOS DAG the concretizer would otherwise
-          # silently drop the optional variant, which makes the WavePort
-          # voltage-path unit test abort ("requires MFEM_USE_GSLIB").
-          PALACE_SPEC="local.palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+gslib"
-
-          cat << EOF > spack.yaml
-          spack:
-            specs:
-              - ${PALACE_SPEC}
-            view: false
-            config:
-              install_tree:
-                root: ${HOME}/opt/spack
-                # Padding supports better buildcache relocation.
-                # https://spack.readthedocs.io/en/latest/binary_caches.html#relocation
-                padded_length: 256
-            concretizer:
-              reuse: false
-              unify: true
-            packages:
-              # GNU (gcc/g++/gfortran) compiles the whole library DAG, so every
-              # built package shares one C++ ABI (libstdc++) and one Fortran
-              # runtime. Build tools that cannot (or should not) be built with
-              # gcc on macOS -- cmake, python, perl, autotools, and other GNU
-              # build utilities -- are taken as externals from Homebrew instead
-              # (see the "Configure Compilers" step). They are not compiled
-              # here, so the requirement below applies only to real libraries.
-              #
-              # The version is pinned (gcc@${GCC_MAJOR}, installed above)
-              # because macOS runners ship several gcc versions; an unpinned gcc
-              # requirement lets the solver explore every one across the DAG
-              # under unify:true, which makes concretization hang for minutes.
-              # Pinning one version collapses that search.
-              c:
-                require: ["gcc@${GCC_MAJOR}"]
-              cxx:
-                require: ["gcc@${GCC_MAJOR}"]
-              fortran:
-                require: ["gcc@${GCC_MAJOR}"]
-              petsc:
-                require: ~hdf5
-              mpi:
-                require: openmpi
-              # Pin a modern OpenMPI: under the gcc requirement the concretizer
-              # otherwise drifts to an ancient release (2.1.6) whose bundled
-              # assembly the current macOS assembler rejects ("expected first
-              # even register of a consecutive same-size even/odd register
-              # pair"). 5.x builds cleanly.
-              openmpi:
-                require: "@5:"
-              blas:
-                require: openblas
-              lapack:
-                require: openblas
-              # metis always compiles some shared objects, so it needs -fPIC.
-              metis:
-                require: cflags=-fPIC cppflags=-fPIC
-              # Keep GNU Make and GNU sed Spack-built: Homebrew installs them as
-              # bin/gmake and bin/gsed, while Spack expects bin/make and bin/sed.
-              # Avoid symlink/PATH workarounds. GNU Make also needs C17 with
-              # gcc@15 because C23 breaks its bundled fnmatch.c.
-              gmake:
-                require: cflags=-std=gnu17
-              mfem:
-                require: "+exceptions"
-            repos:
-            - spack_repo/local
-            mirrors:
-              spack:
-                binary: true
-                url: https://binaries.spack.io/develop
-              local-buildcache:
-                binary: true
-                url: oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}
-                signed: false
-                access_pair:
-                  id_variable: GITHUB_USER
-                  secret_variable: GITHUB_TOKEN
-          EOF
+          # CI-specific settings stay out of the developer environment.
+          spack -e . repo add --scope="env:$(pwd)" "$(pwd)/spack_repo/local"
+          spack -e . config add "config:install_tree:root:${HOME}/opt/spack"
+          spack -e . config add "config:install_tree:padded_length:256"
+          spack -e . mirror add --type binary \
+            spack https://binaries.spack.io/develop
+          spack -e . mirror add --type binary --unsigned \
+            --oci-username-variable GITHUB_USER \
+            --oci-password-variable GITHUB_TOKEN \
+            local-buildcache \
+            "oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
 
       - name: Configure Compilers
         run: |
