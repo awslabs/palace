@@ -23,81 +23,6 @@ works. If you're completely new to Spack, start with the [official
 tutorials](https://spack-tutorial.readthedocs.io/en/latest/index.html) to learn
 about specs, variants, and environments.
 
-## Developing Palace with Spack on macOS
-
-On macOS, install the compiler and build tools with
-[Homebrew](https://brew.sh/), then let Spack build the *Palace* library
-dependency graph. First install the Xcode command-line tools, if needed:
-
-```sh
-xcode-select --install
-```
-
-Palace dependencies require a Fortran compiler, so this configuration uses
-Homebrew GCC for C, C++, and Fortran. Clone and activate the same Spack release
-series used in CI:
-
-```sh
-git clone -c feature.manyFiles=true https://github.com/spack/spack.git
-cd spack
-git checkout releases/v1.2
-source share/spack/setup-env.sh
-export SPACK_DISABLE_LOCAL_CONFIG=true
-```
-
-!!! warning "Pre-existing Spack configuration"
-
-    Spack normally merges an environment with configuration from `~/.spack`
-    and `/etc/spack`. Do not use this setup with global Spack configuration:
-    existing compiler, provider, package, or repository settings can conflict
-    with the environment or change its concretization. Either remove those
-    configuration files or, as shown above, export
-    `SPACK_DISABLE_LOCAL_CONFIG=true` before running any `spack` command. Keep
-    it exported in every shell used with this environment.
-
-Copy the macOS environment used by CI into a development directory:
-
-```sh
-mkdir -p ~/spack-environments/palace
-cp ~/repos/palace/docs/src/developer/spack/spack.yaml \
-  ~/spack-environments/palace/spack.yaml
-cd ~/spack-environments/palace
-```
-
-The checked-in [`spack.yaml`](spack/spack.yaml) is included below:
-
-```@eval
-import Markdown
-path = joinpath("spack", "spack.yaml")
-Markdown.parse("```yaml\n$(read(path, String))\n```")
-```
-
-Run the checked-in
-[`setup-macos.sh`](spack/setup-macos.sh) script from the environment directory.
-It installs or upgrades the Homebrew compiler and build tools, then registers
-them with Spack using their stable Homebrew formula prefixes:
-
-```sh
-~/repos/palace/docs/src/developer/spack/setup-macos.sh
-spack -e . develop --path=~/repos/palace palace@develop
-```
-
-The script discovers the concrete Homebrew versions and adds them to your copy
-of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
-alone and upgrades outdated ones. After an upgrade, remove `spack.lock` and
-concretize again. GNU Make and GNU sed remain
-Spack-built because Homebrew installs them as `gmake` and `gsed`, while Spack
-expects `make` and `sed`. No forced links or `PATH` changes are needed.
-
-Concretize and install the environment, then load *Palace*:
-
-```sh
-spack -e . concretize -f
-spack -e . install
-spack env activate .
-spack load palace
-```
-
 ## Developing Palace with Spack Environments
 
 The recommended approach for developing *Palace* with Spack is to use Spack
@@ -178,6 +103,82 @@ well. If you need to modify MFEM alongside *Palace*, you can add another entry
 to the `develop` section of your `spack.yaml` pointing to your local MFEM
 checkout. Spack will then manage both packages in development mode, rebuilding
 each as needed when you make changes.
+
+
+## Developing Palace with Spack on macOS
+
+Using Spack on macOS requires some attention as several of the packages macOS
+come with cannot be used to compile Palace. In this section, we present a recipe
+to get a working configuration.
+
+!!! warning "Pre-existing Spack configuration"
+
+    In the following, we use Spack enviroments to fully capture the configuration
+    needed to identify a Spack set up. Spack normally merges an environment with
+    configuration from `~/.spack` and `/etc/spack`. Do not use this setup with
+    global Spack configuration: existing compiler, provider, package, or repository
+    settings can conflict with the environment or change its concretization.
+    Either remove those configuration files or, as shown above, export
+    `SPACK_DISABLE_LOCAL_CONFIG=true` before running any `spack` command. Keep
+    it exported in every shell used with this environment.
+
+Assuming you have [Homebrew](https://brew.sh/) and the Xcode command-line tools,
+install `Spack`:
+
+```sh
+git clone -c feature.manyFiles=true https://github.com/spack/spack.git
+cd spack
+git checkout releases/v1.2
+source share/spack/setup-env.sh
+export SPACK_DISABLE_LOCAL_CONFIG=true
+```
+
+Copy the macOS environment used by CI into a development directory:
+
+```sh
+mkdir -p ~/spack-environments/palace
+cp ~/repos/palace/docs/src/developer/spack/spack.yaml \
+  ~/spack-environments/palace/spack.yaml
+cd ~/spack-environments/palace
+```
+
+The checked-in [`spack.yaml`](spack/spack.yaml) is included below:
+
+```@eval
+import Markdown
+path = joinpath("spack", "spack.yaml")
+Markdown.parse("```yaml\n$(read(path, String))\n```")
+```
+
+Run the checked-in [`setup-macos.sh`](spack/setup-macos.sh) script from the
+environment directory. It installs or upgrades the Homebrew compiler and build
+tools, then registers them with Spack:
+
+```@eval
+import Markdown
+path = joinpath("spack", "setup-macos.sh")
+Markdown.parse("```bash\n$(read(path, String))\n```")
+```
+
+```sh
+~/repos/palace/docs/src/developer/spack/setup-macos.sh
+spack -e . develop --path=~/repos/palace palace@develop
+```
+
+The script discovers the concrete Homebrew versions and adds them to your copy
+of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
+alone and upgrades outdated ones. GNU Make and GNU sed remain Spack-built
+because Homebrew installs them as `gmake` and `gsed`, while Spack expects `make`
+and `sed`.
+
+Concretize and install the environment, then load *Palace*:
+
+```sh
+spack -e . concretize -f
+spack -e . install
+spack env activate .
+spack load palace
+```
 
 ## Developing Palace's Package Recipe
 
