@@ -72,7 +72,7 @@ spack:
     # Palace and its CUDA-capable dependencies receive the same multi-valued
     # architecture constraint. The action replaces 80 with its requested list.
     - >-
-      +cuda+cudss cuda_arch=80 ^cuda@13.0
+      +cuda+cudss cuda_arch=80 ^cuda@13
       ^openmpi+cuda
       ^libfabric+cuda+cuda_dlopen
   - when: not env.get("PALACE_CUDA_ARCH")
