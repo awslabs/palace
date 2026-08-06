@@ -66,5 +66,9 @@ runs:
             delay=$((delay * 2))
           fi
         done
-        echo "Buildcache index refresh failed after ${attempts} attempts." >&2
-        exit 1
+        # Best-effort: a failed refresh is not fatal. The index self-heals on
+        # the next successful run, and binaries stay reachable meanwhile via
+        # Spack's direct OCI-tag fallback, so do not block CI on it.
+        echo "WARNING: buildcache index refresh failed after ${attempts}" \
+          "attempts; leaving the previous index in place (self-heals next run)." >&2
+        exit 0
