@@ -135,8 +135,6 @@ jobs:
 
           # CI-specific settings stay out of the developer environment.
           spack -e . repo add --scope="env:$(pwd)" "$(pwd)/spack_repo/local"
-          spack -e . mirror add --type binary \
-            spack https://binaries.spack.io/develop
           spack -e . mirror add --type binary --unsigned \
             --oci-username-variable GITHUB_USER \
             --oci-password-variable GITHUB_TOKEN \
@@ -196,13 +194,6 @@ jobs:
           echo "=== Generated spack.yaml ==="
           cat spack.yaml
           echo "=== End spack.yaml ==="
-
-      - name: Configure Binary Mirror Keys
-        run: |
-          # The local GHCR buildcache is unsigned and may not exist yet. Only
-          # trust keys from Spack's public mirror; GHCR binaries are still used
-          # opportunistically with a source-build fallback on cache misses.
-          spack -e . buildcache keys -y --install --trust spack
 
       - name: Bootstrap
         run: spack -e . bootstrap now
