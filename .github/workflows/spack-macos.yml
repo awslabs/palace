@@ -82,6 +82,13 @@ jobs:
         env:
           GCC_MAJOR: '15'
         run: |
+          # GitHub's runner image includes this tap, but none of the formulas
+          # below use it. Remove it rather than weakening Homebrew's tap trust
+          # checks or asking developers to trust an unrelated third-party tap.
+          if brew tap | grep -qx aws/tap; then
+            brew untap aws/tap
+          fi
+
           brew install \
             "gcc@${GCC_MAJOR}" \
             autoconf \
