@@ -45,6 +45,26 @@ runs:
                 id_variable: GITHUB_USER
                 secret_variable: GITHUB_TOKEN
         EOF
-        SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
-          buildcache update-index local-buildcache
-        echo "Buildcache index refresh: $((SECONDS - START_TIME))s"
+        # GHCR intermittently returns 403 on manifest GETs during
+        # update-index, so retry a few times with backoff before giving up.
+        refresh_index() {
+          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
+            buildcache update-index local-buildcache
+        }
+        attempts=4
+        delay=15
+        for attempt in $(seq 1 "${attempts}"); do
+          if refresh_index; then
+            echo "Buildcache index refresh succeeded on attempt" \
+              "${attempt}: $((SECONDS - START_TIME))s"
+            exit 0
+          fi
+          if [ "${attempt}" -lt "${attempts}" ]; then
+            echo "Index refresh failed (attempt ${attempt}/${attempts});" \
+              "retrying in ${delay}s."
+            sleep "${delay}"
+            delay=$((delay * 2))
+          fi
+        done
+        echo "Buildcache index refresh failed after ${attempts} attempts." >&2
+        exit 1
