@@ -504,6 +504,23 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
                Catch::Matchers::WithinRel(lifting.energy, 1.0e-12));
     CHECK(lifting.real.face_patches > 0);
     CHECK(lifting.imag.face_patches > 0);
+
+    ComplexVector coarse_field(space_op.GetNDTrueVSize());
+    for (int dof = 0; dof < coarse_field.Size(); dof++)
+    {
+      coarse_field.Real()(dof) = std::sin(0.19 * dof + 0.3);
+      coarse_field.Imag()(dof) = std::cos(0.29 * dof - 0.2);
+    }
+    for (int dof : space_op.GetCombinedNDDbcTDofList())
+    {
+      coarse_field.Real()(dof) = 0.0;
+      coarse_field.Imag()(dof) = 0.0;
+    }
+    const auto parallel_estimate =
+        hierarchy.EstimatePolynomialEigenResidual(omega, coarse_field);
+    CHECK(parallel_estimate.total_energy > 0.0);
+    CHECK_THAT(parallel_estimate.indicator_energy.Sum(),
+               Catch::Matchers::WithinRel(parallel_estimate.total_energy, 1.0e-12));
   }
 
   auto K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ONE);
@@ -860,6 +877,134 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
 }
 
 }  // namespace
+
+TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
+          "[spaceoperator][singularelements][hierarchical][Serial][Parallel]")
+{
+  REQUIRE((Mpi::Size(Mpi::World()) == 1 || Mpi::Size(Mpi::World()) == 2));
+  auto serial_mesh = InternalSheetMesh();
+  const auto serial_features = fem::singular::ExtractSerialSheetFeatures(serial_mesh, {7});
+  std::vector<fem::singular::GlobalVertexId> serial_vertex_ids(serial_mesh.GetNV());
+  std::iota(serial_vertex_ids.begin(), serial_vertex_ids.end(), 0);
+  const std::array<int, 4> serial_partition{0, 0, 0, 0};
+  const std::array<int, 4> parallel_partition{0, 0, 1, 1};
+  const int *partition =
+      Mpi::Size(Mpi::World()) == 1 ? serial_partition.data() : parallel_partition.data();
+  auto parallel_mesh =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh, partition);
+  const auto local_vertex_ids =
+      fem::singular::MapPartitionedSerialVertexIds(serial_mesh, *parallel_mesh, partition);
+  const auto local_features = fem::singular::DistributeSerialSheetFeatures(
+      serial_mesh, serial_features, *parallel_mesh, local_vertex_ids);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
+  auto iodata = SingularSpaceData(3, 1, 1, false, true);
+  for (auto &material : iodata.domains.materials)
+  {
+    material.tandelta.s = {0.017, 0.017, 0.017};
+  }
+  SpaceOperator space_op(iodata, meshes, &local_features, nullptr, &local_vertex_ids);
+  HierarchicalMaxwellDomainData hierarchy(space_op);
+
+  // A projected smooth physical field is decomposition-independent, unlike raw true-DOF
+  // coefficient patterns whose numbering and edge orientations depend on the partition.
+  const auto build_field = [](SpaceOperator &space_operator)
+  {
+    ComplexVector field(space_operator.GetNDTrueVSize());
+    field = 0.0;
+    mfem::VectorFunctionCoefficient real_field(
+        3,
+        [](const mfem::Vector &x, mfem::Vector &value)
+        {
+          value(0) = x(1) * x(2) + 0.3 * x(0);
+          value(1) = x(0) - 0.5 * x(2) * x(2);
+          value(2) = x(0) * x(1) + 0.25 * x(2);
+        });
+    mfem::VectorFunctionCoefficient imag_field(
+        3,
+        [](const mfem::Vector &x, mfem::Vector &value)
+        {
+          value(0) = x(2) - 0.2 * x(1);
+          value(1) = x(0) * x(1);
+          value(2) = -x(0) + 0.1 * x(2) * x(2);
+        });
+    mfem::ParGridFunction projected(&space_operator.GetNDSpace().Get());
+    Vector standard_true(space_operator.GetNDSpace().GetTrueVSize());
+    projected.ProjectCoefficient(real_field);
+    projected.GetTrueDofs(standard_true);
+    for (int dof = 0; dof < standard_true.Size(); dof++)
+    {
+      field.Real()(dof) = standard_true(dof);
+    }
+    projected.ProjectCoefficient(imag_field);
+    projected.GetTrueDofs(standard_true);
+    for (int dof = 0; dof < standard_true.Size(); dof++)
+    {
+      field.Imag()(dof) = standard_true(dof);
+    }
+    for (int dof : space_operator.GetCombinedNDDbcTDofList())
+    {
+      field.Real()(dof) = 0.0;
+      field.Imag()(dof) = 0.0;
+    }
+    return field;
+  };
+  const auto field = build_field(space_op);
+  const auto estimate = hierarchy.EstimatePolynomialEigenResidual({0.7, 0.08}, field);
+  CAPTURE(estimate.total_energy);
+  CHECK(std::isfinite(estimate.total_energy));
+  CHECK(estimate.total_energy > 0.0);
+  double sum = estimate.indicator_energy.Sum();
+  Mpi::GlobalSum(1, &sum, Mpi::World());
+  CHECK_THAT(sum, Catch::Matchers::WithinRel(estimate.total_energy, 1.0e-12));
+  for (int element = 0; element < estimate.indicator_energy.Size(); element++)
+  {
+    CHECK(estimate.indicator_energy(element) >= -1.0e-12 * estimate.total_energy);
+  }
+
+  if (Mpi::Size(Mpi::World()) == 2)
+  {
+    // Replicated one-rank oracle: every rank rebuilds the complete problem on its own
+    // communicator and the distributed estimate must reproduce it to roundoff, including
+    // the per-element localization under the known partition.
+    auto replicated_serial_mesh = InternalSheetMesh();
+    auto replicated_mesh = std::make_unique<mfem::ParMesh>(
+        MPI_COMM_SELF, replicated_serial_mesh, serial_partition.data());
+    const auto replicated_vertex_ids = fem::singular::MapPartitionedSerialVertexIds(
+        replicated_serial_mesh, *replicated_mesh, serial_partition.data());
+    const auto replicated_features = fem::singular::DistributeSerialSheetFeatures(
+        replicated_serial_mesh, serial_features, *replicated_mesh, replicated_vertex_ids);
+    std::vector<std::unique_ptr<Mesh>> replicated_meshes;
+    replicated_meshes.push_back(std::make_unique<Mesh>(std::move(replicated_mesh)));
+    auto replicated_iodata = SingularSpaceData(3, 1, 1, false, true);
+    for (auto &material : replicated_iodata.domains.materials)
+    {
+      material.tandelta.s = {0.017, 0.017, 0.017};
+    }
+    SpaceOperator replicated_space_op(replicated_iodata, replicated_meshes,
+                                      &replicated_features, nullptr,
+                                      &replicated_vertex_ids);
+    HierarchicalMaxwellDomainData replicated_hierarchy(replicated_space_op);
+    const auto replicated_field = build_field(replicated_space_op);
+    const auto replicated_estimate =
+        replicated_hierarchy.EstimatePolynomialEigenResidual({0.7, 0.08}, replicated_field);
+    CAPTURE(replicated_estimate.total_energy);
+    REQUIRE(replicated_estimate.total_energy > 0.0);
+    CHECK_THAT(estimate.total_energy,
+               Catch::Matchers::WithinRel(replicated_estimate.total_energy, 1.0e-10));
+    // Partition-ordered element mapping: rank 0 owns serial elements {0,1}, rank 1 owns
+    // {2,3}.
+    REQUIRE(estimate.indicator_energy.Size() == 2);
+    const int offset = Mpi::Rank(Mpi::World()) == 0 ? 0 : 2;
+    for (int element = 0; element < estimate.indicator_energy.Size(); element++)
+    {
+      CAPTURE(element, offset);
+      CHECK_THAT(estimate.indicator_energy(element),
+                 Catch::Matchers::WithinRel(
+                     replicated_estimate.indicator_energy(offset + element), 1.0e-9));
+    }
+  }
+}
 
 TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-order maps",
           "[spaceoperator][singularelements][curved][Serial]")

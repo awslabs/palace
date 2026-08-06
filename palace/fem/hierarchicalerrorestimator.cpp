@@ -300,6 +300,8 @@ PatchLiftingReport LiftResidualByPatches(
   {
     for (int dof : data.dofs)
     {
+      MFEM_VERIFY(dof >= 0 && dof < combined_size,
+                  "Hierarchical metric contribution DOF is outside the combined layout!");
       dof_elements[dof].insert(data.support_element);
     }
   }
@@ -315,6 +317,8 @@ PatchLiftingReport LiftResidualByPatches(
     std::vector<int> rows, columns;
     for (int dof : fine_entity)
     {
+      MFEM_VERIFY(dof >= 0 && dof < combined_size,
+                  "Hierarchical fine entity DOF is outside the combined layout!");
       if (!fine_essential[dof])
       {
         rows.push_back(dof);
@@ -322,6 +326,8 @@ PatchLiftingReport LiftResidualByPatches(
     }
     for (int dof : coarse_entity)
     {
+      MFEM_VERIFY(dof >= 0 && dof < static_cast<int>(coarse_essential.size()),
+                  "Hierarchical coarse entity DOF is outside the combined layout!");
       if (!coarse_essential[dof])
       {
         columns.push_back(dof);

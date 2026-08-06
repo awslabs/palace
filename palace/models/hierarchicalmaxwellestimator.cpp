@@ -9,8 +9,10 @@
 
 #include "fem/fespace.hpp"
 #include "fem/singularassembly.hpp"
+#include "fem/singularsystem.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -58,13 +60,12 @@ void SetSignedMatrix(const mfem::DenseMatrix &input, const mfem::Array<int> &sta
 
 }  // namespace
 
-HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &space_op)
+HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &space_op_)
+  : space_op(&space_op_)
 {
+  auto &space_op = space_op_;
   MFEM_VERIFY(space_op.HasSingularEnrichment(),
               "Hierarchical Maxwell domain data requires singular enrichment!");
-  MFEM_VERIFY(Mpi::Size(space_op.GetComm()) == 1,
-              "The first hierarchical Maxwell domain adapter is serial-only; parallel "
-              "shared-entity ownership must be enabled before MPI production use!");
   MFEM_VERIFY(!space_op.GetMaterialOp().HasLondonDepth(),
               "The first hierarchical Maxwell domain adapter does not yet include the "
               "inverse-London-depth mass contribution to K!");
@@ -80,10 +81,10 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
       std::make_unique<FiniteElementSpace>(space_op.GetMesh(), fine_h1_collection.get());
 
   auto &coarse_nd = space_op.GetNDSpace().Get();
-  MFEM_VERIFY(coarse_nd.GetVSize() == coarse_nd.GetTrueVSize() &&
-                  fine_nd_space->GetVSize() == fine_nd_space->GetTrueVSize(),
-              "The first hierarchical Maxwell domain adapter requires a conforming "
-              "rank-one mesh with identity local-to-true constraints!");
+  MFEM_VERIFY(coarse_nd.GetConformingProlongation() == nullptr &&
+                  fine_nd_space->Get().GetConformingProlongation() == nullptr,
+              "The hierarchical Maxwell domain adapter requires a conforming mesh without "
+              "hanging-node local-to-true constraints!");
   injection = fem::hierarchical::BuildSparsePInjection(space_op.GetMesh().Get(), coarse_nd,
                                                        fine_nd_space->Get());
 
@@ -146,38 +147,57 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
   MFEM_VERIFY(local.size() == 3,
               "Hierarchical Maxwell domain assembly did not return all material slots!");
 
-  const int enrichment_size =
+  enrichment_size =
       dimension == 3
           ? static_cast<int>(space_op.GetSingularDofTopology()->nd_dofs.size())
           : static_cast<int>(space_op.GetTriangleSingularDofTopology()->nd_dofs.size());
   const int fine_standard_size = fine_nd_space->GetVSize();
   const int coarse_standard_size = coarse_nd.GetVSize();
-  MFEM_VERIFY(static_cast<int>(space_op.GetSingularParallelNumbering().nd.owned_size) ==
+  MFEM_VERIFY(static_cast<int>(space_op.GetSingularParallelNumbering().nd.local_size) ==
                   enrichment_size,
-              "Serial hierarchical Maxwell enrichment numbering is inconsistent!");
+              "Hierarchical Maxwell local enrichment numbering is inconsistent!");
+  enrichment_prolongation = fem::singular::BuildParallelEnrichmentProlongation(
+      space_op.GetComm(), space_op.GetSingularParallelNumbering().nd);
 
-  // Essential masks in the local combined layouts. On one rank, conforming true and local
-  // standard DOF numbers agree; singular true identities are order-independent.
-  coarse_essential.assign(coarse_standard_size + enrichment_size, false);
+  // Essential true DOFs for the p+1 standard space and the order-independent singular
+  // space. The serial shared-engine masks are populated only when local and true layouts
+  // coincide; parallel lifting uses these true lists directly.
+  // GetEssentialTrueDofs consumes a boundary marker, not an attribute list.
+  const int boundary_attribute_maximum = space_op.GetMesh().Get().bdr_attributes.Size()
+                                             ? space_op.GetMesh().Get().bdr_attributes.Max()
+                                             : 0;
+  const auto dbc_marker =
+      mesh::AttrToMarker(boundary_attribute_maximum, space_op.GetNDDbcAttributes());
+  fine_nd_space->Get().GetEssentialTrueDofs(dbc_marker, fine_standard_essential_true_dofs);
+  const int coarse_standard_true_size = coarse_nd.GetTrueVSize();
   for (int dof : space_op.GetCombinedNDDbcTDofList())
   {
-    MFEM_VERIFY(dof >= 0 && dof < static_cast<int>(coarse_essential.size()),
-                "Invalid coarse combined essential DOF!");
-    coarse_essential[dof] = true;
-  }
-  fine_essential.assign(fine_standard_size + enrichment_size, false);
-  mfem::Array<int> fine_standard_essential;
-  fine_nd_space->Get().GetEssentialTrueDofs(space_op.GetNDDbcAttributes(),
-                                            fine_standard_essential);
-  for (int dof : fine_standard_essential)
-  {
-    fine_essential[dof] = true;
-  }
-  for (int dof : space_op.GetCombinedNDDbcTDofList())
-  {
-    if (dof >= coarse_standard_size)
+    if (dof >= coarse_standard_true_size)
     {
-      fine_essential[fine_standard_size + dof - coarse_standard_size] = true;
+      enrichment_essential_true_dofs.Append(dof - coarse_standard_true_size);
+    }
+  }
+  const bool serial_identity_layout =
+      Mpi::Size(space_op.GetComm()) == 1 &&
+      coarse_nd.GetVSize() == coarse_nd.GetTrueVSize() &&
+      fine_nd_space->GetVSize() == fine_nd_space->GetTrueVSize() &&
+      static_cast<int>(space_op.GetSingularParallelNumbering().nd.owned_size) ==
+          enrichment_size;
+  if (serial_identity_layout)
+  {
+    coarse_essential.assign(coarse_standard_size + enrichment_size, false);
+    for (int dof : space_op.GetCombinedNDDbcTDofList())
+    {
+      coarse_essential[dof] = true;
+    }
+    fine_essential.assign(fine_standard_size + enrichment_size, false);
+    for (int dof : fine_standard_essential_true_dofs)
+    {
+      fine_essential[dof] = true;
+    }
+    for (int dof : enrichment_essential_true_dofs)
+    {
+      fine_essential[fine_standard_size + dof] = true;
     }
   }
 
@@ -211,6 +231,8 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
       const auto &absolute = local[2].nd_element_patches[retained_index[2][element]];
       const int local_size = real.mass.Height();
       standard_dofs = real.standard_dofs;
+      data.standard_dofs = real.standard_dofs;
+      data.enrichment_dofs = real.enrichment_dofs;
       for (int dof : standard_dofs)
       {
         data.dofs.push_back(UnsignedDof(dof));
@@ -228,6 +250,7 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
 
     mfem::DofTransformation transformation;
     fine_nd_space->Get().GetElementVDofs(element, standard_dofs, transformation);
+    data.standard_dofs = standard_dofs;
     for (int dof : standard_dofs)
     {
       data.dofs.push_back(UnsignedDof(dof));
@@ -315,11 +338,6 @@ HierarchicalMaxwellDomainData::~HierarchicalMaxwellDomainData() = default;
 int HierarchicalMaxwellDomainData::GetFineStandardSize() const
 {
   return fine_nd_space->GetVSize();
-}
-
-int HierarchicalMaxwellDomainData::GetEnrichmentSize() const
-{
-  return static_cast<int>(fine_essential.size()) - GetFineStandardSize();
 }
 
 std::vector<fem::hierarchical::ComplexLocalOperatorContribution>
@@ -432,6 +450,229 @@ HierarchicalMaxwellDomainData::BuildPolynomialMetricContributions(
   append(boundary_damping_abs, std::abs(omega));
   append(boundary_mass_abs, std::norm(omega));
   return contributions;
+}
+
+std::vector<fem::singular::LocalNDElementPatchMatrices>
+HierarchicalMaxwellDomainData::BuildPolynomialMetricElementPatches(
+    std::complex<double> omega) const
+{
+  const auto contributions = BuildPolynomialMetricContributions(omega);
+  std::vector<mfem::DenseMatrix> assembled(elements.size());
+  for (std::size_t element = 0; element < elements.size(); element++)
+  {
+    assembled[element].SetSize(static_cast<int>(elements[element].dofs.size()));
+    assembled[element] = 0.0;
+  }
+  for (const auto &contribution : contributions)
+  {
+    MFEM_VERIFY(contribution.support_element >= 0 &&
+                    contribution.support_element < static_cast<int>(elements.size()),
+                "Hierarchical Maxwell metric contribution has invalid support!");
+    const auto &element = elements[contribution.support_element];
+    auto &matrix = assembled[contribution.support_element];
+    for (int row = 0; row < static_cast<int>(contribution.dofs.size()); row++)
+    {
+      const auto found_row =
+          std::find(element.dofs.begin(), element.dofs.end(), contribution.dofs[row]);
+      MFEM_VERIFY(found_row != element.dofs.end(),
+                  "Hierarchical boundary metric row is absent from its support element!");
+      const int element_row = static_cast<int>(found_row - element.dofs.begin());
+      for (int column = 0; column < static_cast<int>(contribution.dofs.size()); column++)
+      {
+        const auto found_column =
+            std::find(element.dofs.begin(), element.dofs.end(), contribution.dofs[column]);
+        MFEM_VERIFY(found_column != element.dofs.end(),
+                    "Hierarchical boundary metric column is absent from its support "
+                    "element!");
+        const int element_column = static_cast<int>(found_column - element.dofs.begin());
+        matrix(element_row, element_column) += contribution.matrix(row, column);
+      }
+    }
+  }
+
+  std::vector<fem::singular::LocalNDElementPatchMatrices> patches;
+  patches.reserve(elements.size());
+  for (std::size_t element_index = 0; element_index < elements.size(); element_index++)
+  {
+    const auto &element = elements[element_index];
+    auto &patch = patches.emplace_back();
+    patch.element = static_cast<int>(element_index);
+    patch.standard_dofs = element.standard_dofs;
+    patch.enrichment_dofs = element.enrichment_dofs;
+    const int local_size = static_cast<int>(element.dofs.size());
+    patch.curl_curl.SetSize(local_size);
+    for (int row = 0; row < local_size; row++)
+    {
+      const double row_sign =
+          row < patch.standard_dofs.Size() ? DofSign(patch.standard_dofs[row]) : 1.0;
+      for (int column = 0; column < local_size; column++)
+      {
+        const double column_sign = column < patch.standard_dofs.Size()
+                                       ? DofSign(patch.standard_dofs[column])
+                                       : 1.0;
+        // ParallelElementPatchInverse applies these signs while gathering/scattering, so
+        // convert the final unsigned matrix back to its local element orientation here.
+        patch.curl_curl(row, column) =
+            row_sign * column_sign * assembled[element_index](row, column);
+      }
+    }
+    patch.mass.SetSize(local_size);
+    patch.mass = 0.0;
+    patch.mass_estimated_absolute_error.SetSize(local_size);
+    patch.mass_estimated_absolute_error = 0.0;
+    patch.curl_curl_estimated_absolute_error.SetSize(local_size);
+    patch.curl_curl_estimated_absolute_error = 0.0;
+  }
+  return patches;
+}
+
+HierarchicalMaxwellDomainData::ParallelEstimate
+HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
+    std::complex<double> omega, const ComplexVector &coarse_field) const
+{
+  auto &coarse_fespace = space_op->GetNDSpace().Get();
+  auto &fine_fespace = fine_nd_space->Get();
+  const auto &numbering = space_op->GetSingularParallelNumbering().nd;
+  const int coarse_standard_true = coarse_fespace.GetTrueVSize();
+  const int fine_standard_true = fine_fespace.GetTrueVSize();
+  const int enrichment_owned = static_cast<int>(numbering.owned_size);
+  MFEM_VERIFY(coarse_field.Size() == coarse_standard_true + enrichment_owned,
+              "Hierarchical Maxwell estimator received an invalid coarse true field!");
+
+  const auto inject_component = [&](const Vector &coarse_true, Vector &fine_local)
+  {
+    Vector coarse_standard_true_vector(coarse_standard_true);
+    Vector coarse_enrichment_true(enrichment_owned);
+    for (int dof = 0; dof < coarse_standard_true; dof++)
+    {
+      coarse_standard_true_vector(dof) = coarse_true(dof);
+    }
+    for (int dof = 0; dof < enrichment_owned; dof++)
+    {
+      coarse_enrichment_true(dof) = coarse_true(coarse_standard_true + dof);
+    }
+    Vector coarse_standard_local(coarse_fespace.GetVSize());
+    coarse_fespace.Dof_TrueDof_Matrix()->Mult(coarse_standard_true_vector,
+                                              coarse_standard_local);
+    Vector fine_standard_local(fine_fespace.GetVSize());
+    mfem::PRefinementTransferOperator transfer(coarse_fespace, fine_fespace);
+    transfer.Mult(coarse_standard_local, fine_standard_local);
+    Vector fine_enrichment_local(enrichment_size);
+    enrichment_prolongation->Mult(coarse_enrichment_true, fine_enrichment_local);
+    fine_local.SetSize(fine_fespace.GetVSize() + enrichment_size);
+    for (int dof = 0; dof < fine_fespace.GetVSize(); dof++)
+    {
+      fine_local(dof) = fine_standard_local(dof);
+    }
+    for (int dof = 0; dof < enrichment_size; dof++)
+    {
+      fine_local(fine_fespace.GetVSize() + dof) = fine_enrichment_local(dof);
+    }
+  };
+
+  Vector injected_real, injected_imag;
+  inject_component(coarse_field.Real(), injected_real);
+  inject_component(coarse_field.Imag(), injected_imag);
+  const auto physical = BuildComplexPolynomialContributions(omega);
+  const std::vector<bool> no_local_essential(injected_real.Size(), false);
+  const auto local_residual = fem::hierarchical::AssembleComplexResidual(
+      injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);
+
+  const auto local_to_true = [&](const Vector &local, Vector &combined_true)
+  {
+    Vector standard_local(fine_fespace.GetVSize());
+    Vector enrichment_local(enrichment_size);
+    for (int dof = 0; dof < standard_local.Size(); dof++)
+    {
+      standard_local(dof) = local(dof);
+    }
+    for (int dof = 0; dof < enrichment_size; dof++)
+    {
+      enrichment_local(dof) = local(fine_fespace.GetVSize() + dof);
+    }
+    Vector standard_true(fine_standard_true), enrichment_true(enrichment_owned);
+    fine_fespace.Dof_TrueDof_Matrix()->MultTranspose(standard_local, standard_true);
+    enrichment_prolongation->MultTranspose(enrichment_local, enrichment_true);
+    combined_true.SetSize(fine_standard_true + enrichment_owned);
+    for (int dof = 0; dof < fine_standard_true; dof++)
+    {
+      combined_true(dof) = standard_true(dof);
+    }
+    for (int dof = 0; dof < enrichment_owned; dof++)
+    {
+      combined_true(fine_standard_true + dof) = enrichment_true(dof);
+    }
+    for (int dof : fine_standard_essential_true_dofs)
+    {
+      combined_true(dof) = 0.0;
+    }
+    for (int dof : enrichment_essential_true_dofs)
+    {
+      combined_true(fine_standard_true + dof) = 0.0;
+    }
+  };
+
+  Vector residual_true_real, residual_true_imag;
+  local_to_true(local_residual.real, residual_true_real);
+  local_to_true(local_residual.imag, residual_true_imag);
+  auto metric_patches = BuildPolynomialMetricElementPatches(omega);
+  fem::singular::ParallelElementPatchInverse inverse(
+      fine_fespace, numbering, metric_patches, 1.0, 1.0, fine_standard_essential_true_dofs,
+      enrichment_essential_true_dofs);
+  Vector correction_true_real, correction_true_imag;
+  inverse.Mult(residual_true_real, correction_true_real);
+  inverse.Mult(residual_true_imag, correction_true_imag);
+
+  const auto true_to_local = [&](const Vector &combined_true, Vector &local)
+  {
+    Vector standard_true(fine_standard_true), enrichment_true(enrichment_owned);
+    for (int dof = 0; dof < fine_standard_true; dof++)
+    {
+      standard_true(dof) = combined_true(dof);
+    }
+    for (int dof = 0; dof < enrichment_owned; dof++)
+    {
+      enrichment_true(dof) = combined_true(fine_standard_true + dof);
+    }
+    Vector standard_local(fine_fespace.GetVSize()), enrichment_local(enrichment_size);
+    fine_fespace.Dof_TrueDof_Matrix()->Mult(standard_true, standard_local);
+    enrichment_prolongation->Mult(enrichment_true, enrichment_local);
+    local.SetSize(fine_fespace.GetVSize() + enrichment_size);
+    for (int dof = 0; dof < standard_local.Size(); dof++)
+    {
+      local(dof) = standard_local(dof);
+    }
+    for (int dof = 0; dof < enrichment_size; dof++)
+    {
+      local(fine_fespace.GetVSize() + dof) = enrichment_local(dof);
+    }
+  };
+
+  Vector correction_local_real, correction_local_imag;
+  true_to_local(correction_true_real, correction_local_real);
+  true_to_local(correction_true_imag, correction_local_imag);
+  const auto metric = BuildPolynomialMetricContributions(omega);
+  ParallelEstimate estimate;
+  estimate.indicator_energy.SetSize(space_op->GetMesh().GetNE());
+  estimate.indicator_energy = 0.0;
+  for (const auto &contribution : metric)
+  {
+    Vector local_real(static_cast<int>(contribution.dofs.size()));
+    Vector local_imag(static_cast<int>(contribution.dofs.size()));
+    for (int i = 0; i < local_real.Size(); i++)
+    {
+      local_real(i) = correction_local_real(contribution.dofs[i]);
+      local_imag(i) = correction_local_imag(contribution.dofs[i]);
+    }
+    Vector action(local_real.Size());
+    contribution.matrix.Mult(local_real, action);
+    estimate.indicator_energy(contribution.support_element) += local_real * action;
+    contribution.matrix.Mult(local_imag, action);
+    estimate.indicator_energy(contribution.support_element) += local_imag * action;
+  }
+  estimate.total_energy = estimate.indicator_energy.Sum();
+  Mpi::GlobalSum(1, &estimate.total_energy, space_op->GetComm());
+  return estimate;
 }
 
 }  // namespace palace

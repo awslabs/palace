@@ -12,6 +12,7 @@
 #include "fem/hierarchicalerrorestimator.hpp"
 #include "fem/singularassembly.hpp"
 #include "fem/singulardofs.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -30,6 +31,9 @@ private:
   std::unique_ptr<mfem::H1_FECollection> fine_h1_collection;
   std::unique_ptr<FiniteElementSpace> fine_nd_space;
   std::unique_ptr<FiniteElementSpace> fine_h1_space;
+  SpaceOperator *space_op;
+  std::unique_ptr<mfem::HypreParMatrix> enrichment_prolongation;
+  int enrichment_size = 0;
 
   fem::hierarchical::SparseInjection injection;
   std::vector<bool> coarse_essential, fine_essential;
@@ -39,6 +43,8 @@ private:
   {
     int support_element = -1;
     std::vector<int> dofs;
+    mfem::Array<int> standard_dofs;
+    mfem::Array<int> enrichment_dofs;
     mfem::DenseMatrix curl_curl;
     mfem::DenseMatrix mass_real;
     mfem::DenseMatrix mass_imag;
@@ -52,6 +58,11 @@ private:
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_damping_abs;
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_mass_abs;
   bool unsupported_polynomial_boundary = false;
+  mfem::Array<int> fine_standard_essential_true_dofs;
+  mfem::Array<int> enrichment_essential_true_dofs;
+
+  std::vector<fem::singular::LocalNDElementPatchMatrices>
+  BuildPolynomialMetricElementPatches(std::complex<double> omega) const;
 
 public:
   explicit HierarchicalMaxwellDomainData(SpaceOperator &space_op);
@@ -64,7 +75,7 @@ public:
   const auto &GetFineEssentialMask() const { return fine_essential; }
   const auto &GetElementEnrichmentGuests() const { return element_enrichment_guests; }
   int GetFineStandardSize() const;
-  int GetEnrichmentSize() const;
+  int GetEnrichmentSize() const { return enrichment_size; }
 
   // Exact domain part of
   //   K - omega^2 (Mr + i Mi)
@@ -88,6 +99,19 @@ public:
   //   K_abs + |omega| C_abs + |omega|^2 M_abs.
   std::vector<fem::hierarchical::LocalOperatorContribution>
   BuildPolynomialMetricContributions(std::complex<double> omega) const;
+
+  struct ParallelEstimate
+  {
+    Vector indicator_energy;
+    double total_energy = 0.0;
+  };
+
+  // Parallel exact polynomial eigen-residual estimate (zero RHS). The coarse combined true
+  // field is injected to the local p+1 standard/singular layout, all local element/facet
+  // residuals are summed to parallel true DOFs, and one fixed additive element-Schwarz
+  // inverse lifts both complex components. No global p+1 matrix or solve is constructed.
+  ParallelEstimate EstimatePolynomialEigenResidual(std::complex<double> omega,
+                                                   const ComplexVector &coarse_field) const;
 };
 
 }  // namespace palace
