@@ -34,8 +34,7 @@ spack:
       require: ~openmp       # We don't want any package with OpenMP
     # Enable AWS EFA
     libfabric:
-      require:
-      - fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+      require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
     # We do not want to include the full Python stack in the container
     rdma-core:
       require: ~pyverbs
@@ -70,9 +69,9 @@ spack:
       %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
   - cuda_constraints:
     - >-
-      +cuda+cudss ^cuda@13
-      ^openmpi+cuda
-      ^libfabric+cuda+cuda_dlopen
+      +cuda+cudss cuda_arch=none ^cuda@13
+      ^openmpi+cuda cuda_arch=none
+      ^libfabric+cuda+cuda_dlopen cuda_arch=none
   - when: not env.get("PALACE_CUDA")
     palace:
     - $palace_base
