@@ -782,7 +782,9 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   RHS = 0.0;
   if (HasSingularEnrichment())
   {
-    MFEM_VERIFY(singular_eliminated_stiffness && singular_essential_true_dofs.Size() > 0 &&
+    HYPRE_BigInt global_essential_true_dofs = singular_essential_true_dofs.Size();
+    Mpi::GlobalSum(1, &global_essential_true_dofs, mesh.GetComm());
+    MFEM_VERIFY(singular_eliminated_stiffness && global_essential_true_dofs > 0 &&
                     K.Width() >= GetH1Space().GetTrueVSize(),
                 "Singular Dirichlet system was not assembled!");
     Vector standard_x(GetH1Space().GetTrueVSize());
