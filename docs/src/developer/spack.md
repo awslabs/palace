@@ -17,12 +17,164 @@ to local copies of both *Palace* and MFEM simultaneously. This guide walks you
 through both using Spack to develop *Palace* itself and working on *Palace*'s
 Spack package recipe.
 
-Before diving in, this guide assumes you already have Spack installed and
-understand the basics of how it works. If you're completely new to Spack, you
-should start with their official documentation to get familiar with concepts
-like specs, variants, and environments. Check the [official
-tutorials](https://spack-tutorial.readthedocs.io/en/latest/index.html) out to
-get started.
+The macOS section below includes a complete setup. The remaining sections
+assume you already have Spack installed and understand the basics of how it
+works. If you're completely new to Spack, start with the [official
+tutorials](https://spack-tutorial.readthedocs.io/en/latest/index.html) to learn
+about specs, variants, and environments.
+
+## Developing Palace with Spack on macOS
+
+On macOS, install the compiler and build tools with
+[Homebrew](https://brew.sh/), then let Spack build the *Palace* library
+dependency graph. First install the Xcode command-line tools, if needed, and
+the Homebrew packages used by the macOS CI build:
+
+```sh
+xcode-select --install
+brew install \
+  gcc@15 \
+  autoconf \
+  automake \
+  cmake \
+  diffutils \
+  libtool \
+  m4 \
+  perl \
+  pkgconf \
+  python
+```
+
+Palace dependencies require a Fortran compiler, so this configuration uses
+Homebrew GCC for C, C++, and Fortran. Clone and activate the same Spack release
+series used in CI:
+
+```sh
+git clone -c feature.manyFiles=true https://github.com/spack/spack.git
+cd spack
+git checkout releases/v1.2
+source share/spack/setup-env.sh
+```
+
+Create a directory for the development environment:
+
+```sh
+mkdir -p ~/spack-environments/palace
+cd ~/spack-environments/palace
+```
+
+Add the following `spack.yaml`, adjusting the development path to point to your
+*Palace* checkout:
+
+```yaml
+spack:
+  specs:
+  - palace@develop
+  view: true
+  concretizer:
+    unify: true
+  packages:
+    gcc:
+      externals:
+      - spec: gcc@15.3.0 languages:='c,c++,fortran'
+        prefix: /opt/homebrew/opt/gcc@15
+        extra_attributes:
+          compilers:
+            c: /opt/homebrew/opt/gcc@15/bin/gcc-15
+            cxx: /opt/homebrew/opt/gcc@15/bin/g++-15
+            fortran: /opt/homebrew/opt/gcc@15/bin/gfortran-15
+      buildable: false
+    c:
+      require: ["gcc@15"]
+    cxx:
+      require: ["gcc@15"]
+    fortran:
+      require: ["gcc@15"]
+    autoconf:
+      externals:
+      - spec: autoconf@2.73
+        prefix: /opt/homebrew/opt/autoconf
+      buildable: false
+    automake:
+      externals:
+      - spec: automake@1.18.1
+        prefix: /opt/homebrew/opt/automake
+      buildable: false
+    cmake:
+      externals:
+      - spec: cmake@4.4.0
+        prefix: /opt/homebrew/opt/cmake
+      buildable: false
+    diffutils:
+      externals:
+      - spec: diffutils@3.12
+        prefix: /opt/homebrew/opt/diffutils
+      buildable: false
+    libtool:
+      externals:
+      - spec: libtool@2.6.2
+        prefix: /opt/homebrew/opt/libtool
+      buildable: false
+    m4:
+      externals:
+      - spec: m4@1.4.21
+        prefix: /opt/homebrew/opt/m4
+      buildable: false
+    perl:
+      externals:
+      - spec: perl@5.42.2
+        prefix: /opt/homebrew/opt/perl
+      buildable: false
+    pkgconf:
+      externals:
+      - spec: pkgconf@3.0.4
+        prefix: /opt/homebrew/opt/pkgconf
+      buildable: false
+    pkgconfig:
+      buildable: false
+    python:
+      externals:
+      - spec: python@3.14.6
+        prefix: /opt/homebrew/opt/python@3.14
+      buildable: false
+    mpi:
+      require: openmpi
+    openmpi:
+      require: "@5:"
+    blas:
+      require: openblas
+    lapack:
+      require: openblas
+    metis:
+      require: cflags=-fPIC cppflags=-fPIC
+    # Homebrew provides gmake and gsed, but Spack expects make and sed.
+    # Let Spack build both tools instead of adding links or changing PATH.
+    gmake:
+      require: cflags=-std=gnu17
+  develop:
+    palace:
+      spec: palace@=develop
+      path: ~/repos/palace
+```
+
+This example uses Homebrew's stable `opt` paths under its default Apple Silicon
+prefix, `/opt/homebrew`. On an Intel Mac, replace `/opt/homebrew` with
+`/usr/local`. Homebrew keeps these paths stable across upgrades, so no forced
+links or `PATH` changes are needed.
+
+Spack requires each external to have a concrete version. After upgrading the
+Homebrew packages, update the version after `@` in each external spec to match
+`brew list --versions`, remove `spack.lock`, and concretize again. The prefixes
+do not change.
+
+Concretize and install the environment, then load *Palace*:
+
+```sh
+spack -e . concretize -f
+spack -e . install
+spack env activate .
+spack load palace
+```
 
 ## Developing Palace with Spack Environments
 
