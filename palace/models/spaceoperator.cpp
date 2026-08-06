@@ -463,14 +463,20 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
         tetrahedral ? !singular_features->elements[element].nodes.empty() ||
                           !singular_features->elements[element].edges.empty()
                     : !triangle_singular_features->elements[element].nodes.empty();
-    if (!enriched)
+    if (!mat_op.IsIsotropic(attribute))
     {
+      MFEM_VERIFY(!enriched,
+                  "Full-wave singular enrichment requires isotropic material in every "
+                  "enriched simplex! Domain attribute: "
+                      << attribute);
+      // Local singular tensors are absent here. These scalar placeholders are never used
+      // for an enriched element; the initial serial hierarchical workspace rejects any
+      // anisotropic element until its standard-only tensor path is implemented.
       continue;
     }
-    MFEM_VERIFY(mat_op.IsIsotropic(attribute),
-                "Full-wave singular enrichment requires isotropic material in every "
-                "enriched simplex! Domain attribute: "
-                    << attribute);
+    // Retain exact scalar material data for every isotropic element, not only enriched
+    // elements: p+1 local residual assembly needs ordinary neighbors in complete patch
+    // support unions as well.
     materials[element] = {mat_op.GetPermittivityReal(attribute)(0, 0),
                           mat_op.GetInvPermeability(attribute)(0, 0)};
     imaginary_materials[element] = {mat_op.GetPermittivityImag(attribute)(0, 0), 1.0};

@@ -6469,7 +6469,14 @@ BuildCombinedNDElementMatrix(const mfem::DenseMatrix &standard_standard,
       enrichment_enrichment.Width() != enrichment_size)
   {
     throw std::invalid_argument(
-        "Coupled singular element patch received inconsistent matrix dimensions!");
+        "Coupled singular element patch received inconsistent matrix dimensions: ss=" +
+        std::to_string(standard_size) +
+        ", se=" + std::to_string(standard_enrichment.Height()) + "x" +
+        std::to_string(standard_enrichment.Width()) +
+        ", es=" + std::to_string(enrichment_standard.Height()) + "x" +
+        std::to_string(enrichment_standard.Width()) +
+        ", ee=" + std::to_string(enrichment_enrichment.Height()) + "x" +
+        std::to_string(enrichment_enrichment.Width()) + "!");
   }
 
   mfem::DenseMatrix combined(standard_size + enrichment_size);
@@ -6547,7 +6554,7 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     throw std::invalid_argument(
         "Singular sparse batch assembly requires at least one material field!");
   }
-  if (retained_patch_batch < -1 ||
+  if (retained_patch_batch < RetainAllNDElementPatchBatches ||
       retained_patch_batch >= static_cast<int>(material_batches.size()))
   {
     throw std::invalid_argument(
@@ -6615,7 +6622,7 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     const auto nd_unsigned_dofs = UnsignedDofs(nd_standard_dofs);
 
     mfem::DenseMatrix standard_mass, standard_curl_curl;
-    if (retained_patch_batch >= 0)
+    if (retained_patch_batch == RetainAllNDElementPatchBatches || retained_patch_batch >= 0)
     {
       standard_mass_integrator.AssembleElementMatrix(*nd_fespace.GetFE(element),
                                                      transformation, standard_mass);
@@ -6637,26 +6644,48 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
       material_transformation_time += elapsed(material_start);
       auto &result = results[batch];
 
-      if (static_cast<int>(batch) == retained_patch_batch)
+      if (retained_patch_batch == RetainAllNDElementPatchBatches ||
+          static_cast<int>(batch) == retained_patch_batch)
       {
         const auto &material = material_batches[batch][element];
         LocalNDElementPatchMatrices patch;
         patch.element = element;
         patch.standard_dofs = nd_standard_dofs;
         patch.enrichment_dofs = nd_enrichment_dofs;
-        patch.mass = BuildCombinedNDElementMatrix(
-            standard_mass, material.electric, coupling.nd_mass_standard_enrichment,
-            coupling.nd_mass_enrichment_standard, enrichment.nd_mass);
-        patch.mass_estimated_absolute_error = BuildCombinedNDElementErrorMatrix(
-            standard_mass.Height(), coupling.nd_mass_estimated_absolute_error,
-            enrichment.nd_mass_estimated_absolute_error);
-        patch.curl_curl = BuildCombinedNDElementMatrix(
-            standard_curl_curl, material.inverse_magnetic,
-            coupling.nd_curl_curl_standard_enrichment,
-            coupling.nd_curl_curl_enrichment_standard, enrichment.nd_curl_curl);
-        patch.curl_curl_estimated_absolute_error = BuildCombinedNDElementErrorMatrix(
-            standard_curl_curl.Height(), coupling.nd_curl_curl_estimated_absolute_error,
-            enrichment.nd_curl_curl_estimated_absolute_error);
+        const int combined_nd_size = standard_mass.Height() + nd_enrichment_dofs.Size();
+        if (material.electric == 0.0)
+        {
+          patch.mass.SetSize(combined_nd_size);
+          patch.mass = 0.0;
+          patch.mass_estimated_absolute_error.SetSize(combined_nd_size);
+          patch.mass_estimated_absolute_error = 0.0;
+        }
+        else
+        {
+          patch.mass = BuildCombinedNDElementMatrix(
+              standard_mass, material.electric, coupling.nd_mass_standard_enrichment,
+              coupling.nd_mass_enrichment_standard, enrichment.nd_mass);
+          patch.mass_estimated_absolute_error = BuildCombinedNDElementErrorMatrix(
+              standard_mass.Height(), coupling.nd_mass_estimated_absolute_error,
+              enrichment.nd_mass_estimated_absolute_error);
+        }
+        if (material.inverse_magnetic == 0.0)
+        {
+          patch.curl_curl.SetSize(combined_nd_size);
+          patch.curl_curl = 0.0;
+          patch.curl_curl_estimated_absolute_error.SetSize(combined_nd_size);
+          patch.curl_curl_estimated_absolute_error = 0.0;
+        }
+        else
+        {
+          patch.curl_curl = BuildCombinedNDElementMatrix(
+              standard_curl_curl, material.inverse_magnetic,
+              coupling.nd_curl_curl_standard_enrichment,
+              coupling.nd_curl_curl_enrichment_standard, enrichment.nd_curl_curl);
+          patch.curl_curl_estimated_absolute_error = BuildCombinedNDElementErrorMatrix(
+              standard_curl_curl.Height(), coupling.nd_curl_curl_estimated_absolute_error,
+              enrichment.nd_curl_curl_estimated_absolute_error);
+        }
         result.nd_element_patches.push_back(std::move(patch));
       }
 

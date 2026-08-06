@@ -10,11 +10,13 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "fem/mesh.hpp"
 #include "fem/singularfeatures.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/vector.hpp"
+#include "models/hierarchicalmaxwellestimator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -343,7 +345,8 @@ void CheckSymmetricPositive(const Operator &matrix)
 
 void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent = 0.0,
                         int order = 1, int mg_max_levels = 1, bool heterogeneous = false,
-                        bool lumped_port = false, bool open_exterior = false)
+                        bool lumped_port = false, bool open_exterior = false,
+                        bool hierarchical = false)
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   const int dimension = serial_mesh.Dimension();
@@ -401,6 +404,98 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   REQUIRE(space_op.GetNDDbcAttributes().Size() > 0);
   CHECK(space_op.GetSingularAssemblyOptions().quadrature_order ==
         iodata.solver.singular_elements.quadrature_order);
+
+  if (hierarchical)
+  {
+    HierarchicalMaxwellDomainData hierarchy(space_op);
+    CHECK(hierarchy.GetInjection().consistency_error < 1.0e-12);
+    CHECK(hierarchy.GetInjection().nonidentity_transformations > 0);
+    const std::complex<double> omega(0.7, 0.08);
+    const auto complex_domain = hierarchy.BuildComplexDomainContributions(omega);
+    const auto at_zero = hierarchy.BuildComplexDomainContributions(0.0);
+    const auto at_one = hierarchy.BuildComplexDomainContributions(1.0);
+    const auto at_i = hierarchy.BuildComplexDomainContributions({0.0, 1.0});
+    const auto metric = hierarchy.BuildDomainMetricContributions(omega);
+    const auto metric_one = hierarchy.BuildDomainMetricContributions(1.0);
+    REQUIRE(complex_domain.size() == static_cast<std::size_t>(meshes.back()->GetNE()));
+    REQUIRE(metric.size() == complex_domain.size());
+    REQUIRE(at_zero.size() == complex_domain.size());
+    REQUIRE(at_one.size() == complex_domain.size());
+    REQUIRE(at_i.size() == complex_domain.size());
+    double formula_error = 0.0, metric_error = 0.0, loss_norm = 0.0, symmetry_error = 0.0;
+    const std::complex<double> mass_scale = -omega * omega;
+    for (std::size_t element = 0; element < complex_domain.size(); element++)
+    {
+      const auto &K = at_zero[element].matrix_real;
+      for (int row = 0; row < K.Height(); row++)
+      {
+        for (int column = 0; column < K.Width(); column++)
+        {
+          // omega=i gives K+Mr+iMi; omega=1 gives K-Mr-iMi.
+          const double Mr = at_i[element].matrix_real(row, column) - K(row, column);
+          const double Mi = at_i[element].matrix_imag(row, column);
+          const double expected_real =
+              K(row, column) + mass_scale.real() * Mr - mass_scale.imag() * Mi;
+          const double expected_imag = mass_scale.imag() * Mr + mass_scale.real() * Mi;
+          formula_error = std::max(
+              formula_error,
+              std::abs(complex_domain[element].matrix_real(row, column) - expected_real));
+          formula_error = std::max(
+              formula_error,
+              std::abs(complex_domain[element].matrix_imag(row, column) - expected_imag));
+          formula_error =
+              std::max(formula_error, std::abs(at_one[element].matrix_real(row, column) +
+                                               at_i[element].matrix_real(row, column) -
+                                               2.0 * K(row, column)));
+          formula_error =
+              std::max(formula_error, std::abs(at_one[element].matrix_imag(row, column) +
+                                               at_i[element].matrix_imag(row, column)));
+          loss_norm = std::max(loss_norm, std::abs(Mi));
+          const double Mabs = metric_one[element].matrix(row, column) - K(row, column);
+          metric_error =
+              std::max(metric_error, std::abs(metric[element].matrix(row, column) -
+                                              K(row, column) - std::norm(omega) * Mabs));
+          symmetry_error = std::max(
+              symmetry_error, std::abs(complex_domain[element].matrix_real(row, column) -
+                                       complex_domain[element].matrix_real(column, row)));
+          symmetry_error = std::max(
+              symmetry_error, std::abs(complex_domain[element].matrix_imag(row, column) -
+                                       complex_domain[element].matrix_imag(column, row)));
+        }
+      }
+    }
+    CAPTURE(formula_error, metric_error, loss_norm, symmetry_error);
+    CHECK(formula_error < 1.0e-12);
+    CHECK(metric_error < 1.0e-12);
+    CHECK(loss_norm > 0.0);
+    CHECK(symmetry_error < 1.0e-12);
+    CHECK_THROWS(hierarchy.BuildDomainMetricContributions(0.0));
+    const int combined_size =
+        hierarchy.GetFineStandardSize() + hierarchy.GetEnrichmentSize();
+    mfem::Vector xr(combined_size), xi(combined_size);
+    for (int dof = 0; dof < combined_size; dof++)
+    {
+      xr(dof) = std::sin(0.31 * dof + 0.2);
+      xi(dof) = std::cos(0.23 * dof - 0.1);
+      if (hierarchy.GetFineEssentialMask()[dof])
+      {
+        xr(dof) = 0.0;
+        xi(dof) = 0.0;
+      }
+    }
+    const auto residual = fem::hierarchical::AssembleComplexResidual(
+        combined_size, complex_domain, xr, xi, hierarchy.GetFineEssentialMask());
+    const auto lifting = fem::hierarchical::LiftComplexResidualByPatches(
+        meshes.back()->Get(), space_op.GetNDSpace().Get(), hierarchy.GetFineNDSpace().Get(),
+        hierarchy.GetInjection(), metric, hierarchy.GetFineEssentialMask(),
+        hierarchy.GetCoarseEssentialMask(), residual,
+        hierarchy.GetElementEnrichmentGuests());
+    CHECK(lifting.energy > 0.0);
+    CHECK_THAT(std::accumulate(lifting.indicator.begin(), lifting.indicator.end(), 0.0),
+               Catch::Matchers::WithinRel(lifting.energy, 1.0e-12));
+    CHECK(lifting.real.face_patches > 0);
+    CHECK(lifting.imag.face_patches > 0);
+  }
 
   auto K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ONE);
   auto K_zero = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
@@ -770,7 +865,7 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   }
   SECTION("3D quadratic affine")
   {
-    CheckSpaceOperator(InternalSheetMesh(), false);
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.017, 1, 1, false, false, false, true);
   }
   SECTION("3D lossless spectral embedding")
   {

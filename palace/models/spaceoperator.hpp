@@ -299,6 +299,7 @@ public:
   const auto &GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }
 
   // Access the underlying mesh object.
+  auto &GetMesh() { return GetNDSpace().GetMesh(); }
   const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
 
   // Return the number of true (conforming) dofs on the finest ND space.

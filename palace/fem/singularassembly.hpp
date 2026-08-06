@@ -380,7 +380,10 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
 // nonpolynomial basis tensors and adaptive quadrature only once. The outer result
 // ordering matches material_batches. If retained_patch_batch is nonnegative,
 // combined standard-plus-enrichment element matrices are retained only in that
-// result entry for use by an overlapping Maxwell smoother.
+// result entry for use by an overlapping Maxwell smoother. Pass
+// RetainAllNDElementPatchBatches to retain them in every result (used by the
+// hierarchical residual's real, imaginary, and absolute-metric slots).
+inline constexpr int RetainAllNDElementPatchBatches = -2;
 std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
     const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     mfem::FiniteElementSpace &nd_fespace,
