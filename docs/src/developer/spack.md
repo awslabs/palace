@@ -42,7 +42,16 @@ git clone -c feature.manyFiles=true https://github.com/spack/spack.git
 cd spack
 git checkout releases/v1.2
 source share/spack/setup-env.sh
+export SPACK_DISABLE_LOCAL_CONFIG=true
 ```
+
+!!! warning "Pre-existing Spack configuration"
+
+    Spack normally merges an environment with configuration from `~/.spack`
+    and `/etc/spack`. Existing compiler, provider, package, or repository
+    settings can conflict with this environment or change its concretization.
+    Keep `SPACK_DISABLE_LOCAL_CONFIG=true` exported in every shell used with
+    this environment.
 
 Copy the macOS environment used by CI into a development directory:
 
