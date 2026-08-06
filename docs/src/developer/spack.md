@@ -104,7 +104,6 @@ to the `develop` section of your `spack.yaml` pointing to your local MFEM
 checkout. Spack will then manage both packages in development mode, rebuilding
 each as needed when you make changes.
 
-
 ## Developing Palace with Spack on macOS
 
 Using Spack on macOS requires some attention as several of the packages macOS
