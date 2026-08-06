@@ -80,7 +80,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
-    patch("palace-0.12.0.patch", when="@0.12")
+    patch(
+        "https://raw.githubusercontent.com/awslabs/palace/"
+        "b22f654ab36fe01f1f3176349c60626efed1a6a2/"
+        "spack_repo/local/packages/palace/palace-0.12.0.patch",
+        sha256="4e6c88ed21b91610f61f6586b7015900f535e0633ef26884f3f1f2f376b199a7",
+        when="@0.12",
+    )
 
     depends_on("c", type="build")
     depends_on("cxx", type="build")
