@@ -529,6 +529,139 @@ HierarchicalMaxwellDomainData::BuildPolynomialMetricElementPatches(
   return patches;
 }
 
+std::vector<HierarchicalMaxwellDomainData::TrueElementRecord>
+HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
+    std::complex<double> omega) const
+{
+  auto &coarse_fespace = space_op->GetNDSpace().Get();
+  auto &fine_fespace = fine_nd_space->Get();
+  const auto &numbering = space_op->GetSingularParallelNumbering().nd;
+  const auto &mesh = space_op->GetMesh().Get();
+
+  // Per-ldof (global true DOF, sign) taken directly from the conforming prolongation so
+  // the sign convention is exactly the one every P-based localization uses. Rows can
+  // carry explicit zeros, so select the unit-magnitude entry instead of assuming a
+  // single stored entry (that assumption previously aborted one rank and deadlocked the
+  // rest); GetDofSign is not equivalent on non-owned shared DOFs.
+  const auto build_ldof_map = [](mfem::ParFiniteElementSpace &fespace)
+  {
+    std::vector<std::pair<HYPRE_BigInt, double>> map(fespace.GetVSize());
+    mfem::SparseMatrix diag, offd;
+    HYPRE_BigInt *colmap = nullptr;
+    fespace.Dof_TrueDof_Matrix()->GetDiag(diag);
+    fespace.Dof_TrueDof_Matrix()->GetOffd(offd, colmap);
+    const HYPRE_BigInt true_offset = fespace.GetMyTDofOffset();
+    for (int ldof = 0; ldof < fespace.GetVSize(); ldof++)
+    {
+      int significant = 0;
+      for (int entry = diag.GetI()[ldof]; entry < diag.GetI()[ldof + 1]; entry++)
+      {
+        if (std::abs(diag.GetData()[entry]) > 0.5)
+        {
+          map[ldof] = {true_offset + diag.GetJ()[entry], diag.GetData()[entry]};
+          significant++;
+        }
+      }
+      for (int entry = offd.GetI()[ldof]; entry < offd.GetI()[ldof + 1]; entry++)
+      {
+        if (std::abs(offd.GetData()[entry]) > 0.5)
+        {
+          map[ldof] = {colmap[offd.GetJ()[entry]], offd.GetData()[entry]};
+          significant++;
+        }
+      }
+      MFEM_VERIFY(significant == 1 && std::abs(std::abs(map[ldof].second) - 1.0) < 1.0e-14,
+                  "Conforming true-DOF prolongation must have one unit entry per local "
+                  "DOF!");
+    }
+    return map;
+  };
+  const auto fine_map = build_ldof_map(fine_fespace);
+  const auto coarse_map = build_ldof_map(coarse_fespace);
+  const HYPRE_BigInt fine_standard_global = fine_fespace.GlobalTrueVSize();
+  const HYPRE_BigInt coarse_standard_global = coarse_fespace.GlobalTrueVSize();
+
+  // Merge domain and facet metric contributions so each element appears exactly once.
+  const auto contributions = BuildPolynomialMetricContributions(omega);
+  std::vector<TrueElementRecord> records(mesh.GetNE());
+  std::vector<std::map<int, int>> dof_positions(mesh.GetNE());
+  mfem::Array<int> coarse_dofs;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &record = records[element];
+    record.element_id = mesh.GetGlobalElementNum(element);
+    const auto &domain = contributions[element];
+    MFEM_VERIFY(domain.support_element == element,
+                "Hierarchical metric contributions are not element-ordered!");
+    const int local_size = static_cast<int>(domain.dofs.size());
+    record.fine_dofs.resize(local_size);
+    mfem::Vector signs(local_size);
+    for (int i = 0; i < local_size; i++)
+    {
+      const int dof = domain.dofs[i];
+      dof_positions[element].emplace(dof, i);
+      if (dof < fine_fespace.GetVSize())
+      {
+        record.fine_dofs[i] = fine_map[dof].first;
+        signs(i) = fine_map[dof].second;
+      }
+      else
+      {
+        const int enrichment_dof = dof - fine_fespace.GetVSize();
+        record.fine_dofs[i] =
+            fine_standard_global + numbering.local_to_true[enrichment_dof];
+        signs(i) = 1.0;
+      }
+    }
+    record.metric.SetSize(local_size);
+    for (int i = 0; i < local_size; i++)
+    {
+      for (int j = 0; j < local_size; j++)
+      {
+        record.metric(i, j) = signs(i) * signs(j) * domain.matrix(i, j);
+      }
+    }
+
+    mfem::DofTransformation transformation;
+    coarse_fespace.GetElementVDofs(element, coarse_dofs, transformation);
+    for (int dof : coarse_dofs)
+    {
+      const int unsigned_dof = dof >= 0 ? dof : -1 - dof;
+      record.coarse_dofs.push_back(coarse_map[unsigned_dof].first);
+    }
+    for (int guest : element_enrichment_guests[element])
+    {
+      record.coarse_dofs.push_back(coarse_standard_global + numbering.local_to_true[guest]);
+    }
+  }
+  for (std::size_t extra = static_cast<std::size_t>(mesh.GetNE());
+       extra < contributions.size(); extra++)
+  {
+    const auto &facet = contributions[extra];
+    auto &record = records[facet.support_element];
+    const auto &positions = dof_positions[facet.support_element];
+    for (int i = 0; i < static_cast<int>(facet.dofs.size()); i++)
+    {
+      const auto row = positions.find(facet.dofs[i]);
+      MFEM_VERIFY(row != positions.end(),
+                  "Hierarchical facet metric DOF is absent from its support element!");
+      // Facet matrices share the domain contribution's unsigned local convention, so fold
+      // the same true-DOF signs.
+      const auto sign_of = [&](int local_dof)
+      { return local_dof < fine_fespace.GetVSize() ? fine_map[local_dof].second : 1.0; };
+      for (int j = 0; j < static_cast<int>(facet.dofs.size()); j++)
+      {
+        const auto column = positions.find(facet.dofs[j]);
+        MFEM_VERIFY(column != positions.end(),
+                    "Hierarchical facet metric DOF is absent from its support element!");
+        record.metric(row->second, column->second) +=
+            sign_of(facet.dofs[i]) * sign_of(facet.dofs[j]) * facet.matrix(i, j);
+      }
+    }
+  }
+  return records;
+}
+
 HierarchicalMaxwellDomainData::ParallelEstimate
 HierarchicalMaxwellDomainData::LiftLocalComplexResidual(
     std::complex<double> omega, fem::hierarchical::ComplexResidual residual,

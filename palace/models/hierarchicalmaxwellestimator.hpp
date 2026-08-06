@@ -118,6 +118,26 @@ public:
   };
   bool EntityPatchesAvailable() const { return entity_patches_available; }
 
+  // One uneliminated element contribution of the positive metric, expressed on global
+  // combined true DOFs with local orientation signs folded into the matrix. Records are
+  // rank-portable: any rank can scatter them without knowing the source rank's local
+  // numbering, which is the transport primitive for cross-rank entity-patch support
+  // unions. Combined global numbering places all standard true DOFs first and appends the
+  // global enrichment numbering.
+  struct TrueElementRecord
+  {
+    HYPRE_BigInt element_id = -1;  // Owner-rank global element identity.
+    std::vector<HYPRE_BigInt> fine_dofs;
+    std::vector<HYPRE_BigInt> coarse_dofs;
+    mfem::DenseMatrix metric;
+  };
+
+  // Extract this rank's local metric contributions as global-true records. Facet
+  // contributions are merged into their support element's record so each element appears
+  // exactly once.
+  std::vector<TrueElementRecord>
+  BuildTrueMetricElementRecords(std::complex<double> omega) const;
+
 private:
   // Shared lifting tail: consumes the uneliminated local complex residual and applies one
   // fixed lifting map of the selected patch shape identically to both components.

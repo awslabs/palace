@@ -980,6 +980,166 @@ TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
   CAPTURE(estimate.total_energy);
   CHECK(std::isfinite(estimate.total_energy));
   CHECK(estimate.total_energy > 0.0);
+
+  // Global-true element records: evaluate a decomposition-independent projected fine
+  // field against every record through a globally gathered dictionary, exercising shared
+  // ND sign folding across ranks.
+  const auto record_quadratic_form =
+      [](HierarchicalMaxwellDomainData &workspace, SpaceOperator &space_operator)
+  {
+    mfem::VectorFunctionCoefficient fine_field(
+        3,
+        [](const mfem::Vector &x, mfem::Vector &value)
+        {
+          value(0) = x(1) * x(2) + 0.3 * x(0);
+          value(1) = x(0) - 0.5 * x(2) * x(2);
+          value(2) = x(0) * x(1) + 0.25 * x(2);
+        });
+    auto &fine_fespace = workspace.GetFineNDSpace().Get();
+    mfem::ParGridFunction projected(&fine_fespace);
+    projected.ProjectCoefficient(fine_field);
+    Vector fine_true(fine_fespace.GetTrueVSize());
+    projected.GetTrueDofs(fine_true);
+    // Gather a global true-DOF dictionary (test scale only).
+    const int local_count = fine_true.Size();
+    std::vector<HYPRE_BigInt> local_ids(local_count);
+    for (int dof = 0; dof < local_count; dof++)
+    {
+      local_ids[dof] = fine_fespace.GetMyTDofOffset() + dof;
+    }
+    int total_count = local_count;
+    Mpi::GlobalSum(1, &total_count, space_operator.GetComm());
+    std::vector<int> counts(Mpi::Size(space_operator.GetComm())),
+        displacements(Mpi::Size(space_operator.GetComm()), 0);
+    MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
+                  space_operator.GetComm());
+    for (std::size_t rank = 1; rank < counts.size(); rank++)
+    {
+      displacements[rank] = displacements[rank - 1] + counts[rank - 1];
+    }
+    std::vector<HYPRE_BigInt> all_ids(total_count);
+    std::vector<double> all_values(total_count);
+    MPI_Allgatherv(local_ids.data(), local_count, HYPRE_MPI_BIG_INT, all_ids.data(),
+                   counts.data(), displacements.data(), HYPRE_MPI_BIG_INT,
+                   space_operator.GetComm());
+    MPI_Allgatherv(fine_true.GetData(), local_count, MPI_DOUBLE, all_values.data(),
+                   counts.data(), displacements.data(), MPI_DOUBLE,
+                   space_operator.GetComm());
+    std::map<HYPRE_BigInt, double> dictionary;
+    for (int i = 0; i < total_count; i++)
+    {
+      dictionary[all_ids[i]] = all_values[i];
+    }
+    // Direct probe of the record DOF map: |dictionary value through record id| must match
+    // |P-localized value| at every standard element DOF. Absolute values separate id
+    // errors from sign errors.
+    {
+      Vector fine_local(fine_fespace.GetVSize());
+      fine_fespace.Dof_TrueDof_Matrix()->Mult(fine_true, fine_local);
+      const auto probe_records = workspace.BuildTrueMetricElementRecords({0.7, 0.08});
+      double id_error = 0.0, sign_error = 0.0;
+      mfem::Array<int> vdofs;
+      mfem::DofTransformation transformation;
+      for (int element = 0; element < workspace.GetFineNDSpace().GetParMesh().GetNE();
+           element++)
+      {
+        fine_fespace.GetElementVDofs(element, vdofs, transformation);
+        const auto &record = probe_records[element];
+        for (int i = 0; i < vdofs.Size(); i++)
+        {
+          const int ldof = vdofs[i] >= 0 ? vdofs[i] : -1 - vdofs[i];
+          const auto found = dictionary.find(record.fine_dofs[i]);
+          const double via_dictionary = found != dictionary.end() ? found->second : 0.0;
+          const double via_prolongation = fine_local(ldof);
+          id_error = std::max(
+              id_error, std::abs(std::abs(via_dictionary) - std::abs(via_prolongation)));
+          sign_error = std::max(sign_error, std::abs(via_dictionary - via_prolongation));
+        }
+      }
+      CAPTURE(id_error, sign_error);
+      CHECK(id_error < 1.0e-12);
+    }
+    const auto records = workspace.BuildTrueMetricElementRecords({0.7, 0.08});
+    std::map<HYPRE_BigInt, std::array<double, 4>> energies;
+    for (const auto &record : records)
+    {
+      Vector local(static_cast<int>(record.fine_dofs.size()));
+      for (int i = 0; i < local.Size(); i++)
+      {
+        const auto found = dictionary.find(record.fine_dofs[i]);
+        local(i) = found != dictionary.end() ? found->second : 0.0;
+      }
+      Vector action(local.Size());
+      record.metric.Mult(local, action);
+      double absolute_sum = 0.0, signed_sum = 0.0, id_checksum = 0.0;
+      for (int i = 0; i < local.Size(); i++)
+      {
+        id_checksum += static_cast<double>(record.fine_dofs[i] % 1000003);
+        for (int j = 0; j < local.Size(); j++)
+        {
+          absolute_sum += std::abs(record.metric(i, j));
+          signed_sum += record.metric(i, j);
+        }
+      }
+      energies[record.element_id] = {local * action, absolute_sum, signed_sum, id_checksum};
+    }
+    // Gather per-element energies to every rank so all comparisons are collective and any
+    // failure is visible in the root Catch report.
+    std::vector<HYPRE_BigInt> my_elements;
+    std::vector<double> my_energies;
+    for (const auto &[element, data] : energies)
+    {
+      my_elements.push_back(element);
+      for (double value : data)
+      {
+        my_energies.push_back(value);
+      }
+    }
+    const int my_count = static_cast<int>(my_elements.size());
+    std::vector<int> gathered_counts(Mpi::Size(space_operator.GetComm()));
+    MPI_Allgather(&my_count, 1, MPI_INT, gathered_counts.data(), 1, MPI_INT,
+                  space_operator.GetComm());
+    std::vector<int> gathered_offsets(gathered_counts.size(), 0);
+    int gathered_total = gathered_counts[0];
+    for (std::size_t rank = 1; rank < gathered_counts.size(); rank++)
+    {
+      gathered_offsets[rank] = gathered_offsets[rank - 1] + gathered_counts[rank - 1];
+      gathered_total += gathered_counts[rank];
+    }
+    std::vector<HYPRE_BigInt> all_elements(gathered_total);
+    std::vector<double> all_energies(4 * gathered_total);
+    MPI_Allgatherv(my_elements.data(), my_count, HYPRE_MPI_BIG_INT, all_elements.data(),
+                   gathered_counts.data(), gathered_offsets.data(), HYPRE_MPI_BIG_INT,
+                   space_operator.GetComm());
+    std::vector<int> value_counts(gathered_counts), value_offsets(gathered_offsets);
+    for (auto &count : value_counts)
+    {
+      count *= 4;
+    }
+    for (auto &offset : value_offsets)
+    {
+      offset *= 4;
+    }
+    MPI_Allgatherv(my_energies.data(), 4 * my_count, MPI_DOUBLE, all_energies.data(),
+                   value_counts.data(), value_offsets.data(), MPI_DOUBLE,
+                   space_operator.GetComm());
+    std::map<HYPRE_BigInt, std::array<double, 4>> global_energies;
+    for (int i = 0; i < gathered_total; i++)
+    {
+      global_energies[all_elements[i]] = {all_energies[4 * i], all_energies[4 * i + 1],
+                                          all_energies[4 * i + 2], all_energies[4 * i + 3]};
+    }
+    return global_energies;
+  };
+  const auto record_energies = record_quadratic_form(hierarchy, space_op);
+  double record_energy = 0.0;
+  for (const auto &[element, data] : record_energies)
+  {
+    record_energy += data[0];
+  }
+  CAPTURE(record_energy);
+  CHECK(std::isfinite(record_energy));
+  CHECK(record_energy > 0.0);
   double sum = estimate.indicator_energy.Sum();
   Mpi::GlobalSum(1, &sum, Mpi::World());
   CHECK_THAT(sum, Catch::Matchers::WithinRel(estimate.total_energy, 1.0e-12));
@@ -1018,6 +1178,25 @@ TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
     REQUIRE(replicated_estimate.total_energy > 0.0);
     CHECK_THAT(estimate.total_energy,
                Catch::Matchers::WithinRel(replicated_estimate.total_energy, 1.0e-10));
+    const auto replicated_record_energies =
+        record_quadratic_form(replicated_hierarchy, replicated_space_op);
+    for (const auto &[element, data] : record_energies)
+    {
+      const auto reference = replicated_record_energies.find(element);
+      REQUIRE(reference != replicated_record_energies.end());
+      const auto &[energy, absolute_sum, signed_sum, id_checksum] = data;
+      const auto &[reference_energy, reference_absolute, reference_signed,
+                   reference_checksum] = reference->second;
+      CAPTURE(element, energy, reference_energy, absolute_sum, reference_absolute,
+              signed_sum, reference_signed, id_checksum, reference_checksum);
+      // Global true-DOF numbering is run-relative (rank-contiguous standard numbering,
+      // owner-major enrichment numbering), so id checksums are not compared across runs;
+      // the invariant is the physical record data evaluated through each run's own
+      // consistent dictionary.
+      CHECK_THAT(absolute_sum, Catch::Matchers::WithinRel(reference_absolute, 1.0e-10));
+      CHECK_THAT(signed_sum, Catch::Matchers::WithinRel(reference_signed, 1.0e-10));
+      CHECK_THAT(energy, Catch::Matchers::WithinRel(reference_energy, 1.0e-10));
+    }
     // Partition-ordered element mapping: rank 0 owns serial elements {0,1}, rank 1 owns
     // {2,3}.
     REQUIRE(estimate.indicator_energy.Size() == 2);
