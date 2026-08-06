@@ -95,7 +95,6 @@ runs:
         IMAGE_NAME="palace-${ARCH_LABEL}-${SOURCE_SHA:0:7}"
         {
           echo "image_name=${IMAGE_NAME}"
-          echo "cache_tag=${ARCH_LABEL}"
           echo "publish_artifacts=${PUBLISH_ARTIFACTS}"
         } >> "$GITHUB_OUTPUT"
         echo "Image name: ${IMAGE_NAME}"
@@ -147,9 +146,8 @@ runs:
     - name: Build OCI image
       shell: bash
       env:
-        # Keep one GHCR repository, but isolate matrix profiles so concurrent
-        # exports do not replace one another's cache metadata.
-        CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache:${{ steps.name.outputs.cache_tag }}
+        # Podman 4 cache repositories cannot contain a tag or digest.
+        CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
         CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         CUDA_ARCH: ${{ inputs.cuda_arch }}
         IMAGE_NAME: ${{ steps.name.outputs.image_name }}
