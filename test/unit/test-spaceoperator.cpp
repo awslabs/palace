@@ -529,6 +529,24 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
     CHECK(entity_estimate.total_energy > 0.0);
     CHECK_THAT(entity_estimate.indicator_energy.Sum(),
                Catch::Matchers::WithinRel(entity_estimate.total_energy, 1.0e-12));
+
+    // With a zero excitation, the driven residual at real omega is exactly the eigen
+    // residual.
+    ComplexVector zero_rhs(space_op.GetNDTrueVSize());
+    zero_rhs = 0.0;
+    const auto driven_estimate = hierarchy.EstimatePolynomialDrivenResidual(
+        0.7, coarse_field, 1, zero_rhs, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+    const auto eigen_estimate = hierarchy.EstimatePolynomialEigenResidual(
+        {0.7, 0.0}, coarse_field, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+    REQUIRE(eigen_estimate.total_energy > 0.0);
+    CHECK_THAT(driven_estimate.total_energy,
+               Catch::Matchers::WithinRel(eigen_estimate.total_energy, 1.0e-12));
+    for (int element = 0; element < eigen_estimate.indicator_energy.Size(); element++)
+    {
+      CHECK_THAT(driven_estimate.indicator_energy(element),
+                 Catch::Matchers::WithinAbs(eigen_estimate.indicator_energy(element),
+                                            1.0e-12 * eigen_estimate.total_energy));
+    }
   }
 
   auto K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ONE);
@@ -1012,6 +1030,123 @@ TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
                      replicated_estimate.indicator_energy(offset + element), 1.0e-9));
     }
   }
+}
+
+TEST_CASE("Hierarchical Maxwell driven excitation is Galerkin consistent",
+          "[spaceoperator][singularelements][hierarchical][Serial]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 1);
+  auto serial_mesh = InternalSheetMesh();
+  const auto sheet_features = fem::singular::ExtractSerialSheetFeatures(serial_mesh, {7});
+  std::vector<fem::singular::GlobalVertexId> source_vertex_ids(serial_mesh.GetNV());
+  std::vector<fem::singular::GlobalVertexId> source_element_ids(serial_mesh.GetNE());
+  std::iota(source_vertex_ids.begin(), source_vertex_ids.end(), 0);
+  std::iota(source_element_ids.begin(), source_element_ids.end(), 0);
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
+  const auto local_features = fem::singular::DistributeSerialSheetFeatures(
+      sheet_features, *parallel_mesh, source_vertex_ids, source_element_ids);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
+
+  config::json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "unused.mesh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 2.3}, {"Permeability", 1.7}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {1}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"Attributes", {7}},
+           {"R", 50.0},
+           {"Excitation", true},
+           {"Direction", "+X"}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Driven", {{"Samples", {{{"Type", "Point"}, {"Freq", {0.35}}}}}}},
+        {"SingularElements",
+         {{"Attributes", {7}},
+          {"Order", 1},
+          {"QuadratureOrder", 8},
+          {"AbsTol", 1.0e-3},
+          {"RelTol", 1.0e-3},
+          {"MaxSubdivisions", 6}}},
+        {"Linear",
+         {{"Type", "STRUMPACK"}, {"MGMaxLevels", 1}, {"Tol", 1.0e-12}, {"MaxIts", 20}}}}}};
+  IoData iodata(config, false);
+  SpaceOperator space_op(iodata, meshes, &local_features, nullptr, &source_vertex_ids);
+  REQUIRE(space_op.HasSingularEnrichment());
+  HierarchicalMaxwellDomainData hierarchy(space_op);
+
+  const double omega = 0.6;
+  ComplexVector coarse_rhs(space_op.GetNDTrueVSize());
+  coarse_rhs = 0.0;
+  REQUIRE(space_op.GetExcitationVector(1, omega, coarse_rhs));
+  const auto fine_excitation = hierarchy.AssembleFineExcitation(1, omega, coarse_rhs);
+  REQUIRE(fine_excitation.real.Size() ==
+          hierarchy.GetFineStandardSize() + hierarchy.GetEnrichmentSize());
+
+  // Galerkin consistency: the coarse restriction of the fine standard load must match the
+  // assembled coarse excitation on free coarse DOFs, and enrichment rows splice exactly.
+  const int coarse_standard = space_op.GetNDSpace().GetTrueVSize();
+  Vector restricted(coarse_standard);
+  restricted = 0.0;
+  const auto &injection = hierarchy.GetInjection();
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+    {
+      restricted(column) += injection.columns[column].values[entry] *
+                            fine_excitation.imag(injection.columns[column].dofs[entry]);
+    }
+  }
+  double difference = 0.0, scale = 0.0, enrichment_difference = 0.0, enrichment_scale = 0.0;
+  for (int dof = 0; dof < coarse_standard; dof++)
+  {
+    if (!hierarchy.GetCoarseEssentialMask()[dof])
+    {
+      difference = std::max(difference, std::abs(restricted(dof) - coarse_rhs.Imag()(dof)));
+      scale = std::max(scale, std::abs(coarse_rhs.Imag()(dof)));
+    }
+  }
+  for (int dof = 0; dof < hierarchy.GetEnrichmentSize(); dof++)
+  {
+    enrichment_difference =
+        std::max(enrichment_difference,
+                 std::abs(fine_excitation.imag(hierarchy.GetFineStandardSize() + dof) -
+                          coarse_rhs.Imag()(coarse_standard + dof)));
+    enrichment_scale =
+        std::max(enrichment_scale, std::abs(coarse_rhs.Imag()(coarse_standard + dof)));
+  }
+  CAPTURE(difference, scale, enrichment_difference, enrichment_scale);
+  REQUIRE(scale > 0.0);
+  REQUIRE(enrichment_scale > 0.0);
+  CHECK(difference < 1.0e-10 * scale);
+  CHECK(enrichment_difference == 0.0);
+  CHECK(fine_excitation.real.Norml2() == 0.0);
+
+  // The driven estimate with the physical load runs end to end and differs from the
+  // load-free eigen estimate.
+  ComplexVector field(space_op.GetNDTrueVSize());
+  field = 0.0;
+  for (int dof = 0; dof < field.Size(); dof++)
+  {
+    field.Real()(dof) = std::sin(0.21 * dof + 0.4);
+    field.Imag()(dof) = std::cos(0.17 * dof - 0.3);
+  }
+  for (int dof : space_op.GetCombinedNDDbcTDofList())
+  {
+    field.Real()(dof) = 0.0;
+    field.Imag()(dof) = 0.0;
+  }
+  const auto driven = hierarchy.EstimatePolynomialDrivenResidual(
+      omega, field, 1, coarse_rhs, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+  const auto eigen = hierarchy.EstimatePolynomialEigenResidual(
+      {omega, 0.0}, field, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+  CAPTURE(driven.total_energy, eigen.total_energy);
+  CHECK(driven.total_energy > 0.0);
+  CHECK(std::abs(driven.total_energy - eigen.total_energy) > 1.0e-8 * eigen.total_energy);
 }
 
 TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-order maps",

@@ -19,6 +19,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/floquetportoperator.hpp"
+#include "models/hierarchicalmaxwellestimator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
@@ -384,6 +385,15 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
         iodata.solver.linear.estimator_mg);
   }
   ErrorIndicator indicator;
+  // Opt-in hierarchical p+1 residual estimation for three-dimensional singular AMR; see
+  // the eigenmode driver for the wedge qualification record. The driven residual uses the
+  // exact excitation load b(omega) - A(omega) x.
+  std::unique_ptr<HierarchicalMaxwellDomainData> hierarchy;
+  if (!is_2d && iodata.model.refinement.max_it > 0 &&
+      iodata.solver.singular_elements.hierarchical_estimator)
+  {
+    hierarchy = std::make_unique<HierarchicalMaxwellDomainData>(space_op);
+  }
 
   const fem::singular::AdaptiveAssemblyOptions surface_options{
       iodata.solver.singular_elements.quadrature_order,
@@ -603,6 +613,30 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
         estimator_2d->AddErrorIndicator(standard_electric, standard_magnetic,
                                         total_field_energy, indicator);
       }
+      else if (hierarchy)
+      {
+        const auto patch_shape = hierarchy->EntityPatchesAvailable()
+                                     ? HierarchicalMaxwellDomainData::PatchShape::ENTITY
+                                     : HierarchicalMaxwellDomainData::PatchShape::ELEMENT;
+        const auto estimate = hierarchy->EstimatePolynomialDrivenResidual(
+            omega, electric_field, excitation_index, rhs, patch_shape);
+        Vector local_indicator(estimate.indicator_energy.Size());
+        const double scale = total_field_energy > 0.0 ? 0.5 / total_field_energy : 1.0;
+        for (int element = 0; element < local_indicator.Size(); element++)
+        {
+          local_indicator(element) =
+              std::sqrt(scale * std::max(estimate.indicator_energy(element), 0.0));
+        }
+        indicator.AddIndicator(local_indicator);
+        ErrorIndicator sliced_diagnostic;
+        estimator_3d->AddErrorIndicator(standard_electric, standard_magnetic,
+                                        total_field_energy, sliced_diagnostic);
+        Mpi::Print(" Hierarchical driven residual: energy = {:.3e}, indicator = {:.3e} "
+                   "(sliced recovery {:.3e})\n",
+                   estimate.total_energy,
+                   std::sqrt(scale * std::max(estimate.total_energy, 0.0)),
+                   sliced_diagnostic.Norml2(space_op.GetComm()));
+      }
       else
       {
         estimator_3d->AddErrorIndicator(standard_electric, standard_magnetic,
@@ -666,7 +700,9 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"LumpedPorts", space_op.GetLumpedPortOp().Size()},
           {"FieldGridOutput", false},
-          {"ErrorEstimator", "standard-space smooth remainder on the complete mesh"},
+          {"ErrorEstimator", hierarchy
+                                 ? "hierarchical p+1 polynomial residual lifting"
+                                 : "standard-space smooth remainder on the complete mesh"},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3
                                        ? GetSingularSurfaceIntegrabilityMetadata(
                                              *singular_features.GetSheetFeatures())

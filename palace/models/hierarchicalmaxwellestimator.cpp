@@ -7,7 +7,9 @@
 #include <cmath>
 #include <map>
 
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/singularassembly.hpp"
 #include "fem/singularsystem.hpp"
 #include "models/spaceoperator.hpp"
@@ -528,65 +530,32 @@ HierarchicalMaxwellDomainData::BuildPolynomialMetricElementPatches(
 }
 
 HierarchicalMaxwellDomainData::ParallelEstimate
-HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
-    std::complex<double> omega, const ComplexVector &coarse_field,
+HierarchicalMaxwellDomainData::LiftLocalComplexResidual(
+    std::complex<double> omega, fem::hierarchical::ComplexResidual residual,
     PatchShape patch_shape) const
 {
   auto &coarse_fespace = space_op->GetNDSpace().Get();
   auto &fine_fespace = fine_nd_space->Get();
   const auto &numbering = space_op->GetSingularParallelNumbering().nd;
-  const int coarse_standard_true = coarse_fespace.GetTrueVSize();
   const int fine_standard_true = fine_fespace.GetTrueVSize();
   const int enrichment_owned = static_cast<int>(numbering.owned_size);
-  MFEM_VERIFY(coarse_field.Size() == coarse_standard_true + enrichment_owned,
-              "Hierarchical Maxwell estimator received an invalid coarse true field!");
-
-  const auto inject_component = [&](const Vector &coarse_true, Vector &fine_local)
-  {
-    Vector coarse_standard_true_vector(coarse_standard_true);
-    Vector coarse_enrichment_true(enrichment_owned);
-    for (int dof = 0; dof < coarse_standard_true; dof++)
-    {
-      coarse_standard_true_vector(dof) = coarse_true(dof);
-    }
-    for (int dof = 0; dof < enrichment_owned; dof++)
-    {
-      coarse_enrichment_true(dof) = coarse_true(coarse_standard_true + dof);
-    }
-    Vector coarse_standard_local(coarse_fespace.GetVSize());
-    coarse_fespace.Dof_TrueDof_Matrix()->Mult(coarse_standard_true_vector,
-                                              coarse_standard_local);
-    Vector fine_standard_local(fine_fespace.GetVSize());
-    mfem::PRefinementTransferOperator transfer(coarse_fespace, fine_fespace);
-    transfer.Mult(coarse_standard_local, fine_standard_local);
-    Vector fine_enrichment_local(enrichment_size);
-    enrichment_prolongation->Mult(coarse_enrichment_true, fine_enrichment_local);
-    fine_local.SetSize(fine_fespace.GetVSize() + enrichment_size);
-    for (int dof = 0; dof < fine_fespace.GetVSize(); dof++)
-    {
-      fine_local(dof) = fine_standard_local(dof);
-    }
-    for (int dof = 0; dof < enrichment_size; dof++)
-    {
-      fine_local(fine_fespace.GetVSize() + dof) = fine_enrichment_local(dof);
-    }
-  };
-
-  Vector injected_real, injected_imag;
-  inject_component(coarse_field.Real(), injected_real);
-  inject_component(coarse_field.Imag(), injected_imag);
-  const auto physical = BuildComplexPolynomialContributions(omega);
 
   if (patch_shape == PatchShape::ENTITY)
   {
     // Certified edge/face/interior lifting through the shared engine, currently limited
     // to one rank with identity local-to-true layouts. On that layout the local residual
-    // is complete, so essential elimination can happen directly in local coordinates.
+    // is complete, so essential elimination happens directly in local coordinates.
     MFEM_VERIFY(entity_patches_available,
                 "Entity-patch hierarchical lifting requires one rank with identity "
                 "local-to-true layouts; use the element-patch shape instead!");
-    const auto residual = fem::hierarchical::AssembleComplexResidual(
-        injected_real.Size(), physical, injected_real, injected_imag, fine_essential);
+    for (int dof = 0; dof < residual.real.Size(); dof++)
+    {
+      if (fine_essential[dof])
+      {
+        residual.real(dof) = 0.0;
+        residual.imag(dof) = 0.0;
+      }
+    }
     const auto metric = BuildPolynomialMetricContributions(omega);
     const auto lifting = fem::hierarchical::LiftComplexResidualByPatches(
         space_op->GetMesh().Get(), coarse_fespace, fine_fespace, injection, metric,
@@ -600,10 +569,6 @@ HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
     estimate.total_energy = lifting.energy;
     return estimate;
   }
-
-  const std::vector<bool> no_local_essential(injected_real.Size(), false);
-  const auto local_residual = fem::hierarchical::AssembleComplexResidual(
-      injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);
 
   const auto local_to_true = [&](const Vector &local, Vector &combined_true)
   {
@@ -640,8 +605,8 @@ HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
   };
 
   Vector residual_true_real, residual_true_imag;
-  local_to_true(local_residual.real, residual_true_real);
-  local_to_true(local_residual.imag, residual_true_imag);
+  local_to_true(residual.real, residual_true_real);
+  local_to_true(residual.imag, residual_true_imag);
   auto metric_patches = BuildPolynomialMetricElementPatches(omega);
   fem::singular::ParallelElementPatchInverse inverse(
       fine_fespace, numbering, metric_patches, 1.0, 1.0, fine_standard_essential_true_dofs,
@@ -700,6 +665,156 @@ HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
   estimate.total_energy = estimate.indicator_energy.Sum();
   Mpi::GlobalSum(1, &estimate.total_energy, space_op->GetComm());
   return estimate;
+}
+
+namespace
+{
+
+// Inject one component of the coarse combined true field into the uneliminated local
+// combined p+1 layout.
+void InjectCoarseComponent(mfem::ParFiniteElementSpace &coarse_fespace,
+                           mfem::ParFiniteElementSpace &fine_fespace,
+                           const mfem::HypreParMatrix &enrichment_prolongation,
+                           int enrichment_size, const Vector &coarse_true,
+                           Vector &fine_local)
+{
+  const int coarse_standard_true = coarse_fespace.GetTrueVSize();
+  const int enrichment_owned = enrichment_prolongation.Width();
+  Vector coarse_standard_true_vector(coarse_standard_true);
+  Vector coarse_enrichment_true(enrichment_owned);
+  for (int dof = 0; dof < coarse_standard_true; dof++)
+  {
+    coarse_standard_true_vector(dof) = coarse_true(dof);
+  }
+  for (int dof = 0; dof < enrichment_owned; dof++)
+  {
+    coarse_enrichment_true(dof) = coarse_true(coarse_standard_true + dof);
+  }
+  Vector coarse_standard_local(coarse_fespace.GetVSize());
+  coarse_fespace.Dof_TrueDof_Matrix()->Mult(coarse_standard_true_vector,
+                                            coarse_standard_local);
+  Vector fine_standard_local(fine_fespace.GetVSize());
+  mfem::PRefinementTransferOperator transfer(coarse_fespace, fine_fespace);
+  transfer.Mult(coarse_standard_local, fine_standard_local);
+  Vector fine_enrichment_local(enrichment_size);
+  enrichment_prolongation.Mult(coarse_enrichment_true, fine_enrichment_local);
+  fine_local.SetSize(fine_fespace.GetVSize() + enrichment_size);
+  for (int dof = 0; dof < fine_fespace.GetVSize(); dof++)
+  {
+    fine_local(dof) = fine_standard_local(dof);
+  }
+  for (int dof = 0; dof < enrichment_size; dof++)
+  {
+    fine_local(fine_fespace.GetVSize() + dof) = fine_enrichment_local(dof);
+  }
+}
+
+}  // namespace
+
+HierarchicalMaxwellDomainData::ParallelEstimate
+HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
+    std::complex<double> omega, const ComplexVector &coarse_field,
+    PatchShape patch_shape) const
+{
+  auto &coarse_fespace = space_op->GetNDSpace().Get();
+  auto &fine_fespace = fine_nd_space->Get();
+  const auto &numbering = space_op->GetSingularParallelNumbering().nd;
+  const int coarse_standard_true = coarse_fespace.GetTrueVSize();
+  const int enrichment_owned = static_cast<int>(numbering.owned_size);
+  MFEM_VERIFY(coarse_field.Size() == coarse_standard_true + enrichment_owned,
+              "Hierarchical Maxwell estimator received an invalid coarse true field!");
+  Vector injected_real, injected_imag;
+  InjectCoarseComponent(coarse_fespace, fine_fespace, *enrichment_prolongation,
+                        enrichment_size, coarse_field.Real(), injected_real);
+  InjectCoarseComponent(coarse_fespace, fine_fespace, *enrichment_prolongation,
+                        enrichment_size, coarse_field.Imag(), injected_imag);
+  const auto physical = BuildComplexPolynomialContributions(omega);
+  const std::vector<bool> no_local_essential(injected_real.Size(), false);
+  auto residual = fem::hierarchical::AssembleComplexResidual(
+      injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);
+  return LiftLocalComplexResidual(omega, std::move(residual), patch_shape);
+}
+
+fem::hierarchical::ComplexResidual
+HierarchicalMaxwellDomainData::AssembleFineExcitation(int excitation_idx, double omega,
+                                                      const ComplexVector &coarse_rhs) const
+{
+  auto &fine_fespace = fine_nd_space->Get();
+  const auto &numbering = space_op->GetSingularParallelNumbering().nd;
+  const int coarse_standard_true = space_op->GetNDSpace().GetTrueVSize();
+  const int enrichment_owned = static_cast<int>(numbering.owned_size);
+  MFEM_VERIFY(coarse_rhs.Size() == coarse_standard_true + enrichment_owned,
+              "Hierarchical Maxwell excitation received an invalid coarse right-hand "
+              "side!");
+  const int local_size = fine_fespace.GetVSize() + enrichment_size;
+  fem::hierarchical::ComplexResidual excitation{Vector(local_size), Vector(local_size)};
+  excitation.real = 0.0;
+  excitation.imag = 0.0;
+
+  // Standard rows: the same boundary excitation coefficients as the coarse assembly,
+  // integrated against p+1 test functions. b = i omega RHS1 puts the load on the
+  // imaginary slot for the real mode coefficients used by lumped ports.
+  SumVectorCoefficient fb(space_op->GetMesh().SpaceDimension());
+  space_op->GetLumpedPortOp().AddExcitationBdrCoefficients(excitation_idx, fb);
+  space_op->GetSurfaceCurrentOp().AddExcitationBdrCoefficients(fb);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, space_op->GetComm());
+  if (!empty)
+  {
+    mfem::ParLinearForm rhs1(&fine_fespace);
+    rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+    rhs1.UseFastAssembly(false);
+    rhs1.Assemble();
+    for (int dof = 0; dof < fine_fespace.GetVSize(); dof++)
+    {
+      excitation.imag(dof) = omega * rhs1[dof];
+    }
+  }
+
+  // Enrichment rows are independent of the standard order: splice the exact coarse
+  // combined entries (already i omega scaled and essential-eliminated).
+  Vector owned_real(enrichment_owned), owned_imag(enrichment_owned);
+  for (int dof = 0; dof < enrichment_owned; dof++)
+  {
+    owned_real(dof) = coarse_rhs.Real()(coarse_standard_true + dof);
+    owned_imag(dof) = coarse_rhs.Imag()(coarse_standard_true + dof);
+  }
+  Vector local_real(enrichment_size), local_imag(enrichment_size);
+  enrichment_prolongation->Mult(owned_real, local_real);
+  enrichment_prolongation->Mult(owned_imag, local_imag);
+  for (int dof = 0; dof < enrichment_size; dof++)
+  {
+    excitation.real(fine_fespace.GetVSize() + dof) += local_real(dof);
+    excitation.imag(fine_fespace.GetVSize() + dof) += local_imag(dof);
+  }
+  return excitation;
+}
+
+HierarchicalMaxwellDomainData::ParallelEstimate
+HierarchicalMaxwellDomainData::EstimatePolynomialDrivenResidual(
+    double omega, const ComplexVector &coarse_field, int excitation_idx,
+    const ComplexVector &coarse_rhs, PatchShape patch_shape) const
+{
+  auto &coarse_fespace = space_op->GetNDSpace().Get();
+  auto &fine_fespace = fine_nd_space->Get();
+  const auto &numbering = space_op->GetSingularParallelNumbering().nd;
+  const int coarse_standard_true = coarse_fespace.GetTrueVSize();
+  const int enrichment_owned = static_cast<int>(numbering.owned_size);
+  MFEM_VERIFY(coarse_field.Size() == coarse_standard_true + enrichment_owned,
+              "Hierarchical Maxwell estimator received an invalid coarse true field!");
+  Vector injected_real, injected_imag;
+  InjectCoarseComponent(coarse_fespace, fine_fespace, *enrichment_prolongation,
+                        enrichment_size, coarse_field.Real(), injected_real);
+  InjectCoarseComponent(coarse_fespace, fine_fespace, *enrichment_prolongation,
+                        enrichment_size, coarse_field.Imag(), injected_imag);
+  const auto physical = BuildComplexPolynomialContributions({omega, 0.0});
+  const std::vector<bool> no_local_essential(injected_real.Size(), false);
+  auto residual = fem::hierarchical::AssembleComplexResidual(
+      injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);
+  const auto excitation = AssembleFineExcitation(excitation_idx, omega, coarse_rhs);
+  residual.real += excitation.real;
+  residual.imag += excitation.imag;
+  return LiftLocalComplexResidual({omega, 0.0}, std::move(residual), patch_shape);
 }
 
 }  // namespace palace

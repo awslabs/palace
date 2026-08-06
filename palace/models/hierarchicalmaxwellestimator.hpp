@@ -118,6 +118,23 @@ public:
   };
   bool EntityPatchesAvailable() const { return entity_patches_available; }
 
+private:
+  // Shared lifting tail: consumes the uneliminated local complex residual and applies one
+  // fixed lifting map of the selected patch shape identically to both components.
+  ParallelEstimate LiftLocalComplexResidual(std::complex<double> omega,
+                                            fem::hierarchical::ComplexResidual residual,
+                                            PatchShape patch_shape) const;
+
+public:
+  // Port-excitation load b(omega) = i omega RHS1 evaluated against the p+1 test space, in
+  // the uneliminated local combined layout. Standard rows assemble the same lumped-port
+  // and surface-current boundary coefficients as the coarse excitation; enrichment rows
+  // are order-independent and splice exactly from the coarse combined right-hand side.
+  // Public so tests can check Galerkin consistency against the coarse excitation.
+  fem::hierarchical::ComplexResidual
+  AssembleFineExcitation(int excitation_idx, double omega,
+                         const ComplexVector &coarse_rhs) const;
+
   // Parallel exact polynomial eigen-residual estimate (zero RHS). The coarse combined true
   // field is injected to the local p+1 standard/singular layout, all local element/facet
   // residuals are summed to parallel true DOFs, and one fixed lifting map (of the selected
@@ -127,6 +144,14 @@ public:
   EstimatePolynomialEigenResidual(std::complex<double> omega,
                                   const ComplexVector &coarse_field,
                                   PatchShape patch_shape = PatchShape::ELEMENT) const;
+
+  // Driven counterpart: the residual is b(omega) - A(omega) x for the coarse solution x
+  // and the exact excitation functional of the selected port drive, so a converged coarse
+  // solve has exactly the hierarchical p-enrichment residual left over.
+  ParallelEstimate
+  EstimatePolynomialDrivenResidual(double omega, const ComplexVector &coarse_field,
+                                   int excitation_idx, const ComplexVector &coarse_rhs,
+                                   PatchShape patch_shape = PatchShape::ELEMENT) const;
 };
 
 }  // namespace palace
