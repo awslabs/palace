@@ -25,7 +25,8 @@ spack:
       require: ~hdf5
     mpi:
       require: openmpi
-    # OpenMPI 2.1.6 does not build with the current macOS assembler.
+    # Spack's variant optimization otherwise prefers OpenMPI 2.1.6, which does
+    # not build with the current macOS assembler.
     openmpi:
       require: "@5:"
     blas:

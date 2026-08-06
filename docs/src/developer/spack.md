@@ -27,22 +27,10 @@ about specs, variants, and environments.
 
 On macOS, install the compiler and build tools with
 [Homebrew](https://brew.sh/), then let Spack build the *Palace* library
-dependency graph. First install the Xcode command-line tools, if needed, and
-the Homebrew packages used by the macOS CI build:
+dependency graph. First install the Xcode command-line tools, if needed:
 
 ```sh
 xcode-select --install
-brew install \
-  gcc \
-  autoconf \
-  automake \
-  cmake \
-  diffutils \
-  libtool \
-  m4 \
-  perl \
-  pkgconf \
-  python
 ```
 
 Palace dependencies require a Fortran compiler, so this configuration uses
@@ -73,29 +61,20 @@ path = joinpath("spack", "spack.yaml")
 Markdown.parse("```yaml\n$(read(path, String))\n```")
 ```
 
-Register the Homebrew compiler and build tools using their formula prefixes:
+Run the checked-in
+[`setup-macos.sh`](spack/setup-macos.sh) script from the environment directory.
+It installs or upgrades the Homebrew compiler and build tools, then registers
+them with Spack using their stable Homebrew formula prefixes:
 
 ```sh
-spack -e . compiler find "$(brew --prefix gcc)/bin"
-
-spack -e . external find --not-buildable \
-  --path "$(brew --prefix autoconf)/bin" \
-  --path "$(brew --prefix automake)/bin" \
-  --path "$(brew --prefix cmake)/bin" \
-  --path "$(brew --prefix diffutils)/bin" \
-  --path "$(brew --prefix libtool)/bin" \
-  --path "$(brew --prefix m4)/bin" \
-  --path "$(brew --prefix perl)/bin" \
-  --path "$(brew --prefix pkgconf)/bin" \
-  --path "$(brew --prefix python)/bin" \
-  autoconf automake cmake diffutils libtool m4 perl pkgconf python
-
+~/repos/palace/docs/src/developer/spack/setup-macos.sh
 spack -e . develop --path=~/repos/palace palace@develop
 ```
 
-These commands discover the concrete Homebrew versions and add them to your
-copy of `spack.yaml`. Re-run them after upgrading the Homebrew packages, then
-remove `spack.lock` and concretize again. GNU Make and GNU sed remain
+The script discovers the concrete Homebrew versions and adds them to your copy
+of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
+alone and upgrades outdated ones. After an upgrade, remove `spack.lock` and
+concretize again. GNU Make and GNU sed remain
 Spack-built because Homebrew installs them as `gmake` and `gsed`, while Spack
 expects `make` and `sed`. No forced links or `PATH` changes are needed.
 

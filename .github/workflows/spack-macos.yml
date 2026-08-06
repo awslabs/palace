@@ -52,7 +52,7 @@ jobs:
               - 'test/unit/**'
               - 'test/data/**'
               - 'spack_repo/**'
-              - 'docs/src/developer/spack/spack.yaml'
+              - 'docs/src/developer/spack/**'
               - '.github/workflows/spack-macos.yml'
 
   build-test-macos-spack:
@@ -64,38 +64,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      # Install the toolchain from Homebrew rather than relying on whatever the
-      # runner image preinstalls, so this job matches what a developer starting
-      # from a stock macOS box would have. The runner ships cmake, python, and
-      # other build tools; a developer generally does not, so depending on them
-      # would test a machine configuration nobody actually has.
-      #
-      # gcc (with g++/gfortran) compiles the whole build; see the packages:
-      # block in "Prepare spack.yaml" for why. Build-only tools are provided by
-      # Homebrew so Spack can focus on the library DAG. openmpi/openblas are
-      # still built by Spack from the spec/cache for reproducibility (the same
-      # way palace-ci builds them on Linux instead of apt-installing).
-      - name: Install build tools from Homebrew
-        run: |
-          # GitHub's runner image includes this tap, but none of the formulas
-          # below use it. Remove it rather than weakening Homebrew's tap trust
-          # checks or asking developers to trust an unrelated third-party tap.
-          if brew tap | grep -qx aws/tap; then
-            brew untap aws/tap
-          fi
-
-          brew install \
-            gcc \
-            autoconf \
-            automake \
-            cmake \
-            diffutils \
-            libtool \
-            m4 \
-            perl \
-            pkgconf \
-            python
-
       - name: Setup Spack
         uses: spack/setup-spack@v3
         with:
@@ -103,6 +71,16 @@ jobs:
           packages_ref: releases/v2026.06
           buildcache: true
           color: true
+
+      - name: Install and configure macOS build tools
+        run: |
+          # GitHub's runner image includes this unused, untrusted tap.
+          if brew tap | grep -qx aws/tap; then
+            brew untap aws/tap
+          fi
+
+          cp docs/src/developer/spack/spack.yaml spack.yaml
+          docs/src/developer/spack/setup-macos.sh
 
       - name: Patch Spack package.py files for known problems
         run: |
@@ -124,8 +102,6 @@ jobs:
 
       - name: Prepare spack.yaml
         run: |
-          cp docs/src/developer/spack/spack.yaml spack.yaml
-
           # Isolate GHCR buildcaches by Spack version (see palace-ci). Darwin
           # binaries carry platform=darwin + the microarch in their DAG hash, so
           # they never collide with the Linux OCI tags in the same cache.
@@ -140,54 +116,6 @@ jobs:
             --oci-password-variable GITHUB_TOKEN \
             local-buildcache \
             "oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
-
-      - name: Configure Compilers
-        run: |
-          spack -e . compiler find "$(brew --prefix gcc)/bin"
-          spack -e . compiler list
-
-          # Register build tools as externals so Spack does not rebuild them
-          # with gcc, which the global gcc requirement would otherwise force:
-          #   - python: CPython has a hard "platform=darwin %gcc" conflict (it
-          #     does not build with gcc on macOS) and is a build dep of
-          #     petsc/libxsmm.
-          #   - cmake: its macOS source uses __builtin_available, an
-          #     apple-clang-only builtin that gcc cannot compile.
-          #   - perl and autotools: together they pull in a large build-only
-          #     dependency chain and are used to regenerate OpenMPI's build
-          #     system.
-          #   - diffutils: a PETSc build dependency that otherwise also pulls
-          #     Spack's libiconv into the build-only dependency chain.
-          #   - pkgconf: a build-only dependency used by Palace and OpenMPI.
-          # Taking them as externals keeps the compiled DAG entirely gcc.
-          #
-          # Search only the Homebrew prefixes, never the whole PATH: `--path`
-          # replaces the default PATH scan rather than adding to it, so this
-          # pins each external to the brew copy installed above instead of
-          # silently picking up a runner-preinstalled tool a developer would not
-          # have.
-          spack -e . external find --not-buildable \
-            --path "$(brew --prefix autoconf)/bin" \
-            --path "$(brew --prefix automake)/bin" \
-            --path "$(brew --prefix cmake)/bin" \
-            --path "$(brew --prefix diffutils)/bin" \
-            --path "$(brew --prefix libtool)/bin" \
-            --path "$(brew --prefix m4)/bin" \
-            --path "$(brew --prefix perl)/bin" \
-            --path "$(brew --prefix pkgconf)/bin" \
-            --path "$(brew --prefix python)/bin" \
-            autoconf automake cmake diffutils libtool m4 perl pkgconf python
-
-          # `external find` reports nothing and exits 0 when a package is not
-          # found, which would silently fall back to building the tool with gcc
-          # (or, for python, hitting its %gcc conflict) much later in the run.
-          # Fail here instead, where the cause is obvious.
-          for tool in autoconf automake cmake diffutils libtool m4 perl pkgconf python; do
-            if ! spack -e . config get packages | grep -q "^  ${tool}:"; then
-              echo "::error::Expected external '${tool}' was not detected"
-              exit 1
-            fi
-          done
 
       - name: Display spack.yaml
         run: |
