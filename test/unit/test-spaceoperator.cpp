@@ -390,6 +390,17 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
   SpaceOperator space_op(iodata, meshes, tetrahedral ? &local_sheet_features : nullptr,
                          tetrahedral ? nullptr : &local_line_features, &source_vertex_ids);
   REQUIRE(space_op.HasSingularEnrichment());
+  REQUIRE(space_op.GetSingularMaterialCoefficients().size() ==
+          static_cast<std::size_t>(meshes.back()->GetNE()));
+  REQUIRE(space_op.GetSingularImagMaterialCoefficients().size() ==
+          static_cast<std::size_t>(meshes.back()->GetNE()));
+  REQUIRE(space_op.GetSingularAbsMaterialCoefficients().size() ==
+          static_cast<std::size_t>(meshes.back()->GetNE()));
+  REQUIRE((space_op.GetSingularFeatures() != nullptr) == tetrahedral);
+  REQUIRE((space_op.GetTriangleSingularFeatures() != nullptr) == !tetrahedral);
+  REQUIRE(space_op.GetNDDbcAttributes().Size() > 0);
+  CHECK(space_op.GetSingularAssemblyOptions().quadrature_order ==
+        iodata.solver.singular_elements.quadrature_order);
 
   auto K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ONE);
   auto K_zero = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);

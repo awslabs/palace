@@ -450,12 +450,12 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
              minimum_h1_basis_incidences, maximum_h1_basis_incidences,
              minimum_nd_basis_incidences, maximum_nd_basis_incidences);
 
-  std::vector<fem::singular::IsotropicMaterialCoefficients> materials(GetMesh().GetNE(),
-                                                                      {1.0, 1.0});
-  std::vector<fem::singular::IsotropicMaterialCoefficients> imaginary_materials(
-      GetMesh().GetNE(), {0.0, 1.0});
-  std::vector<fem::singular::IsotropicMaterialCoefficients> absolute_materials(
-      GetMesh().GetNE(), {1.0, 1.0});
+  singular_material_coefficients.assign(GetMesh().GetNE(), {1.0, 1.0});
+  singular_imag_material_coefficients.assign(GetMesh().GetNE(), {0.0, 1.0});
+  singular_abs_material_coefficients.assign(GetMesh().GetNE(), {1.0, 1.0});
+  auto &materials = singular_material_coefficients;
+  auto &imaginary_materials = singular_imag_material_coefficients;
+  auto &absolute_materials = singular_abs_material_coefficients;
   for (int element = 0; element < GetMesh().GetNE(); element++)
   {
     const int attribute = GetMesh().Get().GetAttribute(element);

@@ -101,6 +101,15 @@ private:
   std::vector<fem::singular::ParallelSparseEnrichmentMatrices> singular_domain_abs_matrices;
   std::vector<fem::singular::LocalNDElementPatchMatrices>
       singular_nd_element_patch_matrices;
+  // Element material batches used by singular domain assembly. Retaining these exact
+  // production coefficients lets the hierarchical estimator assemble its p+1 local
+  // residual and positive metric without reconstructing material data or building a
+  // global fine operator.
+  std::vector<fem::singular::IsotropicMaterialCoefficients> singular_material_coefficients;
+  std::vector<fem::singular::IsotropicMaterialCoefficients>
+      singular_imag_material_coefficients;
+  std::vector<fem::singular::IsotropicMaterialCoefficients>
+      singular_abs_material_coefficients;
   std::vector<fem::singular::ParallelSparseOperatorBlocks>
       singular_lumped_stiffness_matrices;
   std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_lumped_damping_matrices;
@@ -321,6 +330,34 @@ public:
   const fem::singular::TriangleDofTopology *GetTriangleSingularDofTopology() const
   {
     return triangle_singular_dofs.get();
+  }
+  const fem::singular::FeatureTopology *GetSingularFeatures() const
+  {
+    return singular_features;
+  }
+  const fem::singular::TriangleFeatureTopology *GetTriangleSingularFeatures() const
+  {
+    return triangle_singular_features;
+  }
+  const mfem::Array<int> &GetNDDbcAttributes() const { return dbc_attr; }
+  const fem::singular::AdaptiveAssemblyOptions &GetSingularAssemblyOptions() const
+  {
+    return singular_assembly_options;
+  }
+  const auto &GetSingularMaterialCoefficients() const
+  {
+    MFEM_VERIFY(HasSingularEnrichment(), "Space operator has no singular materials!");
+    return singular_material_coefficients;
+  }
+  const auto &GetSingularImagMaterialCoefficients() const
+  {
+    MFEM_VERIFY(HasSingularEnrichment(), "Space operator has no singular materials!");
+    return singular_imag_material_coefficients;
+  }
+  const auto &GetSingularAbsMaterialCoefficients() const
+  {
+    MFEM_VERIFY(HasSingularEnrichment(), "Space operator has no singular materials!");
+    return singular_abs_material_coefficients;
   }
   const fem::singular::ParallelSparseEnrichmentMatrices &GetSingularDomainMatrices() const
   {
