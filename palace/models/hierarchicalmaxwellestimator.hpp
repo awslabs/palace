@@ -10,6 +10,7 @@
 #include <mfem.hpp>
 
 #include "fem/hierarchicalerrorestimator.hpp"
+#include "fem/singularassembly.hpp"
 #include "fem/singulardofs.hpp"
 
 namespace palace
@@ -44,6 +45,13 @@ private:
     mfem::DenseMatrix mass_abs;
   };
   std::vector<ElementMatrices> elements;
+  std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_stiffness;
+  std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_damping;
+  std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_mass;
+  std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_stiffness_abs;
+  std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_damping_abs;
+  std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_mass_abs;
+  bool unsupported_polynomial_boundary = false;
 
 public:
   explicit HierarchicalMaxwellDomainData(SpaceOperator &space_op);
@@ -68,6 +76,18 @@ public:
   // Positive graph metric K + |omega|^2 M_abs used only to lift the exact complex residual.
   std::vector<fem::hierarchical::LocalOperatorContribution>
   BuildDomainMetricContributions(std::complex<double> omega) const;
+
+  // Complete polynomial domain-plus-boundary operator
+  //   K + i omega C - omega^2 (Mr + i Mi)
+  // including singular lumped-port and supported surface-impedance facets. General
+  // frequency-dependent A2(omega) terms are appended by the next driver adapter.
+  std::vector<fem::hierarchical::ComplexLocalOperatorContribution>
+  BuildComplexPolynomialContributions(std::complex<double> omega) const;
+
+  // Positive domain-plus-boundary graph metric with absolute physical coefficients:
+  //   K_abs + |omega| C_abs + |omega|^2 M_abs.
+  std::vector<fem::hierarchical::LocalOperatorContribution>
+  BuildPolynomialMetricContributions(std::complex<double> omega) const;
 };
 
 }  // namespace palace

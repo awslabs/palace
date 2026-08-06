@@ -486,13 +486,13 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
   const fem::singular::AdaptiveAssemblyOptions options{
       solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
       solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions};
-  const auto constrained_impedance_attributes =
+  singular_constrained_impedance_attributes =
       tetrahedral
           ? GetConstrainedSingularImpedanceAttributes(iodata, *singular_features)
           : GetConstrainedSingularImpedanceAttributes(iodata, *triangle_singular_features);
   const auto filter_impedance_coefficients = [&](std::map<int, double> coefficients)
   {
-    for (int attribute : constrained_impedance_attributes)
+    for (int attribute : singular_constrained_impedance_attributes)
     {
       coefficients.erase(attribute);
     }
@@ -788,7 +788,7 @@ void SpaceOperator::SetUpSingularEnrichment(const IoData &iodata)
   singular_essential_attributes.Append(
       boundaries.auxpec.attributes.data(),
       static_cast<int>(boundaries.auxpec.attributes.size()));
-  for (int attribute : constrained_impedance_attributes)
+  for (int attribute : singular_constrained_impedance_attributes)
   {
     singular_essential_attributes.Append(attribute);
   }

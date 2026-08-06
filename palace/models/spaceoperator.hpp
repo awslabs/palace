@@ -7,6 +7,7 @@
 #include <complex>
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -120,6 +121,7 @@ private:
       singular_impedance_damping_matrices;
   std::vector<fem::singular::ParallelSparseOperatorBlocks> singular_impedance_mass_matrices;
   fem::singular::AdaptiveAssemblyOptions singular_assembly_options{};
+  std::set<int> singular_constrained_impedance_attributes;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_gradients;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_nd_prolongations;
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> singular_h1_prolongations;
@@ -344,6 +346,10 @@ public:
   const fem::singular::AdaptiveAssemblyOptions &GetSingularAssemblyOptions() const
   {
     return singular_assembly_options;
+  }
+  const auto &GetSingularConstrainedImpedanceAttributes() const
+  {
+    return singular_constrained_impedance_attributes;
   }
   const auto &GetSingularMaterialCoefficients() const
   {

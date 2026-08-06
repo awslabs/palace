@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 
@@ -140,6 +141,18 @@ struct LocalNDElementPatchMatrices
   mfem::DenseMatrix mass_estimated_absolute_error;
   mfem::DenseMatrix curl_curl;
   mfem::DenseMatrix curl_curl_estimated_absolute_error;
+};
+
+// One material-weighted boundary mass contribution in final unsigned local combined-DOF
+// coordinates. Standard trace orientation and tetrahedral face DofTransformation have
+// already been applied. Boundary terms sharing an adjacent support element remain separate
+// so the hierarchical residual can include every lumped/impedance facet exactly once.
+struct LocalNDBoundaryPatchMatrices
+{
+  int boundary = -1;
+  int element = -1;
+  std::vector<int> dofs;
+  mfem::DenseMatrix mass;
 };
 
 struct LocalSparseEnrichmentMatrices
@@ -425,7 +438,9 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
 LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
     const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
     const std::map<int, double> &boundary_coefficients,
-    const AdaptiveAssemblyOptions &options);
+    const AdaptiveAssemblyOptions &options,
+    std::vector<LocalNDBoundaryPatchMatrices> *retained_patches = nullptr,
+    const std::set<int> &excluded_singular_attributes = {});
 
 LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
     const TriangleDofTopology &topology, mfem::FiniteElementSpace &nd_fespace,

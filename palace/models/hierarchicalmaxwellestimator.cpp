@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 #include "fem/fespace.hpp"
 #include "fem/singularassembly.hpp"
@@ -24,6 +25,16 @@ int UnsignedDof(int dof)
 double DofSign(int dof)
 {
   return dof >= 0 ? 1.0 : -1.0;
+}
+
+std::map<int, double> AbsoluteBoundaryCoefficients(std::map<int, double> coefficients)
+{
+  for (auto &[attribute, coefficient] : coefficients)
+  {
+    (void)attribute;
+    coefficient = std::abs(coefficient);
+  }
+  return coefficients;
 }
 
 void SetSignedMatrix(const mfem::DenseMatrix &input, const mfem::Array<int> &standard_dofs,
@@ -248,6 +259,55 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
     set_standard(unweighted_mass, imaginary_materials[element].electric, data.mass_imag);
     set_standard(unweighted_mass, absolute_materials[element].electric, data.mass_abs);
   }
+
+  const auto lumped_stiffness = space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap();
+  const auto lumped_damping = space_op.GetLumpedPortOp().GetDampingBdrCoefficientMap();
+  const auto lumped_mass = space_op.GetLumpedPortOp().GetMassBdrCoefficientMap();
+  const auto impedance_stiffness =
+      space_op.GetSurfaceImpedanceOp().GetStiffnessBdrCoefficientMap();
+  const auto impedance_damping =
+      space_op.GetSurfaceImpedanceOp().GetDampingBdrCoefficientMap();
+  const auto impedance_mass = space_op.GetSurfaceImpedanceOp().GetMassBdrCoefficientMap();
+  const bool has_polynomial_boundary =
+      !lumped_stiffness.empty() || !lumped_damping.empty() || !lumped_mass.empty() ||
+      !impedance_stiffness.empty() || !impedance_damping.empty() || !impedance_mass.empty();
+  unsupported_polynomial_boundary = dimension != 3 && has_polynomial_boundary;
+  if (dimension == 3)
+  {
+    const auto *topology = space_op.GetSingularDofTopology();
+    const std::set<int> no_excluded;
+    const auto &excluded = space_op.GetSingularConstrainedImpedanceAttributes();
+    const auto assemble_boundary =
+        [&](const std::map<int, double> &coefficients,
+            std::vector<fem::singular::LocalNDBoundaryPatchMatrices> &patches,
+            const std::set<int> &excluded_singular_attributes)
+    {
+      if (!coefficients.empty())
+      {
+        (void)fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+            *topology, fine_nd_space->Get(), coefficients,
+            space_op.GetSingularAssemblyOptions(), &patches, excluded_singular_attributes);
+      }
+    };
+    assemble_boundary(lumped_stiffness, boundary_stiffness, no_excluded);
+    assemble_boundary(impedance_stiffness, boundary_stiffness, excluded);
+    assemble_boundary(lumped_damping, boundary_damping, no_excluded);
+    assemble_boundary(impedance_damping, boundary_damping, excluded);
+    assemble_boundary(lumped_mass, boundary_mass, no_excluded);
+    assemble_boundary(impedance_mass, boundary_mass, excluded);
+    assemble_boundary(AbsoluteBoundaryCoefficients(lumped_stiffness),
+                      boundary_stiffness_abs, no_excluded);
+    assemble_boundary(AbsoluteBoundaryCoefficients(impedance_stiffness),
+                      boundary_stiffness_abs, excluded);
+    assemble_boundary(AbsoluteBoundaryCoefficients(lumped_damping), boundary_damping_abs,
+                      no_excluded);
+    assemble_boundary(AbsoluteBoundaryCoefficients(impedance_damping), boundary_damping_abs,
+                      excluded);
+    assemble_boundary(AbsoluteBoundaryCoefficients(lumped_mass), boundary_mass_abs,
+                      no_excluded);
+    assemble_boundary(AbsoluteBoundaryCoefficients(impedance_mass), boundary_mass_abs,
+                      excluded);
+  }
 }
 
 HierarchicalMaxwellDomainData::~HierarchicalMaxwellDomainData() = default;
@@ -309,6 +369,68 @@ HierarchicalMaxwellDomainData::BuildDomainMetricContributions(
     data.rhs.SetSize(static_cast<int>(data.dofs.size()));
     data.rhs = 0.0;
   }
+  return contributions;
+}
+
+std::vector<fem::hierarchical::ComplexLocalOperatorContribution>
+HierarchicalMaxwellDomainData::BuildComplexPolynomialContributions(
+    std::complex<double> omega) const
+{
+  MFEM_VERIFY(!unsupported_polynomial_boundary,
+              "Hierarchical Maxwell polynomial boundary contributions are not yet "
+              "implemented in two dimensions!");
+  auto contributions = BuildComplexDomainContributions(omega);
+  const auto append =
+      [&](const std::vector<fem::singular::LocalNDBoundaryPatchMatrices> &patches,
+          std::complex<double> scale)
+  {
+    for (const auto &patch : patches)
+    {
+      auto &data = contributions.emplace_back();
+      data.support_element = patch.element;
+      data.dofs = patch.dofs;
+      data.matrix_real = patch.mass;
+      data.matrix_real *= scale.real();
+      data.matrix_imag = patch.mass;
+      data.matrix_imag *= scale.imag();
+      data.rhs_real.SetSize(static_cast<int>(data.dofs.size()));
+      data.rhs_imag.SetSize(static_cast<int>(data.dofs.size()));
+      data.rhs_real = 0.0;
+      data.rhs_imag = 0.0;
+    }
+  };
+  append(boundary_stiffness, 1.0);
+  append(boundary_damping, std::complex<double>(0.0, 1.0) * omega);
+  append(boundary_mass, -omega * omega);
+  return contributions;
+}
+
+std::vector<fem::hierarchical::LocalOperatorContribution>
+HierarchicalMaxwellDomainData::BuildPolynomialMetricContributions(
+    std::complex<double> omega) const
+{
+  MFEM_VERIFY(!unsupported_polynomial_boundary,
+              "Hierarchical Maxwell polynomial boundary contributions are not yet "
+              "implemented in two dimensions!");
+  auto contributions = BuildDomainMetricContributions(omega);
+  const auto append =
+      [&](const std::vector<fem::singular::LocalNDBoundaryPatchMatrices> &patches,
+          double scale)
+  {
+    for (const auto &patch : patches)
+    {
+      auto &data = contributions.emplace_back();
+      data.support_element = patch.element;
+      data.dofs = patch.dofs;
+      data.matrix = patch.mass;
+      data.matrix *= scale;
+      data.rhs.SetSize(static_cast<int>(data.dofs.size()));
+      data.rhs = 0.0;
+    }
+  };
+  append(boundary_stiffness_abs, 1.0);
+  append(boundary_damping_abs, std::abs(omega));
+  append(boundary_mass_abs, std::norm(omega));
   return contributions;
 }
 

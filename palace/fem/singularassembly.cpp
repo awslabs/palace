@@ -5599,7 +5599,9 @@ ElementNDBoundaryMassMatrices AssembleTriangleElementH1BoundaryMassMatrices(
 LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
     const DofTopology &topology, mfem::FiniteElementSpace &nd_fespace,
     const std::map<int, double> &boundary_coefficients,
-    const AdaptiveAssemblyOptions &options)
+    const AdaptiveAssemblyOptions &options,
+    std::vector<LocalNDBoundaryPatchMatrices> *retained_patches,
+    const std::set<int> &excluded_singular_attributes)
 {
   ValidateAdaptiveAssemblyOptions(options);
   auto *mesh = nd_fespace.GetMesh();
@@ -5640,12 +5642,106 @@ LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
           "Tetrahedral singular boundary mass could not find its adjacent element!");
     }
     const auto &element_dofs = topology.elements[element];
-    if (element_dofs.nd.empty())
+    mfem::Array<int> standard_dofs;
+    mfem::DofTransformation dof_transformation;
+    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
+    const bool exclude_singular =
+        excluded_singular_attributes.find(mesh->GetBdrAttribute(boundary)) !=
+        excluded_singular_attributes.end();
+    mfem::Array<int> enrichment_dofs;
+    if (!exclude_singular)
     {
+      enrichment_dofs = GetElementEnrichmentDofs(element_dofs.nd, topology.nd_dofs.size());
+    }
+
+    // Retain a complete standard-plus-enrichment boundary facet in final unsigned local
+    // coordinates. Standard trace assembly uses the boundary finite element and its own
+    // face orientation transformation; singular coupling uses the adjacent volume element
+    // transformation below.
+    const auto retain_patch = [&](const ElementNDBoundaryMassMatrices *singular_matrices)
+    {
+      if (!retained_patches)
+      {
+        return;
+      }
+      LocalNDBoundaryPatchMatrices patch;
+      patch.boundary = boundary;
+      patch.element = element;
+      for (int dof : standard_dofs)
+      {
+        patch.dofs.push_back(dof >= 0 ? dof : -1 - dof);
+      }
+      for (int dof : enrichment_dofs)
+      {
+        patch.dofs.push_back(nd_fespace.GetVSize() + dof);
+      }
+      patch.mass.SetSize(static_cast<int>(patch.dofs.size()));
+      patch.mass = 0.0;
+
+      mfem::Array<int> boundary_dofs;
+      mfem::DofTransformation boundary_transformation;
+      nd_fespace.GetBdrElementVDofs(boundary, boundary_dofs, boundary_transformation);
+      mfem::ConstantCoefficient standard_coefficient(coefficient->second);
+      mfem::VectorFEMassIntegrator standard_integrator(standard_coefficient);
+      mfem::DenseMatrix standard_mass;
+      standard_integrator.AssembleElementMatrix(
+          *nd_fespace.GetBE(boundary), *mesh->GetBdrElementTransformation(boundary),
+          standard_mass);
+      boundary_transformation.TransformDual(standard_mass);
+      for (int i = 0; i < boundary_dofs.Size(); i++)
+      {
+        const int global_i =
+            boundary_dofs[i] >= 0 ? boundary_dofs[i] : -1 - boundary_dofs[i];
+        const auto found_i = std::find(patch.dofs.begin(),
+                                       patch.dofs.begin() + standard_dofs.Size(), global_i);
+        MFEM_VERIFY(found_i != patch.dofs.begin() + standard_dofs.Size(),
+                    "Boundary trace DOF is absent from its adjacent ND element!");
+        const int row = static_cast<int>(found_i - patch.dofs.begin());
+        const double row_sign = boundary_dofs[i] >= 0 ? 1.0 : -1.0;
+        for (int j = 0; j < boundary_dofs.Size(); j++)
+        {
+          const int global_j =
+              boundary_dofs[j] >= 0 ? boundary_dofs[j] : -1 - boundary_dofs[j];
+          const auto found_j = std::find(
+              patch.dofs.begin(), patch.dofs.begin() + standard_dofs.Size(), global_j);
+          MFEM_VERIFY(found_j != patch.dofs.begin() + standard_dofs.Size(),
+                      "Boundary trace DOF is absent from its adjacent ND element!");
+          const int column = static_cast<int>(found_j - patch.dofs.begin());
+          const double column_sign = boundary_dofs[j] >= 0 ? 1.0 : -1.0;
+          patch.mass(row, column) += row_sign * column_sign * standard_mass(i, j);
+        }
+      }
+      if (singular_matrices)
+      {
+        const int standard_size = standard_dofs.Size();
+        for (int row = 0; row < standard_size; row++)
+        {
+          const double sign = standard_dofs[row] >= 0 ? 1.0 : -1.0;
+          for (int column = 0; column < enrichment_dofs.Size(); column++)
+          {
+            patch.mass(row, standard_size + column) =
+                sign * singular_matrices->standard_enrichment(row, column);
+            patch.mass(standard_size + column, row) =
+                sign * singular_matrices->enrichment_standard(column, row);
+          }
+        }
+        for (int row = 0; row < enrichment_dofs.Size(); row++)
+        {
+          for (int column = 0; column < enrichment_dofs.Size(); column++)
+          {
+            patch.mass(standard_size + row, standard_size + column) =
+                singular_matrices->enrichment_enrichment(row, column);
+          }
+        }
+      }
+      retained_patches->push_back(std::move(patch));
+    };
+
+    if (exclude_singular || element_dofs.nd.empty())
+    {
+      retain_patch(nullptr);
       continue;
     }
-    const auto enrichment_dofs =
-        GetElementEnrichmentDofs(element_dofs.nd, topology.nd_dofs.size());
 
     ElementNDBoundaryMassMatrices matrices;
     try
@@ -5662,9 +5758,6 @@ LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
           boundary, mesh->GetBdrAttribute(boundary), element, error.what()));
     }
 
-    mfem::Array<int> standard_dofs;
-    mfem::DofTransformation dof_transformation;
-    nd_fespace.GetElementVDofs(element, standard_dofs, dof_transformation);
     ValidateStandardRowTransformation(
         dof_transformation, matrices.standard_enrichment, matrices.enrichment_standard,
         matrices.standard_enrichment_estimated_absolute_error);
@@ -5683,6 +5776,7 @@ LocalSparseOperatorBlocks AssembleLocalSparseNDBoundaryMassMatrices(
     result.standard_enrichment_estimated_absolute_error->AddSubMatrix(
         unsigned_standard_dofs, enrichment_dofs,
         matrices.standard_enrichment_estimated_absolute_error);
+    retain_patch(&matrices);
   }
   FinalizeLocalSparseBlock(result);
   return result;

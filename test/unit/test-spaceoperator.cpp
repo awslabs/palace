@@ -411,65 +411,74 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
     CHECK(hierarchy.GetInjection().consistency_error < 1.0e-12);
     CHECK(hierarchy.GetInjection().nonidentity_transformations > 0);
     const std::complex<double> omega(0.7, 0.08);
-    const auto complex_domain = hierarchy.BuildComplexDomainContributions(omega);
-    const auto at_zero = hierarchy.BuildComplexDomainContributions(0.0);
-    const auto at_one = hierarchy.BuildComplexDomainContributions(1.0);
-    const auto at_i = hierarchy.BuildComplexDomainContributions({0.0, 1.0});
-    const auto metric = hierarchy.BuildDomainMetricContributions(omega);
-    const auto metric_one = hierarchy.BuildDomainMetricContributions(1.0);
-    REQUIRE(complex_domain.size() == static_cast<std::size_t>(meshes.back()->GetNE()));
-    REQUIRE(metric.size() == complex_domain.size());
-    REQUIRE(at_zero.size() == complex_domain.size());
-    REQUIRE(at_one.size() == complex_domain.size());
-    REQUIRE(at_i.size() == complex_domain.size());
-    double formula_error = 0.0, metric_error = 0.0, loss_norm = 0.0, symmetry_error = 0.0;
+    const auto complex_operator = hierarchy.BuildComplexPolynomialContributions(omega);
+    const auto at_zero = hierarchy.BuildComplexPolynomialContributions(0.0);
+    const auto at_one = hierarchy.BuildComplexPolynomialContributions(1.0);
+    const auto at_minus_one = hierarchy.BuildComplexPolynomialContributions(-1.0);
+    const auto metric = hierarchy.BuildPolynomialMetricContributions(omega);
+    const auto metric_one = hierarchy.BuildPolynomialMetricContributions(1.0);
+    const auto metric_two = hierarchy.BuildPolynomialMetricContributions(2.0);
+    REQUIRE(complex_operator.size() > static_cast<std::size_t>(meshes.back()->GetNE()));
+    REQUIRE(metric.size() == complex_operator.size());
+    REQUIRE(at_zero.size() == complex_operator.size());
+    REQUIRE(at_one.size() == complex_operator.size());
+    REQUIRE(at_minus_one.size() == complex_operator.size());
+    REQUIRE(metric_one.size() == complex_operator.size());
+    REQUIRE(metric_two.size() == complex_operator.size());
+    double formula_error = 0.0, metric_error = 0.0, loss_norm = 0.0, damping_norm = 0.0,
+           symmetry_error = 0.0;
     const std::complex<double> mass_scale = -omega * omega;
-    for (std::size_t element = 0; element < complex_domain.size(); element++)
+    for (std::size_t element = 0; element < complex_operator.size(); element++)
     {
       const auto &K = at_zero[element].matrix_real;
       for (int row = 0; row < K.Height(); row++)
       {
         for (int column = 0; column < K.Width(); column++)
         {
-          // omega=i gives K+Mr+iMi; omega=1 gives K-Mr-iMi.
-          const double Mr = at_i[element].matrix_real(row, column) - K(row, column);
-          const double Mi = at_i[element].matrix_imag(row, column);
-          const double expected_real =
-              K(row, column) + mass_scale.real() * Mr - mass_scale.imag() * Mi;
-          const double expected_imag = mass_scale.imag() * Mr + mass_scale.real() * Mi;
+          // omega=+/-1 separates damping from dielectric loss:
+          // A(+1)=K-Mr+i(C-Mi), A(-1)=K-Mr-i(C+Mi).
+          const double Mr =
+              K(row, column) - 0.5 * (at_one[element].matrix_real(row, column) +
+                                      at_minus_one[element].matrix_real(row, column));
+          const double C = 0.5 * (at_one[element].matrix_imag(row, column) -
+                                  at_minus_one[element].matrix_imag(row, column));
+          const double Mi = -0.5 * (at_one[element].matrix_imag(row, column) +
+                                    at_minus_one[element].matrix_imag(row, column));
+          const double expected_real = K(row, column) - omega.imag() * C +
+                                       mass_scale.real() * Mr - mass_scale.imag() * Mi;
+          const double expected_imag =
+              omega.real() * C + mass_scale.imag() * Mr + mass_scale.real() * Mi;
           formula_error = std::max(
               formula_error,
-              std::abs(complex_domain[element].matrix_real(row, column) - expected_real));
+              std::abs(complex_operator[element].matrix_real(row, column) - expected_real));
           formula_error = std::max(
               formula_error,
-              std::abs(complex_domain[element].matrix_imag(row, column) - expected_imag));
-          formula_error =
-              std::max(formula_error, std::abs(at_one[element].matrix_real(row, column) +
-                                               at_i[element].matrix_real(row, column) -
-                                               2.0 * K(row, column)));
-          formula_error =
-              std::max(formula_error, std::abs(at_one[element].matrix_imag(row, column) +
-                                               at_i[element].matrix_imag(row, column)));
+              std::abs(complex_operator[element].matrix_imag(row, column) - expected_imag));
           loss_norm = std::max(loss_norm, std::abs(Mi));
-          const double Mabs = metric_one[element].matrix(row, column) - K(row, column);
-          metric_error =
-              std::max(metric_error, std::abs(metric[element].matrix(row, column) -
-                                              K(row, column) - std::norm(omega) * Mabs));
+          damping_norm = std::max(damping_norm, std::abs(C));
+          const double B1 = metric_one[element].matrix(row, column);
+          const double B2 = metric_two[element].matrix(row, column);
+          const double Mabs = 0.5 * (B2 - 2.0 * B1 + K(row, column));
+          const double Cabs = B1 - K(row, column) - Mabs;
+          metric_error = std::max(
+              metric_error, std::abs(metric[element].matrix(row, column) - K(row, column) -
+                                     std::abs(omega) * Cabs - std::norm(omega) * Mabs));
           symmetry_error = std::max(
-              symmetry_error, std::abs(complex_domain[element].matrix_real(row, column) -
-                                       complex_domain[element].matrix_real(column, row)));
+              symmetry_error, std::abs(complex_operator[element].matrix_real(row, column) -
+                                       complex_operator[element].matrix_real(column, row)));
           symmetry_error = std::max(
-              symmetry_error, std::abs(complex_domain[element].matrix_imag(row, column) -
-                                       complex_domain[element].matrix_imag(column, row)));
+              symmetry_error, std::abs(complex_operator[element].matrix_imag(row, column) -
+                                       complex_operator[element].matrix_imag(column, row)));
         }
       }
     }
-    CAPTURE(formula_error, metric_error, loss_norm, symmetry_error);
+    CAPTURE(formula_error, metric_error, loss_norm, damping_norm, symmetry_error);
     CHECK(formula_error < 1.0e-12);
     CHECK(metric_error < 1.0e-12);
     CHECK(loss_norm > 0.0);
+    CHECK(damping_norm > 0.0);
     CHECK(symmetry_error < 1.0e-12);
-    CHECK_THROWS(hierarchy.BuildDomainMetricContributions(0.0));
+    CHECK_THROWS(hierarchy.BuildPolynomialMetricContributions(0.0));
     const int combined_size =
         hierarchy.GetFineStandardSize() + hierarchy.GetEnrichmentSize();
     mfem::Vector xr(combined_size), xi(combined_size);
@@ -484,7 +493,7 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
       }
     }
     const auto residual = fem::hierarchical::AssembleComplexResidual(
-        combined_size, complex_domain, xr, xi, hierarchy.GetFineEssentialMask());
+        combined_size, complex_operator, xr, xi, hierarchy.GetFineEssentialMask());
     const auto lifting = fem::hierarchical::LiftComplexResidualByPatches(
         meshes.back()->Get(), space_op.GetNDSpace().Get(), hierarchy.GetFineNDSpace().Get(),
         hierarchy.GetInjection(), metric, hierarchy.GetFineEssentialMask(),
@@ -865,7 +874,7 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   }
   SECTION("3D quadratic affine")
   {
-    CheckSpaceOperator(InternalSheetMesh(), false, 0.017, 1, 1, false, false, false, true);
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.017, 1, 1, false, true, false, true);
   }
   SECTION("3D lossless spectral embedding")
   {

@@ -1405,8 +1405,9 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
       }
       mfem::ND_FECollection nd_collection(order, 3);
       mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+      std::vector<fem::singular::LocalNDBoundaryPatchMatrices> retained_patches;
       auto blocks = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
-          topology, nd_space, {{11, coefficient}}, options);
+          topology, nd_space, {{11, coefficient}}, options, &retained_patches);
       REQUIRE(blocks.standard_enrichment);
       REQUIRE(blocks.enrichment_standard);
       REQUIRE(blocks.enrichment_enrichment);
@@ -1454,6 +1455,52 @@ TEST_CASE("Tetrahedral singular boundary mass matches an edge-Duffy oracle",
               enrichment_enrichment(row, column);
         }
       }
+      // Independent local-facet retention must scatter to the same complete matrix as the
+      // established MFEM standard block plus singular sparse blocks.
+      REQUIRE(retained_patches.size() == 1);
+      Eigen::MatrixXd retained = Eigen::MatrixXd::Zero(completed.rows(), completed.cols());
+      const auto &patch = retained_patches.front();
+      for (int row = 0; row < static_cast<int>(patch.dofs.size()); row++)
+      {
+        for (int column = 0; column < static_cast<int>(patch.dofs.size()); column++)
+        {
+          retained(patch.dofs[row], patch.dofs[column]) += patch.mass(row, column);
+        }
+      }
+      CHECK((retained - completed).cwiseAbs().maxCoeff() < 1.0e-11);
+
+      if (order == 2 && !curved)
+      {
+        // Constrained impedance attributes retain the standard trace but deliberately omit
+        // the nonintegrable singular trace blocks.
+        std::vector<fem::singular::LocalNDBoundaryPatchMatrices> constrained_patches;
+        const auto constrained = fem::singular::AssembleLocalSparseNDBoundaryMassMatrices(
+            topology, nd_space, {{11, coefficient}}, options, &constrained_patches, {11});
+        REQUIRE(constrained_patches.size() == 1);
+        REQUIRE(constrained.standard_enrichment->MaxNorm() == 0.0);
+        REQUIRE(constrained.enrichment_enrichment->MaxNorm() == 0.0);
+        Eigen::MatrixXd constrained_retained =
+            Eigen::MatrixXd::Zero(completed.rows(), completed.cols());
+        const auto &constrained_patch = constrained_patches.front();
+        for (int row = 0; row < static_cast<int>(constrained_patch.dofs.size()); row++)
+        {
+          for (int column = 0; column < static_cast<int>(constrained_patch.dofs.size());
+               column++)
+          {
+            constrained_retained(constrained_patch.dofs[row],
+                                 constrained_patch.dofs[column]) +=
+                constrained_patch.mass(row, column);
+          }
+        }
+        CHECK((constrained_retained.topLeftCorner(standard_size, standard_size) -
+               completed.topLeftCorner(standard_size, standard_size))
+                  .cwiseAbs()
+                  .maxCoeff() < 1.0e-11);
+        CHECK(constrained_retained.bottomRows(enrichment_size).cwiseAbs().maxCoeff() ==
+              0.0);
+        CHECK(constrained_retained.rightCols(enrichment_size).cwiseAbs().maxCoeff() == 0.0);
+      }
+
       Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> completed_solver(completed);
       REQUIRE(completed_solver.info() == Eigen::Success);
       const double completed_minimum = completed_solver.eigenvalues().minCoeff();
