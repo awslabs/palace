@@ -29,12 +29,47 @@ struct LocalOperatorContribution
   mfem::Vector rhs;
 };
 
+// Complex counterpart used for the complete frequency-domain residual. Splitting local
+// matrices and loads into real and imaginary slots preserves all cross-coupling from
+//
+//   A(omega) = K + i omega C - omega^2 (Mr + i Mi) + A2(omega).
+//
+// The residual assembler below is agnostic to how those slots were formed, so genuinely
+// complex frequencies and non-polynomial A2 terms use the exact same path.
+struct ComplexLocalOperatorContribution
+{
+  int support_element = -1;
+  std::vector<int> dofs;
+  mfem::DenseMatrix matrix_real;
+  mfem::DenseMatrix matrix_imag;
+  mfem::Vector rhs_real;
+  mfem::Vector rhs_imag;
+};
+
+struct ComplexResidual
+{
+  mfem::Vector real;
+  mfem::Vector imag;
+};
+
 // Assemble b-Ax without constructing A. Essential equations are set to zero after all local
 // contributions are scattered.
 mfem::Vector AssembleResidual(int combined_size,
                               const std::vector<LocalOperatorContribution> &contributions,
                               const mfem::Vector &injected,
                               const std::vector<bool> &essential);
+
+// Assemble the exact coupled complex residual. For A = Ar + i Ai and x = xr + i xi,
+//
+//   rr = br - Ar xr + Ai xi,
+//   ri = bi - Ai xr - Ar xi.
+//
+// Essential equations are zeroed only after every element and facet contribution has been
+// scattered.
+ComplexResidual AssembleComplexResidual(
+    int combined_size, const std::vector<ComplexLocalOperatorContribution> &contributions,
+    const mfem::Vector &injected_real, const mfem::Vector &injected_imag,
+    const std::vector<bool> &essential);
 
 // Assemble B^T A B and B^T r over a complete support union. Returns the number of local
 // matrix entries touched, a deterministic work proxy.
@@ -75,6 +110,11 @@ struct PatchLiftingOptions
   int sweeps = 4;
   // Sparse entries below this magnitude are dropped from complement basis columns.
   double drop_tolerance = 1.0e-13;
+  // Residual-dependent scalar line searches improve a single real lift but make separate
+  // real/imaginary lifts depend on the arbitrary global complex phase. Complex lifting
+  // therefore forces this false and applies the same fixed linear patch inverse to both
+  // components.
+  bool residual_line_search = true;
 };
 
 struct PatchLiftingReport
@@ -118,6 +158,39 @@ PatchLiftingReport EstimateByPatchLifting(
     const std::vector<LocalOperatorContribution> &metric_contributions,
     const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
     const mfem::Vector &coarse_combined,
+    const std::vector<std::vector<int>> &element_enrichment_guests,
+    const PatchLiftingOptions &options = {});
+
+// Lower-level lifting for one real residual. Complex callers should use
+// LiftComplexResidualByPatches rather than calling this independently for each component:
+// the latter disables residual-dependent scalar line searches so the summed indicator is
+// invariant under an arbitrary global complex phase.
+PatchLiftingReport LiftResidualByPatches(
+    mfem::Mesh &mesh, mfem::FiniteElementSpace &coarse_space,
+    mfem::FiniteElementSpace &fine_space, const SparseInjection &injection,
+    const std::vector<LocalOperatorContribution> &metric_contributions,
+    const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
+    const mfem::Vector &residual,
+    const std::vector<std::vector<int>> &element_enrichment_guests,
+    const PatchLiftingOptions &options = {});
+
+struct ComplexPatchLiftingReport
+{
+  PatchLiftingReport real;
+  PatchLiftingReport imag;
+  std::vector<double> indicator;
+  double energy = 0.0;
+};
+
+// Apply one fixed linear approximate B^-1 to both components of the exact complex
+// residual, then sum their B-energy indicators. Because the same real linear map acts on
+// both components, the result is invariant under r -> exp(i phi) r.
+ComplexPatchLiftingReport LiftComplexResidualByPatches(
+    mfem::Mesh &mesh, mfem::FiniteElementSpace &coarse_space,
+    mfem::FiniteElementSpace &fine_space, const SparseInjection &injection,
+    const std::vector<LocalOperatorContribution> &metric_contributions,
+    const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
+    const ComplexResidual &residual,
     const std::vector<std::vector<int>> &element_enrichment_guests,
     const PatchLiftingOptions &options = {});
 

@@ -64,6 +64,59 @@ mfem::Vector AssembleResidual(int combined_size,
   return residual;
 }
 
+ComplexResidual AssembleComplexResidual(
+    int combined_size, const std::vector<ComplexLocalOperatorContribution> &contributions,
+    const mfem::Vector &injected_real, const mfem::Vector &injected_imag,
+    const std::vector<bool> &essential)
+{
+  MFEM_VERIFY(injected_real.Size() == combined_size &&
+                  injected_imag.Size() == combined_size &&
+                  essential.size() == static_cast<std::size_t>(combined_size),
+              "Complex hierarchical residual received inconsistent combined vectors!");
+  ComplexResidual residual{mfem::Vector(combined_size), mfem::Vector(combined_size)};
+  residual.real = 0.0;
+  residual.imag = 0.0;
+  for (const auto &data : contributions)
+  {
+    const int local_size = static_cast<int>(data.dofs.size());
+    MFEM_VERIFY(
+        data.matrix_real.Height() == local_size && data.matrix_real.Width() == local_size &&
+            data.matrix_imag.Height() == local_size &&
+            data.matrix_imag.Width() == local_size && data.rhs_real.Size() == local_size &&
+            data.rhs_imag.Size() == local_size,
+        "Complex hierarchical residual received an inconsistent local "
+        "contribution!");
+    mfem::Vector local_real(local_size), local_imag(local_size);
+    for (int i = 0; i < local_size; i++)
+    {
+      MFEM_VERIFY(data.dofs[i] >= 0 && data.dofs[i] < combined_size,
+                  "Complex hierarchical residual received an invalid combined DOF!");
+      local_real(i) = injected_real(data.dofs[i]);
+      local_imag(i) = injected_imag(data.dofs[i]);
+    }
+    mfem::Vector ar_xr(local_size), ar_xi(local_size), ai_xr(local_size), ai_xi(local_size);
+    data.matrix_real.Mult(local_real, ar_xr);
+    data.matrix_real.Mult(local_imag, ar_xi);
+    data.matrix_imag.Mult(local_real, ai_xr);
+    data.matrix_imag.Mult(local_imag, ai_xi);
+    for (int i = 0; i < local_size; i++)
+    {
+      const int dof = data.dofs[i];
+      residual.real(dof) += data.rhs_real(i) - ar_xr(i) + ai_xi(i);
+      residual.imag(dof) += data.rhs_imag(i) - ai_xr(i) - ar_xi(i);
+    }
+  }
+  for (int dof = 0; dof < combined_size; dof++)
+  {
+    if (essential[dof])
+    {
+      residual.real(dof) = 0.0;
+      residual.imag(dof) = 0.0;
+    }
+  }
+  return residual;
+}
+
 long long
 AssembleRestrictedOperator(const std::vector<LocalOperatorContribution> &contributions,
                            const std::set<int> &support_elements,
@@ -221,13 +274,12 @@ SparseInjection BuildSparsePInjection(mfem::Mesh &mesh,
   return injection;
 }
 
-PatchLiftingReport EstimateByPatchLifting(
+PatchLiftingReport LiftResidualByPatches(
     mfem::Mesh &mesh, mfem::FiniteElementSpace &coarse_space,
     mfem::FiniteElementSpace &fine_space, const SparseInjection &injection,
-    const std::vector<LocalOperatorContribution> &residual_contributions,
     const std::vector<LocalOperatorContribution> &metric_contributions,
     const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
-    const mfem::Vector &coarse_combined,
+    const mfem::Vector &residual,
     const std::vector<std::vector<int>> &element_enrichment_guests,
     const PatchLiftingOptions &options)
 {
@@ -236,31 +288,12 @@ PatchLiftingReport EstimateByPatchLifting(
   const int fine_standard = fine_space.GetVSize();
   const int enrichment = static_cast<int>(fine_essential.size()) - fine_standard;
   const int combined_size = fine_standard + enrichment;
-  MFEM_VERIFY(enrichment >= 0 && coarse_combined.Size() == coarse_standard + enrichment &&
+  MFEM_VERIFY(enrichment >= 0 && residual.Size() == combined_size &&
                   coarse_essential.size() ==
                       static_cast<std::size_t>(coarse_standard + enrichment) &&
                   static_cast<int>(injection.columns.size()) == coarse_standard &&
                   static_cast<int>(element_enrichment_guests.size()) == mesh.GetNE(),
               "Hierarchical patch lifting received inconsistent combined layouts!");
-
-  // Inject the coarse combined solution into the fine combined layout and assemble the
-  // uneliminated residual there.
-  mfem::Vector injected(combined_size);
-  injected = 0.0;
-  for (int column = 0; column < coarse_standard; column++)
-  {
-    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
-    {
-      injected(injection.columns[column].dofs[entry]) +=
-          coarse_combined(column) * injection.columns[column].values[entry];
-    }
-  }
-  for (int dof = 0; dof < enrichment; dof++)
-  {
-    injected(fine_standard + dof) = coarse_combined(coarse_standard + dof);
-  }
-  mfem::Vector residual =
-      AssembleResidual(combined_size, residual_contributions, injected, fine_essential);
 
   std::vector<std::set<int>> dof_elements(combined_size);
   for (const auto &data : metric_contributions)
@@ -596,7 +629,8 @@ PatchLiftingReport EstimateByPatchLifting(
   report.enrichment_guest_counts = enrichment_count;
   double raw_energy = Energy(metric_contributions, raw);
   double raw_work = mfem::InnerProduct(raw, residual);
-  const double alpha = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
+  const double alpha =
+      options.residual_line_search ? (raw_energy > 0.0 ? raw_work / raw_energy : 0.0) : 1.0;
   raw *= alpha;
 
   // Additional additive-Schwarz defect-correction sweeps relaxing the coercive metric
@@ -639,14 +673,16 @@ PatchLiftingReport EstimateByPatchLifting(
     const double delta_work = mfem::InnerProduct(delta, current_residual);
     if (delta_energy > 0.0)
     {
-      raw.Add(delta_work / delta_energy, delta);
+      const double scale = options.residual_line_search ? delta_work / delta_energy : 1.0;
+      raw.Add(scale, delta);
     }
   }
 
   // A final scalar projection restores the energy/work identity without changing ranking.
   raw_energy = Energy(metric_contributions, raw);
   raw_work = mfem::InnerProduct(raw, residual);
-  const double final_scale = raw_energy > 0.0 ? raw_work / raw_energy : 0.0;
+  const double final_scale =
+      options.residual_line_search ? (raw_energy > 0.0 ? raw_work / raw_energy : 0.0) : 1.0;
   raw *= final_scale;
   report.energy = final_scale * final_scale * raw_energy;
   report.work = final_scale * raw_work;
@@ -663,6 +699,77 @@ PatchLiftingReport EstimateByPatchLifting(
     report.indicator[data.support_element] += mfem::InnerProduct(local, action);
   }
   return report;
+}
+
+ComplexPatchLiftingReport LiftComplexResidualByPatches(
+    mfem::Mesh &mesh, mfem::FiniteElementSpace &coarse_space,
+    mfem::FiniteElementSpace &fine_space, const SparseInjection &injection,
+    const std::vector<LocalOperatorContribution> &metric_contributions,
+    const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
+    const ComplexResidual &residual,
+    const std::vector<std::vector<int>> &element_enrichment_guests,
+    const PatchLiftingOptions &options)
+{
+  MFEM_VERIFY(residual.real.Size() == residual.imag.Size(),
+              "Complex patch lifting received inconsistent residual components!");
+  PatchLiftingOptions linear_options = options;
+  linear_options.residual_line_search = false;
+  ComplexPatchLiftingReport report;
+  report.real = LiftResidualByPatches(
+      mesh, coarse_space, fine_space, injection, metric_contributions, fine_essential,
+      coarse_essential, residual.real, element_enrichment_guests, linear_options);
+  report.imag = LiftResidualByPatches(
+      mesh, coarse_space, fine_space, injection, metric_contributions, fine_essential,
+      coarse_essential, residual.imag, element_enrichment_guests, linear_options);
+  MFEM_VERIFY(report.real.indicator.size() == report.imag.indicator.size(),
+              "Complex patch lifting produced inconsistent element indicators!");
+  report.indicator.resize(report.real.indicator.size());
+  for (std::size_t element = 0; element < report.indicator.size(); element++)
+  {
+    report.indicator[element] =
+        report.real.indicator[element] + report.imag.indicator[element];
+  }
+  report.energy = report.real.energy + report.imag.energy;
+  return report;
+}
+
+PatchLiftingReport EstimateByPatchLifting(
+    mfem::Mesh &mesh, mfem::FiniteElementSpace &coarse_space,
+    mfem::FiniteElementSpace &fine_space, const SparseInjection &injection,
+    const std::vector<LocalOperatorContribution> &residual_contributions,
+    const std::vector<LocalOperatorContribution> &metric_contributions,
+    const std::vector<bool> &fine_essential, const std::vector<bool> &coarse_essential,
+    const mfem::Vector &coarse_combined,
+    const std::vector<std::vector<int>> &element_enrichment_guests,
+    const PatchLiftingOptions &options)
+{
+  const int coarse_standard = coarse_space.GetVSize();
+  const int fine_standard = fine_space.GetVSize();
+  const int enrichment = static_cast<int>(fine_essential.size()) - fine_standard;
+  const int combined_size = fine_standard + enrichment;
+  MFEM_VERIFY(enrichment >= 0 && coarse_combined.Size() == coarse_standard + enrichment &&
+                  static_cast<int>(injection.columns.size()) == coarse_standard,
+              "Hierarchical patch injection received an inconsistent coarse vector or "
+              "injection!");
+  mfem::Vector injected(combined_size);
+  injected = 0.0;
+  for (int column = 0; column < coarse_standard; column++)
+  {
+    for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+    {
+      injected(injection.columns[column].dofs[entry]) +=
+          coarse_combined(column) * injection.columns[column].values[entry];
+    }
+  }
+  for (int dof = 0; dof < enrichment; dof++)
+  {
+    injected(fine_standard + dof) = coarse_combined(coarse_standard + dof);
+  }
+  const mfem::Vector residual =
+      AssembleResidual(combined_size, residual_contributions, injected, fine_essential);
+  return LiftResidualByPatches(mesh, coarse_space, fine_space, injection,
+                               metric_contributions, fine_essential, coarse_essential,
+                               residual, element_enrichment_guests, options);
 }
 
 }  // namespace palace::fem::hierarchical
