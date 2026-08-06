@@ -6,6 +6,21 @@ function(palace_escape_external_project_list output values)
   set(${output} "${escaped}" PARENT_SCOPE)
 endfunction()
 
+# Append -DCMAKE_CUDA_ARCHITECTURES=<list> to an ExternalProject options list.
+# ExternalProject_Add splits its command on ";", so the semicolon-separated
+# architecture list is escaped or only the first entry survives. No-op when no
+# architectures are set, so callers can invoke this unconditionally from within
+# their CUDA branch.
+function(palace_append_cuda_architectures options_var)
+  if("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    return()
+  endif()
+  palace_escape_external_project_list(escaped "${CMAKE_CUDA_ARCHITECTURES}")
+  set(options "${${options_var}}")
+  list(APPEND options "-DCMAKE_CUDA_ARCHITECTURES=${escaped}")
+  set(${options_var} "${options}" PARENT_SCOPE)
+endfunction()
+
 function(palace_parse_cuda_architecture architecture output_number output_kind)
   if(NOT architecture MATCHES "^([0-9]+)(-(real|virtual))?$")
     message(FATAL_ERROR "Unsupported CUDA architecture: ${architecture}")

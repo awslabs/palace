@@ -40,3 +40,19 @@ palace_parse_cuda_architecture("90-virtual" cuda_arch cuda_kind)
 if(NOT cuda_arch STREQUAL "90" OR NOT cuda_kind STREQUAL "virtual")
   message(FATAL_ERROR "Unexpected parsed CUDA architecture: ${cuda_arch} ${cuda_kind}")
 endif()
+
+# palace_append_cuda_architectures forwards the escaped list when set...
+set(CMAKE_CUDA_ARCHITECTURES "80;90")
+set(options "-DFOO=bar")
+palace_append_cuda_architectures(options)
+if(NOT options STREQUAL "-DFOO=bar;-DCMAKE_CUDA_ARCHITECTURES=80$<SEMICOLON>90")
+  message(FATAL_ERROR "Unexpected appended options: ${options}")
+endif()
+
+# ...and is a no-op when no architectures are set.
+set(CMAKE_CUDA_ARCHITECTURES "")
+set(options "-DFOO=bar")
+palace_append_cuda_architectures(options)
+if(NOT options STREQUAL "-DFOO=bar")
+  message(FATAL_ERROR "Expected no CUDA architectures to be appended: ${options}")
+endif()
