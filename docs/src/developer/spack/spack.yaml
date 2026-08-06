@@ -1,0 +1,40 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+spack:
+  specs:
+  - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+gslib
+  view: false
+  concretizer:
+    reuse: false
+    unify: true
+  packages:
+    # Build the entire library DAG with one C++ ABI and Fortran runtime.
+    c:
+      require: ["gcc@15"]
+    cxx:
+      require: ["gcc@15"]
+    fortran:
+      require: ["gcc@15"]
+    petsc:
+      require: ~hdf5
+    mpi:
+      require: openmpi
+    # OpenMPI 2.1.6 does not build with the current macOS assembler.
+    openmpi:
+      require: "@5:"
+    blas:
+      require: openblas
+    lapack:
+      require: openblas
+    # METIS builds shared objects and therefore requires position-independent
+    # code.
+    metis:
+      require: cflags=-fPIC cppflags=-fPIC
+    # Homebrew provides gmake and gsed, while Spack expects make and sed. Let
+    # Spack build both tools instead of adding links or changing PATH. GNU Make
+    # also needs C17 with GCC 15 because C23 breaks its bundled fnmatch.c.
+    gmake:
+      require: cflags=-std=gnu17
+    mfem:
+      require: "+exceptions"
