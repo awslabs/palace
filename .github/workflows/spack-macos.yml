@@ -3,16 +3,9 @@
 
 name: Spack (macOS)
 
-# Builds Palace on macOS (Apple Silicon) *through Spack* and runs its unit
-# tests. This is the Spack analogue of build-and-test-macos.yml (which uses the
-# Homebrew + raw CMake path) and doubles as a build test for the Spack recipe on
-# macOS (awslabs/palace#766).
-#
-# palace-ci / setup-runner are Linux-only (apt, sudo, LLVM/Intel PPAs, lscpu),
-# so this workflow inlines everything, the same way build-and-test-macos.yml
-# does. It borrows the shape of palace-ci's spack.yaml generation, adapted for
-# macOS: GNU (gcc/g++/gfortran) builds the library DAG, while build tools that
-# should not be compiled with GNU are provided by Homebrew.
+# Builds Palace on macOS through Spack and runs its unit tests. This is the
+# Spack analogue of build-and-test-macos.yml (which uses the Homebrew + raw
+# CMake path) and doubles as a build test for the Spack recipe on macOS.
 
 on:
   push:
