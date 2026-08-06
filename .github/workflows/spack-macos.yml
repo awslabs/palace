@@ -211,9 +211,10 @@ jobs:
               # metis always compiles some shared objects, so it needs -fPIC.
               metis:
                 require: cflags=-fPIC cppflags=-fPIC
-              # Keep GNU Make Spack-built: Homebrew installs it as bin/gmake,
-              # while Spack expects bin/make. Avoid a symlink/PATH workaround;
-              # gcc@15 needs C17 because C23 breaks gmake's bundled fnmatch.c.
+              # Keep GNU Make and GNU sed Spack-built: Homebrew installs them as
+              # bin/gmake and bin/gsed, while Spack expects bin/make and bin/sed.
+              # Avoid symlink/PATH workarounds. GNU Make also needs C17 with
+              # gcc@15 because C23 breaks its bundled fnmatch.c.
               gmake:
                 require: cflags=-std=gnu17
               mfem:
