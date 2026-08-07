@@ -601,6 +601,11 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
   {
     inactive_port_mode = source.at("InactiveMode").get<InactivePortMode>();
   }
+  if (source.find("ApertureAttributes") != source.end())
+  {
+    aperture_attributes = source.at("ApertureAttributes").get<std::vector<int>>();
+    std::sort(aperture_attributes.begin(), aperture_attributes.end());
+  }
 }
 
 SurfaceFluxData::SurfaceFluxData(const json &flux)
@@ -1473,13 +1478,6 @@ std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::s
 std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
-
-  // Check for unsupported boundary combinations.
-  if (!boundaries.current.empty() && !boundaries.fluxloop.empty())
-  {
-    errors << "Combining \"SurfaceCurrent\" and \"FluxLoop\" excitations in the same "
-              "magnetostatic simulation is not yet supported\n";
-  }
 
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
   // SurfaceCurrent, FluxLoop, Terminal.

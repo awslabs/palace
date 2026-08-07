@@ -498,7 +498,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(config::Validate(boundary_data).has_value());
   }
 
-  SECTION("SurfaceCurrent and FluxLoop combination fails validation")
+  SECTION("SurfaceCurrent and FluxLoop combination passes validation")
   {
     json boundaries = {
         {"SurfaceCurrent", {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}}}},
@@ -509,10 +509,26 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
            {"FluxAmounts", {1.0}},
            {"Direction", "+Z"}}}}};
     config::BoundaryData boundary_data(boundaries);
-    auto err = config::Validate(boundary_data);
-    REQUIRE(err.has_value());
-    CHECK(err->find("SurfaceCurrent") != std::string::npos);
-    CHECK(err->find("FluxLoop") != std::string::npos);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.current.size() == 1);
+    CHECK(boundary_data.fluxloop.size() == 1);
+    // Without ApertureAttributes the mutual inductances are not measurable, but the
+    // configuration itself is still valid.
+    CHECK(boundary_data.current.at(1).aperture_attributes.empty());
+  }
+
+  SECTION("SurfaceCurrent ApertureAttributes is optional and sorted when present")
+  {
+    json boundaries = {{"SurfaceCurrent",
+                        {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}},
+                         {{"Attributes", {7}},
+                          {"Index", 2},
+                          {"Direction", "+X"},
+                          {"ApertureAttributes", {7, 5, 6}}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.current.at(1).aperture_attributes.empty());
+    CHECK(boundary_data.current.at(2).aperture_attributes == std::vector<int>{5, 6, 7});
   }
 
   SECTION("SurfaceCurrent InactiveMode is optional and parses per port")

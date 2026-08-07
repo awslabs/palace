@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1449,6 +1449,10 @@
         "InactiveMode": {
           "$ref": "#/$defs/InactivePortMode",
           "description": "Overrides [`/Solver/Magnetostatic/InactivePorts`](@ref config-solver-magnetostatic) for this port, controlling how it is treated when inactive during a magnetostatic inductance sweep. If unset, the global value is used."
+        },
+        "ApertureAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for the surface spanning this port's current loop. Only used for magnetostatic inductance extraction in a simulation combining `\"SurfaceCurrent\"` and `\"FluxLoop\"` excitations, where the magnetic flux linked through this surface determines the mutual inductance between this port and the flux loops. If not specified, the mutual inductance cannot be measured and this port's self-inductance is reported as screened by the zero-flux loops."
         }
       }
     },
@@ -1492,6 +1496,10 @@
         "InactiveMode": {
           "$ref": "#/$defs/InactivePortMode",
           "description": "Overrides [`/Solver/Magnetostatic/InactivePorts`](@ref config-solver-magnetostatic) for this port, controlling how it is treated when inactive during a magnetostatic inductance sweep. If unset, the global value is used."
+        },
+        "ApertureAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for the surface spanning this port's current loop. Only used for magnetostatic inductance extraction in a simulation combining `\"SurfaceCurrent\"` and `\"FluxLoop\"` excitations, where the magnetic flux linked through this surface determines the mutual inductance between this port and the flux loops. If not specified, the mutual inductance cannot be measured and this port's self-inductance is reported as screened by the zero-flux loops."
         }
       }
     },
