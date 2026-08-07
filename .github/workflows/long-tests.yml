@@ -1,28 +1,31 @@
-# This workflow runs long tests on a PR when the 'trigger-long-tests' label is
-# added. Long tests are a required check for merging non-trivial PRs.
+# Runs long tests when requested and exposes a native GitHub Actions check for
+# branch protection. Native checks work for fork PRs without a writable token.
 #
-# The typical workflow is:
-# 1. Developer iterates using the short (default) tests
-# 2. When ready to merge, add the 'trigger-long-tests' label
-# 3. Long tests run and the long-tests status is updated
+# The `long-tests` job is the stable check to require. It succeeds when testing
+# is deferred or after the tests pass. Applying `trigger-long-tests` asks for an
+# authoritative result for the PR's current head SHA; a new commit defers tests
+# again, so a maintainer must remove and reapply the label to test that revision.
 #
-# If the PR is updated while the label is present, the tests re-run
-# automatically. It can also be run manually from the GitHub Actions UI.
+# Pull request workflows cannot filter label events by name. Unrelated label
+# events therefore use a unique concurrency group and a differently named
+# reporting job, so they cannot cancel a test or replace its result.
 name: Long Tests
 
 on:
   workflow_dispatch:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled, opened, reopened, synchronize]
 
 permissions:
   packages: read
-  statuses: write
   contents: read
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    long-tests-${{ (github.event.action == 'labeled' &&
+    github.event.label.name != 'trigger-long-tests') &&
+    github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,50 +33,110 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  long-tests:
-    runs-on: [self-hosted, x64]
-    # Run if:
-    # - manually triggered from the Actions UI, OR
-    # - the 'trigger-long-tests' label was just added, OR
-    # - the PR was updated and already has the 'trigger-long-tests' label
-    # Do not run from forks.
-    if: |
-      github.repository == 'awslabs/palace' &&
-      (
-        github.event_name == 'workflow_dispatch' ||
-        (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'trigger-long-tests'))
-      )
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.authorize.outputs.authorized }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Authorize request
+        id: authorize
+        env:
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REQUESTED: >-
+            ${{ github.repository == 'awslabs/palace' &&
+            (github.event_name == 'workflow_dispatch' ||
+            (github.event.action == 'labeled' &&
+            github.event.label.name == 'trigger-long-tests')) }}
+        shell: bash
+        run: |
+          echo "authorized=false" >> "$GITHUB_OUTPUT"
+
+          if [[ "$REQUESTED" != "true" ]]; then
+            echo "Long tests were not requested for this revision."
+            exit 0
+          fi
+
+          permission=$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)
+          if [[ "$permission" != "maintain" && "$permission" != "admin" ]]; then
+            echo "::error::$ACTOR has '$permission' permission; long tests require maintain or admin."
+            exit 1
+          fi
+
+          echo "authorized=true" >> "$GITHUB_OUTPUT"
+          echo "Long tests authorized by $ACTOR for permission level '$permission'."
+
+  test:
+    name: run-long-tests
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - name: Check out authorized revision
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Check out dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
           test-cases: long
 
-      - name: Set success status
-        if: github.event_name == 'pull_request' && success()
+  long-tests:
+    name: >-
+      ${{ (github.event.action == 'labeled' &&
+      github.event.label.name != 'trigger-long-tests') &&
+      'long-tests (ignored event)' || 'long-tests' }}
+    needs: [authorize, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report result
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTH_RESULT: ${{ needs.authorize.result }}
+          AUTHORIZED: ${{ needs.authorize.outputs.authorized }}
+          REQUESTED: >-
+            ${{ github.repository == 'awslabs/palace' &&
+            (github.event_name == 'workflow_dispatch' ||
+            (github.event.action == 'labeled' &&
+            github.event.label.name == 'trigger-long-tests')) }}
+          TEST_RESULT: ${{ needs.test.result }}
+        shell: bash
         run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=success \
-            --field context=long-tests \
-            --field description="Long tests passed"
+          if [[ "$REQUESTED" != "true" ]]; then
+            echo "Long tests deferred for this revision."
+            exit 0
+          fi
 
-      - name: Set failure status
-        if: github.event_name == 'pull_request' && (failure() || cancelled())
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=failure \
-            --field context=long-tests \
-            --field description="Long tests failed"
+          if [[ "$AUTH_RESULT" != "success" || "$AUTHORIZED" != "true" ]]; then
+            echo "::error::Long tests were requested by an unauthorized actor."
+            exit 1
+          fi
+
+          case "$TEST_RESULT" in
+            success)
+              echo "Long tests passed."
+              ;;
+            cancelled)
+              echo "::error::Long tests were cancelled."
+              exit 1
+              ;;
+            skipped)
+              echo "::error::Long tests did not run."
+              exit 1
+              ;;
+            *)
+              echo "::error::Long tests failed ($TEST_RESULT)."
+              exit 1
+              ;;
+          esac
