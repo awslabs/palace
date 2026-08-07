@@ -23,6 +23,7 @@ namespace palace
 {
 
 class ErrorIndicator;
+class LaplaceOperator;
 class Mesh;
 template <ProblemType>
 class PostOperator;
@@ -32,16 +33,29 @@ class PostOperator;
 //
 class ElectrostaticSolver : public BaseSolver
 {
-private:
+protected:
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
 
+  // Inner solve: fills V with the per-terminal potentials for a prebuilt operator, so
+  // tests/MMS can inspect the solved field. No postprocessing or error estimation.
+  void Solve(std::vector<Vector> &V, LaplaceOperator &laplace_op) const;
+
+  // Dispatched entry point: builds the operator, runs the inner solve, then postprocesses.
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:
   using BaseSolver::BaseSolver;
+};
+
+// Test-only subclass: re-exposes the protected Solve overloads as public for unit tests.
+class ExposedElectrostaticSolver : public ElectrostaticSolver
+{
+public:
+  using ElectrostaticSolver::ElectrostaticSolver;
+  using ElectrostaticSolver::Solve;
 };
 
 }  // namespace palace
