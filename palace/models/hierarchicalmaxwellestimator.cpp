@@ -248,9 +248,16 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
         data.dofs.push_back(fine_standard_size + dof);
       }
       SetSignedMatrix(real.curl_curl, standard_dofs, local_size, data.curl_curl);
-      SetSignedMatrix(real.mass, standard_dofs, local_size, data.mass_real);
-      SetSignedMatrix(imaginary.mass, standard_dofs, local_size, data.mass_imag);
-      SetSignedMatrix(absolute.mass, standard_dofs, local_size, data.mass_abs);
+      // The three material slots share one mass block up to their electric scalars, so
+      // store the real-weighted block once with the scalar ratios.
+      SetSignedMatrix(real.mass, standard_dofs, local_size, data.mass);
+      (void)imaginary;
+      (void)absolute;
+      data.electric_real = 1.0;
+      data.electric_imag =
+          imaginary_materials[element].electric / materials[element].electric;
+      data.electric_abs =
+          absolute_materials[element].electric / materials[element].electric;
       continue;
     }
 
@@ -284,9 +291,10 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
       }
     };
     set_standard(unweighted_curl, materials[element].inverse_magnetic, data.curl_curl);
-    set_standard(unweighted_mass, materials[element].electric, data.mass_real);
-    set_standard(unweighted_mass, imaginary_materials[element].electric, data.mass_imag);
-    set_standard(unweighted_mass, absolute_materials[element].electric, data.mass_abs);
+    set_standard(unweighted_mass, 1.0, data.mass);
+    data.electric_real = materials[element].electric;
+    data.electric_imag = imaginary_materials[element].electric;
+    data.electric_abs = absolute_materials[element].electric;
   }
 
   const auto lumped_stiffness = space_op.GetLumpedPortOp().GetStiffnessBdrCoefficientMap();
@@ -398,12 +406,14 @@ HierarchicalMaxwellDomainData::BuildComplexDomainContributions(
     data.support_element = element.support_element;
     data.dofs = element.dofs;
     data.matrix_real = element.curl_curl;
-    data.matrix_real.Add(mass_scale.real(), element.mass_real);
-    data.matrix_real.Add(-mass_scale.imag(), element.mass_imag);
+    data.matrix_real.Add(mass_scale.real() * element.electric_real -
+                             mass_scale.imag() * element.electric_imag,
+                         element.mass);
     data.matrix_imag.SetSize(element.curl_curl.Height());
     data.matrix_imag = 0.0;
-    data.matrix_imag.Add(mass_scale.imag(), element.mass_real);
-    data.matrix_imag.Add(mass_scale.real(), element.mass_imag);
+    data.matrix_imag.Add(mass_scale.imag() * element.electric_real +
+                             mass_scale.real() * element.electric_imag,
+                         element.mass);
     data.rhs_real.SetSize(static_cast<int>(data.dofs.size()));
     data.rhs_imag.SetSize(static_cast<int>(data.dofs.size()));
     data.rhs_real = 0.0;
@@ -428,7 +438,7 @@ HierarchicalMaxwellDomainData::BuildDomainMetricContributions(
     data.support_element = element.support_element;
     data.dofs = element.dofs;
     data.matrix = element.curl_curl;
-    data.matrix.Add(mass_scale, element.mass_abs);
+    data.matrix.Add(mass_scale * element.electric_abs, element.mass);
     data.rhs.SetSize(static_cast<int>(data.dofs.size()));
     data.rhs = 0.0;
   }
@@ -646,7 +656,8 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
   for (int element = 0; element < mesh.GetNE(); element++)
   {
     merged[element] = elements[element].curl_curl;
-    merged[element].Add(metric_mass_scale, elements[element].mass_abs);
+    merged[element].Add(metric_mass_scale * elements[element].electric_abs,
+                        elements[element].mass);
     for (int i = 0; i < static_cast<int>(elements[element].dofs.size()); i++)
     {
       dof_positions[element].emplace(elements[element].dofs[i], i);
@@ -844,8 +855,8 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
 }
 
 std::vector<HierarchicalMaxwellDomainData::TrueElementRecord>
-HierarchicalMaxwellDomainData::ExchangeHaloRecords(
-    const std::vector<TrueElementRecord> &records, int *ghost_count) const
+HierarchicalMaxwellDomainData::ExchangeHaloRecords(std::vector<TrueElementRecord> records,
+                                                   int *ghost_count) const
 {
   auto &mesh = space_op->GetMesh().Get();
   auto &fine_fespace = fine_nd_space->Get();
@@ -1009,7 +1020,7 @@ HierarchicalMaxwellDomainData::ExchangeHaloRecords(
   }
   MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
 
-  std::vector<TrueElementRecord> augmented = records;
+  std::vector<TrueElementRecord> augmented = std::move(records);
   std::set<HYPRE_BigInt> known;
   for (const auto &record : records)
   {
@@ -1258,11 +1269,13 @@ HierarchicalMaxwellDomainData::AssembleStreamingComplexResidual(
     block_real.SetSize(local_size);
     block_imag.SetSize(local_size);
     block_real = element.curl_curl;
-    block_real.Add(mass_scale.real(), element.mass_real);
-    block_real.Add(-mass_scale.imag(), element.mass_imag);
+    block_real.Add(mass_scale.real() * element.electric_real -
+                       mass_scale.imag() * element.electric_imag,
+                   element.mass);
     block_imag = 0.0;
-    block_imag.Add(mass_scale.imag(), element.mass_real);
-    block_imag.Add(mass_scale.real(), element.mass_imag);
+    block_imag.Add(mass_scale.imag() * element.electric_real +
+                       mass_scale.real() * element.electric_imag,
+                   element.mass);
     apply(element.dofs, block_real, block_imag);
   }
   const auto apply_boundary =
@@ -1407,7 +1420,7 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
   const HYPRE_BigInt fine_true_offset = fine_fespace.GetMyTDofOffset();
   const HYPRE_BigInt enrichment_offset = numbering.owned_offset;
 
-  const auto records = ExchangeHaloRecords(BuildTrueMetricElementRecords(omega));
+  auto records = ExchangeHaloRecords(BuildTrueMetricElementRecords(omega));
   const int own_elements = mesh.GetNE();
   const int record_count = static_cast<int>(records.size());
 
@@ -1529,6 +1542,20 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
     {
       column_offsets[c + 1] += column_offsets[c];
     }
+  }
+  // Only each record's metric is needed from here on (restricted congruence, sweeps, and
+  // indicator energies); release the injection blocks and id/flag arrays.
+  for (auto &record : records)
+  {
+    record.injection.SetSize(0, 0);
+    record.fine_dofs.clear();
+    record.fine_dofs.shrink_to_fit();
+    record.coarse_dofs.clear();
+    record.coarse_dofs.shrink_to_fit();
+    record.fine_essential.clear();
+    record.fine_essential.shrink_to_fit();
+    record.coarse_essential.clear();
+    record.coarse_essential.shrink_to_fit();
   }
 
   // Ownership and complete residual values on the halo.
@@ -1702,8 +1729,63 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
     int owned = 0;
     std::vector<int> owned_begin;  // owned + 1 offsets into the pools.
     std::vector<int> guests;       // coarse universe indices.
-    mfem::DenseMatrix restricted;
+    // Packed lower-triangular Cholesky factor of the restricted SPD metric; the dense
+    // restricted matrix itself is never retained.
+    std::vector<double> factor;
     std::vector<int> support;  // record indices, sorted unique.
+  };
+  const auto packed_cholesky_factor =
+      [](mfem::DenseMatrix &matrix, std::vector<double> &factor)
+  {
+    const int n = matrix.Height();
+    factor.assign(static_cast<std::size_t>(n) * (n + 1) / 2, 0.0);
+    for (int j = 0; j < n; j++)
+    {
+      double diagonal = matrix(j, j);
+      const std::size_t row_j = static_cast<std::size_t>(j) * (j + 1) / 2;
+      for (int k = 0; k < j; k++)
+      {
+        diagonal -= factor[row_j + k] * factor[row_j + k];
+      }
+      MFEM_VERIFY(diagonal > 0.0,
+                  "Entity-patch restricted metric lost positive definiteness!");
+      const double pivot = std::sqrt(diagonal);
+      factor[row_j + j] = pivot;
+      for (int i = j + 1; i < n; i++)
+      {
+        const std::size_t row_i = static_cast<std::size_t>(i) * (i + 1) / 2;
+        double value = matrix(i, j);
+        for (int k = 0; k < j; k++)
+        {
+          value -= factor[row_i + k] * factor[row_j + k];
+        }
+        factor[row_i + j] = value / pivot;
+      }
+    }
+  };
+  const auto packed_cholesky_solve =
+      [](const std::vector<double> &factor, int n, Vector &rhs)
+  {
+    for (int i = 0; i < n; i++)
+    {
+      const std::size_t row_i = static_cast<std::size_t>(i) * (i + 1) / 2;
+      double value = rhs(i);
+      for (int k = 0; k < i; k++)
+      {
+        value -= factor[row_i + k] * rhs(k);
+      }
+      rhs(i) = value / factor[row_i + i];
+    }
+    for (int i = n - 1; i >= 0; i--)
+    {
+      const std::size_t row_i = static_cast<std::size_t>(i) * (i + 1) / 2;
+      double value = rhs(i);
+      for (int k = i + 1; k < n; k++)
+      {
+        value -= factor[static_cast<std::size_t>(k) * (k + 1) / 2 + i] * rhs(k);
+      }
+      rhs(i) = value / factor[row_i + i];
+    }
   };
   std::vector<Patch> patches;
   std::vector<int> pool_dof;
@@ -1874,11 +1956,12 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
       patch.support = std::move(support);
     }
 
-    // Restricted metric over the support union. Column membership per record DOF is
-    // gathered through the generation-stamped scratch.
+    // Restricted metric over the support union, assembled into a transient dense block
+    // and immediately factored. Column membership per record DOF is gathered through the
+    // generation-stamped scratch.
     const int dimension = patch.owned + static_cast<int>(patch.guests.size());
-    patch.restricted.SetSize(dimension);
-    patch.restricted = 0.0;
+    mfem::DenseMatrix restricted(dimension);
+    restricted = 0.0;
     std::vector<std::vector<std::pair<int, double>>> dof_columns_scratch;
     for (const int r : patch.support)
     {
@@ -1939,12 +2022,13 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
           {
             for (const auto &[bj, vj] : dof_columns_scratch[j])
             {
-              patch.restricted(bi, bj) += vi * value * vj;
+              restricted(bi, bj) += vi * value * vj;
             }
           }
         }
       }
     }
+    packed_cholesky_factor(restricted, patch.factor);
     patches.push_back(std::move(patch));
   };
 
@@ -2037,13 +2121,6 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
                 "direction exactly once across all ranks!");
   }
 
-  // Dense factorization once per patch.
-  std::vector<mfem::DenseMatrixInverse> inverses(patches.size());
-  for (std::size_t p = 0; p < patches.size(); p++)
-  {
-    inverses[p].Factor(patches[p].restricted);
-  }
-
   // Bounded undamped additive-Schwarz sweeps applied identically to both components.
   std::vector<double> correction(2 * static_cast<std::size_t>(nf), 0.0);
   std::vector<double> current(2 * static_cast<std::size_t>(nf), 0.0);
@@ -2123,9 +2200,10 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
         rhs_real(patch.owned + static_cast<int>(g)) = sum_real;
         rhs_imag(patch.owned + static_cast<int>(g)) = sum_imag;
       }
-      Vector c_real(dimension), c_imag(dimension);
-      inverses[p].Mult(rhs_real, c_real);
-      inverses[p].Mult(rhs_imag, c_imag);
+      Vector &c_real = rhs_real;
+      Vector &c_imag = rhs_imag;
+      packed_cholesky_solve(patch.factor, dimension, c_real);
+      packed_cholesky_solve(patch.factor, dimension, c_imag);
       for (int b = 0; b < patch.owned; b++)
       {
         for (int entry = patch.owned_begin[b]; entry < patch.owned_begin[b + 1]; entry++)

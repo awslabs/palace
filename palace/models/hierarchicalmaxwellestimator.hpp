@@ -39,6 +39,10 @@ private:
   std::vector<bool> coarse_essential, fine_essential;
   std::vector<std::vector<int>> element_enrichment_guests;
 
+  // Isotropic material scaling makes the imaginary and absolute mass blocks exact scalar
+  // multiples of one unweighted mass block per element, so only two dense matrices are
+  // stored: curl_curl (inverse-permeability weighted) and mass (unweighted), plus the
+  // three electric scalars.
   struct ElementMatrices
   {
     int support_element = -1;
@@ -46,9 +50,10 @@ private:
     mfem::Array<int> standard_dofs;
     mfem::Array<int> enrichment_dofs;
     mfem::DenseMatrix curl_curl;
-    mfem::DenseMatrix mass_real;
-    mfem::DenseMatrix mass_imag;
-    mfem::DenseMatrix mass_abs;
+    mfem::DenseMatrix mass;
+    double electric_real = 1.0;
+    double electric_imag = 0.0;
+    double electric_abs = 1.0;
   };
   std::vector<ElementMatrices> elements;
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_stiffness;
@@ -149,9 +154,8 @@ public:
   // ring, coarse guest columns one more, and their support elements a third). Received
   // records are deduplicated by global element identity; the returned set contains the
   // local records first, then ghosts. ghost_count reports how many ghosts were appended.
-  std::vector<TrueElementRecord>
-  ExchangeHaloRecords(const std::vector<TrueElementRecord> &records,
-                      int *ghost_count = nullptr) const;
+  std::vector<TrueElementRecord> ExchangeHaloRecords(std::vector<TrueElementRecord> records,
+                                                     int *ghost_count = nullptr) const;
 
   // Rank-count-agnostic certified entity-patch lifting over augmented records: sorted
   // true-DOF complement bases per owned edge/face/interior entity, dense Cholesky patch
