@@ -7,15 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Testing
 
-*Palace* comes with two types of tests:
+*Palace* comes with three complementary types of tests:
 
   - Unit tests in `test/unit/` test individual components in isolation
   - Regression tests, registered in `test/unit/regression/cases.cpp`, run
     full Palace solves on fixtures under `test/data/regression/input/`
     and compare generated CSVs against `test/data/regression/ref/`
+  - Numerical verification tests compare computed solutions and convergence
+    rates against mathematical solutions and theoretical predictions
 
-Both types of tests are run automatically as part of the project's continuous
+All three types of tests are run automatically as part of the project's continuous
 integration (CI) workflows.
+
+Mathematical solution and convergence studies are described separately in
+[Numerical Verification](verification.md).
 
 ## Building and running unit tests
 

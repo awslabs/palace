@@ -4,7 +4,7 @@
 CLANG_FORMAT ?= clang-format
 JULIA ?= julia
 
-.PHONY: format format-cpp format-jl docs docs-generate-config \
+.PHONY: format format-cpp format-jl docs docs-mms-plots docs-generate-config \
 	docs-generate-schema-compatibility tests
 
 # Style/format
@@ -21,6 +21,9 @@ docs:
 	$(RM) -r docs/build
 	$(JULIA) --project=docs -e 'using Pkg; Pkg.instantiate()'
 	$(JULIA) --project=docs --color=yes docs/make.jl
+
+docs-mms-plots:
+	$(JULIA) --project=examples docs/generate_electrostatic_mms_plots.jl
 
 docs-generate-config:
 	$(JULIA) --project=docs --color=yes docs/generate_config_docs.jl
