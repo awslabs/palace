@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Manages long test status for PRs based on labels and file changes.
 #
 # 1. Label-based bypass:
