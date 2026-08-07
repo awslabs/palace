@@ -396,8 +396,14 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
 // ordering matches material_batches. If retained_patch_batch is nonnegative,
 // combined standard-plus-enrichment element matrices are retained only in that
 // result entry for use by an overlapping Maxwell smoother. Pass
-// RetainAllNDElementPatchBatches to retain them in every result (used by the
-// hierarchical residual's real, imaginary, and absolute-metric slots).
+// RetainAllNDElementPatchBatches to retain them in every result. Pass
+// RetainNDElementPatchStripsOnly for the estimator-only extraction mode: retain only the
+// standard-enrichment and enrichment-enrichment columns in every result, omit
+// reconstructible standard blocks and quadrature-error matrices, and leave the returned
+// sparse operators and aggregate quadrature counts empty. Timing/cache diagnostics remain
+// populated. This mode avoids duplicating data already owned by the production
+// SpaceOperator.
+inline constexpr int RetainNDElementPatchStripsOnly = -3;
 inline constexpr int RetainAllNDElementPatchBatches = -2;
 std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatricesBatch(
     const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,

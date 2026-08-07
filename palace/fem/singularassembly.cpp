@@ -6654,6 +6654,36 @@ BuildCombinedNDElementMatrix(const mfem::DenseMatrix &standard_standard,
 }
 
 mfem::DenseMatrix
+BuildNDElementEnrichmentColumns(const mfem::DenseMatrix &standard_enrichment,
+                                const mfem::DenseMatrix &enrichment_enrichment)
+{
+  const int standard_size = standard_enrichment.Height();
+  const int enrichment_size = enrichment_enrichment.Height();
+  if (standard_enrichment.Width() != enrichment_size ||
+      enrichment_enrichment.Width() != enrichment_size)
+  {
+    throw std::invalid_argument(
+        "Singular element enrichment strip received inconsistent dimensions!");
+  }
+  mfem::DenseMatrix columns(standard_size + enrichment_size, enrichment_size);
+  for (int i = 0; i < standard_size; i++)
+  {
+    for (int j = 0; j < enrichment_size; j++)
+    {
+      columns(i, j) = standard_enrichment(i, j);
+    }
+  }
+  for (int i = 0; i < enrichment_size; i++)
+  {
+    for (int j = 0; j < enrichment_size; j++)
+    {
+      columns(standard_size + i, j) = enrichment_enrichment(i, j);
+    }
+  }
+  return columns;
+}
+
+mfem::DenseMatrix
 BuildCombinedNDElementErrorMatrix(int standard_size,
                                   const mfem::DenseMatrix &standard_enrichment,
                                   const mfem::DenseMatrix &enrichment_enrichment)
@@ -6704,7 +6734,7 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     throw std::invalid_argument(
         "Singular sparse batch assembly requires at least one material field!");
   }
-  if (retained_patch_batch < RetainAllNDElementPatchBatches ||
+  if (retained_patch_batch < RetainNDElementPatchStripsOnly ||
       retained_patch_batch >= static_cast<int>(material_batches.size()))
   {
     throw std::invalid_argument(
@@ -6794,7 +6824,8 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
       material_transformation_time += elapsed(material_start);
       auto &result = results[batch];
 
-      if (retained_patch_batch == RetainAllNDElementPatchBatches ||
+      if (retained_patch_batch == RetainNDElementPatchStripsOnly ||
+          retained_patch_batch == RetainAllNDElementPatchBatches ||
           static_cast<int>(batch) == retained_patch_batch)
       {
         const auto &material = material_batches[batch][element];
@@ -6802,6 +6833,15 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
         patch.element = element;
         patch.standard_dofs = nd_standard_dofs;
         patch.enrichment_dofs = nd_enrichment_dofs;
+        if (retained_patch_batch == RetainNDElementPatchStripsOnly)
+        {
+          patch.mass = BuildNDElementEnrichmentColumns(coupling.nd_mass_standard_enrichment,
+                                                       enrichment.nd_mass);
+          patch.curl_curl = BuildNDElementEnrichmentColumns(
+              coupling.nd_curl_curl_standard_enrichment, enrichment.nd_curl_curl);
+          result.nd_element_patches.push_back(std::move(patch));
+          continue;
+        }
         const int combined_nd_size = standard_mass.Height() + nd_enrichment_dofs.Size();
         if (material.electric == 0.0)
         {

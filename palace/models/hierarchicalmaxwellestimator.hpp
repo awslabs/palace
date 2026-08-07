@@ -5,6 +5,7 @@
 #define PALACE_MODELS_HIERARCHICALMAXWELLESTIMATOR_HPP
 
 #include <complex>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -49,8 +50,13 @@ private:
     std::vector<int> dofs;
     mfem::Array<int> standard_dofs;
     mfem::Array<int> enrichment_dofs;
+    // For enriched elements these store only columns touching enrichment DOFs
+    // (local_size x enrichment_size); standard-standard blocks are reconstructed from the
+    // p+1 MFEM element. They are empty on ordinary elements.
     mfem::DenseMatrix curl_curl;
     mfem::DenseMatrix mass;
+    double inverse_magnetic = 1.0;
+    double standard_mass_scale = 1.0;
     double electric_real = 1.0;
     double electric_imag = 0.0;
     double electric_abs = 1.0;
@@ -62,10 +68,24 @@ private:
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_stiffness_abs;
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_damping_abs;
   std::vector<fem::singular::LocalNDBoundaryPatchMatrices> boundary_mass_abs;
+  struct MetricBoundaryPatchRef
+  {
+    int family = 0;  // 0: stiffness, 1: damping, 2: mass.
+    int index = 0;
+  };
+  // Element-indexed CSR over the absolute boundary metric patches. On-demand local metric
+  // reconstruction must not rescan every boundary facet for every patch incidence.
+  std::vector<int> metric_boundary_offsets;
+  std::vector<MetricBoundaryPatchRef> metric_boundary_patches;
   bool unsupported_polynomial_boundary = false;
   bool entity_patches_available = false;
   mfem::Array<int> fine_standard_essential_true_dofs;
   mfem::Array<int> enrichment_essential_true_dofs;
+
+  // Materialize the signed local curl and unweighted mass blocks. Enriched blocks are
+  // copied from their exact retained assembly; ordinary p+1 blocks are recomputed.
+  void ComputeElementMatrices(int element, mfem::DenseMatrix &curl_curl,
+                              mfem::DenseMatrix &mass) const;
 
   std::vector<fem::singular::LocalNDElementPatchMatrices>
   BuildPolynomialMetricElementPatches(std::complex<double> omega) const;
@@ -136,26 +156,51 @@ public:
     std::vector<HYPRE_BigInt> coarse_dofs;
     std::vector<char> fine_essential;
     std::vector<char> coarse_essential;
+    // Dense metric in global-true coordinates. In the lean engine path this stays empty
+    // for rank-local records (recomputed on demand through the sparse prolongation block
+    // below) and is materialized only for halo transport and received ghosts.
     mfem::DenseMatrix metric;
+    // Sparse element block of the local-to-true prolongation: per local DOF, (position in
+    // fine_dofs, value). Enables on-demand metric congruence for local records.
+    std::vector<std::vector<std::pair<int, double>>> prolongation;
     // Element block of the coarse-to-fine injection in the same sign-folded true
-    // convention (rows: coarse_dofs, columns: fine_dofs). Receiving ranks cannot evaluate
-    // transfer matrices for ghost elements, so guest columns assemble from these blocks.
+    // convention (rows: coarse_dofs, columns: fine_dofs). Public/materialized records keep
+    // the dense form for diagnostics; the production lean path and halo transport retain
+    // only entries above the certified sparsity tolerance.
     mfem::DenseMatrix injection;
+    struct InjectionEntry
+    {
+      int coarse = 0;
+      int fine = 0;
+      double value = 0.0;
+    };
+    std::vector<InjectionEntry> injection_entries;
   };
 
   // Extract this rank's local metric contributions as global-true records. Facet
   // contributions are merged into their support element's record so each element appears
-  // exactly once.
+  // exactly once. With materialize_metrics false, dense metrics are skipped and the
+  // sparse prolongation blocks retained instead (the lean engine path).
   std::vector<TrueElementRecord>
-  BuildTrueMetricElementRecords(std::complex<double> omega) const;
+  BuildTrueMetricElementRecords(std::complex<double> omega,
+                                bool materialize_metrics = true) const;
+
+  // On-demand dense metric of one rank-local record through its sparse prolongation
+  // block: standard-plus-strip element blocks, absolute-material mass scaling, and any
+  // merged boundary facets, congruence-transformed to global-true coordinates.
+  void ComputeRecordMetric(const TrueElementRecord &record, int element,
+                           std::complex<double> omega, mfem::DenseMatrix &out) const;
 
   // Exchange a three-layer halo of records with every mesh-neighbor rank, so shared-entity
   // patch owners hold the complete support union (owned complement modes reach one element
   // ring, coarse guest columns one more, and their support elements a third). Received
   // records are deduplicated by global element identity; the returned set contains the
   // local records first, then ghosts. ghost_count reports how many ghosts were appended.
-  std::vector<TrueElementRecord> ExchangeHaloRecords(std::vector<TrueElementRecord> records,
-                                                     int *ghost_count = nullptr) const;
+  // Lean records with empty metrics must supply materialize so their transport payloads
+  // contain a dense metric; the callback is unnecessary for default materialized records.
+  std::vector<TrueElementRecord> ExchangeHaloRecords(
+      std::vector<TrueElementRecord> records, int *ghost_count = nullptr,
+      const std::function<void(int, TrueElementRecord &)> &materialize = nullptr) const;
 
   // Rank-count-agnostic certified entity-patch lifting over augmented records: sorted
   // true-DOF complement bases per owned edge/face/interior entity, dense Cholesky patch

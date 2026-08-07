@@ -4097,6 +4097,41 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
     CHECK(batch->maximum_subdivision_depth == independent->maximum_subdivision_depth);
   }
 
+  // The estimator-only strip mode must preserve every column that touches an enrichment
+  // DOF exactly, including signed shared-face standard orientations and material scaling.
+  const auto full_patches = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+      topology, h1_space, nd_space, {materials}, options, 0);
+  const auto strip_patches = fem::singular::AssembleLocalSparseEnrichmentMatricesBatch(
+      topology, h1_space, nd_space, {materials}, options,
+      fem::singular::RetainNDElementPatchStripsOnly);
+  REQUIRE(full_patches.size() == 1);
+  REQUIRE(strip_patches.size() == 1);
+  REQUIRE(full_patches[0].nd_element_patches.size() ==
+          strip_patches[0].nd_element_patches.size());
+  for (std::size_t p = 0; p < full_patches[0].nd_element_patches.size(); p++)
+  {
+    const auto &full = full_patches[0].nd_element_patches[p];
+    const auto &strip = strip_patches[0].nd_element_patches[p];
+    const int standard_size = full.standard_dofs.Size();
+    const int enrichment_size = full.enrichment_dofs.Size();
+    REQUIRE(strip.mass.Height() == standard_size + enrichment_size);
+    REQUIRE(strip.mass.Width() == enrichment_size);
+    REQUIRE(strip.curl_curl.Height() == standard_size + enrichment_size);
+    REQUIRE(strip.curl_curl.Width() == enrichment_size);
+    for (int i = 0; i < standard_size + enrichment_size; i++)
+    {
+      for (int j = 0; j < enrichment_size; j++)
+      {
+        CHECK(strip.mass(i, j) == full.mass(i, standard_size + j));
+        CHECK(strip.curl_curl(i, j) == full.curl_curl(i, standard_size + j));
+        CHECK(strip.mass(i, j) == full.mass(standard_size + j, i));
+        CHECK(strip.curl_curl(i, j) == full.curl_curl(standard_size + j, i));
+      }
+    }
+    CHECK(strip.mass_estimated_absolute_error.Size() == 0);
+    CHECK(strip.curl_curl_estimated_absolute_error.Size() == 0);
+  }
+
   REQUIRE(sparse.h1_diffusion.enrichment_enrichment);
   REQUIRE(sparse.h1_diffusion.standard_enrichment);
   REQUIRE(sparse.h1_diffusion.enrichment_standard);
