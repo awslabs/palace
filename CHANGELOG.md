@@ -69,6 +69,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Reject all-zero numerator or denominator polynomial coefficients in
+    `config["Boundaries"]["RationalImpedance"]` during schema validation, instead of
+    accepting the configuration only to reject it when parsing the solve. SchemaVer 1-5-1
+    [PR 874](https://github.com/awslabs/palace/pull/874).
   - Fixed validation of domain material coverage so postprocessing and retained mesh
     attributes without a corresponding `config["Domains"]["Materials"]` entry are rejected
     instead of silently assigning zero material coefficients to retained volumes. [PR
