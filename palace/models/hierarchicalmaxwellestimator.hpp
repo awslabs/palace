@@ -129,6 +129,8 @@ public:
     HYPRE_BigInt element_id = -1;  // Owner-rank global element identity.
     std::vector<HYPRE_BigInt> fine_dofs;
     std::vector<HYPRE_BigInt> coarse_dofs;
+    std::vector<char> fine_essential;
+    std::vector<char> coarse_essential;
     mfem::DenseMatrix metric;
   };
 
@@ -137,6 +139,15 @@ public:
   // exactly once.
   std::vector<TrueElementRecord>
   BuildTrueMetricElementRecords(std::complex<double> omega) const;
+
+  // Exchange a three-layer halo of records with every mesh-neighbor rank, so shared-entity
+  // patch owners hold the complete support union (owned complement modes reach one element
+  // ring, coarse guest columns one more, and their support elements a third). Received
+  // records are deduplicated by global element identity; the returned set contains the
+  // local records first, then ghosts. ghost_count reports how many ghosts were appended.
+  std::vector<TrueElementRecord>
+  ExchangeHaloRecords(const std::vector<TrueElementRecord> &records,
+                      int *ghost_count = nullptr) const;
 
 private:
   // Shared lifting tail: consumes the uneliminated local complex residual and applies one

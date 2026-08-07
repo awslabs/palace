@@ -1138,6 +1138,80 @@ TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
     record_energy += data[0];
   }
   CAPTURE(record_energy);
+
+  // Halo exchange: ghosts must reproduce the sender's records entrywise, and on this
+  // small fixture every element lies within three layers of the interface, so each rank
+  // ends with the complete global record set.
+  {
+    const auto records = hierarchy.BuildTrueMetricElementRecords({0.7, 0.08});
+    int ghost_count = -1;
+    const auto augmented = hierarchy.ExchangeHaloRecords(records, &ghost_count);
+    const int expected_ghosts =
+        Mpi::Size(Mpi::World()) == 2 ? 4 - static_cast<int>(records.size()) : 0;
+    CAPTURE(records.size(), augmented.size(), ghost_count);
+    CHECK(ghost_count == expected_ghosts);
+    CHECK(augmented.size() ==
+          static_cast<std::size_t>(Mpi::Size(Mpi::World()) == 2 ? 4 : records.size()));
+    const auto fingerprint = [](const HierarchicalMaxwellDomainData::TrueElementRecord &r)
+    {
+      double absolute_sum = 0.0, dof_sum = 0.0, essential_sum = 0.0;
+      for (int i = 0; i < r.metric.Height(); i++)
+      {
+        dof_sum += static_cast<double>(r.fine_dofs[i] % 1000003);
+        essential_sum += r.fine_essential[i] ? 1.0 : 0.0;
+        for (int j = 0; j < r.metric.Width(); j++)
+        {
+          absolute_sum += std::abs(r.metric(i, j));
+        }
+      }
+      for (std::size_t i = 0; i < r.coarse_dofs.size(); i++)
+      {
+        dof_sum += static_cast<double>(r.coarse_dofs[i] % 999983);
+        essential_sum += r.coarse_essential[i] ? 1.0 : 0.0;
+      }
+      return std::array<double, 3>{absolute_sum, dof_sum, essential_sum};
+    };
+    // Gather every rank's local fingerprints and require each augmented record to match
+    // the original owner's fingerprint exactly.
+    std::vector<double> local_prints;
+    for (const auto &record : records)
+    {
+      local_prints.push_back(static_cast<double>(record.element_id));
+      const auto print = fingerprint(record);
+      local_prints.insert(local_prints.end(), print.begin(), print.end());
+    }
+    const int local_print_count = static_cast<int>(local_prints.size());
+    std::vector<int> print_counts(Mpi::Size(Mpi::World()));
+    MPI_Allgather(&local_print_count, 1, MPI_INT, print_counts.data(), 1, MPI_INT,
+                  Mpi::World());
+    std::vector<int> print_offsets(print_counts.size(), 0);
+    int print_total = print_counts[0];
+    for (std::size_t rank = 1; rank < print_counts.size(); rank++)
+    {
+      print_offsets[rank] = print_offsets[rank - 1] + print_counts[rank - 1];
+      print_total += print_counts[rank];
+    }
+    std::vector<double> all_prints(print_total);
+    MPI_Allgatherv(local_prints.data(), local_print_count, MPI_DOUBLE, all_prints.data(),
+                   print_counts.data(), print_offsets.data(), MPI_DOUBLE, Mpi::World());
+    std::map<HYPRE_BigInt, std::array<double, 3>> global_prints;
+    for (int i = 0; i < print_total; i += 4)
+    {
+      global_prints[static_cast<HYPRE_BigInt>(all_prints[i])] = {
+          all_prints[i + 1], all_prints[i + 2], all_prints[i + 3]};
+    }
+    for (const auto &record : augmented)
+    {
+      const auto reference = global_prints.find(record.element_id);
+      REQUIRE(reference != global_prints.end());
+      const auto print = fingerprint(record);
+      CAPTURE(record.element_id, print[0], print[1], print[2], reference->second[0],
+              reference->second[1], reference->second[2]);
+      CHECK_THAT(print[0], Catch::Matchers::WithinRel(reference->second[0], 1.0e-14));
+      CHECK(print[1] == reference->second[1]);
+      CHECK(print[2] == reference->second[2]);
+    }
+  }
   CHECK(std::isfinite(record_energy));
   CHECK(record_energy > 0.0);
   double sum = estimate.indicator_energy.Sum();

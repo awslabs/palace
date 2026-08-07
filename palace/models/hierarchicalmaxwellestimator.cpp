@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
@@ -581,6 +582,25 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
   const HYPRE_BigInt fine_standard_global = fine_fespace.GlobalTrueVSize();
   const HYPRE_BigInt coarse_standard_global = coarse_fespace.GlobalTrueVSize();
 
+  // Rank-local essential flags for every local DOF, including non-owned shared copies.
+  // Standard flags come from the geometric PEC marker; enrichment flags localize the
+  // owned essential list through the enrichment prolongation.
+  const int boundary_attribute_maximum =
+      mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto dbc_marker =
+      mesh::AttrToMarker(boundary_attribute_maximum, space_op->GetNDDbcAttributes());
+  mfem::Array<int> fine_essential_vdofs, coarse_essential_vdofs;
+  fine_fespace.GetEssentialVDofs(dbc_marker, fine_essential_vdofs);
+  coarse_fespace.GetEssentialVDofs(dbc_marker, coarse_essential_vdofs);
+  Vector enrichment_essential_owned(static_cast<int>(numbering.owned_size));
+  enrichment_essential_owned = 0.0;
+  for (int dof : enrichment_essential_true_dofs)
+  {
+    enrichment_essential_owned(dof) = 1.0;
+  }
+  Vector enrichment_essential_local(enrichment_size);
+  enrichment_prolongation->Mult(enrichment_essential_owned, enrichment_essential_local);
+
   // Merge domain and facet metric contributions so each element appears exactly once.
   const auto contributions = BuildPolynomialMetricContributions(omega);
   std::vector<TrueElementRecord> records(mesh.GetNE());
@@ -595,6 +615,7 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
                 "Hierarchical metric contributions are not element-ordered!");
     const int local_size = static_cast<int>(domain.dofs.size());
     record.fine_dofs.resize(local_size);
+    record.fine_essential.resize(local_size);
     mfem::Vector signs(local_size);
     for (int i = 0; i < local_size; i++)
     {
@@ -603,6 +624,7 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
       if (dof < fine_fespace.GetVSize())
       {
         record.fine_dofs[i] = fine_map[dof].first;
+        record.fine_essential[i] = fine_essential_vdofs[dof] != 0;
         signs(i) = fine_map[dof].second;
       }
       else
@@ -610,6 +632,8 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
         const int enrichment_dof = dof - fine_fespace.GetVSize();
         record.fine_dofs[i] =
             fine_standard_global + numbering.local_to_true[enrichment_dof];
+        record.fine_essential[i] =
+            std::abs(enrichment_essential_local(enrichment_dof)) > 0.5;
         signs(i) = 1.0;
       }
     }
@@ -628,10 +652,12 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
     {
       const int unsigned_dof = dof >= 0 ? dof : -1 - dof;
       record.coarse_dofs.push_back(coarse_map[unsigned_dof].first);
+      record.coarse_essential.push_back(coarse_essential_vdofs[unsigned_dof] != 0);
     }
     for (int guest : element_enrichment_guests[element])
     {
       record.coarse_dofs.push_back(coarse_standard_global + numbering.local_to_true[guest]);
+      record.coarse_essential.push_back(std::abs(enrichment_essential_local(guest)) > 0.5);
     }
   }
   for (std::size_t extra = static_cast<std::size_t>(mesh.GetNE());
@@ -660,6 +686,223 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
     }
   }
   return records;
+}
+
+std::vector<HierarchicalMaxwellDomainData::TrueElementRecord>
+HierarchicalMaxwellDomainData::ExchangeHaloRecords(
+    const std::vector<TrueElementRecord> &records, int *ghost_count) const
+{
+  auto &mesh = space_op->GetMesh().Get();
+  auto &fine_fespace = fine_nd_space->Get();
+  if (ghost_count)
+  {
+    *ghost_count = 0;
+  }
+  if (Mpi::Size(space_op->GetComm()) == 1)
+  {
+    return records;
+  }
+
+  // Interface seed elements: any shared fine standard DOF or shared mesh vertex (the
+  // latter covers vertex-anchored enrichment between ranks that share no ND DOF).
+  std::vector<char> shared_ldof(fine_fespace.GetVSize(), false);
+  const auto &group_ldof = fine_fespace.GroupComm().GroupLDofTable();
+  for (int group = 1; group < group_ldof.Size(); group++)
+  {
+    const int *ldofs = group_ldof.GetRow(group);
+    for (int i = 0; i < group_ldof.RowSize(group); i++)
+    {
+      shared_ldof[ldofs[i]] = true;
+    }
+  }
+  std::vector<char> shared_vertex(mesh.GetNV(), false);
+  for (int group = 1; group < mesh.GetNGroups(); group++)
+  {
+    for (int vertex = 0; vertex < mesh.GroupNVertices(group); vertex++)
+    {
+      shared_vertex[mesh.GroupVertex(group, vertex)] = true;
+    }
+  }
+
+  // Three layers of DOF-connectivity outward from the interface. Owned complement modes
+  // reach the entity's element ring, coarse guest columns one more ring, and their
+  // support elements a third.
+  std::map<HYPRE_BigInt, std::vector<int>> dof_elements;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    for (const auto dof : records[element].fine_dofs)
+    {
+      dof_elements[dof].push_back(element);
+    }
+  }
+  std::vector<int> layer(mesh.GetNE(), 0);
+  mfem::Array<int> vdofs, vertices;
+  mfem::DofTransformation transformation;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    bool seed = false;
+    fine_fespace.GetElementVDofs(element, vdofs, transformation);
+    for (int dof : vdofs)
+    {
+      seed = seed || shared_ldof[dof >= 0 ? dof : -1 - dof];
+    }
+    mesh.GetElementVertices(element, vertices);
+    for (int vertex : vertices)
+    {
+      seed = seed || shared_vertex[vertex];
+    }
+    layer[element] = seed ? 1 : 0;
+  }
+  for (int pass = 1; pass < 3; pass++)
+  {
+    std::vector<int> next(layer);
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      if (layer[element] != pass)
+      {
+        continue;
+      }
+      for (const auto dof : records[element].fine_dofs)
+      {
+        for (int neighbor : dof_elements[dof])
+        {
+          if (next[neighbor] == 0)
+          {
+            next[neighbor] = pass + 1;
+          }
+        }
+      }
+    }
+    layer = next;
+  }
+
+  // Pack the halo once and send it to every mesh-topology neighbor rank.
+  std::vector<double> payload;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    if (layer[element] == 0)
+    {
+      continue;
+    }
+    const auto &record = records[element];
+    payload.push_back(static_cast<double>(record.element_id));
+    payload.push_back(static_cast<double>(record.fine_dofs.size()));
+    payload.push_back(static_cast<double>(record.coarse_dofs.size()));
+    for (const auto dof : record.fine_dofs)
+    {
+      payload.push_back(static_cast<double>(dof));
+    }
+    for (const auto dof : record.coarse_dofs)
+    {
+      payload.push_back(static_cast<double>(dof));
+    }
+    for (const char flag : record.fine_essential)
+    {
+      payload.push_back(flag ? 1.0 : 0.0);
+    }
+    for (const char flag : record.coarse_essential)
+    {
+      payload.push_back(flag ? 1.0 : 0.0);
+    }
+    for (int i = 0; i < record.metric.Height(); i++)
+    {
+      for (int j = 0; j < record.metric.Width(); j++)
+      {
+        payload.push_back(record.metric(i, j));
+      }
+    }
+  }
+
+  const auto &group_topology = mesh.gtopo;
+  std::vector<int> neighbors;
+  for (int neighbor = 1; neighbor < group_topology.GetNumNeighbors(); neighbor++)
+  {
+    neighbors.push_back(group_topology.GetNeighborRank(neighbor));
+  }
+  std::vector<MPI_Request> requests;
+  requests.reserve(2 * neighbors.size());
+  const long long send_size = static_cast<long long>(payload.size());
+  std::vector<long long> receive_sizes(neighbors.size(), 0);
+  for (std::size_t i = 0; i < neighbors.size(); i++)
+  {
+    requests.emplace_back();
+    MPI_Isend(&send_size, 1, MPI_LONG_LONG, neighbors[i], 71, space_op->GetComm(),
+              &requests.back());
+    requests.emplace_back();
+    MPI_Irecv(&receive_sizes[i], 1, MPI_LONG_LONG, neighbors[i], 71, space_op->GetComm(),
+              &requests.back());
+  }
+  MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
+  requests.clear();
+  std::vector<std::vector<double>> received(neighbors.size());
+  for (std::size_t i = 0; i < neighbors.size(); i++)
+  {
+    received[i].resize(receive_sizes[i]);
+    requests.emplace_back();
+    MPI_Isend(payload.data(), static_cast<int>(payload.size()), MPI_DOUBLE, neighbors[i],
+              72, space_op->GetComm(), &requests.back());
+    requests.emplace_back();
+    MPI_Irecv(received[i].data(), static_cast<int>(received[i].size()), MPI_DOUBLE,
+              neighbors[i], 72, space_op->GetComm(), &requests.back());
+  }
+  MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
+
+  std::vector<TrueElementRecord> augmented = records;
+  std::set<HYPRE_BigInt> known;
+  for (const auto &record : records)
+  {
+    known.insert(record.element_id);
+  }
+  for (const auto &buffer : received)
+  {
+    std::size_t cursor = 0;
+    while (cursor < buffer.size())
+    {
+      TrueElementRecord record;
+      record.element_id = static_cast<HYPRE_BigInt>(buffer[cursor++]);
+      const int fine_count = static_cast<int>(buffer[cursor++]);
+      const int coarse_count = static_cast<int>(buffer[cursor++]);
+      record.fine_dofs.resize(fine_count);
+      record.coarse_dofs.resize(coarse_count);
+      record.fine_essential.resize(fine_count);
+      record.coarse_essential.resize(coarse_count);
+      for (int i = 0; i < fine_count; i++)
+      {
+        record.fine_dofs[i] = static_cast<HYPRE_BigInt>(buffer[cursor++]);
+      }
+      for (int i = 0; i < coarse_count; i++)
+      {
+        record.coarse_dofs[i] = static_cast<HYPRE_BigInt>(buffer[cursor++]);
+      }
+      for (int i = 0; i < fine_count; i++)
+      {
+        record.fine_essential[i] = buffer[cursor++] > 0.5;
+      }
+      for (int i = 0; i < coarse_count; i++)
+      {
+        record.coarse_essential[i] = buffer[cursor++] > 0.5;
+      }
+      record.metric.SetSize(fine_count);
+      for (int i = 0; i < fine_count; i++)
+      {
+        for (int j = 0; j < fine_count; j++)
+        {
+          record.metric(i, j) = buffer[cursor++];
+        }
+      }
+      if (known.insert(record.element_id).second)
+      {
+        augmented.push_back(std::move(record));
+        if (ghost_count)
+        {
+          (*ghost_count)++;
+        }
+      }
+    }
+    MFEM_VERIFY(cursor == buffer.size(),
+                "Hierarchical halo record buffer decoded inconsistently!");
+  }
+  return augmented;
 }
 
 HierarchicalMaxwellDomainData::ParallelEstimate
