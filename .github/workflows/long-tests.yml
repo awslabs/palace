@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # This workflow runs long tests on a PR when the 'trigger-long-tests' label is
 # added. Long tests are a required check for merging non-trivial PRs.
 #
