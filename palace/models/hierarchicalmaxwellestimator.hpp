@@ -153,12 +153,27 @@ public:
   ExchangeHaloRecords(const std::vector<TrueElementRecord> &records,
                       int *ghost_count = nullptr) const;
 
+  // Rank-count-agnostic certified entity-patch lifting over augmented records: sorted
+  // true-DOF complement bases per owned edge/face/interior entity, dense Cholesky patch
+  // solves over complete halo support unions, globally averaged partition-of-unity
+  // guests, and the same bounded undamped sweeps as the serial engine, applied
+  // identically to both complex residual components. Returns per-owned-element metric
+  // energies of the lifted correction.
+  ParallelEstimate
+  LiftTrueComplexResidualByEntityPatches(std::complex<double> omega,
+                                         const Vector &residual_true_real,
+                                         const Vector &residual_true_imag) const;
+
 private:
   // Shared lifting tail: consumes the uneliminated local complex residual and applies one
   // fixed lifting map of the selected patch shape identically to both components.
   ParallelEstimate LiftLocalComplexResidual(std::complex<double> omega,
                                             fem::hierarchical::ComplexResidual residual,
                                             PatchShape patch_shape) const;
+
+  // Reduce one uneliminated local combined component to owned true DOFs, zeroing
+  // essential equations.
+  void LocalToTrue(const Vector &local, Vector &combined_true) const;
 
 public:
   // Port-excitation load b(omega) = i omega RHS1 evaluated against the p+1 test space, in

@@ -529,6 +529,52 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent
     CHECK(entity_estimate.total_energy > 0.0);
     CHECK_THAT(entity_estimate.indicator_energy.Sum(),
                Catch::Matchers::WithinRel(entity_estimate.total_energy, 1.0e-12));
+    // The rank-agnostic record engine must reproduce the certified serial engine for the
+    // same lifted residual: inject the coarse field on the identity serial layout, then
+    // lift directly through the shared engine.
+    {
+      const int coarse_standard = space_op.GetNDSpace().GetTrueVSize();
+      const int fine_standard = hierarchy.GetFineStandardSize();
+      Vector injected_real(combined_size), injected_imag(combined_size);
+      injected_real = 0.0;
+      injected_imag = 0.0;
+      const auto &injection = hierarchy.GetInjection();
+      for (int column = 0; column < coarse_standard; column++)
+      {
+        for (std::size_t entry = 0; entry < injection.columns[column].dofs.size(); entry++)
+        {
+          injected_real(injection.columns[column].dofs[entry]) +=
+              coarse_field.Real()(column) * injection.columns[column].values[entry];
+          injected_imag(injection.columns[column].dofs[entry]) +=
+              coarse_field.Imag()(column) * injection.columns[column].values[entry];
+        }
+      }
+      for (int dof = 0; dof < hierarchy.GetEnrichmentSize(); dof++)
+      {
+        injected_real(fine_standard + dof) = coarse_field.Real()(coarse_standard + dof);
+        injected_imag(fine_standard + dof) = coarse_field.Imag()(coarse_standard + dof);
+      }
+      const auto reference_residual = fem::hierarchical::AssembleComplexResidual(
+          combined_size, complex_operator, injected_real, injected_imag,
+          hierarchy.GetFineEssentialMask());
+      const auto reference_lift = fem::hierarchical::LiftComplexResidualByPatches(
+          meshes.back()->Get(), space_op.GetNDSpace().Get(),
+          hierarchy.GetFineNDSpace().Get(), injection, metric,
+          hierarchy.GetFineEssentialMask(), hierarchy.GetCoarseEssentialMask(),
+          reference_residual, hierarchy.GetElementEnrichmentGuests());
+      CAPTURE(entity_estimate.total_energy, reference_lift.energy);
+      REQUIRE(reference_lift.energy > 0.0);
+      CHECK_THAT(entity_estimate.total_energy,
+                 Catch::Matchers::WithinRel(reference_lift.energy, 1.0e-8));
+      for (int element = 0; element < entity_estimate.indicator_energy.Size(); element++)
+      {
+        CAPTURE(element);
+        CHECK_THAT(
+            entity_estimate.indicator_energy(element),
+            Catch::Matchers::WithinAbs(reference_lift.indicator[element],
+                                       1.0e-8 * std::max(reference_lift.energy, 1.0)));
+      }
+    }
 
     // With a zero excitation, the driven residual at real omega is exactly the eigen
     // residual.
@@ -1259,6 +1305,27 @@ TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
     REQUIRE(replicated_estimate.total_energy > 0.0);
     CHECK_THAT(estimate.total_energy,
                Catch::Matchers::WithinRel(replicated_estimate.total_energy, 1.0e-10));
+
+    // Entity-patch lifting must also be decomposition-independent: the distributed
+    // engine reproduces the replicated one-rank engine's total and per-element energies.
+    const auto entity_distributed = hierarchy.EstimatePolynomialEigenResidual(
+        {0.7, 0.08}, field, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+    const auto entity_replicated = replicated_hierarchy.EstimatePolynomialEigenResidual(
+        {0.7, 0.08}, replicated_field, HierarchicalMaxwellDomainData::PatchShape::ENTITY);
+    CAPTURE(entity_distributed.total_energy, entity_replicated.total_energy);
+    REQUIRE(entity_replicated.total_energy > 0.0);
+    CHECK_THAT(entity_distributed.total_energy,
+               Catch::Matchers::WithinRel(entity_replicated.total_energy, 1.0e-8));
+    REQUIRE(entity_distributed.indicator_energy.Size() == 2);
+    const int entity_offset = Mpi::Rank(Mpi::World()) == 0 ? 0 : 2;
+    for (int element = 0; element < entity_distributed.indicator_energy.Size(); element++)
+    {
+      CAPTURE(element, entity_offset);
+      CHECK_THAT(entity_distributed.indicator_energy(element),
+                 Catch::Matchers::WithinAbs(
+                     entity_replicated.indicator_energy(entity_offset + element),
+                     1.0e-8 * entity_replicated.total_energy));
+    }
     const auto replicated_record_energies =
         record_quadratic_form(replicated_hierarchy, replicated_space_op);
     for (const auto &[element, data] : record_energies)
