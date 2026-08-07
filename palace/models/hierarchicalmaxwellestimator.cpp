@@ -84,10 +84,12 @@ HierarchicalMaxwellDomainData::HierarchicalMaxwellDomainData(SpaceOperator &spac
       std::make_unique<FiniteElementSpace>(space_op.GetMesh(), fine_h1_collection.get());
 
   auto &coarse_nd = space_op.GetNDSpace().Get();
-  MFEM_VERIFY(coarse_nd.GetConformingProlongation() == nullptr &&
-                  fine_nd_space->Get().GetConformingProlongation() == nullptr,
-              "The hierarchical Maxwell domain adapter requires a conforming mesh without "
-              "hanging-node local-to-true constraints!");
+  // Constrained (hanging-node) prolongation rows are not yet certified for the record
+  // congruences, and NCMesh-backed spaces must not be probed through the serial
+  // conforming-interpolation path.
+  MFEM_VERIFY(space_op.GetMesh().Get().Conforming(),
+              "The hierarchical Maxwell estimator requires a conforming mesh; "
+              "nonconforming singular AMR keeps the sliced recovery estimator!");
   injection = fem::hierarchical::BuildSparsePInjection(space_op.GetMesh().Get(), coarse_nd,
                                                        fine_nd_space->Get());
 

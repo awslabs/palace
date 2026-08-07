@@ -602,7 +602,10 @@ public:
       full_operator = &op;
     }
     const auto *matrix = dynamic_cast<const mfem::HypreParMatrix *>(full_operator->Real());
-    MFEM_VERIFY(matrix && !full_operator->Imag() && standard_size < matrix->Height(),
+    // A rank may own zero enrichment true DOFs (for example after adaptive refinement
+    // concentrates every singular feature on other ranks), so the local block height can
+    // equal the standard size.
+    MFEM_VERIFY(matrix && !full_operator->Imag() && standard_size <= matrix->Height(),
                 "Singular AMS coarse approximation is inconsistent!");
 
     mfem::Array<int> standard_indices(standard_size);

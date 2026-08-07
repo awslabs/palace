@@ -390,7 +390,8 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
   // exact excitation load b(omega) - A(omega) x.
   std::unique_ptr<HierarchicalMaxwellDomainData> hierarchy;
   if (!is_2d && iodata.model.refinement.max_it > 0 &&
-      iodata.solver.singular_elements.hierarchical_estimator)
+      iodata.solver.singular_elements.hierarchical_estimator &&
+      space_op.GetMesh().Get().Conforming())
   {
     hierarchy = std::make_unique<HierarchicalMaxwellDomainData>(space_op);
   }

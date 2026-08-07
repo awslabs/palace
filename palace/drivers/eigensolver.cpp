@@ -946,7 +946,8 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
   // the element-patch shapes in parallel before this becomes the default estimator.
   std::unique_ptr<HierarchicalMaxwellDomainData> hierarchy;
   if (!is_2d && iodata.model.refinement.max_it > 0 &&
-      iodata.solver.singular_elements.hierarchical_estimator)
+      iodata.solver.singular_elements.hierarchical_estimator &&
+      space_op.GetMesh().Get().Conforming())
   {
     hierarchy = std::make_unique<HierarchicalMaxwellDomainData>(space_op);
   }
