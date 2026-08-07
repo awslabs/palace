@@ -132,6 +132,10 @@ public:
     std::vector<char> fine_essential;
     std::vector<char> coarse_essential;
     mfem::DenseMatrix metric;
+    // Element block of the coarse-to-fine injection in the same sign-folded true
+    // convention (rows: coarse_dofs, columns: fine_dofs). Receiving ranks cannot evaluate
+    // transfer matrices for ghost elements, so guest columns assemble from these blocks.
+    mfem::DenseMatrix injection;
   };
 
   // Extract this rank's local metric contributions as global-true records. Facet

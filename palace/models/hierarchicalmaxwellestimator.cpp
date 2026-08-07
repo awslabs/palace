@@ -648,9 +648,11 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
 
     mfem::DofTransformation transformation;
     coarse_fespace.GetElementVDofs(element, coarse_dofs, transformation);
+    std::vector<int> coarse_local_unsigned;
     for (int dof : coarse_dofs)
     {
       const int unsigned_dof = dof >= 0 ? dof : -1 - dof;
+      coarse_local_unsigned.push_back(unsigned_dof);
       record.coarse_dofs.push_back(coarse_map[unsigned_dof].first);
       record.coarse_essential.push_back(coarse_essential_vdofs[unsigned_dof] != 0);
     }
@@ -658,6 +660,42 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
     {
       record.coarse_dofs.push_back(coarse_standard_global + numbering.local_to_true[guest]);
       record.coarse_essential.push_back(std::abs(enrichment_essential_local(guest)) > 0.5);
+    }
+
+    // Element injection block in the same sign-folded true convention. Standard rows come
+    // from the sparse p-injection restricted to this element's fine DOFs; enrichment rows
+    // are the identity onto the matching fine enrichment DOF.
+    record.injection.SetSize(static_cast<int>(record.coarse_dofs.size()), local_size);
+    record.injection = 0.0;
+    std::map<int, int> fine_positions;
+    for (int i = 0; i < local_size; i++)
+    {
+      fine_positions.emplace(domain.dofs[i], i);
+    }
+    for (std::size_t row = 0; row < coarse_local_unsigned.size(); row++)
+    {
+      const int coarse_local = coarse_local_unsigned[row];
+      const double coarse_sign = coarse_map[coarse_local].second;
+      const auto &column = injection.columns[coarse_local];
+      for (std::size_t entry = 0; entry < column.dofs.size(); entry++)
+      {
+        const auto position = fine_positions.find(column.dofs[entry]);
+        if (position != fine_positions.end())
+        {
+          const double fine_sign = fine_map[column.dofs[entry]].second;
+          record.injection(static_cast<int>(row), position->second) =
+              fine_sign * column.values[entry] * coarse_sign;
+        }
+      }
+    }
+    for (std::size_t guest = 0; guest < element_enrichment_guests[element].size(); guest++)
+    {
+      const int enrichment_dof = element_enrichment_guests[element][guest];
+      const auto position = fine_positions.find(fine_fespace.GetVSize() + enrichment_dof);
+      MFEM_VERIFY(position != fine_positions.end(),
+                  "Element enrichment guest is absent from its own element record!");
+      record.injection(static_cast<int>(coarse_local_unsigned.size() + guest),
+                       position->second) = 1.0;
     }
   }
   for (std::size_t extra = static_cast<std::size_t>(mesh.GetNE());
@@ -811,6 +849,13 @@ HierarchicalMaxwellDomainData::ExchangeHaloRecords(
         payload.push_back(record.metric(i, j));
       }
     }
+    for (int i = 0; i < record.injection.Height(); i++)
+    {
+      for (int j = 0; j < record.injection.Width(); j++)
+      {
+        payload.push_back(record.injection(i, j));
+      }
+    }
   }
 
   const auto &group_topology = mesh.gtopo;
@@ -888,6 +933,14 @@ HierarchicalMaxwellDomainData::ExchangeHaloRecords(
         for (int j = 0; j < fine_count; j++)
         {
           record.metric(i, j) = buffer[cursor++];
+        }
+      }
+      record.injection.SetSize(coarse_count, fine_count);
+      for (int i = 0; i < coarse_count; i++)
+      {
+        for (int j = 0; j < fine_count; j++)
+        {
+          record.injection(i, j) = buffer[cursor++];
         }
       }
       if (known.insert(record.element_id).second)

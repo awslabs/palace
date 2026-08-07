@@ -1169,6 +1169,13 @@ TEST_CASE("Parallel hierarchical Maxwell p-plus-one residual lifting",
         dof_sum += static_cast<double>(r.coarse_dofs[i] % 999983);
         essential_sum += r.coarse_essential[i] ? 1.0 : 0.0;
       }
+      for (int i = 0; i < r.injection.Height(); i++)
+      {
+        for (int j = 0; j < r.injection.Width(); j++)
+        {
+          absolute_sum += 3.0 * std::abs(r.injection(i, j));
+        }
+      }
       return std::array<double, 3>{absolute_sum, dof_sum, essential_sum};
     };
     // Gather every rank's local fingerprints and require each augmented record to match
