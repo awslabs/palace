@@ -18,18 +18,15 @@
 namespace palace
 {
 
-std::pair<ErrorIndicator, long long int>
-ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
+void ElectrostaticSolver::Solve(std::vector<Vector> &V, LaplaceOperator &laplace_op) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
   BlockTimer bt0(Timer::CONSTRUCT);
-  LaplaceOperator laplace_op(iodata, mesh);
   auto K = laplace_op.GetStiffnessMatrix();
   const auto &Grad = laplace_op.GetGradMatrix();
-  SaveMetadata(laplace_op.GetH1Spaces());
 
   // Set up the linear solver.
   KspSolver ksp(iodata, laplace_op.GetH1Spaces());
@@ -37,20 +34,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
-  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
   int n_step = static_cast<int>(laplace_op.GetSources().size());
   MFEM_VERIFY(n_step > 0, "No terminal boundaries specified for electrostatic simulation!");
 
   // Right-hand side term and solution vector storage.
-  Vector RHS(Grad.Width()), E(Grad.Height());
-  std::vector<Vector> V(n_step);
-
-  // Initialize structures for storing and reducing the results of error estimation.
-  GradFluxErrorEstimator estimator(
-      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
-  ErrorIndicator indicator;
+  Vector RHS(Grad.Width());
+  V.resize(n_step);
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal {}\n", n_step,
@@ -67,13 +56,42 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\n");
     laplace_op.GetExcitationVector(idx, *K, V[step], RHS);
     ksp.Mult(RHS, V[step]);
-
-    // Start Post-processing.
-    BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplace_op.GetComm(), V[step]),
                linalg::Norml2(laplace_op.GetComm(), RHS));
 
+    // Next terminal.
+    step++;
+  }
+  SaveMetadata(ksp);
+}
+
+std::pair<ErrorIndicator, long long int>
+ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  // Build the operator and solve for the per-terminal potentials via the inner overload.
+  BlockTimer bt0(Timer::CONSTRUCT);
+  LaplaceOperator laplace_op(iodata, mesh);
+  SaveMetadata(laplace_op.GetH1Spaces());
+  std::vector<Vector> V;
+  Solve(V, laplace_op);
+
+  // Post-processing: recover E = -∇V per terminal, measure, and estimate the error.
+  BlockTimer bt1(Timer::POSTPRO);
+  const auto &Grad = laplace_op.GetGradMatrix();
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+
+  // Initialize structures for storing and reducing the results of error estimation.
+  GradFluxErrorEstimator estimator(
+      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
+  ErrorIndicator indicator;
+
+  Vector E(Grad.Height());
+  int step = 0;
+  for (const auto &[idx, data] : laplace_op.GetSources())
+  {
     // Compute E = -∇V on the true dofs.
     E = 0.0;
     Grad.AddMult(V[step], E, -1.0);
@@ -90,8 +108,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  BlockTimer bt1(Timer::POSTPRO);
-  SaveMetadata(ksp);
   PostprocessTerminals(post_op, laplace_op.GetSources(), V);
   post_op.MeasureFinalize(indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};
