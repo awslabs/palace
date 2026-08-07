@@ -1,28 +1,26 @@
-# This workflow runs long tests on a PR when the 'trigger-long-tests' label is
-# added. Long tests are a required check for merging non-trivial PRs.
+# Runs long, expensive tests on self-hosted large runners.
 #
-# The typical workflow is:
-# 1. Developer iterates using the short (default) tests
-# 2. When ready to merge, add the 'trigger-long-tests' label
-# 3. Long tests run and the long-tests status is updated
-#
-# If the PR is updated while the label is present, the tests re-run
-# automatically. It can also be run manually from the GitHub Actions UI.
+# The `long-tests` job succeeds either when testing is deferred (there is no
+# `trigger-long-tests` label), or after the tests pass. New commits are tested
+# automatically while the label remains present.
 name: Long Tests
 
 on:
-  workflow_dispatch:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled, opened, synchronize]
 
 permissions:
   packages: read
-  statuses: write
   contents: read
-  pull-requests: read
 
+# Pull request workflows cannot filter label events by name. Unrelated label
+# events therefore use a unique concurrency group and a differently named
+# reporting job, so they cannot cancel a test or replace its result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    long-tests-${{ (github.event.action == 'labeled' &&
+    github.event.label.name != 'trigger-long-tests') &&
+    github.run_id || github.event.pull_request.number }}
   cancel-in-progress: true
 
 env:
@@ -30,50 +28,66 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  long-tests:
-    runs-on: [self-hosted, x64]
-    # Run if:
-    # - manually triggered from the Actions UI, OR
-    # - the 'trigger-long-tests' label was just added, OR
-    # - the PR was updated and already has the 'trigger-long-tests' label
-    # Do not run from forks.
+  test:
+    name: run-long-tests
     if: |
       github.repository == 'awslabs/palace' &&
+      contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
       (
-        github.event_name == 'workflow_dispatch' ||
-        (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'trigger-long-tests'))
+        github.event.action != 'labeled' ||
+        github.event.label.name == 'trigger-long-tests'
       )
+    runs-on: [self-hosted, x64]
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out authorized revision
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
           test-cases: long
 
-      - name: Set success status
-        if: github.event_name == 'pull_request' && success()
+  long-tests:
+    name: >-
+      ${{ (github.event.action == 'labeled' &&
+      github.event.label.name != 'trigger-long-tests') &&
+      'long-tests (ignored event)' || 'long-tests' }}
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report result
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUESTED: >-
+            ${{ github.repository == 'awslabs/palace' &&
+            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
+            (github.event.action != 'labeled' ||
+            github.event.label.name == 'trigger-long-tests') }}
+          TEST_RESULT: ${{ needs.test.result }}
+        shell: bash
         run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=success \
-            --field context=long-tests \
-            --field description="Long tests passed"
+          if [[ "$REQUESTED" != "true" ]]; then
+            exit 0
+          fi
 
-      - name: Set failure status
-        if: github.event_name == 'pull_request' && (failure() || cancelled())
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=failure \
-            --field context=long-tests \
-            --field description="Long tests failed"
+          case "$TEST_RESULT" in
+            success)
+              echo "Long tests passed."
+              ;;
+            cancelled)
+              echo "::error::Long tests were cancelled."
+              exit 1
+              ;;
+            skipped)
+              echo "::error::Long tests did not run."
+              exit 1
+              ;;
+            *)
+              echo "::error::Long tests failed ($TEST_RESULT)."
+              exit 1
+              ;;
+          esac
