@@ -619,6 +619,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
       }
       else if (hierarchy)
       {
+        BlockTimer bt_estimate(Timer::ESTIMATION);
         const auto patch_shape = hierarchy->EntityPatchesAvailable()
                                      ? HierarchicalMaxwellDomainData::PatchShape::ENTITY
                                      : HierarchicalMaxwellDomainData::PatchShape::ELEMENT;

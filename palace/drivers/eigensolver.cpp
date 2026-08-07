@@ -1184,6 +1184,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
       {
         // The certified edge/face/interior lifting is used whenever available (currently
         // one rank); the element-patch shape is the MPI-capable interim.
+        BlockTimer bt_estimate(Timer::ESTIMATION);
         const auto patch_shape = hierarchy->EntityPatchesAvailable()
                                      ? HierarchicalMaxwellDomainData::PatchShape::ENTITY
                                      : HierarchicalMaxwellDomainData::PatchShape::ELEMENT;

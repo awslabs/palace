@@ -634,41 +634,49 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
   Vector enrichment_essential_local(enrichment_size);
   enrichment_prolongation->Mult(enrichment_essential_owned, enrichment_essential_local);
 
-  // Merge domain and facet metric contributions so each element appears exactly once
-  // (still in the unsigned local convention).
-  const auto contributions = BuildPolynomialMetricContributions(omega);
+  // Merge domain and facet metric blocks directly (still in the unsigned local
+  // convention) without materializing a contribution vector: metric = curl-curl +
+  // |omega| damping facets + |omega|^2 (mass facets and absolute domain mass).
+  MFEM_VERIFY(std::abs(omega) > 0.0,
+              "Hierarchical Maxwell graph metric requires nonzero frequency so mass "
+              "controls the curl-gradient nullspace!");
+  const double metric_mass_scale = std::norm(omega);
   std::vector<mfem::DenseMatrix> merged(mesh.GetNE());
   std::vector<std::map<int, int>> dof_positions(mesh.GetNE());
   for (int element = 0; element < mesh.GetNE(); element++)
   {
-    const auto &domain = contributions[element];
-    MFEM_VERIFY(domain.support_element == element,
-                "Hierarchical metric contributions are not element-ordered!");
-    merged[element] = domain.matrix;
-    for (int i = 0; i < static_cast<int>(domain.dofs.size()); i++)
+    merged[element] = elements[element].curl_curl;
+    merged[element].Add(metric_mass_scale, elements[element].mass_abs);
+    for (int i = 0; i < static_cast<int>(elements[element].dofs.size()); i++)
     {
-      dof_positions[element].emplace(domain.dofs[i], i);
+      dof_positions[element].emplace(elements[element].dofs[i], i);
     }
   }
-  for (std::size_t extra = static_cast<std::size_t>(mesh.GetNE());
-       extra < contributions.size(); extra++)
+  const auto merge_boundary =
+      [&](const std::vector<fem::singular::LocalNDBoundaryPatchMatrices> &patches,
+          double scale)
   {
-    const auto &facet = contributions[extra];
-    const auto &positions = dof_positions[facet.support_element];
-    for (int i = 0; i < static_cast<int>(facet.dofs.size()); i++)
+    for (const auto &facet : patches)
     {
-      const auto row = positions.find(facet.dofs[i]);
-      MFEM_VERIFY(row != positions.end(),
-                  "Hierarchical facet metric DOF is absent from its support element!");
-      for (int j = 0; j < static_cast<int>(facet.dofs.size()); j++)
+      const auto &positions = dof_positions[facet.element];
+      for (int i = 0; i < static_cast<int>(facet.dofs.size()); i++)
       {
-        const auto column = positions.find(facet.dofs[j]);
-        MFEM_VERIFY(column != positions.end(),
+        const auto row = positions.find(facet.dofs[i]);
+        MFEM_VERIFY(row != positions.end(),
                     "Hierarchical facet metric DOF is absent from its support element!");
-        merged[facet.support_element](row->second, column->second) += facet.matrix(i, j);
+        for (int j = 0; j < static_cast<int>(facet.dofs.size()); j++)
+        {
+          const auto column = positions.find(facet.dofs[j]);
+          MFEM_VERIFY(column != positions.end(),
+                      "Hierarchical facet metric DOF is absent from its support element!");
+          merged[facet.element](row->second, column->second) += scale * facet.mass(i, j);
+        }
       }
     }
-  }
+  };
+  merge_boundary(boundary_stiffness_abs, 1.0);
+  merge_boundary(boundary_damping_abs, std::abs(omega));
+  merge_boundary(boundary_mass_abs, metric_mass_scale);
 
   std::vector<TrueElementRecord> records(mesh.GetNE());
   mfem::Array<int> coarse_dofs;
@@ -676,7 +684,7 @@ HierarchicalMaxwellDomainData::BuildTrueMetricElementRecords(
   {
     auto &record = records[element];
     record.element_id = mesh.GetGlobalElementNum(element);
-    const auto &domain = contributions[element];
+    const auto &domain = elements[element];
     const int local_size = static_cast<int>(domain.dofs.size());
 
     // Element block of the local-to-true prolongation: standard DOFs may couple pairs of
@@ -1197,6 +1205,88 @@ void InjectCoarseComponent(mfem::ParFiniteElementSpace &coarse_fespace,
 
 }  // namespace
 
+fem::hierarchical::ComplexResidual
+HierarchicalMaxwellDomainData::AssembleStreamingComplexResidual(
+    std::complex<double> omega, const Vector &injected_real,
+    const Vector &injected_imag) const
+{
+  const std::complex<double> mass_scale = -omega * omega;
+  const std::complex<double> damping_scale = std::complex<double>(0.0, 1.0) * omega;
+  const int combined_size = injected_real.Size();
+  fem::hierarchical::ComplexResidual residual{Vector(combined_size), Vector(combined_size)};
+  residual.real = 0.0;
+  residual.imag = 0.0;
+  mfem::DenseMatrix block_real, block_imag;
+  Vector local_real, local_imag, action;
+  const auto apply = [&](const std::vector<int> &dofs, const mfem::DenseMatrix &real,
+                         const mfem::DenseMatrix &imag)
+  {
+    const int local_size = static_cast<int>(dofs.size());
+    local_real.SetSize(local_size);
+    local_imag.SetSize(local_size);
+    action.SetSize(local_size);
+    for (int i = 0; i < local_size; i++)
+    {
+      local_real(i) = injected_real(dofs[i]);
+      local_imag(i) = injected_imag(dofs[i]);
+    }
+    // rr -= Ar xr - Ai xi; ri -= Ai xr + Ar xi.
+    real.Mult(local_real, action);
+    for (int i = 0; i < local_size; i++)
+    {
+      residual.real(dofs[i]) -= action(i);
+    }
+    real.Mult(local_imag, action);
+    for (int i = 0; i < local_size; i++)
+    {
+      residual.imag(dofs[i]) -= action(i);
+    }
+    imag.Mult(local_real, action);
+    for (int i = 0; i < local_size; i++)
+    {
+      residual.imag(dofs[i]) -= action(i);
+    }
+    imag.Mult(local_imag, action);
+    for (int i = 0; i < local_size; i++)
+    {
+      residual.real(dofs[i]) += action(i);
+    }
+  };
+  for (const auto &element : elements)
+  {
+    const int local_size = static_cast<int>(element.dofs.size());
+    block_real.SetSize(local_size);
+    block_imag.SetSize(local_size);
+    block_real = element.curl_curl;
+    block_real.Add(mass_scale.real(), element.mass_real);
+    block_real.Add(-mass_scale.imag(), element.mass_imag);
+    block_imag = 0.0;
+    block_imag.Add(mass_scale.imag(), element.mass_real);
+    block_imag.Add(mass_scale.real(), element.mass_imag);
+    apply(element.dofs, block_real, block_imag);
+  }
+  const auto apply_boundary =
+      [&](const std::vector<fem::singular::LocalNDBoundaryPatchMatrices> &patches,
+          std::complex<double> scale)
+  {
+    for (const auto &patch : patches)
+    {
+      const int local_size = static_cast<int>(patch.dofs.size());
+      block_real.SetSize(local_size);
+      block_imag.SetSize(local_size);
+      block_real = patch.mass;
+      block_real *= scale.real();
+      block_imag = patch.mass;
+      block_imag *= scale.imag();
+      apply(patch.dofs, block_real, block_imag);
+    }
+  };
+  apply_boundary(boundary_stiffness, 1.0);
+  apply_boundary(boundary_damping, damping_scale);
+  apply_boundary(boundary_mass, mass_scale);
+  return residual;
+}
+
 HierarchicalMaxwellDomainData::ParallelEstimate
 HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
     std::complex<double> omega, const ComplexVector &coarse_field,
@@ -1214,10 +1304,7 @@ HierarchicalMaxwellDomainData::EstimatePolynomialEigenResidual(
                         enrichment_size, coarse_field.Real(), injected_real);
   InjectCoarseComponent(coarse_fespace, fine_fespace, *enrichment_prolongation,
                         enrichment_size, coarse_field.Imag(), injected_imag);
-  const auto physical = BuildComplexPolynomialContributions(omega);
-  const std::vector<bool> no_local_essential(injected_real.Size(), false);
-  auto residual = fem::hierarchical::AssembleComplexResidual(
-      injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);
+  auto residual = AssembleStreamingComplexResidual(omega, injected_real, injected_imag);
   return LiftLocalComplexResidual(omega, std::move(residual), patch_shape);
 }
 
@@ -1293,10 +1380,8 @@ HierarchicalMaxwellDomainData::EstimatePolynomialDrivenResidual(
                         enrichment_size, coarse_field.Real(), injected_real);
   InjectCoarseComponent(coarse_fespace, fine_fespace, *enrichment_prolongation,
                         enrichment_size, coarse_field.Imag(), injected_imag);
-  const auto physical = BuildComplexPolynomialContributions({omega, 0.0});
-  const std::vector<bool> no_local_essential(injected_real.Size(), false);
-  auto residual = fem::hierarchical::AssembleComplexResidual(
-      injected_real.Size(), physical, injected_real, injected_imag, no_local_essential);
+  auto residual =
+      AssembleStreamingComplexResidual({omega, 0.0}, injected_real, injected_imag);
   const auto excitation = AssembleFineExcitation(excitation_idx, omega, coarse_rhs);
   residual.real += excitation.real;
   residual.imag += excitation.imag;
@@ -1324,19 +1409,130 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
 
   const auto records = ExchangeHaloRecords(BuildTrueMetricElementRecords(omega));
   const int own_elements = mesh.GetNE();
+  const int record_count = static_cast<int>(records.size());
 
-  // Global-DOF dictionaries over the augmented record set.
-  std::map<HYPRE_BigInt, std::vector<std::pair<int, int>>> dof_records;
-  std::map<HYPRE_BigInt, char> dof_essential;
-  for (int record = 0; record < static_cast<int>(records.size()); record++)
+  // Dense halo DOF universes: every quantity below is a flat array over these indices,
+  // which replaces the previous node-based map storage (whose allocation overhead
+  // dominated time and memory at production scale).
+  std::vector<HYPRE_BigInt> fine_universe, coarse_universe;
+  for (const auto &record : records)
   {
-    for (int i = 0; i < static_cast<int>(records[record].fine_dofs.size()); i++)
+    fine_universe.insert(fine_universe.end(), record.fine_dofs.begin(),
+                         record.fine_dofs.end());
+    coarse_universe.insert(coarse_universe.end(), record.coarse_dofs.begin(),
+                           record.coarse_dofs.end());
+  }
+  std::sort(fine_universe.begin(), fine_universe.end());
+  fine_universe.erase(std::unique(fine_universe.begin(), fine_universe.end()),
+                      fine_universe.end());
+  std::sort(coarse_universe.begin(), coarse_universe.end());
+  coarse_universe.erase(std::unique(coarse_universe.begin(), coarse_universe.end()),
+                        coarse_universe.end());
+  const int nf = static_cast<int>(fine_universe.size());
+  const int nc = static_cast<int>(coarse_universe.size());
+  const auto fine_index = [&](HYPRE_BigInt id)
+  {
+    const auto it = std::lower_bound(fine_universe.begin(), fine_universe.end(), id);
+    return (it != fine_universe.end() && *it == id)
+               ? static_cast<int>(it - fine_universe.begin())
+               : -1;
+  };
+  const auto coarse_index = [&](HYPRE_BigInt id)
+  {
+    const auto it = std::lower_bound(coarse_universe.begin(), coarse_universe.end(), id);
+    return (it != coarse_universe.end() && *it == id)
+               ? static_cast<int>(it - coarse_universe.begin())
+               : -1;
+  };
+
+  // Record DOF lists in dense indices, essential flags, and DOF->record incidence (CSR).
+  std::vector<std::vector<int>> record_fine(record_count), record_coarse(record_count);
+  std::vector<char> fine_essential_flag(nf, false), coarse_essential_flag(nc, false);
+  std::vector<int> incidence_offsets(nf + 1, 0);
+  for (int r = 0; r < record_count; r++)
+  {
+    record_fine[r].resize(records[r].fine_dofs.size());
+    for (std::size_t i = 0; i < records[r].fine_dofs.size(); i++)
     {
-      dof_records[records[record].fine_dofs[i]].push_back({record, i});
-      dof_essential[records[record].fine_dofs[i]] = records[record].fine_essential[i];
+      const int f = fine_index(records[r].fine_dofs[i]);
+      record_fine[r][i] = f;
+      fine_essential_flag[f] = fine_essential_flag[f] || records[r].fine_essential[i];
+      incidence_offsets[f + 1]++;
+    }
+    record_coarse[r].resize(records[r].coarse_dofs.size());
+    for (std::size_t i = 0; i < records[r].coarse_dofs.size(); i++)
+    {
+      const int c = coarse_index(records[r].coarse_dofs[i]);
+      record_coarse[r][i] = c;
+      coarse_essential_flag[c] = coarse_essential_flag[c] || records[r].coarse_essential[i];
     }
   }
-  const auto owns_dof = [&](HYPRE_BigInt dof)
+  for (int f = 0; f < nf; f++)
+  {
+    incidence_offsets[f + 1] += incidence_offsets[f];
+  }
+  std::vector<int> incidence_records(incidence_offsets[nf]);
+  {
+    std::vector<int> cursor(incidence_offsets.begin(), incidence_offsets.end() - 1);
+    for (int r = 0; r < record_count; r++)
+    {
+      for (const int f : record_fine[r])
+      {
+        incidence_records[cursor[f]++] = r;
+      }
+    }
+  }
+
+  // Guest columns as one shared CSR over the coarse universe (entries deduplicated by
+  // (coarse, fine); duplicated element contributions are consistent by construction).
+  std::vector<int> column_offsets(nc + 1, 0);
+  std::vector<int> column_fine;
+  std::vector<double> column_value;
+  {
+    struct Entry
+    {
+      int coarse;
+      int fine;
+      double value;
+    };
+    std::vector<Entry> entries;
+    for (int r = 0; r < record_count; r++)
+    {
+      const auto &record = records[r];
+      for (int row = 0; row < record.injection.Height(); row++)
+      {
+        for (int j = 0; j < record.injection.Width(); j++)
+        {
+          const double value = record.injection(row, j);
+          if (std::abs(value) > 1.0e-13)
+          {
+            entries.push_back({record_coarse[r][row], record_fine[r][j], value});
+          }
+        }
+      }
+    }
+    std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b)
+              { return a.coarse != b.coarse ? a.coarse < b.coarse : a.fine < b.fine; });
+    entries.erase(std::unique(entries.begin(), entries.end(),
+                              [](const Entry &a, const Entry &b)
+                              { return a.coarse == b.coarse && a.fine == b.fine; }),
+                  entries.end());
+    column_fine.reserve(entries.size());
+    column_value.reserve(entries.size());
+    for (const auto &entry : entries)
+    {
+      column_offsets[entry.coarse + 1]++;
+      column_fine.push_back(entry.fine);
+      column_value.push_back(entry.value);
+    }
+    for (int c = 0; c < nc; c++)
+    {
+      column_offsets[c + 1] += column_offsets[c];
+    }
+  }
+
+  // Ownership and complete residual values on the halo.
+  const auto owns_dof_id = [&](HYPRE_BigInt dof)
   {
     if (dof < fine_standard_global)
     {
@@ -1346,32 +1542,55 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
     return enrichment >= enrichment_offset &&
            enrichment < enrichment_offset + enrichment_owned;
   };
-  const auto true_index = [&](HYPRE_BigInt dof)
+  std::vector<char> fine_owned(nf, false);
+  std::vector<int> fine_true_index(nf, -1);
+  for (int f = 0; f < nf; f++)
   {
-    return dof < fine_standard_global
-               ? static_cast<int>(dof - fine_true_offset)
-               : fine_standard_true +
-                     static_cast<int>(dof - fine_standard_global - enrichment_offset);
-  };
+    const HYPRE_BigInt id = fine_universe[f];
+    if (owns_dof_id(id))
+    {
+      fine_owned[f] = true;
+      fine_true_index[f] =
+          id < fine_standard_global
+              ? static_cast<int>(id - fine_true_offset)
+              : fine_standard_true +
+                    static_cast<int>(id - fine_standard_global - enrichment_offset);
+    }
+  }
 
-  // Neighbor value exchange: merge (id, value...) pairs by summation.
+  // Neighbor merge of flat (id, values...) streams; unknown ids are beyond this rank's
+  // halo and provably cannot touch its owned DOFs, so they are skipped.
   const auto &group_topology = mesh.gtopo;
   std::vector<int> neighbors;
   for (int neighbor = 1; neighbor < group_topology.GetNumNeighbors(); neighbor++)
   {
     neighbors.push_back(group_topology.GetNeighborRank(neighbor));
   }
-  const auto exchange_sum = [&](std::map<HYPRE_BigInt, std::array<double, 4>> &values)
+  const auto exchange_sum = [&](const std::vector<HYPRE_BigInt> &universe,
+                                const auto &index_of, std::vector<double> &values,
+                                int width)
   {
     if (neighbors.empty())
     {
       return;
     }
     std::vector<double> payload;
-    for (const auto &[id, data] : values)
+    const int n = static_cast<int>(universe.size());
+    for (int i = 0; i < n; i++)
     {
-      payload.push_back(static_cast<double>(id));
-      payload.insert(payload.end(), data.begin(), data.end());
+      bool nonzero = false;
+      for (int k = 0; k < width; k++)
+      {
+        nonzero = nonzero || values[static_cast<std::size_t>(i) * width + k] != 0.0;
+      }
+      if (nonzero)
+      {
+        payload.push_back(static_cast<double>(universe[i]));
+        for (int k = 0; k < width; k++)
+        {
+          payload.push_back(values[static_cast<std::size_t>(i) * width + k]);
+        }
+      }
     }
     std::vector<MPI_Request> requests;
     const long long send_size = static_cast<long long>(payload.size());
@@ -1400,35 +1619,36 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
     MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
     for (const auto &buffer : received)
     {
-      for (std::size_t cursor = 0; cursor < buffer.size(); cursor += 5)
+      for (std::size_t cursor = 0; cursor < buffer.size();
+           cursor += static_cast<std::size_t>(width) + 1)
       {
-        auto &data = values[static_cast<HYPRE_BigInt>(buffer[cursor])];
-        for (int k = 0; k < 4; k++)
+        const int i = index_of(static_cast<HYPRE_BigInt>(buffer[cursor]));
+        if (i < 0)
         {
-          data[k] += buffer[cursor + 1 + k];
+          continue;
+        }
+        for (int k = 0; k < width; k++)
+        {
+          values[static_cast<std::size_t>(i) * width + k] += buffer[cursor + 1 + k];
         }
       }
     }
   };
 
-  // Complete residual values on the halo: owners contribute their true values once, then
-  // one merge distributes them to every rank whose records reference the DOF.
-  std::map<HYPRE_BigInt, std::array<double, 4>> residual_values;
-  for (const auto &[dof, incidences] : dof_records)
+  std::vector<double> residual_values(2 * static_cast<std::size_t>(nf), 0.0);
+  for (int f = 0; f < nf; f++)
   {
-    (void)incidences;
-    residual_values[dof] = {0.0, 0.0, 0.0, 0.0};
-    if (owns_dof(dof))
+    if (fine_owned[f])
     {
-      const int index = true_index(dof);
-      residual_values[dof] = {residual_true_real(index), residual_true_imag(index), 0.0,
-                              0.0};
+      residual_values[2 * static_cast<std::size_t>(f)] =
+          residual_true_real(fine_true_index[f]);
+      residual_values[2 * static_cast<std::size_t>(f) + 1] =
+          residual_true_imag(fine_true_index[f]);
     }
   }
-  exchange_sum(residual_values);
+  exchange_sum(fine_universe, fine_index, residual_values, 2);
 
-  // Reverse ldof -> group maps classify entity ownership; sorted global ids make the
-  // construction deterministic and rank-agnostic.
+  // Reverse ldof -> group map classifies entity ownership.
   const auto build_group_map = [](mfem::ParFiniteElementSpace &fespace)
   {
     std::vector<int> group(fespace.GetVSize(), 0);
@@ -1444,100 +1664,97 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
     return group;
   };
   const auto fine_group = build_group_map(fine_fespace);
-  const auto fine_ldof_map = [&fine_fespace]()
+  const auto build_ldof_rows = [](mfem::ParFiniteElementSpace &fespace)
   {
-    std::vector<std::pair<HYPRE_BigInt, double>> map(fine_fespace.GetVSize());
+    std::vector<std::vector<std::pair<HYPRE_BigInt, double>>> rows(fespace.GetVSize());
     mfem::SparseMatrix diag, offd;
     HYPRE_BigInt *colmap = nullptr;
-    fine_fespace.Dof_TrueDof_Matrix()->GetDiag(diag);
-    fine_fespace.Dof_TrueDof_Matrix()->GetOffd(offd, colmap);
-    const HYPRE_BigInt true_offset = fine_fespace.GetMyTDofOffset();
-    for (int ldof = 0; ldof < fine_fespace.GetVSize(); ldof++)
+    fespace.Dof_TrueDof_Matrix()->GetDiag(diag);
+    fespace.Dof_TrueDof_Matrix()->GetOffd(offd, colmap);
+    const HYPRE_BigInt true_offset = fespace.GetMyTDofOffset();
+    for (int ldof = 0; ldof < fespace.GetVSize(); ldof++)
     {
       for (int entry = diag.GetI()[ldof]; entry < diag.GetI()[ldof + 1]; entry++)
       {
-        if (std::abs(diag.GetData()[entry]) > 0.5)
+        if (std::abs(diag.GetData()[entry]) > 1.0e-14)
         {
-          map[ldof] = {true_offset + diag.GetJ()[entry], diag.GetData()[entry]};
+          rows[ldof].push_back({true_offset + diag.GetJ()[entry], diag.GetData()[entry]});
         }
       }
       for (int entry = offd.GetI()[ldof]; entry < offd.GetI()[ldof + 1]; entry++)
       {
-        if (std::abs(offd.GetData()[entry]) > 0.5)
+        if (std::abs(offd.GetData()[entry]) > 1.0e-14)
         {
-          map[ldof] = {colmap[offd.GetJ()[entry]], offd.GetData()[entry]};
+          rows[ldof].push_back({colmap[offd.GetJ()[entry]], offd.GetData()[entry]});
         }
       }
     }
-    return map;
-  }();
-
-  // Guest columns assembled once from record injection blocks, deduplicated by fine DOF.
-  std::map<HYPRE_BigInt, std::map<HYPRE_BigInt, double>> guest_columns;
-  for (const auto &record : records)
-  {
-    for (std::size_t row = 0; row < record.coarse_dofs.size(); row++)
-    {
-      auto &column = guest_columns[record.coarse_dofs[row]];
-      for (int j = 0; j < record.injection.Width(); j++)
-      {
-        const double value = record.injection(static_cast<int>(row), j);
-        if (std::abs(value) > 1.0e-13)
-        {
-          column.emplace(record.fine_dofs[j], value);
-        }
-      }
-    }
-  }
-  const auto build_guest_column =
-      [&](HYPRE_BigInt coarse_dof) -> const std::map<HYPRE_BigInt, double> &
-  {
-    static const std::map<HYPRE_BigInt, double> empty;
-    const auto found = guest_columns.find(coarse_dof);
-    return found != guest_columns.end() ? found->second : empty;
+    return rows;
   };
+  const auto fine_rows = build_ldof_rows(fine_fespace);
+  const auto coarse_rows = build_ldof_rows(coarse_fespace);
 
+  // Patch storage: owned complement columns live in one pooled sparse array; guest
+  // columns are referenced by coarse universe index into the shared column CSR instead of
+  // being copied per patch.
   struct Patch
   {
     int owned = 0;
-    std::vector<std::map<HYPRE_BigInt, double>> basis;
-    std::vector<HYPRE_BigInt> guests;
+    std::vector<int> owned_begin;  // owned + 1 offsets into the pools.
+    std::vector<int> guests;       // coarse universe indices.
     mfem::DenseMatrix restricted;
-    std::set<int> support;
+    std::vector<int> support;  // record indices, sorted unique.
   };
   std::vector<Patch> patches;
+  std::vector<int> pool_dof;
+  std::vector<double> pool_value;
   int owned_modes = 0;
 
-  const auto add_patch = [&](const std::vector<HYPRE_BigInt> &fine_entity,
-                             const std::vector<HYPRE_BigInt> &coarse_entity)
+  // Generation-stamped scratch arrays for patch-local gathers (no per-patch allocation).
+  std::vector<int> fine_stamp(nf, -1);
+  std::vector<int> fine_slot(nf, -1);
+  int generation = 0;
+
+  const auto add_patch =
+      [&](const std::vector<int> &fine_entity, const std::vector<int> &coarse_entity)
   {
-    // Deterministic complement of the injected coarse entity trace inside the fine
-    // entity trace, in sorted-global-DOF coordinates.
-    std::vector<HYPRE_BigInt> rows;
-    for (const auto dof : fine_entity)
+    std::vector<int> rows;
+    for (const int f : fine_entity)
     {
-      if (!dof_essential[dof])
+      if (f >= 0 && !fine_essential_flag[f])
       {
-        rows.push_back(dof);
+        rows.push_back(f);
       }
     }
     std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
     if (rows.empty())
     {
       return;
     }
-    std::vector<mfem::Vector> range;
-    for (const auto coarse_dof : coarse_entity)
+    const int row_count = static_cast<int>(rows.size());
+    generation++;
+    for (int i = 0; i < row_count; i++)
     {
-      const auto column = build_guest_column(coarse_dof);
-      mfem::Vector vector(static_cast<int>(rows.size()));
-      vector = 0.0;
-      for (std::size_t i = 0; i < rows.size(); i++)
+      fine_stamp[rows[i]] = generation;
+      fine_slot[rows[i]] = i;
+    }
+    // Range of the injected coarse entity trace restricted to the entity rows.
+    std::vector<mfem::Vector> range;
+    for (const int c : coarse_entity)
+    {
+      if (c < 0 || coarse_essential_flag[c])
       {
-        const auto found = column.find(rows[i]);
-        if (found != column.end())
+        continue;
+      }
+      mfem::Vector vector(row_count);
+      vector = 0.0;
+      for (int entry = column_offsets[c]; entry < column_offsets[c + 1]; entry++)
+      {
+        const int f = column_fine[entry];
+        if (fine_stamp[f] == generation)
         {
-          vector(static_cast<int>(i)) = found->second;
+          vector(fine_slot[f]) = column_value[entry];
         }
       }
       for (int repeat = 0; repeat < 2; repeat++)
@@ -1554,27 +1771,13 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
         range.push_back(vector);
       }
     }
-    Patch patch;
-    for (std::size_t direction = 0; direction < rows.size(); direction++)
+    // Deterministic complement in sorted-row coordinates.
+    std::vector<mfem::Vector> owned_columns;
+    for (int direction = 0; direction < row_count; direction++)
     {
-      mfem::Vector vector(static_cast<int>(rows.size()));
+      mfem::Vector vector(row_count);
       vector = 0.0;
-      vector(static_cast<int>(direction)) = 1.0;
-      std::vector<mfem::Vector> owned_columns;
-      for (const auto &basis : patch.basis)
-      {
-        mfem::Vector dense(static_cast<int>(rows.size()));
-        dense = 0.0;
-        for (std::size_t i = 0; i < rows.size(); i++)
-        {
-          const auto found = basis.find(rows[i]);
-          if (found != basis.end())
-          {
-            dense(static_cast<int>(i)) = found->second;
-          }
-        }
-        owned_columns.push_back(dense);
-      }
+      vector(direction) = 1.0;
       for (int repeat = 0; repeat < 2; repeat++)
       {
         for (const auto &basis : range)
@@ -1590,82 +1793,126 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
       if (norm > 1.0e-10)
       {
         vector /= norm;
-        std::map<HYPRE_BigInt, double> column;
-        for (std::size_t i = 0; i < rows.size(); i++)
-        {
-          if (std::abs(vector(static_cast<int>(i))) > 1.0e-13)
-          {
-            column.emplace(rows[i], vector(static_cast<int>(i)));
-          }
-        }
-        patch.basis.push_back(std::move(column));
+        owned_columns.push_back(vector);
       }
     }
-    patch.owned = static_cast<int>(patch.basis.size());
-    if (patch.owned == 0)
+    if (owned_columns.empty())
     {
       return;
     }
+    Patch patch;
+    patch.owned = static_cast<int>(owned_columns.size());
     owned_modes += patch.owned;
-
-    // Guests: non-essential coarse DOFs of every element incident to the entity.
-    std::set<HYPRE_BigInt> guests;
-    std::set<int> owner_records;
-    for (const auto dof : fine_entity)
+    patch.owned_begin.push_back(static_cast<int>(pool_dof.size()));
+    for (const auto &column : owned_columns)
     {
-      for (const auto &[record, position] : dof_records[dof])
+      for (int i = 0; i < row_count; i++)
       {
-        (void)position;
-        owner_records.insert(record);
-      }
-    }
-    for (const int record : owner_records)
-    {
-      for (std::size_t i = 0; i < records[record].coarse_dofs.size(); i++)
-      {
-        if (!records[record].coarse_essential[i])
+        if (std::abs(column(i)) > 1.0e-13)
         {
-          guests.insert(records[record].coarse_dofs[i]);
+          pool_dof.push_back(rows[i]);
+          pool_value.push_back(column(i));
         }
       }
-    }
-    for (const auto guest : guests)
-    {
-      patch.guests.push_back(guest);
-      patch.basis.push_back(build_guest_column(guest));
+      patch.owned_begin.push_back(static_cast<int>(pool_dof.size()));
     }
 
-    for (const auto &column : patch.basis)
+    // Guests: non-essential coarse DOFs of every record incident to the entity.
     {
-      for (const auto &[dof, value] : column)
+      std::vector<int> owner_records;
+      for (const int f : rows)
       {
-        (void)value;
-        MFEM_VERIFY(!dof_essential[dof],
+        for (int entry = incidence_offsets[f]; entry < incidence_offsets[f + 1]; entry++)
+        {
+          owner_records.push_back(incidence_records[entry]);
+        }
+      }
+      std::sort(owner_records.begin(), owner_records.end());
+      owner_records.erase(std::unique(owner_records.begin(), owner_records.end()),
+                          owner_records.end());
+      std::vector<int> guests;
+      for (const int r : owner_records)
+      {
+        for (const int c : record_coarse[r])
+        {
+          if (!coarse_essential_flag[c])
+          {
+            guests.push_back(c);
+          }
+        }
+      }
+      std::sort(guests.begin(), guests.end());
+      guests.erase(std::unique(guests.begin(), guests.end()), guests.end());
+      patch.guests = std::move(guests);
+    }
+
+    // Support union over every basis column DOF, through the incidence CSR.
+    {
+      std::vector<int> support;
+      const auto add_dof_support = [&](int f)
+      {
+        MFEM_VERIFY(!fine_essential_flag[f],
                     "Entity-patch basis columns must avoid essential fine equations!");
-        for (const auto &[record, position] : dof_records[dof])
+        for (int entry = incidence_offsets[f]; entry < incidence_offsets[f + 1]; entry++)
         {
-          (void)position;
-          patch.support.insert(record);
+          support.push_back(incidence_records[entry]);
+        }
+      };
+      for (int entry = patch.owned_begin.front(); entry < patch.owned_begin.back(); entry++)
+      {
+        add_dof_support(pool_dof[entry]);
+      }
+      for (const int c : patch.guests)
+      {
+        for (int entry = column_offsets[c]; entry < column_offsets[c + 1]; entry++)
+        {
+          add_dof_support(column_fine[entry]);
         }
       }
+      std::sort(support.begin(), support.end());
+      support.erase(std::unique(support.begin(), support.end()), support.end());
+      patch.support = std::move(support);
     }
-    const int dimension = static_cast<int>(patch.basis.size());
+
+    // Restricted metric over the support union. Column membership per record DOF is
+    // gathered through the generation-stamped scratch.
+    const int dimension = patch.owned + static_cast<int>(patch.guests.size());
     patch.restricted.SetSize(dimension);
     patch.restricted = 0.0;
-    for (const int record_index : patch.support)
+    std::vector<std::vector<std::pair<int, double>>> dof_columns_scratch;
+    for (const int r : patch.support)
     {
-      const auto &record = records[record_index];
-      const int local_size = static_cast<int>(record.fine_dofs.size());
-      std::vector<std::vector<std::pair<int, double>>> local_basis(local_size);
+      const auto &fine = record_fine[r];
+      const int local_size = static_cast<int>(fine.size());
+      dof_columns_scratch.assign(local_size, {});
       bool touched = false;
-      for (int b = 0; b < dimension; b++)
+      generation++;
+      for (int i = 0; i < local_size; i++)
       {
-        for (int i = 0; i < local_size; i++)
+        fine_stamp[fine[i]] = generation;
+        fine_slot[fine[i]] = i;
+      }
+      for (int b = 0; b < patch.owned; b++)
+      {
+        for (int entry = patch.owned_begin[b]; entry < patch.owned_begin[b + 1]; entry++)
         {
-          const auto found = patch.basis[b].find(record.fine_dofs[i]);
-          if (found != patch.basis[b].end())
+          if (fine_stamp[pool_dof[entry]] == generation)
           {
-            local_basis[i].push_back({b, found->second});
+            dof_columns_scratch[fine_slot[pool_dof[entry]]].push_back(
+                {b, pool_value[entry]});
+            touched = true;
+          }
+        }
+      }
+      for (std::size_t g = 0; g < patch.guests.size(); g++)
+      {
+        const int c = patch.guests[g];
+        for (int entry = column_offsets[c]; entry < column_offsets[c + 1]; entry++)
+        {
+          if (fine_stamp[column_fine[entry]] == generation)
+          {
+            dof_columns_scratch[fine_slot[column_fine[entry]]].push_back(
+                {patch.owned + static_cast<int>(g), column_value[entry]});
             touched = true;
           }
         }
@@ -1674,19 +1921,25 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
       {
         continue;
       }
+      const auto &metric = records[r].metric;
       for (int i = 0; i < local_size; i++)
       {
+        if (dof_columns_scratch[i].empty())
+        {
+          continue;
+        }
         for (int j = 0; j < local_size; j++)
         {
-          if (record.metric(i, j) == 0.0)
+          const double value = metric(i, j);
+          if (value == 0.0 || dof_columns_scratch[j].empty())
           {
             continue;
           }
-          for (const auto &[bi, vi] : local_basis[i])
+          for (const auto &[bi, vi] : dof_columns_scratch[i])
           {
-            for (const auto &[bj, vj] : local_basis[j])
+            for (const auto &[bj, vj] : dof_columns_scratch[j])
             {
-              patch.restricted(bi, bj) += vi * record.metric(i, j) * vj;
+              patch.restricted(bi, bj) += vi * value * vj;
             }
           }
         }
@@ -1695,46 +1948,25 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
     patches.push_back(std::move(patch));
   };
 
-  // Owned entities: shared entities belong to their DOF-group master; purely local
-  // entities belong to this rank. Fine and coarse interior DOF sets share the entity.
+  // Owned entities: shared entities belong to their DOF-group master; local entities to
+  // this rank. Entity DOF ids come from the interior accessors through the prolongation
+  // rows (which may couple pairs of true DOFs on shared tetrahedral faces).
   mfem::Array<int> fine_entity_dofs, coarse_entity_dofs;
-  const auto entity_ids = [&](mfem::Array<int> &dofs, const auto &map)
+  const auto entity_indices =
+      [&](mfem::Array<int> &dofs, const auto &rows, const auto &index_of)
   {
-    std::vector<HYPRE_BigInt> ids;
+    std::vector<int> indices;
     mfem::FiniteElementSpace::AdjustVDofs(dofs);
     for (int dof : dofs)
     {
-      ids.push_back(map[dof].first);
+      for (const auto &[id, value] : rows[dof])
+      {
+        (void)value;
+        indices.push_back(index_of(id));
+      }
     }
-    return ids;
+    return indices;
   };
-  const auto coarse_ldof_map = [&coarse_fespace]()
-  {
-    std::vector<std::pair<HYPRE_BigInt, double>> map(coarse_fespace.GetVSize());
-    mfem::SparseMatrix diag, offd;
-    HYPRE_BigInt *colmap = nullptr;
-    coarse_fespace.Dof_TrueDof_Matrix()->GetDiag(diag);
-    coarse_fespace.Dof_TrueDof_Matrix()->GetOffd(offd, colmap);
-    const HYPRE_BigInt true_offset = coarse_fespace.GetMyTDofOffset();
-    for (int ldof = 0; ldof < coarse_fespace.GetVSize(); ldof++)
-    {
-      for (int entry = diag.GetI()[ldof]; entry < diag.GetI()[ldof + 1]; entry++)
-      {
-        if (std::abs(diag.GetData()[entry]) > 0.5)
-        {
-          map[ldof] = {true_offset + diag.GetJ()[entry], diag.GetData()[entry]};
-        }
-      }
-      for (int entry = offd.GetI()[ldof]; entry < offd.GetI()[ldof + 1]; entry++)
-      {
-        if (std::abs(offd.GetData()[entry]) > 0.5)
-        {
-          map[ldof] = {colmap[offd.GetJ()[entry]], offd.GetData()[entry]};
-        }
-      }
-    }
-    return map;
-  }();
   const auto owns_entity = [&](const mfem::Array<int> &dofs)
   {
     for (int dof : dofs)
@@ -1756,8 +1988,8 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
       continue;
     }
     coarse_fespace.GetEdgeInteriorDofs(edge, coarse_entity_dofs);
-    add_patch(entity_ids(fine_entity_dofs, fine_ldof_map),
-              entity_ids(coarse_entity_dofs, coarse_ldof_map));
+    add_patch(entity_indices(fine_entity_dofs, fine_rows, fine_index),
+              entity_indices(coarse_entity_dofs, coarse_rows, coarse_index));
   }
   if (mesh.Dimension() == 3)
   {
@@ -1769,8 +2001,8 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
         continue;
       }
       coarse_fespace.GetFaceInteriorDofs(face, coarse_entity_dofs);
-      add_patch(entity_ids(fine_entity_dofs, fine_ldof_map),
-                entity_ids(coarse_entity_dofs, coarse_ldof_map));
+      add_patch(entity_indices(fine_entity_dofs, fine_rows, fine_index),
+                entity_indices(coarse_entity_dofs, coarse_rows, coarse_index));
     }
   }
   for (int element = 0; element < own_elements; element++)
@@ -1781,8 +2013,8 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
       continue;
     }
     coarse_fespace.GetElementInteriorDofs(element, coarse_entity_dofs);
-    add_patch(entity_ids(fine_entity_dofs, fine_ldof_map),
-              entity_ids(coarse_entity_dofs, coarse_ldof_map));
+    add_patch(entity_indices(fine_entity_dofs, fine_rows, fine_index),
+              entity_indices(coarse_entity_dofs, coarse_rows, coarse_index));
   }
 
   // Global ownership identity: every conforming complement direction is owned exactly
@@ -1805,7 +2037,7 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
                 "direction exactly once across all ranks!");
   }
 
-  // Dense Cholesky factorization once per patch.
+  // Dense factorization once per patch.
   std::vector<mfem::DenseMatrixInverse> inverses(patches.size());
   for (std::size_t p = 0; p < patches.size(); p++)
   {
@@ -1813,135 +2045,136 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
   }
 
   // Bounded undamped additive-Schwarz sweeps applied identically to both components.
-  // Corrections and guest partition-of-unity data merge across neighbors each pass.
-  std::map<HYPRE_BigInt, std::array<double, 4>> correction;
-  for (const auto &[dof, incidences] : dof_records)
-  {
-    (void)incidences;
-    correction[dof] = {0.0, 0.0, 0.0, 0.0};
-  }
+  std::vector<double> correction(2 * static_cast<std::size_t>(nf), 0.0);
+  std::vector<double> current(2 * static_cast<std::size_t>(nf), 0.0);
+  std::vector<double> delta(4 * static_cast<std::size_t>(nf), 0.0);
+  std::vector<double> guest_data(4 * static_cast<std::size_t>(nc), 0.0);
+  Vector record_real, record_imag, record_action;
   constexpr int sweeps = 4;
   for (int sweep = 0; sweep < sweeps; sweep++)
   {
-    // Current residual r - A e over the halo (complete for every basis DOF).
-    std::map<HYPRE_BigInt, std::array<double, 2>> current;
-    for (const auto &[dof, value] : residual_values)
-    {
-      current[dof] = {value[0], value[1]};
-    }
+    std::copy(residual_values.begin(), residual_values.end(), current.begin());
     if (sweep > 0)
     {
-      for (const auto &record : records)
+      for (int r = 0; r < record_count; r++)
       {
-        const int local_size = static_cast<int>(record.fine_dofs.size());
-        Vector local_real(local_size), local_imag(local_size);
+        const auto &fine = record_fine[r];
+        const int local_size = static_cast<int>(fine.size());
+        record_real.SetSize(local_size);
+        record_imag.SetSize(local_size);
+        record_action.SetSize(local_size);
         for (int i = 0; i < local_size; i++)
         {
-          const auto &e = correction[record.fine_dofs[i]];
-          local_real(i) = e[0];
-          local_imag(i) = e[1];
+          record_real(i) = correction[2 * static_cast<std::size_t>(fine[i])];
+          record_imag(i) = correction[2 * static_cast<std::size_t>(fine[i]) + 1];
         }
-        Vector action(local_size);
-        record.metric.Mult(local_real, action);
+        records[r].metric.Mult(record_real, record_action);
         for (int i = 0; i < local_size; i++)
         {
-          current[record.fine_dofs[i]][0] -= action(i);
+          current[2 * static_cast<std::size_t>(fine[i])] -= record_action(i);
         }
-        record.metric.Mult(local_imag, action);
+        records[r].metric.Mult(record_imag, record_action);
         for (int i = 0; i < local_size; i++)
         {
-          current[record.fine_dofs[i]][1] -= action(i);
+          current[2 * static_cast<std::size_t>(fine[i]) + 1] -= record_action(i);
         }
       }
     }
-    for (auto &[dof, value] : current)
+    for (int f = 0; f < nf; f++)
     {
-      if (dof_essential[dof])
+      if (fine_essential_flag[f])
       {
-        value = {0.0, 0.0};
+        current[2 * static_cast<std::size_t>(f)] = 0.0;
+        current[2 * static_cast<std::size_t>(f) + 1] = 0.0;
       }
     }
 
-    // Patch solves; owned modes scatter once, guests accumulate global sums and counts.
-    std::map<HYPRE_BigInt, std::array<double, 4>> delta;
-    std::map<HYPRE_BigInt, std::array<double, 4>> guest_data;
+    std::fill(delta.begin(), delta.end(), 0.0);
+    std::fill(guest_data.begin(), guest_data.end(), 0.0);
     for (std::size_t p = 0; p < patches.size(); p++)
     {
       const auto &patch = patches[p];
-      const int dimension = static_cast<int>(patch.basis.size());
+      const int dimension = patch.owned + static_cast<int>(patch.guests.size());
       Vector rhs_real(dimension), rhs_imag(dimension);
-      for (int b = 0; b < dimension; b++)
+      for (int b = 0; b < patch.owned; b++)
       {
-        rhs_real(b) = 0.0;
-        rhs_imag(b) = 0.0;
-        for (const auto &[dof, value] : patch.basis[b])
+        double sum_real = 0.0, sum_imag = 0.0;
+        for (int entry = patch.owned_begin[b]; entry < patch.owned_begin[b + 1]; entry++)
         {
-          rhs_real(b) += value * current[dof][0];
-          rhs_imag(b) += value * current[dof][1];
+          sum_real +=
+              pool_value[entry] * current[2 * static_cast<std::size_t>(pool_dof[entry])];
+          sum_imag += pool_value[entry] *
+                      current[2 * static_cast<std::size_t>(pool_dof[entry]) + 1];
         }
+        rhs_real(b) = sum_real;
+        rhs_imag(b) = sum_imag;
+      }
+      for (std::size_t g = 0; g < patch.guests.size(); g++)
+      {
+        const int c = patch.guests[g];
+        double sum_real = 0.0, sum_imag = 0.0;
+        for (int entry = column_offsets[c]; entry < column_offsets[c + 1]; entry++)
+        {
+          sum_real += column_value[entry] *
+                      current[2 * static_cast<std::size_t>(column_fine[entry])];
+          sum_imag += column_value[entry] *
+                      current[2 * static_cast<std::size_t>(column_fine[entry]) + 1];
+        }
+        rhs_real(patch.owned + static_cast<int>(g)) = sum_real;
+        rhs_imag(patch.owned + static_cast<int>(g)) = sum_imag;
       }
       Vector c_real(dimension), c_imag(dimension);
       inverses[p].Mult(rhs_real, c_real);
       inverses[p].Mult(rhs_imag, c_imag);
       for (int b = 0; b < patch.owned; b++)
       {
-        for (const auto &[dof, value] : patch.basis[b])
+        for (int entry = patch.owned_begin[b]; entry < patch.owned_begin[b + 1]; entry++)
         {
-          auto &entry = delta[dof];
-          entry[0] += c_real(b) * value;
-          entry[1] += c_imag(b) * value;
+          delta[4 * static_cast<std::size_t>(pool_dof[entry])] +=
+              c_real(b) * pool_value[entry];
+          delta[4 * static_cast<std::size_t>(pool_dof[entry]) + 1] +=
+              c_imag(b) * pool_value[entry];
         }
       }
       for (std::size_t g = 0; g < patch.guests.size(); g++)
       {
-        auto &entry = guest_data[patch.guests[g]];
-        entry[0] += c_real(patch.owned + static_cast<int>(g));
-        entry[1] += c_imag(patch.owned + static_cast<int>(g));
-        entry[2] += 1.0;
+        guest_data[4 * static_cast<std::size_t>(patch.guests[g])] +=
+            c_real(patch.owned + static_cast<int>(g));
+        guest_data[4 * static_cast<std::size_t>(patch.guests[g]) + 1] +=
+            c_imag(patch.owned + static_cast<int>(g));
+        guest_data[4 * static_cast<std::size_t>(patch.guests[g]) + 2] += 1.0;
       }
     }
-    exchange_sum(guest_data);
-    for (const auto &[guest, data] : guest_data)
+    exchange_sum(coarse_universe, coarse_index, guest_data, 4);
+    for (int c = 0; c < nc; c++)
     {
-      if (data[2] <= 0.0)
+      const double count = guest_data[4 * static_cast<std::size_t>(c) + 2];
+      if (count <= 0.0)
       {
         continue;
       }
-      const double average_real = data[0] / data[2];
-      const double average_imag = data[1] / data[2];
-      const auto column = build_guest_column(guest);
-      for (const auto &[dof, value] : column)
+      const double average_real = guest_data[4 * static_cast<std::size_t>(c)] / count;
+      const double average_imag = guest_data[4 * static_cast<std::size_t>(c) + 1] / count;
+      for (int entry = column_offsets[c]; entry < column_offsets[c + 1]; entry++)
       {
-        if (dof_essential[dof])
+        const int f = column_fine[entry];
+        // Guest averages scatter only at owned DOFs so the merge counts each entry once.
+        if (!fine_essential_flag[f] && fine_owned[f])
         {
-          continue;
-        }
-        // Every rank scatters guest averages only at DOFs it owns; the merge then
-        // distributes the complete values back to the halo.
-        if (owns_dof(dof))
-        {
-          auto &entry = delta[dof];
-          entry[2] += average_real * value;
-          entry[3] += average_imag * value;
+          delta[4 * static_cast<std::size_t>(f) + 2] += average_real * column_value[entry];
+          delta[4 * static_cast<std::size_t>(f) + 3] += average_imag * column_value[entry];
         }
       }
     }
-    // Owned-mode partials merge by summation onto owners, then everywhere; guest
-    // contributions were owner-partitioned already.
-    std::map<HYPRE_BigInt, std::array<double, 4>> owner_delta;
-    for (const auto &[dof, value] : delta)
+    exchange_sum(fine_universe, fine_index, delta, 4);
+    for (int f = 0; f < nf; f++)
     {
-      owner_delta[dof] = value;
-    }
-    exchange_sum(owner_delta);
-    for (auto &[dof, value] : correction)
-    {
-      const auto found = owner_delta.find(dof);
-      if (found != owner_delta.end())
-      {
-        value[0] += found->second[0] + found->second[2];
-        value[1] += found->second[1] + found->second[3];
-      }
+      correction[2 * static_cast<std::size_t>(f)] +=
+          delta[4 * static_cast<std::size_t>(f)] +
+          delta[4 * static_cast<std::size_t>(f) + 2];
+      correction[2 * static_cast<std::size_t>(f) + 1] +=
+          delta[4 * static_cast<std::size_t>(f) + 1] +
+          delta[4 * static_cast<std::size_t>(f) + 3];
     }
   }
 
@@ -1951,19 +2184,20 @@ HierarchicalMaxwellDomainData::LiftTrueComplexResidualByEntityPatches(
   estimate.indicator_energy = 0.0;
   for (int element = 0; element < own_elements; element++)
   {
-    const auto &record = records[element];
-    const int local_size = static_cast<int>(record.fine_dofs.size());
-    Vector local_real(local_size), local_imag(local_size), action(local_size);
+    const auto &fine = record_fine[element];
+    const int local_size = static_cast<int>(fine.size());
+    record_real.SetSize(local_size);
+    record_imag.SetSize(local_size);
+    record_action.SetSize(local_size);
     for (int i = 0; i < local_size; i++)
     {
-      const auto &e = correction[record.fine_dofs[i]];
-      local_real(i) = e[0];
-      local_imag(i) = e[1];
+      record_real(i) = correction[2 * static_cast<std::size_t>(fine[i])];
+      record_imag(i) = correction[2 * static_cast<std::size_t>(fine[i]) + 1];
     }
-    record.metric.Mult(local_real, action);
-    estimate.indicator_energy(element) += local_real * action;
-    record.metric.Mult(local_imag, action);
-    estimate.indicator_energy(element) += local_imag * action;
+    records[element].metric.Mult(record_real, record_action);
+    estimate.indicator_energy(element) += record_real * record_action;
+    records[element].metric.Mult(record_imag, record_action);
+    estimate.indicator_energy(element) += record_imag * record_action;
   }
   estimate.total_energy = estimate.indicator_energy.Sum();
   Mpi::GlobalSum(1, &estimate.total_energy, comm);

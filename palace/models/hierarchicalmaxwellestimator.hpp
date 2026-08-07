@@ -171,6 +171,13 @@ private:
                                             fem::hierarchical::ComplexResidual residual,
                                             PatchShape patch_shape) const;
 
+  // Streaming form of the exact complex polynomial residual b - A(omega) x on the
+  // uneliminated local combined layout: element and facet operator blocks are formed on
+  // the stack one at a time instead of materializing two dense matrices per element.
+  fem::hierarchical::ComplexResidual
+  AssembleStreamingComplexResidual(std::complex<double> omega, const Vector &injected_real,
+                                   const Vector &injected_imag) const;
+
   // Reduce one uneliminated local combined component to owned true DOFs, zeroing
   // essential equations.
   void LocalToTrue(const Vector &local, Vector &combined_true) const;
