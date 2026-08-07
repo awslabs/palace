@@ -136,8 +136,11 @@ AdditivePatchSolver::AdditivePatchSolver(
     std::vector<std::unique_ptr<mfem::Solver>> &&patch_solvers)
   : mfem::Solver(size)
 {
-  MFEM_VERIFY(size > 0 && !patch_dofs.empty() && patch_dofs.size() == patch_solvers.size(),
-              "Additive patch correction requires compatible nonempty patches!");
+  MFEM_VERIFY(size >= 0, "Additive patch correction requires a nonnegative local size!");
+  MFEM_VERIFY(!patch_dofs.empty(),
+              "Additive patch correction requires globally nonempty patches!");
+  MFEM_VERIFY(patch_dofs.size() == patch_solvers.size(),
+              "Additive patch correction received inconsistent patches and solvers!");
   patches.reserve(patch_dofs.size());
   for (std::size_t i = 0; i < patch_dofs.size(); i++)
   {

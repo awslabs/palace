@@ -604,8 +604,9 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     auto hierarchy = std::make_unique<MultigridOperator>(number_levels);
     for (std::size_t level = 0; level < number_levels; level++)
     {
-      HYPRE_BigInt nnz = combined_operators[level]->NNZ();
-      Mpi::GlobalSum(1, &nnz, GetComm());
+      // mfem::HypreParMatrix::NNZ() reports the global nonzero count. Unlike the local
+      // HypreCSRMatrix count used below, it must not be summed again across ranks.
+      const HYPRE_BigInt nnz = combined_operators[level]->NNZ();
       Mpi::Print(" Level {:d} (p = {:d}): {:d} combined H1 unknowns, {:d} NNZ\n", level,
                  GetH1Spaces().GetFESpaceAtLevel(level).GetMaxElementOrder(),
                  combined_operators[level]->GetGlobalNumRows(), nnz);

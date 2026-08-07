@@ -4517,6 +4517,40 @@ TEST_CASE("Coupled singular element patches use a certified spectral pseudoinver
                   std::runtime_error);
 }
 
+TEST_CASE("Additive patch correction permits empty local ownership",
+          "[singularelements][singularassembly][Serial]")
+{
+  class EmptyPatchSolver : public mfem::Solver
+  {
+  public:
+    EmptyPatchSolver() : mfem::Solver(0) {}
+
+    void SetOperator(const mfem::Operator &op) override
+    {
+      REQUIRE(op.Height() == 0);
+      REQUIRE(op.Width() == 0);
+    }
+
+    void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+    {
+      REQUIRE(x.Size() == 0);
+      y.SetSize(0);
+    }
+  };
+
+  std::vector<mfem::Array<int>> patch_dofs(1);
+  std::vector<std::unique_ptr<mfem::Solver>> patch_solvers;
+  patch_solvers.push_back(std::make_unique<EmptyPatchSolver>());
+  AdditivePatchSolver additive(0, std::move(patch_dofs), std::move(patch_solvers));
+
+  mfem::DenseMatrix empty_patch(0), empty_full(0);
+  additive.SetPatchOperators({&empty_patch});
+  additive.SetOperator(empty_full);
+  mfem::Vector input(0), output;
+  additive.Mult(input, output);
+  CHECK(output.Size() == 0);
+}
+
 TEST_CASE("Additive overlapping patch correction is symmetric positive definite",
           "[singularelements][singularassembly][Serial]")
 {
