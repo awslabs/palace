@@ -252,4 +252,57 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   PtAP_K->EliminateRHS(X, RHS);
 }
 
+void LaplaceOperator::GetSourceExcitationVector(const Operator &K, Vector &X, Vector &RHS)
+{
+  MFEM_VERIFY(
+      rhs_source,
+      "GetSourceExcitationVector requires a volumetric source (call SetRhsSource)!");
+
+  // Assemble the volumetric load ∫ ρ φ dV. Note mfem::DomainLFIntegrator is a true volume
+  // integrator; palace::DomainLFIntegrator is a boundary integrator.
+  mfem::ParLinearForm rhs(&GetH1Space().Get());
+  rhs.AddDomainIntegrator(new mfem::DomainLFIntegrator(*rhs_source));
+
+  // Optional prescribed Neumann flux: add the surface term ∮ g φ dS over neumann_attr. This
+  // uses the boundary integrator (mfem::BoundaryLFIntegrator), not the volume one above.
+  // The marker must outlive Assemble(), which stores a reference to it.
+  const mfem::ParMesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> neumann_marker;
+  if (neumann_source)
+  {
+    neumann_marker = mesh::AttrToMarker(bdr_attr_max, neumann_attr);
+    rhs.AddBoundaryIntegrator(new mfem::BoundaryLFIntegrator(*neumann_source),
+                              neumann_marker);
+  }
+  rhs.Assemble();
+
+  X.SetSize(GetH1Space().GetTrueVSize());
+  RHS.SetSize(GetH1Space().GetTrueVSize());
+  X.UseDevice(true);
+  RHS.UseDevice(true);
+  X = 0.0;
+  RHS = 0.0;
+  GetH1Space().GetProlongationMatrix()->MultTranspose(rhs, RHS);
+
+  // Prescribed Dirichlet values on X, projected onto all essential boundaries. When no
+  // boundary coefficient is set, X stays 0 (homogeneous).
+  if (dbc_source)
+  {
+    mfem::Array<int> dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
+    mfem::ParGridFunction x(&GetH1Space().Get());
+    x = 0.0;
+    x.ProjectBdrCoefficient(*dbc_source, dbc_marker);
+    x.ParallelProject(X);
+  }
+
+  // EliminateRHS folds the Dirichlet lift (-K_ib X_b) into RHS and clears the essential
+  // dofs.
+  const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
+  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
+                            : dynamic_cast<const ParOperator *>(&K);
+  MFEM_VERIFY(PtAP_K, "LaplaceOperator requires ParOperator for RHS elimination!");
+  PtAP_K->EliminateRHS(X, RHS);
+}
+
 }  // namespace palace

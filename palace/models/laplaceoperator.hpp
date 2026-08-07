@@ -61,6 +61,20 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
+  // Optional volumetric source ρ for -div(ε ∇V) = ρ (not owned). Null except in
+  // manufactured-solution verification tests; there is no config path that sets it.
+  mfem::Coefficient *rhs_source = nullptr;
+
+  // Optional prescribed Dirichlet values on the essential boundary (not owned). Null means
+  // homogeneous (V = 0). Set only by manufactured-solution verification tests.
+  mfem::Coefficient *dbc_source = nullptr;
+
+  // Optional prescribed Neumann flux g = ε ∂V/∂n on non-essential boundaries (not owned),
+  // applied over neumann_attr. Null means the natural homogeneous-Neumann BC. Set only by
+  // manufactured-solution verification tests.
+  mfem::Coefficient *neumann_source = nullptr;
+  mfem::Array<int> neumann_attr;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::TerminalData> &terminal,
@@ -111,6 +125,30 @@ public:
   // Assemble the solution boundary conditions and right-hand side vector for a nonzero
   // prescribed voltage on the specified surface index.
   void GetExcitationVector(int idx, const Operator &K, Vector &X, Vector &RHS);
+
+  // Set the volumetric source ρ (see rhs_source; caller retains ownership).
+  void SetRhsSource(mfem::Coefficient &source) { rhs_source = &source; }
+  bool HasRhsSource() const { return rhs_source != nullptr; }
+
+  // Set prescribed Dirichlet values on the essential boundary (see dbc_source; caller
+  // retains ownership).
+  void SetDbcCoefficient(mfem::Coefficient &dbc) { dbc_source = &dbc; }
+
+  // Set a prescribed Neumann flux g = ε ∂V/∂n over the given boundary attributes (see
+  // neumann_source; caller retains ownership).
+  void SetNeumannCoefficient(mfem::Coefficient &g, const std::vector<int> &attributes)
+  {
+    neumann_source = &g;
+    neumann_attr.SetSize(0);
+    for (int attr : attributes)
+    {
+      neumann_attr.Append(attr);
+    }
+  }
+
+  // Assemble the RHS from the volumetric source, with Dirichlet BCs on all essential
+  // boundaries (homogeneous, or the values from SetDbcCoefficient). Requires SetRhsSource.
+  void GetSourceExcitationVector(const Operator &K, Vector &X, Vector &RHS);
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetH1Space().GetComm(); }
