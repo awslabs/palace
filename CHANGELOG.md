@@ -52,6 +52,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     are saved per excitation. The default, each loop its own excitation, is unchanged.
     SchemaVer 3-1-0.
     [PR 979](https://github.com/awslabs/palace/pull/979).
+  - Added scalar frequency-dependent material `Permittivity` objects with additive Drude,
+    Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Existing scalar and
+    three-component `Permittivity` inputs remain supported. SchemaVer 2-3-0.
 
 #### Interface Changes
 
