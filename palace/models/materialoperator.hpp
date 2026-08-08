@@ -4,6 +4,8 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
+#include <complex>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
 #include "utils/configfile.hpp"
@@ -44,8 +46,23 @@ private:
   mfem::Array<bool> attr_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
-  // London penetration depth, or Floquet wave vector.
-  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
+  // London penetration depth, Floquet wave vector, or frequency-dependent permittivity.
+  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr,
+      has_frequency_dependent_permittivity;
+
+  // Frequency-dependent permittivity state is indexed by the global position in
+  // Domains.Materials, unlike attr_mat which is compacted independently on each rank.
+  // Exact zero poles are folded into mat_sigma during setup; all remaining terms share a
+  // cached spatial mass operator for each material.
+  struct PermittivityPoleTerm
+  {
+    std::complex<double> pole, residue;
+  };
+  std::vector<std::vector<int>> frequency_dependent_permittivity_attributes;
+  std::vector<std::vector<PermittivityPoleTerm>> permittivity_pole_terms;
+  std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
+  std::vector<bool> frequency_dependent_permittivity_material,
+      frequency_dependent_permittivity_support;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -143,6 +160,42 @@ public:
 
   bool HasLossTangent() const { return has_losstan_attr; }
   bool HasConductivity() const { return has_conductivity_attr; }
+  bool HasFrequencyDependentPermittivity() const
+  {
+    return has_frequency_dependent_permittivity;
+  }
+  std::size_t NumFrequencyDependentPermittivityMaterials() const
+  {
+    return frequency_dependent_permittivity_attributes.size();
+  }
+  bool HasFrequencyDependentPermittivity(std::size_t material_idx) const
+  {
+    return frequency_dependent_permittivity_material.at(material_idx);
+  }
+  bool HasFrequencyDependentPermittivityA2(std::size_t material_idx) const
+  {
+    return !permittivity_pole_terms.at(material_idx).empty() ||
+           !djordjevic_sarkar_terms.at(material_idx).empty();
+  }
+  bool HasFrequencyDependentPermittivitySupport(std::size_t material_idx) const
+  {
+    return frequency_dependent_permittivity_support.at(material_idx);
+  }
+  const std::vector<int> &
+  GetFrequencyDependentPermittivityAttributes(std::size_t material_idx) const
+  {
+    return frequency_dependent_permittivity_attributes.at(material_idx);
+  }
+  // Evaluate the complete frequency-dependent contribution to the system coefficient.
+  // The high-frequency permittivity and exact zero poles are handled by the ordinary mass
+  // and conductivity paths, respectively.
+  std::complex<double>
+  EvaluateFrequencyDependentPermittivityA2(std::size_t material_idx,
+                                           std::complex<double> s) const;
+  // True when a globally supported material has a nonlinear permittivity term. This is
+  // deliberately frequency independent: valid additive contributions can cancel at an
+  // interpolation or ROM probe frequency without ceasing to be nonlinear.
+  bool HasFrequencyDependentPermittivityA2() const;
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }
