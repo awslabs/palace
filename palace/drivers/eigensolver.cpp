@@ -65,7 +65,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
-  bool has_A2 = (A2 != nullptr);
+  // A complete multipole contribution may cancel at the target while remaining nonzero
+  // elsewhere. Its frequency-independent structure must therefore select the nonlinear
+  // solver path.
+  bool has_A2 =
+      (A2 != nullptr) || space_op.GetMaterialOp().HasFrequencyDependentPermittivityA2();
 
   // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
   // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
@@ -301,7 +305,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
+      !space_op.GetMaterialOp().HasLondonDepth() &&
+      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;

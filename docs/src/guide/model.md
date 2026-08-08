@@ -56,8 +56,8 @@ from driven problems in the time domain.
 
 Material properties are handled by the
 [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
-object. *Palace* supports linear, frequency independent constitutive laws for material
-modeling.
+object. *Palace* supports linear material models and scalar frequency-dependent
+permittivity for supported frequency-domain simulations.
 
 Materials with scalar or symmetric matrix-valued material properties are supported. For most
 simulation types, each material in the model requires a specified relative permittivity and
@@ -71,3 +71,47 @@ Modeling of superconducting domains is performed using the current-field constit
 relations given by the London equations. The user can specify a London penetration depth to
 activate this model. It can also be used in conjunction with a material conductivity when
 wishing to model both superconducting and normal currents.
+
+### Frequency-dependent permittivity
+
+For driven frequency-domain and three-dimensional eigenmode simulations, scalar additive
+permittivity models use the object form
+
+```json
+"Permittivity": {
+  "HighFrequency": 2.08,
+  "Terms": [
+    {"Type": "Drude", "PlasmaFrequency": 1.0, "CollisionFrequency": 0.1}
+  ]
+}
+```
+
+`HighFrequency` is the scalar ``\epsilon_\infty`` and `Terms` is a nonempty additive array.
+The available terms are:
+
+  - `Drude`: positive `PlasmaFrequency` and `CollisionFrequency`, both in GHz.
+  - `Debye`: signed, nonzero `DeltaPermittivity` and positive `RelaxationTime` in ns.
+  - `Lorentz`: signed, nonzero `DeltaPermittivity`, positive `ResonanceFrequency`, and
+    nonnegative `DampingFrequency`, both frequencies in GHz. The exactly critically damped
+    case is not supported.
+  - `PoleResidue`: the explicit escape hatch ``r/(s-p)`` with `Pole` and `Residue` in SI
+    angular rates (rad/s). Values are real or `[real, imag]`; upper-half-plane poles include
+    their conjugates automatically.
+  - `DjordjevicSarkar`: signed, nonzero `Strength` and positive `LowerFrequency` and
+    `UpperFrequency` bounds in GHz, with the upper bound larger than the lower. This native
+    term is ``\mathrm{Strength}\,\log((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``.
+
+The object form requires scalar permittivity and cannot be combined with `LossTan`;
+ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
+permittivity mass matrix. Exact zero poles use the ordinary conductivity coefficient, and
+all nonlinear terms on a material share one unit vector-mass operator.
+
+Transient, electrostatic, magnetostatic, and boundary-mode problems, Absorbing boundaries,
+Floquet or numeric wave ports, a nonzero `Periodic.FloquetWaveVector`, and adaptive circuit
+synthesis are not supported with this material model. The eigenmode divergence-free
+projection is disabled because longitudinal plasma modes can be physical.
+
+Frequency-aware postprocessing is not yet available. Domain electric energy, EPR, and
+quality factor; permittivity-based error indicators; electric `SurfaceFlux`; and automatic
+electric boundary charge ``Q_s`` all use ``\epsilon_\infty``, not ``\epsilon(s)``. Do not
+use these outputs as physical validation of a frequency-dependent material.
