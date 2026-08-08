@@ -5,6 +5,7 @@
 #define PALACE_UTILS_CONFIG_FILE_HPP
 
 #include <array>
+#include <complex>
 #include <map>
 #include <optional>
 #include <string>
@@ -236,6 +237,15 @@ public:
   }
 };
 
+struct PermittivityPoleData
+{
+public:
+  // User-supplied pole and residue. MaterialOperator expands an upper-half-plane pole into
+  // its conjugate internally when it builds the real-valued constitutive response.
+  std::complex<double> pole = 0.0;
+  std::complex<double> residue = 0.0;
+};
+
 struct MaterialData
 {
 public:
@@ -253,6 +263,11 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // User-supplied scalar pole-residue terms for the relative permittivity. Input values are
+  // SI angular rates; upper-half-plane conjugates are expanded privately by
+  // MaterialOperator.
+  std::vector<PermittivityPoleData> permittivity_poles = {};
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};

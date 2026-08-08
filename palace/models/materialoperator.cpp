@@ -133,15 +133,66 @@ void MaterialOperator::SetUpMaterialProperties(
     const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
-  // Check material attributes. Only verify positivity here — the per-material local
-  // presence check happens below via mat_marker (some ranks may not have all attributes
-  // in their partition).
+  // Check material attributes and canonicalize globally-indexed pole data before the
+  // rank-local material compaction below. In particular, do not key this state on attr_mat:
+  // a material support can be absent from a rank's partition.
   MFEM_VERIFY(!materials.empty(), "Materials must be non-empty!");
-  for (const auto &data : materials)
+  permittivity_pole_attributes.resize(materials.size());
+  permittivity_pole_terms.resize(materials.size());
+  permittivity_pole_material.assign(materials.size(), false);
+  permittivity_pole_support.assign(materials.size(), false);
+  std::vector<double> permittivity_pole_conductivity(materials.size(), 0.0);
+  has_permittivity_poles = false;
+  for (std::size_t i = 0; i < materials.size(); i++)
   {
+    const auto &data = materials[i];
     for (auto attr : data.attributes)
     {
       MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
+    }
+    if (data.permittivity_poles.empty())
+    {
+      continue;
+    }
+
+    has_permittivity_poles = true;
+    permittivity_pole_material[i] = true;
+    MFEM_VERIFY(internal::mat::IsIsotropic(data.epsilon_r),
+                "Material permittivity with pole-residue terms must be scalar!");
+    MFEM_VERIFY(std::all_of(data.tandelta.s.begin(), data.tandelta.s.end(),
+                            [](double x) { return x == 0.0; }),
+                "Material permittivity pole-residue terms are incompatible with LossTan!");
+    permittivity_pole_attributes[i] = data.attributes;
+    for (const auto &term : data.permittivity_poles)
+    {
+      MFEM_VERIFY(std::isfinite(term.pole.real()) && std::isfinite(term.pole.imag()) &&
+                      std::isfinite(term.residue.real()) &&
+                      std::isfinite(term.residue.imag()) && term.pole.real() <= 0.0 &&
+                      term.residue != std::complex<double>(0.0, 0.0),
+                  "Invalid material permittivity pole-residue term!");
+      if (term.pole.imag() == 0.0)
+      {
+        MFEM_VERIFY(term.residue.imag() == 0.0,
+                    "A real material permittivity pole requires a real residue!");
+        if (term.pole == std::complex<double>{0.0, 0.0})
+        {
+          // r s² / s = r s exactly, so a zero pole is ordinary conductivity in the
+          // nondimensional Maxwell system and needs no nonlinear operator state.
+          permittivity_pole_conductivity[i] += term.residue.real();
+        }
+        else
+        {
+          permittivity_pole_terms[i].push_back({term.pole, term.residue});
+        }
+      }
+      else
+      {
+        MFEM_VERIFY(term.pole.imag() > 0.0,
+                    "Complex material permittivity poles must be in the upper half-plane!");
+        permittivity_pole_terms[i].push_back({term.pole, term.residue});
+        permittivity_pole_terms[i].push_back(
+            {std::conj(term.pole), std::conj(term.residue)});
+      }
     }
   }
 
@@ -165,6 +216,19 @@ void MaterialOperator::SetUpMaterialProperties(
       }
     }
   }
+  // A nonzero-pole support must be represented identically on all ranks, even where its
+  // local operator is empty.
+  std::unique_ptr<bool[]> pole_support(new bool[materials.size()]);
+  for (std::size_t i = 0; i < materials.size(); i++)
+  {
+    pole_support[i] = mat_marker[i] && !permittivity_pole_terms[i].empty();
+  }
+  Mpi::GlobalOr(static_cast<int>(materials.size()), pole_support.get(), mesh.GetComm());
+  for (std::size_t i = 0; i < materials.size(); i++)
+  {
+    permittivity_pole_support[i] = pole_support[i];
+  }
+
   attr_mat.SetSize(loc_attr.size());
   attr_mat = -1;
 
@@ -306,6 +370,10 @@ void MaterialOperator::SetUpMaterialProperties(
       mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd_3d);
 
       mfem::DenseMatrix mat_sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
+      for (int d = 0; d < mat_sigma_3d.Height(); d++)
+      {
+        mat_sigma_3d(d, d) += permittivity_pole_conductivity[i];
+      }
       mat_sigma_scalar(count)(0, 0) = ProjectNormal(mat_sigma_3d);
     }
 
@@ -339,8 +407,13 @@ void MaterialOperator::SetUpMaterialProperties(
     mat_c0_min[count] = linalg::SingularValueMin(mat_c0(count));
     mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
-    // Electrical conductivity, σ
+    // Electrical conductivity, σ. Exact zero permittivity poles contribute an isotropic
+    // r to this ordinary damping coefficient.
     mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrixTruncated(data.sigma, sdim));
+    for (int d = 0; d < sdim; d++)
+    {
+      mat_sigma(count)(d, d) += permittivity_pole_conductivity[i];
+    }
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
@@ -397,13 +470,40 @@ void MaterialOperator::SetUpMaterialProperties(
                           "config[\"Domains\"][\"Materials\"]!",
                           missing_attr));
 
-  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr};
-  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
+  bool has_attr[5] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
+                      has_wave_attr, has_permittivity_poles};
+  Mpi::GlobalOr(5, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
+  has_permittivity_poles = has_attr[4];
+}
+
+std::complex<double>
+MaterialOperator::EvaluatePermittivityPoleA2(std::size_t material_idx,
+                                             std::complex<double> s) const
+{
+  std::complex<double> value = 0.0;
+  for (const auto &term : permittivity_pole_terms.at(material_idx))
+  {
+    MFEM_VERIFY(s != term.pole,
+                "Material permittivity pole-residue evaluation is singular at s = pole!");
+    value += term.residue * s * s / (s - term.pole);
+  }
+  return value;
+}
+
+bool MaterialOperator::HasPermittivityPoleA2() const
+{
+  for (std::size_t i = 0; i < permittivity_pole_terms.size(); i++)
+  {
+    if (permittivity_pole_support[i] && !permittivity_pole_terms[i].empty())
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const

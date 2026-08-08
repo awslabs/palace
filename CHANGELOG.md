@@ -19,6 +19,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added scalar pole-residue dispersive permittivity materials through
+    `config["Domains"]["Materials"][i]["PermittivityPoles"]`. The model uses
+    $\epsilon_r(s) = \epsilon_\infty + \sum r/(s-p)$, supports automatically paired
+    complex-conjugate poles, and reuses one unit vector-mass operator per material support
+    with nonzero poles.
+    SchemaVer 1-6-0.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

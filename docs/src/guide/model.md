@@ -56,8 +56,8 @@ from driven problems in the time domain.
 
 Material properties are handled by the
 [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
-object. *Palace* supports linear, frequency independent constitutive laws for material
-modeling.
+object. *Palace* supports linear material models; scalar pole-residue permittivity is also
+available for supported frequency-domain simulations.
 
 Materials with scalar or symmetric matrix-valued material properties are supported. For most
 simulation types, each material in the model requires a specified relative permittivity and
@@ -71,3 +71,34 @@ Modeling of superconducting domains is performed using the current-field constit
 relations given by the London equations. The user can specify a London penetration depth to
 activate this model. It can also be used in conjunction with a material conductivity when
 wishing to model both superconducting and normal currents.
+
+### Scalar pole-residue permittivity
+
+For driven frequency-domain and three-dimensional eigenmode simulations, a scalar material
+can additionally specify `PermittivityPoles`. This uses the causal pole-residue model
+
+```math
+\epsilon_r(s) = \epsilon_\infty + \sum_j \frac{r_j}{s-p_j}, \qquad s=i\omega,
+```
+
+where `Permittivity` is ``\epsilon_\infty``, and `Pole` and `Residue` are SI angular rates
+in rad/s. Each value is either a real number or `[real, imag]`. Real poles have real
+residues; a complex pole must be supplied in the upper half-plane and *Palace* adds its
+conjugate term automatically. Poles require scalar/isotropic `Permittivity` and cannot be
+combined with `LossTan`; ordinary `Conductivity` remains additive.
+
+The high-frequency term uses the ordinary permittivity mass matrix. Exact zero poles are
+folded into the ordinary conductivity coefficient, while each material support with a
+nonzero pole reuses one unit vector-mass operator whose complete coefficient
+``\sum_j r_j s^2/(s-p_j)`` is evaluated in the frequency-dependent system term. No
+pole-derived term enters the stiffness matrix.
+
+Transient, electrostatic, magnetostatic, and boundary-mode problems, Absorbing boundaries,
+Floquet or numeric wave ports, a nonzero `Periodic.FloquetWaveVector`, and adaptive circuit
+synthesis are not supported with this material model. The eigenmode divergence-free
+projection is disabled because longitudinal plasma modes can be physical.
+
+Frequency-aware postprocessing is not yet available. Domain electric energy, EPR, and
+quality factor; permittivity-based error indicators; electric `SurfaceFlux`; and automatic
+electric boundary charge ``Q_s`` all use ``\epsilon_\infty``, not ``\epsilon(s)``, for pole
+materials. Do not use these outputs as physical validation of a dispersive model.

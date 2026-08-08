@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <sstream>
 #include <string_view>
@@ -94,6 +95,26 @@ void ParseSymmetricMatrixData(const json &mat, const std::string &name,
     data.s.fill(s);
   }
   data.v = mat.value("MaterialAxes", data.v);
+}
+
+std::complex<double> ParseComplexNumber(const json &data, const char *name)
+{
+  double real = 0.0, imag = 0.0;
+  if (data.is_number())
+  {
+    real = data.get<double>();
+  }
+  else
+  {
+    MFEM_VERIFY(
+        data.is_array() && data.size() == 2 && data[0].is_number() && data[1].is_number(),
+        "Material permittivity pole \"" << name << "\" must be a number or [real, imag]!");
+    real = data[0].get<double>();
+    imag = data[1].get<double>();
+  }
+  MFEM_VERIFY(std::isfinite(real) && std::isfinite(imag),
+              "Material permittivity pole \"" << name << "\" must be finite!");
+  return {real, imag};
 }
 
 // Helper function for extracting element data from the configuration file, either from a
@@ -281,6 +302,35 @@ MaterialData::MaterialData(const json &domain)
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
   lambda_L = domain.value("LondonDepth", lambda_L);
+
+  if (auto it = domain.find("PermittivityPoles"); it != domain.end())
+  {
+    for (const auto &term : *it)
+    {
+      MFEM_VERIFY(term.is_object() && term.contains("Pole") && term.contains("Residue"),
+                  "Each material permittivity pole must contain \"Pole\" and \"Residue\"!");
+      const auto pole = ParseComplexNumber(term.at("Pole"), "Pole");
+      const auto residue = ParseComplexNumber(term.at("Residue"), "Residue");
+      MFEM_VERIFY(pole.real() <= 0.0,
+                  "Material permittivity poles must satisfy Re(Pole) <= 0!");
+      MFEM_VERIFY(residue != std::complex<double>(0.0, 0.0),
+                  "Material permittivity pole residues must be nonzero!");
+      if (pole.imag() == 0.0)
+      {
+        MFEM_VERIFY(residue.imag() == 0.0,
+                    "A real material permittivity pole requires a real residue!");
+      }
+      else
+      {
+        MFEM_VERIFY(pole.imag() > 0.0,
+                    "Complex material permittivity poles must be in the upper half-plane!");
+      }
+      // Preserve the input representation in MaterialData and in resolved configurations.
+      // The conjugate required for a real time-domain response is expanded internally by
+      // MaterialOperator when it constructs the nonzero-pole A2 contribution.
+      permittivity_poles.push_back({pole, residue});
+    }
+  }
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
@@ -1620,6 +1670,12 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+  const double tc_seconds = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
+  for (auto &term : data.permittivity_poles)
+  {
+    term.pole *= tc_seconds;
+    term.residue *= tc_seconds;
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)

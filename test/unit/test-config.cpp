@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <complex>
 #include <iterator>
 #include <set>
 #include <string>
@@ -922,6 +923,108 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
 }
 
+TEST_CASE("Config scalar permittivity poles", "[config][Serial]")
+{
+  const json base = {{"Attributes", {1}}, {"Permittivity", 2.5}};
+
+  SECTION("User representation is preserved")
+  {
+    json material = base;
+    material["PermittivityPoles"] = {{{"Pole", {-2.0, 5.0}}, {"Residue", {1.2, -0.4}}},
+                                     {{"Pole", 0.0}, {"Residue", 3.0}}};
+    const config::MaterialData data(material);
+    REQUIRE(data.permittivity_poles.size() == 2);
+    CHECK((data.permittivity_poles[0].pole == std::complex<double>{-2.0, 5.0}));
+    CHECK((data.permittivity_poles[0].residue == std::complex<double>{1.2, -0.4}));
+    CHECK((data.permittivity_poles[1].pole == std::complex<double>{0.0, 0.0}));
+    CHECK((data.permittivity_poles[1].residue == std::complex<double>{3.0, 0.0}));
+  }
+
+  SECTION("Invalid pole inputs are rejected")
+  {
+    auto CheckInvalid = [&](json pole, json residue)
+    {
+      json material = base;
+      material["PermittivityPoles"] = {{{"Pole", pole}, {"Residue", residue}}};
+      CHECK_THROWS(config::MaterialData(material));
+    };
+    CheckInvalid({1.0, 0.0}, 1.0);
+    CheckInvalid({-1.0, -2.0}, 1.0);
+    CheckInvalid(-1.0, {1.0, 2.0});
+    CheckInvalid(-1.0, 0.0);
+    CheckInvalid({-1.0}, 1.0);
+  }
+}
+
+TEST_CASE("Config dispersive material support gates", "[config][Serial]")
+{
+  auto MakeConfig = []
+  {
+    return json{
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}},
+             {"Permittivity", 2.0},
+             {"PermittivityPoles", {{{"Pole", -1.0}, {"Residue", 2.0}}}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Driven",
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}}}}};
+  };
+
+  SECTION("Ordinary driven solve is accepted")
+  {
+    CHECK_NOTHROW(IoData(MakeConfig(), false));
+  }
+  SECTION("Resolved config preserves user pole terms")
+  {
+    auto config = MakeConfig();
+    const json terms = {{{"Pole", {-2.0, 5.0}}, {"Residue", {1.2, -0.4}}}};
+    config["Domains"]["Materials"][0]["PermittivityPoles"] = terms;
+    const IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Domains"]["Materials"][0]["PermittivityPoles"] == terms);
+  }
+  SECTION("Adaptive circuit synthesis is rejected")
+  {
+    auto config = MakeConfig();
+    config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
+    CHECK_THROWS(IoData(config, false));
+  }
+  SECTION("Numeric wave ports are rejected")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["WavePort"] = {{{"Index", 1}, {"Attributes", {2}}}};
+    CHECK_THROWS(IoData(config, false));
+  }
+  SECTION("Numeric wave port PEC boundaries are rejected")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["WavePortPEC"] = {{"Attributes", {2}}};
+    CHECK_THROWS(IoData(config, false));
+  }
+  SECTION("Absorbing boundaries are rejected")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["Absorbing"] = {{"Attributes", {2}}};
+    CHECK_THROWS(IoData(config, false));
+  }
+  SECTION("Floquet ports are rejected")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["FloquetPort"] = {{{"Index", 1}, {"Attributes", {2}}}};
+    CHECK_THROWS(IoData(config, false));
+  }
+  SECTION("Nonzero periodic Floquet wave vectors are rejected")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["Periodic"] = {{"FloquetWaveVector", {0.0, 0.1, 0.0}}};
+    CHECK_THROWS(IoData(config, false));
+  }
+}
+
 TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 {
   SECTION("Electrostatic resolves linear solver sentinels")
@@ -959,6 +1062,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK_FALSE(config["Domains"]["Materials"][0].contains("PermittivityPoles"));
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")
@@ -1643,7 +1747,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // basis". Concretize does not synthesize one.
     auto mat_gaps = SchemaCoverageGaps("/properties/Domains/properties/Materials/items",
                                        config["Domains"]["Materials"][0],
-                                       /*skip=*/{"MaterialAxes"});
+                                       /*skip=*/{"MaterialAxes", "PermittivityPoles"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
   }

@@ -561,14 +561,15 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       Mwp_p.emplace(port_idx, std::move(Mp));
     }
   }
-  // Detect whether GetExtraSystemMatrix has any non-wave-port contributions (e.g.
-  // second-order farfield, surface conductivity, or Floquet Robin terms).
+  // Detect non-wave-port contributions from dispersive volumes or frequency-dependent
+  // boundaries. Volume A2 is structural: it can cancel at this probe frequency and must
+  // still force the exact slow per-frequency projection path. Adaptive circuit synthesis
+  // is rejected for volume dispersion.
   {
+    has_volume_A2 = space_op.GetMaterialOp().HasPermittivityPoleA2();
     auto A2_other_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
         1.0, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
-    // The probe stamps every non-wave-port frequency-dependent term, including the
-    // Floquet Robin BC, so a non-null probe is the complete condition.
-    has_other_A2 = (A2_other_probe != nullptr);
+    has_other_A2 = (A2_other_probe != nullptr) || has_volume_A2;
   }
 
   // Cache the ω-independent boundary masses for the other frequency-dependent BCs so they
@@ -1079,8 +1080,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
-  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
-  // only nonzero on boundaries, will be empty if not needed.
+  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) may contain dispersive-domain and boundary terms; RHS2
+  // is assembled only if required and is boundary-supported.
 
   // No basis states ill-defined: return zero vector to match current behaviour.
   if (V.empty())
@@ -1100,13 +1101,11 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     space_op.GetFloquetPortOp().Initialize(omega);
   }
 
-  // Other ω-nonlinear A2 contributors (second-order farfield ABC and surface conductivity).
-  // These are applied in factored form: their ω-independent boundary masses (M_ff_r,
-  // Asig_g_r) were projected onto the basis once in UpdatePROM, exactly like the wave-port
-  // masses, so the online cost is a per-ω scalar times an n×n matrix add — no per-ω HDM-
-  // scale assembly or reprojection. This is algebraically identical to projecting the full
-  // A2(ω) here (the scalar is uniform per boundary group, so it commutes with the
-  // projection) and matches the HDM stamping to round-off.
+  // Other ω-nonlinear A2 contributors (second-order farfield ABC, surface conductivity,
+  // rational impedance, and Floquet Robin terms) are applied in factored form. Their
+  // ω-independent boundary masses were projected once in UpdatePROM, so online assembly is
+  // a scalar times an n×n matrix add. Nonzero material poles deliberately force the exact
+  // slow fallback below because their cached spatial masses are not PROM-factored.
   //
   // Robustness: the structural check below requires every factored operator we hold to be
   // sized to the current basis, but it cannot know whether the factored set is COMPLETE
@@ -1175,7 +1174,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // sized to the current basis, and we must hold at least one (else has_other_A2 came from
   // a BC we don't factor).
   bool other_A2_factored = false;
-  if (has_other_A2 && other_A2_factored_ok)
+  if (has_other_A2 && !has_volume_A2 && other_A2_factored_ok)
   {
     const long n = static_cast<long>(V.size());
     bool any_factored = false, all_present = true;

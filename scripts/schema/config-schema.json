@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -608,6 +608,41 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "ComplexNumber": {
+      "description": "A real number or complex number represented by `[real, imag]`.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "additionalItems": false
+        }
+      ]
+    },
+    "PermittivityPole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Pole",
+        "Residue"
+      ],
+      "properties": {
+        "Pole": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Pole angular rate in rad/s. Real part must be nonpositive; complex poles must be specified in the upper half-plane."
+        },
+        "Residue": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Scalar residue angular rate in rad/s. Real poles require real residues."
+        }
+      }
+    },
     "Material": {
       "type": "object",
       "additionalProperties": false,
@@ -626,8 +661,15 @@
         },
         "Permittivity": {
           "$ref": "#/$defs/ScalarOrVector3",
-          "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "description": "Relative high-frequency permittivity ε∞ for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
           "default": 1.0
+        },
+        "PermittivityPoles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PermittivityPole"
+          },
+          "description": "Optional scalar pole-residue terms for εr(s) = ε∞ + Σ r/(s-p), with s = iω. Pole and residue values are SI angular rates in rad/s. Complex upper-half-plane poles automatically include their conjugates. Pole materials require scalar Permittivity and zero LossTan."
         },
         "LossTan": {
           "$ref": "#/$defs/ScalarOrVector3",

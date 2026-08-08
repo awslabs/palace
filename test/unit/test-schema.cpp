@@ -719,6 +719,26 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(ValidateConfig(json{{"MaxIts", 1}}, "Linear").empty());
   }
 
+  SECTION("Permittivity poles validate in a material config")
+  {
+    json config;
+    config["Problem"] = {{"Type", "Driven"}};
+    config["Model"] = {{"Mesh", "test.msh"}};
+    json material;
+    material["Attributes"] = {1};
+    material["PermittivityPoles"] = json::array();
+    material["PermittivityPoles"].push_back({{"Pole", -1.0}, {"Residue", 2.0}});
+    material["PermittivityPoles"].push_back(
+        {{"Pole", {-2.0, 5.0}}, {"Residue", {1.2, -0.4}}});
+    config["Domains"]["Materials"] = json::array({material});
+    config["Boundaries"] = json::object();
+    config["Solver"]["Driven"]["Samples"] = {
+        {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
+    CHECK(ValidateConfig(config).empty());
+    config["Domains"]["Materials"][0]["PermittivityPoles"][0]["Pole"] = {-1.0};
+    CHECK_FALSE(ValidateConfig(config).empty());
+  }
+
   SECTION("Excitation integer minimum - LumpedPort")
   {
     json port = {{"Index", 1}, {"Attributes", {1}}, {"Excitation", -1}};
