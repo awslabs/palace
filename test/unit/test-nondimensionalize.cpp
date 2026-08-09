@@ -186,7 +186,8 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     config::MaterialData data;
     data.sigma = config::SymmetricMatrixData<3>(1e6);
     data.lambda_L = 0.1;
-    data.permittivity_poles.push_back({{2.0e12, -5.0e12}, {1.2e12, 0.4e12}});
+    data.permittivity_pole_terms.push_back({{2.0e12, -5.0e12}, {1.2e12, 0.4e12}});
+    data.djordjevic_sarkar_terms.push_back({0.1, 3.0e9, 4.0e12});
 
     config::Nondimensionalize(units, data);
 
@@ -194,10 +195,13 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
           Approx(1e6 / units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>()));
     CHECK(data.lambda_L == Approx(0.1 / units.GetMeshLengthRelativeScale()));
     const double tc_seconds = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
-    CHECK(data.permittivity_poles[0].pole.real() == Approx(2.0e12 * tc_seconds));
-    CHECK(data.permittivity_poles[0].pole.imag() == Approx(-5.0e12 * tc_seconds));
-    CHECK(data.permittivity_poles[0].residue.real() == Approx(1.2e12 * tc_seconds));
-    CHECK(data.permittivity_poles[0].residue.imag() == Approx(0.4e12 * tc_seconds));
+    CHECK(data.permittivity_pole_terms[0].pole.real() == Approx(2.0e12 * tc_seconds));
+    CHECK(data.permittivity_pole_terms[0].pole.imag() == Approx(-5.0e12 * tc_seconds));
+    CHECK(data.permittivity_pole_terms[0].residue.real() == Approx(1.2e12 * tc_seconds));
+    CHECK(data.permittivity_pole_terms[0].residue.imag() == Approx(0.4e12 * tc_seconds));
+    CHECK(data.djordjevic_sarkar_terms[0].strength == Approx(0.1));
+    CHECK(data.djordjevic_sarkar_terms[0].omega_lower == Approx(3.0e9 * tc_seconds));
+    CHECK(data.djordjevic_sarkar_terms[0].omega_upper == Approx(4.0e12 * tc_seconds));
 
     // Golden value: sigma_scale = 1/(Z0 * Lc_m) = 1/(376.730313412 * 2e-3) ~ 1.32721
     // sigma_nondim = 1e6 / 1.32721 ~ 7.53461e5

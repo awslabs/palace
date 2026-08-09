@@ -71,9 +71,10 @@ private:
   // Operator for domain material properties.
   MaterialOperator mat_op;
 
-  // One unit vector mass B_m per globally indexed material support with a nonzero pole.
-  // These have no essential-DOF policy; returned A2 wrappers apply it after factorization.
-  std::vector<std::unique_ptr<ParOperator>> permittivity_pole_mass;
+  // One unit vector mass B_m per globally indexed material support with a nonlinear
+  // permittivity term. These have no essential-DOF policy; returned A2 wrappers apply it
+  // after factorization.
+  std::vector<std::unique_ptr<ParOperator>> frequency_dependent_permittivity_mass;
 
   // Operators for boundary conditions and source excitations.
   CurrentDipoleOperator current_dipole_op;
@@ -120,28 +121,30 @@ private:
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
-  void SetUpPermittivityPoleMassOperators();
+  void SetUpFrequencyDependentPermittivityMassOperators();
   std::unique_ptr<Operator>
-  BuildPermittivityPoleA2Operator(std::unique_ptr<Operator> &&base,
-                                  const std::vector<double> &coeff) const;
-  void AddPermittivityPoleA2Coefficient(std::size_t material_idx, double coeff,
-                                        MaterialPropertyCoefficient &f) const;
-  void GetPermittivityPoleA2Coefficients(std::complex<double> omega,
-                                         std::vector<double> &real,
-                                         std::vector<double> &imag, bool &has_real,
-                                         bool &has_imag) const;
-  void AssemblePermittivityPoleA2Operators(std::complex<double> omega,
-                                           const MaterialPropertyCoefficient &dfbr,
-                                           const MaterialPropertyCoefficient &dfbi,
-                                           const MaterialPropertyCoefficient &fbr,
-                                           const MaterialPropertyCoefficient &fbi,
-                                           std::unique_ptr<Operator> &ar,
-                                           std::unique_ptr<Operator> &ai);
-  void AddPermittivityPoleA2Coefficients(std::complex<double> omega,
-                                         MaterialPropertyCoefficient &fr,
-                                         MaterialPropertyCoefficient &fi) const;
-  void AddPermittivityPoleA2Coefficients(std::complex<double> omega,
-                                         MaterialPropertyCoefficient &f) const;
+  BuildFrequencyDependentPermittivityA2Operator(std::unique_ptr<Operator> &&base,
+                                                const std::vector<double> &coeff) const;
+  void AddFrequencyDependentPermittivityA2Coefficient(std::size_t material_idx,
+                                                      double coeff,
+                                                      MaterialPropertyCoefficient &f) const;
+  void GetFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                       std::vector<double> &real,
+                                                       std::vector<double> &imag,
+                                                       bool &has_real,
+                                                       bool &has_imag) const;
+  void AssembleFrequencyDependentPermittivityA2Operators(
+      std::complex<double> omega, const MaterialPropertyCoefficient &dfbr,
+      const MaterialPropertyCoefficient &dfbi, const MaterialPropertyCoefficient &fbr,
+      const MaterialPropertyCoefficient &fbi, std::unique_ptr<Operator> &ar,
+      std::unique_ptr<Operator> &ai);
+  void
+  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &fr,
+                                                  MaterialPropertyCoefficient &fi) const;
+  void
+  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &f) const;
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
@@ -262,7 +265,7 @@ public:
                                                  bool include_wave_ports);
 
   // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
-  // frequency-dependent domain and boundary terms (including nonzero permittivity poles,
+  // frequency-dependent domain and boundary terms (including material permittivity models,
   // 2nd-order ABC, surface conductivity, rational impedance, and numeric wave ports)
   // evaluated at the genuinely complex frequency
   // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution

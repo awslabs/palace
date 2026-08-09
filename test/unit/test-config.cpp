@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <complex>
 #include <iterator>
 #include <set>
@@ -923,40 +925,110 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
 }
 
-TEST_CASE("Config scalar permittivity poles", "[config][Serial]")
+TEST_CASE("Config material permittivity models", "[config][Serial]")
 {
-  const json base = {{"Attributes", {1}}, {"Permittivity", 2.5}};
-
-  SECTION("User representation is preserved")
+  SECTION("Legacy scalar and vector inputs")
   {
-    json material = base;
-    material["PermittivityPoles"] = {{{"Pole", {-2.0, 5.0}}, {"Residue", {1.2, -0.4}}},
-                                     {{"Pole", 0.0}, {"Residue", 3.0}}};
-    const config::MaterialData data(material);
-    REQUIRE(data.permittivity_poles.size() == 2);
-    CHECK((data.permittivity_poles[0].pole == std::complex<double>{-2.0, 5.0}));
-    CHECK((data.permittivity_poles[0].residue == std::complex<double>{1.2, -0.4}));
-    CHECK((data.permittivity_poles[1].pole == std::complex<double>{0.0, 0.0}));
-    CHECK((data.permittivity_poles[1].residue == std::complex<double>{3.0, 0.0}));
+    const config::MaterialData scalar({{"Attributes", {1}}, {"Permittivity", 2.5}});
+    CHECK(scalar.epsilon_r.s == std::array<double, 3>{2.5, 2.5, 2.5});
+    CHECK_FALSE(scalar.HasFrequencyDependentPermittivity());
+
+    const config::MaterialData vector(
+        {{"Attributes", {1}}, {"Permittivity", {2.0, 3.0, 4.0}}});
+    CHECK(vector.epsilon_r.s == std::array<double, 3>{2.0, 3.0, 4.0});
+    CHECK_FALSE(vector.HasFrequencyDependentPermittivity());
   }
 
-  SECTION("Invalid pole inputs are rejected")
+  SECTION("Named terms expand to canonical data")
   {
-    auto CheckInvalid = [&](json pole, json residue)
+    const json permittivity = {
+        {"HighFrequency", 2.08},
+        {"Terms",
+         {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
+          {{"Type", "Debye"}, {"DeltaPermittivity", -1.5}, {"RelaxationTime", 0.02}},
+          {{"Type", "Lorentz"},
+           {"DeltaPermittivity", 0.8},
+           {"ResonanceFrequency", 6.0},
+           {"DampingFrequency", 0.2}},
+          {{"Type", "PoleResidue"},
+           {"Pole", {-2.0e12, 5.0e12}},
+           {"Residue", {1.2e12, -0.4e12}}},
+          {{"Type", "DjordjevicSarkar"},
+           {"Strength", 0.0575258},
+           {"LowerFrequency", 9.07157e-5},
+           {"UpperFrequency", 159.154956}}}}};
+    const config::MaterialData data({{"Attributes", {1}}, {"Permittivity", permittivity}});
+    CHECK(data.epsilon_r.s == std::array<double, 3>{2.08, 2.08, 2.08});
+    REQUIRE(data.permittivity_pole_terms.size() == 5);
+    REQUIRE(data.djordjevic_sarkar_terms.size() == 1);
+
+    constexpr double scale = 2.0 * M_PI * 1.0e9;
+    const double wp = scale, gamma = 0.1 * scale;
+    CHECK(data.permittivity_pole_terms[0].pole == std::complex<double>{0.0, 0.0});
+    CHECK(data.permittivity_pole_terms[0].residue.real() == Catch::Approx(wp * wp / gamma));
+    CHECK(data.permittivity_pole_terms[1].pole.real() == Catch::Approx(-gamma));
+    CHECK(data.permittivity_pole_terms[1].residue.real() ==
+          Catch::Approx(-wp * wp / gamma));
+    CHECK(data.permittivity_pole_terms[2].pole.real() == Catch::Approx(-1.0 / 0.02e-9));
+    CHECK(data.permittivity_pole_terms[2].residue.real() == Catch::Approx(-1.5 / 0.02e-9));
+
+    const double w0 = 6.0 * scale, damping = 0.2 * scale;
+    const double wd = std::sqrt(w0 * w0 - 0.25 * damping * damping);
+    CHECK(data.permittivity_pole_terms[3].pole.real() == Catch::Approx(-0.5 * damping));
+    CHECK(data.permittivity_pole_terms[3].pole.imag() == Catch::Approx(wd));
+    CHECK(data.permittivity_pole_terms[3].residue.real() == 0.0);
+    CHECK(data.permittivity_pole_terms[3].residue.imag() ==
+          Catch::Approx(-0.5 * 0.8 * w0 * w0 / wd));
+    CHECK(data.permittivity_pole_terms[4].pole == std::complex<double>{-2.0e12, 5.0e12});
+    CHECK(data.permittivity_pole_terms[4].residue == std::complex<double>{1.2e12, -0.4e12});
+    CHECK(data.djordjevic_sarkar_terms[0].strength == Catch::Approx(0.0575258));
+    CHECK(data.djordjevic_sarkar_terms[0].omega_lower == Catch::Approx(scale * 9.07157e-5));
+    CHECK(data.djordjevic_sarkar_terms[0].omega_upper == Catch::Approx(scale * 159.154956));
+  }
+
+  SECTION("Overdamped Lorentz expands to two real poles")
+  {
+    const config::MaterialData data({{"Attributes", {1}},
+                                     {"Permittivity",
+                                      {{"HighFrequency", 1.0},
+                                       {"Terms",
+                                        {{{"Type", "Lorentz"},
+                                          {"DeltaPermittivity", -0.5},
+                                          {"ResonanceFrequency", 1.0},
+                                          {"DampingFrequency", 3.0}}}}}}});
+    REQUIRE(data.permittivity_pole_terms.size() == 2);
+    CHECK(data.permittivity_pole_terms[0].pole.imag() == 0.0);
+    CHECK(data.permittivity_pole_terms[1].pole.imag() == 0.0);
+    CHECK(data.permittivity_pole_terms[0].pole.real() < 0.0);
+    CHECK(data.permittivity_pole_terms[1].pole.real() <
+          data.permittivity_pole_terms[0].pole.real());
+  }
+
+  SECTION("Invalid term parameters are rejected")
+  {
+    auto CheckInvalid = [](const json &term)
     {
-      json material = base;
-      material["PermittivityPoles"] = {{{"Pole", pole}, {"Residue", residue}}};
+      const json material = {{"Attributes", {1}},
+                             {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", {term}}}}};
       CHECK_THROWS(config::MaterialData(material));
     };
-    CheckInvalid({1.0, 0.0}, 1.0);
-    CheckInvalid({-1.0, -2.0}, 1.0);
-    CheckInvalid(-1.0, {1.0, 2.0});
-    CheckInvalid(-1.0, 0.0);
-    CheckInvalid({-1.0}, 1.0);
+    CheckInvalid(
+        {{"Type", "Drude"}, {"PlasmaFrequency", 0.0}, {"CollisionFrequency", 0.1}});
+    CheckInvalid({{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 0.0}});
+    CheckInvalid({{"Type", "Lorentz"},
+                  {"DeltaPermittivity", 1.0},
+                  {"ResonanceFrequency", 1.0},
+                  {"DampingFrequency", 2.0}});
+    CheckInvalid({{"Type", "PoleResidue"}, {"Pole", {-1.0, -2.0}}, {"Residue", 1.0}});
+    CheckInvalid({{"Type", "DjordjevicSarkar"},
+                  {"Strength", 1.0},
+                  {"LowerFrequency", 2.0},
+                  {"UpperFrequency", 1.0}});
+    CheckInvalid({{"Type", "Unknown"}});
   }
 }
 
-TEST_CASE("Config dispersive material support gates", "[config][Serial]")
+TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Serial]")
 {
   auto MakeConfig = []
   {
@@ -966,8 +1038,10 @@ TEST_CASE("Config dispersive material support gates", "[config][Serial]")
         {"Domains",
          {{"Materials",
            {{{"Attributes", {1}},
-             {"Permittivity", 2.0},
-             {"PermittivityPoles", {{{"Pole", -1.0}, {"Residue", 2.0}}}}}}}}},
+             {"Permittivity",
+              {{"HighFrequency", 2.0},
+               {"Terms",
+                {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 2.0}}}}}}}}}}},
         {"Boundaries", json::object()},
         {"Solver",
          {{"Driven",
@@ -978,14 +1052,17 @@ TEST_CASE("Config dispersive material support gates", "[config][Serial]")
   {
     CHECK_NOTHROW(IoData(MakeConfig(), false));
   }
-  SECTION("Resolved config preserves user pole terms")
+  SECTION("Resolved config preserves the named object exactly")
   {
     auto config = MakeConfig();
-    const json terms = {{{"Pole", {-2.0, 5.0}}, {"Residue", {1.2, -0.4}}}};
-    config["Domains"]["Materials"][0]["PermittivityPoles"] = terms;
+    config["Domains"]["Materials"][0]["Permittivity"] = {
+        {"HighFrequency", 2.08},
+        {"Terms",
+         {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}}}}};
+    const json supplied = config["Domains"]["Materials"][0]["Permittivity"];
     const IoData iodata(config, false);
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
-    CHECK(resolved["Domains"]["Materials"][0]["PermittivityPoles"] == terms);
+    CHECK(resolved["Domains"]["Materials"][0]["Permittivity"] == supplied);
   }
   SECTION("Adaptive circuit synthesis is rejected")
   {
@@ -1062,7 +1139,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
-    CHECK_FALSE(config["Domains"]["Materials"][0].contains("PermittivityPoles"));
+    CHECK(config["Domains"]["Materials"][0]["Permittivity"] == 1.0);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")
@@ -1747,7 +1824,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // basis". Concretize does not synthesize one.
     auto mat_gaps = SchemaCoverageGaps("/properties/Domains/properties/Materials/items",
                                        config["Domains"]["Materials"][0],
-                                       /*skip=*/{"MaterialAxes", "PermittivityPoles"});
+                                       /*skip=*/{"MaterialAxes"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
   }

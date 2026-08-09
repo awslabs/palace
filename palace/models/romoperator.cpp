@@ -566,7 +566,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // still force the exact slow per-frequency projection path. Adaptive circuit synthesis
   // is rejected for volume dispersion.
   {
-    has_volume_A2 = space_op.GetMaterialOp().HasPermittivityPoleA2();
+    has_volume_A2 = space_op.GetMaterialOp().HasFrequencyDependentPermittivityA2();
     auto A2_other_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
         1.0, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
     has_other_A2 = (A2_other_probe != nullptr) || has_volume_A2;

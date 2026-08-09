@@ -133,16 +133,17 @@ void MaterialOperator::SetUpMaterialProperties(
     const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
-  // Check material attributes and canonicalize globally-indexed pole data before the
+  // Check material attributes and canonicalize globally indexed model data before the
   // rank-local material compaction below. In particular, do not key this state on attr_mat:
   // a material support can be absent from a rank's partition.
   MFEM_VERIFY(!materials.empty(), "Materials must be non-empty!");
-  permittivity_pole_attributes.resize(materials.size());
+  frequency_dependent_permittivity_attributes.resize(materials.size());
   permittivity_pole_terms.resize(materials.size());
-  permittivity_pole_material.assign(materials.size(), false);
-  permittivity_pole_support.assign(materials.size(), false);
+  djordjevic_sarkar_terms.resize(materials.size());
+  frequency_dependent_permittivity_material.assign(materials.size(), false);
+  frequency_dependent_permittivity_support.assign(materials.size(), false);
   std::vector<double> permittivity_pole_conductivity(materials.size(), 0.0);
-  has_permittivity_poles = false;
+  has_frequency_dependent_permittivity = false;
   for (std::size_t i = 0; i < materials.size(); i++)
   {
     const auto &data = materials[i];
@@ -150,20 +151,20 @@ void MaterialOperator::SetUpMaterialProperties(
     {
       MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
     }
-    if (data.permittivity_poles.empty())
+    if (!data.HasFrequencyDependentPermittivity())
     {
       continue;
     }
 
-    has_permittivity_poles = true;
-    permittivity_pole_material[i] = true;
+    has_frequency_dependent_permittivity = true;
+    frequency_dependent_permittivity_material[i] = true;
     MFEM_VERIFY(internal::mat::IsIsotropic(data.epsilon_r),
-                "Material permittivity with pole-residue terms must be scalar!");
+                "Frequency-dependent material Permittivity must be scalar!");
     MFEM_VERIFY(std::all_of(data.tandelta.s.begin(), data.tandelta.s.end(),
                             [](double x) { return x == 0.0; }),
-                "Material permittivity pole-residue terms are incompatible with LossTan!");
-    permittivity_pole_attributes[i] = data.attributes;
-    for (const auto &term : data.permittivity_poles)
+                "Frequency-dependent material Permittivity is incompatible with LossTan!");
+    frequency_dependent_permittivity_attributes[i] = data.attributes;
+    for (const auto &term : data.permittivity_pole_terms)
     {
       MFEM_VERIFY(std::isfinite(term.pole.real()) && std::isfinite(term.pole.imag()) &&
                       std::isfinite(term.residue.real()) &&
@@ -194,6 +195,14 @@ void MaterialOperator::SetUpMaterialProperties(
             {std::conj(term.pole), std::conj(term.residue)});
       }
     }
+    for (const auto &term : data.djordjevic_sarkar_terms)
+    {
+      MFEM_VERIFY(std::isfinite(term.strength) && std::isfinite(term.omega_lower) &&
+                      std::isfinite(term.omega_upper) && term.strength != 0.0 &&
+                      term.omega_lower > 0.0 && term.omega_upper > term.omega_lower,
+                  "Invalid DjordjevicSarkar material permittivity term!");
+      djordjevic_sarkar_terms[i].push_back(term);
+    }
   }
 
   // Set up material properties of the different domain regions, represented with element-
@@ -216,17 +225,18 @@ void MaterialOperator::SetUpMaterialProperties(
       }
     }
   }
-  // A nonzero-pole support must be represented identically on all ranks, even where its
-  // local operator is empty.
-  std::unique_ptr<bool[]> pole_support(new bool[materials.size()]);
+  // A nonlinear material support must be represented identically on all ranks, even where
+  // its local operator is empty.
+  std::unique_ptr<bool[]> model_support(new bool[materials.size()]);
   for (std::size_t i = 0; i < materials.size(); i++)
   {
-    pole_support[i] = mat_marker[i] && !permittivity_pole_terms[i].empty();
+    model_support[i] = mat_marker[i] && (!permittivity_pole_terms[i].empty() ||
+                                         !djordjevic_sarkar_terms[i].empty());
   }
-  Mpi::GlobalOr(static_cast<int>(materials.size()), pole_support.get(), mesh.GetComm());
+  Mpi::GlobalOr(static_cast<int>(materials.size()), model_support.get(), mesh.GetComm());
   for (std::size_t i = 0; i < materials.size(); i++)
   {
-    permittivity_pole_support[i] = pole_support[i];
+    frequency_dependent_permittivity_support[i] = model_support[i];
   }
 
   attr_mat.SetSize(loc_attr.size());
@@ -471,18 +481,18 @@ void MaterialOperator::SetUpMaterialProperties(
                           missing_attr));
 
   bool has_attr[5] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr, has_permittivity_poles};
+                      has_wave_attr, has_frequency_dependent_permittivity};
   Mpi::GlobalOr(5, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
-  has_permittivity_poles = has_attr[4];
+  has_frequency_dependent_permittivity = has_attr[4];
 }
 
 std::complex<double>
-MaterialOperator::EvaluatePermittivityPoleA2(std::size_t material_idx,
-                                             std::complex<double> s) const
+MaterialOperator::EvaluateFrequencyDependentPermittivityA2(std::size_t material_idx,
+                                                           std::complex<double> s) const
 {
   std::complex<double> value = 0.0;
   for (const auto &term : permittivity_pole_terms.at(material_idx))
@@ -491,14 +501,23 @@ MaterialOperator::EvaluatePermittivityPoleA2(std::size_t material_idx,
                 "Material permittivity pole-residue evaluation is singular at s = pole!");
     value += term.residue * s * s / (s - term.pole);
   }
+  for (const auto &term : djordjevic_sarkar_terms.at(material_idx))
+  {
+    MFEM_VERIFY(s != -term.omega_lower && s != -term.omega_upper,
+                "DjordjevicSarkar permittivity evaluation is singular at a frequency "
+                "bound!");
+    value +=
+        term.strength * s * s * std::log((s + term.omega_upper) / (s + term.omega_lower));
+  }
   return value;
 }
 
-bool MaterialOperator::HasPermittivityPoleA2() const
+bool MaterialOperator::HasFrequencyDependentPermittivityA2() const
 {
   for (std::size_t i = 0; i < permittivity_pole_terms.size(); i++)
   {
-    if (permittivity_pole_support[i] && !permittivity_pole_terms[i].empty())
+    if (frequency_dependent_permittivity_support[i] &&
+        (!permittivity_pole_terms[i].empty() || !djordjevic_sarkar_terms[i].empty()))
     {
       return true;
     }

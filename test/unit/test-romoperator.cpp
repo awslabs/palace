@@ -150,13 +150,12 @@ TEST_CASE("RomOperator retains a structurally nonlinear dispersive volume A2",
   json config;
   config["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
   config["Model"] = {{"Mesh", "test.msh"}};
-  config["Domains"]["Materials"] = {{{"Attributes", {1}},
-                                     {"Permittivity", 1.0},
-                                     // The full volume A2 cancels at s = i but not s = 2i.
-                                     {"PermittivityPoles",
-                                      {{{"Pole", -1.0}, {"Residue", 4.0}},
-                                       {{"Pole", -2.0}, {"Residue", -20.0}},
-                                       {{"Pole", -3.0}, {"Residue", 20.0}}}}}};
+  // The full volume A2 cancels at s = i but not s = 2i.
+  const json terms = {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 4.0}},
+                      {{"Type", "PoleResidue"}, {"Pole", -2.0}, {"Residue", -20.0}},
+                      {{"Type", "PoleResidue"}, {"Pole", -3.0}, {"Residue", 20.0}}};
+  config["Domains"]["Materials"] = {
+      {{"Attributes", {1}}, {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", terms}}}}};
   // A simultaneous factored boundary contributor ensures a numerical first-frequency
   // self-check cannot stand in for structural volume-A2 detection.
   config["Boundaries"]["Conductivity"] = {{{"Attributes", {1}}, {"Conductivity", 5.8e7}}};

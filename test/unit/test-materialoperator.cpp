@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cmath>
 #include <complex>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/bilinearform.hpp"
@@ -15,6 +17,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/constants.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -166,19 +169,20 @@ TEST_CASE("MaterialOperator requires materials for retained mesh domains",
 
   SECTION("Pole support uses global material indices")
   {
-    material2.permittivity_poles.push_back({{-2.0, 5.0}, {1.2, -0.4}});
+    material2.permittivity_pole_terms.push_back({{-2.0, 5.0}, {1.2, -0.4}});
     MaterialOperator mat_op({material1, material2}, periodic, ProblemType::DRIVEN,
                             palace_mesh);
-    CHECK(mat_op.HasPermittivityPoles());
-    REQUIRE(mat_op.NumPermittivityPoleMaterials() == 2);
-    CHECK(mat_op.HasNonzeroPermittivityPoles(1));
-    CHECK(mat_op.HasPermittivityPoleSupport(1));
-    CHECK(mat_op.GetPermittivityPoleAttributes(1) == std::vector<int>{2});
+    CHECK(mat_op.HasFrequencyDependentPermittivity());
+    REQUIRE(mat_op.NumFrequencyDependentPermittivityMaterials() == 2);
+    CHECK(mat_op.HasFrequencyDependentPermittivityA2(1));
+    CHECK(mat_op.HasFrequencyDependentPermittivitySupport(1));
+    CHECK(mat_op.GetFrequencyDependentPermittivityAttributes(1) == std::vector<int>{2});
     const std::complex<double> s{0.4, 1.1};
     const std::complex<double> pole{-2.0, 5.0}, residue{1.2, -0.4};
     const auto expected =
         residue * s * s / (s - pole) + std::conj(residue) * s * s / (s - std::conj(pole));
-    CHECK(std::abs(mat_op.EvaluatePermittivityPoleA2(1, s) - expected) == Approx(0.0));
+    CHECK(std::abs(mat_op.EvaluateFrequencyDependentPermittivityA2(1, s) - expected) ==
+          Approx(0.0));
   }
 }
 
@@ -191,35 +195,41 @@ TEST_CASE("MaterialOperator scalar permittivity pole identities",
   Mesh palace_mesh(std::move(par_mesh));
   config::PeriodicBoundaryData periodic;
 
-  config::MaterialData material;
-  material.attributes = {1};
-  constexpr double eps_inf = 2.5, wp2 = 9.0, gamma = 3.0;
-  material.epsilon_r = config::SymmetricMatrixData<3>(eps_inf);
-  material.permittivity_poles.push_back({{0.0, 0.0}, {wp2 / gamma, 0.0}});
-  material.permittivity_poles.push_back({{-gamma, 0.0}, {-wp2 / gamma, 0.0}});
+  constexpr double eps_inf = 2.5, plasma_frequency = 1.0, collision_frequency = 0.1;
+  const config::MaterialData material(
+      {{"Attributes", {1}},
+       {"Permittivity",
+        {{"HighFrequency", eps_inf},
+         {"Terms",
+          {{{"Type", "Drude"},
+            {"PlasmaFrequency", plasma_frequency},
+            {"CollisionFrequency", collision_frequency}}}}}}});
+  const double wp = 2.0 * M_PI * 1.0e9 * plasma_frequency;
+  const double gamma = 2.0 * M_PI * 1.0e9 * collision_frequency;
+  const double wp2 = wp * wp;
 
   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
   const std::complex<double> s{1.25, 4.0};
   const std::complex<double> lhs = eps_inf * s * s + mat_op.GetConductivity(1)(0, 0) * s +
-                                   mat_op.EvaluatePermittivityPoleA2(0, s);
+                                   mat_op.EvaluateFrequencyDependentPermittivityA2(0, s);
   const std::complex<double> rhs = eps_inf * s * s + wp2 * s / (s + gamma);
   CHECK(lhs.real() == Approx(rhs.real()));
   CHECK(lhs.imag() == Approx(rhs.imag()));
   CHECK(mat_op.GetConductivity(1)(0, 0) == Approx(wp2 / gamma));
   CHECK(mat_op.HasConductivity());
-  CHECK(mat_op.HasPermittivityPoleA2());
-  CHECK_THROWS_WITH(mat_op.EvaluatePermittivityPoleA2(0, {-gamma, 0.0}),
+  CHECK(mat_op.HasFrequencyDependentPermittivityA2());
+  CHECK_THROWS_WITH(mat_op.EvaluateFrequencyDependentPermittivityA2(0, {-gamma, 0.0}),
                     Catch::Matchers::ContainsSubstring("singular at s = pole"));
 
   // This distant-pole value is O(1). The forbidden long-division K/C/A2 split forms
   // O(1e16) terms whose cancellation cannot reproduce this result in binary64.
   config::MaterialData distant;
   distant.attributes = {1};
-  distant.permittivity_poles.push_back({{-1.0e8, 0.0}, {1.0e8, 0.0}});
+  distant.permittivity_pole_terms.push_back({{-1.0e8, 0.0}, {1.0e8, 0.0}});
   MaterialOperator distant_op({distant}, periodic, ProblemType::DRIVEN, palace_mesh);
   const std::complex<double> distant_expected = -1.0e8 / std::complex<double>(1.0e8, 1.0);
-  CHECK(std::abs(distant_op.EvaluatePermittivityPoleA2(0, {0.0, 1.0}) - distant_expected) <
-        2.0e-16);
+  CHECK(std::abs(distant_op.EvaluateFrequencyDependentPermittivityA2(0, {0.0, 1.0}) -
+                 distant_expected) < 2.0e-16);
 
   auto anisotropic = material;
   anisotropic.epsilon_r.s = {eps_inf, 2.0 * eps_inf, eps_inf};
@@ -231,6 +241,111 @@ TEST_CASE("MaterialOperator scalar permittivity pole identities",
   conducting.sigma = config::SymmetricMatrixData<3>(1.0);
   MaterialOperator conducting_op({conducting}, periodic, ProblemType::DRIVEN, palace_mesh);
   CHECK(conducting_op.GetConductivity(1)(0, 0) == Approx(1.0 + wp2 / gamma));
+}
+
+TEST_CASE("MaterialOperator named permittivity model evaluation",
+          "[materialoperator][Serial]")
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+  config::PeriodicBoundaryData periodic;
+
+  constexpr double delta_debye = -0.3, tau_ns = 0.04;
+  constexpr double delta_lorentz_under = 0.8, f0_under = 6.0, fg_under = 0.2;
+  constexpr double delta_lorentz_over = -0.2, f0_over = 1.0, fg_over = 3.0;
+  constexpr std::complex<double> pole{-2.0e12, 5.0e12};
+  constexpr std::complex<double> residue{1.2e12, -0.4e12};
+  constexpr double strength = 0.0575258, f_lower = 9.07157e-5, f_upper = 159.154956;
+  const config::MaterialData material({{"Attributes", {1}},
+                                       {"Permittivity",
+                                        {{"HighFrequency", 2.08},
+                                         {"Terms",
+                                          {{{"Type", "Debye"},
+                                            {"DeltaPermittivity", delta_debye},
+                                            {"RelaxationTime", tau_ns}},
+                                           {{"Type", "Lorentz"},
+                                            {"DeltaPermittivity", delta_lorentz_under},
+                                            {"ResonanceFrequency", f0_under},
+                                            {"DampingFrequency", fg_under}},
+                                           {{"Type", "Lorentz"},
+                                            {"DeltaPermittivity", delta_lorentz_over},
+                                            {"ResonanceFrequency", f0_over},
+                                            {"DampingFrequency", fg_over}},
+                                           {{"Type", "PoleResidue"},
+                                            {"Pole", {-2.0e12, 5.0e12}},
+                                            {"Residue", {1.2e12, -0.4e12}}},
+                                           {{"Type", "DjordjevicSarkar"},
+                                            {"Strength", strength},
+                                            {"LowerFrequency", f_lower},
+                                            {"UpperFrequency", f_upper}}}}}}});
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+  CHECK(mat_op.HasFrequencyDependentPermittivity());
+  CHECK(mat_op.HasFrequencyDependentPermittivityA2());
+
+  constexpr double scale = 2.0 * M_PI * 1.0e9;
+  const std::complex<double> s{0.7e9, 2.3e10};
+  const auto Lorentz = [s, scale](double delta, double f0, double fg)
+  {
+    const double w0 = scale * f0, gamma = scale * fg;
+    return delta * w0 * w0 / (s * s + gamma * s + w0 * w0);
+  };
+  const std::complex<double> expected_epsilon =
+      delta_debye / (1.0 + s * tau_ns * 1.0e-9) +
+      Lorentz(delta_lorentz_under, f0_under, fg_under) +
+      Lorentz(delta_lorentz_over, f0_over, fg_over) + residue / (s - pole) +
+      std::conj(residue) / (s - std::conj(pole)) +
+      strength * std::log((s + scale * f_upper) / (s + scale * f_lower));
+  const auto value = mat_op.EvaluateFrequencyDependentPermittivityA2(0, s);
+  CHECK(std::abs(value - s * s * expected_epsilon) <
+        2.0e-14 * std::max(1.0, std::abs(value)));
+}
+
+TEST_CASE("Djordjevic-Sarkar real-axis and analytic evaluation",
+          "[materialoperator][Serial]")
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+  config::PeriodicBoundaryData periodic;
+
+  constexpr double strength = 0.0575258, f_lower = 9.07157e-5, f_upper = 159.154956;
+  const config::MaterialData material({{"Attributes", {1}},
+                                       {"Permittivity",
+                                        {{"HighFrequency", 1.0},
+                                         {"Terms",
+                                          {{{"Type", "DjordjevicSarkar"},
+                                            {"Strength", strength},
+                                            {"LowerFrequency", f_lower},
+                                            {"UpperFrequency", f_upper}}}}}}});
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+
+  constexpr double f = 2.5;
+  const double omega = 2.0 * M_PI * 1.0e9 * f;
+  const std::complex<double> s{0.0, omega};
+  const auto epsilon_term = mat_op.EvaluateFrequencyDependentPermittivityA2(0, s) / (s * s);
+  const double expected_real =
+      0.5 * strength * std::log((f_upper * f_upper + f * f) / (f_lower * f_lower + f * f));
+  const double expected_sigma = 2.0 * M_PI * electromagnetics::epsilon0_ * strength * f *
+                                1.0e9 * (std::atan(f / f_lower) - std::atan(f / f_upper));
+  CHECK(epsilon_term.real() == Approx(expected_real).epsilon(2.0e-14));
+  CHECK(-omega * electromagnetics::epsilon0_ * epsilon_term.imag() ==
+        Approx(expected_sigma).epsilon(2.0e-14));
+  CHECK(0.5 * strength == Approx(0.0287629));
+  CHECK(2.0 * M_PI * electromagnetics::epsilon0_ * strength ==
+        Approx(3.20031e-12).epsilon(2.0e-6));
+
+  const std::complex<double> s_off_axis{4.0e8, 1.7e10};
+  const std::complex<double> expected_off_axis =
+      strength * std::log((s_off_axis + 2.0 * M_PI * 1.0e9 * f_upper) /
+                          (s_off_axis + 2.0 * M_PI * 1.0e9 * f_lower));
+  const auto evaluated_off_axis =
+      mat_op.EvaluateFrequencyDependentPermittivityA2(0, s_off_axis) /
+      (s_off_axis * s_off_axis);
+  CHECK(std::abs(evaluated_off_axis - expected_off_axis) <
+        1.0e-14 * std::max(1.0, std::abs(expected_off_axis)));
 }
 
 TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Serial]")
@@ -276,15 +391,15 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
       {
         // This contribution is O(1) near s = i, while the obsolete long-division terms
         // are O(1e16). Exercise the complete operator action, not only scalar evaluation.
-        dispersive_material.permittivity_poles = {{{-1.0e8, 0.0}, {1.0e8, 0.0}}};
+        dispersive_material.permittivity_pole_terms = {{{-1.0e8, 0.0}, {1.0e8, 0.0}}};
       }
       else
       {
         // The complete nonzero-pole contribution cancels at s = i but not at s = 2i.
         // This guards structural nonlinear detection against target-frequency sampling.
-        dispersive_material.permittivity_poles = {{{-1.0, 0.0}, {4.0, 0.0}},
-                                                  {{-2.0, 0.0}, {-20.0, 0.0}},
-                                                  {{-3.0, 0.0}, {20.0, 0.0}}};
+        dispersive_material.permittivity_pole_terms = {{{-1.0, 0.0}, {4.0, 0.0}},
+                                                       {{-2.0, 0.0}, {-20.0, 0.0}},
+                                                       {{-3.0, 0.0}, {20.0, 0.0}}};
       }
       config::DomainData dispersive_domains;
       dispersive_domains.materials = {dispersive_material};
@@ -339,11 +454,13 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
         };
 
         const auto &mat = dispersive.GetMaterialOp();
-        CHECK(mat.HasPermittivityPoleA2());
+        CHECK(mat.HasFrequencyDependentPermittivityA2());
         if (!distant_pole)
         {
-          CHECK(std::abs(mat.EvaluatePermittivityPoleA2(0, {0.0, 1.0})) < 1.0e-14);
-          CHECK(std::abs(mat.EvaluatePermittivityPoleA2(0, {0.0, 2.0})) > 1.0e-3);
+          CHECK(std::abs(mat.EvaluateFrequencyDependentPermittivityA2(0, {0.0, 1.0})) <
+                1.0e-14);
+          CHECK(std::abs(mat.EvaluateFrequencyDependentPermittivityA2(0, {0.0, 2.0})) >
+                1.0e-3);
           auto A2_cancelled =
               dispersive.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO);
           REQUIRE(A2_cancelled);
@@ -355,11 +472,11 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
         CheckAction(*K, 0.0, K0.get());  // No pole-derived stiffness contribution.
         CheckAction(*M, 1.0);            // epsilon_inf remains in ordinary M.
         std::complex<double> g = 0.0;
-        for (const auto &term : dispersive_material.permittivity_poles)
+        for (const auto &term : dispersive_material.permittivity_pole_terms)
         {
           g += term.residue * s * s / (s - term.pole);
         }
-        CHECK(std::abs(mat.EvaluatePermittivityPoleA2(0, s) - g) <
+        CHECK(std::abs(mat.EvaluateFrequencyDependentPermittivityA2(0, s) - g) <
               1.0e-14 * std::max(1.0, std::abs(g)));
         CheckAction(*A2, g);
 
@@ -395,6 +512,81 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
   }
 }
 
+TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
+          "[materialoperator][Serial]")
+{
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+
+  constexpr double fp = 1.0, fg = 0.1;
+  const config::MaterialData named_material(
+      {{"Attributes", {1}},
+       {"Permittivity",
+        {{"HighFrequency", 2.08},
+         {"Terms",
+          {{{"Type", "Drude"}, {"PlasmaFrequency", fp}, {"CollisionFrequency", fg}}}}}}});
+  const double wp = 2.0 * M_PI * 1.0e9 * fp;
+  const double gamma = 2.0 * M_PI * 1.0e9 * fg;
+  config::MaterialData canonical_material;
+  canonical_material.attributes = {1};
+  canonical_material.epsilon_r = config::SymmetricMatrixData<3>(2.08);
+  canonical_material.permittivity_pole_terms = {{{0.0, 0.0}, {wp * wp / gamma, 0.0}},
+                                                {{-gamma, 0.0}, {-wp * wp / gamma, 0.0}}};
+
+  config::DomainData named_domains, canonical_domains;
+  named_domains.materials = {named_material};
+  canonical_domains.materials = {canonical_material};
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  PaOrderThresholdGuard threshold_guard;
+  BilinearForm::pa_order_threshold = 1;
+  auto named_mesh = MakeMesh();
+  auto canonical_mesh = MakeMesh();
+  SpaceOperator named(solver, named_domains, boundaries, ProblemType::DRIVEN, units,
+                      named_mesh);
+  SpaceOperator canonical(solver, canonical_domains, boundaries, ProblemType::DRIVEN, units,
+                          canonical_mesh);
+
+  auto C_named = named.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto C_canonical = canonical.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const double omega = 2.0 * M_PI * 1.0e9 * 2.5;
+  auto A2_named = named.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  auto A2_canonical =
+      canonical.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  REQUIRE(C_named);
+  REQUIRE(C_canonical);
+  REQUIRE(A2_named);
+  REQUIRE(A2_canonical);
+
+  ComplexVector x(C_named->Width()), named_y(C_named->Height()),
+      canonical_y(C_named->Height());
+  x.UseDevice(true);
+  named_y.UseDevice(true);
+  canonical_y.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  auto CheckSameAction =
+      [&](const ComplexOperator &named_op, const ComplexOperator &canonical_op)
+  {
+    named_op.Mult(x, named_y);
+    canonical_op.Mult(x, canonical_y);
+    named_y.Add(-1.0, canonical_y);
+    CHECK(linalg::Norml2(Mpi::World(), named_y) <
+          1.0e-12 * std::max(1.0, linalg::Norml2(Mpi::World(), canonical_y)));
+  };
+  CheckSameAction(*C_named, *C_canonical);
+  CheckSameAction(*A2_named, *A2_canonical);
+}
+
 TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
           "[materialoperator][Serial]")
 {
@@ -420,12 +612,12 @@ TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
   pole_material.attributes = {1};
   pole_material.epsilon_r = config::SymmetricMatrixData<3>(2.0);
   pole_material.sigma = config::SymmetricMatrixData<3>(1.0);
-  pole_material.permittivity_poles.push_back({{0.0, 0.0}, {3.0, 0.0}});
+  pole_material.permittivity_pole_terms.push_back({{0.0, 0.0}, {3.0, 0.0}});
   config::DomainData pole_domains;
   pole_domains.materials = {pole_material};
 
   auto conductivity_material = pole_material;
-  conductivity_material.permittivity_poles.clear();
+  conductivity_material.permittivity_pole_terms.clear();
   conductivity_material.sigma = config::SymmetricMatrixData<3>(4.0);
   config::DomainData conductivity_domains;
   conductivity_domains.materials = {conductivity_material};
@@ -442,9 +634,9 @@ TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
                              units, conductivity_mesh);
 
   const auto &mat = pole.GetMaterialOp();
-  CHECK(mat.HasPermittivityPoles());
-  CHECK_FALSE(mat.HasNonzeroPermittivityPoles(0));
-  CHECK_FALSE(mat.HasPermittivityPoleA2());
+  CHECK(mat.HasFrequencyDependentPermittivity());
+  CHECK_FALSE(mat.HasFrequencyDependentPermittivityA2(0));
+  CHECK_FALSE(mat.HasFrequencyDependentPermittivityA2());
   CHECK(mat.HasConductivity());
   CHECK(mat.GetConductivity(1)(0, 0) == Approx(4.0));
   CHECK_FALSE(pole.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO));
@@ -517,12 +709,12 @@ TEST_CASE("SpaceOperator dispersive mass action across partitioned material supp
   config::MaterialData material2;
   material2.attributes = {2};
   material2.epsilon_r = config::SymmetricMatrixData<3>(1.0);
-  material2.permittivity_poles.push_back({{-2.0, 0.0}, {3.0, 0.0}});
+  material2.permittivity_pole_terms.push_back({{-2.0, 0.0}, {3.0, 0.0}});
   config::DomainData dispersive_domains;
   dispersive_domains.materials = {material1, material2};
 
   auto reference_material2 = material2;
-  reference_material2.permittivity_poles.clear();
+  reference_material2.permittivity_pole_terms.clear();
   config::DomainData reference_domains;
   reference_domains.materials = {material1, reference_material2};
   auto doubled_material2 = reference_material2;
@@ -543,7 +735,7 @@ TEST_CASE("SpaceOperator dispersive mass action across partitioned material supp
                         doubled_mesh);
   CHECK((dispersive.GetMaterialOp().GetCeedAttributes(std::vector<int>{2}).Size() > 0) ==
         (Mpi::Rank(comm) == 0));
-  CHECK(dispersive.GetMaterialOp().HasPermittivityPoleSupport(1));
+  CHECK(dispersive.GetMaterialOp().HasFrequencyDependentPermittivitySupport(1));
 
   auto K = dispersive.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto C = dispersive.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -600,7 +792,7 @@ TEST_CASE("SpaceOperator dispersive mass action across partitioned material supp
   M->Mult(x, y);
   y.Add(-1.0, expected);
   CHECK(linalg::Norml2(comm, y) < 1.0e-11 * std::max(1.0, linalg::Norml2(comm, expected)));
-  CheckAction(*A2, mat.EvaluatePermittivityPoleA2(1, s));
+  CheckAction(*A2, mat.EvaluateFrequencyDependentPermittivityA2(1, s));
 
   auto system = dispersive.GetSystemMatrix(std::complex<double>{1.0}, s, s * s, K.get(),
                                            C.get(), M.get(), A2.get());

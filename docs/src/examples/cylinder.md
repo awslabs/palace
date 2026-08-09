@@ -180,14 +180,9 @@ variant uses the hexahedral mesh with a damped Drude permittivity,
 ```
 
 Here ``\varepsilon_\infty=2.08``, ``\omega_p=2\pi\times 1\text{ GHz}``, and
-``\gamma=2\pi\times 0.1\text{ GHz}``. In
-[`PermittivityPoles`](../config/reference.md#config-domains-materials-permittivitypoles),
-the Drude term is entered in SI angular rates (rad/s) using the mapping
-
-```math
-(p_1,r_1)=\left(0,\frac{\omega_p^2}{\gamma}\right), \qquad
-(p_2,r_2)=\left(-\gamma,-\frac{\omega_p^2}{\gamma}\right).
-```
+``\gamma=2\pi\times 0.1\text{ GHz}``. The
+[`Permittivity`](../config/reference.md#config-domains-materials-permittivity) object uses a
+`Drude` term whose `PlasmaFrequency` and `CollisionFrequency` are entered directly in GHz.
 
 For a cavity mode with geometric angular frequency ``\Omega_0``, the expected root
 satisfies ``(\Omega_0^2+\varepsilon_\infty s^2)(s+\gamma)+\omega_p^2s=0``. For the

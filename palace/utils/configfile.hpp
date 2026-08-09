@@ -240,10 +240,19 @@ public:
 struct PermittivityPoleData
 {
 public:
-  // User-supplied pole and residue. MaterialOperator expands an upper-half-plane pole into
-  // its conjugate internally when it builds the real-valued constitutive response.
+  // Canonical pole and residue. MaterialOperator expands an upper-half-plane pole into its
+  // conjugate internally when it builds the real-valued constitutive response.
   std::complex<double> pole = 0.0;
   std::complex<double> residue = 0.0;
+};
+
+struct DjordjevicSarkarData
+{
+public:
+  // Native logarithmic relative-permittivity term. Frequency bounds are angular rates.
+  double strength = 0.0;
+  double omega_lower = 0.0;
+  double omega_upper = 0.0;
 };
 
 struct MaterialData
@@ -264,10 +273,16 @@ public:
   // London penetration depth [m].
   double lambda_L = 0.0;
 
-  // User-supplied scalar pole-residue terms for the relative permittivity. Input values are
-  // SI angular rates; upper-half-plane conjugates are expanded privately by
-  // MaterialOperator.
-  std::vector<PermittivityPoleData> permittivity_poles = {};
+  // Canonical scalar pole-residue terms and native logarithmic terms for the
+  // frequency-dependent relative permittivity. Angular rates are SI until inputs are
+  // nondimensionalized; upper-half-plane conjugates are expanded by MaterialOperator.
+  std::vector<PermittivityPoleData> permittivity_pole_terms = {};
+  std::vector<DjordjevicSarkarData> djordjevic_sarkar_terms = {};
+
+  bool HasFrequencyDependentPermittivity() const
+  {
+    return !permittivity_pole_terms.empty() || !djordjevic_sarkar_terms.empty();
+  }
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
