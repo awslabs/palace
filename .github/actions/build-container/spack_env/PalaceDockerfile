@@ -19,6 +19,7 @@ RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
       "$SPACK_PACKAGES_COMMIT"
 
 # Copy inputs needed to install dependencies before the Palace source tree.
+COPY extern/patch/libCEED/libceed_nontensor_atpoints_cuda.diff /opt/palace/extern/patch/libCEED/libceed_nontensor_atpoints_cuda.diff
 COPY spack_repo /opt/palace/spack_repo
 
 # Set up spack repo and apply patches to builtin spack packages
