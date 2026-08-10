@@ -60,5 +60,12 @@ patterns, and fixed quadrature order/depth. Files are validated before use and i
 an atomic no-replace hard link. A cold depth-six generation remains expensive, but a warm depth-six cache
 performs no recursive reference quadrature and has the same contraction cost as depth two.
 
+`Subdivisions` controls matrix/reference-tensor construction only. Electrostatic total
+energy, including the denominator of every surface participation ratio, is evaluated from
+the algebraic quadratic form `V^T K V`. If per-domain energies are requested,
+`PostprocessingSubdivisions` controls their independent direct-field integration and
+defaults to two. Three-dimensional surface participation continues to use edge-aligned
+Gauss-Jacobi quadrature and does not recursively follow either subdivision depth.
+
 `TransmissionWedge` remains the default finite-metal model and preserves the existing
 material-dependent exponent, loss-tangent validation, and strict junction behavior.

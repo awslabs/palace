@@ -46,6 +46,8 @@ struct SingularDomainEnergyMeasurement
   double integration_error_bound;
   double assembly_error_bound;
   double floating_point_allowance;
+  bool direct_measurement_available;
+  bool consistency_certified;
 };
 
 struct SingularCoefficientMeasurement
@@ -735,39 +737,42 @@ MeasureSingularDomainEnergy(const IoData &iodata, const LaplaceOperator &laplace
       iodata.solver.singular_elements.rel_tol,
       iodata.solver.singular_elements.max_subdivisions,
       iodata.solver.singular_elements.UsesFixedSubdivision(),
-      iodata.solver.singular_elements.subdivisions};
+      iodata.solver.singular_elements.postprocessing_subdivisions};
   const auto &configured_domains = iodata.domains.postpro.energy;
   std::vector<double> reductions(2 + configured_domains.size(), 0.0);
 
-  for (int element = 0; element < laplace_op.GetMesh().GetNE(); element++)
+  if (!configured_domains.empty())
   {
-    const int attribute = laplace_op.GetMesh().Get().GetAttribute(element);
-    const auto &material = laplace_op.GetMaterialOp();
-    MFEM_VERIFY(
-        material.IsPermittivityIsotropic(attribute),
-        "Singular electrostatic field energy requires isotropic permittivity in every "
-        "domain! Domain attribute: "
-            << attribute);
-    const double epsilon = material.GetPermittivityReal(attribute)(0, 0);
-    const auto integral =
-        evaluator.IntegrateElementGradientEnergy(element, epsilon, options);
-    MFEM_VERIFY(integral.converged && std::isfinite(integral.value) &&
-                    std::isfinite(integral.estimated_absolute_error) &&
-                    integral.estimated_absolute_error >= 0.0,
-                "Combined singular field energy integration failed to converge on "
-                "element "
-                    << element << "!");
-    reductions[0] += integral.value;
-    reductions[1] += integral.estimated_absolute_error;
-
-    std::size_t domain = 0;
-    for (const auto &[idx, data] : configured_domains)
+    for (int element = 0; element < laplace_op.GetMesh().GetNE(); element++)
     {
-      if (std::binary_search(data.attributes.begin(), data.attributes.end(), attribute))
+      const int attribute = laplace_op.GetMesh().Get().GetAttribute(element);
+      const auto &material = laplace_op.GetMaterialOp();
+      MFEM_VERIFY(
+          material.IsPermittivityIsotropic(attribute),
+          "Singular electrostatic field energy requires isotropic permittivity in every "
+          "domain! Domain attribute: "
+              << attribute);
+      const double epsilon = material.GetPermittivityReal(attribute)(0, 0);
+      const auto integral =
+          evaluator.IntegrateElementGradientEnergy(element, epsilon, options);
+      MFEM_VERIFY(integral.converged && std::isfinite(integral.value) &&
+                      std::isfinite(integral.estimated_absolute_error) &&
+                      integral.estimated_absolute_error >= 0.0,
+                  "Combined singular field energy integration failed to converge on "
+                  "element "
+                      << element << "!");
+      reductions[0] += integral.value;
+      reductions[1] += integral.estimated_absolute_error;
+
+      std::size_t domain = 0;
+      for (const auto &[idx, data] : configured_domains)
       {
-        reductions[2 + domain] += integral.value;
+        if (std::binary_search(data.attributes.begin(), data.attributes.end(), attribute))
+        {
+          reductions[2 + domain] += integral.value;
+        }
+        domain++;
       }
-      domain++;
     }
   }
   Mpi::GlobalSum(static_cast<int>(reductions.size()), reductions.data(),
@@ -778,30 +783,38 @@ MeasureSingularDomainEnergy(const IoData &iodata, const LaplaceOperator &laplace
   stiffness.Mult(potential, stiffness_potential);
   const double algebraic_integral =
       linalg::Dot(laplace_op.GetComm(), potential, stiffness_potential);
+  MFEM_VERIFY(std::isfinite(algebraic_integral) && algebraic_integral > 0.0,
+              "Singular electrostatic algebraic energy must be finite and positive!");
+  if (configured_domains.empty())
+  {
+    reductions[0] = algebraic_integral;
+  }
   const double assembly_error = laplace_op.GetSingularStiffnessEnergyErrorBound(potential);
+  const double direct_integral = reductions[0];
   const double floating_point_error =
       64.0 * std::numeric_limits<double>::epsilon() *
       std::max(1.0, static_cast<double>(laplace_op.GlobalTrueVSize())) *
-      (std::abs(reductions[0]) + std::abs(algebraic_integral));
-  const double discrepancy = std::abs(reductions[0] - algebraic_integral);
+      (std::abs(direct_integral) + std::abs(algebraic_integral));
+  const double discrepancy = std::abs(direct_integral - algebraic_integral);
   const double error_bound = reductions[1] + assembly_error + floating_point_error;
-  MFEM_VERIFY(std::isfinite(algebraic_integral) && algebraic_integral > 0.0 &&
-                  std::isfinite(discrepancy) && std::isfinite(error_bound) &&
-                  discrepancy <= error_bound,
-              "Direct combined-field energy is inconsistent with V^T K V! "
-              "Discrepancy: "
-                  << discrepancy << ", integration error: " << reductions[1]
-                  << ", assembly error: " << assembly_error
-                  << ", floating-point allowance: " << floating_point_error);
+  MFEM_VERIFY(std::isfinite(direct_integral) && direct_integral > 0.0 &&
+                  std::isfinite(discrepancy) && std::isfinite(error_bound),
+              "Singular electrostatic direct energy diagnostics must be finite!");
 
-  SingularDomainEnergyMeasurement measurement{source,
-                                              0.5 * reductions[0],
-                                              {},
-                                              algebraic_integral,
-                                              reductions[0],
-                                              reductions[1],
-                                              assembly_error,
-                                              floating_point_error};
+  SingularDomainEnergyMeasurement measurement{
+      source,
+      0.5 * algebraic_integral,
+      {},
+      algebraic_integral,
+      direct_integral,
+      reductions[1],
+      assembly_error,
+      floating_point_error,
+      !configured_domains.empty(),
+      !configured_domains.empty() &&
+          (!options.fixed_subdivision ||
+           options.subdivisions == iodata.solver.singular_elements.subdivisions) &&
+          discrepancy <= error_bound};
   std::size_t domain = 0;
   for (const auto &[idx, data] : configured_domains)
   {
@@ -809,10 +822,17 @@ MeasureSingularDomainEnergy(const IoData &iodata, const LaplaceOperator &laplace
     domain++;
   }
   Mpi::Print(
-      " Field energy E = {:.3e} J (combined-field relative discrepancy = {:.3e}, "
-      "relative bound = {:.3e})\n",
-      iodata.units.Dimensionalize<Units::ValueType::ENERGY>(measurement.total_energy),
-      discrepancy / algebraic_integral, error_bound / algebraic_integral);
+      " Field energy E = {:.3e} J (algebraic quadratic form)\n",
+      iodata.units.Dimensionalize<Units::ValueType::ENERGY>(measurement.total_energy));
+  if (!configured_domains.empty())
+  {
+    Mpi::Print(" Domain-energy quadrature: {} (relative algebraic discrepancy = {:.3e}, "
+               "relative estimated bound = {:.3e})\n",
+               options.fixed_subdivision
+                   ? fmt::format("fixed subdivision depth {}", options.subdivisions)
+                   : fmt::format("adaptive maximum depth {}", options.maximum_subdivisions),
+               discrepancy / algebraic_integral, error_bound / algebraic_integral);
+  }
   return measurement;
 }
 
@@ -1671,20 +1691,27 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const double scale = std::abs(measurement.algebraic_integral);
       MFEM_VERIFY(std::isfinite(scale) && scale > 0.0,
                   "Invalid algebraic energy scale for singular metadata!");
-      const double discrepancy =
-          std::abs(measurement.direct_integral - measurement.algebraic_integral);
-      const double bound = measurement.integration_error_bound +
-                           measurement.assembly_error_bound +
-                           measurement.floating_point_allowance;
-      singular_metadata["EnergyConsistency"].push_back(
-          {{"Source", measurement.source},
-           {"Normalization", "absolute nondimensional integral divided by |V^T K V|"},
-           {"DirectToAlgebraicRelativeDiscrepancy", discrepancy / scale},
-           {"CertifiedRelativeErrorBound", bound / scale},
-           {"IntegrationRelativeErrorBound", measurement.integration_error_bound / scale},
-           {"AssemblyRelativeErrorBound", measurement.assembly_error_bound / scale},
-           {"FloatingPointRelativeAllowance",
-            measurement.floating_point_allowance / scale}});
+      nlohmann::json consistency{
+          {"Source", measurement.source},
+          {"DirectMeasurementAvailable", measurement.direct_measurement_available},
+          {"ConsistencyCertified", measurement.consistency_certified}};
+      if (measurement.direct_measurement_available)
+      {
+        const double discrepancy =
+            std::abs(measurement.direct_integral - measurement.algebraic_integral);
+        const double bound = measurement.integration_error_bound +
+                             measurement.assembly_error_bound +
+                             measurement.floating_point_allowance;
+        consistency.update(
+            {{"Normalization", "absolute nondimensional integral divided by |V^T K V|"},
+             {"DirectToAlgebraicRelativeDiscrepancy", discrepancy / scale},
+             {"EstimatedRelativeErrorBound", bound / scale},
+             {"IntegrationRelativeErrorBound", measurement.integration_error_bound / scale},
+             {"AssemblyRelativeErrorBound", measurement.assembly_error_bound / scale},
+             {"FloatingPointRelativeAllowance",
+              measurement.floating_point_allowance / scale}});
+      }
+      singular_metadata["EnergyConsistency"].push_back(std::move(consistency));
     }
     SaveMetadata("SingularElements", singular_metadata);
     WriteSingularDomainEnergy(post_dir, iodata, domain_energy, root);

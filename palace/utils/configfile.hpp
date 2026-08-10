@@ -1182,6 +1182,10 @@ public:
   int quadrature_order = 8;
   int subdivisions = 6;
 
+  // Fixed-subdivision depth for direct postprocessing of configured per-domain energies.
+  // Surface participation uses singularity-adapted quadrature instead.
+  int postprocessing_subdivisions = 2;
+
   // Optional directory for persistent affine reference tensors. An empty value disables
   // on-disk caching while retaining the in-memory cache for one operator construction.
   std::string reference_cache;

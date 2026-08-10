@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-8-0",
+  "$id": "urn:palace:schema:1-9-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2882,6 +2882,14 @@
           "minimum": 0,
           "maximum": 8,
           "default": 6,
+          "x-palace-advanced": true
+        },
+        "PostprocessingSubdivisions": {
+          "type": "integer",
+          "description": "Fixed-subdivision depth used only for direct integration of configured per-domain electrostatic energies. Total energy uses the algebraic quadratic form, and singular surface participation uses edge-aligned quadrature independent of this value.",
+          "minimum": 0,
+          "maximum": 8,
+          "default": 2,
           "x-palace-advanced": true
         },
         "ReferenceCache": {

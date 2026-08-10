@@ -34,6 +34,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     report actual reference-table leaf generation. Added the optional
     `Solver.SingularElements.ReferenceCache` directory for reusing validated reference
     tensors between launches and AMR rebuilds. SchemaVer 1-8-0.
+  - Decoupled fixed-subdivision matrix quadrature from singular electrostatic domain-energy
+    postprocessing. Total energy and participation denominators now use the algebraic
+    quadratic form, while `PostprocessingSubdivisions` independently controls optional
+    per-domain direct integration. SchemaVer 1-9-0.
   - Added an experimental `config["Solver"]["SingularElements"]` interface for additive
     singular-element enrichment of selected internal zero-thickness PEC sheets in
     electrostatic simulations. SchemaVer 1-4-0.

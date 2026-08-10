@@ -1433,6 +1433,8 @@ SingularElementsData::SingularElementsData(const json &singular_elements)
   quadrature_strategy = singular_elements.value("QuadratureStrategy", quadrature_strategy);
   quadrature_order = singular_elements.value("QuadratureOrder", quadrature_order);
   subdivisions = singular_elements.value("Subdivisions", subdivisions);
+  postprocessing_subdivisions =
+      singular_elements.value("PostprocessingSubdivisions", postprocessing_subdivisions);
   reference_cache = singular_elements.value("ReferenceCache", reference_cache);
   abs_tol = singular_elements.value("AbsTol", abs_tol);
   rel_tol = singular_elements.value("RelTol", rel_tol);
@@ -1446,6 +1448,8 @@ SingularElementsData::SingularElementsData(const json &singular_elements)
               "FixedExponent must be finite and satisfy 0 < FixedExponent < 1!");
   MFEM_VERIFY(subdivisions >= 0 && subdivisions <= 8,
               "Singular fixed quadrature Subdivisions must be in [0, 8]!");
+  MFEM_VERIFY(postprocessing_subdivisions >= 0 && postprocessing_subdivisions <= 8,
+              "Singular PostprocessingSubdivisions must be in [0, 8]!");
 }
 
 SolverData::SolverData(const json &solver)

@@ -939,6 +939,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                        {"QuadratureStrategy", "FixedSubdivision"},
                        {"QuadratureOrder", 10},
                        {"Subdivisions", 6},
+                       {"PostprocessingSubdivisions", 3},
                        {"ReferenceCache", "reference-cache"},
                        {"AbsTol", 1.0e-8},
                        {"RelTol", 2.0e-8},
@@ -955,6 +956,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(singular.quadrature_strategy == SingularQuadratureStrategy::FIXED_SUBDIVISION);
     CHECK(singular.quadrature_order == 10);
     CHECK(singular.subdivisions == 6);
+    CHECK(singular.postprocessing_subdivisions == 3);
     CHECK(singular.reference_cache == "reference-cache");
     CHECK(singular.abs_tol == 1.0e-8);
     CHECK(singular.rel_tol == 2.0e-8);
@@ -973,6 +975,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_singular["QuadratureStrategy"].get<std::string>() == "FixedSubdivision");
     CHECK(j_singular["QuadratureOrder"].get<int>() == 10);
     CHECK(j_singular["Subdivisions"].get<int>() == 6);
+    CHECK(j_singular["PostprocessingSubdivisions"].get<int>() == 3);
     CHECK(j_singular["ReferenceCache"].get<std::string>() == "reference-cache");
     CHECK(j_singular["AbsTol"].get<double>() == 1.0e-8);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-8);
@@ -1778,6 +1781,10 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
 
     config = MakeConfig();
     config["Solver"]["SingularElements"]["Subdivisions"] = 9;
+    CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["PostprocessingSubdivisions"] = 9;
     CHECK_FALSE(ValidateConfig(config).empty());
   }
 

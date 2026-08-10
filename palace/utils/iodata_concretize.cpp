@@ -459,18 +459,20 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
 void ConcretizeSingularElements(const config::SingularElementsData &singular,
                                 json &j_singular)
 {
-  ApplyEntries(j_singular, {{"Attributes", singular.attributes},
-                            {"Order", singular.order},
-                            {"FiniteMetalModel", ToString(singular.finite_metal_model)},
-                            {"FixedExponent", singular.fixed_exponent},
-                            {"QuadratureStrategy", ToString(singular.quadrature_strategy)},
-                            {"QuadratureOrder", singular.quadrature_order},
-                            {"Subdivisions", singular.subdivisions},
-                            {"ReferenceCache", singular.reference_cache},
-                            {"AbsTol", singular.abs_tol},
-                            {"RelTol", singular.rel_tol},
-                            {"MaxSubdivisions", singular.max_subdivisions},
-                            {"HierarchicalEstimator", singular.hierarchical_estimator}});
+  ApplyEntries(j_singular,
+               {{"Attributes", singular.attributes},
+                {"Order", singular.order},
+                {"FiniteMetalModel", ToString(singular.finite_metal_model)},
+                {"FixedExponent", singular.fixed_exponent},
+                {"QuadratureStrategy", ToString(singular.quadrature_strategy)},
+                {"QuadratureOrder", singular.quadrature_order},
+                {"Subdivisions", singular.subdivisions},
+                {"PostprocessingSubdivisions", singular.postprocessing_subdivisions},
+                {"ReferenceCache", singular.reference_cache},
+                {"AbsTol", singular.abs_tol},
+                {"RelTol", singular.rel_tol},
+                {"MaxSubdivisions", singular.max_subdivisions},
+                {"HierarchicalEstimator", singular.hierarchical_estimator}});
 }
 
 }  // namespace
