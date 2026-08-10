@@ -2544,6 +2544,12 @@
           "minimum": 0.0,
           "default": 0.0,
           "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesisAnchorExtrapolate": {
+          "type": "boolean",
+          "description": "Cancel the ``O(\\nu^2)`` screening bias of the quasistatic anchor solves (see [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq)) by Richardson extrapolation: each anchored port is solved at both ``\\nu`` and ``\\nu/2`` and combined as ``[4 x(\\nu/2) - x(\\nu)]/3``, which reproduces the unscreened response ``K x = b_p`` up to ``O(\\nu^4)``. The exported `anchor_<index>` column then satisfies the unscreened L-column identity ``L^{-1} v = s\\,e_p`` (rather than the screened ``L^{-1} v + \\nu^2 C v = s\\,e_p``), which downstream junction-anchored extraction may rely on for exact inductive block-diagonality. Costs one extra linear solve and one extra preconditioner setup per anchored port. Default `false`.",
+          "default": false,
+          "x-palace-advanced": true
         }
       }
     },

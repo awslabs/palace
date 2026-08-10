@@ -19,6 +19,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added optional enrichment of the adaptive driven circuit-synthesis reduced-order basis
+    with quasistatic anchor solves (per-port `"SynthesisAnchor"`, screening frequency
+    `"AdaptiveCircuitSynthesisAnchorFreq"`), electrostatic terminal solves
+    (`"AdaptiveCircuitSynthesisElectrostatic"`), and eigenmodes near the
+    `config["Solver"]["Eigenmode"]` target (`"AdaptiveCircuitSynthesisEigenmodes"`). All
+    are opt-in and export labeled columns (`anchor_<index>`, `electrostatic_<index>`,
+    `eigen_<k>`) in the synthesized circuit matrices. The anchor solve is the screened
+    system `(K + ν²M) x = b_p`, so its exported column satisfies `L⁻¹v + ν²Cv = s·e_p`;
+    setting `"AdaptiveCircuitSynthesisAnchorExtrapolate"` solves at both `ν` and `ν/2` and
+    Richardson-extrapolates to recover the unscreened L-column identity `L⁻¹v = s·e_p` up
+    to `O(ν⁴)`, at the cost of one extra solve per anchored port.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

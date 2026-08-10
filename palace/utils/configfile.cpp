@@ -1135,6 +1135,9 @@ DrivenSolverData::DrivenSolverData(const json &driven)
       "AdaptiveCircuitSynthesisAnchorFreq", adaptive_circuit_synthesis_anchor_freq);
   MFEM_VERIFY(adaptive_circuit_synthesis_anchor_freq >= 0.0,
               "\"AdaptiveCircuitSynthesisAnchorFreq\" must be non-negative!");
+  adaptive_circuit_synthesis_anchor_extrapolate =
+      driven.value("AdaptiveCircuitSynthesisAnchorExtrapolate",
+                   adaptive_circuit_synthesis_anchor_extrapolate);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");

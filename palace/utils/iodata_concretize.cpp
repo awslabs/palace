@@ -161,6 +161,8 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
         ToString(driven.adaptive_circuit_synthesis_domain_orthog)},
        {"AdaptiveCircuitSynthesisAnchorFreq",
         driven.adaptive_circuit_synthesis_anchor_freq},
+       {"AdaptiveCircuitSynthesisAnchorExtrapolate",
+        driven.adaptive_circuit_synthesis_anchor_extrapolate},
        {"AdaptiveCircuitSynthesisEigenmodes", driven.adaptive_circuit_synthesis_eigenmodes},
        {"AdaptiveCircuitSynthesisElectrostatic",
         driven.adaptive_circuit_synthesis_electrostatic}});

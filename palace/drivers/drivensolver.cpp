@@ -338,7 +338,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         nu = 0.1 * omega_sample.front();  // sample_f is sorted ascending on input
       }
       Mpi::Print(" Anchor screening frequency: ν = {:.3e} GHz\n", nu * unit_GHz);
-      prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
+      prom_op.AddLumpedPortAnchorModesForSynthesis(
+          nu, iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
     }
     if (iodata.solver.driven.adaptive_circuit_synthesis_electrostatic)
     {
