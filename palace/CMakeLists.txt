@@ -375,6 +375,13 @@ set_property(
 # Generate embedded schema header from JSON schema files
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
 
+# Palace version, always available so `palace --version` reports it even in
+# non-Git builds. Git metadata below is optional additional detail.
+set_property(
+  SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_VERSION=\"${PROJECT_VERSION}\""
+)
+
 # Add Git revision information (forces reconfigure when Git status changes)
 include(GetGitDescription)
 git_describe(GIT_COMMIT_ID)
@@ -669,6 +676,59 @@ if(PALACE_WITH_GPU_AWARE_MPI)
   )
 endif()
 
+# Report build dependency versions through `palace --version`. For each
+# dependency the version is resolved in order of decreasing authority:
+#   1. PALACE_DEP_<NAME>_VERSION passed in by the producer that knows the
+#      concrete provenance (e.g. a Spack recipe passing its resolved spec).
+#   2. The version number discovered by find_package.
+#   3. As a last resort, the git description of the dependency source tree under
+#      PALACE_EXTERN_SOURCE_DIR (only meaningful for the superbuild layout).
+# Dependencies that resolve to nothing are not reported.
+set(dependency_folders
+  STRUMPACK arpack-ng eigen fmt gslib hypre json libCEED libxsmm magma
+  metis mfem mumps parmetis petsc scalapack scn slepc sundials superlu_dist
+)
+
+# Root of the dependency source trees for the fallback git probe. Passed
+# explicitly by the superbuild rather than assumed relative to the build tree.
+set(PALACE_EXTERN_SOURCE_DIR "${CMAKE_BINARY_DIR}/../extern" CACHE PATH
+  "Directory holding dependency source trees, used to report their versions"
+)
+
+# find_package version numbers, used as a fallback when no git description is
+# available. Folders without an entry here (gslib, libCEED, libxsmm, magma,
+# petsc, slepc) expose no version number at this point and are therefore
+# reported only when built from source.
+set(dep_version_STRUMPACK    "${strumpack_VERSION}")
+set(dep_version_arpack_ng    "${arpackng_VERSION}")
+set(dep_version_eigen        "${Eigen3_VERSION}")
+set(dep_version_fmt          "${fmt_VERSION}")
+set(dep_version_hypre        "${HYPRE_VERSION}")
+set(dep_version_json         "${nlohmann_json_VERSION}")
+set(dep_version_metis        "${METIS_VERSION}")
+set(dep_version_mfem         "${MFEM_VERSION}")
+set(dep_version_mumps        "${MUMPS_VERSION}")
+set(dep_version_parmetis     "${ParMETIS_VERSION}")
+set(dep_version_scalapack    "${scalapack_VERSION}")
+set(dep_version_scn          "${scn_VERSION}")
+set(dep_version_sundials     "${SUNDIALS_VERSION}")
+set(dep_version_superlu_dist "${superlu_dist_VERSION}")
+
+foreach(dep_folder IN LISTS dependency_folders)
+  string(REPLACE "-" "_" dep_name "${dep_folder}")
+  set(dep_info "${PALACE_DEP_${dep_name}_VERSION}")
+  if(dep_info STREQUAL "")
+    set(dep_info "${dep_version_${dep_name}}")
+  endif()
+  if(dep_info STREQUAL "")
+    get_dependency_git_sha("${PALACE_EXTERN_SOURCE_DIR}/${dep_folder}" dep_info)
+  endif()
+  message(DEBUG "Version info for ${dep_folder}: ${dep_info}")
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_DEP_${dep_name}_VERSION=\"${dep_info}\""
+  )
+endforeach()
 
 # Install target and helper scripts
 install(
