@@ -181,8 +181,8 @@ TEST_CASE("MaterialOperator requires materials for retained mesh domains",
     const std::complex<double> pole{-2.0, 5.0}, residue{1.2, -0.4};
     const auto expected =
         residue * s * s / (s - pole) + std::conj(residue) * s * s / (s - std::conj(pole));
-    CHECK(std::abs(mat_op.EvaluateFrequencyDependentPermittivityA2(1, s) - expected) ==
-          Approx(0.0));
+    CHECK(std::abs(mat_op.EvaluateFrequencyDependentPermittivityA2(1, s) - expected) <
+          1.0e-14 * std::max(1.0, std::abs(expected)));
   }
 }
 
@@ -546,6 +546,10 @@ TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
   config::SolverData solver;
   solver.order = 1;
   solver.linear.mg_max_levels = 1;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   PaOrderThresholdGuard threshold_guard;
