@@ -21,7 +21,6 @@ RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
 
 # Copy inputs needed to install dependencies before the Palace source tree.
 COPY spack_repo /opt/palace/spack_repo
-COPY extern/patch/mfem /opt/palace/extern/patch/mfem
 
 # Set up spack repo and apply patches to builtin spack packages
 RUN mkdir -p /opt/spack-environment && \
