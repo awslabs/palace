@@ -70,11 +70,11 @@ jobs:
           run-regression-tests: 'true'
           use-develop-deps: 'true'
 
-  # Build against the tip of Spack (develop) rather than the pinned 1.2 release
+  # Build against the tip of Spack (develop) rather than the pinned release
   # series, to catch upstream Spack/spack-packages changes that break Palace.
   # Dependencies stay at their pinned versions so a failure points at Spack.
   # This job writes only to the isolated palace-develop buildcache, never the
-  # pinned Spack 1.2 cache used by required CI.
+  # pinned Spack cache used by required CI.
   build-test-x64-gcc-spack-develop:
     needs: filter
     if: needs.filter.outputs.test == 'true'
@@ -90,20 +90,69 @@ jobs:
           run-regression-tests: 'true'
           spack-version: 'develop'
 
-      # This is the only Spack develop writer, so it can refresh its index
-      # directly without racing another writer. Run after Palace CI so the
-      # index includes dependencies banked by this job, even if a later test
-      # failed; readers continue using the previous complete index meanwhile.
+  # Refresh the palace-develop buildcache index after its sole cache-producing
+  # job. Runs even if a later test in that job failed, so the index includes
+  # the dependencies it banked; readers keep using the previous complete index
+  # until this upload finishes.
+  #
+  # This is a separate job (not a step in the build above) only because steps
+  # cannot carry `concurrency`. No other job writes this mirror, but two
+  # concurrent Lookahead runs on different PRs are still two writers, and
+  # `update-index` is a read-modify-write of the mirror's single `index.spack`
+  # tag. The workflow-level group is keyed on github.ref and so does not
+  # serialize across refs; this group deliberately omits it, and
+  # cancel-in-progress: false queues the newer writer instead of clobbering.
+  refresh-develop-buildcache-index:
+    needs:
+      - filter
+      - build-test-x64-gcc-spack-develop
+    # Running if the
+    # - the path filter says relevant files have changes
+    # - the event is not a PR from a fork (they can't update the index anyway)
+    if: |
+      !cancelled() &&
+      needs.filter.outputs.test == 'true' &&
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: palace-develop-buildcache-index
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Install Spack develop
+        uses: actions/checkout@v6
+        with:
+          repository: spack/spack
+          path: spack
+          ref: develop
+
+      # The build job's Spack environment is not on this runner, so synthesize
+      # a minimal one carrying just the mirror definition (same approach as
+      # refresh-buildcache-index in spack.yml).
       - name: Refresh Spack develop buildcache index
-        if: |
-          !cancelled() &&
-          hashFiles('spack.yaml') != '' &&
-          (
-            github.event_name != 'pull_request' ||
-            github.event.pull_request.head.repo.full_name == github.repository
-          )
         shell: bash
         run: |
           START_TIME=${SECONDS}
-          spack -e . buildcache update-index local-buildcache
+          INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
+          mkdir -p "${INDEX_ENV}"
+          cat > "${INDEX_ENV}/spack.yaml" << 'EOF'
+          spack:
+            specs: []
+            mirrors:
+              local-buildcache:
+                binary: true
+                url: oci://ghcr.io/awslabs/palace-develop
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
+          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
+            buildcache update-index local-buildcache
           echo "Spack develop buildcache index refresh: $((SECONDS - START_TIME))s"

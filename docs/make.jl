@@ -87,7 +87,11 @@ makedocs(
             "guide/parallelism.md"
         ],
         "Configuration File" => Any["config/config.md", "config/reference.md"],
-        "Features" => Any["features/farfield.md", "features/adaptive_driven_solver.md"],
+        "Features" => Any[
+            "features/farfield.md",
+            "features/adaptive_driven_solver.md",
+            "features/circuit_extraction.md"
+        ],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",

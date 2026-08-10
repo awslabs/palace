@@ -171,6 +171,17 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-latest
+    # Serialize index writers across all refs. Individual spec tags are
+    # immutable and may be pushed concurrently, but `update-index` is a
+    # read-modify-write of the mirror's single `index.spack` tag, so two
+    # concurrent writers are last-writer-wins and the loser's specs can drop
+    # out of the index. The workflow-level group is keyed on github.ref and so
+    # does not serialize across branches/PRs; this group deliberately omits it.
+    # cancel-in-progress: false queues the newer writer instead of clobbering.
+    concurrency:
+      group: palace-1.2-buildcache-index
+      cancel-in-progress: false
+      queue: max
     steps:
       - name: Install Spack 1.2
         uses: actions/checkout@v6
