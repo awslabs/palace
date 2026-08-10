@@ -104,11 +104,15 @@ jobs:
             fi
           done
   
-          # Workaround for https://github.com/spack/spack/issues/51505.
-          # -f so a runner that did not fully clean spack_repo/local/packages
-          # from a prior job does not abort here on an existing link.
-          ln -sf "$(spack location --repo builtin)"/packages/libceed "$PALACE_DIR"/spack_repo/local/packages/
-          ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
+          # Workaround for https://github.com/spack/spack/issues/51505. Preserve
+          # local package overrides and link builtin recipes only when absent.
+          BUILTIN_REPO="$(spack location --repo builtin)"
+          for package in libceed mfem; do
+            package_path="$PALACE_DIR/spack_repo/local/packages/$package"
+            if [ ! -d "$package_path" ]; then
+              ln -sfn "$BUILTIN_REPO/packages/$package" "$package_path"
+            fi
+          done
   
       - name: Setup Environment
         if: needs.filter.outputs.should_build == 'true'

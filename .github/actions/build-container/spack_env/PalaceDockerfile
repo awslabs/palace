@@ -27,9 +27,15 @@ RUN mkdir -p /opt/spack-environment && \
     ln -s /opt/palace/spack_repo /opt/spack-environment/spack_repo && \
     # Add it to spack
     spack repo add /opt/palace/spack_repo/local && \
-    # Workaround for https://github.com/spack/spack/issues/51505
-    ln -sf $(spack location --repo builtin)/packages/libceed /opt/palace/spack_repo/local/packages/libceed && \
-    ln -sf $(spack location --repo builtin)/packages/mfem /opt/palace/spack_repo/local/packages/mfem && \
+    # Work around https://github.com/spack/spack/issues/51505 while preserving
+    # local package overrides.
+    builtin_repo="$(spack location --repo builtin)" && \
+    for package in libceed mfem; do \
+      package_path="/opt/palace/spack_repo/local/packages/$package"; \
+      if [ ! -d "$package_path" ]; then \
+        ln -sfn "$builtin_repo/packages/$package" "$package_path"; \
+      fi; \
+    done && \
     # Apply patches to builtin repo
     cd $(cd $(spack location --repo builtin) && git rev-parse --show-toplevel) && \
     for patch in /opt/palace/spack_repo/patches/*.diff; do \
