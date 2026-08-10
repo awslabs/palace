@@ -489,6 +489,26 @@ void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
     const MaterialPropertyCoefficient &fbi, std::unique_ptr<Operator> &ar,
     std::unique_ptr<Operator> &ai)
 {
+  // Preserve the established boundary-only assembly path when no volume A2 model exists.
+  // In particular, exact-zero poles have already been folded into ordinary conductivity.
+  if (!mat_op.HasFrequencyDependentPermittivityA2())
+  {
+    int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+    Mpi::GlobalMin(2, empty, GetComm());
+    constexpr bool skip_zeros = false;
+    if (!empty[0])
+    {
+      ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr,
+                            skip_zeros);
+    }
+    if (!empty[1])
+    {
+      ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr,
+                            skip_zeros);
+    }
+    return;
+  }
+
   std::vector<double> model_A2_real, model_A2_imag;
   bool has_model_A2_real, has_model_A2_imag;
   GetFrequencyDependentPermittivityA2Coefficients(omega, model_A2_real, model_A2_imag,
