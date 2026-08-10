@@ -11,18 +11,81 @@ index 996c8f04e0d656d54714173d2670bee1796c8db9..b25d52b91151bb9c60677445ad0da738
  - Add `CeedElemRestrictionGetLLayout` to provide L-vector layout for strided `CeedElemRestriction` created with `CEED_BACKEND_STRIDES`.
  - Add `CeedVectorReturnCeed` and similar when parent `Ceed` context for a libCEED object is only needed once in a calling scope.
 diff --git a/backends/cuda-ref/ceed-cuda-ref-basis.c b/backends/cuda-ref/ceed-cuda-ref-basis.c
-index 684f329e898dbb34fbdce336010b2c6851261360..19d3c1d066e5239a55e728548fc3ce5bdee7c1b8 100644
+index 684f329e898dbb34fbdce336010b2c6851261360..097bbca6d4f2643ef8691009538011bd5c60d752 100644
 --- a/backends/cuda-ref/ceed-cuda-ref-basis.c
 +++ b/backends/cuda-ref/ceed-cuda-ref-basis.c
-@@ -10,6 +10,7 @@
+@@ -10,6 +10,8 @@
  #include <ceed/jit-tools.h>
  #include <cuda.h>
  #include <cuda_runtime.h>
++#include <limits.h>
 +#include <math.h>
  #include <string.h>
  
  #include "../cuda/ceed-cuda-common.h"
-@@ -255,6 +256,209 @@ static int CeedBasisApplyAddAtPoints_Cuda(CeedBasis basis, const CeedInt num_ele
+@@ -105,12 +107,14 @@ static int CeedBasisApplyAdd_Cuda(CeedBasis basis, const CeedInt num_elem, CeedT
+ static int CeedBasisApplyAtPointsCore_Cuda(CeedBasis basis, bool apply_add, const CeedInt num_elem, const CeedInt *num_points,
+                                            CeedTransposeMode t_mode, CeedEvalMode eval_mode, CeedVector x_ref, CeedVector u, CeedVector v) {
+   Ceed              ceed;
+-  CeedInt           Q_1d, dim, max_num_points = num_points[0];
++  CeedInt           Q_1d, dim, max_num_points = num_points[0], storage_points_per_elem;
++  CeedSize          points_stride;
+   const CeedInt     is_transpose   = t_mode == CEED_TRANSPOSE;
+   const int         max_block_size = 32;
+   const CeedScalar *d_x, *d_u;
+   CeedScalar       *d_v;
+   CeedBasis_Cuda   *data;
++  bool              is_padded;
+ 
+   CeedCallBackend(CeedBasisGetData(basis, &data));
+   CeedCallBackend(CeedBasisGetNumQuadraturePoints1D(basis, &Q_1d));
+@@ -126,6 +130,13 @@ static int CeedBasisApplyAtPointsCore_Cuda(CeedBasis basis, bool apply_add, cons
+ 
+   // Check padded to uniform number of points per elem
+   for (CeedInt i = 1; i < num_elem; i++) max_num_points = CeedIntMax(max_num_points, num_points[i]);
++  CeedCallBackend(CeedBasisGetAtPointsLayout(basis, num_elem, num_points, t_mode, eval_mode, x_ref, u, v, &is_padded, &points_stride));
++  CeedCheck(points_stride % num_elem == 0 && points_stride / num_elem <= INT_MAX, ceed, CEED_ERROR_DIMENSION,
++            "AtPoints padding exceeds CeedInt range");
++  storage_points_per_elem = (CeedInt)(points_stride / num_elem);
++  CeedCheck(storage_points_per_elem >= max_num_points, ceed, CEED_ERROR_BACKEND,
++            "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends");
++  (void)is_padded;
+   {
+     CeedInt  num_comp, q_comp;
+     CeedSize len, len_required;
+@@ -133,7 +144,7 @@ static int CeedBasisApplyAtPointsCore_Cuda(CeedBasis basis, bool apply_add, cons
+     CeedCallBackend(CeedBasisGetNumComponents(basis, &num_comp));
+     CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, eval_mode, &q_comp));
+     CeedCallBackend(CeedVectorGetLength(is_transpose ? u : v, &len));
+-    len_required = (CeedSize)num_comp * (CeedSize)q_comp * (CeedSize)num_elem * (CeedSize)max_num_points;
++    len_required = (CeedSize)num_comp * (CeedSize)q_comp * points_stride;
+     CeedCheck(len >= len_required, ceed, CEED_ERROR_BACKEND,
+               "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends."
+               " Found %" CeedSize_FMT ", Required %" CeedSize_FMT,
+@@ -159,11 +170,11 @@ static int CeedBasisApplyAtPointsCore_Cuda(CeedBasis basis, bool apply_add, cons
+   }
+ 
+   // Build kernels if needed
+-  if (data->num_points != max_num_points) {
++  if (data->num_points != storage_points_per_elem) {
+     CeedInt P_1d;
+ 
+     CeedCallBackend(CeedBasisGetNumNodes1D(basis, &P_1d));
+-    data->num_points = max_num_points;
++    data->num_points = storage_points_per_elem;
+ 
+     // -- Create interp matrix to Chebyshev coefficients
+     if (!data->d_chebyshev_interp_1d) {
+@@ -187,7 +198,7 @@ static int CeedBasisApplyAtPointsCore_Cuda(CeedBasis basis, bool apply_add, cons
+     CeedCallBackend(CeedCompile_Cuda(ceed, basis_kernel_source, "basis_at_points", &data->moduleAtPoints, 9, "BASIS_Q_1D", Q_1d, "BASIS_P_1D", P_1d,
+                                      "BASIS_BUF_LEN", Q_1d * CeedIntPow(Q_1d > P_1d ? Q_1d : P_1d, dim - 1), "BASIS_DIM", dim, "BASIS_NUM_COMP",
+                                      num_comp, "BASIS_NUM_NODES", CeedIntPow(P_1d, dim), "BASIS_NUM_QPTS", CeedIntPow(Q_1d, dim), "BASIS_NUM_PTS",
+-                                     max_num_points, "POINTS_BUFF_LEN", CeedIntPow(Q_1d, dim - 1)));
++                                     storage_points_per_elem, "POINTS_BUFF_LEN", CeedIntPow(Q_1d, dim - 1)));
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, data->moduleAtPoints, "InterpAtPoints", &data->InterpAtPoints));
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, data->moduleAtPoints, "InterpTransposeAtPoints", &data->InterpTransposeAtPoints));
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, data->moduleAtPoints, "GradAtPoints", &data->GradAtPoints));
+@@ -255,6 +266,209 @@ static int CeedBasisApplyAddAtPoints_Cuda(CeedBasis basis, const CeedInt num_ele
    return CEED_ERROR_SUCCESS;
  }
  
@@ -232,7 +295,7 @@ index 684f329e898dbb34fbdce336010b2c6851261360..19d3c1d066e5239a55e728548fc3ce5b
  //------------------------------------------------------------------------------
  // Basis apply - non-tensor
  //------------------------------------------------------------------------------
-@@ -392,11 +596,17 @@ static int CeedBasisDestroyNonTensor_Cuda(CeedBasis basis) {
+@@ -392,11 +606,17 @@ static int CeedBasisDestroyNonTensor_Cuda(CeedBasis basis) {
    CeedCallBackend(CeedBasisGetCeed(basis, &ceed));
    CeedCallBackend(CeedBasisGetData(basis, &data));
    CeedCallCuda(ceed, cuModuleUnload(data->module));
@@ -250,7 +313,7 @@ index 684f329e898dbb34fbdce336010b2c6851261360..19d3c1d066e5239a55e728548fc3ce5b
    CeedCallBackend(CeedFree(&data));
    CeedCallBackend(CeedDestroy(&ceed));
    return CEED_ERROR_SUCCESS;
-@@ -499,6 +709,8 @@ int CeedBasisCreateH1_Cuda(CeedElemTopology topo, CeedInt dim, CeedInt num_nodes
+@@ -499,6 +719,8 @@ int CeedBasisCreateH1_Cuda(CeedElemTopology topo, CeedInt dim, CeedInt num_nodes
    // Register backend functions
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "Apply", CeedBasisApplyNonTensor_Cuda));
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "ApplyAdd", CeedBasisApplyAddNonTensor_Cuda));
@@ -259,7 +322,7 @@ index 684f329e898dbb34fbdce336010b2c6851261360..19d3c1d066e5239a55e728548fc3ce5b
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "Destroy", CeedBasisDestroyNonTensor_Cuda));
    CeedCallBackend(CeedDestroy(&ceed));
    return CEED_ERROR_SUCCESS;
-@@ -554,6 +766,8 @@ int CeedBasisCreateHdiv_Cuda(CeedElemTopology topo, CeedInt dim, CeedInt num_nod
+@@ -554,6 +776,8 @@ int CeedBasisCreateHdiv_Cuda(CeedElemTopology topo, CeedInt dim, CeedInt num_nod
    // Register backend functions
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "Apply", CeedBasisApplyNonTensor_Cuda));
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "ApplyAdd", CeedBasisApplyAddNonTensor_Cuda));
@@ -268,7 +331,7 @@ index 684f329e898dbb34fbdce336010b2c6851261360..19d3c1d066e5239a55e728548fc3ce5b
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "Destroy", CeedBasisDestroyNonTensor_Cuda));
    CeedCallBackend(CeedDestroy(&ceed));
    return CEED_ERROR_SUCCESS;
-@@ -609,6 +823,8 @@ int CeedBasisCreateHcurl_Cuda(CeedElemTopology topo, CeedInt dim, CeedInt num_no
+@@ -609,6 +833,8 @@ int CeedBasisCreateHcurl_Cuda(CeedElemTopology topo, CeedInt dim, CeedInt num_no
    // Register backend functions
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "Apply", CeedBasisApplyNonTensor_Cuda));
    CeedCallBackend(CeedSetBackendFunction(ceed, "Basis", basis, "ApplyAdd", CeedBasisApplyAddNonTensor_Cuda));
@@ -310,6 +373,224 @@ index 11b45f3452e6f2ff2ba7ffbdd4b6f14c3abcda88..3c8411cef21ab946a9e0b35a9bb52fe8
  } CeedBasisNonTensor_Cuda;
  
  typedef struct {
+diff --git a/backends/cuda-shared/ceed-cuda-shared-basis.c b/backends/cuda-shared/ceed-cuda-shared-basis.c
+index a3f8d74d19cbd0f2ef64729a4c57579ad80ef5b4..15655d278d56b974d2bf29e8a5d0557d14f6af55 100644
+--- a/backends/cuda-shared/ceed-cuda-shared-basis.c
++++ b/backends/cuda-shared/ceed-cuda-shared-basis.c
+@@ -10,6 +10,7 @@
+ #include <ceed/jit-tools.h>
+ #include <cuda.h>
+ #include <cuda_runtime.h>
++#include <limits.h>
+ #include <stdbool.h>
+ #include <stddef.h>
+ #include <string.h>
+@@ -214,11 +215,13 @@ static int CeedBasisApplyAtPointsCore_Cuda_shared(CeedBasis basis, bool apply_ad
+                                                   CeedTransposeMode t_mode, CeedEvalMode eval_mode, CeedVector x_ref, CeedVector u, CeedVector v) {
+   Ceed                   ceed;
+   Ceed_Cuda             *ceed_Cuda;
+-  CeedInt                Q_1d, dim, num_comp, max_num_points = num_points[0];
++  CeedInt                Q_1d, dim, num_comp, max_num_points = num_points[0], storage_points_per_elem;
++  CeedSize               points_stride;
+   const CeedInt          is_transpose = t_mode == CEED_TRANSPOSE;
+   const CeedScalar      *d_x, *d_u;
+   CeedScalar            *d_v;
+   CeedBasis_Cuda_shared *data;
++  bool                   is_padded;
+ 
+   CeedCallBackend(CeedBasisGetData(basis, &data));
+   CeedCallBackend(CeedBasisGetNumQuadraturePoints1D(basis, &Q_1d));
+@@ -236,12 +239,19 @@ static int CeedBasisApplyAtPointsCore_Cuda_shared(CeedBasis basis, bool apply_ad
+ 
+   // Check padded to uniform number of points per elem
+   for (CeedInt i = 1; i < num_elem; i++) max_num_points = CeedIntMax(max_num_points, num_points[i]);
++  CeedCallBackend(CeedBasisGetAtPointsLayout(basis, num_elem, num_points, t_mode, eval_mode, x_ref, u, v, &is_padded, &points_stride));
++  CeedCheck(points_stride % num_elem == 0 && points_stride / num_elem <= INT_MAX, ceed, CEED_ERROR_DIMENSION,
++            "AtPoints padding exceeds CeedInt range");
++  storage_points_per_elem = (CeedInt)(points_stride / num_elem);
++  CeedCheck(storage_points_per_elem >= max_num_points, ceed, CEED_ERROR_BACKEND,
++            "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends");
++  (void)is_padded;
+   {
+     CeedInt  q_comp;
+     CeedSize len, len_required;
+     CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, eval_mode, &q_comp));
+     CeedCallBackend(CeedVectorGetLength(is_transpose ? u : v, &len));
+-    len_required = (CeedSize)num_comp * (CeedSize)q_comp * (CeedSize)num_elem * (CeedSize)max_num_points;
++    len_required = (CeedSize)num_comp * (CeedSize)q_comp * points_stride;
+     CeedCheck(len >= len_required, ceed, CEED_ERROR_BACKEND,
+               "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends."
+               " Found %" CeedSize_FMT ", Required %" CeedSize_FMT,
+@@ -267,11 +277,11 @@ static int CeedBasisApplyAtPointsCore_Cuda_shared(CeedBasis basis, bool apply_ad
+   }
+ 
+   // Build kernels if needed
+-  if (data->num_points != max_num_points) {
++  if (data->num_points != storage_points_per_elem) {
+     CeedInt P_1d;
+ 
+     CeedCallBackend(CeedBasisGetNumNodes1D(basis, &P_1d));
+-    data->num_points = max_num_points;
++    data->num_points = storage_points_per_elem;
+ 
+     // -- Create interp matrix to Chebyshev coefficients
+     if (!data->d_chebyshev_interp_1d) {
+@@ -294,7 +304,7 @@ static int CeedBasisApplyAtPointsCore_Cuda_shared(CeedBasis basis, bool apply_ad
+     CeedCallBackend(CeedBasisGetNumComponents(basis, &num_comp));
+     CeedCallBackend(CeedCompile_Cuda(ceed, basis_kernel_source, "basis_at_points_shared", &data->moduleAtPoints, 8, "BASIS_Q_1D", Q_1d, "BASIS_P_1D",
+                                      P_1d, "BASIS_T_1D", CeedIntMax(Q_1d, P_1d), "BASIS_DIM", dim, "BASIS_NUM_COMP", num_comp, "BASIS_NUM_NODES",
+-                                     CeedIntPow(P_1d, dim), "BASIS_NUM_QPTS", CeedIntPow(Q_1d, dim), "BASIS_NUM_PTS", max_num_points));
++                                     CeedIntPow(P_1d, dim), "BASIS_NUM_QPTS", CeedIntPow(Q_1d, dim), "BASIS_NUM_PTS", storage_points_per_elem));
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, data->moduleAtPoints, "InterpAtPoints", &data->InterpAtPoints));
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, data->moduleAtPoints, "InterpTransposeAtPoints", &data->InterpTransposeAtPoints));
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, data->moduleAtPoints, "InterpTransposeAddAtPoints", &data->InterpTransposeAddAtPoints));
+diff --git a/backends/hip-ref/ceed-hip-ref-basis.c b/backends/hip-ref/ceed-hip-ref-basis.c
+index e56dd6f3af8d26b5c637d6e05fcb5bc806c5df8a..8b6a98e5e27b77f1e299737bb5e04f30f52c5ffd 100644
+--- a/backends/hip-ref/ceed-hip-ref-basis.c
++++ b/backends/hip-ref/ceed-hip-ref-basis.c
+@@ -8,6 +8,7 @@
+ #include <ceed.h>
+ #include <ceed/backend.h>
+ #include <ceed/jit-tools.h>
++#include <limits.h>
+ #include <string.h>
+ #include <hip/hip_runtime.h>
+ 
+@@ -104,12 +105,14 @@ static int CeedBasisApplyAdd_Hip(CeedBasis basis, const CeedInt num_elem, CeedTr
+ static int CeedBasisApplyAtPointsCore_Hip(CeedBasis basis, bool apply_add, const CeedInt num_elem, const CeedInt *num_points,
+                                           CeedTransposeMode t_mode, CeedEvalMode eval_mode, CeedVector x_ref, CeedVector u, CeedVector v) {
+   Ceed              ceed;
+-  CeedInt           Q_1d, dim, max_num_points = num_points[0];
++  CeedInt           Q_1d, dim, max_num_points = num_points[0], storage_points_per_elem;
++  CeedSize          points_stride;
+   const CeedInt     is_transpose   = t_mode == CEED_TRANSPOSE;
+   const int         max_block_size = 32;
+   const CeedScalar *d_x, *d_u;
+   CeedScalar       *d_v;
+   CeedBasis_Hip    *data;
++  bool              is_padded;
+ 
+   CeedCallBackend(CeedBasisGetData(basis, &data));
+   CeedCallBackend(CeedBasisGetNumQuadraturePoints1D(basis, &Q_1d));
+@@ -125,6 +128,13 @@ static int CeedBasisApplyAtPointsCore_Hip(CeedBasis basis, bool apply_add, const
+ 
+   // Check padded to uniform number of points per elem
+   for (CeedInt i = 1; i < num_elem; i++) max_num_points = CeedIntMax(max_num_points, num_points[i]);
++  CeedCallBackend(CeedBasisGetAtPointsLayout(basis, num_elem, num_points, t_mode, eval_mode, x_ref, u, v, &is_padded, &points_stride));
++  CeedCheck(points_stride % num_elem == 0 && points_stride / num_elem <= INT_MAX, ceed, CEED_ERROR_DIMENSION,
++            "AtPoints padding exceeds CeedInt range");
++  storage_points_per_elem = (CeedInt)(points_stride / num_elem);
++  CeedCheck(storage_points_per_elem >= max_num_points, ceed, CEED_ERROR_BACKEND,
++            "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends");
++  (void)is_padded;
+   {
+     CeedInt  num_comp, q_comp;
+     CeedSize len, len_required;
+@@ -132,7 +142,7 @@ static int CeedBasisApplyAtPointsCore_Hip(CeedBasis basis, bool apply_add, const
+     CeedCallBackend(CeedBasisGetNumComponents(basis, &num_comp));
+     CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, eval_mode, &q_comp));
+     CeedCallBackend(CeedVectorGetLength(is_transpose ? u : v, &len));
+-    len_required = (CeedSize)num_comp * (CeedSize)q_comp * (CeedSize)num_elem * (CeedSize)max_num_points;
++    len_required = (CeedSize)num_comp * (CeedSize)q_comp * points_stride;
+     CeedCheck(len >= len_required, ceed, CEED_ERROR_BACKEND,
+               "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends."
+               " Found %" CeedSize_FMT ", Required %" CeedSize_FMT,
+@@ -158,11 +168,11 @@ static int CeedBasisApplyAtPointsCore_Hip(CeedBasis basis, bool apply_add, const
+   }
+ 
+   // Build kernels if needed
+-  if (data->num_points != max_num_points) {
++  if (data->num_points != storage_points_per_elem) {
+     CeedInt P_1d;
+ 
+     CeedCallBackend(CeedBasisGetNumNodes1D(basis, &P_1d));
+-    data->num_points = max_num_points;
++    data->num_points = storage_points_per_elem;
+ 
+     // -- Create interp matrix to Chebyshev coefficients
+     if (!data->d_chebyshev_interp_1d) {
+@@ -186,7 +196,7 @@ static int CeedBasisApplyAtPointsCore_Hip(CeedBasis basis, bool apply_add, const
+     CeedCallBackend(CeedCompile_Hip(ceed, basis_kernel_source, "basis_at_points", &data->moduleAtPoints, 9, "BASIS_Q_1D", Q_1d, "BASIS_P_1D", P_1d,
+                                     "BASIS_BUF_LEN", Q_1d * CeedIntPow(Q_1d > P_1d ? Q_1d : P_1d, dim - 1), "BASIS_DIM", dim, "BASIS_NUM_COMP",
+                                     num_comp, "BASIS_NUM_NODES", CeedIntPow(P_1d, dim), "BASIS_NUM_QPTS", CeedIntPow(Q_1d, dim), "BASIS_NUM_PTS",
+-                                    max_num_points, "POINTS_BUFF_LEN", CeedIntPow(Q_1d, dim - 1)));
++                                    storage_points_per_elem, "POINTS_BUFF_LEN", CeedIntPow(Q_1d, dim - 1)));
+     CeedCallBackend(CeedGetKernel_Hip(ceed, data->moduleAtPoints, "InterpAtPoints", &data->InterpAtPoints));
+     CeedCallBackend(CeedGetKernel_Hip(ceed, data->moduleAtPoints, "InterpTransposeAtPoints", &data->InterpTransposeAtPoints));
+     CeedCallBackend(CeedGetKernel_Hip(ceed, data->moduleAtPoints, "GradAtPoints", &data->GradAtPoints));
+diff --git a/backends/hip-shared/ceed-hip-shared-basis.c b/backends/hip-shared/ceed-hip-shared-basis.c
+index 6288deaf270bccd9d4e9f3b699bd67bef19e51fd..d71735c9be89ee0aabafa15abf0364ea9c4dfc86 100644
+--- a/backends/hip-shared/ceed-hip-shared-basis.c
++++ b/backends/hip-shared/ceed-hip-shared-basis.c
+@@ -8,6 +8,7 @@
+ #include <ceed.h>
+ #include <ceed/backend.h>
+ #include <ceed/jit-tools.h>
++#include <limits.h>
+ #include <stdbool.h>
+ #include <stddef.h>
+ #include <string.h>
+@@ -282,11 +283,13 @@ int CeedBasisApplyAddTensor_Hip_shared(CeedBasis basis, const CeedInt num_elem,
+ static int CeedBasisApplyAtPointsCore_Hip_shared(CeedBasis basis, bool apply_add, const CeedInt num_elem, const CeedInt *num_points,
+                                                  CeedTransposeMode t_mode, CeedEvalMode eval_mode, CeedVector x_ref, CeedVector u, CeedVector v) {
+   Ceed                  ceed;
+-  CeedInt               Q_1d, dim, max_num_points = num_points[0];
++  CeedInt               Q_1d, dim, max_num_points = num_points[0], storage_points_per_elem;
++  CeedSize              points_stride;
+   const CeedInt         is_transpose = t_mode == CEED_TRANSPOSE;
+   const CeedScalar     *d_x, *d_u;
+   CeedScalar           *d_v;
+   CeedBasis_Hip_shared *data;
++  bool                  is_padded;
+ 
+   CeedCallBackend(CeedBasisGetData(basis, &data));
+   CeedCallBackend(CeedBasisGetNumQuadraturePoints1D(basis, &Q_1d));
+@@ -302,6 +305,13 @@ static int CeedBasisApplyAtPointsCore_Hip_shared(CeedBasis basis, bool apply_add
+ 
+   // Check padded to uniform number of points per elem
+   for (CeedInt i = 1; i < num_elem; i++) max_num_points = CeedIntMax(max_num_points, num_points[i]);
++  CeedCallBackend(CeedBasisGetAtPointsLayout(basis, num_elem, num_points, t_mode, eval_mode, x_ref, u, v, &is_padded, &points_stride));
++  CeedCheck(points_stride % num_elem == 0 && points_stride / num_elem <= INT_MAX, ceed, CEED_ERROR_DIMENSION,
++            "AtPoints padding exceeds CeedInt range");
++  storage_points_per_elem = (CeedInt)(points_stride / num_elem);
++  CeedCheck(storage_points_per_elem >= max_num_points, ceed, CEED_ERROR_BACKEND,
++            "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends");
++  (void)is_padded;
+   {
+     CeedInt  num_comp, q_comp;
+     CeedSize len, len_required;
+@@ -309,7 +319,7 @@ static int CeedBasisApplyAtPointsCore_Hip_shared(CeedBasis basis, bool apply_add
+     CeedCallBackend(CeedBasisGetNumComponents(basis, &num_comp));
+     CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, eval_mode, &q_comp));
+     CeedCallBackend(CeedVectorGetLength(is_transpose ? u : v, &len));
+-    len_required = (CeedSize)num_comp * (CeedSize)q_comp * (CeedSize)num_elem * (CeedSize)max_num_points;
++    len_required = (CeedSize)num_comp * (CeedSize)q_comp * points_stride;
+     CeedCheck(len >= len_required, ceed, CEED_ERROR_BACKEND,
+               "Vector at points must be padded to the same number of points in each element for BasisApplyAtPoints on GPU backends."
+               " Found %" CeedSize_FMT ", Required %" CeedSize_FMT,
+@@ -335,11 +345,11 @@ static int CeedBasisApplyAtPointsCore_Hip_shared(CeedBasis basis, bool apply_add
+   }
+ 
+   // Build kernels if needed
+-  if (data->num_points != max_num_points) {
++  if (data->num_points != storage_points_per_elem) {
+     CeedInt P_1d;
+ 
+     CeedCallBackend(CeedBasisGetNumNodes1D(basis, &P_1d));
+-    data->num_points = max_num_points;
++    data->num_points = storage_points_per_elem;
+ 
+     // -- Create interp matrix to Chebyshev coefficients
+     if (!data->d_chebyshev_interp_1d) {
+@@ -362,7 +372,7 @@ static int CeedBasisApplyAtPointsCore_Hip_shared(CeedBasis basis, bool apply_add
+     CeedCallBackend(CeedBasisGetNumComponents(basis, &num_comp));
+     CeedCallBackend(CeedCompile_Hip(ceed, basis_kernel_source, "basis_at_points_shared", &data->moduleAtPoints, 9, "BASIS_Q_1D", Q_1d, "BASIS_P_1D",
+                                     P_1d, "BASIS_T_1D", CeedIntMax(Q_1d, P_1d), "BASIS_DIM", dim, "BASIS_NUM_COMP", num_comp, "BASIS_NUM_NODES",
+-                                    CeedIntPow(P_1d, dim), "BASIS_NUM_QPTS", CeedIntPow(Q_1d, dim), "BASIS_NUM_PTS", max_num_points,
++                                    CeedIntPow(P_1d, dim), "BASIS_NUM_QPTS", CeedIntPow(Q_1d, dim), "BASIS_NUM_PTS", storage_points_per_elem,
+                                     "BASIS_INTERP_BLOCK_SIZE", data->block_sizes[0]));
+     CeedCallBackend(CeedGetKernel_Hip(ceed, data->moduleAtPoints, "InterpAtPoints", &data->InterpAtPoints));
+     CeedCallBackend(CeedGetKernel_Hip(ceed, data->moduleAtPoints, "InterpTransposeAtPoints", &data->InterpTransposeAtPoints));
 diff --git a/backends/magma/ceed-magma-basis.c b/backends/magma/ceed-magma-basis.c
 index 85cc251d4277b87faeb02521b9c5949473bb5aeb..31e1fcc8ca76b86dfa30671936289eb3cd7e9851 100644
 --- a/backends/magma/ceed-magma-basis.c
@@ -671,10 +952,10 @@ index a993e0dffea69d564260ad4cabf667e972c79b54..4e725cd69a62749996398b4b772f98f3
  CEED_EXTERN int CeedBasisGetFESpace(CeedBasis basis, CeedFESpace *fe_space);
 diff --git a/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor-at-points.h b/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor-at-points.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8ca07e52f
+index 0000000000000000000000000000000000000000..72cc25f907698b438aa162dcfb8a8c6fa75d5e35
 --- /dev/null
 +++ b/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor-at-points.h
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,372 @@
 +// Copyright (c) 2017-2026, Lawrence Livermore National Security, LLC and other CEED contributors.
 +// All Rights Reserved. See the top-level LICENSE and NOTICE files for details.
 +//
@@ -699,6 +980,10 @@ index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8
 +inline __device__ void PowersAtPoint(const CeedScalar x, CeedScalar *x_pow) {
 +  x_pow[0] = 1.0;
 +  for (CeedInt i = 1; i <= DEGREE; i++) x_pow[i] = x * x_pow[i - 1];
++}
++
++inline __device__ CeedScalar PowerDerivativeAtPoint(const CeedInt degree, const CeedScalar *powers) {
++  return degree ? degree * powers[degree - 1] : 0.0;
 +}
 +
 +template <int DEGREE, int NUM_MODES>
@@ -741,12 +1026,103 @@ index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8
 +    }
 +  }
 +#elif BASIS_MODAL_TOPOLOGY == CEED_BASIS_NONTENSOR_MODAL_PYRAMID
++  const CeedScalar one_minus_z = 1.0 - z;
++  CeedScalar       one_minus_z_pow[DEGREE + 1];
++
++  PowersAtPoint<DEGREE>(one_minus_z, one_minus_z_pow);
 +  for (CeedInt k = 0; k <= DEGREE; k++) {
 +    const CeedInt xy_degree = DEGREE - k;
 +
 +    for (CeedInt i = 0; i <= xy_degree; i++) {
 +      for (CeedInt j = 0; j <= xy_degree; j++) {
-+        phi[mode++] = x_pow[i] * y_pow[j] * z_pow[k];
++        const CeedInt denominator_degree = i < j ? i : j;
++
++        phi[mode++] =
++            one_minus_z == 0.0 ? ((i == 0 && j == 0) ? z_pow[k] : 0.0) : x_pow[i] * y_pow[j] * z_pow[k] / one_minus_z_pow[denominator_degree];
++      }
++    }
++  }
++#endif
++}
++
++//------------------------------------------------------------------------------
++// Non-tensor modal gradients
++//------------------------------------------------------------------------------
++template <int DEGREE, int NUM_MODES>
++inline __device__ void NonTensorModeGradientsAtPoint(const CeedScalar x, const CeedScalar y, const CeedScalar z, CeedScalar *grad_phi) {
++  CeedScalar x_pow[DEGREE + 1], y_pow[DEGREE + 1], z_pow[DEGREE + 1];
++  CeedInt    mode = 0;
++
++  PowersAtPoint<DEGREE>(x, x_pow);
++  PowersAtPoint<DEGREE>(y, y_pow);
++  PowersAtPoint<DEGREE>(z, z_pow);
++
++#if BASIS_MODAL_TOPOLOGY == CEED_BASIS_NONTENSOR_MODAL_LINE
++  for (CeedInt i = 0; i <= DEGREE; i++) grad_phi[mode++] = PowerDerivativeAtPoint(i, x_pow);
++#elif BASIS_MODAL_TOPOLOGY == CEED_BASIS_NONTENSOR_MODAL_TRIANGLE
++  for (CeedInt total = 0; total <= DEGREE; total++) {
++    for (CeedInt i = 0; i <= total; i++) {
++      const CeedInt j = total - i;
++
++      grad_phi[0 * NUM_MODES + mode] = PowerDerivativeAtPoint(i, x_pow) * y_pow[j];
++      grad_phi[1 * NUM_MODES + mode] = x_pow[i] * PowerDerivativeAtPoint(j, y_pow);
++      mode++;
++    }
++  }
++#elif BASIS_MODAL_TOPOLOGY == CEED_BASIS_NONTENSOR_MODAL_TET
++  for (CeedInt total = 0; total <= DEGREE; total++) {
++    for (CeedInt i = 0; i <= total; i++) {
++      for (CeedInt j = 0; j <= total - i; j++) {
++        const CeedInt k = total - i - j;
++
++        grad_phi[0 * NUM_MODES + mode] = PowerDerivativeAtPoint(i, x_pow) * y_pow[j] * z_pow[k];
++        grad_phi[1 * NUM_MODES + mode] = x_pow[i] * PowerDerivativeAtPoint(j, y_pow) * z_pow[k];
++        grad_phi[2 * NUM_MODES + mode] = x_pow[i] * y_pow[j] * PowerDerivativeAtPoint(k, z_pow);
++        mode++;
++      }
++    }
++  }
++#elif BASIS_MODAL_TOPOLOGY == CEED_BASIS_NONTENSOR_MODAL_PRISM
++  for (CeedInt k = 0; k <= DEGREE; k++) {
++    for (CeedInt total = 0; total <= DEGREE; total++) {
++      for (CeedInt i = 0; i <= total; i++) {
++        const CeedInt j = total - i;
++
++        grad_phi[0 * NUM_MODES + mode] = PowerDerivativeAtPoint(i, x_pow) * y_pow[j] * z_pow[k];
++        grad_phi[1 * NUM_MODES + mode] = x_pow[i] * PowerDerivativeAtPoint(j, y_pow) * z_pow[k];
++        grad_phi[2 * NUM_MODES + mode] = x_pow[i] * y_pow[j] * PowerDerivativeAtPoint(k, z_pow);
++        mode++;
++      }
++    }
++  }
++#elif BASIS_MODAL_TOPOLOGY == CEED_BASIS_NONTENSOR_MODAL_PYRAMID
++  const CeedScalar one_minus_z = 1.0 - z;
++  CeedScalar       one_minus_z_pow[DEGREE + 1], half_pow[2 * DEGREE + 1];
++
++  PowersAtPoint<DEGREE>(one_minus_z, one_minus_z_pow);
++  PowersAtPoint<2 * DEGREE>(0.5, half_pow);
++  for (CeedInt k = 0; k <= DEGREE; k++) {
++    const CeedInt xy_degree = DEGREE - k;
++
++    for (CeedInt i = 0; i <= xy_degree; i++) {
++      for (CeedInt j = 0; j <= xy_degree; j++) {
++        const CeedInt denominator_degree = i < j ? i : j, max_xy_degree = i > j ? i : j;
++
++        if (one_minus_z == 0.0) {
++          // Match MFEM's conventional centerline value for the direction-dependent apex gradient.
++          grad_phi[0 * NUM_MODES + mode] = i && max_xy_degree == 1 ? i * half_pow[i - 1 + j] * z_pow[k] : 0.0;
++          grad_phi[1 * NUM_MODES + mode] = j && max_xy_degree == 1 ? j * half_pow[i + j - 1] * z_pow[k] : 0.0;
++          grad_phi[2 * NUM_MODES + mode] = k && max_xy_degree == 0 ? k * z_pow[k - 1] : 0.0;
++          if (denominator_degree && max_xy_degree == 1) grad_phi[2 * NUM_MODES + mode] += denominator_degree * half_pow[i + j] * z_pow[k];
++        } else {
++          const CeedScalar denominator = one_minus_z_pow[denominator_degree];
++
++          grad_phi[0 * NUM_MODES + mode] = PowerDerivativeAtPoint(i, x_pow) * y_pow[j] * z_pow[k] / denominator;
++          grad_phi[1 * NUM_MODES + mode] = x_pow[i] * PowerDerivativeAtPoint(j, y_pow) * z_pow[k] / denominator;
++          grad_phi[2 * NUM_MODES + mode] = x_pow[i] * y_pow[j] * PowerDerivativeAtPoint(k, z_pow) / denominator;
++          if (denominator_degree) grad_phi[2 * NUM_MODES + mode] += denominator_degree * x_pow[i] * y_pow[j] * z_pow[k] / (denominator * one_minus_z);
++        }
++        mode++;
 +      }
 +    }
 +  }
@@ -880,9 +1256,9 @@ index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8
 +#else
 +      const CeedScalar z = 0.0;
 +#endif
-+      CeedScalar phi[BASIS_NUM_MODES];
++      CeedScalar grad_phi[BASIS_DIM * BASIS_NUM_MODES];
 +
-+      NonTensorModesAtPoint<BASIS_POLY_DEGREE, BASIS_NUM_MODES>(x, y, z, phi);
++      NonTensorModeGradientsAtPoint<BASIS_POLY_DEGREE, BASIS_NUM_MODES>(x, y, z, grad_phi);
 +      for (CeedInt comp = 0; comp < BASIS_NUM_COMP; comp++) {
 +        const CeedScalar *U = &d_U[elem * u_elem_stride + comp * u_comp_stride];
 +
@@ -893,7 +1269,8 @@ index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8
 +            CeedScalar shape_grad = 0.0;
 +
 +            for (CeedInt mode = 0; mode < BASIS_NUM_MODES; mode++) {
-+              shape_grad += d_B[(CeedSize)node + (CeedSize)mode * BASIS_P + (CeedSize)d * BASIS_P * BASIS_NUM_MODES] * phi[mode];
++              shape_grad +=
++                  d_B[(CeedSize)node + (CeedSize)mode * BASIS_P + (CeedSize)d * BASIS_P * BASIS_NUM_MODES] * grad_phi[d * BASIS_NUM_MODES + mode];
 +            }
 +            value += shape_grad * U[node];
 +          }
@@ -933,14 +1310,15 @@ index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8
 +#else
 +          const CeedScalar z = 0.0;
 +#endif
-+          CeedScalar phi[BASIS_NUM_MODES];
++          CeedScalar grad_phi[BASIS_DIM * BASIS_NUM_MODES];
 +
-+          NonTensorModesAtPoint<BASIS_POLY_DEGREE, BASIS_NUM_MODES>(x, y, z, phi);
++          NonTensorModeGradientsAtPoint<BASIS_POLY_DEGREE, BASIS_NUM_MODES>(x, y, z, grad_phi);
 +          for (CeedInt d = 0; d < BASIS_DIM; d++) {
 +            CeedScalar shape_grad = 0.0;
 +
 +            for (CeedInt mode = 0; mode < BASIS_NUM_MODES; mode++) {
-+              shape_grad += d_B[(CeedSize)node + (CeedSize)mode * BASIS_P + (CeedSize)d * BASIS_P * BASIS_NUM_MODES] * phi[mode];
++              shape_grad +=
++                  d_B[(CeedSize)node + (CeedSize)mode * BASIS_P + (CeedSize)d * BASIS_P * BASIS_NUM_MODES] * grad_phi[d * BASIS_NUM_MODES + mode];
 +            }
 +            value += shape_grad * d_U[elem * u_elem_stride + comp * u_comp_stride + d * u_dim_stride + p];
 +          }
@@ -951,7 +1329,7 @@ index 0000000000000000000000000000000000000000..a0a9633113feb04f239c452a6aa244b8
 +  }
 +}
 diff --git a/interface/ceed-basis.c b/interface/ceed-basis.c
-index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c4dfb4c6f 100644
+index e90f7d1a88597904effae62c206a93e3cb7934b6..b4e2f11a709d4c11deda6f90197f4f8184636abd 100644
 --- a/interface/ceed-basis.c
 +++ b/interface/ceed-basis.c
 @@ -10,6 +10,7 @@
@@ -1081,7 +1459,7 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
        break;
      case CEED_EVAL_WEIGHT:
        has_good_dims = t_mode == CEED_NOTRANSPOSE && (v_length >= total_num_points);
-@@ -478,6 +531,585 @@ static int CeedBasisApplyAtPointsCheckDims(CeedBasis basis, CeedInt num_elem, co
+@@ -478,31 +531,734 @@ static int CeedBasisApplyAtPointsCheckDims(CeedBasis basis, CeedInt num_elem, co
  
    @ref Developer
  **/
@@ -1187,6 +1565,41 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +  return y;
 +}
 +
++// Pyramid modes span x^i y^j z^k / (1-z)^min(i,j), with max(i,j) + k <= degree.
++// This is the rational Bergot pyramid space and includes MFEM's standard linear pyramid basis.
++static CeedScalar CeedBasisPyramidModeAtPoint(CeedInt i, CeedInt j, CeedInt k, CeedScalar x, CeedScalar y, CeedScalar z) {
++  const CeedScalar one_minus_z        = 1.0 - z;
++  const CeedInt    denominator_degree = CeedIntMin(i, j);
++
++  if (one_minus_z == 0.0) return (i == 0 && j == 0) ? CeedBasisPowIntAtPoints(z, k) : 0.0;
++  return CeedBasisPowIntAtPoints(x, i) * CeedBasisPowIntAtPoints(y, j) * CeedBasisPowIntAtPoints(z, k) /
++         CeedBasisPowIntAtPoints(one_minus_z, denominator_degree);
++}
++
++static void CeedBasisPyramidModeGradientAtPoint(CeedInt i, CeedInt j, CeedInt k, CeedScalar x, CeedScalar y, CeedScalar z, CeedScalar gradient[3]) {
++  const CeedScalar one_minus_z        = 1.0 - z;
++  const CeedInt    denominator_degree = CeedIntMin(i, j), max_xy_degree = CeedIntMax(i, j);
++
++  if (one_minus_z == 0.0) {
++    // Rational pyramid gradients are direction-dependent at the apex. Use the conventional
++    // collapsed-coordinate centerline x = y = (1-z)/2, matching MFEM's apex convention.
++    gradient[0] = i && max_xy_degree == 1 ? i * CeedBasisPowIntAtPoints(0.5, i - 1 + j) * CeedBasisPowIntAtPoints(z, k) : 0.0;
++    gradient[1] = j && max_xy_degree == 1 ? j * CeedBasisPowIntAtPoints(0.5, i + j - 1) * CeedBasisPowIntAtPoints(z, k) : 0.0;
++    gradient[2] = k && max_xy_degree == 0 ? k * CeedBasisPowIntAtPoints(z, k - 1) : 0.0;
++    if (denominator_degree && max_xy_degree == 1)
++      gradient[2] += denominator_degree * CeedBasisPowIntAtPoints(0.5, i + j) * CeedBasisPowIntAtPoints(z, k);
++    return;
++  }
++
++  const CeedScalar x_pow = CeedBasisPowIntAtPoints(x, i), y_pow = CeedBasisPowIntAtPoints(y, j);
++  const CeedScalar z_pow = CeedBasisPowIntAtPoints(z, k), denominator = CeedBasisPowIntAtPoints(one_minus_z, denominator_degree);
++
++  gradient[0] = i ? i * CeedBasisPowIntAtPoints(x, i - 1) * y_pow * z_pow / denominator : 0.0;
++  gradient[1] = j ? j * x_pow * CeedBasisPowIntAtPoints(y, j - 1) * z_pow / denominator : 0.0;
++  gradient[2] = k ? k * x_pow * y_pow * CeedBasisPowIntAtPoints(z, k - 1) / denominator : 0.0;
++  if (denominator_degree) gradient[2] += denominator_degree * x_pow * y_pow * z_pow / (denominator * one_minus_z);
++}
++
 +static int CeedBasisNonTensorModesAtPoint(CeedElemTopology topo, CeedInt degree, CeedScalar x, CeedScalar y, CeedScalar z, CeedScalar *phi) {
 +  CeedInt mode = 0;
 +
@@ -1230,9 +1643,7 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +        const CeedInt xy_degree = degree - k;
 +
 +        for (CeedInt i = 0; i <= xy_degree; i++) {
-+          for (CeedInt j = 0; j <= xy_degree; j++) {
-+            phi[mode++] = CeedBasisPowIntAtPoints(x, i) * CeedBasisPowIntAtPoints(y, j) * CeedBasisPowIntAtPoints(z, k);
-+          }
++          for (CeedInt j = 0; j <= xy_degree; j++) phi[mode++] = CeedBasisPyramidModeAtPoint(i, j, k, x, y, z);
 +        }
 +      }
 +      break;
@@ -1301,11 +1712,10 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +
 +        for (CeedInt i = 0; i <= xy_degree; i++) {
 +          for (CeedInt j = 0; j <= xy_degree; j++) {
-+            const CeedScalar x_pow = CeedBasisPowIntAtPoints(x, i), y_pow = CeedBasisPowIntAtPoints(y, j), z_pow = CeedBasisPowIntAtPoints(z, k);
++            CeedScalar gradient[3];
 +
-+            grad_phi[0 * num_modes + mode] = CeedBasisPowDerivativeAtPoints(x, i) * y_pow * z_pow;
-+            grad_phi[1 * num_modes + mode] = x_pow * CeedBasisPowDerivativeAtPoints(y, j) * z_pow;
-+            grad_phi[2 * num_modes + mode] = x_pow * y_pow * CeedBasisPowDerivativeAtPoints(z, k);
++            CeedBasisPyramidModeGradientAtPoint(i, j, k, x, y, z, gradient);
++            for (CeedInt d = 0; d < 3; d++) grad_phi[d * num_modes + mode] = gradient[d];
 +            mode++;
 +          }
 +        }
@@ -1441,7 +1851,76 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +  }
 +
 +  return CeedError(ceed, CEED_ERROR_UNSUPPORTED,
-+                   "%s AtPoints requires a full-rank, well-conditioned polynomial reconstruction consistent with the tabulation", label);
++                   "%s AtPoints requires a full-rank, well-conditioned supported modal reconstruction consistent with the tabulation", label);
++}
++
++static int CeedBasisValidateNonTensorVectorDerivativesAtPoints(CeedBasis basis, CeedFESpace fe_space, CeedElemTopology topo, CeedInt dim,
++                                                               CeedInt num_nodes, CeedInt num_qpts, const CeedScalar *q_ref) {
++  Ceed              ceed   = CeedBasisReturnCeed(basis);
++  const CeedInt     degree = basis->interp_degree_at_points, num_modes = basis->interp_num_modes_at_points;
++  const CeedScalar *interp_modal = basis->interp_at_points, *deriv;
++  CeedInt           interp_q_comp, deriv_q_comp;
++  CeedScalar       *mode_gradients = NULL;
++  CeedScalar        max_error = 0.0, tabulation_scale = 1.0;
++  CeedSize          mode_gradient_size;
++
++  CeedCheck(fe_space != CEED_FE_SPACE_HCURL || dim == 2 || dim == 3, ceed, CEED_ERROR_UNSUPPORTED,
++            "H(curl) non-tensor AtPoints derivative validation requires dimension 2 or 3");
++  CeedCall(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &interp_q_comp));
++  CeedCheck(interp_q_comp == dim, ceed, CEED_ERROR_UNSUPPORTED,
++            "Vector non-tensor AtPoints requires one interpolation component per reference dimension");
++  if (fe_space == CEED_FE_SPACE_HCURL) {
++    CeedCall(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_CURL, &deriv_q_comp));
++    CeedCall(CeedBasisGetCurl(basis, &deriv));
++  } else {
++    CeedCall(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_DIV, &deriv_q_comp));
++    CeedCall(CeedBasisGetDiv(basis, &deriv));
++  }
++  CeedCheck(deriv && q_ref, ceed, CEED_ERROR_UNSUPPORTED, "Vector non-tensor AtPoints requires differential and reference-coordinate tabulations");
++  CeedCall(CeedSizeMultiplyAtPoints(ceed, dim, num_modes, &mode_gradient_size));
++  CeedCall(CeedCalloc(mode_gradient_size, &mode_gradients));
++  for (CeedInt q = 0; q < num_qpts; q++) {
++    const CeedScalar x = q_ref[0 * num_qpts + q];
++    const CeedScalar y = dim > 1 ? q_ref[1 * num_qpts + q] : 0.0;
++    const CeedScalar z = dim > 2 ? q_ref[2 * num_qpts + q] : 0.0;
++
++    CeedCall(CeedBasisNonTensorModeGradientsAtPoint(topo, degree, x, y, z, mode_gradients));
++    for (CeedInt node = 0; node < num_nodes; node++) {
++      for (CeedInt d = 0; d < deriv_q_comp; d++) {
++        CeedScalar expected = 0.0;
++
++        if (fe_space == CEED_FE_SPACE_HDIV) {
++          for (CeedInt component = 0; component < dim; component++) {
++            for (CeedInt mode = 0; mode < num_modes; mode++)
++              expected += interp_modal[component * num_modes * num_nodes + mode * num_nodes + node] * mode_gradients[component * num_modes + mode];
++          }
++        } else if (dim == 2) {
++          for (CeedInt mode = 0; mode < num_modes; mode++) {
++            expected += interp_modal[1 * num_modes * num_nodes + mode * num_nodes + node] * mode_gradients[0 * num_modes + mode] -
++                        interp_modal[0 * num_modes * num_nodes + mode * num_nodes + node] * mode_gradients[1 * num_modes + mode];
++          }
++        } else {
++          const CeedInt component_a[3] = {2, 0, 1}, derivative_a[3] = {1, 2, 0};
++          const CeedInt component_b[3] = {1, 2, 0}, derivative_b[3] = {2, 0, 1};
++
++          for (CeedInt mode = 0; mode < num_modes; mode++) {
++            expected +=
++                interp_modal[component_a[d] * num_modes * num_nodes + mode * num_nodes + node] * mode_gradients[derivative_a[d] * num_modes + mode] -
++                interp_modal[component_b[d] * num_modes * num_nodes + mode * num_nodes + node] * mode_gradients[derivative_b[d] * num_modes + mode];
++          }
++        }
++        const CeedScalar tabulation_value = deriv[d * num_qpts * num_nodes + q * num_nodes + node];
++        const CeedScalar error            = fabs(expected - tabulation_value);
++
++        max_error        = max_error > error ? max_error : error;
++        tabulation_scale = tabulation_scale > fabs(tabulation_value) ? tabulation_scale : fabs(tabulation_value);
++      }
++    }
++  }
++  CeedCall(CeedFree(&mode_gradients));
++  CeedCheck(max_error <= 10000. * CEED_EPSILON * tabulation_scale * CeedIntMax(num_qpts, num_modes), ceed, CEED_ERROR_UNSUPPORTED,
++            "Vector non-tensor AtPoints requires differential tabulation consistent with the reconstructed modal interpolation basis");
++  return CEED_ERROR_SUCCESS;
 +}
 +
 +static int CeedBasisBuildNonTensorInterpAtPoints(CeedBasis basis) {
@@ -1463,10 +1942,21 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +  CeedCheck(modal_topology, ceed, CEED_ERROR_UNSUPPORTED, "Non-tensor AtPoints interpolation is not supported for this element topology");
 +  CeedCheck(interp && q_ref, ceed, CEED_ERROR_UNSUPPORTED, "Non-tensor interpolation AtPoints requires interp and q_ref tables");
 +  if (!(fe_space == CEED_FE_SPACE_H1 && CeedBasisNonTensorDegreeAtPoints(topo, num_nodes, &degree))) degree = -1;
-+  CeedCall(CeedBasisBuildModalAtPoints(ceed, topo, dim, num_qpts, q_ref, q_comp_interp, num_nodes, interp, degree, degree < 0,
-+                                       "Non-tensor interpolation", &degree, &num_modes, &basis->interp_at_points));
++  CeedCall(CeedBasisBuildModalAtPoints(ceed, topo, dim, num_qpts, q_ref, q_comp_interp, num_nodes, interp, degree,
++                                       fe_space == CEED_FE_SPACE_H1 && degree < 0, "Non-tensor interpolation", &degree, &num_modes,
++                                       &basis->interp_at_points));
 +  basis->interp_num_modes_at_points = num_modes;
 +  basis->interp_degree_at_points    = degree;
++  if (fe_space == CEED_FE_SPACE_HCURL || fe_space == CEED_FE_SPACE_HDIV) {
++    const int ierr = CeedBasisValidateNonTensorVectorDerivativesAtPoints(basis, fe_space, topo, dim, num_nodes, num_qpts, q_ref);
++
++    if (ierr) {
++      (void)CeedFree(&basis->interp_at_points);
++      basis->interp_num_modes_at_points = 0;
++      basis->interp_degree_at_points    = 0;
++      return ierr;
++    }
++  }
 +  return CEED_ERROR_SUCCESS;
 +}
 +
@@ -1502,7 +1992,7 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +  }
 +  CeedCall(CeedFree(&mode_gradients));
 +  CeedCheck(max_error <= 10000. * CEED_EPSILON * tabulation_scale * CeedIntMax(num_qpts, num_modes), ceed, CEED_ERROR_UNSUPPORTED,
-+            "H^1 non-tensor AtPoints requires gradient tabulation consistent with the reconstructed polynomial interpolation basis");
++            "H^1 non-tensor AtPoints requires gradient tabulation consistent with the reconstructed modal interpolation basis");
 +  return CEED_ERROR_SUCCESS;
 +}
 +
@@ -1510,7 +2000,8 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +  Ceed              ceed = CeedBasisReturnCeed(basis);
 +  CeedFESpace       fe_space;
 +  CeedElemTopology  topo;
-+  CeedInt           dim, num_nodes, num_qpts, degree, grad_degree, num_modes, modal_topology;
++  CeedInt           dim, num_nodes, num_qpts, modal_topology;
++  CeedSize          interp_modal_size, grad_modal_size;
 +  const CeedScalar *grad, *q_ref;
 +
 +  CeedCall(CeedBasisGetFESpace(basis, &fe_space));
@@ -1524,18 +2015,16 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +  CeedCheck(fe_space == CEED_FE_SPACE_H1 && modal_topology, ceed, CEED_ERROR_UNSUPPORTED,
 +            "Non-tensor AtPoints gradients are only supported for H^1 bases with supported topologies");
 +  CeedCheck(grad && q_ref, ceed, CEED_ERROR_UNSUPPORTED, "H^1 non-tensor gradient AtPoints requires grad and q_ref tables");
-+  CeedCheck(CeedBasisNonTensorDegreeAtPoints(topo, num_nodes, &degree), ceed, CEED_ERROR_UNSUPPORTED,
-+            "Cannot infer non-tensor H^1 polynomial degree from %" CeedInt_FMT " nodes", num_nodes);
 +  if (!basis->interp_at_points) CeedCall(CeedBasisBuildNonTensorInterpAtPoints(basis));
-+  CeedCheck(basis->interp_degree_at_points == degree, ceed, CEED_ERROR_UNSUPPORTED,
-+            "H^1 non-tensor AtPoints interpolation does not reconstruct at the complete polynomial degree");
 +  CeedCall(CeedBasisValidateNonTensorH1GradAtPoints(basis, topo, dim, num_nodes, num_qpts, q_ref, grad));
 +
-+  grad_degree = (topo == CEED_TOPOLOGY_LINE || topo == CEED_TOPOLOGY_TRIANGLE || topo == CEED_TOPOLOGY_TET) ? CeedIntMax(0, degree - 1) : degree;
-+  CeedCall(CeedBasisBuildModalAtPoints(ceed, topo, dim, num_qpts, q_ref, dim, num_nodes, grad, grad_degree, false, "H^1 non-tensor gradient",
-+                                       &grad_degree, &num_modes, &basis->grad_at_points));
-+  basis->grad_num_modes_at_points = num_modes;
-+  basis->grad_degree_at_points    = grad_degree;
++  CeedCall(CeedSizeMultiplyAtPoints(ceed, basis->interp_num_modes_at_points, num_nodes, &interp_modal_size));
++  CeedCall(CeedSizeMultiplyAtPoints(ceed, dim, interp_modal_size, &grad_modal_size));
++  CeedCall(CeedCalloc(grad_modal_size, &basis->grad_at_points));
++  for (CeedInt d = 0; d < dim; d++)
++    memcpy(&basis->grad_at_points[d * interp_modal_size], basis->interp_at_points, interp_modal_size * sizeof(CeedScalar));
++  basis->grad_num_modes_at_points = basis->interp_num_modes_at_points;
++  basis->grad_degree_at_points    = basis->interp_degree_at_points;
 +  return CEED_ERROR_SUCCESS;
 +}
 +
@@ -1564,7 +2053,6 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +
 +static int CeedBasisApplyAtPointsNonTensor_Core(CeedBasis basis, bool apply_add, CeedInt num_elem, const CeedInt *num_points,
 +                                                CeedTransposeMode t_mode, CeedEvalMode eval_mode, CeedVector x_ref, CeedVector u, CeedVector v) {
-+  Ceed              ceed = CeedBasisReturnCeed(basis);
 +  CeedElemTopology  topo;
 +  CeedInt           dim, num_nodes, num_comp, q_comp, modal_topology, degree_at_points, num_modes_at_points, max_num_points = 0;
 +  CeedSize          v_len = 0, points_stride, padded_elem_stride = 0;
@@ -1613,9 +2101,13 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +      const CeedScalar x           = x_array[0 * points_stride + point_index];
 +      const CeedScalar y           = dim > 1 ? x_array[1 * points_stride + point_index] : 0.0;
 +      const CeedScalar z           = dim > 2 ? x_array[2 * points_stride + point_index] : 0.0;
-+      CeedScalar       phi[num_modes_at_points];
++      CeedScalar       phi[num_modes_at_points], grad_phi[dim * num_modes_at_points];
 +
-+      CeedCall(CeedBasisNonTensorModesAtPoint(topo, degree_at_points, x, y, z, phi));
++      if (eval_mode == CEED_EVAL_INTERP) {
++        CeedCall(CeedBasisNonTensorModesAtPoint(topo, degree_at_points, x, y, z, phi));
++      } else {
++        CeedCall(CeedBasisNonTensorModeGradientsAtPoint(topo, degree_at_points, x, y, z, grad_phi));
++      }
 +      if (t_mode == CEED_NOTRANSPOSE) {
 +        for (CeedInt comp = 0; comp < num_comp; comp++) {
 +          const CeedScalar *U = &u_array[elem * num_nodes + comp * num_elem * num_nodes];
@@ -1627,7 +2119,9 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +              CeedScalar shape = 0.0;
 +
 +              for (CeedInt mode = 0; mode < num_modes_at_points; mode++) {
-+                shape += modal[node + mode * num_nodes + q * num_nodes * num_modes_at_points] * phi[mode];
++                const CeedScalar mode_value = eval_mode == CEED_EVAL_INTERP ? phi[mode] : grad_phi[q * num_modes_at_points + mode];
++
++                shape += modal[node + mode * num_nodes + q * num_nodes * num_modes_at_points] * mode_value;
 +              }
 +              value += shape * U[node];
 +            }
@@ -1647,7 +2141,9 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +              CeedScalar shape = 0.0;
 +
 +              for (CeedInt mode = 0; mode < num_modes_at_points; mode++) {
-+                shape += modal[node + mode * num_nodes + q * num_nodes * num_modes_at_points] * phi[mode];
++                const CeedScalar mode_value = eval_mode == CEED_EVAL_INTERP ? phi[mode] : grad_phi[q * num_modes_at_points + mode];
++
++                shape += modal[node + mode * num_nodes + q * num_nodes * num_modes_at_points] * mode_value;
 +              }
 +              V[node] += shape * value;
 +            }
@@ -1666,8 +2162,11 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +
  static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt num_elem, const CeedInt *num_points, CeedTransposeMode t_mode,
                                         CeedEvalMode eval_mode, CeedVector x_ref, CeedVector u, CeedVector v) {
-   CeedInt dim, num_comp, P_1d = 1, Q_1d = 1, total_num_points = num_points[0];
-@@ -485,18 +1117,20 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt
+-  CeedInt dim, num_comp, P_1d = 1, Q_1d = 1, total_num_points = num_points[0];
++  CeedInt  dim, num_comp, P_1d = 1, Q_1d = 1, total_num_points = num_points[0];
++  CeedSize points_stride;
++  bool     is_padded;
+ 
    CeedCall(CeedBasisGetDimension(basis, &dim));
    // Inserting check because clang-tidy doesn't understand this cannot occur
    CeedCheck(dim > 0, CeedBasisReturnCeed(basis), CEED_ERROR_UNSUPPORTED, "Malformed CeedBasis, dim > 0 is required");
@@ -1693,7 +2192,81 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
    CeedCheck(num_elem == 1, CeedBasisReturnCeed(basis), CEED_ERROR_UNSUPPORTED,
              "Evaluation at arbitrary  points only supported for a single element at a time");
    if (eval_mode == CEED_EVAL_WEIGHT) {
-@@ -956,7 +1590,6 @@ int CeedBasisGetFlopsEstimate(CeedBasis basis, CeedTransposeMode t_mode, CeedEva
+     CeedCall(CeedVectorSetValue(v, 1.0));
+     return CEED_ERROR_SUCCESS;
+   }
++  CeedCall(CeedBasisGetAtPointsLayout(basis, num_elem, num_points, t_mode, eval_mode, x_ref, u, v, &is_padded, &points_stride));
++  (void)is_padded;
+   if (!basis->basis_chebyshev) {
+     // Build basis mapping from nodes to Chebyshev coefficients
+     CeedScalar       *chebyshev_interp_1d, *chebyshev_grad_1d, *chebyshev_q_weight_1d;
+@@ -567,13 +1323,13 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt
+ 
+             for (CeedInt d = 0; d < dim; d++) {
+               // ------ Tensor contract with current Chebyshev polynomial values
+-              CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * total_num_points + p], Q_1d, chebyshev_x));
++              CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * points_stride + p], Q_1d, chebyshev_x));
+               CeedCall(CeedTensorContractApply(basis->contract, pre, Q_1d, post, 1, chebyshev_x, t_mode, false,
+                                                d == 0 ? chebyshev_coeffs : tmp[d % 2], tmp[(d + 1) % 2]));
+               pre /= Q_1d;
+               post *= 1;
+             }
+-            for (CeedInt c = 0; c < num_comp; c++) v_array[c * total_num_points + p] = tmp[dim % 2][c];
++            for (CeedInt c = 0; c < num_comp; c++) v_array[c * points_stride + p] = tmp[dim % 2][c];
+           }
+           break;
+         }
+@@ -589,16 +1345,16 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt
+               for (CeedInt d = 0; d < dim; d++) {
+                 // ------ Tensor contract with current Chebyshev polynomial values
+                 if (pass == d) {
+-                  CeedCall(CeedChebyshevDerivativeAtPoint(x_array_read[d * total_num_points + p], Q_1d, chebyshev_x));
++                  CeedCall(CeedChebyshevDerivativeAtPoint(x_array_read[d * points_stride + p], Q_1d, chebyshev_x));
+                 } else {
+-                  CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * total_num_points + p], Q_1d, chebyshev_x));
++                  CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * points_stride + p], Q_1d, chebyshev_x));
+                 }
+                 CeedCall(CeedTensorContractApply(basis->contract, pre, Q_1d, post, 1, chebyshev_x, t_mode, false,
+                                                  d == 0 ? chebyshev_coeffs : tmp[d % 2], tmp[(d + 1) % 2]));
+                 pre /= Q_1d;
+                 post *= 1;
+               }
+-              for (CeedInt c = 0; c < num_comp; c++) v_array[(pass * num_comp + c) * total_num_points + p] = tmp[dim % 2][c];
++              for (CeedInt c = 0; c < num_comp; c++) v_array[(pass * num_comp + c) * points_stride + p] = tmp[dim % 2][c];
+             }
+           }
+           break;
+@@ -632,10 +1388,10 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt
+           for (CeedInt p = 0; p < total_num_points; p++) {
+             CeedInt pre = num_comp * 1, post = 1;
+ 
+-            for (CeedInt c = 0; c < num_comp; c++) tmp[0][c] = u_array[c * total_num_points + p];
++            for (CeedInt c = 0; c < num_comp; c++) tmp[0][c] = u_array[c * points_stride + p];
+             for (CeedInt d = 0; d < dim; d++) {
+               // ------ Tensor contract with current Chebyshev polynomial values
+-              CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * total_num_points + p], Q_1d, chebyshev_x));
++              CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * points_stride + p], Q_1d, chebyshev_x));
+               CeedCall(CeedTensorContractApply(basis->contract, pre, 1, post, Q_1d, chebyshev_x, t_mode, p > 0 && d == (dim - 1), tmp[d % 2],
+                                                d == (dim - 1) ? chebyshev_coeffs : tmp[(d + 1) % 2]));
+               pre /= 1;
+@@ -653,13 +1409,13 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt
+             for (CeedInt pass = 0; pass < dim; pass++) {
+               CeedInt pre = num_comp * 1, post = 1;
+ 
+-              for (CeedInt c = 0; c < num_comp; c++) tmp[0][c] = u_array[(pass * num_comp + c) * total_num_points + p];
++              for (CeedInt c = 0; c < num_comp; c++) tmp[0][c] = u_array[(pass * num_comp + c) * points_stride + p];
+               for (CeedInt d = 0; d < dim; d++) {
+                 // ------ Tensor contract with current Chebyshev polynomial values
+                 if (pass == d) {
+-                  CeedCall(CeedChebyshevDerivativeAtPoint(x_array_read[d * total_num_points + p], Q_1d, chebyshev_x));
++                  CeedCall(CeedChebyshevDerivativeAtPoint(x_array_read[d * points_stride + p], Q_1d, chebyshev_x));
+                 } else {
+-                  CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * total_num_points + p], Q_1d, chebyshev_x));
++                  CeedCall(CeedChebyshevPolynomialsAtPoint(x_array_read[d * points_stride + p], Q_1d, chebyshev_x));
+                 }
+                 CeedCall(CeedTensorContractApply(basis->contract, pre, 1, post, Q_1d, chebyshev_x, t_mode,
+                                                  (p > 0 || (p == 0 && pass > 0)) && d == (dim - 1), tmp[d % 2],
+@@ -956,7 +1712,6 @@ int CeedBasisGetFlopsEstimate(CeedBasis basis, CeedTransposeMode t_mode, CeedEva
    bool is_tensor;
  
    CeedCall(CeedBasisIsTensor(basis, &is_tensor));
@@ -1701,7 +2274,7 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
    if (is_tensor) {
      CeedInt dim, num_comp, P_1d, Q_1d;
  
-@@ -1072,7 +1705,7 @@ int CeedBasisGetFlopsEstimate(CeedBasis basis, CeedTransposeMode t_mode, CeedEva
+@@ -1072,7 +1827,7 @@ int CeedBasisGetFlopsEstimate(CeedBasis basis, CeedTransposeMode t_mode, CeedEva
        case CEED_EVAL_GRAD:
        case CEED_EVAL_DIV:
        case CEED_EVAL_CURL:
@@ -1710,7 +2283,7 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
          break;
        case CEED_EVAL_WEIGHT:
          *flops = 0;
-@@ -2132,6 +2765,13 @@ int CeedBasisApplyAdd(CeedBasis basis, CeedInt num_elem, CeedTransposeMode t_mod
+@@ -2132,6 +2887,15 @@ int CeedBasisApplyAdd(CeedBasis basis, CeedInt num_elem, CeedTransposeMode t_mod
    @param[in]  u          Input `CeedVector`, of length `num_nodes * num_comp` for @ref CEED_NOTRANSPOSE
    @param[out] v          Output `CeedVector`, of length `num_points * num_q_comp` for @ref CEED_NOTRANSPOSE with @ref CEED_EVAL_INTERP
  
@@ -1718,13 +2291,15 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +        storage. Compact storage has point stride `sum(num_points)`. Uniformly padded storage has point stride `num_elem * points_per_elem`,
 +        where `points_per_elem >= max(num_points)`. Vector lengths must exactly encode one of these layouts.
 +
-+  @note Non-tensor AtPoints requires a full-rank, well-conditioned complete polynomial reconstruction of the basis tabulation. H^1 gradient
-+        tabulation must be derivative-consistent with the reconstructed interpolation basis.
++  @note Non-tensor AtPoints requires a full-rank, well-conditioned supported modal reconstruction of the basis tabulation. The modal spaces are
++        polynomial for line, simplex, and prism elements and rational for pyramid elements. H^1 gradient and vector differential tabulations must
++        be derivative-consistent with the reconstructed interpolation basis. Rational pyramid gradients at the apex use the conventional
++        collapsed-coordinate centerline value.
 +
    @return An error code: 0 - success, otherwise - failure
  
    @ref User
-@@ -2154,7 +2794,7 @@ int CeedBasisApplyAtPoints(CeedBasis basis, CeedInt num_elem, const CeedInt *num
+@@ -2154,7 +2918,7 @@ int CeedBasisApplyAtPoints(CeedBasis basis, CeedInt num_elem, const CeedInt *num
    @param[in]  num_elem   The number of elements to apply the basis evaluation to;
                            the backend will specify the ordering in @ref CeedElemRestrictionCreate()
    @param[in]  num_points Array of the number of points to apply the basis evaluation to in each element, size `num_elem`
@@ -1733,7 +2308,7 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
                             @ref CEED_NOTRANSPOSE is not valid for `CeedBasisApplyAddAtPoints()`
    @param[in]  eval_mode  @ref CEED_EVAL_INTERP to use interpolated values,
                             @ref CEED_EVAL_GRAD to use gradients,
-@@ -2163,6 +2803,13 @@ int CeedBasisApplyAtPoints(CeedBasis basis, CeedInt num_elem, const CeedInt *num
+@@ -2163,6 +2927,15 @@ int CeedBasisApplyAtPoints(CeedBasis basis, CeedInt num_elem, const CeedInt *num
    @param[in]  u          Input `CeedVector`, of length `num_nodes * num_comp` for @ref CEED_NOTRANSPOSE
    @param[out] v          Output `CeedVector`, of length `num_points * num_q_comp` for @ref CEED_NOTRANSPOSE with @ref CEED_EVAL_INTERP
  
@@ -1741,13 +2316,15 @@ index e90f7d1a88597904effae62c206a93e3cb7934b6..f678376aaa1ae8ee750e8d9f9938d09c
 +        storage. Compact storage has point stride `sum(num_points)`. Uniformly padded storage has point stride `num_elem * points_per_elem`,
 +        where `points_per_elem >= max(num_points)`. Vector lengths must exactly encode one of these layouts.
 +
-+  @note Non-tensor AtPoints requires a full-rank, well-conditioned complete polynomial reconstruction of the basis tabulation. H^1 gradient
-+        tabulation must be derivative-consistent with the reconstructed interpolation basis.
++  @note Non-tensor AtPoints requires a full-rank, well-conditioned supported modal reconstruction of the basis tabulation. The modal spaces are
++        polynomial for line, simplex, and prism elements and rational for pyramid elements. H^1 gradient and vector differential tabulations must
++        be derivative-consistent with the reconstructed interpolation basis. Rational pyramid gradients at the apex use the conventional
++        collapsed-coordinate centerline value.
 +
    @return An error code: 0 - success, otherwise - failure
  
    @ref User
-@@ -2508,6 +3155,8 @@ int CeedBasisDestroy(CeedBasis *basis) {
+@@ -2508,6 +3281,8 @@ int CeedBasisDestroy(CeedBasis *basis) {
    CeedCall(CeedFree(&(*basis)->grad_1d));
    CeedCall(CeedFree(&(*basis)->div));
    CeedCall(CeedFree(&(*basis)->curl));
@@ -1997,10 +2574,10 @@ index 0000000000000000000000000000000000000000..95b5f213ff3d000660474ddd3b78eac6
 +}
 diff --git a/tests/t368-basis.c b/tests/t368-basis.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..15fa9b59d1e461be54e5b9d4b237c1387285d181
+index 0000000000000000000000000000000000000000..9f7ab5a3eb0018a3628f7a2abd72882b56a62d39
 --- /dev/null
 +++ b/tests/t368-basis.c
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,90 @@
 +/// @file
 +/// Test non-tensor H(div) tetrahedron interpolation at arbitrary points
 +/// \test Test non-tensor H(div) tetrahedron interpolation at arbitrary points
@@ -2040,6 +2617,9 @@ index 0000000000000000000000000000000000000000..15fa9b59d1e461be54e5b9d4b237c138
 +    for (CeedInt d = 0; d < 3; d++) {
 +      for (CeedInt i = 0; i < P; i++) interp[d * Q * P + q * P + i] = b[d * P + i];
 +    }
++    div[q * P + 3] = 1.0;
++    div[q * P + 4] = 1.0;
++    div[q * P + 5] = 1.0;
 +  }
 +  CeedBasisCreateHdiv(ceed, CEED_TOPOLOGY_TET, 1, P, Q, interp, div, q_ref, q_weight, &basis);
 +
@@ -2353,57 +2933,69 @@ index 0000000000000000000000000000000000000000..35801ec23ae2d04720320ced4c317c7b
 +}
 diff --git a/tests/t371-basis.c b/tests/t371-basis.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..00254ba5767ab27d6e456d09f8bc5ef1bd381c67
+index 0000000000000000000000000000000000000000..f67046f6d0e8e387d2be1a4e68dfd6a79e7dea8b
 --- /dev/null
 +++ b/tests/t371-basis.c
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,138 @@
 +/// @file
-+/// Test non-tensor H^1 pyramid interpolation and gradient at arbitrary points
-+/// \test Test non-tensor H^1 pyramid interpolation and gradient at arbitrary points
++/// Test rational non-tensor H^1 pyramid interpolation and gradient at arbitrary points
++/// \test Test rational non-tensor H^1 pyramid interpolation and gradient at arbitrary points
 +#include <ceed.h>
 +#include <math.h>
 +#include <stdio.h>
-+#include <string.h>
 +
 +#define P 5
 +#define Q 5
 +#define NUM_POINTS 3
 +
 +static void P1PyramidBasis(CeedScalar x, CeedScalar y, CeedScalar z, CeedScalar *interp, CeedScalar *grad) {
-+  interp[0] = 1. - x - y + x * y - z;
-+  interp[1] = x - x * y;
-+  interp[2] = y - x * y;
-+  interp[3] = x * y;
++  const CeedScalar w = 1.0 - z;
++
++  if (w == 0.0) {
++    interp[0] = interp[1] = interp[2] = interp[3] = 0.0;
++    interp[4]                                     = 1.0;
++
++    grad[0 * P + 0] = -0.5;
++    grad[1 * P + 0] = -0.5;
++    grad[2 * P + 0] = -0.75;
++    grad[0 * P + 1] = 0.5;
++    grad[1 * P + 1] = -0.5;
++    grad[2 * P + 1] = -0.25;
++    grad[0 * P + 2] = 0.5;
++    grad[1 * P + 2] = 0.5;
++    grad[2 * P + 2] = 0.25;
++    grad[0 * P + 3] = -0.5;
++    grad[1 * P + 3] = 0.5;
++    grad[2 * P + 3] = -0.25;
++    grad[0 * P + 4] = 0.0;
++    grad[1 * P + 4] = 0.0;
++    grad[2 * P + 4] = 1.0;
++    return;
++  }
++
++  const CeedScalar wx = w - x, wy = w - y, w_inv = 1.0 / w;
++
++  interp[0] = wx * wy * w_inv;
++  interp[1] = x * wy * w_inv;
++  interp[2] = x * y * w_inv;
++  interp[3] = wx * y * w_inv;
 +  interp[4] = z;
 +
-+  grad[0 * P + 0] = -1. + y;
-+  grad[1 * P + 0] = -1. + x;
-+  grad[2 * P + 0] = -1.;
-+  grad[0 * P + 1] = 1. - y;
-+  grad[1 * P + 1] = -x;
-+  grad[2 * P + 1] = 0.;
-+  grad[0 * P + 2] = -y;
-+  grad[1 * P + 2] = 1. - x;
-+  grad[2 * P + 2] = 0.;
-+  grad[0 * P + 3] = y;
-+  grad[1 * P + 3] = x;
-+  grad[2 * P + 3] = 0.;
-+  grad[0 * P + 4] = 0.;
-+  grad[1 * P + 4] = 0.;
-+  grad[2 * P + 4] = 1.;
-+}
-+
-+static CeedScalar PyramidPoly(CeedScalar x, CeedScalar y, CeedScalar z) { return 1. + 2. * x - 3. * y + 5. * x * y - 7. * z; }
-+
-+static CeedScalar PyramidPolyGrad(CeedInt d, CeedScalar x, CeedScalar y) {
-+  switch (d) {
-+    case 0:
-+      return 2. + 5. * y;
-+    case 1:
-+      return -3. + 5. * x;
-+    default:
-+      return -7.;
-+  }
++  grad[0 * P + 0] = -wy * w_inv;
++  grad[1 * P + 0] = -wx * w_inv;
++  grad[2 * P + 0] = x * y * w_inv * w_inv - 1.0;
++  grad[0 * P + 1] = wy * w_inv;
++  grad[1 * P + 1] = -x * w_inv;
++  grad[2 * P + 1] = -x * y * w_inv * w_inv;
++  grad[0 * P + 2] = y * w_inv;
++  grad[1 * P + 2] = x * w_inv;
++  grad[2 * P + 2] = x * y * w_inv * w_inv;
++  grad[0 * P + 3] = -y * w_inv;
++  grad[1 * P + 3] = wx * w_inv;
++  grad[2 * P + 3] = -x * y * w_inv * w_inv;
++  grad[0 * P + 4] = 0.0;
++  grad[1 * P + 4] = 0.0;
++  grad[2 * P + 4] = 1.0;
 +}
 +
 +int main(int argc, char **argv) {
@@ -2412,7 +3004,7 @@ index 0000000000000000000000000000000000000000..00254ba5767ab27d6e456d09f8bc5ef1
 +  CeedVector x_points, u, v_interp, v_grad;
 +
 +  CeedInit(argv[1], &ceed);
-+  CeedScalar q_ref[3 * Q] = {0., 1., 0., 1., 0., 0., 0., 1., 1., 0., 0., 0., 0., 0., 1.};
++  CeedScalar q_ref[3 * Q] = {0., 1., 1., 0., 0., 0., 0., 1., 1., 0., 0., 0., 0., 0., 1.};
 +  CeedScalar q_weight[Q]  = {1., 1., 1., 1., 1.};
 +  CeedScalar interp[Q * P], grad[3 * Q * P];
 +  for (CeedInt q = 0; q < Q; q++) {
@@ -2431,13 +3023,10 @@ index 0000000000000000000000000000000000000000..00254ba5767ab27d6e456d09f8bc5ef1
 +  CeedVectorCreate(ceed, NUM_POINTS, &v_interp);
 +  CeedVectorCreate(ceed, 3 * NUM_POINTS, &v_grad);
 +  {
-+    CeedScalar x_array[3 * NUM_POINTS] = {0.2, 0.4, 0.1, 0.1, 0.2, 0.3, 0.25, 0.1, 0.5};
-+    CeedVectorSetArray(x_points, CEED_MEM_HOST, CEED_COPY_VALUES, x_array);
-+  }
-+  {
-+    CeedScalar u_array[P];
++    CeedScalar x_array[3 * NUM_POINTS] = {0.1, 0.4, 0.0, 0.1, 0.2, 0.0, 0.5, 0.2, 1.0};
++    CeedScalar u_array[P]              = {2.0, -3.0, 5.0, 7.0, -11.0};
 +
-+    for (CeedInt i = 0; i < P; i++) u_array[i] = PyramidPoly(q_ref[0 * Q + i], q_ref[1 * Q + i], q_ref[2 * Q + i]);
++    CeedVectorSetArray(x_points, CEED_MEM_HOST, CEED_COPY_VALUES, x_array);
 +    CeedVectorSetArray(u, CEED_MEM_HOST, CEED_COPY_VALUES, u_array);
 +  }
 +
@@ -2449,30 +3038,31 @@ index 0000000000000000000000000000000000000000..00254ba5767ab27d6e456d09f8bc5ef1
 +  }
 +
 +  {
-+    const CeedScalar *x_array, *interp_array, *grad_array;
++    const CeedScalar *x_array, *u_array, *interp_array, *grad_array;
 +
 +    CeedVectorGetArrayRead(x_points, CEED_MEM_HOST, &x_array);
++    CeedVectorGetArrayRead(u, CEED_MEM_HOST, &u_array);
 +    CeedVectorGetArrayRead(v_interp, CEED_MEM_HOST, &interp_array);
 +    CeedVectorGetArrayRead(v_grad, CEED_MEM_HOST, &grad_array);
 +    for (CeedInt p = 0; p < NUM_POINTS; p++) {
-+      const CeedScalar x               = x_array[0 * NUM_POINTS + p];
-+      const CeedScalar y               = x_array[1 * NUM_POINTS + p];
-+      const CeedScalar z               = x_array[2 * NUM_POINTS + p];
-+      const CeedScalar interp_expected = PyramidPoly(x, y, z);
++      CeedScalar b[P], g[3 * P], expected_interp = 0.0, expected_grad[3] = {0.0, 0.0, 0.0};
 +
-+      if (fabs(interp_array[p] - interp_expected) > 500. * CEED_EPSILON) {
-+        printf("%f != %f at point %" CeedInt_FMT "\n", interp_array[p], interp_expected, p);
++      P1PyramidBasis(x_array[0 * NUM_POINTS + p], x_array[1 * NUM_POINTS + p], x_array[2 * NUM_POINTS + p], b, g);
++      for (CeedInt node = 0; node < P; node++) {
++        expected_interp += u_array[node] * b[node];
++        for (CeedInt d = 0; d < 3; d++) expected_grad[d] += u_array[node] * g[d * P + node];
 +      }
++      if (fabs(interp_array[p] - expected_interp) > 1000. * CEED_EPSILON)
++        printf("%f != %f at point %" CeedInt_FMT "\n", interp_array[p], expected_interp, p);
 +      for (CeedInt d = 0; d < 3; d++) {
-+        const CeedScalar grad_expected = PyramidPolyGrad(d, x, y);
-+        const CeedScalar grad_actual   = grad_array[d * NUM_POINTS + p];
++        const CeedScalar actual = grad_array[d * NUM_POINTS + p];
 +
-+        if (fabs(grad_actual - grad_expected) > 500. * CEED_EPSILON) {
-+          printf("%f != %f at dim %" CeedInt_FMT ", point %" CeedInt_FMT "\n", grad_actual, grad_expected, d, p);
-+        }
++        if (fabs(actual - expected_grad[d]) > 2000. * CEED_EPSILON)
++          printf("%f != %f at dim %" CeedInt_FMT ", point %" CeedInt_FMT "\n", actual, expected_grad[d], d, p);
 +      }
 +    }
 +    CeedVectorRestoreArrayRead(x_points, &x_array);
++    CeedVectorRestoreArrayRead(u, &u_array);
 +    CeedVectorRestoreArrayRead(v_interp, &interp_array);
 +    CeedVectorRestoreArrayRead(v_grad, &grad_array);
 +  }
@@ -2567,7 +3157,7 @@ index 0000000000000000000000000000000000000000..36deda648ea2d524c0cbde2ed0522e1b
 +}
 diff --git a/tests/t373-basis.c b/tests/t373-basis.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2e8a9f7a558f11395fc7e3c7cc39e6e45f46b9b9
+index 0000000000000000000000000000000000000000..7c35b73093b4afe980d2d0f5040ae96de3466609
 --- /dev/null
 +++ b/tests/t373-basis.c
 @@ -0,0 +1,84 @@
@@ -2579,7 +3169,7 @@ index 0000000000000000000000000000000000000000..2e8a9f7a558f11395fc7e3c7cc39e6e4
 +#include <string.h>
 +
 +#define P 6
-+#define Q 4
++#define Q 3
 +#define NUM_POINTS 2
 +
 +static void VectorTetBasis(CeedScalar x, CeedScalar y, CeedScalar z, CeedScalar *interp) {
@@ -2595,8 +3185,8 @@ index 0000000000000000000000000000000000000000..2e8a9f7a558f11395fc7e3c7cc39e6e4
 +static int CheckUnderdetermined(Ceed ceed, bool hcurl) {
 +  CeedBasis  basis;
 +  CeedVector x_points, u, v;
-+  CeedScalar q_ref[3 * Q] = {0.1, 0.6, 0.1, 0.1, 0.2, 0.1, 0.6, 0.1, 0.3, 0.1, 0.1, 0.6};
-+  CeedScalar q_weight[Q]  = {1., 1., 1., 1.};
++  CeedScalar q_ref[3 * Q] = {0.1, 0.6, 0.1, 0.2, 0.1, 0.6, 0.3, 0.1, 0.1};
++  CeedScalar q_weight[Q]  = {1., 1., 1.};
 +  CeedScalar interp[3 * Q * P], curl[3 * Q * P], div[Q * P];
 +
 +  for (CeedInt i = 0; i < 3 * Q * P; i++) curl[i] = 0.0;
@@ -2633,7 +3223,7 @@ index 0000000000000000000000000000000000000000..2e8a9f7a558f11395fc7e3c7cc39e6e4
 +
 +    if (!ierr) printf("Expected underdetermined %s AtPoints error\n", hcurl ? "Hcurl" : "Hdiv");
 +    CeedGetErrorMessage(ceed, &err_msg);
-+    if (!strstr(err_msg, "polynomial reconstruction")) printf("Unexpected error message: %s\n", err_msg);
++    if (!strstr(err_msg, "modal reconstruction")) printf("Unexpected error message: %s\n", err_msg);
 +    CeedResetErrorMessage(ceed, &err_msg);
 +  }
 +
@@ -3454,6 +4044,286 @@ index 0000000000000000000000000000000000000000..b4d3ea8509ae1807fa174d6728c3aa64
 +  CheckHigherOrder(ceed);
 +  CheckIncompatibleInterpolation(ceed);
 +  CheckIncompatibleGradient(ceed);
++  CeedDestroy(&ceed);
++  return 0;
++}
+diff --git a/tests/t380-basis.c b/tests/t380-basis.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..db20b0029b96bec85ad4c6c226de99d7f0d5e61b
+--- /dev/null
++++ b/tests/t380-basis.c
+@@ -0,0 +1,92 @@
++/// @file
++/// Test tensor AtPoints uniformly padded point storage
++/// \test Test tensor AtPoints uniformly padded point storage
++#include <ceed.h>
++#include <math.h>
++#include <stdio.h>
++
++#define P_1D 2
++#define Q_1D 2
++#define NUM_POINTS 2
++#define POINT_STRIDE 4
++
++int main(int argc, char **argv) {
++  Ceed       ceed;
++  CeedBasis  basis;
++  CeedVector x_points, u, v, v_grad, point_values, nodes_out;
++
++  CeedInit(argv[1], &ceed);
++  CeedBasisCreateTensorH1Lagrange(ceed, 2, 1, P_1D, Q_1D, CEED_GAUSS_LOBATTO, &basis);
++  CeedVectorCreate(ceed, 2 * POINT_STRIDE, &x_points);
++  CeedVectorCreate(ceed, P_1D * P_1D, &u);
++  CeedVectorCreate(ceed, POINT_STRIDE, &v);
++  CeedVectorCreate(ceed, 2 * POINT_STRIDE, &v_grad);
++  CeedVectorCreate(ceed, POINT_STRIDE, &point_values);
++  CeedVectorCreate(ceed, P_1D * P_1D, &nodes_out);
++  {
++    CeedScalar x_array[2 * POINT_STRIDE] = {0.0, 0.0, 17.5, 19.5, -1.0, 1.0, 31.0, 41.0};
++    CeedScalar u_array[P_1D * P_1D]      = {-1.0, -1.0, 1.0, 1.0};
++    CeedScalar point_array[POINT_STRIDE] = {2.0, 3.0, -7.0, -11.0};
++
++    CeedVectorSetArray(x_points, CEED_MEM_HOST, CEED_COPY_VALUES, x_array);
++    CeedVectorSetArray(u, CEED_MEM_HOST, CEED_COPY_VALUES, u_array);
++    CeedVectorSetArray(point_values, CEED_MEM_HOST, CEED_COPY_VALUES, point_array);
++  }
++  {
++    const CeedInt num_points = NUM_POINTS;
++
++    CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, x_points, u, v);
++    CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE, CEED_EVAL_GRAD, x_points, u, v_grad);
++    CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_TRANSPOSE, CEED_EVAL_INTERP, x_points, point_values, nodes_out);
++  }
++  {
++    const CeedScalar *array;
++
++    CeedVectorGetArrayRead(v, CEED_MEM_HOST, &array);
++    if (fabs(array[0] + 1.0) > 100. * CEED_EPSILON || fabs(array[1] - 1.0) > 100. * CEED_EPSILON)
++      printf("Padded tensor interpolation values [%f, %f] != [-1, 1]\n", array[0], array[1]);
++    CeedVectorRestoreArrayRead(v, &array);
++
++    CeedVectorGetArrayRead(v_grad, CEED_MEM_HOST, &array);
++    for (CeedInt p = 0; p < NUM_POINTS; p++) {
++      if (fabs(array[p]) > 100. * CEED_EPSILON || fabs(array[POINT_STRIDE + p] - 1.0) > 100. * CEED_EPSILON)
++        printf("Padded tensor gradient mismatch at point %" CeedInt_FMT "\n", p);
++    }
++    CeedVectorRestoreArrayRead(v_grad, &array);
++
++    CeedVectorGetArrayRead(nodes_out, CEED_MEM_HOST, &array);
++    const CeedScalar expected[P_1D * P_1D] = {1.0, 1.0, 1.5, 1.5};
++    for (CeedInt i = 0; i < P_1D * P_1D; i++) {
++      if (fabs(array[i] - expected[i]) > 100. * CEED_EPSILON)
++        printf("Padded tensor transpose value %f != %f at node %" CeedInt_FMT "\n", array[i], expected[i], i);
++    }
++    CeedVectorRestoreArrayRead(nodes_out, &array);
++  }
++  {
++    const CeedInt num_points = NUM_POINTS;
++    CeedVector    x_compact, v_compact;
++    CeedScalar    x_array[2 * NUM_POINTS] = {0.0, 0.0, -1.0, 1.0};
++    const CeedScalar *array;
++
++    CeedVectorCreate(ceed, 2 * NUM_POINTS, &x_compact);
++    CeedVectorCreate(ceed, NUM_POINTS, &v_compact);
++    CeedVectorSetArray(x_compact, CEED_MEM_HOST, CEED_COPY_VALUES, x_array);
++    CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, x_compact, u, v_compact);
++    CeedVectorGetArrayRead(v_compact, CEED_MEM_HOST, &array);
++    if (fabs(array[0] + 1.0) > 100. * CEED_EPSILON || fabs(array[1] - 1.0) > 100. * CEED_EPSILON)
++      printf("Tensor AtPoints cache invalidation failed: [%f, %f] != [-1, 1]\n", array[0], array[1]);
++    CeedVectorRestoreArrayRead(v_compact, &array);
++    CeedVectorDestroy(&x_compact);
++    CeedVectorDestroy(&v_compact);
++  }
++
++  CeedVectorDestroy(&x_points);
++  CeedVectorDestroy(&u);
++  CeedVectorDestroy(&v);
++  CeedVectorDestroy(&v_grad);
++  CeedVectorDestroy(&point_values);
++  CeedVectorDestroy(&nodes_out);
++  CeedBasisDestroy(&basis);
++  CeedDestroy(&ceed);
++  return 0;
++}
+diff --git a/tests/t381-basis.c b/tests/t381-basis.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..e4ab9a6802698b0c33ea48f78757dd73f9a2a89a
+--- /dev/null
++++ b/tests/t381-basis.c
+@@ -0,0 +1,176 @@
++/// @file
++/// Test square non-tensor H(curl)/H(div) prism AtPoints reconstruction
++/// \test Test square non-tensor H(curl)/H(div) prism AtPoints reconstruction
++#include <ceed.h>
++#include <math.h>
++#include <stdio.h>
++#include <string.h>
++
++#define P 6
++#define Q 6
++#define NUM_POINTS 3
++
++static void PrismModes(CeedScalar x, CeedScalar y, CeedScalar z, CeedScalar mode[Q], CeedScalar grad[3][Q]) {
++  mode[0] = 1.0;
++  mode[1] = y;
++  mode[2] = x;
++  mode[3] = z;
++  mode[4] = y * z;
++  mode[5] = x * z;
++
++  memset(grad, 0, 3 * Q * sizeof(CeedScalar));
++  grad[1][1] = 1.0;
++  grad[0][2] = 1.0;
++  grad[2][3] = 1.0;
++  grad[1][4] = z;
++  grad[2][4] = y;
++  grad[0][5] = z;
++  grad[2][5] = x;
++}
++
++static void FillTables(bool hcurl, bool incompatible, const CeedScalar q_ref[3 * Q], CeedScalar interp[3 * Q * P],
++                       CeedScalar deriv[3 * Q * P]) {
++  memset(interp, 0, 3 * Q * P * sizeof(CeedScalar));
++  memset(deriv, 0, 3 * Q * P * sizeof(CeedScalar));
++  for (CeedInt q = 0; q < Q; q++) {
++    CeedScalar mode[Q], grad[3][Q];
++
++    PrismModes(q_ref[0 * Q + q], q_ref[1 * Q + q], q_ref[2 * Q + q], mode, grad);
++    for (CeedInt node = 0; node < P; node++) {
++      const CeedInt component = node % 3;
++
++      interp[component * Q * P + q * P + node] = mode[node];
++      if (hcurl) {
++        const CeedScalar curl[3] = {
++            component == 2 ? grad[1][node] : (component == 1 ? -grad[2][node] : 0.0),
++            component == 0 ? grad[2][node] : (component == 2 ? -grad[0][node] : 0.0),
++            component == 1 ? grad[0][node] : (component == 0 ? -grad[1][node] : 0.0),
++        };
++
++        for (CeedInt d = 0; d < 3; d++) deriv[d * Q * P + q * P + node] = curl[d];
++      } else {
++        deriv[q * P + node] = grad[component][node];
++      }
++    }
++  }
++  if (incompatible) deriv[0] += 1.0;
++}
++
++static void CheckUnsupportedLineHcurl(Ceed ceed) {
++  const CeedInt num_points = 1;
++  CeedBasis     basis;
++  CeedVector    x_points, u, v;
++  CeedScalar    q_ref[2] = {-1.0, 1.0}, q_weight[2] = {1.0, 1.0};
++  CeedScalar    interp[4] = {1.0, 0.0, 0.0, 1.0}, curl[4] = {0.0};
++
++  CeedBasisCreateHcurl(ceed, CEED_TOPOLOGY_LINE, 1, 2, 2, interp, curl, q_ref, q_weight, &basis);
++  CeedVectorCreate(ceed, 1, &x_points);
++  CeedVectorCreate(ceed, 2, &u);
++  CeedVectorCreate(ceed, 1, &v);
++  {
++    const int   ierr = CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, x_points, u, v);
++    const char *error_message;
++
++    if (!ierr) printf("Expected unsupported line H(curl) AtPoints error\n");
++    CeedGetErrorMessage(ceed, &error_message);
++    if (!strstr(error_message, "requires dimension 2 or 3")) printf("Unexpected error message: %s\n", error_message);
++    CeedResetErrorMessage(ceed, &error_message);
++  }
++  CeedVectorDestroy(&x_points);
++  CeedVectorDestroy(&u);
++  CeedVectorDestroy(&v);
++  CeedBasisDestroy(&basis);
++}
++
++static void CheckSquarePrism(Ceed ceed, bool hcurl, bool incompatible) {
++  CeedBasis  basis;
++  CeedVector x_points, u, v;
++  CeedScalar q_ref[3 * Q] = {0., 1., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 0., 1., 1., 1.};
++  CeedScalar q_weight[Q]  = {1., 1., 1., 1., 1., 1.};
++  CeedScalar interp[3 * Q * P], deriv[3 * Q * P];
++
++  FillTables(hcurl, incompatible, q_ref, interp, deriv);
++  if (hcurl) {
++    CeedBasisCreateHcurl(ceed, CEED_TOPOLOGY_PRISM, 1, P, Q, interp, deriv, q_ref, q_weight, &basis);
++  } else {
++    CeedBasisCreateHdiv(ceed, CEED_TOPOLOGY_PRISM, 1, P, Q, interp, deriv, q_ref, q_weight, &basis);
++  }
++
++  CeedVectorCreate(ceed, 3 * NUM_POINTS, &x_points);
++  CeedVectorCreate(ceed, P, &u);
++  CeedVectorCreate(ceed, 3 * NUM_POINTS, &v);
++  {
++    CeedScalar x_array[3 * NUM_POINTS] = {0.2, 0.4, 0.1, 0.1, 0.2, 0.3, 0.25, 0.75, 0.5};
++    CeedScalar u_array[P]              = {2., -3., 5., 7., -11., 13.};
++
++    CeedVectorSetArray(x_points, CEED_MEM_HOST, CEED_COPY_VALUES, x_array);
++    CeedVectorSetArray(u, CEED_MEM_HOST, CEED_COPY_VALUES, u_array);
++  }
++  {
++    const CeedInt num_points = NUM_POINTS;
++    const int     ierr       = CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, x_points, u, v);
++
++    if (incompatible) {
++      const char *error_message;
++
++      if (!ierr) printf("Expected inconsistent square %s prism reconstruction error\n", hcurl ? "H(curl)" : "H(div)");
++      CeedGetErrorMessage(ceed, &error_message);
++      if (!strstr(error_message, "differential tabulation consistent")) printf("Unexpected error message: %s\n", error_message);
++      CeedResetErrorMessage(ceed, &error_message);
++      {
++        const int repeat_ierr = CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, x_points, u, v);
++
++        if (!repeat_ierr) printf("Expected repeated inconsistent square %s prism reconstruction error\n", hcurl ? "H(curl)" : "H(div)");
++        CeedGetErrorMessage(ceed, &error_message);
++        CeedResetErrorMessage(ceed, &error_message);
++      }
++    } else if (ierr) {
++      const char *error_message;
++
++      CeedGetErrorMessage(ceed, &error_message);
++      printf("Unexpected square %s prism reconstruction error: %s\n", hcurl ? "H(curl)" : "H(div)", error_message);
++      CeedResetErrorMessage(ceed, &error_message);
++    } else {
++      const CeedScalar *x_array, *u_array, *v_array;
++
++      CeedVectorGetArrayRead(x_points, CEED_MEM_HOST, &x_array);
++      CeedVectorGetArrayRead(u, CEED_MEM_HOST, &u_array);
++      CeedVectorGetArrayRead(v, CEED_MEM_HOST, &v_array);
++      for (CeedInt p = 0; p < NUM_POINTS; p++) {
++        CeedScalar mode[Q], grad[3][Q], expected[3] = {0.0, 0.0, 0.0};
++
++        PrismModes(x_array[0 * NUM_POINTS + p], x_array[1 * NUM_POINTS + p], x_array[2 * NUM_POINTS + p], mode, grad);
++        for (CeedInt node = 0; node < P; node++) expected[node % 3] += u_array[node] * mode[node];
++        for (CeedInt d = 0; d < 3; d++) {
++          const CeedScalar actual = v_array[d * NUM_POINTS + p];
++
++          if (fabs(actual - expected[d]) > 1000. * CEED_EPSILON)
++            printf("%s prism: %f != %f at dim %" CeedInt_FMT ", point %" CeedInt_FMT "\n", hcurl ? "H(curl)" : "H(div)", actual,
++                   expected[d], d, p);
++        }
++      }
++      CeedVectorRestoreArrayRead(x_points, &x_array);
++      CeedVectorRestoreArrayRead(u, &u_array);
++      CeedVectorRestoreArrayRead(v, &v_array);
++    }
++  }
++
++  CeedVectorDestroy(&x_points);
++  CeedVectorDestroy(&u);
++  CeedVectorDestroy(&v);
++  CeedBasisDestroy(&basis);
++}
++
++int main(int argc, char **argv) {
++  Ceed ceed;
++
++  CeedInit(argv[1], &ceed);
++  CeedSetErrorHandler(ceed, CeedErrorStore);
++  CheckUnsupportedLineHcurl(ceed);
++  CheckSquarePrism(ceed, true, false);
++  CheckSquarePrism(ceed, false, false);
++  CheckSquarePrism(ceed, true, true);
++  CheckSquarePrism(ceed, false, true);
 +  CeedDestroy(&ceed);
 +  return 0;
 +}

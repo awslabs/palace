@@ -288,8 +288,9 @@ TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel][GPU]"
   fem::DefaultIntegrationOrder::q_order_jac = true;
   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
   fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-  auto file = GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
-                       std::string("fichera-mixed-p2.mesh"));
+  auto file =
+      GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
+               std::string("fichera-mixed-p2.mesh"), std::string("tinyzoo-3d.mesh"));
   CAPTURE(file);
   auto mesh = LoadTestMesh(comm, file);
   auto &pmesh = mesh->Get();
@@ -329,8 +330,9 @@ TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel][GPU]"
 TEST_CASE("SurfaceFunctional HCurl Norm", "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
-  auto file = GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
-                       std::string("fichera-mixed-p2.mesh"));
+  auto file =
+      GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
+               std::string("fichera-mixed-p2.mesh"), std::string("tinyzoo-3d.mesh"));
   auto order = GENERATE(1, 2);
   CAPTURE(file, order);
   fem::DefaultIntegrationOrder::p_trial = order;

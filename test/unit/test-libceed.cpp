@@ -5,12 +5,14 @@
 #include <sstream>
 #include <string>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/basis.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "models/materialoperator.hpp"
@@ -1442,7 +1444,149 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   Mpi::Barrier(comm);
 }
 
+mfem::IntegrationRule MakePrismModalRule(int degree)
+{
+  const int triangle_modes = (degree + 1) * (degree + 2) / 2;
+  mfem::IntegrationRule ir(triangle_modes * (degree + 1));
+  int q = 0;
+  for (int k = 0; k <= degree; k++)
+  {
+    for (int total = 0; total <= degree; total++)
+    {
+      for (int i = 0; i <= total; i++)
+      {
+        auto &ip = ir.IntPoint(q++);
+        ip.Set3(static_cast<double>(i) / degree, static_cast<double>(total - i) / degree,
+                static_cast<double>(k) / degree);
+        ip.weight = 1.0;
+      }
+    }
+  }
+  return ir;
+}
+
+void CheckMfemAtPointsBasis(const mfem::FiniteElement &fe,
+                            const mfem::IntegrationRule &tabulation_rule,
+                            const mfem::IntegrationRule &points, bool check_gradient)
+{
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  CeedBasis basis;
+  ceed::InitBasisAtPoints(fe, tabulation_rule, 1, ceed, &basis);
+
+  const int num_nodes = fe.GetDof();
+  const int num_points = points.GetNPoints();
+  const int value_dim = fe.GetRangeType() == mfem::FiniteElement::VECTOR ? fe.GetDim() : 1;
+  CeedVector x_ref, u, v;
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, fe.GetDim() * num_points, &x_ref));
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, num_nodes, &u));
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, value_dim * num_points, &v));
+
+  mfem::Vector x_values(fe.GetDim() * num_points), u_values(num_nodes);
+  for (int q = 0; q < num_points; q++)
+  {
+    const auto &ip = points.IntPoint(q);
+    x_values(0 * num_points + q) = ip.x;
+    if (fe.GetDim() > 1)
+    {
+      x_values(1 * num_points + q) = ip.y;
+    }
+    if (fe.GetDim() > 2)
+    {
+      x_values(2 * num_points + q) = ip.z;
+    }
+  }
+  for (int i = 0; i < num_nodes; i++)
+  {
+    u_values(i) = 0.25 * (i + 1) - 0.1 * (i % 3);
+  }
+  PalaceCeedCall(
+      ceed, CeedVectorSetArray(x_ref, CEED_MEM_HOST, CEED_COPY_VALUES, x_values.GetData()));
+  PalaceCeedCall(
+      ceed, CeedVectorSetArray(u, CEED_MEM_HOST, CEED_COPY_VALUES, u_values.GetData()));
+  PalaceCeedCall(ceed, CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE,
+                                              CEED_EVAL_INTERP, x_ref, u, v));
+
+  const CeedScalar *values;
+  PalaceCeedCall(ceed, CeedVectorGetArrayRead(v, CEED_MEM_HOST, &values));
+  mfem::Vector shape(num_nodes);
+  mfem::DenseMatrix vshape(num_nodes, fe.GetDim());
+  for (int q = 0; q < num_points; q++)
+  {
+    if (value_dim == 1)
+    {
+      fe.CalcShape(points.IntPoint(q), shape);
+      CHECK(values[q] == Catch::Approx(shape * u_values).epsilon(1.0e-11).margin(1.0e-13));
+    }
+    else
+    {
+      fe.CalcVShape(points.IntPoint(q), vshape);
+      for (int d = 0; d < value_dim; d++)
+      {
+        mfem::Vector column(vshape.GetColumn(d), num_nodes);
+        CHECK(values[d * num_points + q] ==
+              Catch::Approx(column * u_values).epsilon(1.0e-11).margin(1.0e-13));
+      }
+    }
+  }
+  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(v, &values));
+
+  if (check_gradient)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, fe.GetDim() * num_points, &v));
+    PalaceCeedCall(ceed, CeedBasisApplyAtPoints(basis, 1, &num_points, CEED_NOTRANSPOSE,
+                                                CEED_EVAL_GRAD, x_ref, u, v));
+    PalaceCeedCall(ceed, CeedVectorGetArrayRead(v, CEED_MEM_HOST, &values));
+    mfem::DenseMatrix dshape(num_nodes, fe.GetDim());
+    for (int q = 0; q < num_points; q++)
+    {
+      fe.CalcDShape(points.IntPoint(q), dshape);
+      for (int d = 0; d < fe.GetDim(); d++)
+      {
+        mfem::Vector column(dshape.GetColumn(d), num_nodes);
+        CHECK(values[d * num_points + q] ==
+              Catch::Approx(column * u_values).epsilon(1.0e-11).margin(1.0e-13));
+      }
+    }
+    PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(v, &values));
+  }
+
+  PalaceCeedCall(ceed, CeedVectorDestroy(&x_ref));
+  PalaceCeedCall(ceed, CeedVectorDestroy(&u));
+  PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&basis));
+}
+
 }  // namespace
+
+TEST_CASE("MFEM non-tensor AtPoints reconstruction", "[libCEED][Serial][Parallel][GPU]")
+{
+  SECTION("Rational pyramid H1")
+  {
+    mfem::LinearPyramidFiniteElement fe;
+    mfem::IntegrationRule points(3);
+    points.IntPoint(0).Set3(0.10, 0.10, 0.50);
+    points.IntPoint(1).Set3(0.20, 0.15, 0.30);
+    points.IntPoint(2).Set3(0.05, 0.20, 0.60);
+    CheckMfemAtPointsBasis(fe, fe.GetNodes(), points, true);
+  }
+
+  SECTION("Square full-rank wedge Hcurl and Hdiv")
+  {
+    for (int order : {1, 2})
+    {
+      auto tabulation_rule = MakePrismModalRule(order);
+      mfem::ND_WedgeElement nd_fe(order);
+      mfem::RT_WedgeElement rt_fe(order - 1);
+      mfem::IntegrationRule points(3);
+      points.IntPoint(0).Set3(0.20, 0.10, 0.25);
+      points.IntPoint(1).Set3(0.40, 0.20, 0.75);
+      points.IntPoint(2).Set3(0.10, 0.30, 0.50);
+      CheckMfemAtPointsBasis(nd_fe, tabulation_rule, points, false);
+      CheckMfemAtPointsBasis(rt_fe, tabulation_rule, points, false);
+    }
+  }
+}
 
 TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel]")
 {
