@@ -76,6 +76,7 @@ spack:
       +cuda+cudss cuda_arch=80,86,89,90 ^cuda@13
       ^openmpi+cuda
       ^libfabric+cuda+cuda_dlopen
+      ^libceed@develop
   - when: not env.get("PALACE_CUDA")
     palace:
     - $palace_base

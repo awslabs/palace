@@ -31,7 +31,5 @@ singularity
 __pycache__
 *.pyc
 
-# Package symlinks created while rendering the Spack environment. Their targets
-# are runner-local paths; the container template recreates them in-container.
-spack_repo/local/packages/libceed
+# Broken mfem symlink (recreated inside container by the template)
 spack_repo/local/packages/mfem
