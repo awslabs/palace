@@ -28,6 +28,10 @@ using namespace Catch::Matchers;
 class LumpedPortDataTest : public LumpedPortData
 {
 public:
+  void InitializeLinearFormsForTest(mfem::ParFiniteElementSpace &nd_fespace) const
+  {
+    InitializeLinearForms(nd_fespace);
+  }
   mfem::LinearForm *GetLinearFormS() const { return s.get(); }
   mfem::LinearForm *GetLinearFormV() const { return v.get(); }
 };
@@ -375,6 +379,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
@@ -728,6 +733,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());

@@ -5,8 +5,13 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstdlib>
+#include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <tuple>
+#include <vector>
 #include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
@@ -27,6 +32,11 @@
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
+#include <mfem/config/config.hpp>
+#if defined(MFEM_USE_CUDA)
+#include <cuda_profiler_api.h>
+#endif
+
 namespace palace
 {
 
@@ -34,6 +44,59 @@ using namespace std::complex_literals;
 
 namespace
 {
+
+bool IsSupportedDomainOutputDimension(const mfem::ParMesh &mesh)
+{
+  return (mesh.Dimension() == 2 && mesh.SpaceDimension() == 2) ||
+         (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3);
+}
+
+bool IsSupportedBoundaryOutputDimension(const mfem::ParMesh &mesh)
+{
+  return IsSupportedDomainOutputDimension(mesh);
+}
+
+bool UseCeedDomainParaviewPointFields(const mfem::ParMesh &mesh)
+{
+  return IsSupportedDomainOutputDimension(mesh);
+}
+
+bool UseCeedBoundaryParaviewPointFields(const mfem::ParMesh &mesh)
+{
+  return IsSupportedBoundaryOutputDimension(mesh);
+}
+
+void RequireCeedPointFieldEvaluator(const PointFieldEvaluator *eval,
+                                    const std::string &what)
+{
+  MFEM_VERIFY(eval && eval->IsValid(), "libCEED postprocessing was expected for " + what +
+                                           ", but PointFieldEvaluator could not assemble!");
+}
+
+bool UseCudaProfilerParaviewRange()
+{
+  return std::getenv("PALACE_PROFILE_PARAVIEW_RANGE") != nullptr;
+}
+
+void StartCudaProfilerParaviewRange()
+{
+#if defined(MFEM_USE_CUDA)
+  if (UseCudaProfilerParaviewRange())
+  {
+    cudaProfilerStart();
+  }
+#endif
+}
+
+void StopCudaProfilerParaviewRange()
+{
+#if defined(MFEM_USE_CUDA)
+  if (UseCudaProfilerParaviewRange())
+  {
+    cudaProfilerStop();
+  }
+#endif
+}
 
 std::string OutputFolderName(const ProblemType solver_t)
 {
@@ -237,9 +300,6 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   RemovePreviousOutput(gridfunction_root, fem_op->GetComm());
   gridfunction_output_dir = (gridfunction_root / OutputFolderName(solver_t)).string();
 
-  SetupFieldCoefficients();
-  InitializeParaviewDataCollection();
-
   // Initialize CSV files for measurements.
   post_op_csv.InitializeCSVDataCollection(*this);
 }
@@ -275,16 +335,197 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   {
     return;
   }
+  MFEM_VERIFY(!field_coefficients_initialized,
+              "Field coefficients should only be initialized once!");
+  field_coefficients_initialized = true;
 
-  // Set-up grid-functions for the paraview output / measurement.
+  // Initialize the (interpolatory L2) output spaces for the libCEED-evaluated
+  // visualization fields. The order matches the ParaView output sampling lattice
+  // (SetLevelsOfDetail below), preserving the existing VTU point layout.
+  // TODO: Revisit the output order choice: order p smooths the (degree 2p) energy
+  // densities slightly relative to the legacy exact-at-lattice sampling (U_e showed
+  // ~2e-3 relative on the CPW example, visualization only). Order 2p reproduces the
+  // legacy values exactly on affine elements at ~3.5x the field storage, which may be
+  // immaterial next to the solver memory high water mark.
+  // All direct VTU point fields and the MFEM mesh writer must use one sampling lattice.
+  // This matters in 2D magnetostatics, where A is ND order p while scalar B is L2 order
+  // p-1. Use the maximum primary-field order rather than whichever field happens to be
+  // initialized first.
+  int paraview_refine_order = 0;
+  for (const auto *field : {E.get(), B.get(), V.get(), A.get()})
+  {
+    if (field)
+    {
+      paraview_refine_order =
+          std::max(paraview_refine_order, field->ParFESpace()->GetMaxElementOrder());
+    }
+  }
+  MFEM_VERIFY(paraview_refine_order > 0, "Unable to determine field output order!");
+  auto InitializeVizSpaces = [&](mfem::ParFiniteElementSpace &src_fespace)
+  {
+    if (viz_fec)
+    {
+      return;
+    }
+    auto *pmesh = src_fespace.GetParMesh();
+    viz_fec =
+        std::make_unique<mfem::L2_FECollection>(paraview_refine_order, pmesh->Dimension());
+    viz_scalar_fespace =
+        std::make_unique<mfem::ParFiniteElementSpace>(pmesh, viz_fec.get());
+    viz_vector_fespace = std::make_unique<mfem::ParFiniteElementSpace>(
+        pmesh, viz_fec.get(), pmesh->SpaceDimension());
+  };
+  const auto &output_mesh = fem_op->GetNDSpace().GetParMesh();
+  const bool use_ceed_domain_paraview_fields =
+      ShouldWriteParaviewFields() && UseCeedDomainParaviewPointFields(output_mesh);
+  const bool use_ceed_domain_fields =
+      ShouldWriteGridFunctionFields() || use_ceed_domain_paraview_fields;
+  const bool use_ceed_boundary_fields =
+      ShouldWriteParaviewFields() && UseCeedBoundaryParaviewPointFields(output_mesh);
+
+  auto MakeFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                mfem::ParFiniteElementSpace *e_fespace,
+                                mfem::ParFiniteElementSpace *b_fespace, double scaling,
+                                std::unique_ptr<PointFieldEvaluator> &eval,
+                                std::unique_ptr<mfem::ParGridFunction> &gf)
+  {
+    InitializeVizSpaces(e_fespace ? *e_fespace : *b_fespace);
+    auto &target = (kind == PointFieldEvaluator::Kind::POYNTING) ? *viz_vector_fespace
+                                                                 : *viz_scalar_fespace;
+    eval = std::make_unique<PointFieldEvaluator>(
+        kind, fem_op->GetMaterialOp().GetMesh(), fem_op->GetMaterialOp(), e_fespace,
+        b_fespace, target, scaling, ShouldWriteGridFunctionFields(),
+        use_ceed_domain_paraview_fields);
+    if (eval->IsValid())
+    {
+      if (ShouldWriteGridFunctionFields())
+      {
+        gf = std::make_unique<mfem::ParGridFunction>(&target);
+        gf->UseDevice(true);
+      }
+    }
+    else
+    {
+      RequireCeedPointFieldEvaluator(eval.get(), "domain field visualization");
+    }
+  };
+  auto MakeBaseDomainFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                          mfem::ParFiniteElementSpace &fespace,
+                                          std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    if (!use_ceed_domain_paraview_fields)
+    {
+      return;
+    }
+    InitializeVizSpaces(fespace);
+    const bool scalar_b_field = kind == PointFieldEvaluator::Kind::FIELD_B &&
+                                fespace.GetParMesh()->Dimension() == 2;
+    auto &target = (kind == PointFieldEvaluator::Kind::FIELD_H1 || scalar_b_field)
+                       ? *viz_scalar_fespace
+                       : *viz_vector_fespace;
+    eval = std::make_unique<PointFieldEvaluator>(
+        kind, fem_op->GetMaterialOp().GetMesh(), fem_op->GetMaterialOp(),
+        (kind == PointFieldEvaluator::Kind::FIELD_E ||
+         kind == PointFieldEvaluator::Kind::FIELD_H1)
+            ? &fespace
+            : nullptr,
+        kind == PointFieldEvaluator::Kind::FIELD_B ? &fespace : nullptr, target, 1.0, false,
+        true);
+    if (!eval->IsValid())
+    {
+      RequireCeedPointFieldEvaluator(eval.get(), "base domain field visualization");
+    }
+  };
+  auto MakeBdrFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                   mfem::ParFiniteElementSpace &fespace,
+                                   std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    eval = std::make_unique<PointFieldEvaluator>(kind, mesh, marker, fespace,
+                                                 paraview_refine_order);
+    if (!eval->IsValid())
+    {
+      RequireCeedPointFieldEvaluator(eval.get(), "boundary field visualization");
+    }
+  };
+  auto MakeBdrCoeffEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                   mfem::ParFiniteElementSpace &fespace, double scaling,
+                                   std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    eval = std::make_unique<PointFieldEvaluator>(kind, mesh, marker, fespace,
+                                                 fem_op->GetMaterialOp(),
+                                                 paraview_refine_order, scaling);
+    if (!eval->IsValid())
+    {
+      RequireCeedPointFieldEvaluator(eval.get(), "boundary coefficient visualization");
+    }
+  };
+  auto MakeBdrPoyntingEvaluator =
+      [&](mfem::ParFiniteElementSpace &e_fespace, mfem::ParFiniteElementSpace &b_fespace,
+          double scaling, std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    eval = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::POYNTING, mesh, marker, e_fespace, b_fespace,
+        fem_op->GetMaterialOp(), paraview_refine_order, scaling);
+    if (!eval->IsValid())
+    {
+      RequireCeedPointFieldEvaluator(eval.get(), "boundary Poynting visualization");
+    }
+  };
+
+  // Set-up evaluators for the paraview output / measurement.
+  if (En)
+  {
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_H1, *En->ParFESpace(),
+                                 En_domain_eval);
+  }
+
+  if (Bt_inplane)
+  {
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E,
+                                 *Bt_inplane->ParFESpace(), Bt_domain_eval);
+  }
+
+  if (E && Bt_inplane && use_ceed_domain_fields)
+  {
+    MakeFieldEvaluator(PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(),
+                       Bt_inplane->ParFESpace(), 1.0, Sn_eval, Sn_gf);
+  }
+
   if constexpr (HasVGridFunction<solver_t>())
   {
-    V_s = std::make_unique<BdrFieldCoefficient>(V->Real());
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_H1, *V->ParFESpace(),
+                                 V_domain_eval);
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_H1, *V->ParFESpace(),
+                            V_bdr_eval);
+    }
   }
 
   if constexpr (HasAGridFunction<solver_t>())
   {
-    A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real());
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *A->ParFESpace(),
+                                 A_domain_eval);
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *A->ParFESpace(),
+                            A_bdr_eval);
+    }
   }
 
   if constexpr (HasEGridFunction<solver_t>())
@@ -302,17 +543,30 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
         *E, fem_op->GetMaterialOp(), scaling);
+    if (use_ceed_domain_fields)
+    {
+      MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
+                         scaling, U_e_eval, U_e_gf);
+    }
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_E, *E->ParFESpace(), scaling,
+                            Ue_bdr_eval);
+    }
 
     // Electric Boundary Field & Surface Charge.
-    E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
-    // Q_s = D ⋅ n = ε_0 E ⋅ n.
-    Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
-    if constexpr (HasComplexGridFunction<solver_t>())
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
+                                 E_domain_eval);
+    if (use_ceed_boundary_fields)
     {
-      E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
-      Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
+                            E_bdr_eval);
+    }
+    // Q_s = D ⋅ n = ε_0 E ⋅ n.
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
+                            Q_bdr_eval);
     }
   }
 
@@ -331,24 +585,33 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
         *B, fem_op->GetMaterialOp(), scaling);
-
-    // Magnetic Boundary Field & Surface Current.
-    // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
-    if (B->Real().VectorDim() > 1)
+    if (use_ceed_domain_fields)
     {
-      B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
-      // J_s = n x H = n x μ⁻¹ B.
-      J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-          B->Real(), fem_op->GetMaterialOp(), scaling);
+      MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
+                         scaling, U_m_eval, U_m_gf);
+    }
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_M, *B->ParFESpace(), scaling,
+                            Um_bdr_eval);
     }
 
-    if constexpr (HasComplexGridFunction<solver_t>())
+    // Magnetic Field, Boundary Field & Surface Current. In 2D, B is scalar (L2), so the
+    // domain field is scalar while boundary vector B and J_s outputs are not applicable.
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
+                                 B_domain_eval);
+    if (B->Real().VectorDim() > 1)
     {
-      if (B->Imag().VectorDim() > 1)
+      if (use_ceed_boundary_fields)
       {
-        B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
-        J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-            B->Imag(), fem_op->GetMaterialOp(), scaling);
+        MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
+                              B_bdr_eval);
+      }
+      // J_s = n x H = n x μ⁻¹ B.
+      if (use_ceed_boundary_fields)
+      {
+        MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(),
+                              scaling, J_bdr_eval);
       }
     }
   }
@@ -366,9 +629,37 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                              units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
       S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
                                                       scaling);
+      if (use_ceed_domain_fields)
+      {
+        MakeFieldEvaluator(PointFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
+                           B->ParFESpace(), scaling, S_eval, S_gf);
+      }
+      if (use_ceed_boundary_fields)
+      {
+        MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling, S_bdr_eval);
+      }
     }
-    // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} is computed after Bt_inplane is
-    // available (in MeasureAndPrintAll), as it requires the in-plane B field.
+    // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} uses the in-plane B field and is
+    // registered below through a domain point evaluator.
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::EnsureFieldCoefficientsSetup()
+{
+  if (!field_coefficients_initialized)
+  {
+    SetupFieldCoefficients();
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::EnsureParaviewDataCollection()
+{
+  EnsureFieldCoefficientsSetup();
+  if (ShouldWriteParaviewFields() && !paraview)
+  {
+    InitializeParaviewDataCollection();
   }
 }
 
@@ -376,6 +667,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
     const fs::path &sub_folder_name)
 {
+  EnsureFieldCoefficientsSetup();
   if (!ShouldWriteParaviewFields())
   {
     return;
@@ -398,147 +690,230 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
-#if defined(MFEM_USE_ZLIB)
-  const int compress = -1;  // Default compression level
-#else
-  const int compress = 0;
-#endif
   const bool use_ho = true;
-  const int refine_ho = HasEGridFunction<solver_t>()
-                            ? E->ParFESpace()->GetMaxElementOrder()
-                            : B->ParFESpace()->GetMaxElementOrder();
+  MFEM_VERIFY(viz_scalar_fespace,
+              "ParaView point-field space must be initialized before the collection!");
+  const int refine_ho = viz_scalar_fespace->GetMaxElementOrder();
+  const bool use_ceed_domain_paraview =
+      UseCeedDomainParaviewPointFields(fem_op->GetNDSpace().GetParMesh());
+  const bool use_ceed_boundary_paraview =
+      UseCeedBoundaryParaviewPointFields(fem_op->GetNDSpace().GetParMesh());
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
   paraview->SetDataFormat(format);
-  paraview->SetCompressionLevel(compress);
+  MFEM_VERIFY(use_ceed_domain_paraview,
+              "ParaView domain output requires the libCEED point-field path!");
+  // Direct point fields use appended raw VTU arrays so their payload can be written
+  // without an extra full-field base64 staging buffer.
+  paraview->SetCompressionLevel(0);
   paraview->SetHighOrderOutput(use_ho);
   paraview->SetLevelsOfDetail(refine_ho);
 
   paraview_bdr->SetBoundaryOutput(true);
   paraview_bdr->SetCycle(-1);
   paraview_bdr->SetDataFormat(format);
-  paraview_bdr->SetCompressionLevel(compress);
+  MFEM_VERIFY(use_ceed_boundary_paraview,
+              "ParaView boundary output requires the libCEED point-field path!");
+  paraview_bdr->SetCompressionLevel(0);
   paraview_bdr->SetHighOrderOutput(use_ho);
   paraview_bdr->SetLevelsOfDetail(refine_ho);
 
+  // Register libCEED domain and boundary visualization fields lazily: ParaView Save()
+  // evaluates one field at a time into a reusable device-capable buffer and then writes
+  // that buffer to the VTU file. Domain direct-VTU buffers are point-major to match VTK
+  // tuple order; boundary buffers keep the existing component-major packing path. This
+  // keeps peak memory proportional to one output field instead of the sum of all derived
+  // fields, while still doing the sampling/transforms in libCEED. Nonconforming AMR
+  // meshes use the same point-field path; the static mesh/header caches above avoid
+  // repeating VTU setup across mode saves.
+  auto RegisterDomainEvalField =
+      [&](const std::string &name, const std::unique_ptr<PointFieldEvaluator> &eval,
+          const GridFunction *E_field, const GridFunction *B_field)
+  {
+    const auto *eval_ptr = eval.get();
+    const auto *E_ptr = E_field;
+    const auto *B_ptr = B_field;
+    paraview->RegisterDomainPointEvaluator(
+        name, [eval_ptr, E_ptr, B_ptr](Vector &buffer)
+        { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); }, eval_ptr->BufferBases(),
+        eval_ptr->BufferNumComp(), eval_ptr->BufferSize(), true);
+  };
+  auto RegisterDomainBaseEvalField = [&](const std::string &name,
+                                         const std::unique_ptr<PointFieldEvaluator> &eval,
+                                         const mfem::ParGridFunction &field)
+  {
+    RequireCeedPointFieldEvaluator(eval.get(),
+                                   fmt::format("domain {} visualization", name));
+    const auto *eval_ptr = eval.get();
+    const auto *field_ptr = &field;
+    paraview->RegisterDomainPointEvaluator(
+        name,
+        [eval_ptr, field_ptr](Vector &buffer) { eval_ptr->EvalBuffer(*field_ptr, buffer); },
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize(), true);
+  };
+  auto RegisterBdrEvalField = [&](const std::string &name,
+                                  const std::unique_ptr<PointFieldEvaluator> &eval,
+                                  const auto &field)
+  {
+    const auto *eval_ptr = eval.get();
+    const auto *field_ptr = &field;
+    paraview_bdr->RegisterBoundaryPointEvaluator(
+        name,
+        [eval_ptr, field_ptr](Vector &buffer) { eval_ptr->EvalBuffer(*field_ptr, buffer); },
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+  };
+  auto RegisterBdrPoyntingField = [&](const std::string &name)
+  {
+    const auto *eval_ptr = S_bdr_eval.get();
+    const auto *E_ptr = E.get();
+    const auto *B_ptr = B.get();
+    paraview_bdr->RegisterBoundaryPointEvaluator(
+        name, [eval_ptr, E_ptr, B_ptr](Vector &buffer)
+        { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); }, eval_ptr->BufferBases(),
+        eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+  };
+
   // Output fields @ phase = 0 and π/2 for frequency domain (rather than, for example,
-  // peak phasors or magnitude = sqrt(2) * RMS). Also output fields evaluated on mesh
-  // boundaries. For internal boundary surfaces, this takes the field evaluated in the
-  // neighboring element with the larger dielectric permittivity or magnetic
-  // permeability.
+  // peak phasors or magnitude = sqrt(2) * RMS). Boundary fields use the documented
+  // trace averages or oriented jumps on internal interfaces.
   if (E)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("E_real", &E->Real());
-      paraview->RegisterField("E_imag", &E->Imag());
-      paraview_bdr->RegisterVCoeffField("E_real", E_sr.get());
-      paraview_bdr->RegisterVCoeffField("E_imag", E_si.get());
+      RegisterDomainBaseEvalField("E_real", E_domain_eval, E->Real());
+      RegisterDomainBaseEvalField("E_imag", E_domain_eval, E->Imag());
+      RequireCeedPointFieldEvaluator(E_bdr_eval.get(), "boundary E visualization");
+      RegisterBdrEvalField("E_real", E_bdr_eval, E->Real());
+      RegisterBdrEvalField("E_imag", E_bdr_eval, E->Imag());
     }
     else
     {
-      paraview->RegisterField("E", &E->Real());
-      paraview_bdr->RegisterVCoeffField("E", E_sr.get());
+      RegisterDomainBaseEvalField("E", E_domain_eval, E->Real());
+      RequireCeedPointFieldEvaluator(E_bdr_eval.get(), "boundary E visualization");
+      RegisterBdrEvalField("E", E_bdr_eval, E->Real());
     }
   }
   if (En)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("En_real", &En->Real());
-      paraview->RegisterField("En_imag", &En->Imag());
+      RegisterDomainBaseEvalField("En_real", En_domain_eval, En->Real());
+      RegisterDomainBaseEvalField("En_imag", En_domain_eval, En->Imag());
     }
     else
     {
-      paraview->RegisterField("En", &En->Real());
+      RegisterDomainBaseEvalField("En", En_domain_eval, En->Real());
     }
   }
   if (B)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("B_real", &B->Real());
-      paraview->RegisterField("B_imag", &B->Imag());
-      if (B_sr)
+      RegisterDomainBaseEvalField("B_real", B_domain_eval, B->Real());
+      RegisterDomainBaseEvalField("B_imag", B_domain_eval, B->Imag());
+      if (B_bdr_eval)
       {
-        paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
-      }
-      if (B_si)
-      {
-        paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+        RegisterBdrEvalField("B_real", B_bdr_eval, B->Real());
+        RegisterBdrEvalField("B_imag", B_bdr_eval, B->Imag());
       }
     }
     else
     {
-      paraview->RegisterField("B", &B->Real());
-      if (B_sr)
+      RegisterDomainBaseEvalField("B", B_domain_eval, B->Real());
+      if (B_bdr_eval)
       {
-        paraview_bdr->RegisterVCoeffField("B", B_sr.get());
+        RegisterBdrEvalField("B", B_bdr_eval, B->Real());
       }
     }
   }
   // In-plane B field for mode analysis (2D vector on ND space).
   if (Bt_inplane)
   {
-    paraview->RegisterField("Bt_real", &Bt_inplane->Real());
-    paraview->RegisterField("Bt_imag", &Bt_inplane->Imag());
+    RegisterDomainBaseEvalField("Bt_real", Bt_domain_eval, Bt_inplane->Real());
+    RegisterDomainBaseEvalField("Bt_imag", Bt_domain_eval, Bt_inplane->Imag());
   }
   if (V)
   {
-    paraview->RegisterField("V", &V->Real());
-    paraview_bdr->RegisterCoeffField("V", V_s.get());
+    RegisterDomainBaseEvalField("V", V_domain_eval, V->Real());
+    RequireCeedPointFieldEvaluator(V_bdr_eval.get(), "boundary V visualization");
+    RegisterBdrEvalField("V", V_bdr_eval, V->Real());
   }
   if (A)
   {
-    paraview->RegisterField("A", &A->Real());
-    paraview_bdr->RegisterVCoeffField("A", A_s.get());
+    RegisterDomainBaseEvalField("A", A_domain_eval, A->Real());
+    RequireCeedPointFieldEvaluator(A_bdr_eval.get(), "boundary A visualization");
+    RegisterBdrEvalField("A", A_bdr_eval, A->Real());
   }
 
   // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
   // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
   if (U_e)
   {
-    paraview->RegisterCoeffField("U_e", U_e.get());
-    paraview_bdr->RegisterCoeffField("U_e", U_e.get());
+    RequireCeedPointFieldEvaluator(U_e_eval.get(), "domain electric energy visualization");
+    RegisterDomainEvalField("U_e", U_e_eval, E.get(), nullptr);
+    RequireCeedPointFieldEvaluator(Ue_bdr_eval.get(),
+                                   "boundary electric energy visualization");
+    RegisterBdrEvalField("U_e", Ue_bdr_eval, *E);
   }
   if (U_m)
   {
-    paraview->RegisterCoeffField("U_m", U_m.get());
-    paraview_bdr->RegisterCoeffField("U_m", U_m.get());
+    RequireCeedPointFieldEvaluator(U_m_eval.get(), "domain magnetic energy visualization");
+    RegisterDomainEvalField("U_m", U_m_eval, nullptr, B.get());
+    RequireCeedPointFieldEvaluator(Um_bdr_eval.get(),
+                                   "boundary magnetic energy visualization");
+    RegisterBdrEvalField("U_m", Um_bdr_eval, *B);
   }
   if (S)
   {
-    paraview->RegisterVCoeffField("S", S.get());
-    paraview_bdr->RegisterVCoeffField("S", S.get());
+    RequireCeedPointFieldEvaluator(S_eval.get(), "domain Poynting visualization");
+    RegisterDomainEvalField("S", S_eval, E.get(), B.get());
+    RequireCeedPointFieldEvaluator(S_bdr_eval.get(), "boundary Poynting visualization");
+    RegisterBdrPoyntingField("S");
   }
 
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
   // currents from tangentially discontinuous RT B-field The surface charge and surface
   // currents are single-valued at internal boundaries.
-  if (Q_sr)
+  if (Q_bdr_eval)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview_bdr->RegisterCoeffField("Q_s_real", Q_sr.get());
-      paraview_bdr->RegisterCoeffField("Q_s_imag", Q_si.get());
+      RegisterBdrEvalField("Q_s_real", Q_bdr_eval, E->Real());
+      RegisterBdrEvalField("Q_s_imag", Q_bdr_eval, E->Imag());
     }
     else
     {
-      paraview_bdr->RegisterCoeffField("Q_s", Q_sr.get());
+      RegisterBdrEvalField("Q_s", Q_bdr_eval, E->Real());
     }
   }
-  if (J_sr)
+  else if (Q_sr)
+  {
+    MFEM_ABORT(
+        "Boundary surface-charge ParaView output requires a libCEED point evaluator!");
+  }
+  if (J_bdr_eval)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview_bdr->RegisterVCoeffField("J_s_real", J_sr.get());
-      paraview_bdr->RegisterVCoeffField("J_s_imag", J_si.get());
+      RegisterBdrEvalField("J_s_real", J_bdr_eval, B->Real());
+      RegisterBdrEvalField("J_s_imag", J_bdr_eval, B->Imag());
     }
     else
     {
-      paraview_bdr->RegisterVCoeffField("J_s", J_sr.get());
+      RegisterBdrEvalField("J_s", J_bdr_eval, B->Real());
     }
+  }
+  else if (J_sr)
+  {
+    MFEM_ABORT(
+        "Boundary surface-current ParaView output requires a libCEED point evaluator!");
+  }
+
+  if (Sn_eval)
+  {
+    RequireCeedPointFieldEvaluator(Sn_eval.get(), "boundary-mode Sn visualization");
+    RegisterDomainEvalField("Sn", Sn_eval, E.get(), Bt_inplane.get());
   }
 
   // Add wave port boundary mode postprocessing when available.
@@ -642,6 +1017,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
+  EnsureParaviewDataCollection();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -667,12 +1043,9 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
-  // Register Sn on first write (created lazily after Bt_inplane is available).
-  if (Sn && !sn_registered)
-  {
-    paraview->RegisterCoeffField("Sn", Sn.get());
-    sn_registered = true;
-  }
+  // libCEED-evaluated derived domain fields are registered as lazy point evaluators;
+  // Save() evaluates them now, after dimensionalization, without materializing
+  // GridFunctions.
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
@@ -682,8 +1055,10 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
+  StartCudaProfilerParaviewRange();
   paraview->Save();
   paraview_bdr->Save();
+  StopCudaProfilerParaviewRange();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
@@ -706,6 +1081,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indicator)
 {
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
+  EnsureParaviewDataCollection();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -741,30 +1117,28 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   {
     paraview->DeregisterVCoeffField(name);
   }
-  mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-  mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-  std::unique_ptr<mfem::GridFunction> rank, eta;
-  {
-    rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-    *rank = mesh.GetMyRank() + 1;
-    paraview->RegisterField("Rank", rank.get());
-  }
+  Vector rank(mesh.GetNE());
+  rank = mesh.GetMyRank() + 1;
+  paraview->RegisterDomainCellField("Rank", rank);
   if (indicator)
   {
-    eta = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-    MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
+    MFEM_VERIFY(mesh.GetNE() == indicator->Local().Size(),
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
-    *eta = indicator->Local();
-    paraview->RegisterField("Indicator", eta.get());
+    paraview->RegisterDomainCellField("Indicator", indicator->Local());
   }
+  for (const char *name :
+       {"E", "E_real", "E_imag", "B", "B_real", "B_imag", "En", "En_real", "En_imag",
+        "Bt_real", "Bt_imag", "V", "A", "U_e", "U_m", "S", "Sn"})
+  {
+    paraview->DeregisterDomainPointField(name);
+  }
+  StartCudaProfilerParaviewRange();
   paraview->Save();
-  if (rank)
+  StopCudaProfilerParaviewRange();
+  paraview->DeregisterDomainCellField("Rank");
+  if (indicator)
   {
-    paraview->DeregisterField("Rank");
-  }
-  if (eta)
-  {
-    paraview->DeregisterField("Indicator");
+    paraview->DeregisterDomainCellField("Indicator");
   }
   for (const auto &[name, gf] : field_map)
   {
@@ -786,6 +1160,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+  EnsureFieldCoefficientsSetup();
 
   // Create output directory if it doesn't exist (node-local filesystem aware).
   EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
@@ -903,29 +1278,54 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   if (U_e)
   {
-    gridfunc_scalar = 0.0;
-    gridfunc_scalar.ProjectCoefficient(*U_e.get());
-    write_grid_function(gridfunc_scalar, "U_e");
+    if (U_e_eval)
+    {
+      // Device-evaluated (libCEED) energy density into the interpolatory L2 output
+      // space, reusing the ParaView evaluator instead of a host coefficient projection.
+      U_e_eval->Eval(E.get(), nullptr, *U_e_gf);
+      write_grid_function(*U_e_gf, "U_e");
+    }
+    else
+    {
+      gridfunc_scalar = 0.0;
+      gridfunc_scalar.ProjectCoefficient(*U_e.get());
+      write_grid_function(gridfunc_scalar, "U_e");
+    }
   }
 
   if (U_m)
   {
-    gridfunc_scalar = 0.0;
-    gridfunc_scalar.ProjectCoefficient(*U_m.get());
-    write_grid_function(gridfunc_scalar, "U_m");
+    if (U_m_eval)
+    {
+      U_m_eval->Eval(nullptr, B.get(), *U_m_gf);
+      write_grid_function(*U_m_gf, "U_m");
+    }
+    else
+    {
+      gridfunc_scalar = 0.0;
+      gridfunc_scalar.ProjectCoefficient(*U_m.get());
+      write_grid_function(gridfunc_scalar, "U_m");
+    }
   }
 
   if (S)
   {
-    gridfunc_vector = 0.0;
-    gridfunc_vector.ProjectCoefficient(*S.get());
-    write_grid_function(gridfunc_vector, "S");
+    if (S_eval)
+    {
+      S_eval->Eval(E.get(), B.get(), *S_gf);
+      write_grid_function(*S_gf, "S");
+    }
+    else
+    {
+      gridfunc_vector = 0.0;
+      gridfunc_vector.ProjectCoefficient(*S.get());
+      write_grid_function(gridfunc_vector, "S");
+    }
   }
-  if (Sn)
+  if (Sn_eval)
   {
-    gridfunc_scalar = 0.0;
-    gridfunc_scalar.ProjectCoefficient(*Sn.get());
-    write_grid_function(gridfunc_scalar, "Sn");
+    Sn_eval->Eval(E.get(), Bt_inplane.get(), *Sn_gf);
+    write_grid_function(*Sn_gf, "Sn");
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
@@ -950,6 +1350,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+  EnsureFieldCoefficientsSetup();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -1093,11 +1494,13 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
                 solver_t == ProblemType::TRANSIENT)
   {
+    const auto port_powers = fem_op->GetLumpedPortOp().GetPowers(*E, *B);
+    const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
-      vi.V = data.GetVoltage(*E);
+      vi.P = port_powers.at(idx);
+      vi.V = port_voltages.at(idx);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
@@ -1123,7 +1526,9 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
                 : 0.0;
         vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
                                std::complex<double>{0.0, 0.0});
-        vi.S = data.GetSParameter(*E);
+        // S-parameter mode coefficient uses the same real reference resistance as the
+        // excitation source, including the unit reference for purely reactive ports.
+        vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
 
         // Add contribution due to all inductive lumped boundaries in the model:
         //                      E_ind = ∑_j 1/2 L_j I_mj².
@@ -1220,10 +1625,13 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
-      vi.V = data.GetVoltage(*E);
-      vi.Z_PV = data.GetCharacteristicImpedance();
+      if (data.HasVoltageCoords())
+      {
+        vi.P = data.GetPower(*E, *B);
+        vi.V = data.GetVoltage(*E);
+        vi.Z_PV = data.GetCharacteristicImpedance();
+      }
     }
   }
 }
@@ -1434,8 +1842,7 @@ void PostOperator<solver_t>::MeasureFarField() const
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq.real(),
-        measurement_cache.freq.imag());
+        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
   }
 }
 
@@ -1813,14 +2220,6 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Bt_inplane->Imag().ExchangeFaceNbrData();
   }
 
-  // Create Sn coefficient for boundary mode Poynting visualization.
-  // Sn = Re{Ex Hy* - Ey Hx*}: z-directed power density on the cross-section.
-  if (Bt_inplane && !Sn)
-  {
-    Sn = std::make_unique<ModeSnCoefficient>(E->Real(), E->Imag(), Bt_inplane->Real(),
-                                             Bt_inplane->Imag(), fem_op->GetMaterialOp());
-  }
-
   measurement_cache = {};
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
@@ -1830,11 +2229,60 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   measurement_cache.mode_data.kn = kn;
   measurement_cache.mode_data.n_eff = n_eff;
 
-  // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
-  auto ComputeVoltage = [this](const std::vector<mfem::Vector> &path, bool has_coords,
-                               mfem::Array<int> marker, int quad_order,
-                               const GridFunction &field) -> std::complex<double>
+  struct LineIntegralKey
   {
+    bool has_coords = false;
+    int quad_order = 0;
+    std::vector<double> path_data;
+    std::vector<int> marker_data;
+
+    bool operator<(const LineIntegralKey &other) const
+    {
+      return std::tie(has_coords, quad_order, path_data, marker_data) <
+             std::tie(other.has_coords, other.quad_order, other.path_data,
+                      other.marker_data);
+    }
+  };
+  auto MakeLineIntegralKey = [](const std::vector<mfem::Vector> &path, bool has_coords,
+                                const mfem::Array<int> &marker, int quad_order)
+  {
+    LineIntegralKey key;
+    key.has_coords = has_coords;
+    key.quad_order = quad_order;
+    if (has_coords)
+    {
+      for (const auto &pt : path)
+      {
+        for (int d = 0; d < pt.Size(); d++)
+        {
+          key.path_data.push_back(pt(d));
+        }
+      }
+    }
+    else
+    {
+      key.marker_data.reserve(marker.Size());
+      for (int i = 0; i < marker.Size(); i++)
+      {
+        key.marker_data.push_back(marker[i]);
+      }
+    }
+    return key;
+  };
+  std::map<LineIntegralKey, std::complex<double>> voltage_cache, current_cache;
+
+  // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
+  auto ComputeVoltage = [this, &MakeLineIntegralKey, &voltage_cache](
+                            const std::vector<mfem::Vector> &path, bool has_coords,
+                            mfem::Array<int> marker, int quad_order,
+                            const GridFunction &field) -> std::complex<double>
+  {
+    auto key = MakeLineIntegralKey(path, has_coords, marker, quad_order);
+    if (auto it = voltage_cache.find(key); it != voltage_cache.end())
+    {
+      return it->second;
+    }
+
     std::complex<double> V(0.0, 0.0);
     if (has_coords)
     {
@@ -1863,14 +2311,22 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       V.real(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fr));
       V.imag(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fi));
     }
+    voltage_cache.emplace(std::move(key), V);
     return V;
   };
 
   // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
-  auto ComputeCurrent = [this](const std::vector<mfem::Vector> &path, bool has_path,
-                               mfem::Array<int> marker, int quad_order,
-                               const GridFunction &field) -> std::complex<double>
+  auto ComputeCurrent = [this, &MakeLineIntegralKey, &current_cache](
+                            const std::vector<mfem::Vector> &path, bool has_path,
+                            mfem::Array<int> marker, int quad_order,
+                            const GridFunction &field) -> std::complex<double>
   {
+    auto key = MakeLineIntegralKey(path, has_path, marker, quad_order);
+    if (auto it = current_cache.find(key); it != current_cache.end())
+    {
+      return it->second;
+    }
+
     std::complex<double> I(0.0, 0.0);
     if (has_path)
     {
@@ -1899,8 +2355,57 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       I.real(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fr));
       I.imag(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fi));
     }
+    current_cache.emplace(std::move(key), I);
     return I;
   };
+
+  auto SameMarker = [](const mfem::Array<int> &a, const mfem::Array<int> &b)
+  {
+    if (a.Size() != b.Size())
+    {
+      return false;
+    }
+    for (int i = 0; i < a.Size(); i++)
+    {
+      if (a[i] != b[i])
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto SamePath = [](const std::vector<mfem::Vector> &a, const std::vector<mfem::Vector> &b)
+  {
+    if (a.size() != b.size())
+    {
+      return false;
+    }
+    for (std::size_t i = 0; i < a.size(); i++)
+    {
+      if (a[i].Size() != b[i].Size())
+      {
+        return false;
+      }
+      for (int d = 0; d < a[i].Size(); d++)
+      {
+        if (a[i](d) != b[i](d))
+        {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  auto SameVoltageConfig =
+      [&](const ImpedancePostproConfig &imp, const VoltagePostproConfig &vol)
+  {
+    return imp.n_samples == vol.n_samples &&
+           imp.has_voltage_coordinates == vol.has_coordinates &&
+           (imp.has_voltage_coordinates
+                ? SamePath(imp.voltage_path, vol.voltage_path)
+                : SameMarker(imp.voltage_marker, vol.voltage_marker));
+  };
+  std::set<int> filled_voltage_postpro;
 
   // Compute impedance for each configured entry. P is the Poynting power of the
   // power-normalized mode (|P| ≈ 1), computed by the caller on the mode eigensolver.
@@ -1909,6 +2414,12 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
                             cfg.voltage_marker, cfg.n_samples, *E);
     auto &result = measurement_cache.mode_data.impedance[idx];
+    if (auto vol_it = voltage_postpro.find(idx);
+        vol_it != voltage_postpro.end() && SameVoltageConfig(cfg, vol_it->second))
+    {
+      measurement_cache.mode_data.voltage[idx] = {V};
+      filled_voltage_postpro.insert(idx);
+    }
 
     // Power-voltage impedance: Z_PV = |V|^2 / (2P).
     if (std::abs(P) > 1e-30)
@@ -1919,18 +2430,25 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     }
 
     // V/I impedance: Z_VI = |V| / |I|.
-    auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
-                            cfg.n_samples, *Bt_inplane);
-    if (std::abs(I) > 1e-30)
+    if (cfg.has_current)
     {
-      result.Z_VI = std::abs(V) / std::abs(I);
-      result.has_vi_impedance = true;
+      auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
+                              cfg.n_samples, *Bt_inplane);
+      if (std::abs(I) > 1e-30)
+      {
+        result.Z_VI = std::abs(V) / std::abs(I);
+        result.has_vi_impedance = true;
+      }
     }
   }
 
   // Compute voltage for each configured voltage-only entry.
   for (const auto &[idx, cfg] : voltage_postpro)
   {
+    if (filled_voltage_postpro.count(idx))
+    {
+      continue;
+    }
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_coordinates, cfg.voltage_marker,
                             cfg.n_samples, *E);
     measurement_cache.mode_data.voltage[idx] = {V};
