@@ -36,6 +36,11 @@ if(NOT cuda_qualified_flags MATCHES "code=compute_90")
   message(FATAL_ERROR "Missing virtual compute_90 code: ${cuda_qualified_flags}")
 endif()
 
+palace_cuda_sm_targets(cuda_targets "80-real;90-virtual;90")
+if(NOT cuda_targets STREQUAL "sm_80 sm_90")
+  message(FATAL_ERROR "Unexpected CUDA targets: ${cuda_targets}")
+endif()
+
 palace_parse_cuda_architecture("90-virtual" cuda_arch cuda_kind)
 if(NOT cuda_arch STREQUAL "90" OR NOT cuda_kind STREQUAL "virtual")
   message(FATAL_ERROR "Unexpected parsed CUDA architecture: ${cuda_arch} ${cuda_kind}")
