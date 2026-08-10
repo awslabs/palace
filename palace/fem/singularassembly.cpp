@@ -6,16 +6,23 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <numeric>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <vector>
+#include <unistd.h>
 #include <fmt/format.h>
 
 #include "fem/coefficient.hpp"
@@ -1808,6 +1815,50 @@ public:
   double GenerationTime() const { return generation_time; }
 };
 
+template <typename T>
+void AppendReferenceCacheKey(std::vector<std::uint8_t> &key, const T &value)
+{
+  static_assert(std::is_trivially_copyable_v<T>);
+  const auto *data = reinterpret_cast<const std::uint8_t *>(&value);
+  key.insert(key.end(), data, data + sizeof(T));
+}
+
+void UpdateReferenceCacheHash(std::uint64_t &hash, const void *data, std::size_t size)
+{
+  const auto *bytes = static_cast<const std::uint8_t *>(data);
+  for (std::size_t i = 0; i < size; i++)
+  {
+    hash ^= bytes[i];
+    hash *= 1099511628211ULL;
+  }
+}
+
+std::uint64_t HashReferenceCacheKey(const std::vector<std::uint8_t> &key)
+{
+  std::uint64_t hash = 1469598103934665603ULL;
+  UpdateReferenceCacheHash(hash, key.data(), key.size());
+  return hash;
+}
+
+template <typename T>
+bool ReadReferenceCacheValue(std::istream &stream, T &value)
+{
+  static_assert(std::is_trivially_copyable_v<T>);
+  stream.read(reinterpret_cast<char *>(&value), sizeof(T));
+  return static_cast<bool>(stream);
+}
+
+template <typename T>
+void WriteReferenceCacheValue(std::ostream &stream, const T &value)
+{
+  static_assert(std::is_trivially_copyable_v<T>);
+  stream.write(reinterpret_cast<const char *>(&value), sizeof(T));
+  if (!stream)
+  {
+    throw std::runtime_error("Failed to write a singular reference cache value!");
+  }
+}
+
 struct AffineCommonNDMassBlocks
 {
   mfem::DenseMatrix standard_enrichment;
@@ -1863,6 +1914,10 @@ private:
   AdaptiveAssemblyOptions options;
   std::map<Key, Entry, KeyLess> entries;
   std::size_t hits = 0;
+  std::size_t pattern_hits = 0;
+  std::size_t persistent_hits = 0;
+  std::size_t persistent_writes = 0;
+  std::size_t generated_leaf_count = 0;
   double generation_time = 0.0;
 
   static std::size_t EnrichmentPairIndex(int row, int column, int size)
@@ -1888,9 +1943,12 @@ private:
     {
       hits += cached->second.standard_enrichment.size() +
               cached->second.enrichment_enrichment.size();
+      pattern_hits++;
       return cached->second;
     }
 
+    const auto persistent_key = BuildPersistentKey(finite_element, element_dofs);
+    const auto persistent_path = GetPersistentPath(persistent_key);
     const auto generation_start = std::chrono::steady_clock::now();
     Entry entry;
     entry.standard_size = finite_element.GetDof();
@@ -1907,6 +1965,18 @@ private:
     {
       throw std::overflow_error(
           "Common affine ND mass quadrature has invalid matrix dimensions!");
+    }
+    const bool persistent_file_existed =
+        !persistent_path.empty() && std::filesystem::is_regular_file(persistent_path);
+    if (LoadPersistentEntry(persistent_path, persistent_key, standard_enrichment_size,
+                            enrichment_enrichment_size, entry))
+    {
+      return entries.emplace(std::move(key), std::move(entry)).first->second;
+    }
+    if (persistent_file_existed)
+    {
+      std::error_code error;
+      std::filesystem::remove(persistent_path, error);
     }
 
     const int quadrature_order =
@@ -2008,12 +2078,259 @@ private:
     }
     entry.leaf_count = integral.leaf_count;
     entry.maximum_subdivision_depth = integral.maximum_subdivision_depth;
+    if (generated_leaf_count >
+        std::numeric_limits<std::size_t>::max() - integral.leaf_count)
+    {
+      throw std::overflow_error("Common affine ND mass generated leaf count overflow!");
+    }
+    generated_leaf_count += integral.leaf_count;
+    if (SavePersistentEntry(persistent_path, persistent_key, entry))
+    {
+      persistent_writes++;
+    }
     hits += number_tensors - 1;
     const auto &result = entries.emplace(std::move(key), std::move(entry)).first->second;
     generation_time +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start)
             .count();
     return result;
+  }
+
+  std::vector<std::uint8_t>
+  BuildPersistentKey(const mfem::FiniteElement &finite_element,
+                     const std::vector<ElementDof> &element_dofs) const
+  {
+    std::vector<std::uint8_t> key;
+    constexpr std::uint32_t format_version = 2;
+    AppendReferenceCacheKey(key, format_version);
+    AppendReferenceCacheKey(key, static_cast<std::uint32_t>(MFEM_VERSION));
+    AppendReferenceCacheKey(
+        key, static_cast<std::uint32_t>(ReferenceIntegral::ConventionVersion));
+    AppendReferenceCacheKey(key, static_cast<std::int32_t>(finite_element.GetGeomType()));
+    AppendReferenceCacheKey(key, static_cast<std::int32_t>(finite_element.GetDim()));
+    AppendReferenceCacheKey(key, static_cast<std::int32_t>(finite_element.GetOrder()));
+    AppendReferenceCacheKey(key, static_cast<std::int32_t>(finite_element.GetDof()));
+    AppendReferenceCacheKey(key, static_cast<std::int32_t>(options.quadrature_order));
+    AppendReferenceCacheKey(key, static_cast<std::int32_t>(options.subdivisions));
+    AppendReferenceCacheKey(key, static_cast<std::uint64_t>(element_dofs.size()));
+    for (const auto &element_dof : element_dofs)
+    {
+      const auto &basis = element_dof.basis;
+      AppendReferenceCacheKey(key, static_cast<std::int32_t>(basis.family));
+      for (int node : basis.nodes)
+      {
+        AppendReferenceCacheKey(key, static_cast<std::int32_t>(node));
+      }
+      for (int index : basis.interpolation_indices)
+      {
+        AppendReferenceCacheKey(key, static_cast<std::int32_t>(index));
+      }
+      AppendReferenceCacheKey(key, static_cast<std::int32_t>(basis.order));
+      std::uint64_t exponent;
+      static_assert(sizeof(exponent) == sizeof(basis.nu));
+      std::memcpy(&exponent, &basis.nu, sizeof(exponent));
+      AppendReferenceCacheKey(key, exponent);
+    }
+    return key;
+  }
+
+  std::uint64_t ComputePersistentChecksum(const std::vector<std::uint8_t> &key,
+                                          const Entry &entry) const
+  {
+    std::uint64_t checksum = 1469598103934665603ULL;
+    UpdateReferenceCacheHash(checksum, key.data(), key.size());
+    const std::uint64_t standard_size = entry.standard_enrichment.size();
+    const std::uint64_t enrichment_size = entry.enrichment_enrichment.size();
+    const std::uint64_t leaf_count = entry.leaf_count;
+    const std::int32_t maximum_depth = entry.maximum_subdivision_depth;
+    UpdateReferenceCacheHash(checksum, &standard_size, sizeof(standard_size));
+    UpdateReferenceCacheHash(checksum, &enrichment_size, sizeof(enrichment_size));
+    UpdateReferenceCacheHash(checksum, &leaf_count, sizeof(leaf_count));
+    UpdateReferenceCacheHash(checksum, &maximum_depth, sizeof(maximum_depth));
+    for (const auto &tensor : entry.standard_enrichment)
+    {
+      UpdateReferenceCacheHash(checksum, &tensor.value, sizeof(tensor.value));
+    }
+    for (const auto &tensor : entry.enrichment_enrichment)
+    {
+      UpdateReferenceCacheHash(checksum, &tensor.value, sizeof(tensor.value));
+    }
+    return checksum;
+  }
+
+  std::filesystem::path GetPersistentPath(const std::vector<std::uint8_t> &key) const
+  {
+    if (!options.fixed_subdivision || options.reference_cache.empty())
+    {
+      return {};
+    }
+    std::ostringstream name;
+    name << "affine-h1-mass-v2-" << std::hex << std::setw(16) << std::setfill('0')
+         << HashReferenceCacheKey(key) << ".bin";
+    return std::filesystem::path(options.reference_cache) / name.str();
+  }
+
+  bool LoadPersistentEntry(const std::filesystem::path &path,
+                           const std::vector<std::uint8_t> &key,
+                           std::size_t standard_enrichment_size,
+                           std::size_t enrichment_enrichment_size, Entry &entry)
+  {
+    if (path.empty() || !std::filesystem::is_regular_file(path))
+    {
+      return false;
+    }
+    std::ifstream stream(path, std::ios::binary);
+    constexpr std::uint64_t magic = 0x50414c4852454631ULL;
+    constexpr std::uint32_t format_version = 2;
+    std::uint64_t file_magic, checksum, key_size, standard_size, enrichment_size,
+        leaf_count;
+    std::uint32_t file_version;
+    std::int32_t maximum_depth;
+    if (!ReadReferenceCacheValue(stream, file_magic) ||
+        !ReadReferenceCacheValue(stream, file_version) ||
+        !ReadReferenceCacheValue(stream, checksum) ||
+        !ReadReferenceCacheValue(stream, key_size) || file_magic != magic ||
+        file_version != format_version || key_size != key.size() ||
+        !ReadReferenceCacheValue(stream, standard_size) ||
+        !ReadReferenceCacheValue(stream, enrichment_size) ||
+        !ReadReferenceCacheValue(stream, leaf_count) ||
+        !ReadReferenceCacheValue(stream, maximum_depth) ||
+        standard_size != standard_enrichment_size ||
+        enrichment_size != enrichment_enrichment_size ||
+        leaf_count > std::numeric_limits<std::size_t>::max() || maximum_depth < 0)
+    {
+      return false;
+    }
+    std::vector<std::uint8_t> file_key(key.size());
+    stream.read(reinterpret_cast<char *>(file_key.data()),
+                static_cast<std::streamsize>(file_key.size()));
+    if (!stream || file_key != key)
+    {
+      return false;
+    }
+
+    entry.standard_enrichment.resize(standard_enrichment_size);
+    entry.enrichment_enrichment.resize(enrichment_enrichment_size);
+    const auto read_tensors = [&](std::vector<AdaptiveCoefficientTensor> &tensors)
+    {
+      for (auto &tensor : tensors)
+      {
+        if (!ReadReferenceCacheValue(stream, tensor.value))
+        {
+          return false;
+        }
+        for (const auto &row : tensor.value)
+        {
+          if (!std::all_of(row.begin(), row.end(),
+                           [](double value) { return std::isfinite(value); }))
+          {
+            return false;
+          }
+        }
+        tensor.total_leaf_count = static_cast<std::size_t>(leaf_count);
+        tensor.maximum_subdivision_depth = maximum_depth;
+      }
+      return true;
+    };
+    if (!read_tensors(entry.standard_enrichment) ||
+        !read_tensors(entry.enrichment_enrichment))
+    {
+      return false;
+    }
+    entry.leaf_count = static_cast<std::size_t>(leaf_count);
+    entry.maximum_subdivision_depth = maximum_depth;
+    if (ComputePersistentChecksum(key, entry) != checksum ||
+        stream.peek() != std::char_traits<char>::eof())
+    {
+      return false;
+    }
+    persistent_hits++;
+    return true;
+  }
+
+  bool SavePersistentEntry(const std::filesystem::path &path,
+                           const std::vector<std::uint8_t> &key, const Entry &entry) const
+  {
+    if (path.empty())
+    {
+      return false;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error)
+    {
+      throw std::runtime_error(
+          fmt::format("Failed to create singular reference cache directory '{}': {}",
+                      path.parent_path().string(), error.message()));
+    }
+    if (std::filesystem::is_regular_file(path))
+    {
+      return false;
+    }
+    std::string temporary_template = path.string() + ".tmp.XXXXXX";
+    std::vector<char> temporary_name(temporary_template.begin(), temporary_template.end());
+    temporary_name.push_back('\0');
+    const int temporary_descriptor = mkstemp(temporary_name.data());
+    if (temporary_descriptor < 0)
+    {
+      throw std::runtime_error(
+          fmt::format("Failed to create a temporary singular reference cache file in "
+                      "'{}'!",
+                      path.parent_path().string()));
+    }
+    close(temporary_descriptor);
+    const std::filesystem::path temporary(temporary_name.data());
+    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+    if (!stream)
+    {
+      std::filesystem::remove(temporary);
+      throw std::runtime_error(
+          fmt::format("Failed to open singular reference cache file '{}' for writing!",
+                      temporary.string()));
+    }
+    constexpr std::uint64_t magic = 0x50414c4852454631ULL;
+    constexpr std::uint32_t format_version = 2;
+    WriteReferenceCacheValue(stream, magic);
+    WriteReferenceCacheValue(stream, format_version);
+    WriteReferenceCacheValue(stream, ComputePersistentChecksum(key, entry));
+    WriteReferenceCacheValue(stream, static_cast<std::uint64_t>(key.size()));
+    WriteReferenceCacheValue(stream,
+                             static_cast<std::uint64_t>(entry.standard_enrichment.size()));
+    WriteReferenceCacheValue(
+        stream, static_cast<std::uint64_t>(entry.enrichment_enrichment.size()));
+    WriteReferenceCacheValue(stream, static_cast<std::uint64_t>(entry.leaf_count));
+    WriteReferenceCacheValue(stream,
+                             static_cast<std::int32_t>(entry.maximum_subdivision_depth));
+    stream.write(reinterpret_cast<const char *>(key.data()),
+                 static_cast<std::streamsize>(key.size()));
+    for (const auto &tensor : entry.standard_enrichment)
+    {
+      WriteReferenceCacheValue(stream, tensor.value);
+    }
+    for (const auto &tensor : entry.enrichment_enrichment)
+    {
+      WriteReferenceCacheValue(stream, tensor.value);
+    }
+    stream.close();
+    if (!stream)
+    {
+      std::filesystem::remove(temporary);
+      throw std::runtime_error(fmt::format(
+          "Failed to finalize singular reference cache file '{}'!", temporary.string()));
+    }
+    std::filesystem::create_hard_link(temporary, path, error);
+    std::filesystem::remove(temporary);
+    if (error)
+    {
+      if (error == std::errc::file_exists && std::filesystem::is_regular_file(path))
+      {
+        return false;
+      }
+      throw std::runtime_error(
+          fmt::format("Failed to install singular reference cache file '{}': {}",
+                      path.string(), error.message()));
+    }
+    return true;
   }
 
 public:
@@ -2095,6 +2412,11 @@ public:
     return size;
   }
   std::size_t Hits() const { return hits; }
+  std::size_t PatternCount() const { return entries.size(); }
+  std::size_t PatternHits() const { return pattern_hits; }
+  std::size_t PersistentHits() const { return persistent_hits; }
+  std::size_t PersistentWrites() const { return persistent_writes; }
+  std::size_t GeneratedLeafCount() const { return generated_leaf_count; }
   double GenerationTime() const { return generation_time; }
 };
 
@@ -4327,7 +4649,9 @@ namespace
 ElementH1EnrichmentMatrices AssembleElementH1EnrichmentMatricesImpl(
     const ElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
     mfem::ElementTransformation &transformation, const AdaptiveAssemblyOptions &options,
-    DuffyH1ReferenceTable *duffy_table)
+    DuffyH1ReferenceTable *duffy_table,
+    AffineCommonNDMassReferenceTable *affine_reference_table,
+    const mfem::FiniteElement *nd_fe)
 {
   if (h1_fe.GetDim() != 3 || h1_fe.GetGeomType() != mfem::Geometry::TETRAHEDRON ||
       h1_fe.GetRangeType() != mfem::FiniteElement::SCALAR ||
@@ -4359,6 +4683,68 @@ ElementH1EnrichmentMatrices AssembleElementH1EnrichmentMatricesImpl(
   result.enrichment_standard.SetSize(enrichment_size, standard_size);
   result.standard_enrichment_estimated_absolute_error.SetSize(standard_size,
                                                               enrichment_size);
+
+  if (affine_geometry && affine_reference_table && nd_fe)
+  {
+    const auto common = affine_reference_table->Get(
+        *nd_fe, element_dofs.h1, center_grad_lambda, center_jacobian_determinant);
+    const int standard_nd_size = nd_fe->GetDof();
+    if (common.standard_enrichment.Height() != standard_nd_size ||
+        common.standard_enrichment.Width() != enrichment_size ||
+        common.enrichment_enrichment.Height() != enrichment_size ||
+        common.enrichment_enrichment.Width() != enrichment_size ||
+        common.standard_enrichment_estimated_absolute_error.Height() != standard_nd_size ||
+        common.standard_enrichment_estimated_absolute_error.Width() != enrichment_size ||
+        common.enrichment_enrichment_estimated_absolute_error.Height() != enrichment_size ||
+        common.enrichment_enrichment_estimated_absolute_error.Width() != enrichment_size)
+    {
+      throw std::runtime_error(
+          "Cached affine singular H1 reference blocks have inconsistent dimensions!");
+    }
+
+    result.enrichment_enrichment = common.enrichment_enrichment;
+    result.enrichment_enrichment_estimated_absolute_error =
+        common.enrichment_enrichment_estimated_absolute_error;
+    mfem::DenseMatrix discrete_gradient(standard_nd_size, standard_size);
+    nd_fe->ProjectGrad(h1_fe, transformation, discrete_gradient);
+    for (int standard = 0; standard < standard_size; standard++)
+    {
+      for (int enrichment = 0; enrichment < enrichment_size; enrichment++)
+      {
+        long double value = 0.0L;
+        long double error = 0.0L;
+        for (int standard_nd = 0; standard_nd < standard_nd_size; standard_nd++)
+        {
+          const double coefficient = discrete_gradient(standard_nd, standard);
+          if (!std::isfinite(coefficient))
+          {
+            throw std::runtime_error(
+                "Cached affine singular H1 discrete gradient contains a nonfinite "
+                "entry!");
+          }
+          value += static_cast<long double>(coefficient) *
+                   common.standard_enrichment(standard_nd, enrichment);
+          error +=
+              std::abs(static_cast<long double>(coefficient)) *
+              common.standard_enrichment_estimated_absolute_error(standard_nd, enrichment);
+        }
+        const double entry = static_cast<double>(value);
+        const double entry_error = static_cast<double>(error);
+        if (!std::isfinite(entry) || !std::isfinite(entry_error) || entry_error < 0.0)
+        {
+          throw std::runtime_error(
+              "Cached affine singular H1 contraction produced an invalid entry!");
+        }
+        result.standard_enrichment(standard, enrichment) = entry;
+        result.enrichment_standard(enrichment, standard) = entry;
+        result.standard_enrichment_estimated_absolute_error(standard, enrichment) =
+            entry_error;
+      }
+    }
+    result.total_quadrature_leaf_count = common.leaf_count;
+    result.maximum_subdivision_depth = common.maximum_subdivision_depth;
+    return result;
+  }
 
   for (int row = 0; row < enrichment_size; row++)
   {
@@ -4491,7 +4877,8 @@ ElementH1EnrichmentMatrices AssembleElementH1EnrichmentMatrices(
   DuffyH1ReferenceTable duffy_table;
   return AssembleElementH1EnrichmentMatricesImpl(
       element_dofs, h1_fe, transformation, options,
-      (!options.fixed_subdivision && h1_fe.GetOrder() == 1) ? &duffy_table : nullptr);
+      (!options.fixed_subdivision && h1_fe.GetOrder() == 1) ? &duffy_table : nullptr,
+      nullptr, nullptr);
 }
 
 void ApplyStandardDofTransformations(const mfem::DofTransformation &h1_dof_transformation,
@@ -7252,6 +7639,14 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
   LocalSparseH1EnrichmentMatrices result;
   InitializeLocalSparseBlock(result.diffusion, h1_fespace.GetVSize(), enrichment_size);
   DuffyH1ReferenceTable duffy_table;
+  std::unique_ptr<mfem::ND_FECollection> nd_collection;
+  std::unique_ptr<AffineCommonNDMassReferenceTable> affine_reference_table;
+  if (options.fixed_subdivision)
+  {
+    nd_collection = std::make_unique<mfem::ND_FECollection>(h1_fespace.GetMaxElementOrder(),
+                                                            mesh->Dimension());
+    affine_reference_table = std::make_unique<AffineCommonNDMassReferenceTable>(options);
+  }
 
   for (int element = 0; element < mesh->GetNE(); element++)
   {
@@ -7268,9 +7663,17 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
     try
     {
       const auto &h1_fe = *h1_fespace.GetFE(element);
+      const auto *nd_fe = nd_collection
+                              ? nd_collection->FiniteElementForGeometry(h1_fe.GetGeomType())
+                              : nullptr;
+      if (nd_fe && nd_fe->GetOrder() != h1_fe.GetOrder())
+      {
+        nd_fe = nullptr;
+      }
       matrices = AssembleElementH1EnrichmentMatricesImpl(
           element_dofs, h1_fe, transformation, options,
-          (!options.fixed_subdivision && h1_fe.GetOrder() == 1) ? &duffy_table : nullptr);
+          (!options.fixed_subdivision && h1_fe.GetOrder() == 1) ? &duffy_table : nullptr,
+          affine_reference_table.get(), nd_fe);
     }
     catch (const std::exception &error)
     {
@@ -7318,6 +7721,18 @@ LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
   FinalizeLocalSparseBlock(result.diffusion);
   result.duffy_reference_table_entries = duffy_table.Size();
   result.duffy_reference_cache_hits = duffy_table.Hits();
+  if (affine_reference_table)
+  {
+    result.affine_reference_table_entries = affine_reference_table->Size();
+    result.affine_reference_cache_hits = affine_reference_table->Hits();
+    result.affine_reference_pattern_count = affine_reference_table->PatternCount();
+    result.affine_reference_pattern_hits = affine_reference_table->PatternHits();
+    result.affine_reference_persistent_hits = affine_reference_table->PersistentHits();
+    result.affine_reference_persistent_writes = affine_reference_table->PersistentWrites();
+    result.affine_reference_generated_leaf_count =
+        affine_reference_table->GeneratedLeafCount();
+    result.affine_reference_generation_time = affine_reference_table->GenerationTime();
+  }
   return result;
 }
 

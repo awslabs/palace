@@ -54,7 +54,8 @@ LaplaceOperator::LaplaceOperator(
                               solver.singular_elements.rel_tol,
                               solver.singular_elements.max_subdivisions,
                               solver.singular_elements.UsesFixedSubdivision(),
-                              solver.singular_elements.subdivisions}
+                              solver.singular_elements.subdivisions,
+                              solver.singular_elements.reference_cache}
 {
   const bool has_tetrahedral_features = singular_features != nullptr;
   const bool has_triangular_features = triangle_singular_features != nullptr;
@@ -389,6 +390,40 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
           *triangle_singular_dofs, GetH1Space().Get(), materials,
           singular_assembly_options);
     }
+    const auto hypre_max =
+        static_cast<std::size_t>(std::numeric_limits<HYPRE_BigInt>::max());
+    if (local_enrichment.affine_reference_table_entries > hypre_max ||
+        local_enrichment.affine_reference_pattern_count > hypre_max ||
+        local_enrichment.affine_reference_pattern_hits > hypre_max ||
+        local_enrichment.affine_reference_persistent_hits > hypre_max ||
+        local_enrichment.affine_reference_persistent_writes > hypre_max ||
+        local_enrichment.affine_reference_generated_leaf_count > hypre_max)
+    {
+      throw std::overflow_error("Singular H1 affine reference diagnostics overflow!");
+    }
+    std::array<HYPRE_BigInt, 6> affine_reference_diagnostics{
+        static_cast<HYPRE_BigInt>(local_enrichment.affine_reference_table_entries),
+        static_cast<HYPRE_BigInt>(local_enrichment.affine_reference_pattern_count),
+        static_cast<HYPRE_BigInt>(local_enrichment.affine_reference_pattern_hits),
+        static_cast<HYPRE_BigInt>(local_enrichment.affine_reference_persistent_hits),
+        static_cast<HYPRE_BigInt>(local_enrichment.affine_reference_persistent_writes),
+        static_cast<HYPRE_BigInt>(local_enrichment.affine_reference_generated_leaf_count)};
+    double affine_reference_generation_time =
+        local_enrichment.affine_reference_generation_time;
+    Mpi::GlobalSum(static_cast<int>(affine_reference_diagnostics.size()),
+                   affine_reference_diagnostics.data(), GetComm());
+    Mpi::GlobalMax(1, &affine_reference_generation_time, GetComm());
+    if (affine_reference_diagnostics[1] > 0)
+    {
+      Mpi::Print(
+          " Singular H1 affine reference cache: {:d} patterns, {:d} memory hits, {:d} "
+          "persistent hits, {:d} persistent writes, {:d} tensor entries, {:d} generated "
+          "leaves, {:.3e} s maximum generation time\n",
+          affine_reference_diagnostics[1], affine_reference_diagnostics[2],
+          affine_reference_diagnostics[3], affine_reference_diagnostics[4],
+          affine_reference_diagnostics[0], affine_reference_diagnostics[5],
+          affine_reference_generation_time);
+    }
     auto parallel_enrichment = fem::singular::AssembleParallelSparseH1EnrichmentMatrices(
         local_enrichment, *singular_numbering, GetH1Space().Get());
 
@@ -565,8 +600,8 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     }
     else if (singular_diagnostics->quadrature_fixed_subdivision)
     {
-      Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} fixed "
-                 "quadrature leaves (uniform depth = {:d})\n",
+      Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} batched fixed "
+                 "reference leaf-equivalents (uniform depth = {:d})\n",
                  singular_numbering->h1.global_size,
                  singular_diagnostics->quadrature_leaf_count,
                  singular_diagnostics->quadrature_subdivisions);

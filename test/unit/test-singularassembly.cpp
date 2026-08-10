@@ -3,7 +3,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <vector>
 #include <Eigen/Dense>
@@ -4051,6 +4055,120 @@ TEST_CASE("Isotropic materials and affine dilation scale singular element blocks
                      scaled_coupling.nd_curl_curl_estimated_absolute_error,
                      coupling.nd_curl_curl_standard_enrichment,
                      coupling.nd_curl_curl_estimated_absolute_error, 1.0 / length_scale);
+}
+
+TEST_CASE("Fixed affine H1 sparse assembly reuses batched reference blocks",
+          "[singularelements][singularassembly][Serial]")
+{
+  auto mesh = SharedFaceTetrahedronMesh(false);
+  mfem::H1_FECollection h1_collection(2, 3);
+  mfem::ND_FECollection nd_collection(2, 3);
+  mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+
+  fem::singular::DofTopology topology;
+  topology.h1_dofs.resize(1);
+  topology.h1_dofs[0].family = fem::singular::HigherOrderBasisFamily::NODE_GRADIENT;
+  topology.nd_dofs.resize(2);
+  topology.nd_dofs[0] = topology.h1_dofs[0];
+  topology.nd_dofs[1].family = fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL;
+  topology.h1_to_nd = {0};
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    topology.elements.push_back(SharedFaceSingularDofs(*mesh.GetElement(element)));
+  }
+
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> materials{{2.3, 0.8},
+                                                                            {4.1, 1.7}};
+  fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9, true, 2};
+  const auto nonce = std::chrono::high_resolution_clock::now().time_since_epoch().count() ^
+                     static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&mesh));
+  const auto cache = std::filesystem::temp_directory_path() /
+                     ("palace-fixed-affine-h1-reference-test-" + std::to_string(nonce));
+  struct CacheCleanup
+  {
+    std::filesystem::path path;
+    ~CacheCleanup()
+    {
+      std::error_code error;
+      std::filesystem::remove_all(path, error);
+    }
+  } cleanup{cache};
+  options.reference_cache = cache.string();
+  const auto h1 = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+      topology, h1_space, materials, options);
+
+  mfem::DenseMatrix direct_enrichment(1), direct_coupling(h1_space.GetVSize(), 1);
+  direct_enrichment = 0.0;
+  direct_coupling = 0.0;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const auto direct = fem::singular::AssembleElementH1EnrichmentMatrices(
+        topology.elements[element], *h1_space.GetFE(element),
+        *mesh.GetElementTransformation(element), options);
+    direct_enrichment(0, 0) +=
+        materials[element].electric * direct.enrichment_enrichment(0, 0);
+    mfem::Array<int> standard_dofs;
+    h1_space.GetElementDofs(element, standard_dofs);
+    for (int standard = 0; standard < standard_dofs.Size(); standard++)
+    {
+      REQUIRE(standard_dofs[standard] >= 0);
+      direct_coupling(standard_dofs[standard], 0) +=
+          materials[element].electric * direct.standard_enrichment(standard, 0);
+    }
+  }
+  CheckClose(DenseMatrix(*h1.diffusion.enrichment_enrichment), direct_enrichment);
+  CheckClose(DenseMatrix(*h1.diffusion.standard_enrichment), direct_coupling);
+
+  std::filesystem::path corrupted;
+  for (const auto &entry : std::filesystem::directory_iterator(cache))
+  {
+    if (entry.is_regular_file())
+    {
+      corrupted = entry.path();
+      break;
+    }
+  }
+  REQUIRE_FALSE(corrupted.empty());
+  std::fstream corrupted_stream(corrupted, std::ios::binary | std::ios::in | std::ios::out);
+  REQUIRE(corrupted_stream);
+  corrupted_stream.seekg(-1, std::ios::end);
+  char corrupted_byte;
+  corrupted_stream.read(&corrupted_byte, 1);
+  REQUIRE(corrupted_stream);
+  corrupted_byte ^= 1;
+  corrupted_stream.seekp(-1, std::ios::end);
+  corrupted_stream.write(&corrupted_byte, 1);
+  corrupted_stream.close();
+
+  const auto repaired = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+      topology, h1_space, materials, options);
+  const auto warm = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+      topology, h1_space, materials, options);
+  const auto full = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+      topology, h1_space, nd_space, materials, options);
+
+  CheckClose(h1.diffusion, repaired.diffusion);
+  CheckClose(h1.diffusion, warm.diffusion);
+  CheckClose(h1.diffusion, full.h1_diffusion);
+  CHECK(h1.maximum_subdivision_depth == options.subdivisions);
+  CHECK(h1.affine_reference_table_entries > 0);
+  CHECK(h1.affine_reference_pattern_count > 0);
+  CHECK(h1.affine_reference_persistent_writes > 0);
+  CHECK(h1.affine_reference_generated_leaf_count == h1.affine_reference_pattern_count * 64);
+  CHECK(h1.total_quadrature_leaf_count >= h1.affine_reference_generated_leaf_count);
+  CHECK(repaired.affine_reference_persistent_hits <
+        repaired.affine_reference_pattern_count);
+  CHECK(repaired.affine_reference_persistent_writes > 0);
+  CHECK(repaired.affine_reference_generated_leaf_count > 0);
+  CHECK(warm.affine_reference_pattern_count == h1.affine_reference_pattern_count);
+  CHECK(warm.affine_reference_persistent_hits == warm.affine_reference_pattern_count);
+  CHECK(warm.affine_reference_persistent_writes == 0);
+  CHECK(warm.affine_reference_generated_leaf_count == 0);
+  CheckSparseNonnegative(*h1.diffusion.enrichment_enrichment_estimated_absolute_error);
+  CheckSparseNonnegative(*h1.diffusion.standard_enrichment_estimated_absolute_error);
+  CheckExactSparseTranspose(*h1.diffusion.standard_enrichment,
+                            *h1.diffusion.enrichment_standard);
 }
 
 TEST_CASE("Local sparse singular assembly preserves element bilinear forms",

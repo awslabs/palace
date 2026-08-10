@@ -46,5 +46,19 @@ uniformly after `Subdivisions` recursive one-to-eight refinements; order 8 and s
 subdivisions reproduce the strategy described by Elkin et al. Fixed subdivision is 3D-only
 and ignores adaptive tolerances.
 
+For affine tetrahedra, fixed-subdivision electrostatic H1 assembly evaluates complete
+standard-enrichment and enrichment-enrichment reference tensor blocks in one batched
+quadrature traversal and caches them by the exact element-local singular basis pattern.
+Every subsequent element with that pattern only contracts the cached tensor with its
+Jacobian metric. Runtime diagnostics report memory and persistent hits, generated patterns,
+tensor entries, and actual generated reference leaves.
+
+Set `Solver.SingularElements.ReferenceCache` to a shared directory to persist these tensors
+between Palace launches and AMR operator rebuilds. Cache keys include the MFEM and reference
+convention versions, finite-element order, complete basis descriptors and exponent bit
+patterns, and fixed quadrature order/depth. Files are validated before use and installed by
+an atomic no-replace hard link. A cold depth-six generation remains expensive, but a warm depth-six cache
+performs no recursive reference quadrature and has the same contraction cost as depth two.
+
 `TransmissionWedge` remains the default finite-metal model and preserves the existing
 material-dependent exponent, loss-tangent validation, and strict junction behavior.

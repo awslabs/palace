@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-7-0",
+  "$id": "urn:palace:schema:1-8-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2882,6 +2882,12 @@
           "minimum": 0,
           "maximum": 8,
           "default": 6,
+          "x-palace-advanced": true
+        },
+        "ReferenceCache": {
+          "type": "string",
+          "description": "Optional directory for persistent affine singular reference tensors. A warm cache avoids recursive reference quadrature on later Palace launches; missing entries are generated and written atomically.",
+          "default": "",
           "x-palace-advanced": true
         },
         "AbsTol": {

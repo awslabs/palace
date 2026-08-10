@@ -28,6 +28,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     default. Added `QuadratureStrategy = "FixedSubdivision"` with configurable uniform
     one-to-eight subdivision depth, allowing the paper's order-eight/six-subdivision rule
     to be selected instead of tolerance-driven adaptive integration. SchemaVer 1-7-0.
+  - Accelerated fixed-subdivision electrostatic singular assembly on affine tetrahedra by
+    batching complete reference tensor blocks and caching repeated element-local basis
+    patterns. Runtime diagnostics now distinguish memory and persistent cache hits and
+    report actual reference-table leaf generation. Added the optional
+    `Solver.SingularElements.ReferenceCache` directory for reusing validated reference
+    tensors between launches and AMR rebuilds. SchemaVer 1-8-0.
   - Added an experimental `config["Solver"]["SingularElements"]` interface for additive
     singular-element enrichment of selected internal zero-thickness PEC sheets in
     electrostatic simulations. SchemaVer 1-4-0.

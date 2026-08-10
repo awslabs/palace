@@ -939,6 +939,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                        {"QuadratureStrategy", "FixedSubdivision"},
                        {"QuadratureOrder", 10},
                        {"Subdivisions", 6},
+                       {"ReferenceCache", "reference-cache"},
                        {"AbsTol", 1.0e-8},
                        {"RelTol", 2.0e-8},
                        {"MaxSubdivisions", 11},
@@ -954,6 +955,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(singular.quadrature_strategy == SingularQuadratureStrategy::FIXED_SUBDIVISION);
     CHECK(singular.quadrature_order == 10);
     CHECK(singular.subdivisions == 6);
+    CHECK(singular.reference_cache == "reference-cache");
     CHECK(singular.abs_tol == 1.0e-8);
     CHECK(singular.rel_tol == 2.0e-8);
     CHECK(singular.max_subdivisions == 11);
@@ -971,6 +973,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_singular["QuadratureStrategy"].get<std::string>() == "FixedSubdivision");
     CHECK(j_singular["QuadratureOrder"].get<int>() == 10);
     CHECK(j_singular["Subdivisions"].get<int>() == 6);
+    CHECK(j_singular["ReferenceCache"].get<std::string>() == "reference-cache");
     CHECK(j_singular["AbsTol"].get<double>() == 1.0e-8);
     CHECK(j_singular["RelTol"].get<double>() == 2.0e-8);
     CHECK(j_singular["MaxSubdivisions"].get<int>() == 11);

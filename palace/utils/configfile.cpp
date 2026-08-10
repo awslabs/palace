@@ -1433,6 +1433,7 @@ SingularElementsData::SingularElementsData(const json &singular_elements)
   quadrature_strategy = singular_elements.value("QuadratureStrategy", quadrature_strategy);
   quadrature_order = singular_elements.value("QuadratureOrder", quadrature_order);
   subdivisions = singular_elements.value("Subdivisions", subdivisions);
+  reference_cache = singular_elements.value("ReferenceCache", reference_cache);
   abs_tol = singular_elements.value("AbsTol", abs_tol);
   rel_tol = singular_elements.value("RelTol", rel_tol);
   max_subdivisions = singular_elements.value("MaxSubdivisions", max_subdivisions);

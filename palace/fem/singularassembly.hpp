@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 
@@ -40,6 +41,7 @@ struct AdaptiveAssemblyOptions
   int maximum_subdivisions;
   bool fixed_subdivision = false;
   int subdivisions = 6;
+  std::string reference_cache;
 };
 
 // Real, piecewise-constant isotropic operator coefficients for one element.
@@ -195,6 +197,14 @@ struct LocalSparseH1EnrichmentMatrices
   int maximum_subdivision_depth = 0;
   std::size_t duffy_reference_table_entries = 0;
   std::size_t duffy_reference_cache_hits = 0;
+  std::size_t affine_reference_table_entries = 0;
+  std::size_t affine_reference_cache_hits = 0;
+  std::size_t affine_reference_pattern_count = 0;
+  std::size_t affine_reference_pattern_hits = 0;
+  std::size_t affine_reference_persistent_hits = 0;
+  std::size_t affine_reference_persistent_writes = 0;
+  std::size_t affine_reference_generated_leaf_count = 0;
+  double affine_reference_generation_time = 0.0;
 };
 
 struct ParallelSparseOperatorBlocks

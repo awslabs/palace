@@ -1182,6 +1182,10 @@ public:
   int quadrature_order = 8;
   int subdivisions = 6;
 
+  // Optional directory for persistent affine reference tensors. An empty value disables
+  // on-disk caching while retaining the in-memory cache for one operator construction.
+  std::string reference_cache;
+
   // Entrywise adaptive quadrature controls. Ignored by FixedSubdivision.
   double abs_tol = 2.0e-6;
   double rel_tol = 2.0e-6;
