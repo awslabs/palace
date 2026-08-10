@@ -55,3 +55,16 @@ function(palace_cuda_gencode_flags output architectures)
   string(STRIP "${flags}" flags)
   set(${output} "${flags}" PARENT_SCOPE)
 endfunction()
+
+# Convert CMake architectures to Make-style targets for dependencies that
+# control their own PTX generation.
+function(palace_cuda_sm_targets output architectures)
+  set(targets)
+  foreach(arch IN LISTS architectures)
+    palace_parse_cuda_architecture("${arch}" arch_number arch_kind)
+    list(APPEND targets "sm_${arch_number}")
+  endforeach()
+  list(REMOVE_DUPLICATES targets)
+  list(JOIN targets " " targets)
+  set(${output} "${targets}" PARENT_SCOPE)
+endfunction()
