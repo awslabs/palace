@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -717,6 +718,59 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
   {
     CHECK(!ValidateConfig(json{{"MaxIts", 0}}, "Linear").empty());
     CHECK(ValidateConfig(json{{"MaxIts", 1}}, "Linear").empty());
+  }
+
+  SECTION("Material permittivity forms and tagged terms")
+  {
+    auto ValidateMaterial = [](const json &permittivity)
+    {
+      json config;
+      config["Problem"] = {{"Type", "Driven"}};
+      config["Model"] = {{"Mesh", "test.msh"}};
+      config["Domains"]["Materials"] = {
+          {{"Attributes", {1}}, {"Permittivity", permittivity}}};
+      config["Boundaries"] = json::object();
+      config["Solver"]["Driven"]["Samples"] = {
+          {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
+      return ValidateConfig(config);
+    };
+
+    const std::vector<json> valid_terms = {
+        {{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
+        {{"Type", "Debye"}, {"DeltaPermittivity", -1.5}, {"RelaxationTime", 0.02}},
+        {{"Type", "Lorentz"},
+         {"DeltaPermittivity", 0.8},
+         {"ResonanceFrequency", 6.0},
+         {"DampingFrequency", 0.2}},
+        {{"Type", "PoleResidue"},
+         {"Pole", {-2.0e12, 5.0e12}},
+         {"Residue", {1.2e12, -0.4e12}}},
+        {{"Type", "DjordjevicSarkar"},
+         {"Strength", 0.0575258},
+         {"LowerFrequency", 9.07157e-5},
+         {"UpperFrequency", 159.154956}}};
+    for (const auto &term : valid_terms)
+    {
+      CHECK(ValidateMaterial({{"HighFrequency", 2.08}, {"Terms", {term}}}).empty());
+    }
+    CHECK(ValidateMaterial(2.08).empty());
+    CHECK(ValidateMaterial({2.0, 3.0, 4.0}).empty());
+
+    auto CheckInvalid = [&ValidateMaterial](const json &permittivity)
+    { CHECK_FALSE(ValidateMaterial(permittivity).empty()); };
+    CheckInvalid({{"HighFrequency", 2.0}, {"Terms", json::array()}});
+    CheckInvalid({{"HighFrequency", 2.0},
+                  {"Terms",
+                   {{{"Type", "Drude"},
+                     {"PlasmaFrequency", 1.0},
+                     {"CollisionFrequency", 0.1},
+                     {"Unknown", 1}}}}});
+    CheckInvalid({{"HighFrequency", 2.0}, {"Terms", {{{"Type", "Unknown"}}}}});
+    CheckInvalid(
+        {{"HighFrequency", 2.0},
+         {"Terms", {{{"Type", "PoleResidue"}, {"Pole", {-1.0}}, {"Residue", 2.0}}}}});
+    CheckInvalid({{"HighFrequency", 2.0},
+                  {"Terms", {{{"Type", "Debye"}, {"RelaxationTime", 0.02}}}}});
   }
 
   SECTION("Excitation integer minimum - LumpedPort")

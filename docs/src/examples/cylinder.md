@@ -168,6 +168,28 @@ for the ``\text{TE}_{011}`` mode is shown below.
 </p>
 ```
 
+### Dispersive cavity material
+
+The compact
+[`cavity_drude.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_drude.json)
+variant uses the hexahedral mesh with a damped Drude permittivity,
+
+```math
+\varepsilon_r(s) = \varepsilon_\infty +
+    \frac{\omega_p^2}{s(s+\gamma)}, \qquad s=i\omega.
+```
+
+Here ``\varepsilon_\infty=2.08``, ``\omega_p=2\pi\times 1\text{ GHz}``, and
+``\gamma=2\pi\times 0.1\text{ GHz}``. The
+[`Permittivity`](../config/reference.md#config-domains-materials-permittivity) object uses a
+`Drude` term whose `PlasmaFrequency` and `CollisionFrequency` are entered directly in GHz.
+
+For a cavity mode with geometric angular frequency ``\Omega_0``, the expected root
+satisfies ``(\Omega_0^2+\varepsilon_\infty s^2)(s+\gamma)+\omega_p^2s=0``. For the
+lowest mode this predicts ``f=2.9852+0.0026947i\text{ GHz}``; the computed result is
+``2.9866+0.0026921i\text{ GHz}``. Domain energy postprocessing is omitted because it uses
+``\varepsilon_\infty`` rather than the frequency-dependent permittivity for this model.
+
 ### Mesh convergence
 
 The effect of mesh size can be investigated for the cylindrical cavity resonator using

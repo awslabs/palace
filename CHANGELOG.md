@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added scalar frequency-dependent material `Permittivity` objects with additive Drude,
+    Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Existing scalar and
+    three-component `Permittivity` inputs remain supported. SchemaVer 1-6-0.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

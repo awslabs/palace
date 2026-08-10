@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -608,6 +608,197 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "ComplexNumber": {
+      "description": "A real number or complex number represented by `[real, imag]`.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "additionalItems": false
+        }
+      ]
+    },
+    "PermittivityModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "HighFrequency",
+        "Terms"
+      ],
+      "properties": {
+        "HighFrequency": {
+          "type": "number",
+          "description": "Scalar high-frequency relative permittivity ε∞."
+        },
+        "Terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PermittivityDrude"
+              },
+              {
+                "$ref": "#/$defs/PermittivityDebye"
+              },
+              {
+                "$ref": "#/$defs/PermittivityLorentz"
+              },
+              {
+                "$ref": "#/$defs/PermittivityPoleResidue"
+              },
+              {
+                "$ref": "#/$defs/PermittivityDjordjevicSarkar"
+              }
+            ]
+          },
+          "description": "Nonempty array of additive scalar permittivity terms."
+        }
+      }
+    },
+    "PermittivityDrude": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "PlasmaFrequency",
+        "CollisionFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Drude"
+        },
+        "PlasmaFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Plasma frequency in GHz."
+        },
+        "CollisionFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Collision frequency in GHz."
+        }
+      }
+    },
+    "PermittivityDebye": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "DeltaPermittivity",
+        "RelaxationTime"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Debye"
+        },
+        "DeltaPermittivity": {
+          "type": "number",
+          "not": {
+            "const": 0.0
+          },
+          "description": "Signed, nonzero relative-permittivity increment."
+        },
+        "RelaxationTime": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relaxation time in ns."
+        }
+      }
+    },
+    "PermittivityLorentz": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "DeltaPermittivity",
+        "ResonanceFrequency",
+        "DampingFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Lorentz"
+        },
+        "DeltaPermittivity": {
+          "type": "number",
+          "not": {
+            "const": 0.0
+          },
+          "description": "Signed, nonzero relative-permittivity increment."
+        },
+        "ResonanceFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Resonance frequency in GHz."
+        },
+        "DampingFrequency": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Damping frequency in GHz. The exactly critical case is not supported."
+        }
+      }
+    },
+    "PermittivityPoleResidue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Pole",
+        "Residue"
+      ],
+      "properties": {
+        "Type": {
+          "const": "PoleResidue"
+        },
+        "Pole": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Pole angular rate in rad/s. Real part must be nonpositive; complex poles must be specified in the upper half-plane."
+        },
+        "Residue": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Scalar residue angular rate in rad/s. Real poles require real residues."
+        }
+      }
+    },
+    "PermittivityDjordjevicSarkar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Strength",
+        "LowerFrequency",
+        "UpperFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "DjordjevicSarkar"
+        },
+        "Strength": {
+          "type": "number",
+          "not": {
+            "const": 0.0
+          },
+          "description": "Signed, nonzero dimensionless logarithmic strength."
+        },
+        "LowerFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Lower frequency bound in GHz."
+        },
+        "UpperFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Upper frequency bound in GHz; must exceed LowerFrequency."
+        }
+      }
+    },
     "Material": {
       "type": "object",
       "additionalProperties": false,
@@ -625,8 +816,15 @@
           "default": 1.0
         },
         "Permittivity": {
-          "$ref": "#/$defs/ScalarOrVector3",
-          "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ScalarOrVector3"
+            },
+            {
+              "$ref": "#/$defs/PermittivityModel"
+            }
+          ],
+          "description": "Relative permittivity for this material. A number or 3-vector specifies a frequency-independent value; the object form specifies a scalar high-frequency value and additive frequency-dependent terms.",
           "default": 1.0
         },
         "LossTan": {

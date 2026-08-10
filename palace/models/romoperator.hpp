@@ -185,12 +185,11 @@ protected:
   // Mp_r.imag() to recover the real symmetric M_proj used for SVD-based augmentation.
   std::map<int, std::unique_ptr<ComplexOperator>> Mwp_p;
   std::map<int, Eigen::MatrixXcd> Mwp_p_r;
-  // True iff GetExtraSystemMatrix has any non-wave-port contributors (currently
-  // second-order farfield, surface conductivity, or Floquet Robin terms). Set in the
-  // ctor; controls the slow SolvePROM A2 fallback path. NOTE: the farfield and surface
-  // conductivity contributors are now ALSO folded into the circuit synthesis (see M_ff_,
-  // Asig_g_ below); has_other_A2 still gates the online SolvePROM fallback, which is
-  // independent of synthesis.
+  // Structural volume A2 detection is separate from boundary contributors because any
+  // nonzero material pole must force exact per-frequency projection of the complete A2,
+  // even when factored boundary operators are available or the volume scalar cancels at a
+  // probe frequency. has_other_A2 also includes all non-wave-port boundary contributors.
+  bool has_volume_A2 = false;
   bool has_other_A2 = false;
   // One-time self-check state for the factored online A2_other path (SolvePROM). On the
   // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +

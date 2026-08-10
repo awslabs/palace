@@ -238,6 +238,20 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The automatically emitted domain-E and error-indicator files are retained as structural
+// regression artifacts. They do not validate physical stored energy for a dispersive
+// medium; the regression signal is the nonlinear eigenfrequency and Q output in eig.csv.
+TEST_CASE("cylinder_cavity_drude", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = kEigenExcluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_drude.json", "cavity_drude", opts);
+}
+
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

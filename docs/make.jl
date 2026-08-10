@@ -69,6 +69,8 @@ makedocs(
         prettyurls=true,
         sidebar_sitename=false,
         collapselevel=2,
+        # The generated configuration reference intentionally lives on a single page.
+        size_threshold=300 * 2^10,
         assets=["assets/favicon.ico", "assets/config.css"]
     ),
     sitename="Palace",

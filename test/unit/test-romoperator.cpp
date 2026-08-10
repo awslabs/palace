@@ -9,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/drivensolver.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
 #include "models/materialoperator.hpp"
@@ -64,6 +65,10 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  auto &GetAr() const { return Ar; }
+  bool HasVolumeA2() const { return has_volume_A2; }
+  bool HasOtherA2() const { return has_other_A2; }
+  void ReserveBasis(std::size_t n) { V.reserve(n); }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -139,7 +144,84 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   // TODO: Add more stringent tests of MRI, including estimating poles.
 }
 
-// TODO: Do some more basic RomOperator Ctor Checks
+TEST_CASE("RomOperator retains a structurally nonlinear dispersive volume A2",
+          "[romoperator][Serial]")
+{
+  json config;
+  config["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
+  config["Model"] = {{"Mesh", "test.msh"}};
+  // The full volume A2 cancels at s = i but not s = 2i.
+  const json terms = {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 4.0}},
+                      {{"Type", "PoleResidue"}, {"Pole", -2.0}, {"Residue", -20.0}},
+                      {{"Type", "PoleResidue"}, {"Pole", -3.0}, {"Residue", 20.0}}};
+  config["Domains"]["Materials"] = {
+      {{"Attributes", {1}}, {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", terms}}}}};
+  // A simultaneous factored boundary contributor ensures a numerical first-frequency
+  // self-check cannot stand in for structural volume-A2 detection.
+  config["Boundaries"]["Conductivity"] = {{{"Attributes", {1}}, {"Conductivity", 5.8e7}}};
+  config["Solver"] = {
+      {"Order", 1},
+      {"Driven", {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}}};
+  IoData iodata(config, false);
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  SpaceOperator space_op(iodata.solver, iodata.domains, iodata.boundaries,
+                         iodata.problem.type, iodata.units, mesh);
+
+  // The constructor probes at omega = 1. The volume term vanishes there, while the
+  // conductivity boundary remains nonzero. The structural predicate must still force the
+  // slow full-A2 projection path rather than accepting the factored boundary-only path.
+  RomOperatorTest prom_op(iodata, space_op, 1);
+  CHECK(prom_op.HasVolumeA2());
+  CHECK(prom_op.HasOtherA2());
+  CHECK(space_op.GetSurfaceConductivityOp().Size() == 1);
+  auto A2_cancelled =
+      space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO, false);
+  REQUIRE(A2_cancelled);
+
+  prom_op.ReserveBasis(1);
+  ComplexVector v(space_op.GlobalTrueVSize());
+  v.UseDevice(true);
+  v = 0.0;
+  linalg::SetRandom(Mpi::World(), v.Real());
+  prom_op.UpdatePROM(v, "test");
+  REQUIRE(prom_op.GetReducedDimension() == 1);
+
+  ComplexVector u;
+  prom_op.SolvePROM(1, 1.0, u);  // Exercise the cancelling first-frequency path first.
+  constexpr double omega = 2.0;
+  prom_op.SolvePROM(1, omega, u);
+  auto A2 =
+      space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO, false);
+  REQUIRE(A2);
+  ComplexVector basis(v.Size()), A2v(v.Size());
+  basis.UseDevice(true);
+  A2v.UseDevice(true);
+  basis = 0.0;
+  basis.Real() = prom_op.GetVectors()[0];
+  A2->Mult(basis, A2v);
+  double a2_reduced_real = prom_op.GetVectors()[0] * A2v.Real();
+  double a2_reduced_imag = prom_op.GetVectors()[0] * A2v.Imag();
+  Mpi::GlobalSum(1, &a2_reduced_real, Mpi::World());
+  Mpi::GlobalSum(1, &a2_reduced_imag, Mpi::World());
+  const std::complex<double> a2_reduced{a2_reduced_real, a2_reduced_imag};
+  std::complex<double> recovered =
+      prom_op.GetAr()(0, 0) - prom_op.GetKr()(0, 0) + omega * omega * prom_op.GetMr()(0, 0);
+  if (prom_op.GetCr().size() > 0)
+  {
+    recovered -= std::complex<double>(0.0, omega) * prom_op.GetCr()(0, 0);
+  }
+  CHECK_THAT(std::abs(recovered - a2_reduced),
+             Catch::Matchers::WithinAbsMatcher(0.0, 1e-10));
+}
 
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
 // inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
