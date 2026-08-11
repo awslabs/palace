@@ -708,6 +708,14 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
+{
+  CHECK_NOTHROW(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 2}}));
+  CHECK_NOTHROW(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 3}}));
+  CHECK_THROWS(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", 3}}));
+  CHECK_THROWS(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", -1}}));
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   SECTION("Defaults to Open when unspecified")

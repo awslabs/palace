@@ -834,6 +834,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
                "Cycle000001" / "proc000000.vtu");
   RequireInteriorBoundaryWasWritten(boundary_vtu, pmesh);
   RequirePointFieldUsesAppendedData(boundary_vtu, "E_real");
+  RequirePointFieldUsesAppendedData(boundary_vtu, "J_s_real");
   RequirePointFieldUsesAppendedData(boundary_vtu, "U_m");
   RequirePointFieldUsesAppendedData(domain_vtu, "B_real");
 
@@ -883,6 +884,15 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CheckStats("Q_s_imag boundary 2D",
              CompareScalarField(ReadBoundaryChecked("Q_s_imag", 1), pmesh, lod,
                                 Q_imag_legacy, rtol, atol));
+
+  BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
+  BdrSurfaceCurrentVectorCoefficient J_imag_legacy(B.Imag(), mat_op, invmu_scaling);
+  CheckStats("J_s_real boundary 2D",
+             CompareVectorField(ReadBoundaryChecked("J_s_real", 2), pmesh, lod,
+                                J_real_legacy, rtol, atol));
+  CheckStats("J_s_imag boundary 2D",
+             CompareVectorField(ReadBoundaryChecked("J_s_imag", 2), pmesh, lod,
+                                J_imag_legacy, rtol, atol));
 
   EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op, eps_scaling);
   EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(B, mat_op, invmu_scaling);

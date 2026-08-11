@@ -4,6 +4,7 @@
 #include "facenbrexchange.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -43,6 +44,22 @@ using PointConfigKey = std::vector<long long>;
 // every exchange object in the same order, so per-pair messages match in order (MPI
 // non-overtaking guarantee).
 constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;
+
+void VerifyPointSet(const std::vector<mfem::IntegrationPoint> &reference,
+                    const std::vector<mfem::IntegrationPoint> &pts)
+{
+  MFEM_VERIFY(reference.size() == pts.size(),
+              "Face-neighbor point key reused with a different point count!");
+  for (std::size_t q = 0; q < reference.size(); q++)
+  {
+    const auto &a = reference[q];
+    const auto &b = pts[q];
+    const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),
+                                 std::abs(a.z - b.z), std::abs(a.weight - b.weight)});
+    MFEM_VERIFY(err <= 1.0e-12,
+                "Face-neighbor point key reused for different reference points!");
+  }
+}
 
 void VerifyRegisteredIr(const mfem::IntegrationRule &ir,
                         const std::vector<mfem::IntegrationPoint> &pts)
@@ -293,6 +310,11 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     std::vector<int> elems;
     std::vector<int> bases;  // Export vector base offset per element entry
   };
+  // point_key values originate in the requester's rank-local mesh. Namespace them by
+  // sender and exchange construction so unrelated ranks or rebuilt meshes cannot alias
+  // in this grouping map or the process-lifetime IntegrationRule registry.
+  static std::atomic<long long> next_exchange_id{0};
+  const long long exchange_id = next_exchange_id++;
   std::map<PointConfigKey, ExportGroup> export_map;
   int export_size = 0;
   for (int i = 0; i < num_nbr; i++)
@@ -336,13 +358,15 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
               use_at_points &&
               (geom == mfem::Geometry::TRIANGLE || geom == mfem::Geometry::TETRAHEDRON);
           PointConfigKey key;
-          key.reserve(5 + point_key.size() + (point_key.empty() ? 3 * pts.size() : 0));
+          key.reserve(7 + point_key.size() + (point_key.empty() ? 3 * pts.size() : 0));
           key.push_back(s);
           key.push_back(static_cast<long long>(geom));
           key.push_back(nq);
           key.push_back(static_cast<long long>(at_points_group));
           if (!at_points_group)
           {
+            key.push_back(exchange_id);
+            key.push_back(pmesh.GetFaceNbrRank(i));
             key.push_back(point_key.empty() ? 0 : 1);
             if (point_key.empty())
             {
@@ -370,6 +394,10 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           else if (group.pts.empty())
           {
             group.pts = pts;
+          }
+          else
+          {
+            VerifyPointSet(group.pts, pts);
           }
           group.elems.push_back(elem);
           group.bases.push_back(export_size);

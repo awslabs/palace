@@ -597,22 +597,19 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     }
 
     // Magnetic Field, Boundary Field & Surface Current. In 2D, B is scalar (L2), so the
-    // domain field is scalar while boundary vector B and J_s outputs are not applicable.
+    // domain field is scalar and there is no boundary B vector. The surface current
+    // J_s = n x (H_z ẑ) remains a valid in-plane tangential vector.
     MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
                                  B_domain_eval);
-    if (B->Real().VectorDim() > 1)
+    if (B->Real().VectorDim() > 1 && use_ceed_boundary_fields)
     {
-      if (use_ceed_boundary_fields)
-      {
-        MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
-                              B_bdr_eval);
-      }
-      // J_s = n x H = n x μ⁻¹ B.
-      if (use_ceed_boundary_fields)
-      {
-        MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(),
-                              scaling, J_bdr_eval);
-      }
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
+                            B_bdr_eval);
+    }
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(), scaling,
+                            J_bdr_eval);
     }
   }
 

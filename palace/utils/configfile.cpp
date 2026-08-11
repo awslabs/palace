@@ -1293,6 +1293,9 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   {
     max_size = DefaultEigenSubspaceSize(n);
   }
+  MFEM_VERIFY(n_post >= 0 && n_post <= n,
+              "config[\"Solver\"][\"Eigenmode\"][\"Save\"] must be between 0 and "
+              "config[\"Solver\"][\"Eigenmode\"][\"N\"]!");
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "

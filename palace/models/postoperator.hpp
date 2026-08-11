@@ -240,6 +240,10 @@ public:
   auto InitializeParaviewDataCollection(int ex_idx)
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
+  // Whether this solve requests any field output. Drivers use this to release solver
+  // memory before constructing the field-output evaluators only when necessary.
+  bool WillWriteFields() const { return ShouldWriteFields(); }
+
 protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E

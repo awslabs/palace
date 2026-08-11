@@ -274,7 +274,6 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
-  const bool has_imag = E.HasImag();
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
 

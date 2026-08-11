@@ -54,9 +54,10 @@ public:
     // Integer/topological identity of the point set, independent of physical or
     // floating-point coordinates. SurfaceFunctional fills this with the reference-face
     // topology/orientation/subface key used to generate pts. Requests with the same
-    // point_key, source slot, element geometry, and point count can share one libCEED
-    // point evaluator. Empty keys are allowed for ad-hoc requests and force a unique
-    // evaluator group.
+    // point_key, source slot, element geometry, point count, sender rank, and exchange
+    // construction can share one mapped-rule libCEED point evaluator. AtPoints-capable
+    // groups carry their coordinates at runtime and may share across senders. Empty keys
+    // are allowed for ad-hoc requests and use exact coordinate bits for identity.
     std::vector<long long> point_key;
 
     // Evaluation points in the neighbor element's reference space (the ghost element

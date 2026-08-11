@@ -2506,6 +2506,36 @@ TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel]")
       CHECK(vals2[offset + j] == Catch::Approx(2.0 * vals[offset + j]).margin(1.0e-12));
     }
   }
+
+  // Rebuild an exchange with the same requester-local topological keys but different
+  // points. Non-AtPoints backends must not alias the process-lifetime IntegrationRule
+  // registry entry from the first exchange.
+  auto requests_2 = requests;
+  for (auto &req : requests_2)
+  {
+    req.pts[0].Set3(0.15, 0.10, 0.20);
+    req.pts[1].Set3(0.20, 0.15, 0.30);
+    req.pts[2].Set3(0.10, 0.25, 0.20);
+    req.pts[3].Set3(0.25, 0.10, 0.15);
+  }
+  FaceNbrFieldExchange exchange_2(
+      *mesh, {&nd_fespace.Get(), &rt_fespace.Get(), nullptr, nullptr}, requests_2);
+  exchange_2.Exchange({&E, &B, nullptr, nullptr});
+  E.ExchangeFaceNbrData();
+  const double *vals_2 = exchange_2.Imported().HostRead();
+  for (std::size_t r = 0; r < requests_2.size(); r++)
+  {
+    const int offset = exchange_2.ImportOffset(static_cast<int>(r), 0);
+    for (std::size_t j = 0; j < requests_2[r].pts.size(); j++)
+    {
+      E.GetVectorValue(pmesh.GetNE() + requests_2[r].face_nbr_elem, requests_2[r].pts[j],
+                       ref);
+      for (int c = 0; c < 3; c++)
+      {
+        CHECK(vals_2[offset + 3 * j + c] == Catch::Approx(ref(c)).margin(1.0e-12));
+      }
+    }
+  }
 }
 
 }  // namespace palace

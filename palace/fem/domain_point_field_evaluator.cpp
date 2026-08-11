@@ -105,22 +105,25 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   const mfem::ParMesh &pmesh = mesh.Get();
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
 
-  // Point-major buffer layout matching VTK tuple order and MFEM's domain VTU point
-  // order (element order, then refined/nodal points within each element). The output
-  // restriction scatters each point tuple contiguously so CeedParaViewDataCollection can
-  // write the payload without repacking.
-  buffer_num_comp = target_fespace.GetVDim();
-  buffer_bases.assign(pmesh.GetNE(), -1);
-  int buffer_points = 0;
   const int vtu_lod = target_fespace.GetMaxElementOrder();
-  for (int e = 0; e < pmesh.GetNE(); e++)
+  if (build_buffer)
   {
-    const auto *RefG =
-        mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(e), vtu_lod, 1);
-    buffer_bases[e] = buffer_points;
-    buffer_points += RefG->RefPts.GetNPoints();
+    // Point-major buffer layout matching VTK tuple order and MFEM's domain VTU point
+    // order (element order, then refined/nodal points within each element). The output
+    // restriction scatters each point tuple contiguously so CeedParaViewDataCollection can
+    // write the payload without repacking.
+    buffer_num_comp = target_fespace.GetVDim();
+    buffer_bases.assign(pmesh.GetNE(), -1);
+    int buffer_points = 0;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      const auto *RefG =
+          mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(e), vtu_lod, 1);
+      buffer_bases[e] = buffer_points;
+      buffer_points += RefG->RefPts.GetNPoints();
+    }
+    buffer_size = buffer_points * buffer_num_comp;
   }
-  buffer_size = buffer_points * buffer_num_comp;
 
   // Group the elements by geometry type.
   std::map<mfem::Geometry::Type, std::vector<int>> geom_elems;
@@ -162,100 +165,6 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     const mfem::Geometry::Type geom = geom_indices.first;
     const auto &indices = geom_indices.second;
     CeedAssemblyScratch scratch(ceed);
-
-    // Evaluation points are the nodal points of the (interpolatory) target space.
-    const mfem::FiniteElement *target_fe =
-        target_fespace.FEColl()->FiniteElementForGeometry(geom);
-    MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
-    const mfem::IntegrationRule &nodes_ir = target_fe->GetNodes();
-    const int num_pts = nodes_ir.GetNPoints();
-
-    // Element attributes (libCEED local, for material lookup) and mesh node gradients
-    // (for on the fly geometry evaluation at the points).
-    std::vector<ceed::CeedFunctionalFieldInput> inputs;
-    std::vector<std::pair<std::string, int>> field_sources;
-    if (!field_value_kind && build_gridfunction)
-    {
-      auto &elem_attr = elem_attrs.emplace_back(indices.size());
-      const auto &loc_attr = mesh.GetCeedAttributes();
-      for (std::size_t k = 0; k < indices.size(); k++)
-      {
-        elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
-      }
-      CeedElemRestriction attr_restr;
-      CeedBasis attr_basis;
-      CeedVector attr_vec;
-      PalaceCeedCall(
-          ceed, CeedElemRestrictionCreateStrided(ceed, indices.size(), 1, 1, indices.size(),
-                                                 CEED_STRIDES_BACKEND, &attr_restr));
-      {
-        // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-        Bt = 1.0;
-        Gt = 0.0;
-        qX = 0.0;
-        qW = 0.0;
-        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                               qW.GetData(), &attr_basis));
-      }
-      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-      inputs.push_back({"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
-      scratch.vecs.push_back(attr_vec);
-      scratch.restrs.push_back(attr_restr);
-      scratch.bases.push_back(attr_basis);
-    }
-    {
-      CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
-          mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
-      const mfem::FiniteElement *mesh_fe =
-          mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
-      CeedBasis mesh_basis;
-      ceed::InitBasisAtPoints(*mesh_fe, nodes_ir, mesh_fespace.GetVDim(), ceed,
-                              &mesh_basis);
-      CeedVector mesh_nodes_vec;
-      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-      inputs.push_back({"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-      scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(mesh_restr);
-      scratch.bases.push_back(mesh_basis);
-    }
-
-    // Field inputs evaluated at the nodal points.
-    auto AddFieldInput =
-        [&](const std::string &name, int source, const mfem::ParFiniteElementSpace &fespace)
-    {
-      CeedElemRestriction restr;
-      CeedBasis basis;
-      CeedVector vec;
-      ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
-                            &restr);
-      const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
-      ceed::InitBasisAtPoints(*fe, nodes_ir, fespace.GetVDim(), ceed, &basis);
-      ceed::InitCeedVector(field_staging, ceed, &vec);
-      inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
-      field_sources.emplace_back(name, source);
-      scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
-      scratch.bases.push_back(basis);
-    };
-    if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
-        kind == Kind::POYNTING || kind == Kind::MODE_SN)
-    {
-      AddFieldInput("u_1", 0, *nd_fespace);
-    }
-    if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING ||
-        kind == Kind::MODE_SN)
-    {
-      AddFieldInput((kind == Kind::POYNTING || kind == Kind::MODE_SN) ? "u_2" : "u_1", 1,
-                    *rt_fespace);
-    }
-
-    // Output restriction scattering nodal values into the target grid function.
-    CeedElemRestriction out_restr;
-    ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
-                          &out_restr);
-    scratch.restrs.push_back(out_restr);
 
     ceed::CeedQFunctionInfo info;
     switch (kind)
@@ -306,6 +215,102 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
 
     if (build_gridfunction)
     {
+      // Evaluation points are the nodal points of the (interpolatory) target space.
+      const mfem::FiniteElement *target_fe =
+          target_fespace.FEColl()->FiniteElementForGeometry(geom);
+      MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
+      const mfem::IntegrationRule &nodes_ir = target_fe->GetNodes();
+      const int num_pts = nodes_ir.GetNPoints();
+
+      // Element attributes (libCEED local, for material lookup) and mesh node gradients
+      // (for on the fly geometry evaluation at the points).
+      std::vector<ceed::CeedFunctionalFieldInput> inputs;
+      std::vector<std::pair<std::string, int>> field_sources;
+      if (!field_value_kind)
+      {
+        auto &elem_attr = elem_attrs.emplace_back(indices.size());
+        const auto &loc_attr = mesh.GetCeedAttributes();
+        for (std::size_t k = 0; k < indices.size(); k++)
+        {
+          elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+        }
+        CeedElemRestriction attr_restr;
+        CeedBasis attr_basis;
+        CeedVector attr_vec;
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                                 ceed, indices.size(), 1, 1, indices.size(),
+                                 CEED_STRIDES_BACKEND, &attr_restr));
+        {
+          // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+          Bt = 1.0;
+          Gt = 0.0;
+          qX = 0.0;
+          qW = 0.0;
+          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                                 qW.GetData(), &attr_basis));
+        }
+        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        inputs.push_back(
+            {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
+        scratch.vecs.push_back(attr_vec);
+        scratch.restrs.push_back(attr_restr);
+        scratch.bases.push_back(attr_basis);
+      }
+      {
+        CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+            mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+        const mfem::FiniteElement *mesh_fe =
+            mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+        CeedBasis mesh_basis;
+        ceed::InitBasisAtPoints(*mesh_fe, nodes_ir, mesh_fespace.GetVDim(), ceed,
+                                &mesh_basis);
+        CeedVector mesh_nodes_vec;
+        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+        inputs.push_back(
+            {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+        scratch.vecs.push_back(mesh_nodes_vec);
+        scratch.restrs.push_back(mesh_restr);
+        scratch.bases.push_back(mesh_basis);
+      }
+
+      // Field inputs evaluated at the nodal points.
+      auto AddFieldInput = [&](const std::string &name, int source,
+                               const mfem::ParFiniteElementSpace &fespace)
+      {
+        CeedElemRestriction restr;
+        CeedBasis basis;
+        CeedVector vec;
+        ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
+                              &restr);
+        const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
+        ceed::InitBasisAtPoints(*fe, nodes_ir, fespace.GetVDim(), ceed, &basis);
+        ceed::InitCeedVector(field_staging, ceed, &vec);
+        inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
+        field_sources.emplace_back(name, source);
+        scratch.vecs.push_back(vec);
+        scratch.restrs.push_back(restr);
+        scratch.bases.push_back(basis);
+      };
+      if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
+          kind == Kind::POYNTING || kind == Kind::MODE_SN)
+      {
+        AddFieldInput("u_1", 0, *nd_fespace);
+      }
+      if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING ||
+          kind == Kind::MODE_SN)
+      {
+        AddFieldInput((kind == Kind::POYNTING || kind == Kind::MODE_SN) ? "u_2" : "u_1", 1,
+                      *rt_fespace);
+      }
+
+      // Output restriction scattering nodal values into the target grid function.
+      CeedElemRestriction out_restr;
+      ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
+                            &out_restr);
+      scratch.restrs.push_back(out_restr);
+
       CeedOperator op;
       ceed::AssembleCeedPointEvaluator(info, ctx.empty() ? nullptr : ctx.data(),
                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
@@ -316,107 +321,109 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       fem::CacheGroupOperatorFieldVectors(groups.back());
     }
 
-    // Assemble a second operator for the direct VTU point-buffer path. This evaluates at
-    // MFEM's refined VTU points (not necessarily the same order as the target L2 nodes)
-    // and scatters into point-major tuples consumed by CeedParaViewDataCollection.
-    const mfem::IntegrationRule &vtu_ir =
-        mfem::GlobGeometryRefiner.Refine(geom, vtu_lod, 1)->RefPts;
-    const int num_vtu_pts = vtu_ir.GetNPoints();
-    std::vector<ceed::CeedFunctionalFieldInput> buffer_inputs;
-    std::vector<std::pair<std::string, int>> buffer_field_sources;
-    if (!field_value_kind && build_buffer)
-    {
-      auto &elem_attr = elem_attrs.emplace_back(indices.size());
-      const auto &loc_attr = mesh.GetCeedAttributes();
-      for (std::size_t k = 0; k < indices.size(); k++)
-      {
-        elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
-      }
-      CeedElemRestriction attr_restr;
-      CeedBasis attr_basis;
-      CeedVector attr_vec;
-      PalaceCeedCall(
-          ceed, CeedElemRestrictionCreateStrided(ceed, indices.size(), 1, 1, indices.size(),
-                                                 CEED_STRIDES_BACKEND, &attr_restr));
-      {
-        mfem::Vector Bt(num_vtu_pts), Gt(num_vtu_pts), qX(num_vtu_pts), qW(num_vtu_pts);
-        Bt = 1.0;
-        Gt = 0.0;
-        qX = 0.0;
-        qW = 0.0;
-        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_vtu_pts,
-                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                               qW.GetData(), &attr_basis));
-      }
-      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-      buffer_inputs.push_back(
-          {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
-      scratch.vecs.push_back(attr_vec);
-      scratch.restrs.push_back(attr_restr);
-      scratch.bases.push_back(attr_basis);
-    }
-    {
-      CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
-          mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
-      const mfem::FiniteElement *mesh_fe =
-          mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
-      CeedBasis mesh_basis;
-      ceed::InitBasisAtPoints(*mesh_fe, vtu_ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
-      CeedVector mesh_nodes_vec;
-      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-      buffer_inputs.push_back(
-          {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-      scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(mesh_restr);
-      scratch.bases.push_back(mesh_basis);
-    }
-    auto AddBufferFieldInput =
-        [&](const std::string &name, int source, const mfem::ParFiniteElementSpace &fespace)
-    {
-      CeedElemRestriction restr;
-      CeedBasis basis;
-      CeedVector vec;
-      ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
-                            &restr);
-      const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
-      ceed::InitBasisAtPoints(*fe, vtu_ir, fespace.GetVDim(), ceed, &basis);
-      ceed::InitCeedVector(field_staging, ceed, &vec);
-      buffer_inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
-      buffer_field_sources.emplace_back(name, source);
-      scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
-      scratch.bases.push_back(basis);
-    };
-    if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
-        kind == Kind::POYNTING || kind == Kind::MODE_SN)
-    {
-      AddBufferFieldInput("u_1", 0, *nd_fespace);
-    }
-    if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING ||
-        kind == Kind::MODE_SN)
-    {
-      AddBufferFieldInput((kind == Kind::POYNTING || kind == Kind::MODE_SN) ? "u_2" : "u_1",
-                          1, *rt_fespace);
-    }
-    CeedElemRestriction buffer_out_restr;
-    {
-      std::vector<CeedInt> offsets(indices.size() * num_vtu_pts);
-      for (std::size_t e = 0; e < indices.size(); e++)
-      {
-        const int point_base = buffer_bases[indices[e]];
-        for (int j = 0; j < num_vtu_pts; j++)
-        {
-          offsets[e * num_vtu_pts + j] = (point_base + j) * buffer_num_comp;
-        }
-      }
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(indices.size()), num_vtu_pts,
-                               buffer_num_comp, 1, (CeedSize)buffer_size, CEED_MEM_HOST,
-                               CEED_COPY_VALUES, offsets.data(), &buffer_out_restr));
-    }
-    scratch.restrs.push_back(buffer_out_restr);
     if (build_buffer)
     {
+      // Assemble a second operator for the direct VTU point-buffer path. This evaluates at
+      // MFEM's refined VTU points (not necessarily the same order as the target L2 nodes)
+      // and scatters into point-major tuples consumed by CeedParaViewDataCollection.
+      const mfem::IntegrationRule &vtu_ir =
+          mfem::GlobGeometryRefiner.Refine(geom, vtu_lod, 1)->RefPts;
+      const int num_vtu_pts = vtu_ir.GetNPoints();
+      std::vector<ceed::CeedFunctionalFieldInput> buffer_inputs;
+      std::vector<std::pair<std::string, int>> buffer_field_sources;
+      if (!field_value_kind)
+      {
+        auto &elem_attr = elem_attrs.emplace_back(indices.size());
+        const auto &loc_attr = mesh.GetCeedAttributes();
+        for (std::size_t k = 0; k < indices.size(); k++)
+        {
+          elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+        }
+        CeedElemRestriction attr_restr;
+        CeedBasis attr_basis;
+        CeedVector attr_vec;
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                                 ceed, indices.size(), 1, 1, indices.size(),
+                                 CEED_STRIDES_BACKEND, &attr_restr));
+        {
+          mfem::Vector Bt(num_vtu_pts), Gt(num_vtu_pts), qX(num_vtu_pts), qW(num_vtu_pts);
+          Bt = 1.0;
+          Gt = 0.0;
+          qX = 0.0;
+          qW = 0.0;
+          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1,
+                                                 num_vtu_pts, Bt.GetData(), Gt.GetData(),
+                                                 qX.GetData(), qW.GetData(), &attr_basis));
+        }
+        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        buffer_inputs.push_back(
+            {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
+        scratch.vecs.push_back(attr_vec);
+        scratch.restrs.push_back(attr_restr);
+        scratch.bases.push_back(attr_basis);
+      }
+      {
+        CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+            mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+        const mfem::FiniteElement *mesh_fe =
+            mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+        CeedBasis mesh_basis;
+        ceed::InitBasisAtPoints(*mesh_fe, vtu_ir, mesh_fespace.GetVDim(), ceed,
+                                &mesh_basis);
+        CeedVector mesh_nodes_vec;
+        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+        buffer_inputs.push_back(
+            {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+        scratch.vecs.push_back(mesh_nodes_vec);
+        scratch.restrs.push_back(mesh_restr);
+        scratch.bases.push_back(mesh_basis);
+      }
+      auto AddBufferFieldInput = [&](const std::string &name, int source,
+                                     const mfem::ParFiniteElementSpace &fespace)
+      {
+        CeedElemRestriction restr;
+        CeedBasis basis;
+        CeedVector vec;
+        ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
+                              &restr);
+        const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
+        ceed::InitBasisAtPoints(*fe, vtu_ir, fespace.GetVDim(), ceed, &basis);
+        ceed::InitCeedVector(field_staging, ceed, &vec);
+        buffer_inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
+        buffer_field_sources.emplace_back(name, source);
+        scratch.vecs.push_back(vec);
+        scratch.restrs.push_back(restr);
+        scratch.bases.push_back(basis);
+      };
+      if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
+          kind == Kind::POYNTING || kind == Kind::MODE_SN)
+      {
+        AddBufferFieldInput("u_1", 0, *nd_fespace);
+      }
+      if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING ||
+          kind == Kind::MODE_SN)
+      {
+        AddBufferFieldInput((kind == Kind::POYNTING || kind == Kind::MODE_SN) ? "u_2"
+                                                                              : "u_1",
+                            1, *rt_fespace);
+      }
+      CeedElemRestriction buffer_out_restr;
+      {
+        std::vector<CeedInt> offsets(indices.size() * num_vtu_pts);
+        for (std::size_t e = 0; e < indices.size(); e++)
+        {
+          const int point_base = buffer_bases[indices[e]];
+          for (int j = 0; j < num_vtu_pts; j++)
+          {
+            offsets[e * num_vtu_pts + j] = (point_base + j) * buffer_num_comp;
+          }
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                                 ceed, static_cast<CeedInt>(indices.size()), num_vtu_pts,
+                                 buffer_num_comp, 1, (CeedSize)buffer_size, CEED_MEM_HOST,
+                                 CEED_COPY_VALUES, offsets.data(), &buffer_out_restr));
+      }
+      scratch.restrs.push_back(buffer_out_restr);
       CeedOperator buffer_op;
       ceed::AssembleCeedPointEvaluator(
           info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar),
