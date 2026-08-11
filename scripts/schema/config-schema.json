@@ -2332,8 +2332,7 @@
         },
         "Save": {
           "type": "integer",
-          "description": "Number of computed field modes to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), at most `N`. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
-          "minimum": 0,
+          "description": "Number of computed field modes to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "default": 0
         },
         "Type": {
