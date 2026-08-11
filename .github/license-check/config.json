@@ -30,19 +30,9 @@
       "**/*.yaml"
     ],
     "exclude": [
-      ".git/**",
-      "spack_repo/local/packages/palace/package.py"
-    ],
-    "license": "./.github/license-check/hash.txt"
-  },
-  {
-    "include": [
-      "spack_repo/local/packages/palace/package.py"
-    ],
-    "exclude": [
       ".git/**"
     ],
-    "license": "./.github/license-check/spack.txt"
+    "license": "./.github/license-check/hash.txt"
   },
   {
     "include": [
