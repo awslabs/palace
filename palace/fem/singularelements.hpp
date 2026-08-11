@@ -418,6 +418,13 @@ double IntegrateReferenceTetrahedron(int order, int subdivisions,
 std::vector<double>
 IntegrateReferenceTetrahedron(int order, int subdivisions, std::size_t number_components,
                               const ReferenceVectorIntegrand &integrand);
+// Fixed-subdivision vector integration for internal kernels which provably fill every
+// component. Validation is amortized once per accumulation block instead of scanning the
+// complete vector at every quadrature point.
+std::vector<double>
+IntegrateReferenceTetrahedronTrusted(int order, int subdivisions,
+                                     std::size_t number_components,
+                                     const ReferenceVectorIntegrand &integrand);
 AdaptiveQuadratureResult
 IntegrateReferenceTetrahedronAdaptive(int order, double absolute_tolerance,
                                       double relative_tolerance, int max_subdivisions,

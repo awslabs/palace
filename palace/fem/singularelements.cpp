@@ -58,6 +58,31 @@ struct CompensatedAccumulator
   double Value() const { return static_cast<double>(sum + correction); }
 };
 
+// The trusted fixed-subdivision tensor kernel intentionally accumulates binary64 point
+// blocks. Keep this type separate from the generic quadrature accumulator so the fast path
+// does not change adaptive, Duffy, or scalar integration precision.
+struct Binary64CompensatedAccumulator
+{
+  double sum = 0.0;
+  double correction = 0.0;
+
+  void Add(double term)
+  {
+    const double updated = sum + term;
+    if (std::abs(sum) >= std::abs(term))
+    {
+      correction += (sum - updated) + term;
+    }
+    else
+    {
+      correction += (term - updated) + sum;
+    }
+    sum = updated;
+  }
+
+  double Value() const { return sum + correction; }
+};
+
 void ValidateIndex(int i)
 {
   if (i < 0 || i >= 4)
@@ -2645,6 +2670,73 @@ std::vector<double> IntegrateReferenceTetrahedron(int order, int subdivisions,
   for (std::size_t component = 0; component < number_components; component++)
   {
     result[component] = accumulators[component].Value();
+  }
+  return result;
+}
+
+std::vector<double>
+IntegrateReferenceTetrahedronTrusted(int order, int subdivisions,
+                                     std::size_t number_components,
+                                     const ReferenceVectorIntegrand &integrand)
+{
+  ValidateQuadratureParameters(order, subdivisions);
+  if (!integrand || number_components == 0)
+  {
+    throw std::invalid_argument(
+        "Trusted singular-element vector integration requires a callable nonempty "
+        "integrand!");
+  }
+  constexpr std::size_t points_per_block = 256;
+  std::vector<Binary64CompensatedAccumulator> accumulators(number_components);
+  std::vector<double> block_sums(number_components, 0.0);
+  std::vector<double> values(number_components);
+  std::size_t points_in_block = 0;
+  const auto flush_block = [&]()
+  {
+    for (std::size_t component = 0; component < number_components; component++)
+    {
+      if (!std::isfinite(block_sums[component]))
+      {
+        throw std::domain_error(
+            "Trusted singular-element vector integrand produced a non-finite block!");
+      }
+      accumulators[component].Add(block_sums[component]);
+      block_sums[component] = 0.0;
+    }
+    points_in_block = 0;
+  };
+  ForEachReferenceTetrahedronQuadraturePoint(
+      order, subdivisions,
+      [&](const BarycentricPoint &lambda, double weight)
+      {
+        integrand(lambda, values);
+        if (values.size() != number_components)
+        {
+          throw std::domain_error(
+              "Trusted singular-element vector integrand changed its output size!");
+        }
+        for (std::size_t component = 0; component < number_components; component++)
+        {
+          block_sums[component] += weight * values[component];
+        }
+        if (++points_in_block == points_per_block)
+        {
+          flush_block();
+        }
+      });
+  if (points_in_block > 0)
+  {
+    flush_block();
+  }
+  std::vector<double> result(number_components);
+  for (std::size_t component = 0; component < number_components; component++)
+  {
+    result[component] = accumulators[component].Value();
+    if (!std::isfinite(result[component]))
+    {
+      throw std::domain_error(
+          "Trusted singular-element vector integration produced a non-finite result!");
+    }
   }
   return result;
 }

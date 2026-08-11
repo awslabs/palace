@@ -313,7 +313,7 @@ AdaptiveQuadratureResult IntegrateConfigured(int order,
 AdaptiveVectorQuadratureResult
 IntegrateConfigured(int order, const AdaptiveAssemblyOptions &options,
                     std::size_t number_components,
-                    const ReferenceVectorIntegrand &integrand)
+                    const ReferenceVectorIntegrand &integrand, bool trusted = false)
 {
   if (!options.fixed_subdivision)
   {
@@ -321,9 +321,11 @@ IntegrateConfigured(int order, const AdaptiveAssemblyOptions &options,
         order, options.absolute_tolerance, options.relative_tolerance,
         options.maximum_subdivisions, number_components, integrand);
   }
-  return {IntegrateReferenceTetrahedron(order, options.subdivisions, number_components,
-                                        integrand),
-          std::vector<double>(number_components),
+  auto value = trusted ? IntegrateReferenceTetrahedronTrusted(order, options.subdivisions,
+                                                              number_components, integrand)
+                       : IntegrateReferenceTetrahedron(order, options.subdivisions,
+                                                       number_components, integrand);
+  return {std::move(value), std::vector<double>(number_components),
           FixedSubdivisionLeafCount(options.subdivisions), options.subdivisions, true};
 }
 
@@ -1977,7 +1979,7 @@ private:
         static_cast<std::size_t>(entry.standard_size) * entry.enrichment_size;
     const std::size_t enrichment_enrichment_size =
         static_cast<std::size_t>(entry.enrichment_size) * (entry.enrichment_size + 1) / 2;
-    constexpr std::size_t tensor_size = 9;
+    constexpr std::size_t tensor_size = 6;
     const std::size_t number_tensors =
         standard_enrichment_size + enrichment_enrichment_size;
     if (number_tensors == 0 ||
@@ -2014,8 +2016,6 @@ private:
     mfem::IntegrationPoint point;
     mfem::DenseMatrix standard_value(entry.standard_size, 3);
     std::vector<Vector3> enrichment_value(static_cast<std::size_t>(entry.enrichment_size));
-    const auto component = [](std::size_t tensor, int u, int v)
-    { return tensor_size * tensor + static_cast<std::size_t>(3 * u + v); };
     const auto integral = IntegrateConfigured(
         quadrature_order, options, tensor_size * number_tensors,
         [&](const BarycentricPoint &lambda, std::vector<double> &value)
@@ -2030,19 +2030,26 @@ private:
                     .value;
           }
 
+          const auto fill_tensor =
+              [&value](std::size_t tensor, const Vector3 &row, const Vector3 &column)
+          {
+            const std::size_t offset = tensor_size * tensor;
+            value[offset] = row[0] * column[0];
+            value[offset + 1] = row[1] * column[1];
+            value[offset + 2] = row[2] * column[2];
+            value[offset + 3] = row[0] * column[1] + row[1] * column[0];
+            value[offset + 4] = row[0] * column[2] + row[2] * column[0];
+            value[offset + 5] = row[1] * column[2] + row[2] * column[1];
+          };
           std::size_t tensor = 0;
           for (int standard = 0; standard < entry.standard_size; standard++)
           {
+            const Vector3 standard_vector{standard_value(standard, 0),
+                                          standard_value(standard, 1),
+                                          standard_value(standard, 2)};
             for (int enrichment = 0; enrichment < entry.enrichment_size; enrichment++)
             {
-              for (int u = 0; u < 3; u++)
-              {
-                for (int v = 0; v < 3; v++)
-                {
-                  value[component(tensor, u, v)] =
-                      standard_value(standard, u) * enrichment_value[enrichment][v];
-                }
-              }
+              fill_tensor(tensor, standard_vector, enrichment_value[enrichment]);
               tensor++;
             }
           }
@@ -2050,14 +2057,7 @@ private:
           {
             for (int column = row; column < entry.enrichment_size; column++)
             {
-              for (int u = 0; u < 3; u++)
-              {
-                for (int v = 0; v < 3; v++)
-                {
-                  value[component(tensor, u, v)] =
-                      enrichment_value[row][u] * enrichment_value[column][v];
-                }
-              }
+              fill_tensor(tensor, enrichment_value[row], enrichment_value[column]);
               tensor++;
             }
           }
@@ -2066,7 +2066,8 @@ private:
             throw std::logic_error(
                 "Common affine ND mass quadrature filled inconsistent dimensions!");
           }
-        });
+        },
+        true);
     if (!integral.converged)
     {
       throw std::runtime_error(fmt::format(
@@ -2085,15 +2086,23 @@ private:
               : entry.enrichment_enrichment[tensor - standard_enrichment_size];
       destination.total_leaf_count = integral.leaf_count;
       destination.maximum_subdivision_depth = integral.maximum_subdivision_depth;
+      const std::size_t offset = tensor_size * tensor;
       for (int u = 0; u < 3; u++)
       {
-        for (int v = 0; v < 3; v++)
-        {
-          const std::size_t index = component(tensor, u, v);
-          destination.value[u][v] = integral.value[index];
-          destination.estimated_absolute_error[u][v] =
-              integral.estimated_absolute_error[index];
-        }
+        destination.value[u][u] = integral.value[offset + u];
+        destination.estimated_absolute_error[u][u] =
+            integral.estimated_absolute_error[offset + u];
+      }
+      constexpr std::array<std::array<int, 2>, 3> off_diagonal{{{0, 1}, {0, 2}, {1, 2}}};
+      for (int pair = 0; pair < 3; pair++)
+      {
+        const int u = off_diagonal[pair][0];
+        const int v = off_diagonal[pair][1];
+        destination.value[u][v] = destination.value[v][u] =
+            0.5 * integral.value[offset + 3 + pair];
+        destination.estimated_absolute_error[u][v] =
+            destination.estimated_absolute_error[v][u] =
+                0.5 * integral.estimated_absolute_error[offset + 3 + pair];
       }
     }
     entry.leaf_count = integral.leaf_count;
@@ -2121,7 +2130,7 @@ private:
                      const std::vector<ElementDof> &element_dofs) const
   {
     std::vector<std::uint8_t> key;
-    constexpr std::uint32_t format_version = 2;
+    constexpr std::uint32_t format_version = 4;
     AppendReferenceCacheKey(key, format_version);
     AppendReferenceCacheKey(key, static_cast<std::uint32_t>(MFEM_VERSION));
     AppendReferenceCacheKey(
@@ -2185,7 +2194,7 @@ private:
       return {};
     }
     std::ostringstream name;
-    name << "affine-h1-mass-v2-" << std::hex << std::setw(16) << std::setfill('0')
+    name << "affine-h1-mass-v4-" << std::hex << std::setw(16) << std::setfill('0')
          << HashReferenceCacheKey(key) << ".bin";
     return std::filesystem::path(options.reference_cache) / name.str();
   }
@@ -2201,7 +2210,7 @@ private:
     }
     std::ifstream stream(path, std::ios::binary);
     constexpr std::uint64_t magic = 0x50414c4852454631ULL;
-    constexpr std::uint32_t format_version = 2;
+    constexpr std::uint32_t format_version = 4;
     std::uint64_t file_magic, checksum, key_size, standard_size, enrichment_size,
         leaf_count;
     std::uint32_t file_version;
@@ -2309,7 +2318,7 @@ private:
                       temporary.string()));
     }
     constexpr std::uint64_t magic = 0x50414c4852454631ULL;
-    constexpr std::uint32_t format_version = 2;
+    constexpr std::uint32_t format_version = 4;
     WriteReferenceCacheValue(stream, magic);
     WriteReferenceCacheValue(stream, format_version);
     WriteReferenceCacheValue(stream, ComputePersistentChecksum(key, entry));
@@ -7689,7 +7698,7 @@ std::uint64_t ReferencePatternCost(const std::vector<std::uint8_t> &key)
   (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Quadrature order.
   (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Subdivision depth.
   const auto enrichment_size = ReadReferenceCacheKey<std::uint64_t>(key, offset);
-  if (format != 2 || mfem_version != static_cast<std::uint32_t>(MFEM_VERSION) ||
+  if (format != 4 || mfem_version != static_cast<std::uint32_t>(MFEM_VERSION) ||
       convention != static_cast<std::uint32_t>(ReferenceIntegral::ConventionVersion) ||
       standard_size <= 0 || enrichment_size == 0 ||
       enrichment_size > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))

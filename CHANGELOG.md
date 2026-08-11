@@ -36,7 +36,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tensors between launches and AMR rebuilds. Cold electrostatic H1 prewarming now
     globally deduplicates persistent patterns, assigns one eligible MPI owner per key with
     deterministic work balancing, and reports minute-scale heartbeat progress without
-    instrumenting quadrature loops. SchemaVer 1-8-0.
+    instrumenting quadrature loops. The fixed affine tensor kernel uses trusted block-level
+    validation and six symmetric metric components rather than nine full components; cache
+    format v4 invalidates older tensor files. SchemaVer 1-8-0.
   - Decoupled fixed-subdivision matrix quadrature from singular electrostatic domain-energy
     postprocessing. Total energy and participation denominators now use the algebraic
     quadratic form, while `PostprocessingSubdivisions` independently controls optional

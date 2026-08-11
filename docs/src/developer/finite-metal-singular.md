@@ -69,8 +69,13 @@ summary and a heartbeat every 60 seconds with elapsed time and visible cache fil
 The heartbeat thread performs no MPI calls or quadrature-loop instrumentation and is enabled
 only when MPI provides at least `MPI_THREAD_FUNNELED`.
 
-A cold depth-six generation remains expensive, but a warm depth-six cache performs no
-recursive reference quadrature and has the same contraction cost as depth two.
+The fixed affine mass-table kernel validates trusted vector integrands once per 256-point
+accumulation block rather than scanning every component at every point. Because affine mass
+geometry is symmetric, it integrates three diagonal and three symmetrized off-diagonal
+coefficient products instead of all nine ordered products. Cache format v4 separates these
+entries from older files. A cold depth-six generation remains expensive, but a warm depth-six
+cache performs no recursive reference quadrature and has the same contraction cost as depth
+two.
 
 `Subdivisions` controls matrix/reference-tensor construction only. Electrostatic total
 energy, including the denominator of every surface participation ratio, is evaluated from
