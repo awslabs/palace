@@ -3,7 +3,12 @@
 
 #include "magnetostaticsolver.hpp"
 
+#include <algorithm>
 #include <limits>
+#include <map>
+#include <numeric>
+#include <set>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -79,9 +84,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
-  // Per-step stiffness matrix for shorted inactive ports; declared here so it outlives the
-  // solver's operator binding for the duration of the step's solve.
-  std::unique_ptr<Operator> K_step;
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
   std::vector<double> Phi_inc(n_step);
@@ -115,26 +117,14 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Pre-allocate boundary values vector for flux loop optimization
   Vector boundary_values;
 
-  for (int step = 0; step < n_step; step++)
+  // Shorted-attribute set of each current-source step (empty = base operator). Steps with the
+  // same set share a cached screened operator.
+  std::vector<mfem::Array<int>> short_attrs_per_step(n_current_steps);
   {
-    A[step].SetSize(RHS.Size());
-    A[step].UseDevice(true);
-    A[step] = 0.0;
-
-    if (step < n_current_steps)
+    int step = 0;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
     {
-      // Current source excitation
-      const auto &[idx, data] = *std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step);
-      Mpi::Print("\nIt {:d}/{:d}: Current Index = {:d} (elapsed time = {:.2e} s)\n",
-                 step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
-
-      curlcurl_op.GetCurrentExcitationVector(idx, RHS);
-      I_inc[step] = data.GetExcitationCurrent();
-      Phi_inc[step] = 0.0;  // Zero flux for current sources
-
-      // Collect the boundary attributes of every inactive port that should be shorted
-      // (PEC) for this excitation step. Ports resolving to Open are left as natural BCs.
-      mfem::Array<int> short_attrs;
+      auto &short_attrs = short_attrs_per_step[step++];
       for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
       {
         if (other_idx != idx && port_is_short(other_idx))
@@ -145,16 +135,62 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           }
         }
       }
+    }
+  }
 
+  // Solve steps grouped by shorted-attribute set so steps sharing an operator are adjacent and
+  // the bound operator (and its preconditioner setup) is reused across the group, whatever the
+  // port index order. Results go to the canonical slot A[step], so postprocessing is unchanged.
+  // Grouping by each key's first-appearance order leaves an already-grouped ordering untouched.
+  auto step_key = [&](int step)
+  {
+    if (step >= n_current_steps)
+    {
+      return std::vector<int>{};
+    }
+    const auto &short_attrs = short_attrs_per_step[step];
+    std::set<int> unique_attr(short_attrs.begin(), short_attrs.end());
+    return std::vector<int>(unique_attr.begin(), unique_attr.end());
+  };
+  std::map<std::vector<int>, int> key_first_seen;
+  for (int step = 0; step < n_step; step++)
+  {
+    key_first_seen.emplace(step_key(step), step);
+  }
+  std::vector<int> solve_order(n_step);
+  std::iota(solve_order.begin(), solve_order.end(), 0);
+  std::stable_sort(solve_order.begin(), solve_order.end(), [&](int a, int b)
+                   { return key_first_seen.at(step_key(a)) < key_first_seen.at(step_key(b)); });
+
+  // Pass 1: solve each excitation in operator-grouped order.
+  int solve_it = 0;
+  for (int step : solve_order)
+  {
+    A[step].SetSize(RHS.Size());
+    A[step].UseDevice(true);
+    A[step] = 0.0;
+    solve_it++;
+
+    if (step < n_current_steps)
+    {
+      // Current source excitation
+      const auto &[idx, data] = *std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step);
+      Mpi::Print("\nIt {:d}/{:d}: Current Index = {:d} (elapsed time = {:.2e} s)\n",
+                 solve_it, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
+
+      curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+      I_inc[step] = data.GetExcitationCurrent();
+      Phi_inc[step] = 0.0;  // Zero flux for current sources
+
+      const auto &short_attrs = short_attrs_per_step[step];
       if (short_attrs.Size() > 0)
       {
-        // Reassemble the stiffness matrix with the shorted inactive ports added as
-        // essential (PEC) boundaries for this excitation step, and zero the excitation on
-        // those DOFs so the DIAG_ONE elimination does not inject spurious values on edges
-        // shared with the active port. The reused solver records its stats for metadata.
-        K_step = curlcurl_op.GetStiffnessMatrix(short_attrs);
+        // Fetch the cached stiffness matrix with the shorted inactive ports added as essential
+        // (PEC) boundaries, and zero the excitation on those DOFs so DIAG_ONE elimination
+        // injects no spurious values on edges shared with the active port.
+        const Operator &K_step = curlcurl_op.GetScreenedStiffnessMatrix(short_attrs);
         curlcurl_op.ZeroEssentialTrueDofs(short_attrs, RHS);
-        set_operator(*K_step);
+        set_operator(K_step);
         ksp.Mult(RHS, A[step]);
       }
       else
@@ -171,7 +207,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const auto &[idx, data] =
           *std::next(curlcurl_op.GetSurfaceFluxOp().begin(), flux_idx);
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
-                 step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
+                 solve_it, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
       curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
       I_inc[step] = 0.0;                         // Zero current for flux loops
@@ -181,7 +217,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       set_operator(*K);
       ksp.Mult(RHS, A[step]);
     }
+  }
 
+  // Pass 2: postprocess in canonical step order so output is independent of solve order.
+  for (int step = 0; step < n_step; step++)
+  {
     Curl.Mult(A[step], B);
 
     // Flux verification for flux loops.
