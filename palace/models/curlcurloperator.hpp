@@ -52,11 +52,11 @@ private:
 
   // Cache of screened stiffness operators keyed by their shorted-attribute set, so that
   // excitation steps that short the same set of inactive ports (e.g. every Open-port
-  // excitation shorts the identical set of Short ports) reuse one assembled operator instead
-  // of reassembling it per step. Each entry owns the per-level essential true DOF lists as
-  // well: ParOperator::SetEssentialTrueDofs stores a shallow reference, so the lists must
-  // outlive the operator. std::map nodes are address-stable across later insertions, which
-  // keeps those references valid for the cache's lifetime.
+  // excitation shorts the identical set of Short ports) reuse one assembled operator
+  // instead of reassembling it per step. Each entry owns the per-level essential true DOF
+  // lists as well: ParOperator::SetEssentialTrueDofs stores a shallow reference, so the
+  // lists must outlive the operator. std::map nodes are address-stable across later
+  // insertions, which keeps those references valid for the cache's lifetime.
   struct ScreenedStiffnessCacheEntry
   {
     std::vector<mfem::Array<int>> dbc_tdof_lists;
@@ -136,10 +136,11 @@ public:
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
-  // construction, without mutating base boundary state. Used in Short mode to treat inactive
-  // surface current ports as PEC for a single excitation step. The operator is cached and
-  // owned by this object, keyed on the shorted-attribute set, so repeated calls with the
-  // same set return a stable reference to one assembled operator rather than reassembling it.
+  // construction, without mutating base boundary state. Used in Short mode to treat
+  // inactive surface current ports as PEC for a single excitation step. The operator is
+  // cached and owned by this object, keyed on the shorted-attribute set, so repeated calls
+  // with the same set return a stable reference to one assembled operator rather than
+  // reassembling it.
   const Operator &GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
 
   // Zero v on the merged essential set (base Dirichlet plus extra_dbc_attr), clearing the

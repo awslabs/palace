@@ -262,9 +262,9 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
 
   // Insert the cache entry before binding essential DOFs: SetEssentialTrueDofs stores a
-  // shallow reference to the tdof list, so the list must live at its final address. std::map
-  // nodes are address-stable across later insertions, so the operator's references stay
-  // valid for the cache's lifetime.
+  // shallow reference to the tdof list, so the list must live at its final address.
+  // std::map nodes are address-stable across later insertions, so the operator's references
+  // stay valid for the cache's lifetime.
   auto &entry = screened_stiffness_cache[key];
   entry.dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());

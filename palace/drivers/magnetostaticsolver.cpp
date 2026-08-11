@@ -117,14 +117,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Pre-allocate boundary values vector for flux loop optimization
   Vector boundary_values;
 
-  // Shorted-attribute set of each current-source step (empty = base operator). Steps with the
-  // same set share a cached screened operator.
+  // Shorted-attribute set of each current-source step and its sorted, deduplicated key
+  // (empty = base operator). Steps sharing a key share a cached screened operator.
   std::vector<mfem::Array<int>> short_attrs_per_step(n_current_steps);
+  std::vector<std::vector<int>> step_keys(n_step);
   {
     int step = 0;
     for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
     {
-      auto &short_attrs = short_attrs_per_step[step++];
+      auto &short_attrs = short_attrs_per_step[step];
       for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
       {
         if (other_idx != idx && port_is_short(other_idx))
@@ -135,32 +136,25 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           }
         }
       }
+      std::set<int> unique_attr(short_attrs.begin(), short_attrs.end());
+      step_keys[step++].assign(unique_attr.begin(), unique_attr.end());
     }
   }
 
-  // Solve steps grouped by shorted-attribute set so steps sharing an operator are adjacent and
-  // the bound operator (and its preconditioner setup) is reused across the group, whatever the
-  // port index order. Results go to the canonical slot A[step], so postprocessing is unchanged.
-  // Grouping by each key's first-appearance order leaves an already-grouped ordering untouched.
-  auto step_key = [&](int step)
-  {
-    if (step >= n_current_steps)
-    {
-      return std::vector<int>{};
-    }
-    const auto &short_attrs = short_attrs_per_step[step];
-    std::set<int> unique_attr(short_attrs.begin(), short_attrs.end());
-    return std::vector<int>(unique_attr.begin(), unique_attr.end());
-  };
+  // Order steps by each key's first appearance so steps sharing an operator are adjacent
+  // and the bound operator (and its preconditioner) is reused across the group;
+  // already-grouped orderings are untouched. Results go to the canonical slot A[step], so
+  // postprocessing is unchanged.
   std::map<std::vector<int>, int> key_first_seen;
   for (int step = 0; step < n_step; step++)
   {
-    key_first_seen.emplace(step_key(step), step);
+    key_first_seen.emplace(step_keys[step], step);
   }
   std::vector<int> solve_order(n_step);
   std::iota(solve_order.begin(), solve_order.end(), 0);
-  std::stable_sort(solve_order.begin(), solve_order.end(), [&](int a, int b)
-                   { return key_first_seen.at(step_key(a)) < key_first_seen.at(step_key(b)); });
+  std::stable_sort(
+      solve_order.begin(), solve_order.end(), [&](int a, int b)
+      { return key_first_seen.at(step_keys[a]) < key_first_seen.at(step_keys[b]); });
 
   // Pass 1: solve each excitation in operator-grouped order.
   int solve_it = 0;
@@ -185,9 +179,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const auto &short_attrs = short_attrs_per_step[step];
       if (short_attrs.Size() > 0)
       {
-        // Fetch the cached stiffness matrix with the shorted inactive ports added as essential
-        // (PEC) boundaries, and zero the excitation on those DOFs so DIAG_ONE elimination
-        // injects no spurious values on edges shared with the active port.
+        // Fetch the cached stiffness matrix with the shorted inactive ports added as
+        // essential (PEC) boundaries, and zero the excitation on those DOFs so DIAG_ONE
+        // elimination injects no spurious values on edges shared with the active port.
         const Operator &K_step = curlcurl_op.GetScreenedStiffnessMatrix(short_attrs);
         curlcurl_op.ZeroEssentialTrueDofs(short_attrs, RHS);
         set_operator(K_step);
