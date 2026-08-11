@@ -189,6 +189,16 @@ struct LocalSparseEnrichmentMatrices
   double sparse_finalization_time = 0.0;
 };
 
+struct DistributedReferencePrewarmDiagnostics
+{
+  std::size_t global_pattern_count = 0;
+  std::size_t locally_owned_pattern_count = 0;
+  std::size_t persistent_hits = 0;
+  std::size_t persistent_writes = 0;
+  std::size_t generated_leaf_count = 0;
+  double generation_time = 0.0;
+};
+
 struct LocalSparseH1EnrichmentMatrices
 {
   LocalSparseOperatorBlocks diffusion;
@@ -426,6 +436,14 @@ std::vector<LocalSparseEnrichmentMatrices> AssembleLocalSparseEnrichmentMatrices
     mfem::FiniteElementSpace &nd_fespace,
     const std::vector<std::vector<IsotropicMaterialCoefficients>> &material_batches,
     const AdaptiveAssemblyOptions &options, int retained_patch_batch = -1);
+
+// Collectively discover and prewarm persistent affine H1 reference patterns. Every
+// missing global pattern is assigned to exactly one rank that reported a local use. The
+// routine is a no-op for adaptive quadrature or an empty ReferenceCache.
+DistributedReferencePrewarmDiagnostics
+PrewarmDistributedH1ReferenceCache(MPI_Comm comm, const DofTopology &topology,
+                                   mfem::FiniteElementSpace &h1_fespace,
+                                   const AdaptiveAssemblyOptions &options);
 
 // Electrostatic specialization of AssembleLocalSparseEnrichmentMatrices. It
 // assembles only the H1 diffusion block and therefore does not evaluate any

@@ -4,21 +4,27 @@
 #include "singularassembly.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <vector>
@@ -1823,6 +1829,20 @@ void AppendReferenceCacheKey(std::vector<std::uint8_t> &key, const T &value)
   key.insert(key.end(), data, data + sizeof(T));
 }
 
+template <typename T>
+T ReadReferenceCacheKey(const std::vector<std::uint8_t> &key, std::size_t &offset)
+{
+  static_assert(std::is_trivially_copyable_v<T>);
+  if (offset > key.size() || key.size() - offset < sizeof(T))
+  {
+    throw std::runtime_error("A distributed singular reference key is truncated!");
+  }
+  T value;
+  std::memcpy(&value, key.data() + offset, sizeof(T));
+  offset += sizeof(T);
+  return value;
+}
+
 void UpdateReferenceCacheHash(std::uint64_t &hash, const void *data, std::size_t size)
 {
   const auto *bytes = static_cast<const std::uint8_t *>(data);
@@ -2337,6 +2357,23 @@ public:
   explicit AffineCommonNDMassReferenceTable(const AdaptiveAssemblyOptions &options_in)
     : options(options_in)
   {
+  }
+
+  std::vector<std::uint8_t> StableKey(const mfem::FiniteElement &finite_element,
+                                      const std::vector<ElementDof> &element_dofs) const
+  {
+    return BuildPersistentKey(finite_element, element_dofs);
+  }
+
+  std::filesystem::path PersistentPath(const std::vector<std::uint8_t> &key) const
+  {
+    return GetPersistentPath(key);
+  }
+
+  void Prewarm(const mfem::FiniteElement &finite_element,
+               const std::vector<ElementDof> &element_dofs)
+  {
+    (void)GetEntry(finite_element, element_dofs);
   }
 
   AffineCommonNDMassBlocks Get(const mfem::FiniteElement &finite_element,
@@ -7604,6 +7641,533 @@ void SetLocalTransformedEnrichmentDiagonal(
                                     enrichment);
   }
   blocks.transformed_enrichment_diagonal = std::move(diagonal);
+}
+
+namespace
+{
+
+struct LocalAffineH1ReferencePattern
+{
+  const mfem::FiniteElement *finite_element = nullptr;
+  std::vector<ElementDof> element_dofs;
+};
+
+void CheckDistributedPrewarmStatus(MPI_Comm comm, const std::string &local_error,
+                                   std::string_view stage)
+{
+  int failed = local_error.empty() ? 0 : 1;
+  int globally_failed = failed;
+  MPI_Allreduce(MPI_IN_PLACE, &globally_failed, 1, MPI_INT, MPI_MAX, comm);
+  if (!globally_failed)
+  {
+    return;
+  }
+  const int rank = Mpi::Rank(comm);
+  int first_failed_rank = failed ? rank : std::numeric_limits<int>::max();
+  MPI_Allreduce(MPI_IN_PLACE, &first_failed_rank, 1, MPI_INT, MPI_MIN, comm);
+  if (failed)
+  {
+    fmt::print(stderr, "Singular reference prewarm failed on rank {} during {}: {}\n", rank,
+               stage, local_error);
+    std::fflush(stderr);
+  }
+  throw std::runtime_error(
+      fmt::format("Distributed singular reference prewarm failed during {} on rank {}!",
+                  stage, first_failed_rank));
+}
+
+std::uint64_t ReferencePatternCost(const std::vector<std::uint8_t> &key)
+{
+  std::size_t offset = 0;
+  const auto format = ReadReferenceCacheKey<std::uint32_t>(key, offset);
+  const auto mfem_version = ReadReferenceCacheKey<std::uint32_t>(key, offset);
+  const auto convention = ReadReferenceCacheKey<std::uint32_t>(key, offset);
+  (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Geometry.
+  (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Dimension.
+  (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Order.
+  const auto standard_size = ReadReferenceCacheKey<std::int32_t>(key, offset);
+  (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Quadrature order.
+  (void)ReadReferenceCacheKey<std::int32_t>(key, offset);  // Subdivision depth.
+  const auto enrichment_size = ReadReferenceCacheKey<std::uint64_t>(key, offset);
+  if (format != 2 || mfem_version != static_cast<std::uint32_t>(MFEM_VERSION) ||
+      convention != static_cast<std::uint32_t>(ReferenceIntegral::ConventionVersion) ||
+      standard_size <= 0 || enrichment_size == 0 ||
+      enrichment_size > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+  {
+    throw std::runtime_error("A distributed singular reference key has invalid metadata!");
+  }
+  for (std::uint64_t basis = 0; basis < enrichment_size; basis++)
+  {
+    const auto family = ReadReferenceCacheKey<std::int32_t>(key, offset);
+    if (family < static_cast<std::int32_t>(HigherOrderBasisFamily::NODE_GRADIENT) ||
+        family > static_cast<std::int32_t>(HigherOrderBasisFamily::EDGE_ROTATIONAL))
+    {
+      throw std::runtime_error("A distributed singular reference key has invalid family!");
+    }
+    for (int i = 0; i < 4; i++)
+    {
+      const int node = ReadReferenceCacheKey<std::int32_t>(key, offset);
+      if (node < 0 || node >= 4)
+      {
+        throw std::runtime_error("A distributed singular reference key has invalid node!");
+      }
+    }
+    for (int i = 0; i < 4; i++)
+    {
+      const int index = ReadReferenceCacheKey<std::int32_t>(key, offset);
+      if (index < 0)
+      {
+        throw std::runtime_error(
+            "A distributed singular reference key has invalid interpolation index!");
+      }
+    }
+    const int order = ReadReferenceCacheKey<std::int32_t>(key, offset);
+    const auto exponent_bits = ReadReferenceCacheKey<std::uint64_t>(key, offset);
+    double exponent;
+    static_assert(sizeof(exponent) == sizeof(exponent_bits));
+    std::memcpy(&exponent, &exponent_bits, sizeof(exponent));
+    if (order < 1 || !std::isfinite(exponent) || !(exponent > 0.0) || !(exponent < 1.0))
+    {
+      throw std::runtime_error(
+          "A distributed singular reference key has invalid order or exponent!");
+    }
+  }
+  if (offset != key.size())
+  {
+    throw std::runtime_error("A distributed singular reference key has trailing data!");
+  }
+  const std::uint64_t coupling =
+      static_cast<std::uint64_t>(standard_size) * enrichment_size;
+  const std::uint64_t enrichment = enrichment_size * (enrichment_size + 1) / 2;
+  if (coupling > std::numeric_limits<std::uint64_t>::max() - enrichment)
+  {
+    throw std::overflow_error("A distributed singular reference cost overflows!");
+  }
+  return coupling + enrichment;
+}
+
+std::vector<char> SerializeReferenceKeys(
+    const std::map<std::vector<std::uint8_t>, LocalAffineH1ReferencePattern> &patterns)
+{
+  std::vector<char> serialized;
+  for (const auto &[key, pattern] : patterns)
+  {
+    (void)pattern;
+    const std::uint64_t size = key.size();
+    if (size > static_cast<std::uint64_t>(std::numeric_limits<int>::max()) ||
+        serialized.size() > std::numeric_limits<std::size_t>::max() - sizeof(size) - size)
+    {
+      throw std::overflow_error("Distributed singular reference serialization overflows!");
+    }
+    const auto *size_data = reinterpret_cast<const char *>(&size);
+    serialized.insert(serialized.end(), size_data, size_data + sizeof(size));
+    serialized.insert(serialized.end(), reinterpret_cast<const char *>(key.data()),
+                      reinterpret_cast<const char *>(key.data() + key.size()));
+  }
+  return serialized;
+}
+
+class ReferencePrewarmHeartbeat
+{
+private:
+  bool root = false;
+  bool active = false;
+  std::vector<std::filesystem::path> expected_paths;
+  std::chrono::steady_clock::time_point start;
+  std::chrono::seconds interval{60};
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool stop = false;
+  std::thread worker;
+
+  std::size_t VisibleFiles() const noexcept
+  {
+    try
+    {
+      std::size_t visible = 0;
+      for (const auto &path : expected_paths)
+      {
+        std::error_code error;
+        visible += std::filesystem::is_regular_file(path, error) && !error ? 1 : 0;
+      }
+      return visible;
+    }
+    catch (...)
+    {
+      return 0;
+    }
+  }
+
+  void Print(std::string_view state) const noexcept
+  {
+    try
+    {
+      const double elapsed =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+      fmt::print(" Singular reference prewarm {}: {:.1f} s elapsed, {}/{} cache files "
+                 "visible\n",
+                 state, elapsed, VisibleFiles(), expected_paths.size());
+      std::fflush(stdout);
+    }
+    catch (...)
+    {
+    }
+  }
+
+public:
+  ReferencePrewarmHeartbeat(bool is_root, const std::vector<std::filesystem::path> &paths,
+                            int ranks, int quadrature_order, int subdivisions,
+                            const std::string &cache) noexcept
+    : root(is_root), start(std::chrono::steady_clock::now())
+  {
+    if (!root)
+    {
+      return;
+    }
+    try
+    {
+      expected_paths = paths;
+      int thread_level = MPI_THREAD_SINGLE;
+      MPI_Query_thread(&thread_level);
+      if (thread_level < MPI_THREAD_FUNNELED)
+      {
+        fmt::print(" Distributed singular reference prewarm: {} unique patterns, {} "
+                   "cache files visible; periodic heartbeat disabled because MPI thread "
+                   "support is below MPI_THREAD_FUNNELED\n",
+                   expected_paths.size(), VisibleFiles());
+        std::fflush(stdout);
+        return;
+      }
+      if (const char *value = std::getenv("PALACE_REFERENCE_HEARTBEAT_SECONDS"))
+      {
+        char *end = nullptr;
+        const long seconds = std::strtol(value, &end, 10);
+        if (end != value && *end == '\0' && seconds > 0 && seconds <= 3600)
+        {
+          interval = std::chrono::seconds(seconds);
+        }
+      }
+      fmt::print(" Distributed singular reference prewarm: {} unique patterns, {} cache "
+                 "files visible, {} ranks, quadrature order {}, subdivision depth {}, "
+                 "cache '{}'\n",
+                 expected_paths.size(), VisibleFiles(), ranks, quadrature_order,
+                 subdivisions, cache);
+      std::fflush(stdout);
+      active = !expected_paths.empty();
+      if (!active)
+      {
+        return;
+      }
+      worker = std::thread(
+          [this]() noexcept
+          {
+            try
+            {
+              std::unique_lock<std::mutex> lock(mutex);
+              while (!condition.wait_for(lock, interval, [this]() { return stop; }))
+              {
+                lock.unlock();
+                Print("still active");
+                lock.lock();
+              }
+            }
+            catch (...)
+            {
+            }
+          });
+    }
+    catch (...)
+    {
+      active = false;
+      try
+      {
+        fmt::print(" Singular reference heartbeat disabled after an internal telemetry "
+                   "error\n");
+        std::fflush(stdout);
+      }
+      catch (...)
+      {
+      }
+    }
+  }
+
+  ReferencePrewarmHeartbeat(const ReferencePrewarmHeartbeat &) = delete;
+  ReferencePrewarmHeartbeat &operator=(const ReferencePrewarmHeartbeat &) = delete;
+
+  void Finish() noexcept
+  {
+    if (!root || !active)
+    {
+      return;
+    }
+    try
+    {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        stop = true;
+      }
+      condition.notify_all();
+      if (worker.joinable())
+      {
+        worker.join();
+      }
+      Print("complete");
+    }
+    catch (...)
+    {
+    }
+    active = false;
+  }
+
+  ~ReferencePrewarmHeartbeat() noexcept { Finish(); }
+};
+
+}  // namespace
+
+DistributedReferencePrewarmDiagnostics
+PrewarmDistributedH1ReferenceCache(MPI_Comm comm, const DofTopology &topology,
+                                   mfem::FiniteElementSpace &h1_fespace,
+                                   const AdaptiveAssemblyOptions &options)
+{
+  DistributedReferencePrewarmDiagnostics diagnostics;
+  if (comm == MPI_COMM_NULL || !options.fixed_subdivision ||
+      options.reference_cache.empty())
+  {
+    return diagnostics;
+  }
+
+  auto *mesh = h1_fespace.GetMesh();
+  std::map<std::vector<std::uint8_t>, LocalAffineH1ReferencePattern> local_patterns;
+  std::unique_ptr<mfem::ND_FECollection> nd_collection;
+  std::unique_ptr<AffineCommonNDMassReferenceTable> reference_table;
+  std::string local_error;
+  try
+  {
+    if (!mesh || topology.elements.size() != static_cast<std::size_t>(mesh->GetNE()))
+    {
+      throw std::invalid_argument(
+          "Distributed singular reference prewarm requires one shared mesh!");
+    }
+    nd_collection = std::make_unique<mfem::ND_FECollection>(h1_fespace.GetMaxElementOrder(),
+                                                            mesh->Dimension());
+    reference_table = std::make_unique<AffineCommonNDMassReferenceTable>(options);
+    for (int element = 0; element < mesh->GetNE(); element++)
+    {
+      const auto &element_dofs = topology.elements[element];
+      if (element_dofs.h1.empty())
+      {
+        continue;
+      }
+      auto *transformation = mesh->GetElementTransformation(element);
+      const auto *h1_fe = h1_fespace.GetFE(element);
+      if (!transformation || !h1_fe || !IsAffineElementTransformation(*transformation))
+      {
+        continue;
+      }
+      const auto *nd_fe = nd_collection->FiniteElementForGeometry(h1_fe->GetGeomType());
+      if (!nd_fe || nd_fe->GetOrder() != h1_fe->GetOrder())
+      {
+        continue;
+      }
+      auto key = reference_table->StableKey(*nd_fe, element_dofs.h1);
+      local_patterns.try_emplace(std::move(key),
+                                 LocalAffineH1ReferencePattern{nd_fe, element_dofs.h1});
+    }
+  }
+  catch (const std::exception &error)
+  {
+    local_error = error.what();
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "local pattern discovery");
+
+  std::vector<char> local_serialized;
+  try
+  {
+    local_serialized = SerializeReferenceKeys(local_patterns);
+  }
+  catch (const std::exception &error)
+  {
+    local_error = error.what();
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "pattern serialization");
+  if (local_serialized.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+  {
+    local_error = "Local distributed singular reference payload exceeds MPI integer count";
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "payload sizing");
+
+  const int ranks = Mpi::Size(comm);
+  const int rank = Mpi::Rank(comm);
+  const int local_size = static_cast<int>(local_serialized.size());
+  std::vector<int> counts(ranks), offsets(ranks);
+  MPI_Allgather(&local_size, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+  std::int64_t total_size = 0;
+  for (int r = 0; r < ranks; r++)
+  {
+    if (counts[r] < 0 || total_size > std::numeric_limits<int>::max() - counts[r])
+    {
+      local_error = "Global distributed singular reference payload exceeds MPI limits";
+      break;
+    }
+    offsets[r] = static_cast<int>(total_size);
+    total_size += counts[r];
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "global payload sizing");
+  std::vector<char> gathered(static_cast<std::size_t>(total_size));
+  MPI_Allgatherv(local_serialized.data(), local_size, MPI_BYTE, gathered.data(),
+                 counts.data(), offsets.data(), MPI_BYTE, comm);
+
+  std::map<std::vector<std::uint8_t>, std::vector<int>> reporters;
+  try
+  {
+    for (int r = 0; r < ranks; r++)
+    {
+      std::size_t position = static_cast<std::size_t>(offsets[r]);
+      const std::size_t end = position + static_cast<std::size_t>(counts[r]);
+      while (position < end)
+      {
+        if (end - position < sizeof(std::uint64_t))
+        {
+          throw std::runtime_error(
+              "A gathered singular reference payload has a truncated record size!");
+        }
+        std::uint64_t size;
+        std::memcpy(&size, gathered.data() + position, sizeof(size));
+        position += sizeof(size);
+        if (size > end - position)
+        {
+          throw std::runtime_error(
+              "A gathered singular reference payload has a truncated key!");
+        }
+        std::vector<std::uint8_t> key(size);
+        std::memcpy(key.data(), gathered.data() + position, size);
+        position += size;
+        (void)ReferencePatternCost(key);
+        reporters[std::move(key)].push_back(r);
+      }
+      if (position != end)
+      {
+        throw std::runtime_error(
+            "A gathered singular reference payload has trailing bytes!");
+      }
+    }
+  }
+  catch (const std::exception &error)
+  {
+    local_error = error.what();
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "global pattern decoding");
+
+  struct ScheduledPattern
+  {
+    const std::vector<std::uint8_t> *key;
+    std::uint64_t cost;
+    int owner = -1;
+  };
+  std::vector<ScheduledPattern> schedule;
+  try
+  {
+    schedule.reserve(reporters.size());
+    for (const auto &[key, pattern_reporters] : reporters)
+    {
+      (void)pattern_reporters;
+      schedule.push_back({&key, ReferencePatternCost(key), -1});
+    }
+    std::sort(schedule.begin(), schedule.end(),
+              [](const auto &left, const auto &right)
+              {
+                return left.cost != right.cost ? left.cost > right.cost
+                                               : *left.key < *right.key;
+              });
+    std::vector<std::uint64_t> predicted_load(ranks, 0);
+    for (auto &pattern : schedule)
+    {
+      const auto &eligible = reporters.at(*pattern.key);
+      pattern.owner =
+          *std::min_element(eligible.begin(), eligible.end(),
+                            [&predicted_load](int left, int right)
+                            {
+                              return predicted_load[left] != predicted_load[right]
+                                         ? predicted_load[left] < predicted_load[right]
+                                         : left < right;
+                            });
+      if (predicted_load[pattern.owner] >
+          std::numeric_limits<std::uint64_t>::max() - pattern.cost)
+      {
+        local_error = "Distributed singular reference predicted work overflows";
+        break;
+      }
+      predicted_load[pattern.owner] += pattern.cost;
+    }
+  }
+  catch (const std::exception &error)
+  {
+    local_error = error.what();
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "pattern scheduling");
+
+  std::vector<std::filesystem::path> expected_paths;
+  try
+  {
+    expected_paths.reserve(schedule.size());
+    for (const auto &pattern : schedule)
+    {
+      expected_paths.push_back(reference_table->PersistentPath(*pattern.key));
+    }
+  }
+  catch (const std::exception &error)
+  {
+    local_error = error.what();
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "progress preparation");
+  ReferencePrewarmHeartbeat heartbeat(Mpi::Root(comm), expected_paths, ranks,
+                                      options.quadrature_order, options.subdivisions,
+                                      options.reference_cache);
+
+  diagnostics.global_pattern_count = schedule.size();
+  try
+  {
+    for (const auto &pattern : schedule)
+    {
+      if (pattern.owner != rank)
+      {
+        continue;
+      }
+      diagnostics.locally_owned_pattern_count++;
+      const auto local = local_patterns.find(*pattern.key);
+      if (local == local_patterns.end() || !local->second.finite_element)
+      {
+        throw std::logic_error(
+            "A distributed singular reference owner has no local pattern representative!");
+      }
+      reference_table->Prewarm(*local->second.finite_element, local->second.element_dofs);
+    }
+  }
+  catch (const std::exception &error)
+  {
+    local_error = error.what();
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "owned pattern generation");
+  Mpi::Barrier(comm);
+  for (const auto &path : expected_paths)
+  {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error)
+    {
+      local_error = fmt::format(
+          "Published singular reference entry '{}' is not visible on every rank",
+          path.string());
+      break;
+    }
+  }
+  CheckDistributedPrewarmStatus(comm, local_error, "cache publication");
+  heartbeat.Finish();
+
+  diagnostics.persistent_hits = reference_table->PersistentHits();
+  diagnostics.persistent_writes = reference_table->PersistentWrites();
+  diagnostics.generated_leaf_count = reference_table->GeneratedLeafCount();
+  diagnostics.generation_time = reference_table->GenerationTime();
+  return diagnostics;
 }
 
 LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(

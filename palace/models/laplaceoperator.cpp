@@ -363,8 +363,15 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                         << attribute);
         materials[element].electric = mat_op.GetPermittivityReal(attribute)(0, 0);
       }
+      const auto prewarm = fem::singular::PrewarmDistributedH1ReferenceCache(
+          GetComm(), *singular_dofs, GetH1Space().Get(), singular_assembly_options);
       local_enrichment = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
           *singular_dofs, GetH1Space().Get(), materials, singular_assembly_options);
+      local_enrichment.affine_reference_persistent_writes += prewarm.persistent_writes;
+      local_enrichment.affine_reference_generated_leaf_count +=
+          prewarm.generated_leaf_count;
+      local_enrichment.affine_reference_generation_time = std::max(
+          local_enrichment.affine_reference_generation_time, prewarm.generation_time);
     }
     else
     {

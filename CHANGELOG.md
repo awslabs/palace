@@ -33,7 +33,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     patterns. Runtime diagnostics now distinguish memory and persistent cache hits and
     report actual reference-table leaf generation. Added the optional
     `Solver.SingularElements.ReferenceCache` directory for reusing validated reference
-    tensors between launches and AMR rebuilds. SchemaVer 1-8-0.
+    tensors between launches and AMR rebuilds. Cold electrostatic H1 prewarming now
+    globally deduplicates persistent patterns, assigns one eligible MPI owner per key with
+    deterministic work balancing, and reports minute-scale heartbeat progress without
+    instrumenting quadrature loops. SchemaVer 1-8-0.
   - Decoupled fixed-subdivision matrix quadrature from singular electrostatic domain-energy
     postprocessing. Total energy and participation denominators now use the algebraic
     quadratic form, while `PostprocessingSubdivisions` independently controls optional

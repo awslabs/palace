@@ -4095,6 +4095,8 @@ TEST_CASE("Fixed affine H1 sparse assembly reuses batched reference blocks",
     }
   } cleanup{cache};
   options.reference_cache = cache.string();
+  const auto cold_prewarm = fem::singular::PrewarmDistributedH1ReferenceCache(
+      Mpi::World(), topology, h1_space, options);
   const auto h1 = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
       topology, h1_space, materials, options);
 
@@ -4141,6 +4143,8 @@ TEST_CASE("Fixed affine H1 sparse assembly reuses batched reference blocks",
   corrupted_stream.write(&corrupted_byte, 1);
   corrupted_stream.close();
 
+  const auto repair_prewarm = fem::singular::PrewarmDistributedH1ReferenceCache(
+      Mpi::World(), topology, h1_space, options);
   const auto repaired = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
       topology, h1_space, materials, options);
   const auto warm = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
@@ -4151,16 +4155,22 @@ TEST_CASE("Fixed affine H1 sparse assembly reuses batched reference blocks",
   CheckClose(h1.diffusion, repaired.diffusion);
   CheckClose(h1.diffusion, warm.diffusion);
   CheckClose(h1.diffusion, full.h1_diffusion);
+  CHECK(cold_prewarm.global_pattern_count > 0);
+  CHECK(cold_prewarm.locally_owned_pattern_count == cold_prewarm.global_pattern_count);
+  CHECK(cold_prewarm.persistent_writes == cold_prewarm.global_pattern_count);
+  CHECK(cold_prewarm.generated_leaf_count == cold_prewarm.global_pattern_count * 64);
   CHECK(h1.maximum_subdivision_depth == options.subdivisions);
   CHECK(h1.affine_reference_table_entries > 0);
   CHECK(h1.affine_reference_pattern_count > 0);
-  CHECK(h1.affine_reference_persistent_writes > 0);
-  CHECK(h1.affine_reference_generated_leaf_count == h1.affine_reference_pattern_count * 64);
-  CHECK(h1.total_quadrature_leaf_count >= h1.affine_reference_generated_leaf_count);
-  CHECK(repaired.affine_reference_persistent_hits <
+  CHECK(h1.affine_reference_persistent_hits == h1.affine_reference_pattern_count);
+  CHECK(h1.affine_reference_persistent_writes == 0);
+  CHECK(h1.affine_reference_generated_leaf_count == 0);
+  CHECK(repair_prewarm.persistent_writes > 0);
+  CHECK(repair_prewarm.generated_leaf_count > 0);
+  CHECK(repaired.affine_reference_persistent_hits ==
         repaired.affine_reference_pattern_count);
-  CHECK(repaired.affine_reference_persistent_writes > 0);
-  CHECK(repaired.affine_reference_generated_leaf_count > 0);
+  CHECK(repaired.affine_reference_persistent_writes == 0);
+  CHECK(repaired.affine_reference_generated_leaf_count == 0);
   CHECK(warm.affine_reference_pattern_count == h1.affine_reference_pattern_count);
   CHECK(warm.affine_reference_persistent_hits == warm.affine_reference_pattern_count);
   CHECK(warm.affine_reference_persistent_writes == 0);
@@ -4169,6 +4179,76 @@ TEST_CASE("Fixed affine H1 sparse assembly reuses batched reference blocks",
   CheckSparseNonnegative(*h1.diffusion.standard_enrichment_estimated_absolute_error);
   CheckExactSparseTranspose(*h1.diffusion.standard_enrichment,
                             *h1.diffusion.enrichment_standard);
+}
+
+TEST_CASE("Distributed affine H1 prewarm assigns one owner per global pattern",
+          "[singularelements][singularassembly][Parallel]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+  int thread_level = MPI_THREAD_SINGLE;
+  MPI_Query_thread(&thread_level);
+  REQUIRE(thread_level >= MPI_THREAD_FUNNELED);
+  auto mesh = SharedFaceTetrahedronMesh(false);
+  mfem::H1_FECollection h1_collection(2, 3);
+  mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+
+  fem::singular::DofTopology topology;
+  topology.h1_dofs.resize(1);
+  topology.h1_dofs[0].family = fem::singular::HigherOrderBasisFamily::NODE_GRADIENT;
+  topology.nd_dofs = topology.h1_dofs;
+  topology.h1_to_nd = {0};
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto element_dofs = SharedFaceSingularDofs(*mesh.GetElement(element));
+    element_dofs.nd.resize(1);
+    topology.elements.push_back(std::move(element_dofs));
+  }
+
+  std::int64_t nonce = 0;
+  if (Mpi::Root(Mpi::World()))
+  {
+    nonce = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  }
+  Mpi::Broadcast(1, &nonce, 0, Mpi::World());
+  const auto cache =
+      std::filesystem::temp_directory_path() /
+      ("palace-distributed-affine-h1-reference-test-" + std::to_string(nonce));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::remove_all(cache);
+  }
+  Mpi::Barrier(Mpi::World());
+
+  fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9, true, 1};
+  options.reference_cache = cache.string();
+  const auto cold = fem::singular::PrewarmDistributedH1ReferenceCache(
+      Mpi::World(), topology, h1_space, options);
+  HYPRE_BigInt owned = cold.locally_owned_pattern_count;
+  HYPRE_BigInt writes = cold.persistent_writes;
+  HYPRE_BigInt leaves = cold.generated_leaf_count;
+  Mpi::GlobalSum(1, &owned, Mpi::World());
+  Mpi::GlobalSum(1, &writes, Mpi::World());
+  Mpi::GlobalSum(1, &leaves, Mpi::World());
+  CHECK(owned == static_cast<HYPRE_BigInt>(cold.global_pattern_count));
+  CHECK(writes == static_cast<HYPRE_BigInt>(cold.global_pattern_count));
+  CHECK(leaves == 8 * static_cast<HYPRE_BigInt>(cold.global_pattern_count));
+
+  const auto warm = fem::singular::PrewarmDistributedH1ReferenceCache(
+      Mpi::World(), topology, h1_space, options);
+  writes = warm.persistent_writes;
+  leaves = warm.generated_leaf_count;
+  Mpi::GlobalSum(1, &writes, Mpi::World());
+  Mpi::GlobalSum(1, &leaves, Mpi::World());
+  CHECK(warm.global_pattern_count == cold.global_pattern_count);
+  CHECK(writes == 0);
+  CHECK(leaves == 0);
+
+  Mpi::Barrier(Mpi::World());
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::error_code error;
+    std::filesystem::remove_all(cache, error);
+  }
 }
 
 TEST_CASE("Local sparse singular assembly preserves element bilinear forms",

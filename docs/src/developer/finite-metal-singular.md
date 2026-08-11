@@ -57,8 +57,20 @@ Set `Solver.SingularElements.ReferenceCache` to a shared directory to persist th
 between Palace launches and AMR operator rebuilds. Cache keys include the MFEM and reference
 convention versions, finite-element order, complete basis descriptors and exponent bit
 patterns, and fixed quadrature order/depth. Files are validated before use and installed by
-an atomic no-replace hard link. A cold depth-six generation remains expensive, but a warm depth-six cache
-performs no recursive reference quadrature and has the same contraction cost as depth two.
+an atomic no-replace hard link.
+
+For electrostatic H1 assembly, Palace collectively discovers persistent reference patterns
+before element assembly, globally deduplicates their complete keys, and assigns each pattern
+to one rank that reported a local use. A deterministic largest-work-first schedule balances
+predicted tensor counts while avoiding duplicate cold-cache generation. The cache directory
+must be coherently visible to every rank. During a cold prewarm, rank zero prints an immediate
+summary and a heartbeat every 60 seconds with elapsed time and visible cache files. Set
+`PALACE_REFERENCE_HEARTBEAT_SECONDS` to a positive value up to 3600 to change the interval.
+The heartbeat thread performs no MPI calls or quadrature-loop instrumentation and is enabled
+only when MPI provides at least `MPI_THREAD_FUNNELED`.
+
+A cold depth-six generation remains expensive, but a warm depth-six cache performs no
+recursive reference quadrature and has the same contraction cost as depth two.
 
 `Subdivisions` controls matrix/reference-tensor construction only. Electrostatic total
 energy, including the denominator of every surface participation ratio, is evaluated from
