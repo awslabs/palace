@@ -1,0 +1,9 @@
+{
+  "schema_versions": [
+    {
+      "schema_version": "1-0-0",
+      "first_palace_release": "0.17.0",
+      "notes": "First explicitly-versioned schema."
+    }
+  ]
+}
