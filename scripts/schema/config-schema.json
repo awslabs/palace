@@ -1838,7 +1838,7 @@
         },
         "EdgeCutoff": {
           "type": "number",
-          "description": "Physical distance in mesh length units excluded from each singular metal edge or corner when singular-element surface postprocessing is enabled. The default zero requests the untruncated surface integral, which is rejected for a nonintegrable ideal thin-sheet trace with nu <= 1/2. A positive value produces an explicitly cutoff-dependent outer thin-layer participation; it is not a finite-thickness response correction.",
+          "description": "Physical distance in mesh length units excluded from the interface surface integral near its boundary curves (or endpoints in 2D). Standard postprocessing on affine meshes (with conforming boundary topology in 3D) globally gathers the topological boundary of the selected interface attributes and applies a hard physical-distance quadrature mask; the boundary mesh and fixed high-order rule must resolve the cutoff. Singular-element postprocessing uses its singular feature edges and cutoff-aware charts. The default zero requests the untruncated integral, which is invalid for a nonintegrable ideal thin-sheet trace with nu <= 1/2. A positive value produces an explicitly cutoff-dependent outer thin-layer participation; it is not a finite-thickness response correction.",
           "minimum": 0.0,
           "default": 0.0
         }

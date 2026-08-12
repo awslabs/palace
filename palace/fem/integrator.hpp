@@ -323,9 +323,13 @@ class BoundaryLFIntegrator : public mfem::LinearFormIntegrator
 private:
   mfem::Coefficient &Q;
   mfem::Vector shape;
+  int minimum_quadrature_order;
 
 public:
-  BoundaryLFIntegrator(mfem::Coefficient &QG) : Q(QG) {}
+  BoundaryLFIntegrator(mfem::Coefficient &QG, int minimum_quadrature_order = 0)
+    : Q(QG), minimum_quadrature_order(minimum_quadrature_order)
+  {
+  }
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
                               mfem::Vector &elvect) override;

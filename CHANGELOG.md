@@ -43,6 +43,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     postprocessing. Total energy and participation denominators now use the algebraic
     quadratic form, while `PostprocessingSubdivisions` independently controls optional
     per-domain direct integration. SchemaVer 1-9-0.
+  - Applied interface-dielectric `EdgeCutoff` to standard surface postprocessing. Standard
+    solves on affine meshes (with conforming boundary topology in 3D) now globally gather
+    and deduplicate the topological
+    boundary curves (or 2D endpoints) of each selected interface, accelerate
+    physical-distance queries with a BVH, and exclude quadrature points inside the
+    requested hard cutoff using a fixed high-order rule. The zero-cutoff path is unchanged.
   - Added an experimental `config["Solver"]["SingularElements"]` interface for additive
     singular-element enrichment of selected internal zero-thickness PEC sheets in
     electrostatic simulations. SchemaVer 1-4-0.

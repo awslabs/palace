@@ -16,6 +16,7 @@ namespace palace
 class GridFunction;
 class IoData;
 class MaterialOperator;
+class SurfaceEdgeCutoff;
 
 namespace config
 {
@@ -59,7 +60,9 @@ private:
   struct InterfaceDielectricData : public SurfaceData
   {
     InterfaceDielectric type;
-    double t, epsilon, tandelta;
+    double t, epsilon, tandelta, edge_cutoff;
+    std::vector<int> cutoff_attributes;
+    std::shared_ptr<const SurfaceEdgeCutoff> cutoff_geometry;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::ParMesh &mesh,
@@ -90,8 +93,8 @@ private:
   // owned).
   mfem::ParFiniteElementSpace &nd_fespace;
 
-  double GetLocalSurfaceIntegral(mfem::Coefficient &f,
-                                 const mfem::Array<int> &attr_marker) const;
+  double GetLocalSurfaceIntegral(mfem::Coefficient &f, const mfem::Array<int> &attr_marker,
+                                 int minimum_quadrature_order = 0) const;
 
 public:
   // Data structures for postprocessing the surface with the given type.

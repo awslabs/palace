@@ -79,7 +79,8 @@ void BoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElement &fe,
                                                   mfem::Vector &elvect)
 {
   const int dof = fe.GetDof();
-  const int q_order = fem::DefaultIntegrationOrder::Get(T);
+  const int q_order =
+      std::max(fem::DefaultIntegrationOrder::Get(T), minimum_quadrature_order);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
   shape.SetSize(dof);
   elvect.SetSize(dof);

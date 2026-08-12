@@ -161,11 +161,17 @@ The thin-sheet examples specify an explicit cutoff on each dielectric interface:
 
 The value is in mesh length units, so `2.0e-3` is 2 nm for these micrometer meshes.
 The reported value in `surface-Q.csv` is the outer thin-layer integral with the
-neighborhood closer than `EdgeCutoff` to each singular line tip excluded. It includes the
-complete standard-plus-singular field. Decreasing the cutoff increases the result
-logarithmically. This is a cutoff-dependent diagnostic, not a finite-thickness response
-correction, and it does not include the energy in the excluded neighborhood. Omitting the
-cutoff for an active `nu <= 1/2` trace is rejected rather than returning a quadrature- or
+neighborhood closer than `EdgeCutoff` to each line tip excluded. Standard postprocessing
+globally gathers the topological endpoints (or perimeter segments in 3D) of the selected
+interface attributes and applies a hard physical-distance mask with a fixed high-order
+boundary quadrature rule; this currently requires affine selected interfaces (and
+conforming boundary topology in 3D), and the mesh
+and quadrature must resolve the cutoff. Singular postprocessing uses the active singular
+features, cutoff-aware integration charts, and the complete standard-plus-singular field.
+Decreasing the cutoff increases the result logarithmically.
+This is a cutoff-dependent diagnostic, not a finite-thickness response correction, and it
+does not include the energy in the excluded neighborhood. Omitting the cutoff for an
+active `nu <= 1/2` singular trace is rejected rather than returning a quadrature- or
 mesh-dependent finite number.
 
 The finite-thickness thick-metal corner has `nu > 1/2`, so its surface trace is integrable.
