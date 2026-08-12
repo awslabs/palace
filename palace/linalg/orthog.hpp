@@ -11,6 +11,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
+#include "utils/labels.hpp"
 
 namespace palace::linalg
 {
@@ -85,6 +86,26 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
       H[j] += dH[j];
       w.Add(-dH[j], V[j]);
     }
+  }
+}
+
+template <typename VecType, typename ScalarType,
+          typename InnerProductW = IdentityInnerProduct>
+inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
+                                const std::vector<VecType> &V, VecType &w, ScalarType *H,
+                                std::size_t m, const InnerProductW &dot_op = {})
+{
+  switch (type)
+  {
+    case Orthogonalization::MGS:
+      OrthogonalizeColumnMGS(comm, V, w, H, m, dot_op);
+      break;
+    case Orthogonalization::CGS:
+      OrthogonalizeColumnCGS(comm, V, w, H, m, false, dot_op);
+      break;
+    case Orthogonalization::CGS2:
+      OrthogonalizeColumnCGS(comm, V, w, H, m, true, dot_op);
+      break;
   }
 }
 
