@@ -3,15 +3,13 @@
 
 // Method of Manufactured Solutions (MMS) verification for the electrostatic operator.
 //
-// We manufacture a smooth potential V_mms on the unit cube [0,1]³, substitute it into
+// We manufacture a potential V_mms on the unit cube [0,1]³, substitute it into
 //     -∇·(ε ∇V) = ρ   (constant ε)
-// to get the volumetric source ρ_mms = -ε ∇²V_mms that makes V_mms exact, solve with V =
-// V_mms on ∂Ω, and check that the discrete solution converges to V_mms in the L2 norm at
-// the optimal rate. Two manufactured solutions exercise different boundary conditions:
-//   - sin(πx)sin(πy)sin(πz): vanishes on ∂Ω → homogeneous Dirichlet (source only).
-//   - cos(πx)cos(πy)cos(πz): nonzero on ∂Ω → non-homogeneous Dirichlet (source + boundary
-//   lift).
-// Both are Laplacian eigenfunctions (∇²V_mms = -3π² V_mms), so ρ_mms = 3π²ε V_mms.
+// to get the source ρ_mms = -ε ∇²V_mms that makes V_mms exact, solve with V = V_mms on ∂Ω,
+// and compare the discrete solution to V_mms in the L2 norm. Several manufactured solutions
+// (defined below) exercise homogeneous and non-homogeneous Dirichlet BCs, checked both for
+// optimal convergence rate under mesh refinement and for exactness when V_mms lies in the
+// FE space.
 
 #include <cmath>
 #include <memory>
@@ -40,32 +38,54 @@ namespace
 // would add a ∇ε·∇V term.
 constexpr double kEpsilonR = 1.0;
 
-// Homogeneous-Dirichlet manufactured solution: sin(πx)sin(πy)sin(πz) vanishes on ∂Ω.
+// sin(πx)sin(πy)sin(πz): vanishes on ∂Ω (homogeneous Dirichlet). Laplacian eigenfunction,
+// so ρ_mms = -ε ∇²V_mms = 3π²ε V_mms.
 double VmmsSin(const mfem::Vector &x)
 {
   return std::sin(M_PI * x[0]) * std::sin(M_PI * x[1]) * std::sin(M_PI * x[2]);
 }
+double RhoSin(const mfem::Vector &x)
+{
+  return 3.0 * M_PI * M_PI * kEpsilonR * VmmsSin(x);
+}
 
-// Non-homogeneous-Dirichlet manufactured solution: cos(πx)cos(πy)cos(πz) is nonzero on ∂Ω.
+// cos(πx)cos(πy)cos(πz): nonzero on ∂Ω (non-homogeneous Dirichlet). Also an eigenfunction.
 double VmmsCos(const mfem::Vector &x)
 {
   return std::cos(M_PI * x[0]) * std::cos(M_PI * x[1]) * std::cos(M_PI * x[2]);
 }
+double RhoCos(const mfem::Vector &x)
+{
+  return 3.0 * M_PI * M_PI * kEpsilonR * VmmsCos(x);
+}
 
-// A manufactured case: the exact solution V_mms and whether it is nonzero on the boundary.
-// Both choices are Laplacian eigenfunctions, so ρ_mms = -ε ∇²V_mms = 3π²ε V_mms.
+// x² + y² + z²: a degree-2 polynomial, nonzero on ∂Ω. ∇²V_mms = 6, so ρ_mms = -6ε
+// (constant).
+double VmmsPoly(const mfem::Vector &x)
+{
+  return x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+}
+double RhoPoly(const mfem::Vector &)
+{
+  return -6.0 * kEpsilonR;
+}
+
+// A manufactured case: exact solution V_mms, its source ρ_mms = -ε ∇²V_mms, and whether
+// V_mms is nonzero on the boundary (i.e. needs a non-homogeneous Dirichlet lift).
 struct MmsCase
 {
   double (*v_mms)(const mfem::Vector &);
+  double (*rho_mms)(const mfem::Vector &);
   bool nonzero_boundary;
 };
 
-const MmsCase kHomogeneous{VmmsSin, false};
-const MmsCase kNonHomogeneous{VmmsCos, true};
+const MmsCase kHomogeneous{VmmsSin, RhoSin, false};
+const MmsCase kNonHomogeneous{VmmsCos, RhoCos, true};
+const MmsCase kPolynomial{VmmsPoly, RhoPoly, true};
 
 // Solve the manufactured electrostatic problem for the given case on an N×N×N unit cube and
 // return the L2 error ‖V_h - V_mms‖ against the manufactured solution.
-double SolveMmsL2Error(const MmsCase &mms, int n, int order)
+double SolveMmsL2Error(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9)
 {
   MPI_Comm comm = Mpi::World();
 
@@ -82,8 +102,10 @@ double SolveMmsL2Error(const MmsCase &mms, int n, int order)
   iodata.solver.order = order;
   // Drive the iterative-solver (algebraic) error below the discretization error we measure.
   // The default 1e-6 leaves an error floor that the finest/highest-order discretization
-  // error falls below, which would collapse the measured convergence rate.
-  iodata.solver.linear.tol = 1.0e-9;
+  // error falls below, which would collapse the measured convergence rate. The
+  // polynomial-exactness test needs an even tighter tol, since its discretization error is
+  // zero and the algebraic error is then all that remains.
+  iodata.solver.linear.tol = linear_tol;
 
   // Structured unit-cube mesh; MakeCartesian3D assigns domain attribute 1 and face
   // attributes 1..6, so h = 1/n and refining is just changing n.
@@ -99,13 +121,11 @@ double SolveMmsL2Error(const MmsCase &mms, int n, int order)
   LaplaceOperator laplace_op(iodata, mesh);
   auto &h1_fespace = laplace_op.GetH1Space();
 
-  // Set the manufactured source ρ_mms = 3π²ε V_mms and, for the non-homogeneous case, the
-  // prescribed boundary values V_mms. Then run the production solve path via the exposed
-  // inner Solve (root=false so BaseSolver's ctor writes no metadata/output files).
+  // Set the manufactured source ρ_mms and, for the non-homogeneous case, the prescribed
+  // boundary values V_mms. Then run the production solve path via the exposed inner Solve
+  // (root=false so BaseSolver's ctor writes no metadata/output files).
   mfem::FunctionCoefficient v_exact(mms.v_mms);
-  mfem::FunctionCoefficient rho_coef(
-      [&mms](const mfem::Vector &x)
-      { return 3.0 * M_PI * M_PI * kEpsilonR * mms.v_mms(x); });
+  mfem::FunctionCoefficient rho_coef(mms.rho_mms);
   laplace_op.SetRhsSource(rho_coef);
   if (mms.nonzero_boundary)
   {
@@ -155,6 +175,18 @@ TEST_CASE("Electrostatic MMS solves to a small L2 error",
 {
   CHECK(SolveMmsL2Error(kHomogeneous, /*n=*/16, /*order=*/2) < 1.0e-3);
   CHECK(SolveMmsL2Error(kNonHomogeneous, /*n=*/16, /*order=*/2) < 1.0e-3);
+}
+
+// A polynomial of degree ≤ p lies exactly in the order-p H1 space, so the FEM has zero
+// discretization error and should reproduce V_mms to ~machine precision on any mesh — a
+// sharper check than the convergence rate (a wrong sign/constant gives an O(1) error, not a
+// bad slope). With discretization error zero, the iterative-solver error is all that
+// remains, so use a tight linear tolerance to keep it below the threshold.
+TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
+          "[electrostaticmms][Serial][Parallel]")
+{
+  CHECK(SolveMmsL2Error(kPolynomial, /*n=*/4, /*order=*/2, /*linear_tol=*/1.0e-13) <
+        1.0e-10);
 }
 
 // Convergence-rate verification: for each polynomial order p, the L2 error must decrease
