@@ -65,6 +65,10 @@ private:
   // manufactured-solution verification tests; there is no config path that sets it.
   mfem::Coefficient *rhs_source = nullptr;
 
+  // Optional prescribed Dirichlet values on the essential boundary (not owned). Null means
+  // homogeneous (V = 0). Set only by manufactured-solution verification tests.
+  mfem::Coefficient *dbc_source = nullptr;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::TerminalData> &terminal,
@@ -120,8 +124,12 @@ public:
   void SetRhsSource(mfem::Coefficient &source) { rhs_source = &source; }
   bool HasRhsSource() const { return rhs_source != nullptr; }
 
-  // Assemble the RHS from the volumetric source alone, with homogeneous Dirichlet BCs on
-  // all essential boundaries. Requires SetRhsSource.
+  // Set prescribed Dirichlet values on the essential boundary (see dbc_source; caller
+  // retains ownership).
+  void SetDbcCoefficient(mfem::Coefficient &dbc) { dbc_source = &dbc; }
+
+  // Assemble the RHS from the volumetric source, with Dirichlet BCs on all essential
+  // boundaries (homogeneous, or the values from SetDbcCoefficient). Requires SetRhsSource.
   void GetSourceExcitationVector(const Operator &K, Vector &X, Vector &RHS);
 
   // Get the associated MPI communicator.

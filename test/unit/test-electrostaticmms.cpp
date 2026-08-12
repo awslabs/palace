@@ -3,17 +3,19 @@
 
 // Method of Manufactured Solutions (MMS) verification for the electrostatic operator.
 //
-// We manufacture a smooth potential on the unit cube [0,1]³ that vanishes on the boundary:
-//     V_mms(x,y,z) = sin(πx) sin(πy) sin(πz)
-// Since ∇²(sin πx sin πy sin πz) = -3π² V_mms, the volumetric charge that makes V_mms an
-// exact solution of  -∇·(ε ∇V) = ρ  (constant ε) is
-//     ρ_mms = -ε ∇²V_mms = 3π²ε V_mms.
-// We solve -∇·(ε ∇V) = ρ_mms with homogeneous Dirichlet BCs (all six faces grounded,
-// matching V_mms = 0 on ∂Ω) and check that the discrete solution converges to V_mms in the
-// L2 norm.
+// We manufacture a smooth potential V_mms on the unit cube [0,1]³, substitute it into
+//     -∇·(ε ∇V) = ρ   (constant ε)
+// to get the volumetric source ρ_mms = -ε ∇²V_mms that makes V_mms exact, solve with V =
+// V_mms on ∂Ω, and check that the discrete solution converges to V_mms in the L2 norm at
+// the optimal rate. Two manufactured solutions exercise different boundary conditions:
+//   - sin(πx)sin(πy)sin(πz): vanishes on ∂Ω → homogeneous Dirichlet (source only).
+//   - cos(πx)cos(πy)cos(πz): nonzero on ∂Ω → non-homogeneous Dirichlet (source + boundary
+//   lift).
+// Both are Laplacian eigenfunctions (∇²V_mms = -3π² V_mms), so ρ_mms = 3π²ε V_mms.
 
 #include <cmath>
 #include <memory>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -38,28 +40,37 @@ namespace
 // would add a ∇ε·∇V term.
 constexpr double kEpsilonR = 1.0;
 
-// Manufactured solution V_mms = sin(πx) sin(πy) sin(πz). Vanishes on all faces of [0,1]³
-// (so it matches a grounded boundary) and is a Laplacian eigenfunction (∇²V_mms = -3π²
-// V_mms), which makes the source a trivial multiple of the solution.
-double VmmsFunction(const mfem::Vector &x)
+// Homogeneous-Dirichlet manufactured solution: sin(πx)sin(πy)sin(πz) vanishes on ∂Ω.
+double VmmsSin(const mfem::Vector &x)
 {
   return std::sin(M_PI * x[0]) * std::sin(M_PI * x[1]) * std::sin(M_PI * x[2]);
 }
 
-// Manufactured source ρ_mms = -ε ∇²V_mms = 3π²ε · V_mms (the 3 is the dimension count).
-double RhommsFunction(const mfem::Vector &x)
+// Non-homogeneous-Dirichlet manufactured solution: cos(πx)cos(πy)cos(πz) is nonzero on ∂Ω.
+double VmmsCos(const mfem::Vector &x)
 {
-  return 3.0 * M_PI * M_PI * kEpsilonR * VmmsFunction(x);
+  return std::cos(M_PI * x[0]) * std::cos(M_PI * x[1]) * std::cos(M_PI * x[2]);
 }
 
-// Solve the manufactured electrostatic problem on an N×N×N unit cube and return the L2
-// error ‖V_h - V_mms‖ against the manufactured solution.
-double SolveMmsL2Error(int n, int order)
+// A manufactured case: the exact solution V_mms and whether it is nonzero on the boundary.
+// Both choices are Laplacian eigenfunctions, so ρ_mms = -ε ∇²V_mms = 3π²ε V_mms.
+struct MmsCase
+{
+  double (*v_mms)(const mfem::Vector &);
+  bool nonzero_boundary;
+};
+
+const MmsCase kHomogeneous{VmmsSin, false};
+const MmsCase kNonHomogeneous{VmmsCos, true};
+
+// Solve the manufactured electrostatic problem for the given case on an N×N×N unit cube and
+// return the L2 error ‖V_h - V_mms‖ against the manufactured solution.
+double SolveMmsL2Error(const MmsCase &mms, int n, int order)
 {
   MPI_Comm comm = Mpi::World();
 
   // Build the IoData in-memory (no mesh file): constant permittivity on the single domain
-  // attribute, all six cube faces grounded (Dirichlet).
+  // attribute, all six cube faces marked Dirichlet.
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.model.Lc = 1.0;
@@ -88,12 +99,18 @@ double SolveMmsL2Error(int n, int order)
   LaplaceOperator laplace_op(iodata, mesh);
   auto &h1_fespace = laplace_op.GetH1Space();
 
-  // Set the manufactured source ρ_mms on the operator, then run the production solve path
-  // via the exposed inner Solve: the operator assembles ∫ρφ into the RHS and applies
-  // homogeneous Dirichlet BCs internally. root=false so BaseSolver's ctor writes no
-  // metadata/output files.
-  mfem::FunctionCoefficient rho_coef(RhommsFunction);
+  // Set the manufactured source ρ_mms = 3π²ε V_mms and, for the non-homogeneous case, the
+  // prescribed boundary values V_mms. Then run the production solve path via the exposed
+  // inner Solve (root=false so BaseSolver's ctor writes no metadata/output files).
+  mfem::FunctionCoefficient v_exact(mms.v_mms);
+  mfem::FunctionCoefficient rho_coef(
+      [&mms](const mfem::Vector &x)
+      { return 3.0 * M_PI * M_PI * kEpsilonR * mms.v_mms(x); });
   laplace_op.SetRhsSource(rho_coef);
+  if (mms.nonzero_boundary)
+  {
+    laplace_op.SetDbcCoefficient(v_exact);
+  }
   ExposedElectrostaticSolver solver(iodata, /*root=*/false);
   std::vector<Vector> V;
   solver.Solve(V, laplace_op);
@@ -110,7 +127,6 @@ double SolveMmsL2Error(int n, int order)
   {
     irs[i] = &mfem::IntRules.Get(i, order_quad);
   }
-  mfem::FunctionCoefficient v_exact(VmmsFunction);
   return V_gf.ComputeL2Error(v_exact, irs);
 }
 
@@ -132,13 +148,13 @@ constexpr double kRateTol = 0.3;
 
 }  // namespace
 
-// Single-resolution sanity check: the manufactured problem solves and the L2 error is
-// small.
+// Single-resolution sanity check: both the homogeneous and non-homogeneous manufactured
+// problems solve and reach a small L2 error.
 TEST_CASE("Electrostatic MMS solves to a small L2 error",
           "[electrostaticmms][Serial][Parallel]")
 {
-  const double err = SolveMmsL2Error(/*n=*/16, /*order=*/2);
-  CHECK(err < 1.0e-3);
+  CHECK(SolveMmsL2Error(kHomogeneous, /*n=*/16, /*order=*/2) < 1.0e-3);
+  CHECK(SolveMmsL2Error(kNonHomogeneous, /*n=*/16, /*order=*/2) < 1.0e-3);
 }
 
 // Convergence-rate verification: for each polynomial order p, the L2 error must decrease
@@ -149,15 +165,20 @@ TEST_CASE("Electrostatic MMS solves to a small L2 error",
 TEST_CASE("Electrostatic MMS converges at the optimal rate",
           "[electrostaticmms][Serial][Parallel][Long]")
 {
+  // Run the sweep for both the homogeneous and non-homogeneous manufactured solutions, at
+  // each polynomial order. GENERATE takes the Cartesian product, so each (case, order) is a
+  // separate reported section — a failure identifies exactly which combination regressed.
+  const auto [name, mms] = GENERATE(table<std::string, MmsCase>(
+      {{"homogeneous", kHomogeneous}, {"non-homogeneous", kNonHomogeneous}}));
   const int order = GENERATE(from_range(kOrders));
-  CAPTURE(order);
+  CAPTURE(name, order);
 
   // Solve on each refinement level and record (h, error).
   std::vector<double> h(kResolutions.size()), err(kResolutions.size());
   for (std::size_t i = 0; i < kResolutions.size(); i++)
   {
     h[i] = 1.0 / kResolutions[i];
-    err[i] = SolveMmsL2Error(kResolutions[i], order);
+    err[i] = SolveMmsL2Error(mms, kResolutions[i], order);
   }
 
   // Every consecutive pair: error decreases and the observed rate matches p+1.

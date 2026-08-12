@@ -268,11 +268,25 @@ void LaplaceOperator::GetSourceExcitationVector(const Operator &K, Vector &X, Ve
   RHS.SetSize(GetH1Space().GetTrueVSize());
   X.UseDevice(true);
   RHS.UseDevice(true);
-  X = 0.0;  // Homogeneous Dirichlet: V = 0 on all essential boundaries.
+  X = 0.0;
   RHS = 0.0;
   GetH1Space().GetProlongationMatrix()->MultTranspose(rhs, RHS);
 
-  // With X = 0 this adds no boundary lift; it just clears RHS at the essential dofs.
+  // Prescribed Dirichlet values on X, projected onto all essential boundaries. When no
+  // boundary coefficient is set, X stays 0 (homogeneous).
+  if (dbc_source)
+  {
+    const mfem::ParMesh &mesh = GetMesh();
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
+    mfem::ParGridFunction x(&GetH1Space().Get());
+    x = 0.0;
+    x.ProjectBdrCoefficient(*dbc_source, dbc_marker);
+    x.ParallelProject(X);
+  }
+
+  // EliminateRHS folds the Dirichlet lift (-K_ib X_b) into RHS and clears the essential
+  // dofs.
   const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
   const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
                             : dynamic_cast<const ParOperator *>(&K);
