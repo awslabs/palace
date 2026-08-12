@@ -252,4 +252,32 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   PtAP_K->EliminateRHS(X, RHS);
 }
 
+void LaplaceOperator::GetSourceExcitationVector(const Operator &K, Vector &X, Vector &RHS)
+{
+  MFEM_VERIFY(
+      rhs_source,
+      "GetSourceExcitationVector requires a volumetric source (call SetRhsSource)!");
+
+  // Assemble the volumetric load ∫ ρ φ dV. Note mfem::DomainLFIntegrator is a true volume
+  // integrator; palace::DomainLFIntegrator is a boundary integrator.
+  mfem::ParLinearForm rhs(&GetH1Space().Get());
+  rhs.AddDomainIntegrator(new mfem::DomainLFIntegrator(*rhs_source));
+  rhs.Assemble();
+
+  X.SetSize(GetH1Space().GetTrueVSize());
+  RHS.SetSize(GetH1Space().GetTrueVSize());
+  X.UseDevice(true);
+  RHS.UseDevice(true);
+  X = 0.0;  // Homogeneous Dirichlet: V = 0 on all essential boundaries.
+  RHS = 0.0;
+  GetH1Space().GetProlongationMatrix()->MultTranspose(rhs, RHS);
+
+  // With X = 0 this adds no boundary lift; it just clears RHS at the essential dofs.
+  const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
+  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
+                            : dynamic_cast<const ParOperator *>(&K);
+  MFEM_VERIFY(PtAP_K, "LaplaceOperator requires ParOperator for RHS elimination!");
+  PtAP_K->EliminateRHS(X, RHS);
+}
+
 }  // namespace palace

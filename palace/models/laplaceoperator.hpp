@@ -61,6 +61,10 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
+  // Optional volumetric source ρ for -div(ε ∇V) = ρ (not owned). Null except in
+  // manufactured-solution verification tests; there is no config path that sets it.
+  mfem::Coefficient *rhs_source = nullptr;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::TerminalData> &terminal,
@@ -111,6 +115,14 @@ public:
   // Assemble the solution boundary conditions and right-hand side vector for a nonzero
   // prescribed voltage on the specified surface index.
   void GetExcitationVector(int idx, const Operator &K, Vector &X, Vector &RHS);
+
+  // Set the volumetric source ρ (see rhs_source; caller retains ownership).
+  void SetRhsSource(mfem::Coefficient &source) { rhs_source = &source; }
+  bool HasRhsSource() const { return rhs_source != nullptr; }
+
+  // Assemble the RHS from the volumetric source alone, with homogeneous Dirichlet BCs on
+  // all essential boundaries. Requires SetRhsSource.
+  void GetSourceExcitationVector(const Operator &K, Vector &X, Vector &RHS);
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetH1Space().GetComm(); }

@@ -32,13 +32,32 @@ void ElectrostaticSolver::Solve(std::vector<Vector> &V, LaplaceOperator &laplace
   KspSolver ksp(iodata, laplace_op.GetH1Spaces());
   ksp.SetOperators(*K, *K);
 
-  // Terminal indices are the set of boundaries over which to compute the capacitance
-  // matrix. Terminal boundaries are aliases for ports.
+  // Terminals are the boundaries over which the capacitance matrix is computed (port
+  // aliases). A manufactured-solution verification problem instead has no terminals and is
+  // driven by a volumetric source, handled by a single source-driven solve below.
   int n_step = static_cast<int>(laplace_op.GetSources().size());
-  MFEM_VERIFY(n_step > 0, "No terminal boundaries specified for electrostatic simulation!");
+  // HasRhsSource() is set only by verification tests (no config path), so for a
+  // config-driven run this is just the original n_step > 0 check. Revisit if SetRhsSource
+  // ever gets one.
+  MFEM_VERIFY(n_step > 0 || laplace_op.HasRhsSource(),
+              "No terminal boundaries specified for electrostatic simulation!");
 
   // Right-hand side term and solution vector storage.
   Vector RHS(Grad.Width());
+
+  if (n_step == 0)
+  {
+    // Source-driven (manufactured) solve: a single system with the volumetric source only.
+    V.resize(1);
+    Mpi::Print("\nComputing electrostatic field for volumetric source\n");
+    laplace_op.GetSourceExcitationVector(*K, V[0], RHS);
+    ksp.Mult(RHS, V[0]);
+    Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
+               linalg::Norml2(laplace_op.GetComm(), V[0]),
+               linalg::Norml2(laplace_op.GetComm(), RHS));
+    return;
+  }
+
   V.resize(n_step);
 
   // Main loop over terminal boundaries.
