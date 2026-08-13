@@ -123,8 +123,7 @@ struct MmsError
 };
 
 MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
-                          mfem::Coefficient &v_exact, mfem::VectorCoefficient &e_exact,
-                          int potential_order_quad)
+                          mfem::Coefficient &v_exact, mfem::VectorCoefficient &e_exact)
 {
   mfem::ParGridFunction V_gf(&laplace_op.GetH1Space().Get());
   V_gf.SetFromTrueDofs(V);
@@ -135,12 +134,7 @@ MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
   mfem::ParGridFunction E_gf(&laplace_op.GetNDSpace().Get());
   E_gf.SetFromTrueDofs(E);
 
-  const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
-  for (int i = 0; i < mfem::Geometry::NumGeom; i++)
-  {
-    irs[i] = &mfem::IntRules.Get(i, potential_order_quad);
-  }
-  return {V_gf.ComputeL2Error(v_exact, irs), E_gf.ComputeL2Error(e_exact)};
+  return {V_gf.ComputeL2Error(v_exact), E_gf.ComputeL2Error(e_exact)};
 }
 
 MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9)
@@ -193,10 +187,9 @@ MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol =
   std::vector<Vector> V;
   solver.Solve(V, laplace_op);
 
-  // Compute errors in V and in the production electric-field recovery E = -∇V. Retain the
-  // existing potential quadrature rule; the vector-field error uses MFEM's default rule to
-  // avoid underintegrated superconvergence at tensor-product quadrature points.
-  return ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact, order + 2);
+  // Compute errors in V and in the production electric-field recovery E = -∇V. MFEM selects
+  // an error-integration rule based on each finite-element space's polynomial order.
+  return ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact);
 }
 
 // Observed convergence rate between two (mesh size h, L2 error) points: the slope of the
@@ -287,8 +280,7 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
   std::vector<Vector> V;
   solver.Solve(V, laplace_op);
 
-  const auto error =
-      ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact, /*potential_order_quad=*/4);
+  const auto error = ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact);
   CHECK(error.potential < 1.0e-10);
   CHECK(error.electric < 1.0e-10);
 }
