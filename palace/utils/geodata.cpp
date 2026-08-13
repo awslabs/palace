@@ -1803,6 +1803,23 @@ std::vector<BoundaryEdgeSegment> GetMeshEdgeSegments(const mfem::Mesh &mesh, int
   return SampleEdgeTransformation(transformation, endpoint0, endpoint1);
 }
 
+MeshEdgeSegmentCache::MeshEdgeSegmentCache(const mfem::Mesh &mesh_)
+  : mesh(mesh_), segments(mesh.GetNEdges())
+{
+}
+
+const std::vector<BoundaryEdgeSegment> &MeshEdgeSegmentCache::Get(int edge)
+{
+  MFEM_VERIFY(edge >= 0 && edge < static_cast<int>(segments.size()),
+              "Invalid topological edge index for geometry sampling cache!");
+  auto &entry = segments[edge];
+  if (!entry)
+  {
+    entry = GetMeshEdgeSegments(mesh, edge);
+  }
+  return *entry;
+}
+
 std::vector<BoundaryEdgeSegment>
 GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool exterior_only)
@@ -1813,6 +1830,7 @@ GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int>
               "Invalid boundary attribute marker for boundary element edge extraction!");
 
   std::vector<double> local_coordinates;
+  MeshEdgeSegmentCache edge_segment_cache(mesh);
   mfem::Array<int> edges, orientations, vertices;
   auto AddSegment = [&](const BoundaryEdgeSegment &segment)
   {
@@ -1863,7 +1881,7 @@ GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int>
       mesh.GetBdrElementEdges(be, edges, orientations);
       for (int edge : edges)
       {
-        for (const auto &segment : GetMeshEdgeSegments(mesh, edge))
+        for (const auto &segment : edge_segment_cache.Get(edge))
         {
           AddSegment(segment);
         }
@@ -1938,6 +1956,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
   std::vector<HYPRE_BigInt> local_keys;
   std::vector<int> local_side_attributes;
   std::vector<double> local_coordinates;
+  MeshEdgeSegmentCache edge_segment_cache(mesh);
   if (mesh.Dimension() == 2)
   {
     // MFEM does not generate point boundary elements for every cracked internal 1D
@@ -2030,7 +2049,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
           std::swap(gv0, gv1);
           std::swap(vertices[0], vertices[1]);
         }
-        for (const auto &segment : GetMeshEdgeSegments(mesh, edge))
+        for (const auto &segment : edge_segment_cache.Get(edge))
         {
           local_keys.push_back(gv0);
           local_keys.push_back(gv1);
@@ -3396,7 +3415,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // For each element / boundary element, find the (at most one, by independence) split edge
   // it contains, returning the matching midpoint id and the local endpoint vertices, or -1.
-  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int(*edge_vert)[2],
+  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int (*edge_vert)[2],
                                           int nedge, int &lv0, int &lv1)
   {
     for (int le = 0; le < nedge; le++)

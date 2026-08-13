@@ -902,6 +902,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       post_op.MeasureFinalize(indicator);
     }
   }
+  if (response_correction)
+  {
+    MFEM_ASSERT(corrected_ksp, "Missing corrected eigenmode linear solver!");
+    SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Eigenmode",
+                                      corrected_ksp->NumTotalMult(),
+                                      corrected_ksp->NumTotalMultIterations());
+    SaveMetadata(*response_correction);
+  }
   MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
                                                          << num_conv << " modes when "
                                                          << iodata.solver.eigenmode.n

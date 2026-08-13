@@ -1,0 +1,1507 @@
+<!doctype html>
+<!--
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Fabrication-Response-Corrected Surface Participation in Palace</title>
+  <style>
+    :root {
+      --ink: #17212b;
+      --muted: #526271;
+      --paper: #f7f9fb;
+      --panel: #ffffff;
+      --line: #d8e0e7;
+      --blue: #1769aa;
+      --blue-soft: #eaf4fb;
+      --cyan: #008ea1;
+      --green: #177245;
+      --green-soft: #e9f6ef;
+      --amber: #9a5b00;
+      --amber-soft: #fff5df;
+      --red: #a33131;
+      --red-soft: #fff0f0;
+      --violet: #6650a4;
+      --code: #eef2f5;
+      --shadow: 0 8px 28px rgba(31, 50, 69, 0.09);
+      --radius: 14px;
+      --measure: 78rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #e6edf3;
+        --muted: #aab8c5;
+        --paper: #0f151b;
+        --panel: #161e26;
+        --line: #34424f;
+        --blue: #72b7ec;
+        --blue-soft: #142d40;
+        --cyan: #63c5d2;
+        --green: #73c89b;
+        --green-soft: #153326;
+        --amber: #f2ba62;
+        --amber-soft: #3a2b13;
+        --red: #ff9999;
+        --red-soft: #3d2020;
+        --violet: #b9a9eb;
+        --code: #222c35;
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 16px/1.62 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-rendering: optimizeLegibility;
+    }
+    a { color: var(--blue); }
+    a:hover { text-decoration-thickness: 2px; }
+    code, pre, kbd, samp {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    code {
+      padding: 0.1em 0.3em;
+      border-radius: 0.3em;
+      background: var(--code);
+      font-size: 0.9em;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 1rem 0;
+      padding: 1rem 1.1rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--code);
+      line-height: 1.45;
+    }
+    pre code { padding: 0; background: transparent; }
+    h1, h2, h3, h4 {
+      line-height: 1.18;
+      letter-spacing: -0.018em;
+      text-wrap: balance;
+    }
+    h1 { margin: 0; font-size: clamp(2.3rem, 5.4vw, 4.8rem); }
+    h2 {
+      margin: 3.4rem 0 1rem;
+      padding-top: 0.4rem;
+      font-size: clamp(1.75rem, 3vw, 2.55rem);
+      border-top: 1px solid var(--line);
+    }
+    h3 { margin: 2.25rem 0 0.65rem; font-size: 1.42rem; }
+    h4 { margin: 1.5rem 0 0.4rem; font-size: 1.08rem; }
+    p { max-width: 76ch; }
+    li + li { margin-top: 0.35rem; }
+    strong { font-weight: 720; }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(3rem, 8vw, 7.5rem) max(1.25rem, calc((100vw - var(--measure)) / 2));
+      color: white;
+      background:
+        radial-gradient(circle at 78% 18%, rgba(80, 207, 224, 0.34), transparent 30%),
+        radial-gradient(circle at 20% 95%, rgba(122, 102, 204, 0.35), transparent 34%),
+        linear-gradient(135deg, #102d46, #0b5564 58%, #123443);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.23;
+      background-image:
+        linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(to bottom, transparent, black 35%, transparent);
+    }
+    .hero > * { position: relative; z-index: 1; }
+    .hero .eyebrow {
+      margin: 0 0 1rem;
+      font-weight: 760;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #a9ebf2;
+    }
+    .hero .subtitle {
+      max-width: 52rem;
+      margin: 1.3rem 0;
+      font-size: clamp(1.08rem, 2vw, 1.42rem);
+      color: #dcecf2;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-top: 1.7rem;
+    }
+    .meta span {
+      padding: 0.38rem 0.75rem;
+      border: 1px solid rgba(255,255,255,.28);
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      font-size: 0.9rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);
+      gap: clamp(2rem, 5vw, 5rem);
+      width: min(calc(100% - 2.5rem), var(--measure));
+      margin: 0 auto;
+      padding: 2.2rem 0 5rem;
+    }
+    .toc {
+      position: sticky;
+      top: 1rem;
+      align-self: start;
+      max-height: calc(100vh - 2rem);
+      overflow-y: auto;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      font-size: 0.9rem;
+    }
+    .toc strong { display: block; margin-bottom: 0.55rem; }
+    .toc ol { margin: 0; padding-left: 1.25rem; }
+    .toc li + li { margin-top: 0.3rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--blue); }
+    main { min-width: 0; }
+
+    .lead {
+      max-width: 74ch;
+      font-size: 1.13rem;
+      color: var(--muted);
+    }
+    .summary-grid, .cards, .metrics {
+      display: grid;
+      gap: 1rem;
+    }
+    .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card, .metric, .callout, figure {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .card { padding: 1.1rem 1.2rem; }
+    .card h3, .card h4 { margin-top: 0; }
+    .card p:last-child { margin-bottom: 0; }
+    .metric { padding: 1rem; }
+    .metric .value {
+      display: block;
+      font-size: 1.75rem;
+      font-weight: 780;
+      line-height: 1.1;
+      color: var(--blue);
+    }
+    .metric .label { color: var(--muted); font-size: 0.88rem; }
+    .callout {
+      margin: 1.2rem 0;
+      padding: 1rem 1.15rem;
+      border-left-width: 5px;
+    }
+    .callout p:first-child { margin-top: 0; }
+    .callout p:last-child { margin-bottom: 0; }
+    .callout.info { border-left-color: var(--blue); background: var(--blue-soft); }
+    .callout.good { border-left-color: var(--green); background: var(--green-soft); }
+    .callout.warn { border-left-color: var(--amber); background: var(--amber-soft); }
+    .callout.risk { border-left-color: var(--red); background: var(--red-soft); }
+    .kicker {
+      display: inline-block;
+      margin-bottom: 0.35rem;
+      font-size: 0.78rem;
+      font-weight: 780;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .equation {
+      overflow-x: auto;
+      margin: 1rem 0;
+      padding: 1rem 1.2rem;
+      border-left: 4px solid var(--violet);
+      background: var(--code);
+      font-family: "STIX Two Math", "Cambria Math", Georgia, serif;
+      font-size: 1.08rem;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .equation .where {
+      display: block;
+      margin-top: 0.5rem;
+      font-family: system-ui, sans-serif;
+      font-size: 0.84rem;
+      color: var(--muted);
+      white-space: normal;
+      text-align: left;
+    }
+
+    .table-wrap { overflow-x: auto; margin: 1rem 0 1.5rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      font-size: 0.92rem;
+    }
+    caption {
+      padding: 0 0 0.5rem;
+      text-align: left;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    th, td {
+      padding: 0.68rem 0.75rem;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--code); }
+    .status {
+      display: inline-block;
+      padding: 0.14rem 0.48rem;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+    .implemented { color: var(--green); background: var(--green-soft); }
+    .partial { color: var(--amber); background: var(--amber-soft); }
+    .missing { color: var(--red); background: var(--red-soft); }
+    .experimental { color: var(--violet); background: var(--code); }
+
+    figure { margin: 1.4rem 0; padding: 1rem; overflow: hidden; }
+    figcaption { margin-top: 0.8rem; color: var(--muted); font-size: 0.88rem; }
+    svg { display: block; width: 100%; height: auto; }
+    .svg-title { font: 700 17px system-ui, sans-serif; fill: var(--ink); }
+    .svg-text { font: 13px system-ui, sans-serif; fill: var(--ink); }
+    .svg-small { font: 11px system-ui, sans-serif; fill: var(--muted); }
+    .svg-line { stroke: var(--ink); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.75rem;
+      align-items: stretch;
+      margin: 1.2rem 0;
+    }
+    .flow-step {
+      position: relative;
+      padding: 0.9rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+    .flow-step:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      top: 50%;
+      right: -0.67rem;
+      z-index: 2;
+      transform: translate(50%, -50%);
+      color: var(--cyan);
+      font-size: 1.3rem;
+      font-weight: 800;
+    }
+    .flow-step b { display: block; margin-bottom: 0.3rem; color: var(--blue); }
+    .flow-step span { color: var(--muted); font-size: 0.86rem; }
+
+    .checklist { list-style: none; padding: 0; }
+    .checklist li {
+      position: relative;
+      padding-left: 1.7rem;
+    }
+    .checklist li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      font-weight: 800;
+    }
+    .roadmap { counter-reset: phase; list-style: none; padding: 0; }
+    .roadmap > li {
+      counter-increment: phase;
+      position: relative;
+      margin: 1rem 0;
+      padding: 1rem 1rem 1rem 3.7rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+    .roadmap > li::before {
+      content: counter(phase);
+      position: absolute;
+      left: 1rem;
+      top: 1rem;
+      display: grid;
+      place-items: center;
+      width: 1.8rem;
+      height: 1.8rem;
+      border-radius: 50%;
+      color: white;
+      background: var(--blue);
+      font-weight: 800;
+    }
+    .roadmap b { display: block; }
+    .small { font-size: 0.88rem; color: var(--muted); }
+    .path { overflow-wrap: anywhere; }
+    footer {
+      padding: 2rem max(1.25rem, calc((100vw - var(--measure)) / 2));
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      background: var(--panel);
+      font-size: 0.88rem;
+    }
+
+    @media (max-width: 920px) {
+      .layout { grid-template-columns: 1fr; }
+      .toc { position: static; max-height: none; }
+      .summary-grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step:not(:last-child)::after {
+        content: "↓";
+        top: auto;
+        right: 50%;
+        bottom: -0.7rem;
+        transform: translate(50%, 50%);
+      }
+    }
+    @media (max-width: 620px) {
+      .cards, .metrics { grid-template-columns: 1fr; }
+      th, td { padding: 0.52rem; }
+    }
+
+    @media print {
+      :root {
+        --ink: #111;
+        --muted: #444;
+        --paper: #fff;
+        --panel: #fff;
+        --line: #bbb;
+        --code: #f2f2f2;
+        --blue: #1769aa;
+        --cyan: #007b8b;
+        --green: #177245;
+        --amber: #7a4800;
+        --red: #8e2b2b;
+        --violet: #56428d;
+        --blue-soft: #eef6fa;
+        --green-soft: #eef8f2;
+        --amber-soft: #fff8e8;
+        --red-soft: #fff1f1;
+        --shadow: none;
+      }
+      body { font-size: 10.5pt; }
+      .hero { padding: 2rem; color: #111; background: #fff; border-bottom: 2px solid #333; }
+      .hero .subtitle, .hero .eyebrow { color: #333; }
+      .hero .meta span { border-color: #999; background: #fff; }
+      .hero::after, .toc { display: none; }
+      .layout { display: block; width: 100%; padding: 0 0 1rem; }
+      main { padding: 0 1rem; }
+      h2 { break-before: page; }
+      h2:first-of-type { break-before: auto; }
+      table, figure, .card, .callout, pre { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+      footer { padding: 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">Technical report · experimental feature</p>
+    <h1>Fabrication-Response-Corrected<br>Surface Participation in Palace</h1>
+    <p class="subtitle">
+      A local-response approach for estimating SA, MS, and MA dielectric participation
+      without resolving nanometer-scale metal thickness, overetch, sidewall taper, and
+      rounding throughout a full superconducting quantum-chip mesh.
+    </p>
+    <div class="meta" aria-label="Report metadata">
+      <span>Branch: simlapointe/surface-participation</span>
+      <span>Snapshot: 2e499e12c</span>
+      <span>Audience: Palace and quantum-chip practitioners</span>
+      <span>Status: research implementation</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Table of contents">
+      <strong>Contents</strong>
+      <ol>
+        <li><a href="#executive-summary">Executive summary</a></li>
+        <li><a href="#problem">The modeling problem</a></li>
+        <li><a href="#idea">The response-correction idea</a></li>
+        <li><a href="#mathematics">Mathematical formulation</a></li>
+        <li><a href="#implementation">Implementation architecture</a></li>
+        <li><a href="#geometry">Geometry and process libraries</a></li>
+        <li><a href="#solvers">Solver integration</a></li>
+        <li><a href="#confidence">Confidence and output</a></li>
+        <li><a href="#validation">Validation evidence</a></li>
+        <li><a href="#readiness">Current readiness and gaps</a></li>
+        <li><a href="#flip-chip">Practical flip-chip workflow</a></li>
+        <li><a href="#roadmap">Recommended path to production</a></li>
+        <li><a href="#code-map">Code map and verification</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <section id="executive-summary">
+        <h2>1. Executive summary</h2>
+        <p class="lead">
+          The branch implements a subgrid model for fabrication-sensitive surface loss.
+          A practical device is solved on its usual zero-thickness-metal mesh. Small,
+          fabrication-resolved coupon simulations are used to learn the local response
+          of metal edges, nearby edge clusters, and three-dimensional vertices. Palace
+          then replaces the unresolved thin-sheet response inside a matching neighborhood
+          with the corresponding fabricated response.
+        </p>
+
+        <div class="summary-grid">
+          <article class="card">
+            <span class="kicker">Core principle</span>
+            <h3>Keep the device mesh thin</h3>
+            <p>
+              The full-chip solve retains the geometry and cost of an ordinary thin-metal
+              Palace model. Fabrication details are confined to reusable local coupons.
+            </p>
+          </article>
+          <article class="card">
+            <span class="kicker">Numerical mechanism</span>
+            <h3>Replace a local response operator</h3>
+            <p>
+              Fabricated-minus-thin Dirichlet-to-Neumann response matrices produce a
+              low-rank correction to the electrostatic stiffness or Maxwell mass term.
+            </p>
+          </article>
+          <article class="card">
+            <span class="kicker">Current status</span>
+            <h3>Implemented, not yet production-qualified</h3>
+            <p>
+              Operators, automatic geometry matching, preflight, corrected solves, and
+              diagnostics exist. General three-dimensional accuracy, process-library
+              qualification, and practical-scale performance remain open.
+            </p>
+          </article>
+        </div>
+
+        <div class="callout good">
+          <p><strong>What has changed relative to a prototype calibration script?</strong></p>
+          <p>
+            The branch now contains an integrated Palace response operator, automatic
+            geometry classification, process-library selection, fixed-trace and fixed-flux
+            closures, self-consistent electrostatic/driven/eigenmode solves, AMR-aware
+            geometry caching, distributed trace evaluation, and confidence reporting.
+          </p>
+        </div>
+
+        <div class="callout warn">
+          <p><strong>Interpretation boundary.</strong></p>
+          <p>
+            “Implemented” means the code path and focused tests exist. It does not mean
+            that every local geometry or solver combination has passed an independent
+            fabrication-resolved accuracy study. The branch documentation explicitly
+            classifies the feature as experimental.
+          </p>
+        </div>
+      </section>
+
+      <section id="problem">
+        <h2>2. The modeling problem</h2>
+        <p>
+          Interface dielectric loss is commonly summarized by a participation ratio
+          <var>p</var><sub>j</sub> for each lossy surface layer <var>j</var>. For a thin,
+          perturbative dielectric film,
+        </p>
+        <div class="equation">
+          p<sub>j</sub> = U<sub>j</sub> / U<sub>e</sub>,
+          &nbsp;&nbsp;&nbsp; Q<sub>j</sub><sup>−1</sup> = p<sub>j</sub> tan δ<sub>j</sub>.
+          <span class="where">
+            <var>U</var><sub>j</sub> is the electric energy assigned to the SA, MS, or MA
+            interface layer, and <var>U</var><sub>e</sub> is the normalization electric
+            energy, including lumped-capacitor energy where applicable.
+          </span>
+        </div>
+        <p>
+          A zero-thickness perfect-conductor sheet has a singular electric field at its
+          perimeter. In the canonical thin-sheet limit, |<b>E</b>| behaves as
+          <var>r</var><sup>−1/2</sup>, so |<b>E</b>|² behaves approximately as
+          1/<var>r</var> near the edge. A surface trace cut off at mesh scale
+          <var>h</var> therefore has logarithmic cutoff dependence, while the surrounding
+          two-dimensional volume cross-section remains integrable:
+        </p>
+        <div class="equation">
+          U<sub>surf</sub>(h,R) ∝ ∫<sub>h</sub><sup>R</sup> dr/r
+          = log(R/h),
+          &nbsp;&nbsp;&nbsp;
+          U<sub>vol</sub>(R) ∝ ∫<sub>0</sub><sup>R</sup> |<b>E</b>|² r dr ∼ R.
+          <span class="where">
+            The second relation motivates the volume-annulus singular-amplitude
+            diagnostic; it does not make the raw surface trace convergent.
+          </span>
+        </div>
+        <p>Consequently:</p>
+        <ul>
+          <li>raw SA/MS/MA participation may drift under refinement;</li>
+          <li>the mesh near the perimeter can dominate AMR;</li>
+          <li>the answer depends on an unphysical numerical cutoff;</li>
+          <li>resolving the real fabrication geometry everywhere is prohibitively costly.</li>
+        </ul>
+        <p>
+          Real fabrication removes the ideal singularity through finite metal thickness,
+          substrate overetch, sidewall taper, and corner rounding. Those scales are often
+          tens of nanometers, while a chip is millimeters across. Meshing both scales in a
+          multi-qubit electromagnetic model produces an extreme and unnecessary scale
+          separation if fabrication physics is local.
+        </p>
+
+        <figure aria-labelledby="cross-section-caption">
+          <svg viewBox="0 0 960 380" role="img" aria-labelledby="cross-title cross-desc">
+            <title id="cross-title">Thin device edge and fabrication-resolved coupon</title>
+            <desc id="cross-desc">Comparison of a zero-thickness metal edge in the device mesh with a local fabricated coupon containing finite thickness, overetch, sidewalls, and interface films.</desc>
+            <defs>
+              <linearGradient id="substrate" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#c8ad7f"/>
+                <stop offset="1" stop-color="#9c7b4f"/>
+              </linearGradient>
+              <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#c7d4df"/>
+                <stop offset="1" stop-color="#70879a"/>
+              </linearGradient>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="#008ea1"/>
+              </marker>
+              <filter id="glow"><feGaussianBlur stdDeviation="6"/></filter>
+            </defs>
+
+            <text x="70" y="35" class="svg-title">Full-device thin-metal model</text>
+            <rect x="40" y="190" width="360" height="140" rx="5" fill="url(#substrate)"/>
+            <rect x="40" y="55" width="360" height="135" rx="5" fill="#dcecf3"/>
+            <line x1="80" y1="190" x2="245" y2="190" stroke="#304c60" stroke-width="8"/>
+            <circle cx="245" cy="190" r="8" fill="#a33131"/>
+            <circle cx="245" cy="190" r="62" fill="none" stroke="#1769aa" stroke-width="3" stroke-dasharray="8 6"/>
+            <path d="M245 190 C280 158, 292 120, 300 82" fill="none" stroke="#a33131" stroke-width="9" opacity=".2" filter="url(#glow)"/>
+            <path d="M245 190 C280 158, 292 120, 300 82" fill="none" stroke="#a33131" stroke-width="2.5"/>
+            <path d="M245 190 C278 215, 305 247, 325 297" fill="none" stroke="#a33131" stroke-width="9" opacity=".2" filter="url(#glow)"/>
+            <path d="M245 190 C278 215, 305 247, 325 297" fill="none" stroke="#a33131" stroke-width="2.5"/>
+            <text x="97" y="178" class="svg-text">zero-thickness metal</text>
+            <text x="260" y="119" class="svg-small">matching contour Γ<tspan baseline-shift="sub">R</tspan></text>
+            <text x="260" y="212" class="svg-small">singular ideal edge</text>
+            <text x="55" y="78" class="svg-small">vacuum / air</text>
+            <text x="55" y="315" class="svg-small">substrate</text>
+
+            <path d="M410 190 L505 190" stroke="#008ea1" stroke-width="4" marker-end="url(#arrow)"/>
+            <text x="424" y="166" class="svg-small">match local</text>
+            <text x="425" y="181" class="svg-small">response</text>
+
+            <text x="560" y="35" class="svg-title">Fabrication-resolved coupon</text>
+            <rect x="535" y="190" width="385" height="140" rx="5" fill="url(#substrate)"/>
+            <rect x="535" y="55" width="385" height="135" rx="5" fill="#dcecf3"/>
+            <path d="M575 188 L718 188 L728 162 L728 133 L575 133 Z" fill="url(#metal)" stroke="#304c60" stroke-width="2"/>
+            <path d="M718 188 Q730 182 728 162" fill="none" stroke="#e3edf4" stroke-width="7"/>
+            <path d="M720 190 L746 190 L746 208 L712 208" fill="#8a613d" opacity=".75"/>
+            <line x1="574" y1="128" x2="729" y2="128" stroke="#d07e19" stroke-width="5"/>
+            <line x1="574" y1="193" x2="714" y2="193" stroke="#6650a4" stroke-width="5"/>
+            <path d="M729 133 Q742 145 733 161" fill="none" stroke="#177245" stroke-width="5"/>
+            <path d="M730 188 C770 153, 785 115, 793 82" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+            <path d="M730 188 C765 220, 793 255, 810 298" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+            <circle cx="730" cy="188" r="62" fill="none" stroke="#1769aa" stroke-width="3" stroke-dasharray="8 6"/>
+            <text x="585" y="114" class="svg-small">MA film</text>
+            <text x="590" y="224" class="svg-small">MS film</text>
+            <text x="740" y="150" class="svg-small">SA film</text>
+            <text x="750" y="215" class="svg-small">overetch</text>
+            <text x="609" y="155" class="svg-small">finite metal</text>
+            <text x="747" y="175" class="svg-small">taper + rounding</text>
+            <text x="550" y="315" class="svg-small">substrate</text>
+          </svg>
+          <figcaption id="cross-section-caption">
+            Figure 1. The full device retains a thin conductor. A local fabricated coupon
+            shares the same matching contour and supplies the response that the device mesh
+            cannot resolve. Colors for the three films are illustrative, not to scale.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section id="idea">
+        <h2>3. The response-correction idea</h2>
+        <p>
+          The method treats fabrication as a local constitutive response rather than as
+          full-device geometry. The exterior device field supplies a trace on a contour or
+          surface surrounding a metal-edge neighborhood. A coupon maps that trace to:
+        </p>
+        <ul>
+          <li>the electric energy stored in the local domain;</li>
+          <li>the SA, MS, and MA film energies inside the neighborhood;</li>
+          <li>the local flux or Dirichlet-to-Neumann response seen by the exterior field.</li>
+        </ul>
+        <p>
+          Two geometrically matched coupons are required: an ideal thin-metal coupon and a
+          fabrication-resolved coupon. Their difference isolates the effect of fabrication
+          while preserving the same exterior trace space. The response can then be reused
+          at every compatible location in a device made with the same process.
+        </p>
+
+        <div class="flow" aria-label="Surface response workflow">
+          <div class="flow-step">
+            <b>1 · Thin device</b>
+            <span>Ordinary Palace mesh with typed SA/MS/MA interfaces.</span>
+          </div>
+          <div class="flow-step">
+            <b>2 · Preflight</b>
+            <span>Extract and classify every local edge neighborhood.</span>
+          </div>
+          <div class="flow-step">
+            <b>3 · Process library</b>
+            <span>Retrieve or generate qualified thin/fabricated coupons.</span>
+          </div>
+          <div class="flow-step">
+            <b>4 · Corrected solve</b>
+            <span>Apply local response patches without remeshing the device.</span>
+          </div>
+          <div class="flow-step">
+            <b>5 · Evidence</b>
+            <span>Report raw, corrected, coverage, closure, and confidence data.</span>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <p><strong>Locality is a hypothesis that must be checked.</strong></p>
+          <p>
+            A straight isolated-edge coupon is not valid near a narrow gap, corner, branch,
+            nearby layer, or strongly curved edge. The implementation therefore classifies
+            coupled neighborhoods and can fail closed with
+            <code>UnmatchedPolicy: "Error"</code>. Warning mode may omit a local
+            neighborhood or retain a documented straight-edge fallback; reduced coverage
+            and confidence mark that result as unqualified.
+          </p>
+        </div>
+      </section>
+
+      <section id="mathematics">
+        <h2>4. Mathematical formulation</h2>
+
+        <h3>4.1 Coupon trace basis and energy matrices</h3>
+        <p>
+          Let {φ<sub>i</sub>} be basis traces on the matching contour Γ<sub>R</sub>. A
+          local boundary trace is represented by coefficients <b>a</b>:
+        </p>
+        <div class="equation">
+          V<sub>Γ</sub>(<b>a</b>) = Σ<sub>i</sub> a<sub>i</sub> φ<sub>i</sub>.
+        </div>
+        <p>
+          Palace solves one electrostatic coupon problem per basis trace and obtains cross
+          terms from summed fields. The resulting symmetric response matrices satisfy
+        </p>
+        <div class="equation">
+          U<sub>domain</sub>(<b>a</b>) = <b>a</b><sup>T</sup> Q<sub>domain</sub> <b>a</b>,
+          &nbsp;&nbsp;&nbsp;
+          U<sub>j</sub>(<b>a</b>) = <b>a</b><sup>T</sup> Q<sub>j</sub> <b>a</b>.
+          <span class="where">
+            For complex Maxwell traces, the quadratic forms are Hermitian. Separate
+            matrices are stored for the thin and fabricated coupons and for each material
+            interface.
+          </span>
+        </div>
+        <p>
+          Because electrostatic energy is one half of the boundary flux pairing, the local
+          Dirichlet-to-Neumann energy operator is <var>S</var> = 2<var>Q</var><sub>domain</sub>.
+        </p>
+
+        <h3>4.2 Global low-rank correction</h3>
+        <p>
+          Let <var>P</var> map the global finite-element field to each coupon trace,
+          including the subtraction of a conductor reference and any independent
+          conductor-voltage states. The fabrication-response defect is
+        </p>
+        <div class="equation">
+          R = P<sup>T</sup>(S<sub>fab</sub> − S<sub>thin</sub>)P.
+        </div>
+        <p>
+          The matrix is not assembled as a dense global operator. Palace evaluates the
+          trace, applies small dense coupon matrices patch by patch, and applies the exact
+          transpose trace map.
+        </p>
+
+        <h3>4.3 Electrostatic, driven, and eigenmode systems</h3>
+        <div class="equation">
+          K<sub>corr</sub> = K<sub>thin</sub> + R.
+          <span class="where">Electrostatic corrected stiffness.</span>
+        </div>
+        <div class="equation">
+          A<sub>corr</sub>(ω) = A<sub>thin</sub>(ω) − ω²R.
+          <span class="where">Driven Maxwell corrected system.</span>
+        </div>
+        <div class="equation">
+          [K + λC + λ²(M + R) + A<sub>2</sub>(λ)] <b>E</b><sub>corr</sub> = 0.
+          <span class="where">
+            Corrected eigenproblem, with λ = iω. The form reduces to the corresponding
+            generalized linear eigenproblem when damping and frequency-dependent terms
+            are absent.
+          </span>
+        </div>
+        <p>
+          The raw thin operator remains the preconditioner. Raw and corrected solves are
+          kept separate so enabling the feature does not silently alter historical Palace
+          output or the raw AMR sequence.
+        </p>
+
+        <h3>4.4 Corrected interface energy</h3>
+        <p>
+          For a target interface <var>j</var>, the divergent or mesh-sensitive thin core is
+          removed and replaced by the complete fabricated coupon response:
+        </p>
+        <div class="equation">
+          U<sub>j,corr</sub> = U<sub>j,thin,outside R</sub>
+          + <b>a</b><sup>H</sup> Q<sub>j,fab,total</sub> <b>a</b>.
+        </div>
+        <p>
+          The corrected normalization energy receives the matching fabricated-minus-thin
+          domain response. Thus both numerator and denominator are corrected consistently.
+        </p>
+
+        <h3>4.5 Fixed-trace, fixed-flux, and self-consistent responses</h3>
+        <div class="cards">
+          <article class="card">
+            <h4>Fixed trace</h4>
+            <p>
+              Apply the fabricated response to the trace reconstructed from the unchanged
+              thin-device field. This is the local Dirichlet closure.
+            </p>
+          </article>
+          <article class="card">
+            <h4>Fixed flux</h4>
+            <p>
+              Transform the trace on the active subspace by
+              <var>a</var><sub>N</sub> = S<sub>fab</sub><sup>−1</sup>
+              S<sub>thin</sub><var>a</var><sub>D</sub> before evaluating fabricated energy.
+              This is the local Neumann closure.
+            </p>
+          </article>
+          <article class="card">
+            <h4>Closure spread</h4>
+            <p>
+              The relative difference between fixed-trace and fixed-flux responses measures
+              information that postprocessing alone cannot recover from the thin field.
+            </p>
+          </article>
+          <article class="card">
+            <h4>Self-consistent solve</h4>
+            <p>
+              Solve the globally coupled corrected system. This supplies exterior coupling
+              rather than choosing one local postprocessing closure.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="implementation">
+        <h2>5. Implementation architecture</h2>
+        <figure aria-labelledby="architecture-caption">
+          <svg viewBox="0 0 1000 560" role="img" aria-labelledby="arch-title arch-desc">
+            <title id="arch-title">Surface response implementation architecture</title>
+            <desc id="arch-desc">Data flow from Palace input and process library through geometry extraction, patch construction, raw and corrected solvers, and output.</desc>
+            <defs>
+              <marker id="arch-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L9,3 z" fill="#1769aa"/>
+              </marker>
+            </defs>
+            <style>
+              .box { fill: var(--panel); stroke: var(--line); stroke-width: 2; }
+              .bluebox { fill: var(--blue-soft); stroke: var(--blue); stroke-width: 2; }
+              .greenbox { fill: var(--green-soft); stroke: var(--green); stroke-width: 2; }
+              .amberbox { fill: var(--amber-soft); stroke: var(--amber); stroke-width: 2; }
+              .arrow { fill: none; stroke: var(--blue); stroke-width: 2.4; marker-end: url(#arch-arrow); }
+              .dash { fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-dasharray: 7 5; marker-end: url(#arch-arrow); }
+            </style>
+
+            <rect class="bluebox" x="30" y="45" width="210" height="105" rx="12"/>
+            <text x="50" y="75" class="svg-title">Thin device input</text>
+            <text x="50" y="102" class="svg-text">mesh + materials</text>
+            <text x="50" y="123" class="svg-text">typed SA / MS / MA</text>
+            <text x="50" y="144" class="svg-text">metal boundary laws</text>
+
+            <rect class="bluebox" x="30" y="205" width="210" height="105" rx="12"/>
+            <text x="50" y="235" class="svg-title">Process library</text>
+            <text x="50" y="262" class="svg-text">fabrication metadata</text>
+            <text x="50" y="283" class="svg-text">response matrices</text>
+            <text x="50" y="304" class="svg-text">qualified geometry models</text>
+
+            <rect class="box" x="305" y="45" width="240" height="105" rx="12"/>
+            <text x="325" y="75" class="svg-title">Geometry classifier</text>
+            <text x="325" y="102" class="svg-text">edge extraction + ownership</text>
+            <text x="325" y="123" class="svg-text">corners / clusters / masks</text>
+            <text x="325" y="144" class="svg-text">exact / interpolated / missing</text>
+
+            <rect class="amberbox" x="305" y="205" width="240" height="105" rx="12"/>
+            <text x="325" y="235" class="svg-title">Preflight manifest</text>
+            <text x="325" y="262" class="svg-text">canonical requirements</text>
+            <text x="325" y="283" class="svg-text">counts + edge lengths</text>
+            <text x="325" y="304" class="svg-text">coverage failures</text>
+
+            <rect class="box" x="610" y="45" width="240" height="105" rx="12"/>
+            <text x="630" y="75" class="svg-title">Response geometry</text>
+            <text x="630" y="102" class="svg-text">models + weighted patches</text>
+            <text x="630" y="123" class="svg-text">contours + conductor states</text>
+            <text x="630" y="144" class="svg-text">cached across AMR</text>
+
+            <rect class="box" x="610" y="205" width="240" height="105" rx="12"/>
+            <text x="630" y="235" class="svg-title">Distributed trace map P</text>
+            <text x="630" y="262" class="svg-text">point / line functionals</text>
+            <text x="630" y="283" class="svg-text">exact transpose</text>
+            <text x="630" y="304" class="svg-text">small dense patch actions</text>
+
+            <rect class="greenbox" x="180" y="390" width="245" height="110" rx="12"/>
+            <text x="200" y="420" class="svg-title">Raw thin solve</text>
+            <text x="200" y="447" class="svg-text">ordinary fields and SPRs</text>
+            <text x="200" y="468" class="svg-text">raw AMR indicator</text>
+            <text x="200" y="489" class="svg-text">preserved output contract</text>
+
+            <rect class="greenbox" x="575" y="390" width="275" height="110" rx="12"/>
+            <text x="595" y="420" class="svg-title">Corrected path</text>
+            <text x="595" y="447" class="svg-text">fixed trace + fixed flux</text>
+            <text x="595" y="468" class="svg-text">self-consistent field solve</text>
+            <text x="595" y="489" class="svg-text">confidence + corrected fields</text>
+
+            <path class="arrow" d="M240 95 L305 95"/>
+            <path class="arrow" d="M240 257 L305 257"/>
+            <path class="arrow" d="M545 95 L610 95"/>
+            <path class="arrow" d="M730 150 L730 205"/>
+            <path class="arrow" d="M665 310 C620 345 570 352 470 360 C380 368 310 375 305 390"/>
+            <path class="arrow" d="M755 310 L725 390"/>
+            <path class="dash" d="M425 150 L425 205"/>
+            <path class="dash" d="M545 257 C575 257 580 142 610 118"/>
+            <path class="dash" d="M425 310 C430 345 460 360 600 400"/>
+          </svg>
+          <figcaption id="architecture-caption">
+            Figure 2. Runtime architecture. Preflight uses the production geometry
+            classifier but stops before operator assembly. During ordinary solves, the raw
+            path remains intact and the response path is additive.
+          </figcaption>
+        </figure>
+
+        <h3>5.1 Configuration surfaces</h3>
+        <p>
+          Electrostatic correction is configured under
+          <code>Solver.Electrostatic.ResponseCorrection</code>. Driven, eigenmode, and
+          boundary-mode correction is configured under
+          <code>Solver.SurfaceResponseCorrection</code>. Maxwell correction requires an
+          automatic process library; explicit model placement remains an electrostatic
+          prototype/legacy feature.
+        </p>
+
+        <h3>5.2 Surface diagnostics and matching-radius resolution</h3>
+        <p>
+          Typed dielectric entries use <code>AutomaticEdges</code>,
+          <code>EdgeDistances</code>, and optionally <code>LocalizeEdgeEnergy</code>.
+          <code>EdgeRefinement</code> can resolve the matching tube before the first field
+          solve and reduce the raw field-error weight inside the replaced core. Elements
+          crossing the matching contour retain full indicator weight.
+        </p>
+        <p>
+          The largest selected edge distance for a corrected interface must equal the
+          process-library matching radius. The device mesh need not resolve the fabrication
+          scale, but it must resolve the contour and the exterior annulus used to couple the
+          local model to the global field.
+        </p>
+
+        <h3>5.3 AMR behavior</h3>
+        <p>
+          Mesh-independent geometry classification is cached across AMR iterations. The
+          finite-element point/line interpolation stencil is rebuilt on each refined mesh.
+          The raw field supplies the AMR indicator; corrected fields and corrected SPRs are
+          evaluated at every solve without redefining the historical raw sequence.
+        </p>
+      </section>
+
+      <section id="geometry">
+        <h2>6. Geometry matching and process libraries</h2>
+        <p>
+          The process library is the scientific contract between fabrication calibration
+          and device simulation. A version-3 library records the matching radius,
+          fabrication stack, interface-layer properties, response matrices, trace bases,
+          geometric signatures, boundary laws, and optional qualification metadata.
+        </p>
+        <div class="callout warn">
+          <p><strong>Runtime matching is not general qualification verification.</strong></p>
+          <p>
+            Palace validates structure, compatibility, geometry, interface layers, and
+            boundary-law metadata, but it generally trusts the numerical matrices in the
+            selected library. Convergence and held-out qualification are responsibilities
+            of the preparation workflow and its preserved evidence.
+          </p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>Local geometry capability at the reviewed snapshot</caption>
+            <thead>
+              <tr><th>Geometry family</th><th>Classification</th><th>Generation</th><th>Qualification state</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Isolated straight edge</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td>Qualified in selected CPW studies</td></tr>
+              <tr><td>Parallel pair</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td>Selected separations studied; dense grids still process-specific</td></tr>
+              <tr><td>Three or more parallel edges</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td><span class="status partial">Incomplete</span></td></tr>
+              <tr><td>Sharp and rounded corners</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td><span class="status partial">Partial</span>; several angle/radius studies remain</td></tr>
+              <tr><td>Smooth curved edge</td><td>High-order-aware sampled chain</td><td>Reuses edge/corner/spatial models</td><td><span class="status missing">Missing</span> general qualification</td></tr>
+              <tr><td>Trace cap or T/cross mask</td><td>Corners, curves, exact masks</td><td><span class="status implemented">Implemented candidate</span></td><td><span class="status partial">Incomplete</span></td></tr>
+              <tr><td>Nonparallel local cluster</td><td>Exact spatial signature</td><td><span class="status implemented">Implemented candidate</span></td><td><span class="status partial">Incomplete</span></td></tr>
+              <tr><td>Cross-layer interaction</td><td>Exact multi-slot signature</td><td><span class="status implemented">Implemented candidate</span></td><td><span class="status partial">Incomplete</span></td></tr>
+              <tr><td>Open/nonmanifold mask</td><td>Detected</td><td>Rejected unless an exact valid manifold mask exists</td><td><span class="status missing">Unsupported automatically</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>6.1 Fail-closed matching</h3>
+        <p>
+          A model is selected only when topology, conductor ownership, process normal,
+          interface mapping, boundary law, and geometric tolerances are compatible. Pair
+          interpolation is bracketed; there is no extrapolation. Rounded-corner radius
+          interpolation additionally requires an explicitly passed held-out qualification
+          span. Exact spatial clusters are not interpolated.
+        </p>
+
+        <h3>6.2 Exact plan-view masks</h3>
+        <p>
+          Nearby nonparallel edges can underdetermine the actual conductor footprint. The
+          classifier therefore clips metal-surface facets to the interaction neighborhood,
+          canonicalizes the union boundary independently of source triangulation, and stores
+          a <code>PlanViewBoundary</code>. Fabricated coupon generation tapers, rounds, and
+          overetches physical boundaries while retaining artificial continuation cuts.
+          Open, point-touching, or otherwise nonmanifold masks fail closed.
+        </p>
+
+        <h3>6.3 Boundary laws</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>Metal boundary-law readiness</caption>
+            <thead><tr><th>Boundary law</th><th>Runtime matching</th><th>Candidate generation</th><th>Physical qualification</th></tr></thead>
+            <tbody>
+              <tr><td>PEC</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td><span class="status partial">Partial</span></td></tr>
+              <tr><td>Conductivity</td><td><span class="status implemented">Exact-parameter matching</span></td><td><span class="status implemented">Candidate</span></td><td><span class="status missing">Missing</span></td></tr>
+              <tr><td>Impedance</td><td><span class="status implemented">Exact-parameter matching</span></td><td><span class="status implemented">Candidate</span></td><td><span class="status missing">Missing</span></td></tr>
+              <tr><td>Rational impedance</td><td><span class="status implemented">Exact-function matching</span></td><td><span class="status implemented">Candidate</span></td><td><span class="status missing">Missing</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Non-PEC candidates currently inherit a quasi-electrostatic response and are
+          marked unqualified. Frequency and boundary-law sweeps are needed before those
+          matrices can be treated as universal or safely interpolated.
+        </p>
+      </section>
+
+      <section id="solvers">
+        <h2>7. Solver integration</h2>
+        <div class="table-wrap">
+          <table>
+            <caption>Implemented solver paths and remaining validation</caption>
+            <thead><tr><th>Problem</th><th>Fixed trace / flux</th><th>Self-consistent</th><th>Remaining work</th></tr></thead>
+            <tbody>
+              <tr><td>2D electrostatic</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td>Production validation</td></tr>
+              <tr><td>3D electrostatic</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td>Practical-device validation</td></tr>
+              <tr><td>2D boundary mode</td><td><span class="status implemented">Implemented</span></td><td>Not planned initially</td><td>Quasi-TEM validity gate</td></tr>
+              <tr><td>3D uniform driven</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td>High-order and AMR validation</td></tr>
+              <tr><td>3D adaptive PROM driven</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Independent corrected PROM</span></td><td>Direct/PROM and AMR validation</td></tr>
+              <tr><td>Linear undamped eigenmode</td><td><span class="status implemented">Implemented</span></td><td><span class="status implemented">Implemented</span></td><td>High-order and practical-device validation</td></tr>
+              <tr><td>Damped/frequency-dependent eigenmode</td><td><span class="status implemented">Implemented</span></td><td><span class="status experimental">PEP / HYBRID / SLP code paths</span></td><td>HYBRID and high-order/AMR validation</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>7.1 Raw-output invariance</h3>
+        <p>
+          The raw solution, standard <code>surface-Q.csv</code>, ordinary field files, and
+          raw AMR indicator remain the thin-metal result. Corrected results are additional
+          outputs. This separation is important both scientifically and operationally: it
+          allows direct comparison and prevents an experimental model from silently
+          changing established Palace behavior.
+        </p>
+
+        <h3>7.2 Corrected driven PROM</h3>
+        <p>
+          A shifted resonance may not be represented by a reduced basis constructed from
+          raw thin-metal snapshots. The adaptive driven implementation therefore constructs
+          a second corrected PROM from corrected HDM samples and runs its own greedy
+          convergence loop. The raw PROM continues to supply ordinary output and AMR.
+        </p>
+
+        <h3>7.3 Corrected eigenmodes</h3>
+        <p>
+          Raw and corrected eigensystems are solved separately. Corrected modes are paired
+          to raw modes by a maximum-total-weight one-to-one assignment of normalized
+          raw-mass overlaps. Corrected frequency and overlap are reported, with overlap
+          acting as a confidence gate near crossings or mode reordering.
+        </p>
+
+        <div class="callout warn">
+          <p><strong>Boundary-mode limitation.</strong></p>
+          <p>
+            The current boundary-mode participation and response path uses the transverse
+            electric field. The longitudinal component is stored separately and is not
+            included in the corrected participation. The result is therefore intended for
+            quasi-TEM modes; a quantitative longitudinal-energy gate is not yet present.
+          </p>
+        </div>
+      </section>
+
+      <section id="confidence">
+        <h2>8. Confidence diagnostics and output</h2>
+        <p>
+          A corrected number is useful only if the local model covers the geometry and the
+          reconstructed trace satisfies the current applicability diagnostics. Palace
+          writes one confidence row per frequency/excitation, eigenmode, or boundary mode.
+          These nominal gates are necessary evidence, not empirically calibrated accuracy
+          guarantees and not a substitute for held-out coupon and device validation.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <caption>Principal Maxwell confidence quantities</caption>
+            <thead><tr><th>Quantity</th><th>Meaning</th><th>Current nominal limit</th></tr></thead>
+            <tbody>
+              <tr><td><code>kR</code></td><td>Electrical size |ω|R/v<sub>min</sub> of the quasi-electrostatic coupon</td><td>≤ 0.1</td></tr>
+              <tr><td>Response-weighted loop residual</td><td>Nonconservative contour voltage carried by material response</td><td>≤ 0.05</td></tr>
+              <tr><td>Loop-response fraction above limit</td><td>Fraction of response assigned to paths with excessive loop residual</td><td>≤ 0.01</td></tr>
+              <tr><td>Matched edge fraction</td><td>Minimum geometric coverage over target interfaces</td><td>Effectively 1</td></tr>
+              <tr><td>Unmodeled corner fraction</td><td>Response neighborhood near unmatched corners/endpoints/junctions</td><td>≤ 0.1</td></tr>
+              <tr><td><code>max R/rho</code></td><td>Matching radius relative to local curvature radius</td><td>≤ 0.25</td></tr>
+              <tr><td>Maximum library distance</td><td>Normalized interpolation or geometry mismatch</td><td>≤ 0.8</td></tr>
+              <tr><td>Boundary-law parameters verified</td><td>Exact PEC or numerical boundary-law match</td><td>1</td></tr>
+              <tr><td>Maximum trace-closure spread</td><td>Largest interface-level fixed-trace/fixed-flux difference</td><td>≤ 0.05</td></tr>
+              <tr><td>Weighted local closure spread</td><td>Patch/interface closure spread weighted by response</td><td>≤ 0.05</td></tr>
+              <tr><td>Closure-response fraction above limit</td><td>Fraction of patch/interface response whose local closure spread exceeds 0.05</td><td>≤ 0.01</td></tr>
+              <tr><td>Self-consistent M-overlap</td><td>Raw-mass overlap of paired eigenmodes</td><td>≥ 0.8</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Primary outputs are:</p>
+        <ul>
+          <li><code>surface-Q.csv</code>: unchanged raw thin-metal SPRs;</li>
+          <li><code>surface-Q-corrected.csv</code>: raw, fixed-trace, fixed-flux, and self-consistent values;</li>
+          <li><code>surface-response-confidence.csv</code>: aggregate confidence diagnostics;</li>
+          <li><code>E_corrected_real/imag</code> and optional <code>D_corrected_real/imag</code>: corrected fields;</li>
+          <li><code>surface-response-requirements.json</code>: geometry-only preflight coverage.</li>
+        </ul>
+
+        <div class="callout info">
+          <p><strong>Failed confidence does not suppress evidence.</strong></p>
+          <p>
+            Palace still writes corrected values when a gate fails, but warns that they are
+            unqualified. Fixed-trace/fixed-flux closure failure does not by itself invalidate
+            a self-consistent solve, because the latter supplies global exterior coupling.
+          </p>
+        </div>
+      </section>
+
+      <section id="validation">
+        <h2>9. Validation evidence and what it establishes</h2>
+        <p>
+          The implementation has broad synthetic unit coverage and several documented CPW
+          studies. The numerical results below should be read as development evidence, not
+          as a complete qualification matrix. Existing local result directories were
+          generated by earlier or dirty revisions and should be rerun at the reviewed HEAD
+          before publication-quality claims are made.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <caption>Selected documented validation results</caption>
+            <thead><tr><th>Case</th><th>Result</th><th>Interpretation</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>2D held-out PEC CPW</td>
+                <td>Selected local calibrations reduce large raw errors to a few percent.</td>
+                <td>Supports local transfer for a straight cross-section and one process; does not validate general 3D geometry.</td>
+              </tr>
+              <tr>
+                <td>3D electrostatic extruded CPW, order 3</td>
+                <td>Self-consistent SA/MS/MA errors documented as +1.53% / −0.82% / +4.35%; closure spread 8.39%.</td>
+                <td>Promising self-consistent result; postprocessing-only closures fail their 5% spread gate.</td>
+              </tr>
+              <tr>
+                <td>Driven CPW, length 50 µm, order 2</td>
+                <td>Self-consistent errors +4.71% / −0.50% / +7.13%; raw errors −10.48% / −21.15% / −59.85%.</td>
+                <td>Large improvement, but MA remains outside the proposed 5% target.</td>
+              </tr>
+              <tr>
+                <td>Driven CPW, length 200 µm, order 1</td>
+                <td>Self-consistent MA error approximately +22%; raw MA error approximately −65%.</td>
+                <td>Demonstrates strong discretization sensitivity and the need for high-order fabricated references.</td>
+              </tr>
+              <tr>
+                <td>Eigenmode CPW, order 1</td>
+                <td>Corrected frequency moves toward the fabricated reference; paired-mode overlap ≈ 0.9999993; MA remains ≈20% high.</td>
+                <td>Validates plumbing and mode matching, not converged MA accuracy.</td>
+              </tr>
+              <tr>
+                <td>Documented flip-chip CPW width sweep</td>
+                <td>Maximum corrected errors: L1 SA/MS/MA = 5.41% / 2.19% / 9.11%; L2 = 0.30% / 0.32% / 4.24%.</td>
+                <td>Useful cross-layer evidence, but L1 SA and MA miss the proposed 5% device target and the study is not a multi-qubit validation.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>9.1 Coarse transmon preflight</h3>
+        <p>
+          A geometry-only preflight was run on the checked-in coarse single-transmon mesh at
+          the reviewed snapshot. It is not a corrected field solve, but it measures how the
+          classifier and planning workflow behave on a nontrivial device.
+        </p>
+        <div class="metrics">
+          <div class="metric"><span class="value">138k</span><span class="label">mesh elements</span></div>
+          <div class="metric"><span class="value">184k</span><span class="label">mesh edges</span></div>
+          <div class="metric"><span class="value">4.6 s</span><span class="label">one-rank preflight</span></div>
+          <div class="metric"><span class="value">288 MB</span><span class="label">peak memory</span></div>
+        </div>
+        <p>The empty process seed produced:</p>
+        <ul>
+          <li>22 requirement records and 215 missing occurrences;</li>
+          <li>42 unmatched corner, endpoint, or junction vertices;</li>
+          <li>15 unique automatically preparatable coupon candidates after aggregation;</li>
+          <li>10 exact spatial clusters, two isolated-edge mappings, one narrow-strip family, and one convex plus one concave corner family;</li>
+          <li>170 occurrences represented by the same narrow-strip requirement.</li>
+        </ul>
+        <p>
+          Canonical aggregation is working: repeated geometry can reuse one process model.
+          The result also illustrates the calibration burden. A coarse single transmon
+          already requires 15 qualified local models for complete coverage; a realistic
+          flip chip will require aggressive geometry reuse or a significantly larger
+          qualified library.
+        </p>
+
+        <h3>9.2 Automated verification performed during review</h3>
+        <ul class="checklist">
+          <li>The branch and Palace unit-test target build with <code>make -j 6 palace-tests</code>.</li>
+          <li>Focused serial and MPI surface-response operator tests pass.</li>
+          <li>The full non-regression CTest sweep has one known schema failure: a process-library seed is treated as a Palace example configuration.</li>
+          <li>All 71 Python example tests pass.</li>
+          <li>The coarse transmon preflight completes and emits a usable coupon plan.</li>
+        </ul>
+      </section>
+
+      <section id="readiness">
+        <h2>10. Current readiness and engineering gaps</h2>
+        <div class="callout risk">
+          <p><strong>Current verdict: suitable for controlled research pilots, not for production design signoff.</strong></p>
+          <p>
+            The major remaining work is no longer basic response-operator functionality.
+            It is scientific qualification, reproducible process-library production,
+            practical-device validation, and scalable execution.
+          </p>
+        </div>
+
+        <h3>10.1 Physical coverage gaps</h3>
+        <ul>
+          <li>Multi-edge, arbitrary-corner, smooth-curve, cap/branch, nonparallel, and cross-layer families are incompletely qualified.</li>
+          <li>Non-PEC response remains unqualified over frequency and boundary-law parameters.</li>
+          <li>High-order/AMR validation is incomplete for adaptive PROM and nonlinear eigenmode paths.</li>
+          <li>No realistic multi-qubit flip-chip reference satisfies the complete per-interface acceptance matrix.</li>
+        </ul>
+
+        <h3>10.2 Workflow and provenance gaps</h3>
+        <ul>
+          <li>The simple process-library builder can package solved but unqualified matrices as “complete.”</li>
+          <li>Current automatic qualifier defaults are not identical to the stricter roadmap release gates.</li>
+          <li>Unqualified finite-impedance candidates can leave top-level execution marked complete even though boundary-law physics is incomplete.</li>
+          <li>Cache keys do not yet include the Palace executable/commit and complete Julia/Gmsh dependency closure.</li>
+          <li>Qualification reports and remote staging are not yet a fully portable, content-addressed package.</li>
+          <li>The process-library schema and migration policy are not frozen.</li>
+        </ul>
+
+        <h3>10.3 Runtime scalability risks</h3>
+        <p>
+          Runtime patches and trace values are distributed, but geometry setup retains
+          important replicated/global operations. Metal component construction gathers
+          canonical surface vertices across ranks; cross-interface nearby-edge discovery
+          includes global pairwise work; exact masks gather neighborhood facets; and the
+          cached configuration retains the global patch layout.
+        </p>
+        <p>
+          Each corrected Krylov application currently performs host-side interpolation,
+          dynamic buffer construction, MPI <code>Alltoallv</code>, dense local patch work,
+          and transpose communication. This is likely to become latency- and
+          synchronization-sensitive at high MPI counts or on accelerators. Practical
+          corrected iteration counts and response-aware preconditioning have not been
+          benchmarked.
+        </p>
+
+        <h3>10.4 Output and component attribution</h3>
+        <p>
+          Corrected output is naturally aggregated by dielectric-interface index. It does
+          not carry stable CAD-semantic ownership such as qubit, readout line, resonator,
+          coupler, pad, bump group, or junction lead. Connectivity-based edge component and
+          chain identifiers are useful diagnostics but are not stable design identifiers.
+        </p>
+        <p>
+          Large local-edge CSV tables are also held in memory and fully rewritten. A
+          realistic frequency sweep with component-level output needs streaming or a
+          compact binary/sharded format.
+        </p>
+
+        <h3>10.5 Specific implementation inconsistencies</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Issue</th><th>Practical effect</th><th>Recommended resolution</th></tr></thead>
+            <tbody>
+              <tr><td>Process seed fails example-config schema test</td><td>Current non-regression suite is not fully green</td><td>Move/exclude library JSON or teach the test about artifact types</td></tr>
+              <tr><td>Maxwell schema reuses explicit electrostatic syntax that runtime rejects</td><td>Schema-valid input can fail in cross-field validation</td><td>Define a library-only Maxwell schema</td></tr>
+              <tr><td><code>Warn</code> with zero usable patches aborts</td><td>Incomplete-library bootstrap may not preserve a raw-only run</td><td>Define and test raw-only fallback or document fail-fast behavior</td></tr>
+              <tr><td>Self-consistent confidence row exports only a subset of diagnostics</td><td>Failure attribution is incomplete</td><td>Export corrected-frequency kR and all relevant non-closure gates</td></tr>
+              <tr><td>Boundary-mode longitudinal field omitted</td><td>Non-quasi-TEM participation may appear plausible but incomplete</td><td>Add full-vector energy or a longitudinal-energy confidence gate</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="flip-chip">
+        <h2>11. Workflow for a realistic flip-chip pilot</h2>
+        <p>
+          A credible first pilot should deliberately constrain physics and geometry while
+          exercising the complete production workflow. The purpose is to discover whether
+          the process-library and runtime scaling assumptions hold before attempting a
+          many-qubit design.
+        </p>
+
+        <h3>11.1 Recommended first scope</h3>
+        <ul>
+          <li>PEC metals;</li>
+          <li>linear undamped eigenmode or uniform driven solver;</li>
+          <li>one fabrication process per chip layer;</li>
+          <li>a two-chip subset containing one or two qubits, a readout/coupler, and representative bump-adjacent geometry;</li>
+          <li>no acceptance claim based on finite-impedance or HYBRID nonlinear results.</li>
+        </ul>
+
+        <h3>11.2 CAD-to-mesh contract</h3>
+        <p>The thin device mesh should provide:</p>
+        <ul>
+          <li>separate L1 and L2 SA, MS, and MA interface attributes;</li>
+          <li>correct metal boundary groups and explicit boundary laws;</li>
+          <li>artificial/truncation attributes that can be excluded from physical perimeters;</li>
+          <li>high-order curves or explicit sharp/smooth geometry metadata;</li>
+          <li>stable semantic component IDs if per-qubit or per-line SPR is required;</li>
+          <li>a documented division between planar response correction, finite bump geometry, junction leads, and the lumped Josephson barrier.</li>
+        </ul>
+        <p>
+          Spatial coupon generation currently assumes parallel or antiparallel fabrication
+          planes. Cross-layer and bump-adjacent neighborhoods must therefore be inspected
+          explicitly in preflight rather than assumed to be covered by planar edge models.
+        </p>
+
+        <h3>11.3 Example device configuration pattern</h3>
+        <pre><code>{
+  "Boundaries": {
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 101,
+          "Attributes": [/* L1 SA surfaces */],
+          "Type": "SA",
+          "Thickness": 0.002,
+          "Permittivity": 4.0,
+          "LossTan": 0.002,
+          "AutomaticEdges": true,
+          "EdgeDistances": [2.0]
+        },
+        {
+          "Index": 201,
+          "Attributes": [/* L2 SA surfaces */],
+          "Type": "SA",
+          "Thickness": 0.002,
+          "Permittivity": 4.0,
+          "LossTan": 0.002,
+          "AutomaticEdges": true,
+          "EdgeDistances": [2.0]
+        }
+        /* Add separate L1/L2 MS and MA entries. */
+      ]
+    }
+  },
+  "Solver": {
+    "SurfaceResponseCorrection": {
+      "Library": "process/library/process-library.json",
+      "TargetInterfaces": [101, 102, 103, 201, 202, 203],
+      "UnmatchedPolicy": "Error",
+      "SolveTol": 1.0e-6
+    }
+  }
+}</code></pre>
+        <p class="small">
+          Lengths are in mesh coordinate units. The largest configured
+          <code>EdgeDistances</code> value for a target must equal the library matching
+          radius. Actual indices and material parameters are process/design specific.
+        </p>
+
+        <h3>11.4 Preflight and coupon preparation</h3>
+        <pre><code># 1. Classify the exact device mesh without solving fields.
+build/bin/palace --surface-response-preflight device-preflight.json
+
+# 2. Convert missing signatures into a deterministic coupon plan.
+python3 examples/cpw2d/prepare_surface_response_coupons.py \
+  postpro/device/surface-response-requirements.json \
+  --output /work/process-coupons
+
+# 3. Generate and qualify candidates. Use at least two FEM orders and
+#    independent fixed-order h-refinement for corners/clusters/spatial masks.
+python3 examples/cpw2d/prepare_surface_response_coupons.py \
+  postpro/device/surface-response-requirements.json \
+  --output /work/process-coupons \
+  --execute \
+  --palace build/bin/palace \
+  --orders 2 3
+
+# 4. Re-run preflight against the generated library and require Complete: true.
+# 5. Run the device with UnmatchedPolicy: Error.</code></pre>
+        <p>
+          For production use, “automatically generated” is not synonymous with
+          “qualified.” Review p- and h-convergence, held-out responses, boundary-law
+          qualification, and the process provenance before accepting the library.
+        </p>
+
+        <h3>11.5 Acceptance ladder</h3>
+        <ol>
+          <li><strong>Geometry:</strong> preflight complete with strict matching and per-interface coverage of one.</li>
+          <li><strong>Coupon:</strong> all selected models pass final-order, independent h-refinement, and held-out gates.</li>
+          <li><strong>Contour:</strong> matching annulus resolved and corrected values stable with FEM order/AMR.</li>
+          <li><strong>Closure:</strong> fixed-trace/fixed-flux spread passes, or the self-consistent result passes every non-closure gate.</li>
+          <li><strong>Physics:</strong> representative fabrication-resolved subdevices agree within the chosen per-interface error target.</li>
+          <li><strong>Scale:</strong> raw/corrected runtime, memory, communication, and output remain within project budgets.</li>
+        </ol>
+
+        <h3>11.6 Required reporting for a pilot</h3>
+        <ul>
+          <li>separate L1/L2 and SA/MS/MA values—never only a global aggregate;</li>
+          <li>raw, fixed-trace, fixed-flux, and self-consistent convergence sequences;</li>
+          <li>all confidence columns and unmatched signatures;</li>
+          <li>process-library checksums and complete qualification evidence;</li>
+          <li>component-level conservation if semantic attribution is used;</li>
+          <li>preflight/setup/solve timing and peak memory at every scale step.</li>
+        </ul>
+      </section>
+
+      <section id="roadmap">
+        <h2>12. Recommended path to production</h2>
+        <ol class="roadmap">
+          <li>
+            <b>Close correctness and workflow gaps.</b>
+            Make the test suite green, align schema and runtime behavior, make qualification
+            status fail closed, and prevent unqualified libraries from being labeled complete.
+          </li>
+          <li>
+            <b>Freeze a reproducible process-library contract.</b>
+            Version the standalone schema, hash every matrix/basis/report, embed the Palace
+            executable and dependency manifests, and support automatic remote staging.
+          </li>
+          <li>
+            <b>Qualify the geometry families encountered by real layouts.</b>
+            Prioritize multi-edge clusters, corners and bends, caps/branches, bump-adjacent
+            masks, and cross-layer interactions from actual preflight manifests.
+          </li>
+          <li>
+            <b>Add semantic component attribution.</b>
+            Carry stable CAD component IDs through edge segments and response patches, and
+            aggregate corrected energy by layer, interface, component, and geometry family.
+          </li>
+          <li>
+            <b>Make geometry setup and response application scalable.</b>
+            Replace replicated pair discovery with a distributed spatial index, batch mask
+            requests, reuse communication buffers, avoid host synchronization, and balance
+            patches by trace/matrix cost.
+          </li>
+          <li>
+            <b>Validate a scale ladder with fabrication-resolved references.</b>
+            Progress from CPW cells to one qubit, two-chip subsets, and a full pilot. Require
+            independent convergence and per-interface accuracy at every stage.
+          </li>
+          <li>
+            <b>Promote realistic cases into CI and benchmark gates.</b>
+            Protect raw-output invariance, preflight determinism, AMR reconstruction,
+            corrected PROM/eigenmodes, output conservation, and multi-node performance.
+          </li>
+        </ol>
+
+        <div class="callout good">
+          <p><strong>Most important near-term experiment.</strong></p>
+          <p>
+            Run strict preflight on an actual two-chip design subset, generate its complete
+            coupon plan, and measure the number of unique exact spatial signatures. That
+            result will determine whether the present local-model vocabulary is practical
+            or whether geometry standardization and more general parameterized responses
+            are needed before further solver optimization.
+          </p>
+        </div>
+      </section>
+
+      <section id="code-map">
+        <h2>13. Code map and source evidence</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Area</th><th>Primary source</th><th>Role</th></tr></thead>
+            <tbody>
+              <tr><td>Response operator</td><td class="path"><code>palace/models/surfaceresponseoperator.cpp/.hpp</code></td><td>Library loading, geometry matching, traces, correction action, energy/confidence evaluation</td></tr>
+              <tr><td>Metal-edge geometry</td><td class="path"><code>palace/utils/metaledge.cpp/.hpp</code></td><td>Physical edge extraction, conductor components, process normals, high-order chains</td></tr>
+              <tr><td>Edge distance/refinement</td><td class="path"><code>palace/utils/edgedistance.cpp/.hpp</code></td><td>Matching tubes and geometry-driven refinement</td></tr>
+              <tr><td>Surface integration</td><td class="path"><code>palace/models/surfacepostoperator.cpp/.hpp</code></td><td>Raw/outside/localized interface and volume energies</td></tr>
+              <tr><td>Common Maxwell output</td><td class="path"><code>palace/models/postoperator.cpp/.hpp</code></td><td>Corrected SPRs, confidence, corrected field export</td></tr>
+              <tr><td>Electrostatic integration</td><td class="path"><code>palace/drivers/electrostaticsolver.cpp</code></td><td>Response matrices and fixed/self-consistent corrections</td></tr>
+              <tr><td>Driven integration</td><td class="path"><code>palace/drivers/drivensolver.cpp</code></td><td>Uniform and independent adaptive corrected solves</td></tr>
+              <tr><td>Eigenmode integration</td><td class="path"><code>palace/drivers/eigensolver.cpp</code></td><td>Corrected mass, nonlinear paths, mode pairing</td></tr>
+              <tr><td>Configuration</td><td class="path"><code>palace/utils/configfile.*</code>, <code>scripts/schema/config-schema.json</code></td><td>Public syntax and parsed response data</td></tr>
+              <tr><td>Preflight CLI</td><td class="path"><code>palace/main.cpp</code>, <code>palace/driver.cpp</code></td><td>Geometry-only requirements mode</td></tr>
+              <tr><td>Coupon automation</td><td class="path"><code>examples/cpw2d/prepare_surface_response_coupons.py</code></td><td>Planning, cache, execution, qualification, partial merge</td></tr>
+              <tr><td>3D coupon geometry</td><td class="path"><code>examples/cpw3d_surface/</code></td><td>Corner, spatial-mask, and held-out validation tooling</td></tr>
+              <tr><td>Focused tests</td><td class="path"><code>test/unit/test-surfaceresponseoperator.cpp</code></td><td>2D/3D matching, MPI, curves, corners, clusters, boundary laws, masks</td></tr>
+              <tr><td>Feature status</td><td class="path"><code>docs/src/developer/surface_response_roadmap.md</code></td><td>Readiness definitions, acceptance gates, and open work</td></tr>
+              <tr><td>Technical reference</td><td class="path"><code>docs/src/reference.md</code></td><td>Response matrix, library, solver, and confidence definitions</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>13.1 Proposed release acceptance targets</h3>
+        <ul>
+          <li>Final two coupon FEM orders: ≤5% matrix change and ≤10% worst probe-energy change.</li>
+          <li>Fabricated-minus-thin domain defect: ≤5% change.</li>
+          <li>Significant held-out material channels: ≤5% response error.</li>
+          <li>Fabricated and corrected device values: independently converged to ≤2%.</li>
+          <li>Corrected versus fabricated reference: ≤5% for every significant physical interface.</li>
+          <li>Postprocessing-only overhead target: ≤10% wall time and memory.</li>
+          <li>Self-consistent overhead target: ≤25% wall time and ≤15% peak memory.</li>
+          <li>No rank retains a replicated device-scale surface representation.</li>
+        </ul>
+
+        <h3>13.2 Scope exclusions</h3>
+        <p>
+          The method does not attempt a full-device fabrication-resolved mesh, a surface
+          boundary-element formulation, or a microscopic Josephson-barrier model. Junction
+          leads and nearby planar metal edges are in scope; the Josephson barrier remains a
+          lumped element unless a separate model changes that contract.
+        </p>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    <p>
+      Standalone technical report for the <code>simlapointe/surface-participation</code>
+      branch, reviewed at commit <code>2e499e12c</code>. Numerical values quoted from the
+      branch documentation are development results and should be regenerated with a clean,
+      recorded Palace build before external publication or design signoff.
+    </p>
+  </footer>
+</body>
+</html>

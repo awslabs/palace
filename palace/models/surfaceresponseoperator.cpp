@@ -649,6 +649,179 @@ struct EdgeSegment3D
   MetalBoundaryLaw boundary_condition;
 };
 
+// Deterministic broad-phase index for nearby segment queries. Exact distance and topology
+// predicates remain at the call sites; this index only removes pairs whose expanded AABBs
+// cannot interact.
+class SegmentBoxIndex
+{
+private:
+  static constexpr std::size_t leaf_size = 16;
+  struct Box
+  {
+    Point3D min{};
+    Point3D max{};
+  };
+  struct Node
+  {
+    Box box;
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    int left = -1;
+    int right = -1;
+    bool IsLeaf() const { return left < 0; }
+  };
+
+  std::vector<Box> boxes;
+  std::vector<std::size_t> indices;
+  std::vector<Node> nodes;
+
+  static bool Intersects(const Box &a, const Box &b)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      if (a.max[d] < b.min[d] || b.max[d] < a.min[d])
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  int Build(std::size_t begin, std::size_t end)
+  {
+    Node node;
+    node.begin = begin;
+    node.end = end;
+    node.box.min.fill(mfem::infinity());
+    node.box.max.fill(-mfem::infinity());
+    for (std::size_t i = begin; i < end; i++)
+    {
+      const auto &box = boxes[indices[i]];
+      for (int d = 0; d < 3; d++)
+      {
+        node.box.min[d] = std::min(node.box.min[d], box.min[d]);
+        node.box.max[d] = std::max(node.box.max[d], box.max[d]);
+      }
+    }
+    const int node_index = static_cast<int>(nodes.size());
+    nodes.push_back(node);
+    if (end - begin <= leaf_size)
+    {
+      return node_index;
+    }
+    int axis = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      if (node.box.max[d] - node.box.min[d] > node.box.max[axis] - node.box.min[axis])
+      {
+        axis = d;
+      }
+    }
+    const std::size_t middle = begin + (end - begin) / 2;
+    std::nth_element(indices.begin() + begin, indices.begin() + middle,
+                     indices.begin() + end,
+                     [&](std::size_t first, std::size_t second)
+                     {
+                       return boxes[first].min[axis] + boxes[first].max[axis] <
+                                  boxes[second].min[axis] + boxes[second].max[axis] ||
+                              (boxes[first].min[axis] + boxes[first].max[axis] ==
+                                   boxes[second].min[axis] + boxes[second].max[axis] &&
+                               first < second);
+                     });
+    nodes[node_index].left = Build(begin, middle);
+    nodes[node_index].right = Build(middle, end);
+    return node_index;
+  }
+
+  void Query(int node_index, const Box &query, std::vector<std::size_t> &matches) const
+  {
+    const auto &node = nodes[node_index];
+    if (!Intersects(node.box, query))
+    {
+      return;
+    }
+    if (node.IsLeaf())
+    {
+      for (std::size_t i = node.begin; i < node.end; i++)
+      {
+        const std::size_t index = indices[i];
+        if (Intersects(boxes[index], query))
+        {
+          matches.push_back(index);
+        }
+      }
+      return;
+    }
+    Query(node.left, query, matches);
+    Query(node.right, query, matches);
+  }
+
+public:
+  explicit SegmentBoxIndex(const std::vector<std::pair<Point3D, Point3D>> &segments)
+    : boxes(segments.size()), indices(segments.size())
+  {
+    MFEM_VERIFY(!segments.empty(), "Cannot build an empty segment proximity index!");
+    for (std::size_t i = 0; i < segments.size(); i++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        boxes[i].min[d] = std::min(segments[i].first[d], segments[i].second[d]);
+        boxes[i].max[d] = std::max(segments[i].first[d], segments[i].second[d]);
+      }
+    }
+    std::iota(indices.begin(), indices.end(), 0);
+    nodes.reserve(2 * (segments.size() / leaf_size + 1));
+    Build(0, segments.size());
+  }
+
+  std::vector<std::size_t> Query(const Point3D &p0, const Point3D &p1,
+                                 double distance) const
+  {
+    Box query;
+    for (int d = 0; d < 3; d++)
+    {
+      query.min[d] = std::min(p0[d], p1[d]) - distance;
+      query.max[d] = std::max(p0[d], p1[d]) + distance;
+    }
+    std::vector<std::size_t> matches;
+    Query(0, query, matches);
+    std::sort(matches.begin(), matches.end());
+    return matches;
+  }
+
+  std::vector<std::pair<std::size_t, std::size_t>> CandidatePairs(double distance) const
+  {
+    std::vector<std::pair<std::size_t, std::size_t>> result;
+    for (std::size_t first = 0; first < boxes.size(); first++)
+    {
+      Point3D p0 = boxes[first].min;
+      Point3D p1 = boxes[first].max;
+      for (const std::size_t second : Query(p0, p1, distance))
+      {
+        if (second > first)
+        {
+          result.emplace_back(first, second);
+        }
+      }
+    }
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+  }
+};
+
+std::vector<std::pair<Point3D, Point3D>>
+SegmentGeometry(const std::vector<EdgeSegment3D> &segments)
+{
+  std::vector<std::pair<Point3D, Point3D>> result;
+  result.reserve(segments.size());
+  for (const auto &segment : segments)
+  {
+    result.emplace_back(segment.p0, segment.p1);
+  }
+  return result;
+}
+
 struct EdgePair3D
 {
   std::size_t first = 0;
@@ -775,6 +948,103 @@ struct AutomaticResponseDiagnostics
   double maximum_library_distance = 0.0;
   bool boundary_law_verified = true;
 };
+
+struct AutomaticResponseStatistics
+{
+  long long int target_groups = 0;
+  long long int edge_sites_2d = 0;
+  long long int metal_vertices = 0;
+  long long int metal_segments = 0;
+  long long int metal_components = 0;
+  long long int physical_components = 0;
+  long long int physical_chains = 0;
+  long long int surface_faces_local = 0;
+
+  long long int pair_checks_global_spatial = 0;
+  long long int pair_checks_external_conflict = 0;
+  long long int pair_checks_group_spatial = 0;
+  long long int pair_checks_safety = 0;
+  long long int pair_checks_patch_construction = 0;
+  long long int spatial_events = 0;
+
+  long long int mask_gather_calls = 0;
+  long long int mask_faces_scanned_local = 0;
+  long long int mask_facets_packed_local = 0;
+  long long int mask_payload_scalars_local = 0;
+  long long int mask_gathered_scalars = 0;
+};
+
+long long int PairCount(std::size_t count)
+{
+  return count > 1 ? static_cast<long long int>(count) * (count - 1) / 2 : 0;
+}
+
+nlohmann::json BuildAutomaticStatistics(MPI_Comm comm,
+                                        const AutomaticResponseStatistics &statistics)
+{
+  auto Replicated = [comm](long long int value, const char *name)
+  {
+    long long int minimum = value;
+    long long int maximum = value;
+    Mpi::GlobalMin(1, &minimum, comm);
+    Mpi::GlobalMax(1, &maximum, comm);
+    MFEM_VERIFY(minimum == maximum,
+                "Rank-inconsistent surface-response statistic \"" << name << "\"!");
+    return minimum;
+  };
+  auto Distribution = [comm](long long int value)
+  {
+    long long int total = value;
+    long long int minimum = value;
+    long long int maximum = value;
+    int nonzero = value > 0 ? 1 : 0;
+    Mpi::GlobalSum(1, &total, comm);
+    Mpi::GlobalMin(1, &minimum, comm);
+    Mpi::GlobalMax(1, &maximum, comm);
+    Mpi::GlobalSum(1, &nonzero, comm);
+    return nlohmann::json{{"Total", total},
+                          {"Minimum", minimum},
+                          {"Maximum", maximum},
+                          {"NonzeroRanks", nonzero}};
+  };
+
+  const long long int global_pair_checks =
+      statistics.pair_checks_global_spatial + statistics.pair_checks_external_conflict +
+      statistics.pair_checks_group_spatial + statistics.pair_checks_safety +
+      statistics.pair_checks_patch_construction;
+  return {{"Version", 1},
+          {"Geometry",
+           {{"TargetGroups", Replicated(statistics.target_groups, "TargetGroups")},
+            {"EdgeSites2D", Replicated(statistics.edge_sites_2d, "EdgeSites2D")},
+            {"MetalVertices", Replicated(statistics.metal_vertices, "MetalVertices")},
+            {"MetalSegments", Replicated(statistics.metal_segments, "MetalSegments")},
+            {"MetalComponents", Replicated(statistics.metal_components, "MetalComponents")},
+            {"PhysicalComponents",
+             Replicated(statistics.physical_components, "PhysicalComponents")},
+            {"PhysicalChains", Replicated(statistics.physical_chains, "PhysicalChains")},
+            {"SurfaceFaces", Distribution(statistics.surface_faces_local)}}},
+          {"Matching",
+           {{"PairChecks",
+             {{"GlobalSpatial", Replicated(statistics.pair_checks_global_spatial,
+                                           "GlobalSpatialPairChecks")},
+              {"ExternalConflict", Replicated(statistics.pair_checks_external_conflict,
+                                              "ExternalConflictPairChecks")},
+              {"GroupSpatial",
+               Replicated(statistics.pair_checks_group_spatial, "GroupSpatialPairChecks")},
+              {"SafetyClassification",
+               Replicated(statistics.pair_checks_safety, "SafetyPairChecks")},
+              {"PatchConstruction", Replicated(statistics.pair_checks_patch_construction,
+                                               "PatchConstructionPairChecks")},
+              {"Total", Replicated(global_pair_checks, "TotalPairChecks")}}},
+            {"SpatialEvents", Replicated(statistics.spatial_events, "SpatialEvents")}}},
+          {"Masks",
+           {{"GatherCalls", Replicated(statistics.mask_gather_calls, "MaskGatherCalls")},
+            {"FacesScanned", Distribution(statistics.mask_faces_scanned_local)},
+            {"FacetsPacked", Distribution(statistics.mask_facets_packed_local)},
+            {"PayloadScalars", Distribution(statistics.mask_payload_scalars_local)},
+            {"GatheredScalars",
+             Replicated(statistics.mask_gathered_scalars, "MaskGatheredScalars")}}}};
+}
 
 double Dot(const Point3D &a, const Point3D &b);
 double Norm(const Point3D &a);
@@ -3393,6 +3663,7 @@ private:
   std::string library_name;
   double matching_radius = 0.0;
   double coordinate_scale = 1.0;
+  nlohmann::json statistics;
   const Units &units;
   bool nondimensionalized = false;
 
@@ -3510,6 +3781,8 @@ public:
     return snapped == 0.0 ? 0.0 : snapped;
   }
 
+  void SetStatistics(nlohmann::json value) { statistics = std::move(value); }
+
   void Add(int dimension, LibraryTopology topology,
            const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot,
            const MetalBoundaryLaw &boundary_condition, const nlohmann::json &geometry,
@@ -3588,15 +3861,21 @@ public:
       lengths[entry["Status"].get<std::string>()] += aggregate.total_edge_length;
       entries.push_back(std::move(entry));
     }
-    return {{"Version", 1},
-            {"Complete", counts["Missing"] == 0},
-            {"Library",
-             {{"Path", library_path},
-              {"Name", library_name},
-              {"MatchingRadius", matching_radius}}},
-            {"LengthUnit", "mesh"},
-            {"Summary", {{"Counts", counts}, {"TotalEdgeLengths", lengths}}},
-            {"Requirements", std::move(entries)}};
+    nlohmann::json result = {
+        {"Version", 1},
+        {"Complete", counts["Missing"] == 0},
+        {"Library",
+         {{"Path", library_path},
+          {"Name", library_name},
+          {"MatchingRadius", matching_radius}}},
+        {"LengthUnit", "mesh"},
+        {"Summary", {{"Counts", counts}, {"TotalEdgeLengths", lengths}}},
+        {"Requirements", std::move(entries)}};
+    if (!statistics.is_null())
+    {
+      result["Statistics"] = statistics;
+    }
+    return result;
   }
 };
 
@@ -3604,7 +3883,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
     const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
     const ResponseCorrectionData &request, bool pec_attribute_conductors = false,
     AutomaticResponseDiagnostics *diagnostics = nullptr,
-    AutomaticResponseRequirements *requirements = nullptr)
+    AutomaticResponseRequirements *requirements = nullptr,
+    AutomaticResponseStatistics *statistics = nullptr)
 {
   MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2,
               "Automatic two-dimensional fabrication-process response matching requires "
@@ -3684,6 +3964,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   }
   MFEM_VERIFY(!groups_by_attributes.empty(),
               "Fabrication-process response matching found no target interfaces!");
+  if (statistics)
+  {
+    statistics->target_groups = groups_by_attributes.size();
+  }
   std::set<int> found;
   for (const auto &[attributes, group] : groups_by_attributes)
   {
@@ -3730,6 +4014,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
 
     const auto sites =
         ExtractEdgeSites(mesh, iodata.boundaries, group, pec_attribute_conductors);
+    if (statistics)
+    {
+      statistics->edge_sites_2d += sites.size();
+    }
     MFEM_VERIFY(!sites.empty(),
                 "Automatic response matching found no physical metal edges for target "
                 "interface group!");
@@ -4450,7 +4738,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                              const MaterialOperator &mat_op,
                              const ResponseCorrectionData &request, bool maxwell,
                              AutomaticResponseDiagnostics *diagnostics = nullptr,
-                             AutomaticResponseRequirements *requirements = nullptr)
+                             AutomaticResponseRequirements *requirements = nullptr,
+                             AutomaticResponseStatistics *statistics = nullptr)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic three-dimensional fabrication-process response matching "
@@ -4490,6 +4779,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
+  if (statistics)
+  {
+    statistics->metal_vertices = geometry.vertices.size();
+    statistics->metal_segments = geometry.segments.size();
+    statistics->metal_components = geometry.metal_components;
+    statistics->physical_components = geometry.physical_components;
+    statistics->physical_chains = geometry.physical_chains;
+    statistics->surface_faces_local = geometry.surface_faces.size();
+  }
 
   std::set<int> target_filter(request.target_interfaces.begin(),
                               request.target_interfaces.end());
@@ -4592,6 +4890,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
   }
 
+  if (statistics)
+  {
+    statistics->target_groups = groups_by_targets.size();
+  }
   const auto &quadrature =
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * std::max(1, iodata.solver.order));
   ResponseCorrectionData result;
@@ -4610,68 +4912,90 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   int matched_spatial_cluster_patches = 0;
   int matched_nonregular_vertices = 0;
 
+  std::map<std::size_t, EdgeSegment3D> segment_cache;
   auto BuildSegments =
       [&](const EdgeGroup3D &group, const std::vector<std::size_t> &geometry_indices)
   {
-    const auto process_normals = BuildMetalEdgeProcessNormals(
-        mesh, geometry, geometry_indices, [&](int attribute)
-        { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal);
-    const auto gap_directions =
-        BuildMetalEdgeGapDirections(mesh, geometry, geometry_indices, process_normals);
+    std::vector<std::size_t> missing;
+    for (const auto geometry_index : geometry_indices)
+    {
+      if (segment_cache.find(geometry_index) == segment_cache.end())
+      {
+        missing.push_back(geometry_index);
+      }
+    }
+    if (!missing.empty())
+    {
+      const auto process_normals = BuildMetalEdgeProcessNormals(
+          mesh, geometry, missing, [&](int attribute)
+          { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal);
+      const auto gap_directions =
+          BuildMetalEdgeGapDirections(mesh, geometry, missing, process_normals);
+      for (std::size_t i = 0; i < missing.size(); i++)
+      {
+        const std::size_t geometry_index = missing[i];
+        const auto &source = geometry.segments[geometry_index];
+        EdgeSegment3D segment;
+        segment.geometry_index = geometry_index;
+        segment.p0 = geometry.vertices[source.vertices[0]].coordinate;
+        segment.p1 = geometry.vertices[source.vertices[1]].coordinate;
+        segment.length = Distance(segment.p0, segment.p1);
+        segment.tangent = Normalize(Subtract(segment.p1, segment.p0));
+        segment.axis_u = gap_directions[i];
+        segment.axis_v = process_normals[i];
+        segment.targets = group.targets;
+        segment.metal_component = source.metal_component;
+        if (maxwell)
+        {
+          MFEM_VERIFY(!source.conditions.empty(),
+                      "Unable to determine the Maxwell metal boundary condition for an "
+                      "automatically detected edge!");
+          const auto boundary_condition =
+              GetBoundaryConditionLaw(iodata.boundaries, source.conditions.front());
+          MFEM_VERIFY(
+              std::all_of(source.conditions.begin(), source.conditions.end(),
+                          [&](const auto &condition)
+                          {
+                            return SameBoundaryLaw(
+                                GetBoundaryConditionLaw(iodata.boundaries, condition),
+                                boundary_condition);
+                          }),
+              "A Maxwell target edge cannot mix distinct metal boundary conditions!");
+          MFEM_VERIFY(source.component >= 0,
+                      "Unable to determine connected metal ownership for a Maxwell edge!");
+          segment.conductor =
+              source.metal_component >= 0 ? source.metal_component : source.component;
+          segment.boundary_condition = boundary_condition;
+        }
+        else
+        {
+          std::set<int> conductors;
+          for (const int attribute : source.metal_attributes)
+          {
+            if (auto conductor = GetConductor(iodata.boundaries, attribute))
+            {
+              conductors.insert(*conductor);
+            }
+          }
+          MFEM_VERIFY(
+              conductors.size() == 1,
+              "Unable to assign an automatically detected three-dimensional metal edge "
+              "to exactly one electrostatic conductor!");
+          segment.conductor = *conductors.begin();
+          segment.boundary_condition = MetalBoundaryLaw{};
+        }
+        segment_cache.emplace(geometry_index, std::move(segment));
+      }
+    }
+
     std::vector<EdgeSegment3D> segments;
     segments.reserve(geometry_indices.size());
-    for (std::size_t i = 0; i < geometry_indices.size(); i++)
+    for (const auto geometry_index : geometry_indices)
     {
-      const std::size_t geometry_index = geometry_indices[i];
-      const auto &source = geometry.segments[geometry_index];
-      EdgeSegment3D segment;
-      segment.geometry_index = geometry_index;
-      segment.p0 = geometry.vertices[source.vertices[0]].coordinate;
-      segment.p1 = geometry.vertices[source.vertices[1]].coordinate;
-      segment.length = Distance(segment.p0, segment.p1);
-      segment.tangent = Normalize(Subtract(segment.p1, segment.p0));
-      segment.axis_u = gap_directions[i];
-      segment.axis_v = process_normals[i];
-      segment.targets = group.targets;
-      segment.metal_component = source.metal_component;
-      if (maxwell)
-      {
-        MFEM_VERIFY(!source.conditions.empty(),
-                    "Unable to determine the Maxwell metal boundary condition for an "
-                    "automatically detected edge!");
-        const auto boundary_condition =
-            GetBoundaryConditionLaw(iodata.boundaries, source.conditions.front());
-        MFEM_VERIFY(std::all_of(source.conditions.begin(), source.conditions.end(),
-                                [&](const auto &condition)
-                                {
-                                  return SameBoundaryLaw(
-                                      GetBoundaryConditionLaw(iodata.boundaries, condition),
-                                      boundary_condition);
-                                }),
-                    "A Maxwell target edge cannot mix distinct metal boundary conditions!");
-        MFEM_VERIFY(source.component >= 0,
-                    "Unable to determine connected metal ownership for a Maxwell edge!");
-        segment.conductor =
-            source.metal_component >= 0 ? source.metal_component : source.component;
-        segment.boundary_condition = boundary_condition;
-      }
-      else
-      {
-        std::set<int> conductors;
-        for (const int attribute : source.metal_attributes)
-        {
-          if (auto conductor = GetConductor(iodata.boundaries, attribute))
-          {
-            conductors.insert(*conductor);
-          }
-        }
-        MFEM_VERIFY(conductors.size() == 1,
-                    "Unable to assign an automatically detected three-dimensional metal "
-                    "edge to exactly one electrostatic conductor!");
-        segment.conductor = *conductors.begin();
-        segment.boundary_condition = MetalBoundaryLaw{};
-      }
-      segments.push_back(std::move(segment));
+      const auto &segment = segment_cache.at(geometry_index);
+      MFEM_VERIFY(segment.targets == group.targets,
+                  "Cached edge frame reused with incompatible target interfaces!");
+      segments.push_back(segment);
     }
     return segments;
   };
@@ -4785,11 +5109,21 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     return clipped;
   };
+  std::map<int, std::vector<const MetalSurfaceFace *>> surface_faces_by_component;
+  for (const auto &face : geometry.surface_faces)
+  {
+    surface_faces_by_component[face.component].push_back(&face);
+  }
+
   auto GatherPlanViewFacets = [&](const std::vector<SpatialEdgeSite3D> &sites,
                                   const Point3D &origin, const std::array<Point3D, 3> &axes,
                                   const std::map<int, int> &conductor_by_metal_component,
                                   int process_axis = 1)
   {
+    if (statistics)
+    {
+      statistics->mask_gather_calls++;
+    }
     MFEM_ASSERT(process_axis >= 0 && process_axis < 3,
                 "Plan-view facet extraction requires a valid process axis!");
     const std::array<int, 2> plan_axes = process_axis == 0   ? std::array<int, 2>{1, 2}
@@ -4855,58 +5189,65 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
     std::vector<PlanViewFacet> local_facets;
     const double tolerance = 1.0e-9 * library.matching_radius;
-    for (const auto &face : geometry.surface_faces)
+    for (const auto &[component, conductor] : conductor_by_metal_component)
     {
-      const auto conductor = conductor_by_metal_component.find(face.component);
-      if (conductor == conductor_by_metal_component.end())
+      const auto component_faces = surface_faces_by_component.find(component);
+      if (component_faces == surface_faces_by_component.end())
       {
         continue;
       }
-      std::vector<Point3D> polygon;
-      polygon.reserve(face.vertices.size());
-      for (const auto &vertex : face.vertices)
+      if (statistics)
       {
-        const Point3D relative = Subtract(vertex, origin);
-        polygon.push_back(
-            {Dot(relative, axes[0]), Dot(relative, axes[1]), Dot(relative, axes[2])});
+        statistics->mask_faces_scanned_local += component_faces->second.size();
       }
-      const auto &planes = planes_by_metal_component.at(face.component);
-      const auto plane = std::find_if(
-          planes.begin(), planes.end(),
-          [&](double candidate)
-          {
-            return std::all_of(
-                polygon.begin(), polygon.end(), [&](const auto &point)
-                { return std::abs(point[process_axis] - candidate) <= tolerance; });
-          });
-      if (plane == planes.end())
+      for (const auto *face : component_faces->second)
       {
-        continue;
-      }
-      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[0], lower[0], true);
-      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[0], upper[0], false);
-      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[1], lower[1], true);
-      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[1], upper[1], false);
-      if (polygon.size() < 3)
-      {
-        continue;
-      }
-      std::vector<Point3D> unique;
-      unique.reserve(polygon.size());
-      for (const auto &point : polygon)
-      {
-        if (unique.empty() || Distance(point, unique.back()) > tolerance)
+        std::vector<Point3D> polygon;
+        polygon.reserve(face->vertices.size());
+        for (const auto &vertex : face->vertices)
         {
-          unique.push_back(point);
+          const Point3D relative = Subtract(vertex, origin);
+          polygon.push_back(
+              {Dot(relative, axes[0]), Dot(relative, axes[1]), Dot(relative, axes[2])});
         }
-      }
-      if (unique.size() > 1 && Distance(unique.front(), unique.back()) <= tolerance)
-      {
-        unique.pop_back();
-      }
-      if (unique.size() >= 3)
-      {
-        local_facets.push_back({conductor->second, std::move(unique)});
+        const auto &planes = planes_by_metal_component.at(component);
+        const auto plane = std::find_if(
+            planes.begin(), planes.end(),
+            [&](double candidate)
+            {
+              return std::all_of(
+                  polygon.begin(), polygon.end(), [&](const auto &point)
+                  { return std::abs(point[process_axis] - candidate) <= tolerance; });
+            });
+        if (plane == planes.end())
+        {
+          continue;
+        }
+        polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[0], lower[0], true);
+        polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[0], upper[0], false);
+        polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[1], lower[1], true);
+        polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[1], upper[1], false);
+        if (polygon.size() < 3)
+        {
+          continue;
+        }
+        std::vector<Point3D> unique;
+        unique.reserve(polygon.size());
+        for (const auto &point : polygon)
+        {
+          if (unique.empty() || Distance(point, unique.back()) > tolerance)
+          {
+            unique.push_back(point);
+          }
+        }
+        if (unique.size() > 1 && Distance(unique.front(), unique.back()) <= tolerance)
+        {
+          unique.pop_back();
+        }
+        if (unique.size() >= 3)
+        {
+          local_facets.push_back({conductor, std::move(unique)});
+        }
       }
     }
 
@@ -4919,6 +5260,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         local_records.insert(local_records.end(), point.begin(), point.end());
       }
+    }
+    if (statistics)
+    {
+      statistics->mask_facets_packed_local += local_facets.size();
+      statistics->mask_payload_scalars_local += local_records.size();
     }
     MFEM_VERIFY(local_records.size() <=
                     static_cast<std::size_t>(std::numeric_limits<int>::max()),
@@ -4934,6 +5280,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
                   "Global plan-view facet data exceeds the MPI count limit!");
       total_values += value_counts[rank];
+    }
+    if (statistics)
+    {
+      statistics->mask_gathered_scalars += total_values;
     }
     std::vector<double> records(total_values);
     Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
@@ -5348,47 +5698,54 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     Point3D center{};
   };
   std::map<std::pair<int, int>, GlobalSpatialInteractionEvent> global_chain_events;
-  for (std::size_t i = 0; i < global_segments.size(); i++)
+  std::vector<std::pair<std::size_t, std::size_t>> global_candidate_pairs;
+  if (!global_segments.empty())
+  {
+    const SegmentBoxIndex index(SegmentGeometry(global_segments));
+    global_candidate_pairs = index.CandidatePairs(global_interaction_distance);
+  }
+  if (statistics)
+  {
+    statistics->pair_checks_global_spatial += global_candidate_pairs.size();
+  }
+  for (const auto &[i, j] : global_candidate_pairs)
   {
     const auto &first_source = geometry.segments[global_segments[i].geometry_index];
-    for (std::size_t j = i + 1; j < global_segments.size(); j++)
+    const auto &second_source = geometry.segments[global_segments[j].geometry_index];
+    if (global_segments[i].targets == global_segments[j].targets ||
+        first_source.physical_chain == second_source.physical_chain ||
+        SegmentsShareVertex(first_source, second_source))
     {
-      const auto &second_source = geometry.segments[global_segments[j].geometry_index];
-      if (global_segments[i].targets == global_segments[j].targets ||
-          first_source.physical_chain == second_source.physical_chain ||
-          SegmentsShareVertex(first_source, second_source))
-      {
-        continue;
-      }
-      const auto closest =
-          ClosestSegmentApproach(global_segments[i].p0, global_segments[i].p1,
-                                 global_segments[j].p0, global_segments[j].p1);
-      if (closest.distance_squared >= global_interaction_distance_squared)
-      {
-        continue;
-      }
-      int first_chain = first_source.physical_chain;
-      int second_chain = second_source.physical_chain;
-      if (first_chain > second_chain)
-      {
-        std::swap(first_chain, second_chain);
-      }
-      const auto key = std::make_pair(first_chain, second_chain);
-      auto event = global_chain_events.find(key);
-      if (event == global_chain_events.end() ||
-          closest.distance_squared < event->second.distance_squared)
-      {
-        const double first_distance = closest.first * global_segments[i].length;
-        const double second_distance = closest.second * global_segments[j].length;
-        global_chain_events[key] = {
-            i,
-            j,
-            first_distance,
-            second_distance,
-            closest.distance_squared,
-            Scale(0.5, Add(Interpolate(global_segments[i], first_distance),
-                           Interpolate(global_segments[j], second_distance)))};
-      }
+      continue;
+    }
+    const auto closest =
+        ClosestSegmentApproach(global_segments[i].p0, global_segments[i].p1,
+                               global_segments[j].p0, global_segments[j].p1);
+    if (closest.distance_squared >= global_interaction_distance_squared)
+    {
+      continue;
+    }
+    int first_chain = first_source.physical_chain;
+    int second_chain = second_source.physical_chain;
+    if (first_chain > second_chain)
+    {
+      std::swap(first_chain, second_chain);
+    }
+    const auto key = std::make_pair(first_chain, second_chain);
+    auto event = global_chain_events.find(key);
+    if (event == global_chain_events.end() ||
+        closest.distance_squared < event->second.distance_squared)
+    {
+      const double first_distance = closest.first * global_segments[i].length;
+      const double second_distance = closest.second * global_segments[j].length;
+      global_chain_events[key] = {
+          i,
+          j,
+          first_distance,
+          second_distance,
+          closest.distance_squared,
+          Scale(0.5, Add(Interpolate(global_segments[i], first_distance),
+                         Interpolate(global_segments[j], second_distance)))};
     }
   }
 
@@ -5398,6 +5755,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   {
     (void)chains;
     global_spatial_events.push_back(std::move(event));
+  }
+  if (statistics)
+  {
+    statistics->spatial_events += global_spatial_events.size();
   }
   std::vector<SpatialClusterSelection3D> cross_interface_selections;
   std::set<std::pair<int, int>> described_cross_interface_pairs;
@@ -5606,6 +5967,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                        });
   };
 
+  std::vector<std::pair<Point3D, Point3D>> geometry_segment_points;
+  geometry_segment_points.reserve(geometry.segments.size());
+  for (const auto &segment : geometry.segments)
+  {
+    geometry_segment_points.emplace_back(geometry.vertices[segment.vertices[0]].coordinate,
+                                         geometry.vertices[segment.vertices[1]].coordinate);
+  }
+  const SegmentBoxIndex geometry_segment_index(geometry_segment_points);
+
   for (const auto &segment_group : groups_by_targets)
   {
     const auto &segment_key = segment_group.first;
@@ -5634,8 +6004,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const auto &p1 = geometry.vertices[source.vertices[1]].coordinate;
       total_selected_length += Distance(p0, p1);
       std::map<int, std::pair<std::size_t, double>> conflicts;
-      for (std::size_t other_index = 0; other_index < geometry.segments.size();
-           other_index++)
+      const auto nearby_geometry =
+          geometry_segment_index.Query(p0, p1, interaction_distance);
+      if (statistics)
+      {
+        statistics->pair_checks_external_conflict += nearby_geometry.size();
+      }
+      for (const std::size_t other_index : nearby_geometry)
       {
         const auto &other = geometry.segments[other_index];
         if (other.type != MetalEdgeSegmentType::PHYSICAL ||
@@ -5755,6 +6130,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       continue;
     }
     auto segments = BuildSegments(group, usable_segment_indices);
+    SegmentBoxIndex segment_index(SegmentGeometry(segments));
+    auto nearby_segment_pairs = segment_index.CandidatePairs(interaction_distance);
     std::map<std::size_t, std::size_t> local_indices;
     for (std::size_t i = 0; i < segments.size(); i++)
     {
@@ -5828,45 +6205,46 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       Point3D center{};
     };
     std::map<std::pair<int, int>, SpatialInteractionEvent> closest_chain_events;
-    for (std::size_t i = 0; i < segments.size(); i++)
+    if (statistics)
+    {
+      statistics->pair_checks_group_spatial += nearby_segment_pairs.size();
+    }
+    for (const auto &[i, j] : nearby_segment_pairs)
     {
       const auto &first_source = geometry.segments[segments[i].geometry_index];
-      for (std::size_t j = i + 1; j < segments.size(); j++)
+      const auto &second_source = geometry.segments[segments[j].geometry_index];
+      if (first_source.physical_chain == second_source.physical_chain ||
+          SegmentsShareVertex(first_source, second_source) || ConnectedNearVertex(i, j))
       {
-        const auto &second_source = geometry.segments[segments[j].geometry_index];
-        if (first_source.physical_chain == second_source.physical_chain ||
-            SegmentsShareVertex(first_source, second_source) || ConnectedNearVertex(i, j))
-        {
-          continue;
-        }
-        const auto closest = ClosestSegmentApproach(segments[i].p0, segments[i].p1,
-                                                    segments[j].p0, segments[j].p1);
-        if (closest.distance_squared >= interaction_distance_squared)
-        {
-          continue;
-        }
-        const double first_distance = closest.first * segments[i].length;
-        const double second_distance = closest.second * segments[j].length;
-        int first_chain = first_source.physical_chain;
-        int second_chain = second_source.physical_chain;
-        if (first_chain > second_chain)
-        {
-          std::swap(first_chain, second_chain);
-        }
-        const auto key = std::make_pair(first_chain, second_chain);
-        auto event = closest_chain_events.find(key);
-        if (event == closest_chain_events.end() ||
-            closest.distance_squared < event->second.distance_squared)
-        {
-          closest_chain_events[key] = {
-              i,
-              j,
-              first_distance,
-              second_distance,
-              closest.distance_squared,
-              Scale(0.5, Add(Interpolate(segments[i], first_distance),
-                             Interpolate(segments[j], second_distance)))};
-        }
+        continue;
+      }
+      const auto closest = ClosestSegmentApproach(segments[i].p0, segments[i].p1,
+                                                  segments[j].p0, segments[j].p1);
+      if (closest.distance_squared >= interaction_distance_squared)
+      {
+        continue;
+      }
+      const double first_distance = closest.first * segments[i].length;
+      const double second_distance = closest.second * segments[j].length;
+      int first_chain = first_source.physical_chain;
+      int second_chain = second_source.physical_chain;
+      if (first_chain > second_chain)
+      {
+        std::swap(first_chain, second_chain);
+      }
+      const auto key = std::make_pair(first_chain, second_chain);
+      auto event = closest_chain_events.find(key);
+      if (event == closest_chain_events.end() ||
+          closest.distance_squared < event->second.distance_squared)
+      {
+        closest_chain_events[key] = {
+            i,
+            j,
+            first_distance,
+            second_distance,
+            closest.distance_squared,
+            Scale(0.5, Add(Interpolate(segments[i], first_distance),
+                           Interpolate(segments[j], second_distance)))};
       }
     }
     std::vector<SpatialInteractionEvent> spatial_events;
@@ -5877,6 +6255,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       spatial_events.push_back(std::move(event));
     }
 
+    if (statistics)
+    {
+      statistics->spatial_events += spatial_events.size();
+    }
     std::vector<SpatialClusterSelection3D> spatial_cluster_selections;
     std::set<std::pair<int, int>> described_spatial_pairs;
     std::vector<bool> visited_spatial_event(spatial_events.size(), false);
@@ -6106,127 +6488,125 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       unsupported_segments.insert(first);
       unsupported_segments.insert(second);
     };
-    for (std::size_t i = 0; i < segments.size(); i++)
+    if (statistics)
+    {
+      statistics->pair_checks_safety += nearby_segment_pairs.size();
+    }
+    for (const auto &[i, j] : nearby_segment_pairs)
     {
       const auto &first_source = geometry.segments[segments[i].geometry_index];
-      for (std::size_t j = i + 1; j < segments.size(); j++)
+      const auto &second_source = geometry.segments[segments[j].geometry_index];
+      if (first_source.physical_chain == second_source.physical_chain ||
+          SegmentsShareVertex(first_source, second_source) ||
+          SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
+                                 segments[j].p1) >= interaction_distance_squared)
       {
-        const auto &second_source = geometry.segments[segments[j].geometry_index];
-        if (first_source.physical_chain == second_source.physical_chain ||
-            SegmentsShareVertex(first_source, second_source) ||
-            SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
-                                   segments[j].p1) >= interaction_distance_squared)
-        {
-          continue;
-        }
-        if (ConnectedNearVertex(i, j) ||
-            IsSpatiallyMatched(i, j, candidate_spatial_interactions))
-        {
-          continue;
-        }
-
-        const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
-        if (std::abs(tangent_dot) < 1.0 - 1.0e-8)
-        {
-          RejectInteraction(i, j, nonparallel_interactions,
-                            "Nearby three-dimensional metal edges are not parallel!");
-          continue;
-        }
-        const double second_s0 =
-            Dot(Subtract(segments[j].p0, segments[i].p0), segments[i].tangent);
-        const double second_s1 =
-            Dot(Subtract(segments[j].p1, segments[i].p0), segments[i].tangent);
-        const double first_begin = std::max(0.0, std::min(second_s0, second_s1));
-        const double first_end =
-            std::min(segments[i].length, std::max(second_s0, second_s1));
-        const double tolerance = 1.0e-10 * std::max({segments[i].length, segments[j].length,
-                                                     group.matching_radius});
-        if (first_end - first_begin <= tolerance)
-        {
-          continue;
-        }
-        const Point3D first_mid = Interpolate(segments[i], 0.5 * (first_begin + first_end));
-        double second_mid = Dot(Subtract(first_mid, segments[j].p0), segments[j].tangent);
-        second_mid = std::clamp(second_mid, 0.0, segments[j].length);
-        const double half_length = 0.5 * (first_end - first_begin);
-        const double second_begin = second_mid - half_length;
-        const double second_end = second_mid + half_length;
-        MFEM_VERIFY(second_begin >= -tolerance &&
-                        second_end <= segments[j].length + tolerance,
-                    "Inconsistent overlap between nearby parallel metal edges!");
-        EdgePair3D pair{i,
-                        j,
-                        first_begin,
-                        first_end,
-                        std::max(0.0, second_begin),
-                        std::min(segments[j].length, second_end)};
-
-        const Point3D second_point = Interpolate(segments[j], second_mid);
-        const Point3D direction = Normalize(Subtract(second_point, first_mid));
-        if (Dot(segments[i].axis_v, segments[j].axis_v) <= 0.95)
-        {
-          RejectInteraction(
-              i, j, incompatible_process_interactions,
-              "Nearby three-dimensional edges have incompatible process normals!");
-          continue;
-        }
-        const Point3D process_normal =
-            Normalize(Add(segments[i].axis_v, segments[j].axis_v));
-        if (std::abs(Dot(direction, process_normal)) > 1.0e-8)
-        {
-          RejectInteraction(
-              i, j, process_offset_interactions,
-              "Nearby three-dimensional edges are offset along the process normal!");
-          continue;
-        }
-        const bool facing = Dot(segments[i].axis_u, direction) > 0.95 &&
-                            Dot(segments[j].axis_u, direction) < -0.95;
-        const bool outward = Dot(segments[i].axis_u, direction) < -0.95 &&
-                             Dot(segments[j].axis_u, direction) > 0.95;
-        const bool same_conductor = segments[i].conductor == segments[j].conductor;
-        std::optional<LibraryTopology> topology;
-        if (facing)
-        {
-          topology = same_conductor ? LibraryTopology::SAME_CONDUCTOR_GAP
-                                    : LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
-        }
-        else if (outward)
-        {
-          // The two gap directions point away from the interval between the edges, so
-          // that interval is occupied by one physical metal strip. Perimeter loops on
-          // opposite sides of the strip need not be connected in the edge graph.
-          topology = LibraryTopology::SAME_CONDUCTOR_STRIP;
-        }
-        if (!topology)
-        {
-          if (same_conductor)
-          {
-            unclassified_same_conductor_interactions++;
-          }
-          else
-          {
-            unclassified_different_conductor_interactions++;
-          }
-          RejectInteraction(i, j, unclassified_interactions,
-                            "No canonical paired-edge topology for nearby "
-                            "three-dimensional metal edges!");
-          continue;
-        }
-        if (!SameBoundaryLaw(segments[i].boundary_condition,
-                             segments[j].boundary_condition))
-        {
-          RejectInteraction(i, j, unclassified_interactions,
-                            "Nearby three-dimensional edges use distinct metal boundary "
-                            "conditions!");
-          continue;
-        }
-        candidate_pairs.push_back(pair);
-        candidate_pair_topologies.push_back(*topology);
-        candidate_pair_has_model.push_back(
-            FindLibraryModel(library, *topology, Distance(first_mid, second_point),
-                             segments[i].boundary_condition)
-                .has_value());
+        continue;
       }
+      if (ConnectedNearVertex(i, j) ||
+          IsSpatiallyMatched(i, j, candidate_spatial_interactions))
+      {
+        continue;
+      }
+
+      const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
+      if (std::abs(tangent_dot) < 1.0 - 1.0e-8)
+      {
+        RejectInteraction(i, j, nonparallel_interactions,
+                          "Nearby three-dimensional metal edges are not parallel!");
+        continue;
+      }
+      const double second_s0 =
+          Dot(Subtract(segments[j].p0, segments[i].p0), segments[i].tangent);
+      const double second_s1 =
+          Dot(Subtract(segments[j].p1, segments[i].p0), segments[i].tangent);
+      const double first_begin = std::max(0.0, std::min(second_s0, second_s1));
+      const double first_end = std::min(segments[i].length, std::max(second_s0, second_s1));
+      const double tolerance = 1.0e-10 * std::max({segments[i].length, segments[j].length,
+                                                   group.matching_radius});
+      if (first_end - first_begin <= tolerance)
+      {
+        continue;
+      }
+      const Point3D first_mid = Interpolate(segments[i], 0.5 * (first_begin + first_end));
+      double second_mid = Dot(Subtract(first_mid, segments[j].p0), segments[j].tangent);
+      second_mid = std::clamp(second_mid, 0.0, segments[j].length);
+      const double half_length = 0.5 * (first_end - first_begin);
+      const double second_begin = second_mid - half_length;
+      const double second_end = second_mid + half_length;
+      MFEM_VERIFY(second_begin >= -tolerance &&
+                      second_end <= segments[j].length + tolerance,
+                  "Inconsistent overlap between nearby parallel metal edges!");
+      EdgePair3D pair{i,
+                      j,
+                      first_begin,
+                      first_end,
+                      std::max(0.0, second_begin),
+                      std::min(segments[j].length, second_end)};
+
+      const Point3D second_point = Interpolate(segments[j], second_mid);
+      const Point3D direction = Normalize(Subtract(second_point, first_mid));
+      if (Dot(segments[i].axis_v, segments[j].axis_v) <= 0.95)
+      {
+        RejectInteraction(
+            i, j, incompatible_process_interactions,
+            "Nearby three-dimensional edges have incompatible process normals!");
+        continue;
+      }
+      const Point3D process_normal = Normalize(Add(segments[i].axis_v, segments[j].axis_v));
+      if (std::abs(Dot(direction, process_normal)) > 1.0e-8)
+      {
+        RejectInteraction(
+            i, j, process_offset_interactions,
+            "Nearby three-dimensional edges are offset along the process normal!");
+        continue;
+      }
+      const bool facing = Dot(segments[i].axis_u, direction) > 0.95 &&
+                          Dot(segments[j].axis_u, direction) < -0.95;
+      const bool outward = Dot(segments[i].axis_u, direction) < -0.95 &&
+                           Dot(segments[j].axis_u, direction) > 0.95;
+      const bool same_conductor = segments[i].conductor == segments[j].conductor;
+      std::optional<LibraryTopology> topology;
+      if (facing)
+      {
+        topology = same_conductor ? LibraryTopology::SAME_CONDUCTOR_GAP
+                                  : LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
+      }
+      else if (outward)
+      {
+        // The two gap directions point away from the interval between the edges, so
+        // that interval is occupied by one physical metal strip. Perimeter loops on
+        // opposite sides of the strip need not be connected in the edge graph.
+        topology = LibraryTopology::SAME_CONDUCTOR_STRIP;
+      }
+      if (!topology)
+      {
+        if (same_conductor)
+        {
+          unclassified_same_conductor_interactions++;
+        }
+        else
+        {
+          unclassified_different_conductor_interactions++;
+        }
+        RejectInteraction(i, j, unclassified_interactions,
+                          "No canonical paired-edge topology for nearby "
+                          "three-dimensional metal edges!");
+        continue;
+      }
+      if (!SameBoundaryLaw(segments[i].boundary_condition, segments[j].boundary_condition))
+      {
+        RejectInteraction(i, j, unclassified_interactions,
+                          "Nearby three-dimensional edges use distinct metal boundary "
+                          "conditions!");
+        continue;
+      }
+      candidate_pairs.push_back(pair);
+      candidate_pair_topologies.push_back(*topology);
+      candidate_pair_has_model.push_back(FindLibraryModel(library, *topology,
+                                                          Distance(first_mid, second_point),
+                                                          segments[i].boundary_condition)
+                                             .has_value());
     }
 
     const auto candidate_parallel_clusters =
@@ -7504,62 +7884,67 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
     std::vector<EdgePair3D> pairs;
     std::vector<std::vector<std::pair<double, double>>> paired_intervals(segments.size());
-    for (std::size_t i = 0; group_matched && i < segments.size(); i++)
+    std::vector<std::pair<std::size_t, std::size_t>> final_nearby_pairs;
+    if (group_matched && !segments.empty())
+    {
+      const SegmentBoxIndex final_index(SegmentGeometry(segments));
+      final_nearby_pairs = final_index.CandidatePairs(interaction_distance);
+    }
+    if (statistics)
+    {
+      statistics->pair_checks_patch_construction += final_nearby_pairs.size();
+    }
+    for (const auto &[i, j] : final_nearby_pairs)
     {
       const auto &first_source = geometry.segments[segments[i].geometry_index];
-      for (std::size_t j = i + 1; j < segments.size(); j++)
+      const auto &second_source = geometry.segments[segments[j].geometry_index];
+      if (first_source.physical_chain == second_source.physical_chain ||
+          SegmentsShareVertex(first_source, second_source) ||
+          SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
+                                 segments[j].p1) >= interaction_distance_squared)
       {
-        const auto &second_source = geometry.segments[segments[j].geometry_index];
-        if (first_source.physical_chain == second_source.physical_chain ||
-            SegmentsShareVertex(first_source, second_source) ||
-            SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
-                                   segments[j].p1) >= interaction_distance_squared)
-        {
-          continue;
-        }
-        if (ConnectedNearVertex(i, j) ||
-            IsSpatiallyMatched(i, j, active_spatial_interactions))
-        {
-          continue;
-        }
-
-        const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
-        if (std::abs(tangent_dot) < 1.0 - 1.0e-8)
-        {
-          Mpi::Warning(
-              "Nearby three-dimensional metal edges are not parallel; correction is "
-              "disabled for this interface group!\n");
-          group_matched = false;
-          break;
-        }
-        const double second_s0 =
-            Dot(Subtract(segments[j].p0, segments[i].p0), segments[i].tangent);
-        const double second_s1 =
-            Dot(Subtract(segments[j].p1, segments[i].p0), segments[i].tangent);
-        const double first_begin = std::max(0.0, std::min(second_s0, second_s1));
-        const double first_end =
-            std::min(segments[i].length, std::max(second_s0, second_s1));
-        const double tolerance = 1.0e-10 * std::max({segments[i].length, segments[j].length,
-                                                     group.matching_radius});
-        if (first_end - first_begin <= tolerance)
-        {
-          continue;
-        }
-        const Point3D first_mid = Interpolate(segments[i], 0.5 * (first_begin + first_end));
-        double second_mid = Dot(Subtract(first_mid, segments[j].p0), segments[j].tangent);
-        second_mid = std::clamp(second_mid, 0.0, segments[j].length);
-        const double half_length = 0.5 * (first_end - first_begin);
-        const double second_begin = second_mid - half_length;
-        const double second_end = second_mid + half_length;
-        MFEM_VERIFY(second_begin >= -tolerance &&
-                        second_end <= segments[j].length + tolerance,
-                    "Inconsistent overlap between nearby parallel metal edges!");
-        pairs.push_back({i, j, first_begin, first_end, std::max(0.0, second_begin),
-                         std::min(segments[j].length, second_end)});
-        paired_intervals[i].emplace_back(first_begin, first_end);
-        paired_intervals[j].emplace_back(std::max(0.0, second_begin),
-                                         std::min(segments[j].length, second_end));
+        continue;
       }
+      if (ConnectedNearVertex(i, j) ||
+          IsSpatiallyMatched(i, j, active_spatial_interactions))
+      {
+        continue;
+      }
+
+      const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
+      if (std::abs(tangent_dot) < 1.0 - 1.0e-8)
+      {
+        Mpi::Warning("Nearby three-dimensional metal edges are not parallel; correction is "
+                     "disabled for this interface group!\n");
+        group_matched = false;
+        break;
+      }
+      const double second_s0 =
+          Dot(Subtract(segments[j].p0, segments[i].p0), segments[i].tangent);
+      const double second_s1 =
+          Dot(Subtract(segments[j].p1, segments[i].p0), segments[i].tangent);
+      const double first_begin = std::max(0.0, std::min(second_s0, second_s1));
+      const double first_end = std::min(segments[i].length, std::max(second_s0, second_s1));
+      const double tolerance = 1.0e-10 * std::max({segments[i].length, segments[j].length,
+                                                   group.matching_radius});
+      if (first_end - first_begin <= tolerance)
+      {
+        continue;
+      }
+      const Point3D first_mid = Interpolate(segments[i], 0.5 * (first_begin + first_end));
+      double second_mid = Dot(Subtract(first_mid, segments[j].p0), segments[j].tangent);
+      second_mid = std::clamp(second_mid, 0.0, segments[j].length);
+      const double half_length = 0.5 * (first_end - first_begin);
+      const double second_begin = second_mid - half_length;
+      const double second_end = second_mid + half_length;
+      MFEM_VERIFY(second_begin >= -tolerance &&
+                      second_end <= segments[j].length + tolerance,
+                  "Inconsistent overlap between nearby parallel metal edges!");
+      pairs.push_back({i, j, first_begin, first_end, std::max(0.0, second_begin),
+                       std::min(segments[j].length, second_end)});
+      paired_intervals[i].emplace_back(first_begin, first_end);
+      paired_intervals[j].emplace_back(std::max(0.0, second_begin),
+                                       std::min(segments[j].length, second_end));
     }
 
     for (auto &intervals : paired_intervals)
@@ -8211,17 +8596,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
 ResponseCorrectionData BuildAutomaticResponseData(const IoData &iodata,
                                                   const LaplaceOperator &laplace_op,
-                                                  const ResponseCorrectionData &request)
+                                                  const ResponseCorrectionData &request,
+                                                  AutomaticResponseStatistics *statistics)
 {
   const auto &mesh = laplace_op.GetH1Space().GetParMesh();
   if (mesh.Dimension() == 2 && mesh.SpaceDimension() == 2)
   {
-    return BuildAutomaticResponseData2D(iodata, mesh, laplace_op.GetMaterialOp(), request);
+    return BuildAutomaticResponseData2D(iodata, mesh, laplace_op.GetMaterialOp(), request,
+                                        false, nullptr, nullptr, statistics);
   }
   if (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
   {
     return BuildAutomaticResponseData3D(iodata, mesh, laplace_op.GetMaterialOp(), request,
-                                        false);
+                                        false, nullptr, nullptr, statistics);
   }
   MFEM_ABORT("Automatic fabrication-process response matching requires a 2D or 3D "
              "electrostatic mesh!");
@@ -8692,23 +9079,25 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   MaterialOperator mat_op(iodata, mesh);
   AutomaticResponseRequirements requirements(iodata.units,
                                              iodata.InputsNondimensionalized());
+  AutomaticResponseStatistics statistics;
   const auto &parallel_mesh = mesh.Get();
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
     BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
-                                 &requirements);
+                                 &requirements, &statistics);
   }
   else if (parallel_mesh.Dimension() == 3 && parallel_mesh.SpaceDimension() == 3)
   {
     BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
-                                 &requirements);
+                                 &requirements, &statistics);
   }
   else
   {
     MFEM_ABORT("Surface-response preflight requires a 2D or 3D solve mesh!");
   }
 
+  requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
   if (Mpi::Root(parallel_mesh.GetComm()))
   {
     auto manifest = requirements.Build();
@@ -8729,6 +9118,7 @@ struct SurfaceResponseGeometry::Impl
 {
   ResponseCorrectionData config;
   std::optional<AutomaticResponseDiagnostics> diagnostics;
+  nlohmann::json statistics;
   bool maxwell = false;
   int dimension = 0;
 };
@@ -8760,15 +9150,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                       cached_geometry->impl->dimension == dimension,
                   "Cannot reuse Maxwell surface-response geometry for electrostatics!");
       config = &cached_geometry->impl->config;
+      automatic_statistics = cached_geometry->impl->statistics;
     }
     else
     {
       BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-      automatic_config = BuildAutomaticResponseData(iodata, laplace_op, *request);
+      AutomaticResponseStatistics statistics;
+      automatic_config =
+          BuildAutomaticResponseData(iodata, laplace_op, *request, &statistics);
+      automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), statistics);
       if (automatic_geometry)
       {
         auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
         impl->config = std::move(*automatic_config);
+        impl->statistics = automatic_statistics;
         impl->dimension = dimension;
         cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
             new SurfaceResponseGeometry(std::move(impl)));
@@ -9053,6 +9448,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
   AutomaticResponseDiagnostics local_diagnostics;
+  AutomaticResponseStatistics local_statistics;
   std::optional<ResponseCorrectionData> local_config;
   std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
   const ResponseCorrectionData *config_ptr = nullptr;
@@ -9066,25 +9462,30 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
     config_ptr = &cached_geometry->impl->config;
     diagnostics_ptr = &*cached_geometry->impl->diagnostics;
+    automatic_statistics = cached_geometry->impl->statistics;
   }
   else
   {
     BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
     if (dimension == 2)
     {
-      local_config = BuildAutomaticResponseData2D(iodata, fespace.GetParMesh(), mat_op,
-                                                  *request, true, &local_diagnostics);
+      local_config =
+          BuildAutomaticResponseData2D(iodata, fespace.GetParMesh(), mat_op, *request, true,
+                                       &local_diagnostics, nullptr, &local_statistics);
     }
     else
     {
-      local_config = BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op,
-                                                  *request, true, &local_diagnostics);
+      local_config =
+          BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op, *request, true,
+                                       &local_diagnostics, nullptr, &local_statistics);
     }
+    automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), local_statistics);
     if (automatic_geometry)
     {
       auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
       impl->config = std::move(*local_config);
       impl->diagnostics = local_diagnostics;
+      impl->statistics = automatic_statistics;
       impl->maxwell = true;
       impl->dimension = dimension;
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
@@ -9538,6 +9939,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     ConfigureMaxwellLines(line_geometry);
   }
   dbc_tdof_list = essential_tdofs;
+  contour_line_count = maxwell_lines.size();
   int global_line_count = static_cast<int>(maxwell_lines.size());
   Mpi::GlobalSum(1, &global_line_count, fespace.GetComm());
 
@@ -10032,6 +10434,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   std::vector<int> candidate_send_offsets, candidate_receive_offsets;
   const int candidate_send_total =
       SetOffsets(candidate_send_counts, candidate_send_offsets);
+  candidate_query_count += candidate_send_total;
   const int candidate_receive_total =
       SetOffsets(candidate_receive_counts, candidate_receive_offsets);
 
@@ -10137,6 +10540,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
       fallback_indices.push_back(point);
     }
   }
+  fallback_query_count += fallback_indices.size();
   int fallback_count = static_cast<int>(fallback_indices.size());
   Mpi::GlobalSum(1, &fallback_count, comm);
   if (fallback_count > 0)
@@ -10187,6 +10591,13 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
 
   const int send_total = SetOffsets(point_send_counts, point_send_offsets);
   const int receive_total = SetOffsets(point_receive_counts, point_receive_offsets);
+  point_send_peer_count = std::count_if(point_send_counts.begin(), point_send_counts.end(),
+                                        [](int count) { return count > 0; });
+  point_receive_peer_count =
+      std::count_if(point_receive_counts.begin(), point_receive_counts.end(),
+                    [](int count) { return count > 0; });
+  point_send_item_count = send_total;
+  point_receive_item_count = receive_total;
   MFEM_ASSERT(send_total == point_query_count, "Invalid point-query communication plan!");
 
   std::vector<int> send_elements(send_total);
@@ -10302,6 +10713,15 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     }
   }
   point_dof_offsets[receive_total] = static_cast<int>(point_dofs.size());
+  stencil_nonzero_count = point_dofs.size();
+  point_owned_values.resize(receive_total);
+  point_packed_values.resize(point_query_count);
+  point_owned_values_pair.resize(2 * receive_total);
+  point_packed_values_pair.resize(2 * point_query_count);
+  point_send_counts_pair = ScaleCommunicationPlan(point_send_counts, 2);
+  point_send_offsets_pair = ScaleCommunicationPlan(point_send_offsets, 2);
+  point_receive_counts_pair = ScaleCommunicationPlan(point_receive_counts, 2);
+  point_receive_offsets_pair = ScaleCommunicationPlan(point_receive_offsets, 2);
 }
 
 void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &values) const
@@ -10310,24 +10730,61 @@ void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &value
   fespace.GetProlongationMatrix()->Mult(x, local_x);
   const auto *local_data = local_x.HostRead();
 
-  std::vector<double> owned_values(point_dof_offsets.size() - 1, 0.0);
+  std::fill(point_owned_values.begin(), point_owned_values.end(), 0.0);
   for (std::size_t i = 0; i + 1 < point_dof_offsets.size(); i++)
   {
     for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
     {
-      owned_values[i] += point_weights[j] * local_data[point_dofs[j]];
+      point_owned_values[i] += point_weights[j] * local_data[point_dofs[j]];
     }
   }
 
-  std::vector<double> packed_values(point_query_count);
-  Mpi::Alltoallv(owned_values.data(), point_receive_counts.data(),
-                 point_receive_offsets.data(), packed_values.data(),
+  Mpi::Alltoallv(point_owned_values.data(), point_receive_counts.data(),
+                 point_receive_offsets.data(), point_packed_values.data(),
                  point_send_counts.data(), point_send_offsets.data(), fespace.GetComm());
   values.SetSize(point_query_count);
   auto *value_data = values.HostWrite();
   for (int i = 0; i < point_query_count; i++)
   {
-    value_data[point_send_indices[i]] = packed_values[i];
+    value_data[point_send_indices[i]] = point_packed_values[i];
+  }
+}
+
+void SurfaceResponseOperator::EvaluatePointValues(const Vector &xr, const Vector &xi,
+                                                  Vector &vr, Vector &vi) const
+{
+  local_x.SetSize(fespace.GetVSize());
+  local_x_imag.SetSize(fespace.GetVSize());
+  fespace.GetProlongationMatrix()->Mult(xr, local_x);
+  fespace.GetProlongationMatrix()->Mult(xi, local_x_imag);
+  const auto *local_real = local_x.HostRead();
+  const auto *local_imag = local_x_imag.HostRead();
+
+  std::fill(point_owned_values_pair.begin(), point_owned_values_pair.end(), 0.0);
+  for (std::size_t i = 0; i + 1 < point_dof_offsets.size(); i++)
+  {
+    for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
+    {
+      const double weight = point_weights[j];
+      const int dof = point_dofs[j];
+      point_owned_values_pair[2 * i] += weight * local_real[dof];
+      point_owned_values_pair[2 * i + 1] += weight * local_imag[dof];
+    }
+  }
+
+  Mpi::Alltoallv(point_owned_values_pair.data(), point_receive_counts_pair.data(),
+                 point_receive_offsets_pair.data(), point_packed_values_pair.data(),
+                 point_send_counts_pair.data(), point_send_offsets_pair.data(),
+                 fespace.GetComm());
+  vr.SetSize(point_query_count);
+  vi.SetSize(point_query_count);
+  auto *real_data = vr.HostWrite();
+  auto *imag_data = vi.HostWrite();
+  for (int i = 0; i < point_query_count; i++)
+  {
+    const int point = point_send_indices[i];
+    real_data[point] = point_packed_values_pair[2 * i];
+    imag_data[point] = point_packed_values_pair[2 * i + 1];
   }
 }
 
@@ -10335,23 +10792,22 @@ void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vect
 {
   MFEM_ASSERT(values.Size() == point_query_count,
               "Invalid surface-response point-functional vector size!");
-  std::vector<double> packed_values(point_query_count);
   const auto *value_data = values.HostRead();
   for (int i = 0; i < point_query_count; i++)
   {
-    packed_values[i] = value_data[point_send_indices[i]];
+    point_packed_values[i] = value_data[point_send_indices[i]];
   }
-  std::vector<double> owned_values(point_dof_offsets.size() - 1);
-  Mpi::Alltoallv(packed_values.data(), point_send_counts.data(), point_send_offsets.data(),
-                 owned_values.data(), point_receive_counts.data(),
-                 point_receive_offsets.data(), fespace.GetComm());
+  Mpi::Alltoallv(point_packed_values.data(), point_send_counts.data(),
+                 point_send_offsets.data(), point_owned_values.data(),
+                 point_receive_counts.data(), point_receive_offsets.data(),
+                 fespace.GetComm());
 
   local_y.SetSize(fespace.GetVSize());
   local_y = 0.0;
   auto *local_data = local_y.HostWrite();
   for (std::size_t i = 0; i + 1 < point_dof_offsets.size(); i++)
   {
-    const double value = owned_values[i];
+    const double value = point_owned_values[i];
     if (value == 0.0)
     {
       continue;
@@ -10372,9 +10828,8 @@ void SurfaceResponseOperator::EvaluatePoints(const Vector &x, Vector &values) co
 
 void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &values) const
 {
-  Vector point_values;
-  EvaluatePointValues(x, point_values);
-  const auto *point_data = point_values.HostRead();
+  EvaluatePointValues(x, maxwell_point_values);
+  const auto *point_data = maxwell_point_values.HostRead();
   values.SetSize(static_cast<int>(maxwell_lines.size()));
   values = 0.0;
   auto *value_data = values.HostWrite();
@@ -10388,14 +10843,38 @@ void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &valu
   }
 }
 
+void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &xr, const Vector &xi,
+                                                   Vector &vr, Vector &vi) const
+{
+  Vector point_real, point_imag;
+  EvaluatePointValues(xr, xi, point_real, point_imag);
+  const auto *point_real_data = point_real.HostRead();
+  const auto *point_imag_data = point_imag.HostRead();
+  vr.SetSize(static_cast<int>(maxwell_lines.size()));
+  vi.SetSize(static_cast<int>(maxwell_lines.size()));
+  vr = 0.0;
+  vi = 0.0;
+  auto *real_data = vr.HostWrite();
+  auto *imag_data = vi.HostWrite();
+  for (std::size_t line_index = 0; line_index < maxwell_lines.size(); line_index++)
+  {
+    const auto &line = maxwell_lines[line_index];
+    for (int q = 0; q < line.point_count; q++)
+    {
+      real_data[line_index] += point_real_data[line.point_offset + q];
+      imag_data[line_index] += point_imag_data[line.point_offset + q];
+    }
+  }
+}
+
 void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
                                                        Vector &y) const
 {
   MFEM_ASSERT(values.Size() == static_cast<int>(maxwell_lines.size()),
               "Invalid Maxwell line-functional vector size!");
-  Vector point_values(point_query_count);
-  point_values = 0.0;
-  auto *point_data = point_values.HostWrite();
+  maxwell_point_values.SetSize(point_query_count);
+  maxwell_point_values = 0.0;
+  auto *point_data = maxwell_point_values.HostWrite();
   const auto *value_data = values.HostRead();
   for (std::size_t line_index = 0; line_index < maxwell_lines.size(); line_index++)
   {
@@ -10405,7 +10884,7 @@ void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
       point_data[line.point_offset + q] = value_data[line_index];
     }
   }
-  AddPointValuesTranspose(point_values, y);
+  AddPointValuesTranspose(maxwell_point_values, y);
 }
 
 void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
@@ -10468,34 +10947,33 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
   line_values.SetSize(static_cast<int>(maxwell_lines.size()));
   line_values = 0.0;
-  Vector conductor_adjoint(basis_size);
-  conductor_adjoint = 0.0;
+  maxwell_conductor_adjoint.SetSize(basis_size);
+  maxwell_conductor_adjoint = 0.0;
   for (const auto &path : maxwell_conductor_paths)
   {
-    conductor_adjoint[path.trace_offset] = values[path.trace_offset];
+    maxwell_conductor_adjoint[path.trace_offset] = values[path.trace_offset];
   }
-  Vector adjoint;
   for (const auto &path : maxwell_paths)
   {
     const int size = static_cast<int>(path.trace_indices.size());
     MFEM_ASSERT(size > 0, "Empty Maxwell contour path!");
-    adjoint.SetSize(size);
+    maxwell_path_adjoint.SetSize(size);
     for (int i = 0; i < size; i++)
     {
-      adjoint[i] = values[path.trace_indices[i]];
+      maxwell_path_adjoint[i] = values[path.trace_indices[i]];
     }
     for (int i = size - 2; i >= 0; i--)
     {
-      line_values[path.contour_line_offset + i] -= adjoint[i + 1];
-      adjoint[i] += adjoint[i + 1];
+      line_values[path.contour_line_offset + i] -= maxwell_path_adjoint[i + 1];
+      maxwell_path_adjoint[i] += maxwell_path_adjoint[i + 1];
     }
     if (path.anchor_line >= 0)
     {
-      line_values[path.anchor_line] -= adjoint[0];
+      line_values[path.anchor_line] -= maxwell_path_adjoint[0];
     }
     if (!path.closed && path.start_conductor_trace >= 0)
     {
-      conductor_adjoint[path.start_conductor_trace] += adjoint[0];
+      maxwell_conductor_adjoint[path.start_conductor_trace] += maxwell_path_adjoint[0];
     }
   }
   auto AddPathIntegralTranspose = [&](const MaxwellContourPath &path, double value)
@@ -10516,18 +10994,19 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   for (auto path = maxwell_conductor_paths.rbegin(); path != maxwell_conductor_paths.rend();
        path++)
   {
-    const double value = conductor_adjoint[path->trace_offset];
+    const double value = maxwell_conductor_adjoint[path->trace_offset];
     AddPathIntegralTranspose(maxwell_paths[path->contour_path],
                              path->integral_sign * value);
     if (path->parent_trace_offset >= 0)
     {
-      conductor_adjoint[path->parent_trace_offset] += value;
+      maxwell_conductor_adjoint[path->parent_trace_offset] += value;
     }
   }
 }
 
 void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
 {
+  trace_forward_count++;
   if (maxwell)
   {
     EvaluateMaxwellLines(x, correction);
@@ -10554,6 +11033,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
 
 void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &y) const
 {
+  trace_transpose_count++;
   if (maxwell)
   {
     BuildMaxwellTraceTranspose(values, correction);
@@ -10601,6 +11081,7 @@ void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) cons
 
 void SurfaceResponseOperator::Mult(const Vector &x, Vector &y) const
 {
+  operator_mult_count++;
   x_free.SetSize(x.Size());
   x_free = x;
   x_free.SetSubVector(dbc_tdof_list, 0.0);
@@ -10610,6 +11091,7 @@ void SurfaceResponseOperator::Mult(const Vector &x, Vector &y) const
 
 void SurfaceResponseOperator::EliminateRHS(const Vector &x, Vector &rhs) const
 {
+  eliminate_rhs_count++;
   ApplyUneliminated(x, correction);
   correction.SetSubVector(dbc_tdof_list, 0.0);
   rhs.Add(-1.0, correction);
@@ -10864,8 +11346,7 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   Vector field_real, field_imag, line_real, line_imag, trace_real, trace_imag;
   E.Real().GetTrueDofs(field_real);
   E.Imag().GetTrueDofs(field_imag);
-  EvaluateMaxwellLines(field_real, line_real);
-  EvaluateMaxwellLines(field_imag, line_imag);
+  EvaluateMaxwellLines(field_real, field_imag, line_real, line_imag);
   BuildMaxwellTrace(line_real, trace_real);
   BuildMaxwellTrace(line_imag, trace_imag);
 
@@ -11080,6 +11561,68 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       result.response_weighted_trace_closure_spread <= maximum_trace_closure_spread &&
       result.trace_closure_response_failure_fraction <=
           maximum_trace_closure_response_failure_fraction;
+  return result;
+}
+
+nlohmann::json SurfaceResponseOperator::GetStatistics() const
+{
+  const auto comm = fespace.GetComm();
+  auto Replicated = [comm](long long int value, const char *name)
+  {
+    long long int minimum = value;
+    long long int maximum = value;
+    Mpi::GlobalMin(1, &minimum, comm);
+    Mpi::GlobalMax(1, &maximum, comm);
+    MFEM_VERIFY(minimum == maximum,
+                "Rank-inconsistent surface-response statistic \"" << name << "\"!");
+    return minimum;
+  };
+  auto Distribution = [comm](long long int value)
+  {
+    long long int total = value;
+    long long int minimum = value;
+    long long int maximum = value;
+    int nonzero = value > 0 ? 1 : 0;
+    Mpi::GlobalSum(1, &total, comm);
+    Mpi::GlobalMin(1, &minimum, comm);
+    Mpi::GlobalMax(1, &maximum, comm);
+    Mpi::GlobalSum(1, &nonzero, comm);
+    return nlohmann::json{{"Total", total},
+                          {"Minimum", minimum},
+                          {"Maximum", maximum},
+                          {"NonzeroRanks", nonzero}};
+  };
+
+  nlohmann::json result = automatic_statistics.is_null() ? nlohmann::json{{"Version", 1}}
+                                                         : automatic_statistics;
+  result["Correction"] = {{"Models", Replicated(models.size(), "Models")},
+                          {"Patches", global_patch_count},
+                          {"TraceCoefficients", global_basis_size},
+                          {"LocalPatches", Distribution(patches.size())},
+                          {"LocalTraceCoefficients", Distribution(basis_size)},
+                          {"ContourLines", Distribution(contour_line_count)}};
+  const long long int stencil_rows =
+      point_dof_offsets.empty() ? 0 : point_dof_offsets.size() - 1;
+  result["Interpolation"] = {{"PointQueries", Distribution(point_query_count)},
+                             {"StencilRows", Distribution(stencil_rows)},
+                             {"StencilNonzeros", Distribution(stencil_nonzero_count)},
+                             {"CandidateQueries", Distribution(candidate_query_count)},
+                             {"FallbackQueries", Distribution(fallback_query_count)}};
+  auto send_items = Distribution(point_send_item_count);
+  auto receive_items = Distribution(point_receive_item_count);
+  MFEM_VERIFY(send_items["Total"] == receive_items["Total"],
+              "Surface-response point communication has mismatched global item counts!");
+  result["Communication"] = {
+      {"PointSendPeers", Distribution(point_send_peer_count)},
+      {"PointReceivePeers", Distribution(point_receive_peer_count)},
+      {"PointSendItems", std::move(send_items)},
+      {"PointReceiveItems", std::move(receive_items)},
+      {"ApplyPayloadScalarsPerDirection", Distribution(point_send_item_count)}};
+  result["Runtime"] = {
+      {"OperatorMultCalls", Replicated(operator_mult_count, "OperatorMultCalls")},
+      {"EliminateRHSCalls", Replicated(eliminate_rhs_count, "EliminateRHSCalls")},
+      {"TraceForwardCalls", Replicated(trace_forward_count, "TraceForwardCalls")},
+      {"TraceTransposeCalls", Replicated(trace_transpose_count, "TraceTransposeCalls")}};
   return result;
 }
 

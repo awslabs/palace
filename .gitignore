@@ -3,7 +3,8 @@ examples/**/postpro*/
 examples/**/log*/
 test/data/regression/input/**/postpro/
 test/data/regression/input/**/log/
-spack_repo/local/packages/palace/__pycache__/
+__pycache__/
+*.py[cod]
 test/examples/ref/**/*.json
 .*.swp
 *.sif

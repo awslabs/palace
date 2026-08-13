@@ -84,6 +84,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
+  long long int corrected_linear_solves = 0;
+  long long int corrected_linear_iterations = 0;
 
   // Initialize structures for storing and reducing the results of error estimation.
   GradFluxErrorEstimator estimator(
@@ -212,7 +214,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       ksp.SetRelTol(iodata.solver.electrostatic.response_correction->solve_tol);
       ksp.SetOperator(*system_K);
       ksp.SetInitialGuess(true);
+      const auto solves_before = ksp.NumTotalMult();
+      const auto iterations_before = ksp.NumTotalMultIterations();
       ksp.Mult(corrected_rhs, V_corrected[step]);
+      corrected_linear_solves += ksp.NumTotalMult() - solves_before;
+      corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
       ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
       ksp.SetOperator(*K);
       ksp.SetRelTol(solve_tol);
@@ -410,6 +416,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     output.WriteFullTableTrunc();
   }
   post_op.MeasureFinalize(indicator);
+  if (response_correction)
+  {
+    SaveSurfaceResponseSolverMetadata(laplace_op.GetComm(), "Electrostatic",
+                                      corrected_linear_solves, corrected_linear_iterations);
+    SaveMetadata(*response_correction);
+  }
   return {indicator, laplace_op.GlobalTrueVSize()};
 }
 

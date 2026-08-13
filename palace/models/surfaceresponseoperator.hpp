@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -132,6 +133,10 @@ private:
   std::vector<int> point_send_offsets;
   std::vector<int> point_receive_counts;
   std::vector<int> point_receive_offsets;
+  std::vector<int> point_send_counts_pair;
+  std::vector<int> point_send_offsets_pair;
+  std::vector<int> point_receive_counts_pair;
+  std::vector<int> point_receive_offsets_pair;
   std::vector<int> point_send_indices;
   std::vector<int> point_dof_offsets;
   std::vector<int> point_dofs;
@@ -159,16 +164,39 @@ private:
   double maximum_library_distance = 0.0;
   bool boundary_law_verified = true;
 
-  mutable Vector x_free, local_x, local_y, trace, response, correction;
+  mutable Vector x_free, local_x, local_x_imag, local_y, trace, response, correction;
+  mutable std::vector<double> point_owned_values, point_packed_values;
+  mutable std::vector<double> point_owned_values_pair, point_packed_values_pair;
+  mutable Vector maxwell_point_values, maxwell_conductor_adjoint, maxwell_path_adjoint;
+
+  // Mesh-independent matching statistics are cached with the automatic geometry. The
+  // remaining counters describe this mesh-specific interpolation and runtime operator.
+  nlohmann::json automatic_statistics;
+  long long int candidate_query_count = 0;
+  long long int fallback_query_count = 0;
+  long long int point_send_peer_count = 0;
+  long long int point_receive_peer_count = 0;
+  long long int point_send_item_count = 0;
+  long long int point_receive_item_count = 0;
+  long long int stencil_nonzero_count = 0;
+  long long int contour_line_count = 0;
+  mutable long long int operator_mult_count = 0;
+  mutable long long int eliminate_rhs_count = 0;
+  mutable long long int trace_forward_count = 0;
+  mutable long long int trace_transpose_count = 0;
 
   void ConfigurePointCommunication(
       const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
   void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
+  void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr,
+                           Vector &vi) const;
   void AddPointValuesTranspose(const Vector &values, Vector &y) const;
   void EvaluatePoints(const Vector &x, Vector &values) const;
   void EvaluateMaxwellLines(const Vector &x, Vector &values) const;
+  void EvaluateMaxwellLines(const Vector &xr, const Vector &xi, Vector &vr,
+                            Vector &vi) const;
   void AddMaxwellLinesTranspose(const Vector &values, Vector &y) const;
   void BuildMaxwellTrace(const Vector &line_values, Vector &values) const;
   void BuildMaxwellTraceTranspose(const Vector &values, Vector &line_values) const;
@@ -269,6 +297,10 @@ public:
   int GetEdgeCount() const { return GetPatchCount(); }
   double GetPatchWeight() const;
   double GetMatchingRadius() const { return matching_radius; }
+
+  // Collect deterministic setup/work-distribution counters and runtime application
+  // counts. This method is collective over the response operator communicator.
+  nlohmann::json GetStatistics() const;
 };
 
 // Classify the configured automatic surface-response neighborhoods without assembling a

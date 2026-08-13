@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -333,6 +334,19 @@ struct BoundaryEdgeSegment
 // produce one segment. High-order edges are sampled to a fixed geometric tolerance while
 // retaining their exact topological endpoints.
 std::vector<BoundaryEdgeSegment> GetMeshEdgeSegments(const mfem::Mesh &mesh, int edge);
+
+// Reuse high-order edge sampling within one mesh traversal. The cache is intentionally
+// bound to one immutable-coordinate mesh and should not outlive coordinate modification.
+class MeshEdgeSegmentCache
+{
+private:
+  const mfem::Mesh &mesh;
+  std::vector<std::optional<std::vector<BoundaryEdgeSegment>>> segments;
+
+public:
+  explicit MeshEdgeSegmentCache(const mfem::Mesh &mesh_);
+  const std::vector<BoundaryEdgeSegment> &Get(int edge);
+};
 
 // Extract all geometric edge segments belonging to boundary elements selected by marker.
 // In 2D, each selected boundary element contributes its line segment. In 3D, each

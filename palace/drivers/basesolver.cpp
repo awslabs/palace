@@ -15,6 +15,7 @@
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
 #include "utils/edgedistance.hpp"
@@ -147,9 +148,12 @@ void RefineEdgeTubes(const IoData &iodata, Mesh &mesh)
   MPI_Comm comm = par_mesh.GetComm();
   constexpr int max_passes = 32;
   int pass = 0;
+  // Edge-distance trees contain only immutable physical coordinates and remain valid as
+  // h-refinement changes the volume mesh. Reuse them across all bounded tube-refinement
+  // passes instead of repeating global metal-edge extraction on every pass.
+  const auto contexts = BuildEdgeRefinementContexts(par_mesh, iodata.boundaries);
   while (true)
   {
-    const auto contexts = BuildEdgeRefinementContexts(par_mesh, iodata.boundaries);
     const auto marked = MarkEdgeRefinementElements(par_mesh, contexts);
     long long int global_marked = marked.Size();
     Mpi::GlobalSum(1, &global_marked, comm);
@@ -420,6 +424,9 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       auto key = Timer::descriptions[i];
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
+      meta["ElapsedTime"]["MinimumDurations"][key] = red.time.min[i];
+      meta["ElapsedTime"]["MaximumDurations"][key] = red.time.max[i];
+      meta["ElapsedTime"]["AverageDurations"][key] = red.time.avg[i];
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
       meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
@@ -458,6 +465,40 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   {
     nlohmann::json meta = LoadMetadata(post_dir);
     meta["Excitations"] = excitation_helper;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
+{
+  // Statistics reduction is collective and must occur before the root-only file update.
+  auto statistics = response.GetStatistics();
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    for (auto &[key, value] : statistics.items())
+    {
+      meta["SurfaceResponse"][key] = std::move(value);
+    }
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
+                                                   long long int solves,
+                                                   long long int iterations) const
+{
+  long long int minimum[2] = {solves, iterations};
+  long long int maximum[2] = {solves, iterations};
+  Mpi::GlobalMin(2, minimum, comm);
+  Mpi::GlobalMax(2, maximum, comm);
+  MFEM_VERIFY(minimum[0] == maximum[0] && minimum[1] == maximum[1],
+              "Rank-inconsistent corrected surface-response solver statistics!");
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"]["CorrectedSolver"][name]["LinearSolves"] = minimum[0];
+    meta["SurfaceResponse"]["CorrectedSolver"][name]["LinearIterations"] = minimum[1];
     WriteMetadata(post_dir, meta);
   }
 }

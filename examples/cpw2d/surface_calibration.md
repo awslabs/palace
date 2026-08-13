@@ -263,9 +263,9 @@ python3 ../transmon/prepare_surface_response_preflight.py \
 palace --surface-response-preflight /tmp/transmon-surface-preflight.json
 ```
 
-The helper resolves the existing mesh path and attaches
-`transmon_surface_process_seed.json`, but does not run an eigenmode solve or create
-fabrication-resolved device geometry.
+The helper resolves the existing mesh path and attaches the metadata seed at
+`../transmon/benchmark/transmon_surface_process_seed.json`, but does not run an eigenmode
+solve or create fabrication-resolved device geometry.
 
 The plan routes isolated and paired edges, parallel multi-edge clusters, 90
 degree convex and concave corners, and exact spatial edge clusters to candidate
@@ -378,11 +378,11 @@ A flip-chip CPW sweep using 100 nm metal, 50 nm overetch, 80 degree sidewalls,
 others used independent one-edge coupons. Against fabrication-resolved
 references, the maximum absolute corrected errors over the sweep were:
 
-| Interface | L1 | L2 |
-|-----------|---:|---:|
-| SA | 5.41% | 0.30% |
-| MS | 2.19% | 0.32% |
-| MA | 9.11% | 4.24% |
+| Interface | L1    | L2    |
+|:--------- | -----:| -----:|
+| SA        | 5.41% | 0.30% |
+| MS        | 2.19% | 0.32% |
+| MA        | 9.11% | 4.24% |
 
 The corresponding raw thin-metal errors reached 169% for L1 MS and 61% for MA.
 The weakest width-1 L1 MS thick reference required nine AMR iterations; using

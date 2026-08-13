@@ -1031,6 +1031,16 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
     return std::pair{std::move(mesh), std::move(geometry)};
   };
   auto [coarse_mesh, coarse] = Extract(8, true, true);
+  mesh::MeshEdgeSegmentCache edge_cache(*coarse_mesh);
+  const auto &cached_edge = edge_cache.Get(0);
+  CHECK(&cached_edge == &edge_cache.Get(0));
+  const auto uncached_edge = mesh::GetMeshEdgeSegments(*coarse_mesh, 0);
+  REQUIRE(cached_edge.size() == uncached_edge.size());
+  for (std::size_t i = 0; i < cached_edge.size(); i++)
+  {
+    CHECK(cached_edge[i].p0 == uncached_edge[i].p0);
+    CHECK(cached_edge[i].p1 == uncached_edge[i].p1);
+  }
   auto [fine_mesh, fine] = Extract(16, false, true);
   auto [sharp_mesh, sharp] = Extract(8, false, false);
 

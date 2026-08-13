@@ -5,6 +5,7 @@
 #define PALACE_DRIVERS_BASE_SOLVER_HPP
 
 #include <memory>
+#include <string>
 #include <vector>
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
@@ -24,6 +25,7 @@ class IoData;
 class Mesh;
 class Timer;
 class PortExcitations;
+class SurfaceResponseOperator;
 
 //
 // Base driver class for all simulation types.
@@ -65,6 +67,10 @@ public:
   void SaveMetadata(const Timer &timer) const;
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
+  void SaveMetadata(const SurfaceResponseOperator &response) const;
+  void SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
+                                         long long int solves,
+                                         long long int iterations) const;
 };
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder

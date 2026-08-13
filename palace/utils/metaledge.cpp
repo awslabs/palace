@@ -309,6 +309,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   if (surface.classify_components || surface.retain_faces)
   {
     std::vector<MetalSurfaceFace> local_faces;
+    mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
     mfem::Array<int> vertices, edges, orientations;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
@@ -336,7 +337,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
                     "Unexpected metal boundary face topology!");
         for (int i = 0; i < edges.Size(); i++)
         {
-          auto edge_segments = mesh::GetMeshEdgeSegments(mesh, edges[i]);
+          auto edge_segments = edge_segment_cache.Get(edges[i]);
           if (orientations[i] < 0)
           {
             std::reverse(edge_segments.begin(), edge_segments.end());
@@ -801,6 +802,7 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
     std::array<double, 3> normal;
   };
   std::vector<Candidate> candidates;
+  mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
   auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
   mutable_mesh.ExchangeFaceNbrData();
   mfem::Array<int> edges, orientations;
@@ -828,7 +830,7 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
     mesh.GetBdrElementEdges(be, edges, orientations);
     for (const int edge : edges)
     {
-      for (const auto &edge_segment : mesh::GetMeshEdgeSegments(mesh, edge))
+      for (const auto &edge_segment : edge_segment_cache.Get(edge))
       {
         const auto selected =
             selected_segments.find(GetSegmentKey(edge_segment.p0, edge_segment.p1));
@@ -1040,6 +1042,7 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
   }
 
   std::vector<double> inward_sum(3 * segment_indices.size(), 0.0);
+  mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
   auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
   mfem::Array<int> edges, orientations;
   mfem::Vector center(3);
@@ -1056,7 +1059,7 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
     mesh.GetBdrElementEdges(be, edges, orientations);
     for (const int edge : edges)
     {
-      for (const auto &edge_segment : mesh::GetMeshEdgeSegments(mesh, edge))
+      for (const auto &edge_segment : edge_segment_cache.Get(edge))
       {
         const Point &p0 = edge_segment.p0;
         const Point &p1 = edge_segment.p1;

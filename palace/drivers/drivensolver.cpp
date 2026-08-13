@@ -310,6 +310,14 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     SaveMetadata(ksp);
   }
   post_op.MeasureFinalize(indicator);
+  if (response_correction)
+  {
+    MFEM_ASSERT(corrected_ksp, "Missing corrected driven linear solver!");
+    SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Driven",
+                                      corrected_ksp->NumTotalMult(),
+                                      corrected_ksp->NumTotalMultIterations());
+    SaveMetadata(*response_correction);
+  }
   return indicator;
 }
 
@@ -664,6 +672,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     SaveMetadata(prom_op.GetLinearSolver());
   }
   post_op.MeasureFinalize(indicator);
+  if (response_correction)
+  {
+    MFEM_ASSERT(corrected_prom_op, "Missing corrected adaptive driven solver!");
+    const auto &corrected_solver = corrected_prom_op->GetLinearSolver();
+    SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "AdaptiveDrivenHDM",
+                                      corrected_solver.NumTotalMult(),
+                                      corrected_solver.NumTotalMultIterations());
+    SaveMetadata(*response_correction);
+  }
   return indicator;
 }
 

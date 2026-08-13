@@ -1174,6 +1174,19 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(cached_automatic_response.GetPatchCount() == automatic_response.GetPatchCount());
   CHECK(cached_automatic_response.GetBasisSize() == automatic_response.GetBasisSize());
   CHECK(cached_automatic_response.HasSurfaceResponse());
+  const auto response_statistics = automatic_response.GetStatistics();
+  const auto cached_response_statistics = cached_automatic_response.GetStatistics();
+  CHECK(response_statistics["Version"] == 1);
+  CHECK(response_statistics["Correction"]["Models"] == 1);
+  CHECK(response_statistics["Correction"]["Patches"] == 2);
+  CHECK(response_statistics["Correction"]["TraceCoefficients"] == 8);
+  CHECK(response_statistics["Interpolation"]["PointQueries"]["Total"] ==
+        response_statistics["Interpolation"]["StencilRows"]["Total"]);
+  CHECK(response_statistics["Interpolation"]["StencilNonzeros"]["Total"] > 0);
+  CHECK(response_statistics["Communication"]["PointSendItems"]["Total"] ==
+        response_statistics["Communication"]["PointReceiveItems"]["Total"]);
+  CHECK(cached_response_statistics["Geometry"] == response_statistics["Geometry"]);
+  CHECK(cached_response_statistics["Matching"] == response_statistics["Matching"]);
 
   const auto requirements_path = temp.temp_dir / "surface-response-requirements.json";
   WriteSurfaceResponseRequirements(automatic_iodata, *automatic_meshes.back(),
@@ -1187,6 +1200,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK_FALSE(requirements["Maxwell"]);
   CHECK(requirements["Summary"]["Counts"]["Exact"] == 2);
   CHECK(requirements["Summary"]["Counts"]["Missing"] == 0);
+  REQUIRE(requirements.contains("Statistics"));
+  CHECK(requirements["Statistics"]["Version"] == 1);
+  CHECK(requirements["Statistics"]["Geometry"]["TargetGroups"] == 1);
+  CHECK(requirements["Statistics"]["Geometry"]["EdgeSites2D"] == 2);
   REQUIRE(requirements["Requirements"].size() == 1);
   CHECK(requirements["Requirements"][0]["Topology"] == "IsolatedEdge");
   CHECK(requirements["Requirements"][0]["Status"] == "Exact");

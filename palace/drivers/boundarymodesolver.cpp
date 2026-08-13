@@ -354,6 +354,10 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
 
   post_op.MeasureFinalize(indicator);
+  if (auto *response = post_op.GetSurfaceResponseOperator())
+  {
+    SaveMetadata(*response);
+  }
 
   return {indicator,
           mode_op.GetNDSpace().GlobalTrueVSize() + mode_op.GetH1Space().GlobalTrueVSize()};

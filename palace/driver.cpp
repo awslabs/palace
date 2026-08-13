@@ -108,8 +108,19 @@ void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   WriteSurfaceResponseRequirements(
       iodata, *mesh.back(),
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
+
+  // Preserve the same structured timing and memory metadata as an ordinary solve so
+  // geometry-only preflight benchmarks do not need to scrape formatted terminal output.
+  const auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
+  const auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
+  Mpi::Print(comm, "\n");
+  memory_reporting::PrintMemoryUsage(comm, peak_mem);
+  memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
   BlockTimer::Finalize(comm);
   BlockTimer::Print(comm);
+  solver->SaveMetadata(BlockTimer::GlobalTimer());
+  solver->SaveMetadata(peak_mem);
+  solver->SaveMetadata(peak_node_mem);
   Mpi::Print(comm, "\n");
 }
 

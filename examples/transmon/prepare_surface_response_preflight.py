@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Prepare the coarse transmon for geometry-only surface-response preflight."""
 
 import argparse
@@ -21,7 +24,7 @@ def main():
     parser.add_argument(
         "--library",
         type=Path,
-        default=ROOT / "transmon_surface_process_seed.json",
+        default=ROOT / "benchmark/transmon_surface_process_seed.json",
     )
     parser.add_argument("--postpro", type=Path)
     args = parser.parse_args()
