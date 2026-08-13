@@ -36,14 +36,17 @@ constexpr AffineTetrahedron ReferenceTetrahedron{
     BarycentricPoint{1.0, 0.0, 0.0, 0.0}, BarycentricPoint{0.0, 1.0, 0.0, 0.0},
     BarycentricPoint{0.0, 0.0, 1.0, 0.0}, BarycentricPoint{0.0, 0.0, 0.0, 1.0}};
 
+// Neumaier-compensated binary64 accumulation. On Linux/AArch64, long double is
+// software-emulated IEEE binary128 and is prohibitively expensive in the innermost
+// reference quadrature loop; compensation retains deterministic near-binary64 accuracy.
 struct CompensatedAccumulator
 {
-  long double sum = 0.0L;
-  long double correction = 0.0L;
+  double sum = 0.0;
+  double correction = 0.0;
 
-  void Add(long double term)
+  void Add(double term)
   {
-    const long double updated = sum + term;
+    const double updated = sum + term;
     if (std::abs(sum) >= std::abs(term))
     {
       correction += (sum - updated) + term;
@@ -55,7 +58,7 @@ struct CompensatedAccumulator
     sum = updated;
   }
 
-  double Value() const { return static_cast<double>(sum + correction); }
+  double Value() const { return sum + correction; }
 };
 
 // The trusted fixed-subdivision tensor kernel intentionally accumulates binary64 point
@@ -1203,7 +1206,7 @@ double IntegrateReferenceQuadrature(Q &&quadrature, const ReferenceIntegrand &in
           throw std::domain_error(
               "Singular-element reference integrand returned a non-finite value!");
         }
-        accumulator.Add(static_cast<long double>(weight) * static_cast<long double>(value));
+        accumulator.Add(static_cast<double>(weight) * static_cast<double>(value));
       });
   return accumulator.Value();
 }
@@ -1223,7 +1226,7 @@ double IntegrateAffineTetrahedron(const AffineTetrahedron &tetrahedron,
           throw std::domain_error(
               "Singular-element reference integrand returned a non-finite value!");
         }
-        accumulator.Add(static_cast<long double>(weight) * static_cast<long double>(value));
+        accumulator.Add(static_cast<double>(weight) * static_cast<double>(value));
       });
   return accumulator.Value();
 }
@@ -1253,8 +1256,8 @@ std::vector<double> IntegrateAffineTetrahedron(const AffineTetrahedron &tetrahed
             throw std::domain_error(
                 "Singular-element vector integrand returned a non-finite value!");
           }
-          accumulators[component].Add(static_cast<long double>(weight) *
-                                      static_cast<long double>(values[component]));
+          accumulators[component].Add(static_cast<double>(weight) *
+                                      static_cast<double>(values[component]));
         }
       });
 
@@ -1277,7 +1280,7 @@ AdaptiveQuadratureResult IntegrateAffineTetrahedronAdaptive(
   for (std::size_t child = 0; child < children.size(); child++)
   {
     child_values[child] = IntegrateAffineTetrahedron(children[child], rule, integrand);
-    fine_accumulator.Add(static_cast<long double>(child_values[child]));
+    fine_accumulator.Add(static_cast<double>(child_values[child]));
   }
   const double fine_value = fine_accumulator.Value();
   const double estimated_error = std::abs(fine_value - coarse_value);
@@ -1300,8 +1303,8 @@ AdaptiveQuadratureResult IntegrateAffineTetrahedronAdaptive(
     const auto result = IntegrateAffineTetrahedronAdaptive(
         children[child], rule, integrand, child_values[child], absolute_tolerance,
         relative_tolerance, depth + 1, max_subdivisions);
-    value_accumulator.Add(static_cast<long double>(result.value));
-    error_accumulator.Add(static_cast<long double>(result.estimated_absolute_error));
+    value_accumulator.Add(static_cast<double>(result.value));
+    error_accumulator.Add(static_cast<double>(result.estimated_absolute_error));
     if (leaf_count > std::numeric_limits<std::size_t>::max() - result.leaf_count)
     {
       throw std::overflow_error(
@@ -1332,8 +1335,7 @@ AdaptiveVectorQuadratureResult IntegrateAffineTetrahedronAdaptive(
         IntegrateAffineTetrahedron(children[child], rule, number_components, integrand);
     for (std::size_t component = 0; component < number_components; component++)
     {
-      fine_accumulators[component].Add(
-          static_cast<long double>(child_values[child][component]));
+      fine_accumulators[component].Add(static_cast<double>(child_values[child][component]));
     }
   }
 
@@ -1367,9 +1369,9 @@ AdaptiveVectorQuadratureResult IntegrateAffineTetrahedronAdaptive(
         absolute_tolerance, relative_tolerance, depth + 1, max_subdivisions);
     for (std::size_t component = 0; component < number_components; component++)
     {
-      value_accumulators[component].Add(static_cast<long double>(result.value[component]));
+      value_accumulators[component].Add(static_cast<double>(result.value[component]));
       error_accumulators[component].Add(
-          static_cast<long double>(result.estimated_absolute_error[component]));
+          static_cast<double>(result.estimated_absolute_error[component]));
     }
     if (leaf_count > std::numeric_limits<std::size_t>::max() - result.leaf_count)
     {
@@ -1420,12 +1422,11 @@ ReferenceIntegral ComputeCanonicalReferenceIntegral(
         {
           for (int v = 0; v < 3; v++)
           {
-            mass[u][v].Add(static_cast<long double>(weight) *
-                           static_cast<long double>(row.value[u]) *
-                           static_cast<long double>(column.value[v]));
-            curl_curl[u][v].Add(static_cast<long double>(weight) *
-                                static_cast<long double>(row.curl[u]) *
-                                static_cast<long double>(column.curl[v]));
+            mass[u][v].Add(static_cast<double>(weight) * static_cast<double>(row.value[u]) *
+                           static_cast<double>(column.value[v]));
+            curl_curl[u][v].Add(static_cast<double>(weight) *
+                                static_cast<double>(row.curl[u]) *
+                                static_cast<double>(column.curl[v]));
           }
         }
       });
@@ -2590,7 +2591,7 @@ double IntegrateReferenceTriangleNodeDuffy(int order, int singular_node,
           throw std::domain_error(
               "Singular-element triangle integrand returned a non-finite value!");
         }
-        result.Add(static_cast<long double>(weight) * value);
+        result.Add(static_cast<double>(weight) * value);
       });
   return result.Value();
 }
@@ -2646,8 +2647,23 @@ std::vector<double> IntegrateReferenceTetrahedron(int order, int subdivisions,
     throw std::invalid_argument(
         "Singular-element reference vector integrand must be callable and nonempty!");
   }
+  // Accumulate ordinary binary64 partial sums over moderately sized point blocks, then
+  // combine those blocks with Neumaier compensation. This retains deterministic compensated
+  // accuracy while keeping the innermost component loop branch-free and vectorizable.
+  constexpr std::size_t points_per_block = 256;
   std::vector<CompensatedAccumulator> accumulators(number_components);
+  std::vector<double> block_sums(number_components, 0.0);
   std::vector<double> values(number_components);
+  std::size_t points_in_block = 0;
+  const auto flush_block = [&]()
+  {
+    for (std::size_t component = 0; component < number_components; component++)
+    {
+      accumulators[component].Add(block_sums[component]);
+      block_sums[component] = 0.0;
+    }
+    points_in_block = 0;
+  };
   ForEachReferenceTetrahedronQuadraturePoint(
       order, subdivisions,
       [&](const BarycentricPoint &lambda, double weight)
@@ -2663,9 +2679,17 @@ std::vector<double> IntegrateReferenceTetrahedron(int order, int subdivisions,
         }
         for (std::size_t component = 0; component < number_components; component++)
         {
-          accumulators[component].Add(static_cast<long double>(weight) * values[component]);
+          block_sums[component] += weight * values[component];
+        }
+        if (++points_in_block == points_per_block)
+        {
+          flush_block();
         }
       });
+  if (points_in_block > 0)
+  {
+    flush_block();
+  }
   std::vector<double> result(number_components);
   for (std::size_t component = 0; component < number_components; component++)
   {
@@ -3061,9 +3085,9 @@ double ContractMass(const ReferenceIntegral &integral,
   {
     for (int v = 0; v < 3; v++)
     {
-      accumulator.Add(static_cast<long double>(jacobian_determinant) *
-                      static_cast<long double>(integral.mass[u][v]) *
-                      static_cast<long double>(
+      accumulator.Add(static_cast<double>(jacobian_determinant) *
+                      static_cast<double>(integral.mass[u][v]) *
+                      static_cast<double>(
                           Dot(canonical_grad_lambda[u + 1], canonical_grad_lambda[v + 1])));
     }
   }
@@ -3086,9 +3110,9 @@ double ContractCurlCurl(const ReferenceIntegral &integral,
   {
     for (int v = 0; v < 3; v++)
     {
-      accumulator.Add(static_cast<long double>(jacobian_determinant) *
-                      static_cast<long double>(integral.curl_curl[u][v]) *
-                      static_cast<long double>(Dot(curl_geometry[u], curl_geometry[v])));
+      accumulator.Add(static_cast<double>(jacobian_determinant) *
+                      static_cast<double>(integral.curl_curl[u][v]) *
+                      static_cast<double>(Dot(curl_geometry[u], curl_geometry[v])));
     }
   }
   return accumulator.Value();
