@@ -636,6 +636,7 @@ def main():
             potential["TerminalAttributes"] = terminal_attributes
         heldout["Boundaries"]["PrescribedPotential"] = [potential]
         heldout["Solver"]["Electrostatic"]["ResponseMatrix"] = False
+        heldout["Solver"]["Electrostatic"]["AggregateResponseMatrix"] = False
         heldout_path = output / f"{heldout_name}.json"
         heldout_path.write_text(json.dumps(heldout, indent=2) + "\n")
         probe_name = f"probe-{'fabricated' if fabricated else 'thin'}"
