@@ -4,13 +4,14 @@
 // Method of Manufactured Solutions (MMS) verification for the electrostatic operator.
 //
 // We manufacture a potential V_mms on the unit cube [0,1]³, substitute it into
-//     -∇·(ε ∇V) = ρ   (constant ε)
-// to get the source ρ_mms = -ε ∇²V_mms that makes V_mms exact, solve with V = V_mms on ∂Ω,
-// and compare the discrete solution to V_mms in the L2 norm. Several manufactured solutions
-// (defined below) exercise homogeneous and non-homogeneous Dirichlet BCs, checked both for
-// optimal convergence rate under mesh refinement and for exactness when V_mms lies in the
-// FE space.
+//     -∇·(ε ∇V) = ρ   (constant diagonal tensor ε)
+// to get the source ρ_mms that makes V_mms exact, solve with V = V_mms on ∂Ω, and compare
+// the discrete solution to V_mms in the L2 norm. Several manufactured solutions (defined
+// below) exercise the anisotropic material tensor and homogeneous/non-homogeneous Dirichlet
+// BCs, checked both for optimal convergence rate under mesh refinement and for exactness
+// when V_mms lies in the FE space.
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -33,50 +34,50 @@ using namespace Catch::Matchers;
 namespace
 {
 
-// Constant relative permittivity on the domain. A single scalar ε is what lets the source
-// be ρ_mms = -ε ∇²V_mms (ε pulls out of the divergence); a spatially-varying or tensor ε
-// would add a ∇ε·∇V term.
-constexpr double kEpsilonR = 1.0;
+// Constant diagonal relative-permittivity tensor on the domain. Distinct principal values
+// make the MMS sensitive to omitted, scalarized, or permuted material components.
+constexpr std::array<double, 3> kEpsilonR = {2.0, 3.0, 5.0};
 
-// sin(πx)sin(πy)sin(πz): vanishes on ∂Ω (homogeneous Dirichlet). Laplacian eigenfunction,
-// so ρ_mms = -ε ∇²V_mms = 3π²ε V_mms.
+// sin(πx)sin(2πy)sin(πz): vanishes on ∂Ω (homogeneous Dirichlet). For diagonal ε,
+// ρ_mms = π²(ε_x + 4ε_y + ε_z)V_mms.
 double VmmsSin(const mfem::Vector &x)
 {
-  return std::sin(M_PI * x[0]) * std::sin(M_PI * x[1]) * std::sin(M_PI * x[2]);
+  return std::sin(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) * std::sin(M_PI * x[2]);
 }
 double RhoSin(const mfem::Vector &x)
 {
-  return 3.0 * M_PI * M_PI * kEpsilonR * VmmsSin(x);
+  return M_PI * M_PI * (kEpsilonR[0] + 4.0 * kEpsilonR[1] + kEpsilonR[2]) * VmmsSin(x);
 }
 
-// cos(πx)cos(πy)cos(πz): nonzero on ∂Ω (non-homogeneous Dirichlet). Also an eigenfunction.
+// cos(πx)cos(2πy)cos(πz): nonzero on ∂Ω (non-homogeneous Dirichlet), with the
+// same anisotropic source factor as VmmsSin.
 double VmmsCos(const mfem::Vector &x)
 {
-  return std::cos(M_PI * x[0]) * std::cos(M_PI * x[1]) * std::cos(M_PI * x[2]);
+  return std::cos(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) * std::cos(M_PI * x[2]);
 }
 double RhoCos(const mfem::Vector &x)
 {
-  return 3.0 * M_PI * M_PI * kEpsilonR * VmmsCos(x);
+  return M_PI * M_PI * (kEpsilonR[0] + 4.0 * kEpsilonR[1] + kEpsilonR[2]) * VmmsCos(x);
 }
 
-// x² + y² + z²: a degree-2 polynomial, nonzero on ∂Ω. ∇²V_mms = 6, so ρ_mms = -6ε
-// (constant); ∇V_mms = (2x, 2y, 2z).
+// x² + 2y² + 3z²: a degree-2 polynomial, nonzero on ∂Ω. Thus
+// ρ_mms = -2(ε_x + 2ε_y + 3ε_z), and ∇V_mms = (2x, 4y, 6z).
 double VmmsPoly(const mfem::Vector &x)
 {
-  return x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+  return x[0] * x[0] + 2.0 * x[1] * x[1] + 3.0 * x[2] * x[2];
 }
 double RhoPoly(const mfem::Vector &)
 {
-  return -6.0 * kEpsilonR;
+  return -2.0 * (kEpsilonR[0] + 2.0 * kEpsilonR[1] + 3.0 * kEpsilonR[2]);
 }
-// Neumann flux g = ε ∂V/∂n for the polynomial on the x = 1 face (outward normal +x̂):
-// g = ε ∇V·n̂ = ε (2x) = 2ε there. Written as 2εx so it equals 2ε on that face.
+// Neumann flux g = n̂·ε∇V for the polynomial on the x = 1 face (outward normal +x̂):
+// g = 2ε_x x, which equals 2ε_x there.
 double NeumannPolyX1(const mfem::Vector &x)
 {
-  return 2.0 * kEpsilonR * x[0];
+  return 2.0 * kEpsilonR[0] * x[0];
 }
 
-// A manufactured case: exact solution V_mms, its source ρ_mms = -ε ∇²V_mms, and whether
+// A manufactured case: exact solution V_mms, its source ρ_mms = -∇·(ε∇V_mms), and whether
 // V_mms is nonzero on the boundary (i.e. needs a non-homogeneous Dirichlet lift).
 struct MmsCase
 {
@@ -95,15 +96,15 @@ double SolveMmsL2Error(const MmsCase &mms, int n, int order, double linear_tol =
 {
   MPI_Comm comm = Mpi::World();
 
-  // Build the IoData in-memory (no mesh file): constant permittivity on the single domain
-  // attribute, all six cube faces marked Dirichlet.
+  // Build the IoData in-memory (no mesh file): constant diagonal permittivity on the single
+  // domain attribute, all six cube faces marked Dirichlet.
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.model.Lc = 1.0;
   iodata.problem.type = ProblemType::ELECTROSTATIC;
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
-  material.epsilon_r.s = {kEpsilonR, kEpsilonR, kEpsilonR};
+  material.epsilon_r.s = kEpsilonR;
   iodata.boundaries.pec.attributes = {1, 2, 3, 4, 5, 6};
   iodata.solver.order = order;
   // Drive the iterative-solver (algebraic) error below the discretization error we measure.
@@ -196,10 +197,10 @@ TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
 }
 
 // Mixed Dirichlet/Neumann: leave the x = 1 face (attribute 3) out of the grounded set so it
-// becomes a natural boundary carrying the prescribed flux g = ε ∂V/∂n, and impose V_mms on
-// the other five faces. Verifies the Neumann boundary term ∮ g φ dS. The polynomial V_mms =
-// x²+y²+z² is FE-exact at order 2, so a correct flux assembly gives ~machine-precision
-// error; a missing or wrong Neumann term leaves an O(1) error.
+// becomes a natural boundary carrying the prescribed flux g = n̂·ε∇V, and impose V_mms on
+// the other five faces. Verifies the Neumann boundary term ∮ g φ dS. The polynomial V_mms
+// is FE-exact at order 2, so a correct flux assembly gives ~machine-precision error; a
+// missing or wrong Neumann term leaves an O(1) error.
 TEST_CASE("Electrostatic MMS handles a Neumann boundary",
           "[electrostaticmms][Serial][Parallel]")
 {
@@ -210,7 +211,7 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
   iodata.problem.type = ProblemType::ELECTROSTATIC;
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
-  material.epsilon_r.s = {kEpsilonR, kEpsilonR, kEpsilonR};
+  material.epsilon_r.s = kEpsilonR;
   iodata.boundaries.pec.attributes = {1, 2, 4, 5,
                                       6};  // all faces except x = 1 (attribute 3)
   iodata.solver.order = 2;
