@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added libCEED-based GPU evaluation for domain and boundary postprocessing
+    functionals, avoiding host coefficient projection for energy, flux, current, port, and
+    far-field reductions [PR 824](https://github.com/awslabs/palace/pull/824).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

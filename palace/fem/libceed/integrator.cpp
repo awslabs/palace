@@ -557,21 +557,33 @@ void AssembleCeedElementErrorIntegrator(
   MFEM_VERIFY(!info.assemble_q_data,
               "Quadrature interpolator does not support quadrature data assembly!");
 
-  // Create basis for summing contributions from all quadrature points on the element.
-  CeedInt num_qpts;
+  // Create an output restriction which sums quadrature point contributions into one
+  // value per element. This avoids expressing the element-local quadrature reduction as
+  // a fake all-ones basis transpose, which is a poor fit for some device backends.
+  CeedInt num_qpts, num_elem;
+  CeedSize elem_l_size;
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(input1_basis, &num_qpts));
-  CeedBasis mesh_elem_basis;
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(mesh_elem_restr, &num_elem));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(mesh_elem_restr, &elem_l_size));
+
+  const CeedInt *mesh_elem_offsets;
+  PalaceCeedCall(ceed, CeedElemRestrictionGetOffsets(mesh_elem_restr, CEED_MEM_HOST,
+                                                     &mesh_elem_offsets));
+  std::vector<CeedInt> elem_q_offsets(num_elem * num_qpts);
+  for (CeedInt e = 0; e < num_elem; e++)
   {
-    // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-    mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
-    Bt = 1.0;
-    Gt = 0.0;
-    qX = 0.0;
-    qW = 0.0;
-    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_qpts,
-                                           Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                           qW.GetData(), &mesh_elem_basis));
+    for (CeedInt q = 0; q < num_qpts; q++)
+    {
+      elem_q_offsets[e * num_qpts + q] = mesh_elem_offsets[e];
+    }
   }
+  PalaceCeedCall(ceed,
+                 CeedElemRestrictionRestoreOffsets(mesh_elem_restr, &mesh_elem_offsets));
+
+  CeedElemRestriction elem_q_restr;
+  PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                           ceed, num_elem, num_qpts, 1, 1, elem_l_size, CEED_MEM_HOST,
+                           CEED_COPY_VALUES, elem_q_offsets.data(), &elem_q_restr));
 
   // Create the QFunction that defines the action of the operator.
   CeedQFunction apply_qf;
@@ -599,7 +611,7 @@ void AssembleCeedElementErrorIntegrator(
   }
   AddQFunctionActiveInputs(info.trial_ops, ceed, input1_basis, apply_qf, "u_1");
   AddQFunctionActiveInputs(info.test_ops, ceed, input2_basis, apply_qf, "u_2");
-  PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v", 1, CEED_EVAL_INTERP));
+  PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v", 1, CEED_EVAL_NONE));
 
   // Create the operator.
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
@@ -616,13 +628,13 @@ void AssembleCeedElementErrorIntegrator(
                                input1);
   AddOperatorActiveInputFields(info.test_ops, ceed, input2_restr, input2_basis, *op, "u_2",
                                input2);
-  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "v", mesh_elem_restr, mesh_elem_basis,
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "v", elem_q_restr, CEED_BASIS_NONE,
                                             CEED_VECTOR_ACTIVE));
 
   PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
 
   // Cleanup (this is now owned by the operator).
-  PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_elem_basis));
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&elem_q_restr));
 }
 
 }  // namespace palace::ceed

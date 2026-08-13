@@ -3,12 +3,34 @@
 
 #include "interpolator.hpp"
 
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
+
 #include <algorithm>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
+
+#include "fem/ceed_group_operator.hpp"
+#include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
+#include "fem/libceed/functional.hpp"
+#include "fem/libceed/restriction.hpp"
+#include "utils/diagnostic.hpp"
+
+PalacePragmaDiagnosticPush
+PalacePragmaDiagnosticDisableUnused
+
+#include "fem/qfunctions/33/eval_33_qf.h"
+
+PalacePragmaDiagnosticPop
 
 namespace palace
 {
@@ -19,7 +41,190 @@ namespace
 constexpr auto GSLIB_BB_TOL = 0.01;  // MFEM defaults, slightly reduced bounding box
 constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
+#if defined(MFEM_USE_GSLIB)
+
+using PointRuleKey = std::array<std::uint64_t, 4>;
+
+std::uint64_t EncodePointCoordinate(double x)
+{
+  static_assert(sizeof(std::uint64_t) == sizeof(double));
+  std::uint64_t bits;
+  std::memcpy(&bits, &x, sizeof(bits));
+  return bits;
+}
+
+// MFEM caches DofToQuad tabulations by IntegrationRule pointer in the shared finite
+// elements. Keep every rule passed to InitBasisAtPoints alive for the application
+// lifetime; exact IEEE data, including the weight, makes reuse collision-safe.
+const mfem::IntegrationRule &GetRegisteredPointRule(const mfem::IntegrationPoint &ip)
+{
+  static std::map<PointRuleKey, std::unique_ptr<mfem::IntegrationRule>> registry;
+  static std::mutex registry_mutex;
+  const PointRuleKey key = {EncodePointCoordinate(ip.x), EncodePointCoordinate(ip.y),
+                            EncodePointCoordinate(ip.z), EncodePointCoordinate(ip.weight)};
+  std::lock_guard<std::mutex> lock(registry_mutex);
+  auto it = registry.find(key);
+  if (it == registry.end())
+  {
+    auto ir = std::make_unique<mfem::IntegrationRule>(1);
+    ir->IntPoint(0) = ip;
+    it = registry.emplace(key, std::move(ir)).first;
+  }
+  return *it->second;
+}
+
+#endif
+
 }  // namespace
+
+#if defined(MFEM_USE_GSLIB)
+
+// Evaluates fields at the (fixed, located) probe points through libCEED: one small
+// operator per locally owned point (volume element restriction and basis tabulated at
+// the point, geometry on the fly from mesh node gradients). Results for all points are
+// reduced over all processes (unowned and not-found points contribute zero, matching
+// the GSLIB default interpolation value).
+class CeedProbeEvaluator
+{
+private:
+  std::vector<fem::CeedGroupOperator> groups;
+  mutable Vector field_staging, local_out;
+  MPI_Comm comm;
+  bool valid = true;
+
+public:
+  CeedProbeEvaluator(const mfem::FindPointsGSLIB &op,
+                     const mfem::ParFiniteElementSpace &fespace)
+    : comm(fespace.GetComm())
+  {
+    const auto &mesh = *fespace.GetParMesh();
+    const auto map_type = fespace.FEColl()->GetMapType(mesh.Dimension());
+    if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3 ||
+        (map_type != mfem::FiniteElement::H_CURL && map_type != mfem::FiniteElement::H_DIV))
+    {
+      valid = false;
+      return;
+    }
+    const mfem::FiniteElementSpace &mesh_fespace = *mesh.GetNodes()->FESpace();
+    const int npts = op.GetCode().Size();
+    const int rank = Mpi::Rank(comm);
+    field_staging.SetSize(fespace.GetVSize());
+    field_staging.UseDevice(true);
+    field_staging = 0.0;
+    local_out.SetSize(npts * 3);
+    local_out.UseDevice(true);
+
+    // Claim each point on exactly one process: for points on element borders the GSLIB
+    // ownership may not be consistent across the (all) searching processes, so resolve
+    // ties globally with a minimum reduction.
+    std::vector<int> owner(npts);
+    for (int i = 0; i < npts; i++)
+    {
+      owner[i] =
+          (op.GetCode()[i] != 2 && op.GetProc()[i] == static_cast<unsigned int>(rank))
+              ? rank
+              : std::numeric_limits<int>::max();
+    }
+    Mpi::GlobalMin(npts, owner.data(), comm);
+
+    Ceed ceed = ceed::internal::GetCeedObjects()[0];
+    for (int i = 0; i < npts; i++)
+    {
+      if (owner[i] != rank)
+      {
+        continue;  // Not found (default value 0) or owned by another process
+      }
+      const int elem = op.GetElem()[i];
+      const auto geom = mesh.GetElementGeometry(elem);
+      const int dim = mesh.Dimension();
+
+      // FindPointsGSLIB::GetReferencePosition returns mfem reference coordinates of
+      // the original mesh element (point-major).
+      mfem::IntegrationPoint ip;
+      ip.Set3(op.GetReferencePosition()[i * dim + 0],
+              op.GetReferencePosition()[i * dim + 1],
+              op.GetReferencePosition()[i * dim + 2]);
+      ip.weight = 1.0;
+      const mfem::IntegrationRule &ir = GetRegisteredPointRule(ip);
+      const std::vector<int> indices = {elem};
+
+      std::vector<ceed::CeedFunctionalFieldInput> inputs;
+      std::vector<std::pair<std::string, int>> field_sources;
+      {
+        CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+            mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+        const mfem::FiniteElement *mesh_fe =
+            mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+        CeedBasis mesh_basis;
+        ceed::InitBasisAtPoints(*mesh_fe, ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
+        CeedVector mesh_nodes_vec;
+        ceed::InitCeedVector(*mesh.GetNodes(), ceed, &mesh_nodes_vec);
+        inputs.push_back(
+            {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+        CeedElemRestriction field_restr;
+        ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
+                              &field_restr);
+        const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
+        CeedBasis field_basis;
+        ceed::InitBasisAtPoints(*fe, ir, fespace.GetVDim(), ceed, &field_basis);
+        CeedVector field_vec;
+        ceed::InitCeedVector(field_staging, ceed, &field_vec);
+        inputs.push_back(
+            {"u_1", field_vec, field_restr, field_basis, ceed::EvalMode::Interp});
+        field_sources.emplace_back("u_1", 0);
+
+        // Output: 3 components for point i (byVDIM layout).
+        CeedElemRestriction out_restr;
+        const CeedInt offset[1] = {3 * i};
+        PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, 1, 1, 3, 1, (CeedSize)npts * 3,
+                                                       CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                       offset, &out_restr));
+
+        ceed::CeedQFunctionInfo info;
+        if (map_type == mfem::FiniteElement::H_CURL)
+        {
+          info.apply_qf = f_eval_probe_hcurl_33;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
+        }
+        else
+        {
+          info.apply_qf = f_eval_probe_hdiv_33;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
+        }
+        CeedOperator point_op;
+        ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, 3, out_restr,
+                                         &point_op);
+        groups.push_back({ceed, point_op, std::move(field_sources)});
+
+        PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
+        PalaceCeedCall(ceed, CeedVectorDestroy(&field_vec));
+        PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
+        PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&field_restr));
+        PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&out_restr));
+        PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
+        PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
+      }
+    }
+  }
+
+  ~CeedProbeEvaluator() { fem::DestroyGroupOperators(groups); }
+
+  bool IsValid() const { return valid; }
+
+  // Evaluate the field at all probe points (byVDIM ordering). Collective.
+  std::vector<double> Eval(const mfem::ParGridFunction &U) const
+  {
+    local_out = 0.0;
+    fem::ApplyAddGroupOperators(groups, {&U}, local_out);
+    std::vector<double> vals(local_out.Size());
+    const double *d = local_out.HostRead();
+    std::copy(d, d + local_out.Size(), vals.begin());
+    Mpi::GlobalSum(static_cast<int>(vals.size()), vals.data(), comm);
+    return vals;
+  }
+};
+
+#endif
 
 InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeData> &probe,
                                              const Units &units,
@@ -78,12 +283,33 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata,
 {
 }
 
+InterpolationOperator::~InterpolationOperator() = default;
+
 std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
 {
 #if defined(MFEM_USE_GSLIB)
+  const int npts = op.GetCode().Size();
+
+  // Use the libCEED evaluation path when supported and enough probe points are present
+  // to amortize operator assembly/JIT. Tiny probe sets are cheaper through the existing
+  // GSLIB interpolation path, especially in driven postprocessing where only a few
+  // fixed monitor points are evaluated once or twice.
+  constexpr int ceed_probe_min_points = 8;
+  if (npts >= ceed_probe_min_points)
+  {
+    auto &eval = ceed_probes[U.FESpace()];
+    if (!eval)
+    {
+      eval = std::make_unique<CeedProbeEvaluator>(op, *U.ParFESpace());
+    }
+    if (eval->IsValid())
+    {
+      return eval->Eval(U);
+    }
+  }
+
   // Interpolated vector values are returned from GSLIB interpolator with the same ordering
   // as the source grid function, which we transform to byVDIM for output.
-  const int npts = op.GetCode().Size();
   const int vdim = U.VectorDim();
   std::vector<double> vals(npts * vdim);
   if (U.FESpace()->GetOrdering() == mfem::Ordering::byVDIM)

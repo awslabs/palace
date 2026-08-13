@@ -10,6 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
+#include "fem/output_functionals.hpp"
 
 namespace palace
 {
@@ -51,7 +52,13 @@ protected:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
 
+  // libCEED surface functionals for port power, voltage, and S-parameter computation,
+  // replacing host boundary LinearForm paths when supported.
+  mutable std::unique_ptr<SurfaceFunctional> power_func, v_func;
+
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
+  SurfaceModeCoefficient GetModeCoefficient(const LumpedElementData &elem,
+                                            double coeff) const;
 
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
@@ -114,6 +121,7 @@ public:
   double GetExcitationVoltage() const;
 
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
 };
@@ -128,6 +136,14 @@ private:
   // calculate circuit properties like voltage and current on lumped or multielement lumped
   // ports.
   std::map<int, LumpedPortData> ports;
+
+  // Batched libCEED surface functional for lumped-port power. The per-port
+  // LumpedPortData fallback remains authoritative when batching is unavailable (for
+  // example, overlapping boundary attributes or unsupported surface-functional cases).
+  mutable std::unique_ptr<SurfaceFunctional> batched_power_func;
+  mutable mfem::Array<int> batched_power_attr_to_port;
+  mutable std::vector<int> batched_power_port_indices;
+  mutable bool batched_power_unavailable = false;
 
   void SetUpBoundaryProperties(const std::map<int, config::LumpedPortData> &lumpedport,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
@@ -147,6 +163,10 @@ public:
   auto rbegin() const { return ports.rbegin(); }
   auto rend() const { return ports.rend(); }
   auto Size() const { return ports.size(); }
+
+  // Compute port powers, batching disjoint libCEED surface-functional evaluations when
+  // possible while preserving per-port scalar outputs.
+  std::map<int, std::complex<double>> GetPowers(GridFunction &E, GridFunction &B) const;
 
   // Returns array of lumped port attributes.
   mfem::Array<int> GetAttrList() const;
