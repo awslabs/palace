@@ -42,8 +42,9 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm comm)
   return mesh;
 }
 
-// Read the cavity2d electrostatic regression config, absolutizing the mesh path (so it
-// resolves regardless of cwd) and blanking the output (no files written during the test).
+// Read the cavity2d electrostatic regression config, absolutizing the mesh path so it
+// resolves regardless of cwd. The solver is constructed as a non-root instance below to
+// suppress metadata output.
 json LoadCavity2dElectrostaticConfig()
 {
   auto dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cavity2d";
@@ -67,7 +68,7 @@ TEST_CASE("ElectrostaticSolver exposes per-terminal potentials",
   IoData iodata(LoadCavity2dElectrostaticConfig(), /*print=*/false);
   auto mesh = LoadScaleParMesh(iodata, comm);
 
-  ExposedElectrostaticSolver solver(iodata, Mpi::Root(comm));
+  ExposedElectrostaticSolver solver(iodata, /*root=*/false);
   LaplaceOperator laplace_op(iodata, mesh);
 
   std::vector<Vector> V;
