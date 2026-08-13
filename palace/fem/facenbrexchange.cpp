@@ -4,6 +4,7 @@
 #include "facenbrexchange.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -43,6 +44,22 @@ using PointConfigKey = std::vector<long long>;
 // every exchange object in the same order, so per-pair messages match in order (MPI
 // non-overtaking guarantee).
 constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;
+
+void VerifyPointSet(const std::vector<mfem::IntegrationPoint> &reference,
+                    const std::vector<mfem::IntegrationPoint> &pts)
+{
+  MFEM_VERIFY(reference.size() == pts.size(),
+              "Face-neighbor point key reused with a different point count!");
+  for (std::size_t q = 0; q < reference.size(); q++)
+  {
+    const auto &a = reference[q];
+    const auto &b = pts[q];
+    const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),
+                                 std::abs(a.z - b.z), std::abs(a.weight - b.weight)});
+    MFEM_VERIFY(err <= 1.0e-12,
+                "Face-neighbor point key reused for different reference points!");
+  }
+}
 
 void VerifyRegisteredIr(const mfem::IntegrationRule &ir,
                         const std::vector<mfem::IntegrationPoint> &pts)
@@ -104,6 +121,25 @@ bool CeedSupportsNonTensorAtPoints(Ceed ceed)
          std::strstr(resource, "/gpu/cuda/magma");
 }
 
+int FieldValueDim(const mfem::ParFiniteElementSpace &fespace, int space_dim)
+{
+  const auto map_type = fespace.FEColl()->GetMapType(fespace.GetParMesh()->Dimension());
+  if (map_type == mfem::FiniteElement::H_CURL || map_type == mfem::FiniteElement::H_DIV)
+  {
+    return space_dim;
+  }
+  if (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL)
+  {
+    MFEM_VERIFY(fespace.GetVDim() == 1,
+                "FaceNbrFieldExchange scalar source spaces must have one component!");
+    return 1;
+  }
+  MFEM_ABORT("FaceNbrFieldExchange requires H(curl), H(div), or scalar VALUE/INTEGRAL "
+             "source spaces (map type = "
+             << map_type << ")!");
+  return 0;
+}
+
 void CreateSequentialPointRestriction(Ceed ceed, std::size_t num_elem, int nq, int num_comp,
                                       CeedSize l_size, CeedElemRestriction *restr)
 {
@@ -132,9 +168,18 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
 {
   const mfem::ParMesh &pmesh = mesh.Get();
   const int num_nbr = pmesh.GetNFaceNeighbors();
-  const int value_dim = pmesh.SpaceDimension();
-  MFEM_VERIFY(value_dim == 2 || value_dim == 3,
-              "FaceNbrFieldExchange requires 2D or 3D physical-space fields!");
+  const int mesh_dim = pmesh.Dimension();
+  const int space_dim = pmesh.SpaceDimension();
+  MFEM_VERIFY((mesh_dim == 2 || mesh_dim == 3) && (space_dim == 2 || space_dim == 3),
+              "FaceNbrFieldExchange requires a 2D or 3D mesh and physical space!");
+  source_num_comp.fill(0);
+  for (int s = 0; s < MaxSources; s++)
+  {
+    if (fespaces[s])
+    {
+      source_num_comp[s] = FieldValueDim(*fespaces[s], space_dim);
+    }
+  }
   MFEM_VERIFY(requests.empty() || num_nbr > 0,
               "FaceNbrFieldExchange requires face neighbor data "
               "(ParMesh::ExchangeFaceNbrData)!");
@@ -206,7 +251,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for requested source slot!");
           import_offsets[r][s] = import_size;
-          import_size += value_dim * nq;
+          import_size += source_num_comp[s] * nq;
         }
       }
     }
@@ -253,8 +298,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   const bool use_at_points = CeedSupportsNonTensorAtPoints(ceed);
 
   // Parse the received requests, assigning export offsets with the same layout rules
-  // as the import offsets above. On AtPoints-capable libCEED backends, tetrahedral
-  // export evaluators use runtime point coordinates so requests with the same
+  // as the import offsets above. On AtPoints-capable libCEED backends, simplex export
+  // evaluators use runtime point coordinates so requests with the same
   // source/geometry/point count can share one operator even when their finite NC trace
   // maps differ. Other backends keep the mapped-integration-rule grouping by
   // integer/topological point-key data; empty keys use exact serialized point bits.
@@ -265,6 +310,11 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     std::vector<int> elems;
     std::vector<int> bases;  // Export vector base offset per element entry
   };
+  // point_key values originate in the requester's rank-local mesh. Namespace them by
+  // sender and exchange construction so unrelated ranks or rebuilt meshes cannot alias
+  // in this grouping map or the process-lifetime IntegrationRule registry.
+  static std::atomic<long long> next_exchange_id{0};
+  const long long exchange_id = next_exchange_id++;
   std::map<PointConfigKey, ExportGroup> export_map;
   int export_size = 0;
   for (int i = 0; i < num_nbr; i++)
@@ -304,15 +354,19 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         {
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for received source slot!");
-          const bool at_points_group = use_at_points && geom == mfem::Geometry::TETRAHEDRON;
+          const bool at_points_group =
+              use_at_points &&
+              (geom == mfem::Geometry::TRIANGLE || geom == mfem::Geometry::TETRAHEDRON);
           PointConfigKey key;
-          key.reserve(5 + point_key.size() + (point_key.empty() ? 3 * pts.size() : 0));
+          key.reserve(7 + point_key.size() + (point_key.empty() ? 3 * pts.size() : 0));
           key.push_back(s);
           key.push_back(static_cast<long long>(geom));
           key.push_back(nq);
           key.push_back(static_cast<long long>(at_points_group));
           if (!at_points_group)
           {
+            key.push_back(exchange_id);
+            key.push_back(pmesh.GetFaceNbrRank(i));
             key.push_back(point_key.empty() ? 0 : 1);
             if (point_key.empty())
             {
@@ -341,9 +395,13 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           {
             group.pts = pts;
           }
+          else
+          {
+            VerifyPointSet(group.pts, pts);
+          }
           group.elems.push_back(elem);
           group.bases.push_back(export_size);
-          export_size += value_dim * nq;
+          export_size += source_num_comp[s] * nq;
         }
       }
     }
@@ -364,9 +422,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     return;
   }
 
-  // Assemble a libCEED point evaluator for each export group, writing the
-  // physical-space field values (space-dimension components per point, point-major)
-  // into the exported vector at the assigned offsets.
+  // Assemble a libCEED point evaluator for each export group, writing point-major
+  // values into the exported vector at the assigned offsets. H(curl)/H(div) sources are
+  // physical-space vectors; VALUE sources are scalar fields.
   int max_vsize = 0;
   for (const auto *fespace : fespaces)
   {
@@ -381,6 +439,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     const int s = static_cast<int>(key[0]);
     const auto geom = static_cast<mfem::Geometry::Type>(key[1]);
     const int nq = static_cast<int>(key[2]);
+    const int value_dim = source_num_comp[s];
     const std::size_t num_elem = group.elems.size();
     const auto &fespace = *fespaces[s];
     MFEM_VERIFY(!group.at_points ||
@@ -397,19 +456,25 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedVector points_vec = nullptr;
     if (group.at_points)
     {
-      auto &points = export_attrs.emplace_back(3 * num_elem * nq);
+      // libCEED's AtPoints coordinates have the basis's topological dimension, not the
+      // fixed three-component layout used to serialize IntegrationPoint requests.
+      auto &points = export_attrs.emplace_back(mesh_dim * num_elem * nq);
       for (std::size_t e = 0; e < num_elem; e++)
       {
         for (int q = 0; q < nq; q++)
         {
           const auto &ip = group.pts[e * nq + q];
-          const std::size_t off = 3 * (e * nq + q);
+          const std::size_t off = mesh_dim * (e * nq + q);
           points[off + 0] = ip.x;
           points[off + 1] = ip.y;
-          points[off + 2] = ip.z;
+          if (mesh_dim == 3)
+          {
+            points[off + 2] = ip.z;
+          }
         }
       }
-      CreateSequentialPointRestriction(ceed, num_elem, nq, 3, points.Size(), &points_restr);
+      CreateSequentialPointRestriction(ceed, num_elem, nq, mesh_dim, points.Size(),
+                                       &points_restr);
       ceed::InitCeedVector(points, ceed, &points_vec);
     }
     CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
@@ -419,8 +484,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedBasis mesh_basis;
     if (group.at_points)
     {
-      ceed::InitTetBasisAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(), ceed,
-                                 &mesh_basis);
+      ceed::InitSimplexBasisAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(),
+                                     ceed, &mesh_basis);
     }
     else
     {
@@ -437,8 +502,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedBasis field_basis;
     if (group.at_points)
     {
-      ceed::InitTetBasisAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
-                                 &field_basis);
+      ceed::InitSimplexBasisAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
+                                     &field_basis);
     }
     else
     {
@@ -465,17 +530,34 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                                                    CEED_MEM_HOST, CEED_COPY_VALUES,
                                                    offsets.data(), &out_restr));
 
-    // The reply contains physical-space field values: the Piola transformation
-    // (H(curl) or H(div) depending on the source space) is applied here so the
-    // requester needs no neighbor element geometry.
+    // The reply contains physical-space field values for Piola-mapped spaces, and scalar
+    // values for H1/L2 spaces. The requester needs no neighbor element geometry.
     const auto map_type = fespace.FEColl()->GetMapType(pmesh.Dimension());
-    MFEM_VERIFY(map_type == mfem::FiniteElement::H_CURL ||
-                    map_type == mfem::FiniteElement::H_DIV,
-                "FaceNbrFieldExchange requires H(curl) or H(div) source spaces!");
     ceed::CeedQFunctionInfo info;
-    if (map_type == mfem::FiniteElement::H_CURL)
+    if (map_type == mfem::FiniteElement::VALUE)
     {
-      if (value_dim == 2)
+      MFEM_VERIFY(value_dim == 1, "Scalar face neighbor fields must have one component!");
+      if (space_dim == 2)
+      {
+        info.apply_qf = f_eval_probe_l2_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_l2_22_loc);
+      }
+      else
+      {
+        info.apply_qf = f_eval_probe_l2_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_l2_33_loc);
+      }
+    }
+    else if (map_type == mfem::FiniteElement::INTEGRAL)
+    {
+      MFEM_VERIFY(space_dim == 2 && value_dim == 1,
+                  "Only scalar 2D INTEGRAL face neighbor fields are supported!");
+      info.apply_qf = f_eval_probe_integral_22;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_integral_22_loc);
+    }
+    else if (map_type == mfem::FiniteElement::H_CURL)
+    {
+      if (space_dim == 2)
       {
         info.apply_qf = f_eval_probe_hcurl_22;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_22_loc);
@@ -486,9 +568,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
       }
     }
-    else
+    else if (map_type == mfem::FiniteElement::H_DIV)
     {
-      if (value_dim == 2)
+      if (space_dim == 2)
       {
         info.apply_qf = f_eval_probe_hdiv_22;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_22_loc);
@@ -498,6 +580,10 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         info.apply_qf = f_eval_probe_hdiv_33;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
       }
+    }
+    else
+    {
+      MFEM_ABORT("Unsupported face neighbor field map type!");
     }
     CeedOperator op;
     if (group.at_points)
@@ -511,6 +597,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                                        &op);
     }
     export_groups.push_back({ceed, op, std::move(field_sources)});
+    export_groups.back().mesh_nodes = pmesh.GetNodes();
+    export_groups.back().mesh_node_fields = {"grad_x"};
+    fem::CacheGroupOperatorFieldVectors(export_groups.back());
 
     // Cleanup (the assembled operator holds its own references).
     if (points_vec)
@@ -529,11 +618,24 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
     PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
   }
+
+  // Export operators cache their passive field-vector handles and re-point them on each
+  // exchange. Detach the borrowed arrays before releasing the construction buffer, which
+  // would otherwise add another full device FE vector to every boundary evaluator.
+  DetachFieldVectors();
+  field_staging.Destroy();
+  MFEM_ASSERT(field_staging.Capacity() == 0,
+              "Face-neighbor staging allocation was not released!");
 }
 
 FaceNbrFieldExchange::~FaceNbrFieldExchange()
 {
   fem::DestroyGroupOperators(export_groups);
+}
+
+void FaceNbrFieldExchange::DetachFieldVectors() const
+{
+  fem::DetachGroupOperatorFieldVectors(export_groups);
 }
 
 void FaceNbrFieldExchange::Exchange(

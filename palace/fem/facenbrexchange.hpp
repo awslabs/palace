@@ -29,9 +29,10 @@ class Mesh;
 // ParMesh::ExchangeFaceNbrData relies on, valid for conformal and nonconforming
 // meshes). At evaluation, the owning process evaluates the requested fields at the
 // points with libCEED point evaluators (on the device) and replies with physical-space
-// field values (Piola transformations applied by the evaluating process, so the
-// requester needs no neighbor element geometry; material properties are applied by the
-// requester using the ghost element attributes).
+// field values (Piola transformations applied by the evaluating process for H(curl) and
+// H(div) sources, scalar VALUE/INTEGRAL sources copied directly), so the requester needs
+// no neighbor element geometry; material properties are applied by the requester using
+// the ghost element attributes).
 //
 class FaceNbrFieldExchange
 {
@@ -53,9 +54,10 @@ public:
     // Integer/topological identity of the point set, independent of physical or
     // floating-point coordinates. SurfaceFunctional fills this with the reference-face
     // topology/orientation/subface key used to generate pts. Requests with the same
-    // point_key, source slot, element geometry, and point count can share one libCEED
-    // point evaluator. Empty keys are allowed for ad-hoc requests and force a unique
-    // evaluator group.
+    // point_key, source slot, element geometry, point count, sender rank, and exchange
+    // construction can share one mapped-rule libCEED point evaluator. AtPoints-capable
+    // groups carry their coordinates at runtime and may share across senders. Empty keys
+    // are allowed for ad-hoc requests and use exact coordinate bits for identity.
     std::vector<long long> point_key;
 
     // Evaluation points in the neighbor element's reference space (the ghost element
@@ -79,9 +81,13 @@ private:
   };
   std::vector<Message> recv_msgs, send_msgs;
 
+  // Number of imported components for each source slot. H(curl)/H(div) fields use the
+  // mesh space dimension; scalar VALUE/INTEGRAL fields use one component.
+  std::array<int, MaxSources> source_num_comp;
+
   // For request r (construction order), base offset of the values for source slot s in
-  // the imported vector (-1 when not requested). Values are space-dimension components
-  // per point, point-major: [x0 y0 (z0) x1 y1 (z1) ...].
+  // the imported vector (-1 when not requested). Values are point-major with
+  // source_num_comp[s] components per point.
   std::vector<std::array<int, MaxSources>> import_offsets;
 
   // Assembled libCEED point evaluators serving the requests of neighboring processes,
@@ -114,13 +120,20 @@ public:
   // Size of the imported values vector.
   int ImportSize() const { return imported.Size(); }
 
+  // Number of point-major components imported for source slot s.
+  int ImportNumComp(int s) const { return source_num_comp[s]; }
+
   // Base offset in the imported vector of the values of source slot s for request r
   // (construction order), or -1 when source s was not requested. Layout per request
-  // and source: space-dimension components per point, point-major.
+  // and source: ImportNumComp(s) components per point, point-major.
   int ImportOffset(int r, int s) const { return import_offsets[r][s]; }
 
   // The imported values vector (filled by Exchange()).
   const Vector &Imported() const { return imported; }
+
+  // Detach borrowed source arrays from the export operators before caller-owned warm-up
+  // storage is released. The next Exchange() reattaches its source arrays directly.
+  void DetachFieldVectors() const;
 
   // Evaluate the exported field values for the neighbors' requests from the given
   // source vectors (L-vectors of the corresponding source spaces), exchange with the
