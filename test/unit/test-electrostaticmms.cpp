@@ -60,7 +60,7 @@ double RhoCos(const mfem::Vector &x)
 }
 
 // x² + y² + z²: a degree-2 polynomial, nonzero on ∂Ω. ∇²V_mms = 6, so ρ_mms = -6ε
-// (constant).
+// (constant); ∇V_mms = (2x, 2y, 2z).
 double VmmsPoly(const mfem::Vector &x)
 {
   return x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
@@ -68,6 +68,12 @@ double VmmsPoly(const mfem::Vector &x)
 double RhoPoly(const mfem::Vector &)
 {
   return -6.0 * kEpsilonR;
+}
+// Neumann flux g = ε ∂V/∂n for the polynomial on the x = 1 face (outward normal +x̂):
+// g = ε ∇V·n̂ = ε (2x) = 2ε there. Written as 2εx so it equals 2ε on that face.
+double NeumannPolyX1(const mfem::Vector &x)
+{
+  return 2.0 * kEpsilonR * x[0];
 }
 
 // A manufactured case: exact solution V_mms, its source ρ_mms = -ε ∇²V_mms, and whether
@@ -187,6 +193,57 @@ TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
 {
   CHECK(SolveMmsL2Error(kPolynomial, /*n=*/4, /*order=*/2, /*linear_tol=*/1.0e-13) <
         1.0e-10);
+}
+
+// Mixed Dirichlet/Neumann: leave the x = 1 face (attribute 3) out of the grounded set so it
+// becomes a natural boundary carrying the prescribed flux g = ε ∂V/∂n, and impose V_mms on
+// the other five faces. Verifies the Neumann boundary term ∮ g φ dS. The polynomial V_mms =
+// x²+y²+z² is FE-exact at order 2, so a correct flux assembly gives ~machine-precision
+// error; a missing or wrong Neumann term leaves an O(1) error.
+TEST_CASE("Electrostatic MMS handles a Neumann boundary",
+          "[electrostaticmms][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::ELECTROSTATIC;
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {kEpsilonR, kEpsilonR, kEpsilonR};
+  iodata.boundaries.pec.attributes = {1, 2, 4, 5,
+                                      6};  // all faces except x = 1 (attribute 3)
+  iodata.solver.order = 2;
+  iodata.solver.linear.tol = 1.0e-13;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
+  iodata.NondimensionalizeInputs(serial_mesh);
+  iodata.CheckConfiguration();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+
+  LaplaceOperator laplace_op(iodata, mesh);
+  mfem::FunctionCoefficient v_exact(VmmsPoly);
+  mfem::FunctionCoefficient rho_coef(RhoPoly);
+  mfem::FunctionCoefficient neumann_coef(NeumannPolyX1);
+  laplace_op.SetRhsSource(rho_coef);
+  laplace_op.SetDbcCoefficient(v_exact);
+  laplace_op.SetNeumannCoefficient(neumann_coef, {3});
+
+  ExposedElectrostaticSolver solver(iodata, /*root=*/false);
+  std::vector<Vector> V;
+  solver.Solve(V, laplace_op);
+
+  mfem::ParGridFunction V_gf(&laplace_op.GetH1Space().Get());
+  V_gf.SetFromTrueDofs(V[0]);
+  const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
+  for (int i = 0; i < mfem::Geometry::NumGeom; i++)
+  {
+    irs[i] = &mfem::IntRules.Get(i, /*order_quad=*/4);
+  }
+  CHECK(V_gf.ComputeL2Error(v_exact, irs) < 1.0e-10);
 }
 
 // Convergence-rate verification: for each polynomial order p, the L2 error must decrease

@@ -262,6 +262,19 @@ void LaplaceOperator::GetSourceExcitationVector(const Operator &K, Vector &X, Ve
   // integrator; palace::DomainLFIntegrator is a boundary integrator.
   mfem::ParLinearForm rhs(&GetH1Space().Get());
   rhs.AddDomainIntegrator(new mfem::DomainLFIntegrator(*rhs_source));
+
+  // Optional prescribed Neumann flux: add the surface term ∮ g φ dS over neumann_attr. This
+  // uses the boundary integrator (mfem::BoundaryLFIntegrator), not the volume one above.
+  // The marker must outlive Assemble(), which stores a reference to it.
+  const mfem::ParMesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> neumann_marker;
+  if (neumann_source)
+  {
+    neumann_marker = mesh::AttrToMarker(bdr_attr_max, neumann_attr);
+    rhs.AddBoundaryIntegrator(new mfem::BoundaryLFIntegrator(*neumann_source),
+                              neumann_marker);
+  }
   rhs.Assemble();
 
   X.SetSize(GetH1Space().GetTrueVSize());
@@ -276,8 +289,6 @@ void LaplaceOperator::GetSourceExcitationVector(const Operator &K, Vector &X, Ve
   // boundary coefficient is set, X stays 0 (homogeneous).
   if (dbc_source)
   {
-    const mfem::ParMesh &mesh = GetMesh();
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
     mfem::ParGridFunction x(&GetH1Space().Get());
     x = 0.0;
