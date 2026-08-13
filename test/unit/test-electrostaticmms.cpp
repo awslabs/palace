@@ -6,10 +6,10 @@
 // We manufacture a potential V_mms on the unit cube [0,1]³, substitute it into
 //     -∇·(ε ∇V) = ρ   (constant diagonal tensor ε)
 // to get the source ρ_mms that makes V_mms exact, solve with V = V_mms on ∂Ω, and compare
-// the discrete solution to V_mms in the L2 norm. Several manufactured solutions (defined
-// below) exercise the anisotropic material tensor and homogeneous/non-homogeneous Dirichlet
-// BCs, checked both for optimal convergence rate under mesh refinement and for exactness
-// when V_mms lies in the FE space.
+// both the discrete potential and recovered electric field E = -∇V to their manufactured
+// counterparts in the L2 norm. Several manufactured solutions exercise the anisotropic
+// material tensor and homogeneous/non-homogeneous Dirichlet BCs, checked both for optimal
+// convergence under mesh refinement and for exactness when V_mms lies in the FE space.
 
 #include <array>
 #include <cmath>
@@ -44,6 +44,15 @@ double VmmsSin(const mfem::Vector &x)
 {
   return std::sin(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) * std::sin(M_PI * x[2]);
 }
+void EmmsSin(const mfem::Vector &x, mfem::Vector &E)
+{
+  E[0] =
+      -M_PI * std::cos(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) * std::sin(M_PI * x[2]);
+  E[1] = -2.0 * M_PI * std::sin(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) *
+         std::sin(M_PI * x[2]);
+  E[2] =
+      -M_PI * std::sin(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) * std::cos(M_PI * x[2]);
+}
 double RhoSin(const mfem::Vector &x)
 {
   return M_PI * M_PI * (kEpsilonR[0] + 4.0 * kEpsilonR[1] + kEpsilonR[2]) * VmmsSin(x);
@@ -55,6 +64,13 @@ double VmmsCos(const mfem::Vector &x)
 {
   return std::cos(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) * std::cos(M_PI * x[2]);
 }
+void EmmsCos(const mfem::Vector &x, mfem::Vector &E)
+{
+  E[0] = M_PI * std::sin(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) * std::cos(M_PI * x[2]);
+  E[1] = 2.0 * M_PI * std::cos(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) *
+         std::cos(M_PI * x[2]);
+  E[2] = M_PI * std::cos(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) * std::sin(M_PI * x[2]);
+}
 double RhoCos(const mfem::Vector &x)
 {
   return M_PI * M_PI * (kEpsilonR[0] + 4.0 * kEpsilonR[1] + kEpsilonR[2]) * VmmsCos(x);
@@ -65,6 +81,12 @@ double RhoCos(const mfem::Vector &x)
 double VmmsPoly(const mfem::Vector &x)
 {
   return x[0] * x[0] + 2.0 * x[1] * x[1] + 3.0 * x[2] * x[2];
+}
+void EmmsPoly(const mfem::Vector &x, mfem::Vector &E)
+{
+  E[0] = -2.0 * x[0];
+  E[1] = -4.0 * x[1];
+  E[2] = -6.0 * x[2];
 }
 double RhoPoly(const mfem::Vector &)
 {
@@ -82,17 +104,46 @@ double NeumannPolyX1(const mfem::Vector &x)
 struct MmsCase
 {
   double (*v_mms)(const mfem::Vector &);
+  void (*e_mms)(const mfem::Vector &, mfem::Vector &);
   double (*rho_mms)(const mfem::Vector &);
   bool nonzero_boundary;
 };
 
-const MmsCase kHomogeneous{VmmsSin, RhoSin, false};
-const MmsCase kNonHomogeneous{VmmsCos, RhoCos, true};
-const MmsCase kPolynomial{VmmsPoly, RhoPoly, true};
+const MmsCase kHomogeneous{VmmsSin, EmmsSin, RhoSin, false};
+const MmsCase kNonHomogeneous{VmmsCos, EmmsCos, RhoCos, true};
+const MmsCase kPolynomial{VmmsPoly, EmmsPoly, RhoPoly, true};
 
 // Solve the manufactured electrostatic problem for the given case on an N×N×N unit cube and
-// return the L2 error ‖V_h - V_mms‖ against the manufactured solution.
-double SolveMmsL2Error(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9)
+// return the L2 errors in the potential and electric field against the manufactured
+// solution.
+struct MmsError
+{
+  double potential;
+  double electric;
+};
+
+MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
+                          mfem::Coefficient &v_exact, mfem::VectorCoefficient &e_exact,
+                          int potential_order_quad)
+{
+  mfem::ParGridFunction V_gf(&laplace_op.GetH1Space().Get());
+  V_gf.SetFromTrueDofs(V);
+
+  Vector E(laplace_op.GetGradMatrix().Height());
+  E = 0.0;
+  laplace_op.GetGradMatrix().AddMult(V, E, -1.0);
+  mfem::ParGridFunction E_gf(&laplace_op.GetNDSpace().Get());
+  E_gf.SetFromTrueDofs(E);
+
+  const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
+  for (int i = 0; i < mfem::Geometry::NumGeom; i++)
+  {
+    irs[i] = &mfem::IntRules.Get(i, potential_order_quad);
+  }
+  return {V_gf.ComputeL2Error(v_exact, irs), E_gf.ComputeL2Error(e_exact)};
+}
+
+MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9)
 {
   MPI_Comm comm = Mpi::World();
 
@@ -126,12 +177,12 @@ double SolveMmsL2Error(const MmsCase &mms, int n, int order, double linear_tol =
   mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
 
   LaplaceOperator laplace_op(iodata, mesh);
-  auto &h1_fespace = laplace_op.GetH1Space();
 
   // Set the manufactured source ρ_mms and, for the non-homogeneous case, the prescribed
   // boundary values V_mms. Then run the production solve path via the exposed inner Solve
   // (root=false so BaseSolver's ctor writes no metadata/output files).
   mfem::FunctionCoefficient v_exact(mms.v_mms);
+  mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, mms.e_mms);
   mfem::FunctionCoefficient rho_coef(mms.rho_mms);
   laplace_op.SetRhsSource(rho_coef);
   if (mms.nonzero_boundary)
@@ -142,19 +193,10 @@ double SolveMmsL2Error(const MmsCase &mms, int n, int order, double linear_tol =
   std::vector<Vector> V;
   solver.Solve(V, laplace_op);
 
-  // Recover the grid function and compute the L2 error against V_mms. Integrate two orders
-  // above the FE order so quadrature error doesn't contaminate the measured discretization
-  // error.
-  mfem::ParGridFunction V_gf(&h1_fespace.Get());
-  V_gf.SetFromTrueDofs(V[0]);
-
-  const int order_quad = order + 2;
-  const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
-  for (int i = 0; i < mfem::Geometry::NumGeom; i++)
-  {
-    irs[i] = &mfem::IntRules.Get(i, order_quad);
-  }
-  return V_gf.ComputeL2Error(v_exact, irs);
+  // Compute errors in V and in the production electric-field recovery E = -∇V. Retain the
+  // existing potential quadrature rule; the vector-field error uses MFEM's default rule to
+  // avoid underintegrated superconvergence at tensor-product quadrature points.
+  return ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact, order + 2);
 }
 
 // Observed convergence rate between two (mesh size h, L2 error) points: the slope of the
@@ -170,18 +212,23 @@ const std::vector<int> kOrders = {1, 2, 3};
 const std::vector<int> kResolutions = {8, 16,
                                        32};  // N per side; h = 1/N (must be ascending)
 
-// Tolerance on the measured convergence rate vs. the theoretical p+1.
+// Tolerance on the measured convergence rates vs. the theoretical p+1 for V and p for E.
 constexpr double kRateTol = 0.3;
 
 }  // namespace
 
 // Single-resolution sanity check: both the homogeneous and non-homogeneous manufactured
-// problems solve and reach a small L2 error.
-TEST_CASE("Electrostatic MMS solves to a small L2 error",
+// problems solve and reach small potential and electric-field L2 errors.
+TEST_CASE("Electrostatic MMS solves to small potential and field errors",
           "[electrostaticmms][Serial][Parallel]")
 {
-  CHECK(SolveMmsL2Error(kHomogeneous, /*n=*/16, /*order=*/2) < 1.0e-3);
-  CHECK(SolveMmsL2Error(kNonHomogeneous, /*n=*/16, /*order=*/2) < 1.0e-3);
+  const auto homogeneous = SolveMmsError(kHomogeneous, /*n=*/16, /*order=*/2);
+  CHECK(homogeneous.potential < 1.0e-3);
+  CHECK(homogeneous.electric < 2.0e-2);
+
+  const auto nonhomogeneous = SolveMmsError(kNonHomogeneous, /*n=*/16, /*order=*/2);
+  CHECK(nonhomogeneous.potential < 1.0e-3);
+  CHECK(nonhomogeneous.electric < 2.0e-2);
 }
 
 // A polynomial of degree ≤ p lies exactly in the order-p H1 space, so the FEM has zero
@@ -192,8 +239,10 @@ TEST_CASE("Electrostatic MMS solves to a small L2 error",
 TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
           "[electrostaticmms][Serial][Parallel]")
 {
-  CHECK(SolveMmsL2Error(kPolynomial, /*n=*/4, /*order=*/2, /*linear_tol=*/1.0e-13) <
-        1.0e-10);
+  const auto error =
+      SolveMmsError(kPolynomial, /*n=*/4, /*order=*/2, /*linear_tol=*/1.0e-13);
+  CHECK(error.potential < 1.0e-10);
+  CHECK(error.electric < 1.0e-10);
 }
 
 // Mixed Dirichlet/Neumann: leave the x = 1 face (attribute 3) out of the grounded set so it
@@ -227,6 +276,7 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
 
   LaplaceOperator laplace_op(iodata, mesh);
   mfem::FunctionCoefficient v_exact(VmmsPoly);
+  mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, EmmsPoly);
   mfem::FunctionCoefficient rho_coef(RhoPoly);
   mfem::FunctionCoefficient neumann_coef(NeumannPolyX1);
   laplace_op.SetRhsSource(rho_coef);
@@ -237,21 +287,17 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
   std::vector<Vector> V;
   solver.Solve(V, laplace_op);
 
-  mfem::ParGridFunction V_gf(&laplace_op.GetH1Space().Get());
-  V_gf.SetFromTrueDofs(V[0]);
-  const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
-  for (int i = 0; i < mfem::Geometry::NumGeom; i++)
-  {
-    irs[i] = &mfem::IntRules.Get(i, /*order_quad=*/4);
-  }
-  CHECK(V_gf.ComputeL2Error(v_exact, irs) < 1.0e-10);
+  const auto error =
+      ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact, /*potential_order_quad=*/4);
+  CHECK(error.potential < 1.0e-10);
+  CHECK(error.electric < 1.0e-10);
 }
 
-// Convergence-rate verification: for each polynomial order p, the L2 error must decrease
-// monotonically under mesh refinement and every consecutive-level rate must match the
-// theoretical p+1 (to within kRateTol). Checking every consecutive pair confirms the rate
-// is stable across refinement, not just at the finest level. Order is parametrized so a
-// failure reports which order regressed.
+// Convergence-rate verification: for each polynomial order p, the potential and electric
+// field L2 errors must decrease monotonically under mesh refinement, with consecutive-level
+// rates matching the theoretical p+1 for V and p for E (to within kRateTol). Checking every
+// consecutive pair confirms the rates are stable across refinement, not just at the finest
+// level. Order is parametrized so a failure reports which order regressed.
 TEST_CASE("Electrostatic MMS converges at the optimal rate",
           "[electrostaticmms][Serial][Parallel][Long]")
 {
@@ -264,21 +310,30 @@ TEST_CASE("Electrostatic MMS converges at the optimal rate",
   CAPTURE(name, order);
 
   // Solve on each refinement level and record (h, error).
-  std::vector<double> h(kResolutions.size()), err(kResolutions.size());
+  std::vector<double> h(kResolutions.size());
+  std::vector<MmsError> error(kResolutions.size());
   for (std::size_t i = 0; i < kResolutions.size(); i++)
   {
     h[i] = 1.0 / kResolutions[i];
-    err[i] = SolveMmsL2Error(mms, kResolutions[i], order);
+    error[i] = SolveMmsError(mms, kResolutions[i], order);
   }
 
-  // Every consecutive pair: error decreases and the observed rate matches p+1.
-  const double expected_rate = order + 1.0;
+  // Every consecutive pair: both errors decrease and the observed rates match theory.
   for (std::size_t i = 0; i + 1 < kResolutions.size(); i++)
   {
-    CAPTURE(kResolutions[i], kResolutions[i + 1], err[i], err[i + 1]);
-    CHECK(err[i + 1] < err[i]);
-    const double rate = ConvergenceRate(h[i], err[i], h[i + 1], err[i + 1]);
-    CAPTURE(rate, expected_rate);
-    CHECK_THAT(rate, WithinAbs(expected_rate, kRateTol));
+    CAPTURE(kResolutions[i], kResolutions[i + 1], error[i].potential,
+            error[i + 1].potential, error[i].electric, error[i + 1].electric);
+
+    CHECK(error[i + 1].potential < error[i].potential);
+    const double potential_rate =
+        ConvergenceRate(h[i], error[i].potential, h[i + 1], error[i + 1].potential);
+    CAPTURE(potential_rate);
+    CHECK_THAT(potential_rate, WithinAbs(order + 1.0, kRateTol));
+
+    CHECK(error[i + 1].electric < error[i].electric);
+    const double electric_rate =
+        ConvergenceRate(h[i], error[i].electric, h[i + 1], error[i + 1].electric);
+    CAPTURE(electric_rate);
+    CHECK_THAT(electric_rate, WithinAbs(static_cast<double>(order), kRateTol));
   }
 }
