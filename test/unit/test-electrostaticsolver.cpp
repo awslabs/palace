@@ -86,4 +86,10 @@ TEST_CASE("ElectrostaticSolver exposes per-terminal potentials",
     CHECK(Vi.Size() > 0);
     CHECK(linalg::Norml2(comm, Vi) > 0.0);
   }
+
+  // Combined terminal and volumetric-source solves are not currently implemented, so the
+  // source must not be silently ignored when terminal excitations are present.
+  mfem::ConstantCoefficient rho(1.0);
+  laplace_op.SetRhsSource(rho);
+  CHECK_THROWS(solver.Solve(V, laplace_op));
 }

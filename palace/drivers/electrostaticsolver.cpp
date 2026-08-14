@@ -20,6 +20,18 @@ namespace palace
 
 void ElectrostaticSolver::Solve(std::vector<Vector> &V, LaplaceOperator &laplace_op) const
 {
+  // Terminals are the boundaries over which the capacitance matrix is computed (port
+  // aliases). A manufactured-solution verification problem instead has no terminals and is
+  // driven by a volumetric source, handled by a single source-driven solve below. Combining
+  // these modes would require a separate particular source solution in addition to the
+  // terminal basis solutions, which is not currently implemented.
+  const int n_step = static_cast<int>(laplace_op.GetSources().size());
+  const bool has_terminals = n_step > 0;
+  const bool has_rhs_source = laplace_op.HasRhsSource();
+  MFEM_VERIFY(has_terminals != has_rhs_source,
+              "Electrostatic simulation currently supports either terminal boundaries or "
+              "a volumetric source, but not both!");
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
@@ -31,16 +43,6 @@ void ElectrostaticSolver::Solve(std::vector<Vector> &V, LaplaceOperator &laplace
   // Set up the linear solver.
   KspSolver ksp(iodata, laplace_op.GetH1Spaces());
   ksp.SetOperators(*K, *K);
-
-  // Terminals are the boundaries over which the capacitance matrix is computed (port
-  // aliases). A manufactured-solution verification problem instead has no terminals and is
-  // driven by a volumetric source, handled by a single source-driven solve below.
-  int n_step = static_cast<int>(laplace_op.GetSources().size());
-  // HasRhsSource() is set only by verification tests (no config path), so for a
-  // config-driven run this is just the original n_step > 0 check. Revisit if SetRhsSource
-  // ever gets one.
-  MFEM_VERIFY(n_step > 0 || laplace_op.HasRhsSource(),
-              "No terminal boundaries specified for electrostatic simulation!");
 
   // Right-hand side term and solution vector storage.
   Vector RHS(Grad.Width());
