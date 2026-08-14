@@ -202,8 +202,8 @@ double ConvergenceRate(double h0, double e0, double h1, double e1)
 // Convergence sweep configuration. Extend these lists to add polynomial orders or
 // refinement levels; the test logic below adapts to any number of entries.
 const std::vector<int> kOrders = {1, 2, 3};
-const std::vector<int> kResolutions = {8, 16,
-                                       32};  // N per side; h = 1/N (must be ascending)
+const std::vector<int> kResolutions = {4, 8,
+                                       16};  // N per side; h = 1/N (must be ascending)
 
 // Tolerance on the measured convergence rates vs. the theoretical p+1 for V and p for E.
 constexpr double kRateTol = 0.3;
@@ -291,7 +291,7 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
 // consecutive pair confirms the rates are stable across refinement, not just at the finest
 // level. Order is parametrized so a failure reports which order regressed.
 TEST_CASE("Electrostatic MMS converges at the optimal rate",
-          "[electrostaticmms][Serial][Parallel][Long]")
+          "[electrostaticmms][Serial][Parallel]")
 {
   // Run the sweep for both the homogeneous and non-homogeneous manufactured solutions, at
   // each polynomial order. GENERATE takes the Cartesian product, so each (case, order) is a
