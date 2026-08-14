@@ -55,6 +55,7 @@ void ElectrostaticSolver::Solve(std::vector<Vector> &V, LaplaceOperator &laplace
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplace_op.GetComm(), V[0]),
                linalg::Norml2(laplace_op.GetComm(), RHS));
+    SaveMetadata(ksp);
     return;
   }
 
