@@ -7,9 +7,9 @@
 //     -∇·(ε ∇V) = ρ   (constant diagonal tensor ε)
 // to get the source ρ_mms that makes V_mms exact, solve with V = V_mms on ∂Ω, and compare
 // both the discrete potential and recovered electric field E = -∇V to their manufactured
-// counterparts in the L2 norm. Several manufactured solutions exercise the anisotropic
-// material tensor and homogeneous/non-homogeneous Dirichlet BCs, checked both for optimal
-// convergence under mesh refinement and for exactness when V_mms lies in the FE space.
+// counterparts in the L2 norm. The smooth convergence cases use an isotropic material
+// baseline, while polynomial exactness and Neumann cases exercise anisotropic permittivity
+// as a Palace-specific extension.
 
 #include <array>
 #include <cmath>
@@ -34,12 +34,14 @@ using namespace Catch::Matchers;
 namespace
 {
 
-// Constant diagonal relative-permittivity tensor on the domain. Distinct principal values
-// make the MMS sensitive to omitted, scalarized, or permuted material components.
-constexpr std::array<double, 3> kEpsilonR = {2.0, 3.0, 5.0};
+// The smooth cases use the isotropic material baseline assumed by the paper. Focused
+// Palace-specific cases retain distinct principal values to detect omitted, scalarized, or
+// permuted material components.
+constexpr std::array<double, 3> kIsotropicEpsilonR = {1.0, 1.0, 1.0};
+constexpr std::array<double, 3> kAnisotropicEpsilonR = {2.0, 3.0, 5.0};
 
-// sin(πx)sin(2πy)sin(πz): vanishes on ∂Ω (homogeneous Dirichlet). For diagonal ε,
-// ρ_mms = π²(ε_x + 4ε_y + ε_z)V_mms.
+// sin(πx)sin(2πy)sin(πz): vanishes on ∂Ω (homogeneous Dirichlet). For ε = I,
+// ρ_mms = 6π²V_mms.
 double VmmsSin(const mfem::Vector &x)
 {
   return std::sin(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) * std::sin(M_PI * x[2]);
@@ -55,11 +57,13 @@ void EmmsSin(const mfem::Vector &x, mfem::Vector &E)
 }
 double RhoSin(const mfem::Vector &x)
 {
-  return M_PI * M_PI * (kEpsilonR[0] + 4.0 * kEpsilonR[1] + kEpsilonR[2]) * VmmsSin(x);
+  return M_PI * M_PI *
+         (kIsotropicEpsilonR[0] + 4.0 * kIsotropicEpsilonR[1] + kIsotropicEpsilonR[2]) *
+         VmmsSin(x);
 }
 
 // cos(πx)cos(2πy)cos(πz): nonzero on ∂Ω (non-homogeneous Dirichlet), with the
-// same anisotropic source factor as VmmsSin.
+// same isotropic source factor as VmmsSin.
 double VmmsCos(const mfem::Vector &x)
 {
   return std::cos(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) * std::cos(M_PI * x[2]);
@@ -73,7 +77,9 @@ void EmmsCos(const mfem::Vector &x, mfem::Vector &E)
 }
 double RhoCos(const mfem::Vector &x)
 {
-  return M_PI * M_PI * (kEpsilonR[0] + 4.0 * kEpsilonR[1] + kEpsilonR[2]) * VmmsCos(x);
+  return M_PI * M_PI *
+         (kIsotropicEpsilonR[0] + 4.0 * kIsotropicEpsilonR[1] + kIsotropicEpsilonR[2]) *
+         VmmsCos(x);
 }
 
 // x² + 2y² + 3z²: a degree-2 polynomial, nonzero on ∂Ω. Thus
@@ -90,28 +96,30 @@ void EmmsPoly(const mfem::Vector &x, mfem::Vector &E)
 }
 double RhoPoly(const mfem::Vector &)
 {
-  return -2.0 * (kEpsilonR[0] + 2.0 * kEpsilonR[1] + 3.0 * kEpsilonR[2]);
+  return -2.0 * (kAnisotropicEpsilonR[0] + 2.0 * kAnisotropicEpsilonR[1] +
+                 3.0 * kAnisotropicEpsilonR[2]);
 }
 // Neumann flux g = n̂·ε∇V for the polynomial on the x = 1 face (outward normal +x̂):
 // g = 2ε_x x, which equals 2ε_x there.
 double NeumannPolyX1(const mfem::Vector &x)
 {
-  return 2.0 * kEpsilonR[0] * x[0];
+  return 2.0 * kAnisotropicEpsilonR[0] * x[0];
 }
 
-// A manufactured case: exact solution V_mms, its source ρ_mms = -∇·(ε∇V_mms), and whether
-// V_mms is nonzero on the boundary (i.e. needs a non-homogeneous Dirichlet lift).
+// A manufactured case: exact solution V_mms, its source ρ_mms = -∇·(ε∇V_mms), constant
+// diagonal relative permittivity, and whether V_mms needs a non-homogeneous Dirichlet lift.
 struct MmsCase
 {
   double (*v_mms)(const mfem::Vector &);
   void (*e_mms)(const mfem::Vector &, mfem::Vector &);
   double (*rho_mms)(const mfem::Vector &);
+  std::array<double, 3> epsilon_r;
   bool nonzero_boundary;
 };
 
-const MmsCase kHomogeneous{VmmsSin, EmmsSin, RhoSin, false};
-const MmsCase kNonHomogeneous{VmmsCos, EmmsCos, RhoCos, true};
-const MmsCase kPolynomial{VmmsPoly, EmmsPoly, RhoPoly, true};
+const MmsCase kHomogeneous{VmmsSin, EmmsSin, RhoSin, kIsotropicEpsilonR, false};
+const MmsCase kNonHomogeneous{VmmsCos, EmmsCos, RhoCos, kIsotropicEpsilonR, true};
+const MmsCase kPolynomial{VmmsPoly, EmmsPoly, RhoPoly, kAnisotropicEpsilonR, true};
 
 // Solve the manufactured electrostatic problem for the given case on an N×N×N unit cube and
 // return the L2 errors in the potential and electric field against the manufactured
@@ -137,9 +145,8 @@ MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
   return {V_gf.ComputeL2Error(v_exact), E_gf.ComputeL2Error(e_exact)};
 }
 
-MmsError SolveMmsError(
-    const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9,
-    mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
+MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9,
+                       mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
 {
   MPI_Comm comm = Mpi::World();
 
@@ -151,7 +158,7 @@ MmsError SolveMmsError(
   iodata.problem.type = ProblemType::ELECTROSTATIC;
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
-  material.epsilon_r.s = kEpsilonR;
+  material.epsilon_r.s = mms.epsilon_r;
   iodata.boundaries.pec.attributes = {1, 2, 3, 4, 5, 6};
   iodata.solver.order = order;
   // Drive the iterative-solver (algebraic) error below the discretization error we measure.
@@ -161,8 +168,8 @@ MmsError SolveMmsError(
   // zero and the algebraic error is then all that remains.
   iodata.solver.linear.tol = linear_tol;
 
-  // Cartesian unit-cube mesh; MakeCartesian3D assigns domain attribute 1 and face attributes
-  // 1..6. The default hexahedral convergence meshes have h = 1/n.
+  // Cartesian unit-cube mesh; MakeCartesian3D assigns domain attribute 1 and face
+  // attributes 1..6. The default hexahedral convergence meshes have h = 1/n.
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(n, n, n, element_type, 1.0, 1.0, 1.0));
   iodata.NondimensionalizeInputs(serial_mesh);
@@ -261,7 +268,7 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
   iodata.problem.type = ProblemType::ELECTROSTATIC;
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
-  material.epsilon_r.s = kEpsilonR;
+  material.epsilon_r.s = kAnisotropicEpsilonR;
   iodata.boundaries.pec.attributes = {1, 2, 4, 5,
                                       6};  // all faces except x = 1 (attribute 3)
   iodata.solver.order = 2;
