@@ -137,7 +137,9 @@ MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
   return {V_gf.ComputeL2Error(v_exact), E_gf.ComputeL2Error(e_exact)};
 }
 
-MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9)
+MmsError SolveMmsError(
+    const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9,
+    mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
 {
   MPI_Comm comm = Mpi::World();
 
@@ -159,10 +161,10 @@ MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol =
   // zero and the algebraic error is then all that remains.
   iodata.solver.linear.tol = linear_tol;
 
-  // Structured unit-cube mesh; MakeCartesian3D assigns domain attribute 1 and face
-  // attributes 1..6, so h = 1/n and refining is just changing n.
+  // Cartesian unit-cube mesh; MakeCartesian3D assigns domain attribute 1 and face attributes
+  // 1..6. The default hexahedral convergence meshes have h = 1/n.
   auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
+      mfem::Mesh::MakeCartesian3D(n, n, n, element_type, 1.0, 1.0, 1.0));
   iodata.NondimensionalizeInputs(serial_mesh);
   iodata.CheckConfiguration();  // also initializes DefaultIntegrationOrder used by
                                 // integrators
@@ -224,16 +226,22 @@ TEST_CASE("Electrostatic MMS solves to small potential and field errors",
   CHECK(nonhomogeneous.electric < 2.0e-2);
 }
 
-// A polynomial of degree ≤ p lies exactly in the order-p H1 space, so the FEM has zero
-// discretization error and should reproduce V_mms to ~machine precision on any mesh — a
-// sharper check than the convergence rate (a wrong sign/constant gives an O(1) error, not a
-// bad slope). With discretization error zero, the iterative-solver error is all that
-// remains, so use a tight linear tolerance to keep it below the threshold.
+// On these affine Cartesian meshes, a polynomial of degree ≤ p lies exactly in the order-p
+// H1 space, so the FEM has zero discretization error and should reproduce V_mms to ~machine
+// precision. The straight-tetrahedron case mirrors the paper's polynomial exactness check.
+// With discretization error zero, the iterative-solver error is all that remains, so use a
+// tight linear tolerance to keep it below the threshold.
 TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
           "[electrostaticmms][Serial][Parallel]")
 {
-  const auto error =
-      SolveMmsError(kPolynomial, /*n=*/4, /*order=*/2, /*linear_tol=*/1.0e-13);
+  const auto [element_name, element_type] =
+      GENERATE(table<std::string, mfem::Element::Type>(
+          {{"hexahedron", mfem::Element::HEXAHEDRON},
+           {"tetrahedron", mfem::Element::TETRAHEDRON}}));
+  CAPTURE(element_name);
+
+  const auto error = SolveMmsError(kPolynomial, /*n=*/4, /*order=*/2,
+                                   /*linear_tol=*/1.0e-13, element_type);
   CHECK(error.potential < 1.0e-10);
   CHECK(error.electric < 1.0e-10);
 }
