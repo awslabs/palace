@@ -3,7 +3,8 @@
 
 // Method of Manufactured Solutions (MMS) verification for the electrostatic operator.
 //
-// We manufacture a potential V_mms on the unit cube [0,1]³, substitute it into
+// We manufacture potentials on affine unit-cube meshes and a curved cylindrical mesh,
+// substitute them into
 //     -∇·(ε ∇V) = ρ   (constant diagonal tensor ε)
 // to get the source ρ_mms that makes V_mms exact, solve with V = V_mms on ∂Ω, and compare
 // both the discrete potential and recovered electric field E = -∇V to their manufactured
@@ -13,6 +14,7 @@
 
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -99,6 +101,12 @@ double RhoPoly(const mfem::Vector &)
   return -2.0 * (kAnisotropicEpsilonR[0] + 2.0 * kAnisotropicEpsilonR[1] +
                  3.0 * kAnisotropicEpsilonR[2]);
 }
+// Isotropic counterpart used on the curved cylinder to isolate the isoparametric mapping.
+double RhoPolyIsotropic(const mfem::Vector &)
+{
+  return -2.0 * (kIsotropicEpsilonR[0] + 2.0 * kIsotropicEpsilonR[1] +
+                 3.0 * kIsotropicEpsilonR[2]);
+}
 // Neumann flux g = n̂·ε∇V for the polynomial on the x = 1 face (outward normal +x̂):
 // g = 2ε_x x, which equals 2ε_x there.
 double NeumannPolyX1(const mfem::Vector &x)
@@ -119,6 +127,8 @@ struct MmsCase
 
 const MmsCase kHomogeneous{VmmsSin, EmmsSin, RhoSin, kIsotropicEpsilonR, false};
 const MmsCase kNonHomogeneous{VmmsCos, EmmsCos, RhoCos, kIsotropicEpsilonR, true};
+const MmsCase kCurvedCylinder{VmmsPoly, EmmsPoly, RhoPolyIsotropic, kIsotropicEpsilonR,
+                              true};
 const MmsCase kPolynomial{VmmsPoly, EmmsPoly, RhoPoly, kAnisotropicEpsilonR, true};
 
 // Solve the manufactured electrostatic problem for the given case on an N×N×N unit cube and
@@ -145,13 +155,12 @@ MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
   return {V_gf.ComputeL2Error(v_exact), E_gf.ComputeL2Error(e_exact)};
 }
 
-MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9,
-                       mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
+MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_mesh,
+                       int order, double linear_tol = 1.0e-9)
 {
   MPI_Comm comm = Mpi::World();
 
-  // Build the IoData in-memory (no mesh file): constant diagonal permittivity on the single
-  // domain attribute, all six cube faces marked Dirichlet.
+  // Build the IoData in-memory with Dirichlet conditions on every mesh boundary.
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.model.Lc = 1.0;
@@ -159,7 +168,10 @@ MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol =
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
   material.epsilon_r.s = mms.epsilon_r;
-  iodata.boundaries.pec.attributes = {1, 2, 3, 4, 5, 6};
+  for (int i = 0; i < serial_mesh->bdr_attributes.Size(); i++)
+  {
+    iodata.boundaries.pec.attributes.push_back(serial_mesh->bdr_attributes[i]);
+  }
   iodata.solver.order = order;
   // Drive the iterative-solver (algebraic) error below the discretization error we measure.
   // The default 1e-6 leaves an error floor that the finest/highest-order discretization
@@ -168,10 +180,6 @@ MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol =
   // zero and the algebraic error is then all that remains.
   iodata.solver.linear.tol = linear_tol;
 
-  // Cartesian unit-cube mesh; MakeCartesian3D assigns domain attribute 1 and face
-  // attributes 1..6. The default hexahedral convergence meshes have h = 1/n.
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian3D(n, n, n, element_type, 1.0, 1.0, 1.0));
   iodata.NondimensionalizeInputs(serial_mesh);
   iodata.CheckConfiguration();  // also initializes DefaultIntegrationOrder used by
                                 // integrators
@@ -201,6 +209,35 @@ MmsError SolveMmsError(const MmsCase &mms, int n, int order, double linear_tol =
   return ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact);
 }
 
+MmsError
+SolveCartesianMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9,
+                       mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
+{
+  // MakeCartesian3D assigns domain attribute 1 and face attributes 1..6. The default
+  // hexahedral convergence meshes have h = 1/n.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(n, n, n, element_type, 1.0, 1.0, 1.0));
+  return SolveMmsError(mms, std::move(serial_mesh), order, linear_tol);
+}
+
+std::unique_ptr<mfem::Mesh> LoadCurvedCylinderMesh(int refinement)
+{
+  const std::string mesh_path =
+      std::string(PALACE_TEST_DATA_DIR) + "/mesh/cylinder-tet-p2.msh";
+  std::ifstream mesh_file(mesh_path);
+  REQUIRE(mesh_file.good());
+  constexpr bool generate_edges = false, refine = true, fix_orientation = true;
+  auto serial_mesh =
+      std::make_unique<mfem::Mesh>(mesh_file, generate_edges, refine, fix_orientation);
+  REQUIRE(serial_mesh->GetNodes());
+  REQUIRE(serial_mesh->GetNodes()->FESpace()->GetMaxElementOrder() == 2);
+  for (int l = 0; l < refinement; l++)
+  {
+    serial_mesh->UniformRefinement();
+  }
+  return serial_mesh;
+}
+
 // Observed convergence rate between two (mesh size h, L2 error) points: the slope of the
 // error in log-log space, log(e0/e1) / log(h0/h1).
 double ConvergenceRate(double h0, double e0, double h1, double e1)
@@ -216,6 +253,9 @@ const std::vector<int> kResolutions = {4, 8,
 
 // Tolerance on the measured convergence rates vs. the theoretical p+1 for V and p for E.
 constexpr double kRateTol = 0.3;
+// The coarsest curved cylinder mesh is intentionally nonuniform, so its asymptotic rate has
+// slightly more variation than the structured Cartesian meshes.
+constexpr double kCurvedRateTol = 0.35;
 
 }  // namespace
 
@@ -224,11 +264,12 @@ constexpr double kRateTol = 0.3;
 TEST_CASE("Electrostatic MMS solves to small potential and field errors",
           "[electrostaticmms][Serial][Parallel]")
 {
-  const auto homogeneous = SolveMmsError(kHomogeneous, /*n=*/16, /*order=*/2);
+  const auto homogeneous = SolveCartesianMmsError(kHomogeneous, /*n=*/16, /*order=*/2);
   CHECK(homogeneous.potential < 1.0e-3);
   CHECK(homogeneous.electric < 2.0e-2);
 
-  const auto nonhomogeneous = SolveMmsError(kNonHomogeneous, /*n=*/16, /*order=*/2);
+  const auto nonhomogeneous =
+      SolveCartesianMmsError(kNonHomogeneous, /*n=*/16, /*order=*/2);
   CHECK(nonhomogeneous.potential < 1.0e-3);
   CHECK(nonhomogeneous.electric < 2.0e-2);
 }
@@ -247,8 +288,8 @@ TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
            {"tetrahedron", mfem::Element::TETRAHEDRON}}));
   CAPTURE(element_name);
 
-  const auto error = SolveMmsError(kPolynomial, /*n=*/4, /*order=*/2,
-                                   /*linear_tol=*/1.0e-13, element_type);
+  const auto error = SolveCartesianMmsError(kPolynomial, /*n=*/4, /*order=*/2,
+                                            /*linear_tol=*/1.0e-13, element_type);
   CHECK(error.potential < 1.0e-10);
   CHECK(error.electric < 1.0e-10);
 }
@@ -322,7 +363,7 @@ TEST_CASE("Electrostatic MMS converges at the optimal rate",
   for (std::size_t i = 0; i < kResolutions.size(); i++)
   {
     h[i] = 1.0 / kResolutions[i];
-    error[i] = SolveMmsError(mms, kResolutions[i], order);
+    error[i] = SolveCartesianMmsError(mms, kResolutions[i], order);
   }
 
   // Every consecutive pair: both errors decrease and the observed rates match theory.
@@ -342,5 +383,41 @@ TEST_CASE("Electrostatic MMS converges at the optimal rate",
         ConvergenceRate(h[i], error[i].electric, h[i + 1], error[i + 1].electric);
     CAPTURE(electric_rate);
     CHECK_THAT(electric_rate, WithinAbs(static_cast<double>(order), kRateTol));
+  }
+}
+
+// Reuse the polynomial that is represented exactly on affine order-2 tetrahedra. The
+// example cylinder instead uses quadratic isoparametric tetrahedra, so the physical-space
+// basis functions are not polynomial and the error is nonzero. Uniformly refining the
+// quadratic map should recover the optimal rates, as in the paper's curved-cylinder test.
+// This exercises curved coordinate transformations; it does not regenerate CAD-projected
+// meshes at each level.
+TEST_CASE("Electrostatic MMS converges on curved tetrahedra",
+          "[electrostaticmms][Serial][Parallel]")
+{
+  constexpr int order = 2;
+  const std::vector<int> refinement = {0, 1, 2};
+  std::vector<MmsError> error(refinement.size());
+  for (std::size_t i = 0; i < refinement.size(); i++)
+  {
+    error[i] = SolveMmsError(kCurvedCylinder, LoadCurvedCylinderMesh(refinement[i]), order);
+  }
+
+  for (std::size_t i = 0; i + 1 < refinement.size(); i++)
+  {
+    CAPTURE(refinement[i], refinement[i + 1], error[i].potential, error[i + 1].potential,
+            error[i].electric, error[i + 1].electric);
+
+    CHECK(error[i + 1].potential < error[i].potential);
+    const double potential_rate =
+        ConvergenceRate(1.0, error[i].potential, 0.5, error[i + 1].potential);
+    CAPTURE(potential_rate);
+    CHECK_THAT(potential_rate, WithinAbs(order + 1.0, kCurvedRateTol));
+
+    CHECK(error[i + 1].electric < error[i].electric);
+    const double electric_rate =
+        ConvergenceRate(1.0, error[i].electric, 0.5, error[i + 1].electric);
+    CAPTURE(electric_rate);
+    CHECK_THAT(electric_rate, WithinAbs(static_cast<double>(order), kCurvedRateTol));
   }
 }
