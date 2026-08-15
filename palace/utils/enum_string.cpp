@@ -29,8 +29,7 @@ namespace
 bool EqualsIgnoreCase(std::string_view a, std::string_view b)
 {
   return a.size() == b.size() &&
-         std::equal(a.begin(), a.end(), b.begin(),
-                    [](unsigned char c1, unsigned char c2)
+         std::equal(a.begin(), a.end(), b.begin(), [](unsigned char c1, unsigned char c2)
                     { return std::tolower(c1) == std::tolower(c2); });
 }
 

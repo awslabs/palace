@@ -1656,12 +1656,11 @@ TEST_CASE("Enum values accept any capitalization", "[config][Serial]")
   // capitalization of e.g. solver names.
   SECTION("FromString resolves values case-insensitively")
   {
-    json config = {
-        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-        {"Boundaries", json::object()},
-        {"Solver", {{"Linear", {{"Type", "boomeramg"}, {"KSPType", "gmres"}}}}}};
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", "boomeramg"}, {"KSPType", "gmres"}}}}}};
 
     IoData iodata(config, false);
     CHECK(iodata.solver.linear.type == LinearSolver::BOOMER_AMG);
@@ -1670,12 +1669,11 @@ TEST_CASE("Enum values accept any capitalization", "[config][Serial]")
 
   SECTION("CanonicalizeEnumCase rewrites to the schema spelling and validates")
   {
-    json config = {
-        {"Problem", {{"Type", "electrostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-        {"Boundaries", json::object()},
-        {"Solver", {{"Linear", {{"Type", "BOOMERAMG"}, {"KSPType", "GmRes"}}}}}};
+    json config = {{"Problem", {{"Type", "electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", "BOOMERAMG"}, {"KSPType", "GmRes"}}}}}};
 
     CanonicalizeEnumCase(config);
     CHECK(config["Problem"]["Type"].get<std::string>() == "Electrostatic");
