@@ -69,6 +69,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Configuration enum values (e.g. solver names such as `"SuperLU"`) are now matched
+    case-insensitively, so any capitalization (`"superlu"`, `"SUPERLU"`, ...) is accepted
+    both during schema validation and parsing, and is normalized to the canonical spelling.
+    Previously an incorrect case caused validation to abort.
+    [Issue 586](https://github.com/awslabs/palace/issues/586).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.

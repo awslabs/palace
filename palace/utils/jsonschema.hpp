@@ -13,6 +13,13 @@ namespace palace
 // Return the schema version extracted from the "$id" URN (e.g. "1-0-0").
 std::string GetSchemaVersion();
 
+// Rewrite enum-valued strings in the config to the canonical spelling declared in the
+// schema, matching case-insensitively (e.g. "superlu" -> "SuperLU"). Values that already
+// match exactly, or that do not match any allowed spelling, are left untouched so that
+// schema validation still reports genuinely invalid values. Run this before ValidateConfig,
+// which matches enum values case-sensitively.
+void CanonicalizeEnumCase(nlohmann::json &config);
+
 // Validate a full JSON config against the embedded root schema.
 // Returns empty string on success, error message on failure.
 std::string ValidateConfig(const nlohmann::json &config);

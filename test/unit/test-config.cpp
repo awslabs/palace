@@ -1649,6 +1649,61 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   }
 }
 
+TEST_CASE("Enum values accept any capitalization", "[config][Serial]")
+{
+  // Regression test for https://github.com/awslabs/palace/issues/586: configuration enum
+  // spellings should not be case-sensitive, so users do not have to remember the exact
+  // capitalization of e.g. solver names.
+  SECTION("FromString resolves values case-insensitively")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Linear", {{"Type", "boomeramg"}, {"KSPType", "gmres"}}}}}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.type == LinearSolver::BOOMER_AMG);
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::GMRES);
+  }
+
+  SECTION("CanonicalizeEnumCase rewrites to the schema spelling and validates")
+  {
+    json config = {
+        {"Problem", {{"Type", "electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Linear", {{"Type", "BOOMERAMG"}, {"KSPType", "GmRes"}}}}}};
+
+    CanonicalizeEnumCase(config);
+    CHECK(config["Problem"]["Type"].get<std::string>() == "Electrostatic");
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "BoomerAMG");
+    CHECK(config["Solver"]["Linear"]["KSPType"].get<std::string>() == "GMRES");
+
+    // The canonicalized enum values now pass case-sensitive schema validation, so a
+    // file-based run (which validates before parsing) no longer aborts on casing.
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+  }
+
+  SECTION("CanonicalizeEnumCase leaves exact and invalid values untouched")
+  {
+    // An already-canonical value is preserved, and a value that matches no allowed
+    // spelling (even case-insensitively) is left as-is so schema validation still
+    // reports it as invalid.
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Solver", {{"Linear", {{"Type", "NotASolver"}}}}}};
+    CanonicalizeEnumCase(config);
+    CHECK(config["Problem"]["Type"].get<std::string>() == "Electrostatic");
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "NotASolver");
+  }
+}
+
 #if defined(MFEM_USE_CUDSS)
 TEST_CASE("Linear solver Type cuDSS parses when built with cuDSS", "[config][Serial]")
 {

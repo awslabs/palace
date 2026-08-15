@@ -4,7 +4,9 @@
 #include "jsonschema.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <nlohmann/json-schema.hpp>
 #include "communication.hpp"
@@ -256,6 +258,67 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
   return json();
 }
 
+// Case-insensitive ASCII string comparison, used to match a user-provided enum spelling
+// against the allowed values declared in the schema.
+bool EqualsIgnoreCase(std::string_view a, std::string_view b)
+{
+  return a.size() == b.size() &&
+         std::equal(a.begin(), a.end(), b.begin(),
+                    [](unsigned char c1, unsigned char c2)
+                    { return std::tolower(c1) == std::tolower(c2); });
+}
+
+// Recursively walk the config, tracking the JSON pointer to each node, and rewrite string
+// leaves whose schema location declares an enum to the canonical (schema-declared) spelling
+// when they match only case-insensitively. Array indices are included in the pointer;
+// FindEnumInSchema skips them when navigating the schema.
+void CanonicalizeEnumCaseImpl(json &node, const json &schema, const std::string &ptr)
+{
+  if (node.is_object())
+  {
+    for (auto &[key, val] : node.items())
+    {
+      CanonicalizeEnumCaseImpl(val, schema, ptr + "/" + key);
+    }
+    return;
+  }
+  if (node.is_array())
+  {
+    for (std::size_t i = 0; i < node.size(); i++)
+    {
+      CanonicalizeEnumCaseImpl(node[i], schema, ptr + "/" + std::to_string(i));
+    }
+    return;
+  }
+  if (!node.is_string())
+  {
+    return;
+  }
+
+  json allowed = FindEnumInSchema(schema, ptr);
+  if (!allowed.is_array() || allowed.empty())
+  {
+    return;
+  }
+  const std::string value = node.get<std::string>();
+  // Leave exact matches (already canonical) and genuinely invalid values (so validation
+  // still reports them) untouched; only rewrite a unique case-insensitive match.
+  bool exact = std::any_of(allowed.begin(), allowed.end(), [&value](const json &a)
+                           { return a.is_string() && a.get<std::string>() == value; });
+  if (exact)
+  {
+    return;
+  }
+  for (const auto &a : allowed)
+  {
+    if (a.is_string() && EqualsIgnoreCase(value, a.get<std::string>()))
+    {
+      node = a;
+      return;
+    }
+  }
+}
+
 }  // namespace
 
 // Custom error handler that formats errors with documentation-style paths.
@@ -371,6 +434,29 @@ std::string GetSchemaVersion()
     }
   }
   return "unknown";
+}
+
+void CanonicalizeEnumCase(nlohmann::json &config)
+{
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find(root_schema_file);
+  if (it == schema_map.end())
+  {
+    // No schema to canonicalize against; ValidateConfig reports the missing schema.
+    return;
+  }
+  json schema;
+  try
+  {
+    schema = json::parse(it->second);
+  }
+  catch (json::parse_error &)
+  {
+    // A malformed schema is a developer error surfaced by ValidateConfig; leave the
+    // config unchanged here.
+    return;
+  }
+  CanonicalizeEnumCaseImpl(config, schema, "");
 }
 
 std::string ValidateConfig(const nlohmann::json &config)

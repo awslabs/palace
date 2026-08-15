@@ -4,7 +4,9 @@
 #include "utils/enum_string.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <iterator>
+#include <string_view>
 #include <utility>
 #include <mfem.hpp>
 
@@ -15,6 +17,24 @@
 
 namespace palace
 {
+
+namespace
+{
+
+// Case-insensitive ASCII string comparison. Configuration enum spellings are plain ASCII,
+// so FromString accepts any capitalization (e.g. "superlu", "SUPERLU", or "SuperLU" all
+// resolve to LinearSolver::SUPERLU) rather than forcing users to remember the exact case.
+// Enum spellings are unique when compared case-insensitively, so this cannot introduce an
+// ambiguous match. See https://github.com/awslabs/palace/issues/586.
+bool EqualsIgnoreCase(std::string_view a, std::string_view b)
+{
+  return a.size() == b.size() &&
+         std::equal(a.begin(), a.end(), b.begin(),
+                    [](unsigned char c1, unsigned char c2)
+                    { return std::tolower(c1) == std::tolower(c2); });
+}
+
+}  // namespace
 
 #define PALACE_ENUM_STRING_DEFINE(ENUM_TYPE, ...)                               \
   std::string ToString(ENUM_TYPE e)                                             \
@@ -32,7 +52,7 @@ namespace palace
     static const std::pair<ENUM_TYPE, const char *> m[] = __VA_ARGS__;          \
     auto it = std::find_if(std::begin(m), std::end(m),                          \
                            [s](const std::pair<ENUM_TYPE, const char *> &p)     \
-                           { return s == p.second; });                          \
+                           { return EqualsIgnoreCase(s, p.second); });          \
     MFEM_VERIFY(it != std::end(m), "Invalid value ("                            \
                                        << s << ") for " #ENUM_TYPE              \
                                        << " given in the configuration file!"); \

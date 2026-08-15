@@ -201,6 +201,11 @@ json IoData::ParseAndValidate(const char *filename)
     MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
   }
 
+  // Normalize enum-valued strings to their canonical spelling (e.g. "superlu" ->
+  // "SuperLU") so users are not forced to remember exact capitalization. This must run
+  // before schema validation, which matches enum values case-sensitively.
+  CanonicalizeEnumCase(config);
+
   // Validate against JSON schema.
   {
     std::string err = ValidateConfig(config);
