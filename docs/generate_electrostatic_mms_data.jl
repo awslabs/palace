@@ -41,7 +41,7 @@ default_output_path() =
 
 function collect_data(test_exe)
     command = addenv(
-        `$test_exe "[electrostaticmms]" --skip-benchmarks`,
+        `$test_exe "[electrostatic][mms][analytic]" --skip-benchmarks`,
         "PALACE_MMS_REPORT" => "1"
     )
     output = read(pipeline(command, stderr=stderr), String)

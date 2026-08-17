@@ -50,14 +50,6 @@ public:
   using BaseSolver::BaseSolver;
 };
 
-// Test-only subclass: re-exposes the protected Solve overloads as public for unit tests.
-class ExposedElectrostaticSolver : public ElectrostaticSolver
-{
-public:
-  using ElectrostaticSolver::ElectrostaticSolver;
-  using ElectrostaticSolver::Solve;
-};
-
 }  // namespace palace
 
 #endif  // PALACE_DRIVERS_ELECTROSTATIC_SOLVER_HPP

@@ -6,9 +6,9 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
-#include "drivers/electrostaticsolver.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
+#include "mms-solvers.hpp"
 #include "models/laplaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"

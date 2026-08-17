@@ -47,6 +47,7 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
+set(PALACE_WITH_ENZYME OFF CACHE BOOL "Build Enzyme support for Palace unit tests")
 
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING
@@ -93,6 +94,9 @@ set(SCALAPACK_DIR "" CACHE STRING
 )
 set(CUDSS_DIR "" CACHE STRING
   "Path to cuDSS installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(ENZYME_DIR "" CACHE STRING
+  "Path to Enzyme build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
 
 # Enable Fortran if required
@@ -205,6 +209,32 @@ message(STATUS "Found scn: ${scn_VERSION} in ${scn_DIR}")
 # Find Eigen
 find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
+
+# Find Enzyme for unit tests
+if(PALACE_WITH_ENZYME)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR
+      "PALACE_WITH_ENZYME requires upstream Clang built against the same LLVM as Enzyme "
+      "(got ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION})"
+    )
+  endif()
+  find_package(Enzyme REQUIRED CONFIG HINTS "${ENZYME_DIR}")
+  if(NOT TARGET ClangEnzymeFlags)
+    message(FATAL_ERROR
+      "The Enzyme package does not provide the ClangEnzymeFlags compiler plugin target"
+    )
+  endif()
+  set(ENZYME_LLVM_VERSION
+    "${Enzyme_LLVM_VERSION_MAJOR}.${Enzyme_LLVM_VERSION_MINOR}.${Enzyme_LLVM_VERSION_PATCH}"
+  )
+  if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL ENZYME_LLVM_VERSION)
+    message(FATAL_ERROR
+      "Enzyme requires matching Clang and LLVM versions: compiler is "
+      "${CMAKE_CXX_COMPILER_VERSION}, Enzyme uses LLVM ${ENZYME_LLVM_VERSION}"
+    )
+  endif()
+  message(STATUS "Found Enzyme for LLVM ${ENZYME_LLVM_VERSION} in ${Enzyme_DIR}")
+endif()
 
 # Find MFEM (recent MFEM targets link to target Threads::Threads, for some reason)
 find_package(Threads REQUIRED)

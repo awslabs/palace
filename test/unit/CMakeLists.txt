@@ -35,7 +35,6 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticmms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
@@ -44,6 +43,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
@@ -64,6 +65,29 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
+
+if(PALACE_WITH_ENZYME)
+  # Enzyme-differentiated sources are compiled into their own object library so the Enzyme
+  # Clang plugin (ClangEnzymeFlags) applies only here, not to the rest of unit-tests.
+  add_library(enzyme-unit-tests OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-enzyme.cpp
+  )
+  target_link_libraries(enzyme-unit-tests
+    PRIVATE Catch2::Catch2
+            ${LIB_TARGET_NAME}
+            ClangEnzymeFlags
+  )
+
+  # ASan only, not the shared sanitizer_flags: its UBSan (-fsanitize=undefined) injects
+  # runtime-handler calls that Enzyme's autodiff pass cannot differentiate, breaking the
+  # compile. ASan is compatible; its runtime comes from unit-tests' sanitizer_flags.
+  if(PALACE_BUILD_WITH_SANITIZERS)
+    target_compile_options(enzyme-unit-tests PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+  endif()
+
+  target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
+endif()
 
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
@@ -297,4 +321,3 @@ endif()
 
 # Enable testing
 enable_testing()
-
