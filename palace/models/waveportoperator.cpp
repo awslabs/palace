@@ -124,12 +124,12 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the outward mesh normal). The n x H
-  // coefficients are updated implicitly as they only store references to the Et, En grid
-  // functions. We choose a (rather arbitrary) phase constraint to at least make results for
+  // coefficients are updated implicitly as they only store a reference to the Et grid
+  // function. We choose a (rather arbitrary) phase constraint to at least make results for
   // the same port consistent between frequencies/meshes.
 
   // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
-  // Et, En. Update linear forms for postprocessing too.
+  // Et. Update linear forms for postprocessing too.
   std::complex<double> dot[2] = {
       {sr * S0t.Real(), si * S0t.Real()},
       {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
@@ -233,14 +233,18 @@ public:
   }
 };
 
-// Computes boundary mode n x H, where +n is the outward mesh normal: n x H =
-// -1/(iωμ) (ik_n Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
-// functions evaluated on the (single-sided) boundary element.
+// Computes the transverse (scalar-admittance) part of the boundary mode n x H, where +n is
+// the outward mesh normal: n x H ≈ -1/(iωμ) (ik_n Eₜ), using the tangential electric field
+// component grid function evaluated on the (single-sided) boundary element. The
+// longitudinal ∇ₜEₙ term of the exact modal n×H is intentionally omitted so this
+// coefficient is consistent with the LHS wave-port boundary operator (the local surface
+// admittance i·k_n/μ on Eₜ); see the note in Eval() for why this consistency is required
+// for S-matrix unitarity.
 template <ValueType Type>
 class BdrSubmeshHVectorCoefficient : public mfem::VectorCoefficient
 {
 private:
-  const GridFunction &Et, &En;
+  const GridFunction &Et;
   const MaterialOperator &mat_op;
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
@@ -249,12 +253,11 @@ private:
   double omega;
 
 public:
-  BdrSubmeshHVectorCoefficient(const GridFunction &Et, const GridFunction &En,
-                               const MaterialOperator &mat_op,
+  BdrSubmeshHVectorCoefficient(const GridFunction &Et, const MaterialOperator &mat_op,
                                const mfem::ParSubMesh &submesh,
                                const std::unordered_map<int, int> &submesh_parent_elems,
                                std::complex<double> kn, double omega)
-    : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), mat_op(mat_op),
+    : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), mat_op(mat_op),
       submesh(submesh), submesh_parent_elems(submesh_parent_elems), kn(kn), omega(omega)
   {
   }
@@ -324,28 +327,27 @@ public:
       return submesh.GetParent()->GetAttribute(iel1);
     }();
 
-    // Compute Re/Im{-1/i (ik_n Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
+    // Compute Re/Im{-1/i (ik_n Eₜ)} = Re/Im{-k_n Eₜ}. Only the transverse
+    // (scalar-admittance) part of n×H is retained: this coefficient drives the wave-port
+    // excitation, mode power normalization, and S-parameter projection, all of which must
+    // be consistent with the LHS boundary operator applied to the field. That operator is
+    // the local surface admittance i·k_n/μ acting on Eₜ (see AddExtraSystemBdrCoefficients
+    // / AddBoundaryMassBdrCoefficients), which omits the longitudinal ∇ₜEₙ contribution to
+    // the exact modal n×H. Including ∇ₜEₙ here but not on the LHS makes the port an inexact
+    // absorber for modes with Eₙ ≠ 0 (e.g. a reactive Impedance BC on the port face, or TM
+    // modes), which breaks S-matrix unitarity for a lossless structure. For quasi-TEM / TE
+    // modes (Eₙ ≈ 0) the two forms coincide.
     double U_data[3];
     mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
-
-      double dU_data[3];
-      mfem::Vector dU(dU_data, vdim);
-      En.Imag().GetGradient(*T_submesh, dU);
-      U -= dU;
     }
     else
     {
       Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
-
-      double dU_data[3];
-      mfem::Vector dU(dU_data, vdim);
-      En.Real().GetGradient(*T_submesh, dU);
-      U += dU;
     }
 
     // Scale by 1/(ωμ) with μ evaluated in the neighboring element.
@@ -708,9 +710,9 @@ void WavePortData::Initialize(double omega)
   {
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+        *port_E0t, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
     BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+        *port_E0t, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
     {
       port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
       port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
@@ -791,8 +793,7 @@ WavePortData::GetModeExcitationCoefficientReal() const
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL>>>(
-      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
-      omega0);
+      attr_list, *port_E0t, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -801,8 +802,7 @@ WavePortData::GetModeExcitationCoefficientImag() const
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG>>>(
-      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
-      omega0);
+      attr_list, *port_E0t, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -178,6 +179,53 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
+// Power-conservation (passivity/unitarity) check for a driven wave-port run on a
+// LOSSLESS structure. For each excitation column j it sums |S_ij|^2 over the
+// reported output ports i and requires Sum_i |S_ij|^2 == 1 within rtol: a lossless
+// network must conserve power. The port-S columns are "|S[i][j]| (dB)"; the second
+// bracket index is the excitation j. This does not use the reference values -- it
+// asserts a physical invariant directly, so it is insensitive to MPI partitioning.
+// Guards the scalar-consistent wave-port n x H fix (waveportoperator.cpp,
+// BdrSubmeshHVectorCoefficient): a revert reports a nonphysical Sum|S|^2 > 1 for
+// modes with a longitudinal field (E_n != 0), e.g. the cylinder TM01 case where
+// |S11| climbs to ~1.07.
+palace::test::CustomCheck TestWavePortLossless(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &)
+  {
+    const std::size_t n_rows = actual.n_rows();
+    for (std::size_t r = 0; r < n_rows; ++r)
+    {
+      std::map<std::string, double> power_by_excitation;
+      for (auto &c : actual)
+      {
+        const std::string &hdr = c.header_text;
+        if (hdr.rfind("|S[", 0) != 0 || hdr.find("(dB)") == std::string::npos)
+        {
+          continue;
+        }
+        // Header is "|S[i][j]| (dB)"; extract the excitation index j (second [..]).
+        const auto b1 = hdr.find(']');
+        const auto b2 = hdr.find('[', b1);
+        const auto b2e = hdr.find(']', b2);
+        if (b1 == std::string::npos || b2 == std::string::npos || b2e == std::string::npos)
+        {
+          continue;
+        }
+        const std::string j = hdr.substr(b2 + 1, b2e - b2 - 1);
+        const double s_lin = std::pow(10.0, c.data[r] / 20.0);  // dB -> linear |S|
+        power_by_excitation[j] += s_lin * s_lin;
+      }
+      for (const auto &[j, sum_sq] : power_by_excitation)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << sum_sq);
+        CHECK_THAT(sum_sq, Catch::Matchers::WithinAbs(1.0, rtol));
+      }
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -266,6 +314,24 @@ TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   palace::test::RunRegressionCase("cylinder", "driven_wave.json", "driven_wave", opts);
+}
+
+// Same mesh, driving the TM01 port mode (Mode 3) instead of the dominant TE11.
+// TM01 has a longitudinal field (E_n != 0 on the port face) -- the regime that
+// exposes the wave-port n x H fix (waveportoperator.cpp,
+// BdrSubmeshHVectorCoefficient). On this lossless shorted guide a correct port
+// gives |S11| = 1; a pre-fix build reports a nonphysical |S11| ~ 1.07. The custom
+// check asserts power conservation directly. TE11 (cylinder_driven_wave) is
+// unaffected.
+TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm.json", "driven_wave_tm",
+                                  opts);
 }
 
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes

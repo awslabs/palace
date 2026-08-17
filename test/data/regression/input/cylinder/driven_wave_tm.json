@@ -1,0 +1,85 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_tm"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        // Lossless fill so a shorted (PEC-terminated) waveguide section must
+        // reflect all incident power: a correct wave port reports |S11| = 1.
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        // Mode 3 of the circular-waveguide port at 3.4 GHz is TM01 (kn ~ 53/m):
+        // a transverse-magnetic mode with a longitudinal field E_z != 0, hence
+        // E_n != 0 on the port face. This is the regime that exposes the
+        // wave-port n x H inconsistency -- the excitation/normalization/
+        // projection historically used the full modal n x H (including the
+        // longitudinal grad_t(E_n) term) while the LHS Robin operator enforces
+        // only the local scalar surface admittance (i k_n / mu) E_t. The
+        // mismatch made a lossless shorted guide report a nonphysical |S11| > 1
+        // (~1.07 here). The scalar-consistent fix in waveportoperator.cpp
+        // (BdrSubmeshHVectorCoefficient) restores |S11| = 1. The dominant TE11
+        // mode (Mode 1, E_z = 0) is unaffected (cf. cylinder_driven_wave).
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 3,
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [3, 4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 3.4,  // GHz (above the TM01 cutoff ~2.9 GHz, below TE21 ~3.7 GHz)
+      "MaxFreq": 3.4,
+      "FreqStep": 0.5,
+      "SaveStep": 1
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}
