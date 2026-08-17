@@ -77,7 +77,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     making the port an inexact absorber and reporting `Sum|S|^2 != 1` for a lossless
     structure. The excitation/normalization/projection now use the same scalar `n x H` as the
     boundary operator, restoring unitarity and reciprocity; quasi-TEM/TE ports (`E_n ~ 0`) are
-    unaffected. [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    unaffected. [PR 884](https://github.com/awslabs/palace/pull/884).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.

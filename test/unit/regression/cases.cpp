@@ -208,8 +208,7 @@ palace::test::CustomCheck TestWavePortLossless(double rtol)
         const auto b1 = hdr.find(']');
         const auto b2 = hdr.find('[', b1);
         const auto b2e = hdr.find(']', b2);
-        if (b1 == std::string::npos || b2 == std::string::npos ||
-            b2e == std::string::npos)
+        if (b1 == std::string::npos || b2 == std::string::npos || b2e == std::string::npos)
         {
           continue;
         }
