@@ -133,11 +133,11 @@ consecutive refinement pair, the tests require:
   - Curved-mesh rates within ``0.35`` of the corresponding theoretical values.
   - Near-machine-precision reproduction of the affine order-2 polynomial.
 
-The focused tests can be run with
+The focused analytic tests can be run with
 
 ```bash
-palace-unit-tests "[electrostaticmms]" --skip-benchmarks
-mpirun -np 2 palace-unit-tests "[electrostaticmms]" --skip-benchmarks
+palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
+mpirun -np 2 palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
 ```
 
 ## References
