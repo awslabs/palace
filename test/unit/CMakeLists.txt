@@ -62,6 +62,18 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
 
+if(PALACE_WITH_ENZYME)
+  add_library(enzyme-unit-tests OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+  )
+  target_link_libraries(enzyme-unit-tests
+    PRIVATE Catch2::Catch2
+            ${LIB_TARGET_NAME}
+            ClangEnzymeFlags
+  )
+  target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
+endif()
+
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
 
@@ -294,4 +306,3 @@ endif()
 
 # Enable testing
 enable_testing()
-
