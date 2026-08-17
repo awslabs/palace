@@ -69,6 +69,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed non-unitary numeric wave port S-parameters for modes with a field component normal
+    to the port face (`E_n != 0`), such as TM waveguide modes or a reactive `Impedance`
+    boundary on the port face. The excitation, mode normalization, and S-parameter projection
+    used the full modal `n x H` (including the longitudinal `grad_t(E_n)` term) while the
+    boundary operator enforced only the local scalar surface admittance `(i k_n / mu) E_t`,
+    making the port an inexact absorber and reporting `Sum|S|^2 != 1` for a lossless
+    structure. The excitation/normalization/projection now use the same scalar `n x H` as the
+    boundary operator, restoring unitarity and reciprocity; quasi-TEM/TE ports (`E_n ~ 0`) are
+    unaffected. [PR XXX](https://github.com/awslabs/palace/pull/XXX).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
