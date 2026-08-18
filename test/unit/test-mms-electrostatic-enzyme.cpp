@@ -7,8 +7,10 @@
 #include <cmath>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 using namespace palace::testing;
+using namespace Catch::Matchers;
 
 namespace palace::testing::mms::electrostatic
 {
@@ -99,8 +101,27 @@ TEST_CASE("Electrostatic MMS Enzyme quantities match the polynomial analytic cas
 {
   const std::vector<std::array<double, 3>> points = {
       {1.0, 0.2, 0.3}, {1.0, 0.5, 0.7}, {1.0, 0.9, 0.1}};
-  CheckPointwiseAgreement(PolynomialCase(), analytic::PolynomialCase(), points,
+  const auto &analytic_polynomial = analytic::PolynomialCase();
+  CheckPointwiseAgreement(PolynomialCase(), analytic_polynomial, points,
                           /*check_neumann=*/true);
+
+  constexpr MmsCoordinates normal = {2.0 / 3.0, -1.0 / 3.0, 2.0 / 3.0};
+  for (const auto &point : points)
+  {
+    mfem::Vector x(3);
+    for (int i = 0; i < kMmsDimension; i++)
+    {
+      x[i] = point[i];
+    }
+    mfem::Vector analytic_electric(kMmsDimension);
+    analytic_polynomial.electric_field(x, analytic_electric);
+    double expected_flux = 0.0;
+    for (int i = 0; i < kMmsDimension; i++)
+    {
+      expected_flux -= normal[i] * analytic_polynomial.epsilon_r[i] * analytic_electric[i];
+    }
+    CHECK_THAT(kPolynomialMms.NormalFlux(x, normal), WithinAbs(expected_flux, 5.0e-13));
+  }
 }
 
 TEST_CASE("Electrostatic MMS Enzyme solves to small potential and field errors",
