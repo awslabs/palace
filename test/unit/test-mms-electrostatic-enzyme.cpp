@@ -38,34 +38,34 @@ const EnzymeMmsScalar<PolynomialPotential> kPolynomialMms(kAnisotropicEpsilonR);
 const EnzymeMmsScalar<PolynomialPotential> kCurvedPolynomialMms(kIsotropicEpsilonR);
 
 template <typename EnzymeMms>
-MmsCase MakeCase(const EnzymeMms &mms, const std::array<double, 3> &epsilon,
-                 bool nonzero_dirichlet, ScalarFunction neumann_flux = {})
+MmsCase MakeCase(const EnzymeMms &mms, bool nonzero_dirichlet,
+                 ScalarFunction neumann_flux = {})
 {
   const auto *mms_ptr = &mms;
   return {[mms_ptr](const mfem::Vector &x) { return mms_ptr->Value(x); },
           [mms_ptr](const mfem::Vector &x, mfem::Vector &electric)
           { mms_ptr->ElectricField(x, electric); },
           [mms_ptr](const mfem::Vector &x) { return mms_ptr->ChargeDensity(x); },
-          epsilon,
+          mms.Permittivity(),
           nonzero_dirichlet,
           neumann_flux};
 }
 
 const MmsCase &HomogeneousCase()
 {
-  static const MmsCase mms = MakeCase(kSinMms, kIsotropicEpsilonR, false);
+  static const MmsCase mms = MakeCase(kSinMms, false);
   return mms;
 }
 
 const MmsCase &NonHomogeneousCase()
 {
-  static const MmsCase mms = MakeCase(kCosMms, kIsotropicEpsilonR, true);
+  static const MmsCase mms = MakeCase(kCosMms, true);
   return mms;
 }
 
 const MmsCase &PolynomialCase()
 {
-  static const MmsCase mms = MakeCase(kPolynomialMms, kAnisotropicEpsilonR, true,
+  static const MmsCase mms = MakeCase(kPolynomialMms, true,
                                       [](const mfem::Vector &x)
                                       {
                                         constexpr MmsCoordinates normal = {1.0, 0.0, 0.0};
@@ -76,7 +76,7 @@ const MmsCase &PolynomialCase()
 
 const MmsCase &CurvedCylinderCase()
 {
-  static const MmsCase mms = MakeCase(kCurvedPolynomialMms, kIsotropicEpsilonR, true);
+  static const MmsCase mms = MakeCase(kCurvedPolynomialMms, true);
   return mms;
 }
 

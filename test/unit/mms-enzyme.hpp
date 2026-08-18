@@ -57,6 +57,8 @@ class EnzymeMmsScalar
 public:
   explicit EnzymeMmsScalar(const MmsCoordinates &epsilon) : epsilon(epsilon) {}
 
+  const MmsCoordinates &Permittivity() const { return epsilon; }
+
   double Value(const mfem::Vector &x) const { return Potential(ToCoordinates(x)); }
 
   MmsCoordinates Gradient(const mfem::Vector &x) const
