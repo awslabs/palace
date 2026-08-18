@@ -47,6 +47,69 @@ using namespace std::complex_literals;
 namespace
 {
 
+// Rank-k, complex-symmetric wave-port operator K = Σ_k g_k s_k s_kᵀ. Unlike the Hermitian
+// Floquet DtN (v vᴴ), the outer product is unconjugated (s sᵀ), which preserves the Maxwell
+// system operator's complex-symmetry and hence S-parameter reciprocity. Used to add the
+// modal correction W_full − W_scalar to the sparse local boundary mass: per port a
+// +g·s_full s_fullᵀ term (full modal n×H, incl. ∇ₜEₙ) and a −g·s_scalar s_scalarᵀ term
+// (scalar-admittance n×H, matching the local mass). On the port's own mode the sum
+// reproduces the full modal n×H; for a TEM mode (E_n≈0) s_full=s_scalar so the correction
+// vanishes and the baseline is recovered exactly. s_k lives on the ND true-dof space with
+// essential dofs eliminated; g_k = −iω / R_k with R_k the unconjugated modal reaction ∫_Γ
+// (n×H_k)·E_k.
+class WavePortModalCorrection : public ComplexOperator
+{
+private:
+  struct Term
+  {
+    std::unique_ptr<ComplexVector> s;
+    std::complex<double> g;
+  };
+  std::vector<Term> terms;
+  MPI_Comm comm;
+
+public:
+  WavePortModalCorrection(MPI_Comm comm, int n) : ComplexOperator(n), comm(comm) {}
+
+  bool Empty() const { return terms.empty(); }
+
+  void AddTerm(std::unique_ptr<ComplexVector> s, std::complex<double> g)
+  {
+    terms.push_back({std::move(s), g});
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    AddMult(x, y, 1.0);
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a) const override
+  {
+    for (const auto &t : terms)
+    {
+      // Unconjugated (complex-symmetric) contraction dot = sᵀx = Σ s_j x_j
+      // = (s_r·x_r − s_i·x_i) + i(s_r·x_i + s_i·x_r).
+      double dot_r = linalg::Dot(comm, t.s->Real(), x.Real()) -
+                     linalg::Dot(comm, t.s->Imag(), x.Imag());
+      double dot_i = linalg::Dot(comm, t.s->Real(), x.Imag()) +
+                     linalg::Dot(comm, t.s->Imag(), x.Real());
+      std::complex<double> c = a * t.g * std::complex<double>(dot_r, dot_i);
+      // y += c·s = (c_r + i c_i)(s_r + i s_i).
+      y.Real().Add(c.real(), t.s->Real());
+      y.Real().Add(-c.imag(), t.s->Imag());
+      y.Imag().Add(c.imag(), t.s->Real());
+      y.Imag().Add(c.real(), t.s->Imag());
+    }
+  }
+};
+
+}  // namespace
+
+namespace
+{
+
 void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n,
                           mfem::ParGridFunction &port_E0t, mfem::ParGridFunction &port_E0n,
                           mfem::ParTransferMap &port_nd_transfer,
@@ -235,8 +298,11 @@ public:
 
 // Computes boundary mode n x H, where +n is the outward mesh normal: n x H =
 // -1/(iωμ) (ik_n Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
-// functions evaluated on the (single-sided) boundary element.
-template <ValueType Type>
+// functions evaluated on the (single-sided) boundary element. With IncludeGradient=false
+// the ∇ₜEₙ longitudinal-gradient term is dropped, leaving the scalar-admittance part
+// -1/(iωμ) ik_n Eₜ only, which matches the sparse local boundary mass i·k_n·M_{μ⁻¹} stamped
+// on the LHS, and is used to form the modal correction W_full − W_scalar.
+template <ValueType Type, bool IncludeGradient = true>
 class BdrSubmeshHVectorCoefficient : public mfem::VectorCoefficient
 {
 private:
@@ -324,7 +390,8 @@ public:
       return submesh.GetParent()->GetAttribute(iel1);
     }();
 
-    // Compute Re/Im{-1/i (ik_n Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
+    // Compute Re/Im{-1/i (ik_n Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element). The
+    // ∇ₜEₙ term is omitted when IncludeGradient=false (scalar-admittance-only n×H).
     double U_data[3];
     mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
@@ -332,20 +399,26 @@ public:
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      double dU_data[3];
-      mfem::Vector dU(dU_data, vdim);
-      En.Imag().GetGradient(*T_submesh, dU);
-      U -= dU;
+      if constexpr (IncludeGradient)
+      {
+        double dU_data[3];
+        mfem::Vector dU(dU_data, vdim);
+        En.Imag().GetGradient(*T_submesh, dU);
+        U -= dU;
+      }
     }
     else
     {
       Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      double dU_data[3];
-      mfem::Vector dU(dU_data, vdim);
-      En.Real().GetGradient(*T_submesh, dU);
-      U += dU;
+      if constexpr (IncludeGradient)
+      {
+        double dU_data[3];
+        mfem::Vector dU(dU_data, vdim);
+        En.Real().GetGradient(*T_submesh, dU);
+        U += dU;
+      }
     }
 
     // Scale by 1/(ωμ) with μ evaluated in the neighboring element.
@@ -754,6 +827,38 @@ void WavePortData::Initialize(double omega)
       ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
                            *port_sr, *port_si);
     }
+
+    // Unconjugated modal reaction R = sᵀe = ∫_Γ (n×H_mode)·E_mode, which scales the rank-1
+    // terms of the modal correction W = (−iω/R) s sᵀ. Computed from the same normalized,
+    // sign-fixed submesh forms/field that define the excitation n×H, so R matches the 3D-
+    // assembled s. Distinct from Normalize's conjugated power sᴴe. Sign-flip invariant (s
+    // and E both flip). s = (sr + i·si), e = (E0t.Re + i·E0t.Im).
+    modal_reaction = {(*port_sr) * port_E0t->Real() - (*port_si) * port_E0t->Imag(),
+                      (*port_sr) * port_E0t->Imag() + (*port_si) * port_E0t->Real()};
+    Mpi::GlobalSum(1, &modal_reaction, port_nd_fespace->GetComm());
+
+    // Scalar-admittance reaction R_scalar = s_scalarᵀe from the scalar-only n×H (∇ₜEₙ
+    // dropped), scaling the W_scalar term that cancels the local boundary mass's modal
+    // action so the correction W_full − W_scalar adds only the ∇ₜEₙ contribution. Assembled
+    // from the final (normalized, sign-fixed) mode field so it is consistent with
+    // modal_reaction.
+    BdrSubmeshHVectorCoefficient<ValueType::REAL, false> port_nxH0r_scalar(
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+    BdrSubmeshHVectorCoefficient<ValueType::IMAG, false> port_nxH0i_scalar(
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+    mfem::LinearForm sr_scalar(&port_nd_fespace->Get()), si_scalar(&port_nd_fespace->Get());
+    sr_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_scalar));
+    si_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_scalar));
+    for (auto *lf : {&sr_scalar, &si_scalar})
+    {
+      lf->UseFastAssembly(false);
+      lf->UseDevice(false);
+      lf->Assemble();
+      lf->UseDevice(true);
+    }
+    modal_reaction_scalar = {sr_scalar * port_E0t->Real() - si_scalar * port_E0t->Imag(),
+                             sr_scalar * port_E0t->Imag() + si_scalar * port_E0t->Real()};
+    Mpi::GlobalSum(1, &modal_reaction_scalar, port_nd_fespace->GetComm());
   }
 }
 
@@ -786,21 +891,35 @@ std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-WavePortData::GetModeExcitationCoefficientReal() const
+WavePortData::GetModeExcitationCoefficientReal(bool include_gradient) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+  if (include_gradient)
+  {
+    return std::make_unique<
+        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, true>>>(
+        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
+        omega0);
+  }
   return std::make_unique<
-      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL>>>(
+      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, false>>>(
       attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
       omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-WavePortData::GetModeExcitationCoefficientImag() const
+WavePortData::GetModeExcitationCoefficientImag(bool include_gradient) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+  if (include_gradient)
+  {
+    return std::make_unique<
+        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, true>>>(
+        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
+        omega0);
+  }
   return std::make_unique<
-      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG>>>(
+      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, false>>>(
       attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
       omega0);
 }
@@ -1406,6 +1525,73 @@ void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double o
     fbr.AddCoefficient(data.GetModeExcitationCoefficientImag(), 2.0 * omega);
     fbi.AddCoefficient(data.GetModeExcitationCoefficientReal(), -2.0 * omega);
   }
+}
+
+std::unique_ptr<ComplexOperator>
+WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
+                                             const mfem::Array<int> &nd_dbc_tdof_list)
+{
+  // Assemble the modal correction W = Σ_ports (W_full − W_scalar) over the active wave
+  // ports. Needs the current per-port modes and reactions, so refresh them.
+  Initialize(omega);
+  const int n = nd_fespace.GetTrueVSize();
+  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(), n);
+
+  // Assemble s = ∫_Γ φ·(n×H_mode) on the parent ND true-dof space from an n×H coefficient
+  // pair, the same n×H the excitation injects (GetModeExcitationCoefficient), so the
+  // enforced BC, excitation, normalization, and S-projection share one modal calibration.
+  // Essential (PEC) dofs are eliminated to match the system operator.
+  auto assemble_s = [&](mfem::VectorCoefficient &cr, mfem::VectorCoefficient &ci)
+  {
+    auto s = std::make_unique<ComplexVector>(n);
+    s->UseDevice(true);
+    *s = 0.0;
+    for (auto [c, tv] : {std::pair{&cr, &s->Real()}, std::pair{&ci, &s->Imag()}})
+    {
+      mfem::LinearForm lf(&nd_fespace.Get());
+      lf.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*c));
+      lf.UseFastAssembly(false);
+      lf.UseDevice(false);
+      lf.Assemble();
+      lf.UseDevice(true);
+      nd_fespace.GetProlongationMatrix()->AddMultTranspose(lf, *tv);
+    }
+    linalg::SetSubVector(s->Real(), nd_dbc_tdof_list, 0.0);
+    linalg::SetSubVector(s->Imag(), nd_dbc_tdof_list, 0.0);
+    return s;
+  };
+
+  for (const auto &[idx, data] : ports)
+  {
+    if (!data.active)
+    {
+      continue;
+    }
+    MFEM_VERIFY(
+        std::abs(data.modal_reaction) > 0.0 && std::abs(data.modal_reaction_scalar) > 0.0,
+        "Wave port " << idx
+                     << " has zero modal reaction; cannot build the modal-correction "
+                        "operator!");
+    // W_port = W_full − W_scalar = (−iω/R_full) s_full s_fullᵀ − (−iω/R_scalar) s_scalar
+    // s_scalarᵀ. Added to the sparse local mass i·k_n·M (whose modal action equals W_scalar
+    // e_mode), the port sees the full modal n×H on its own mode: a matched port satisfies
+    // (i·k_n·M + W_port) e_mode = −iω·s_full, consistent with the −2iω·s_full excitation.
+    // For a TEM mode s_full=s_scalar and R_full=R_scalar, so W_port ≡ 0 (baseline
+    // preserved).
+    auto cr = data.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
+    auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
+    op->AddTerm(assemble_s(*cr, *ci),
+                std::complex<double>(0.0, -omega) / data.modal_reaction);
+    auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
+    auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
+    op->AddTerm(assemble_s(*cr_s, *ci_s),
+                std::complex<double>(0.0, omega) / data.modal_reaction_scalar);
+  }
+  if (op->Empty())
+  {
+    return nullptr;
+  }
+  return op;
 }
 
 }  // namespace palace

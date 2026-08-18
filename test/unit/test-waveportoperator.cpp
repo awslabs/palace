@@ -162,6 +162,104 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
   }
 }
 
+// Verify the applied wave-port operator (the sparse local boundary mass i·k_n·M plus the
+// modal correction W = Σ_p (W_full − W_scalar)) is matched to its own mode. Applied to the
+// parent-space modal field e_p of the excited port, it must reproduce the injected boundary
+// term −iω·s_full,p, which is half the driven excitation vector (RHS₂ = −2iω·s_full,p, cf.
+// AddExcitationBdrCoefficients): the enforced operator and the excitation share the same
+// full modal n×H response, so the port is reflectionless for its own mode. On the mode the
+// mass action i·k_n·M·e = −iω·s_scalar,p cancels the −W_scalar term, leaving the full n×H.
+TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+
+  const double omega =
+      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+
+  // The full applied wave-port operator: sparse local mass i·k_n·M plus the modal
+  // correction (no Floquet ports here). This also triggers the per-port mode/reaction solve
+  // at omega.
+  auto W = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+  REQUIRE(W);
+
+  auto &nd_fespace = space_op.GetNDSpace();
+  const auto &mesh = *nd_fespace.Get().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const int n = nd_fespace.GetTrueVSize();
+
+  // Locate the excited port (Excitation == 1 in the cpw config).
+  int exc_idx = 0;
+  for (const auto &[idx, data] : wp_op)
+  {
+    if (data.HasExcitation())
+    {
+      exc_idx = data.excitation;
+      break;
+    }
+  }
+  REQUIRE(exc_idx != 0);
+
+  // Reconstruct the excited port's modal field on the parent ND space (its tangential trace
+  // over the port boundary; zero elsewhere), from the same mode-field coefficient used for
+  // S-projection. sᵀe only samples e on the port boundary, so essential/interior dofs of e
+  // do not affect W·e.
+  ComplexVector e(n);
+  e.UseDevice(true);
+  e = 0.0;
+  for (const auto &[idx, data] : wp_op)
+  {
+    if (data.excitation != exc_idx)
+    {
+      continue;
+    }
+    mfem::Array<int> marker = mesh::AttrToMarker(bdr_attr_max, data.GetAttrList());
+    auto er = data.GetModeFieldCoefficientReal();
+    auto ei = data.GetModeFieldCoefficientImag();
+    mfem::ParGridFunction e_gf_r(&nd_fespace.Get()), e_gf_i(&nd_fespace.Get());
+    e_gf_r = 0.0;
+    e_gf_i = 0.0;
+    e_gf_r.ProjectBdrCoefficientTangent(*er, marker);
+    e_gf_i.ProjectBdrCoefficientTangent(*ei, marker);
+    e_gf_r.GetTrueDofs(e.Real());
+    e_gf_i.GetTrueDofs(e.Imag());
+    break;
+  }
+
+  // (i·k_n·M + W)·e should equal −iω·s_full = RHS₂/2 for the excited port.
+  ComplexVector We(n), rhs(n), expected(n), diff(n);
+  We.UseDevice(true);
+  rhs.UseDevice(true);
+  expected.UseDevice(true);
+  diff.UseDevice(true);
+  We = 0.0;
+  W->Mult(e, We);
+
+  rhs = 0.0;
+  bool nnz = space_op.GetExcitationVector2(exc_idx, omega, rhs);
+  REQUIRE(nnz);
+  expected = 0.0;
+  linalg::AXPY(std::complex<double>(0.5, 0.0), rhs, expected);
+
+  diff = We;
+  linalg::AXPY(std::complex<double>(-1.0, 0.0), expected, diff);
+  double rel_err =
+      linalg::Norml2(comm, diff) / std::max(linalg::Norml2(comm, expected), 1e-300);
+  CAPTURE(omega, rel_err);
+  // The identity is exact in the FE space up to (i) interpolation of the mode-field
+  // coefficient (ProjectBdrCoefficientTangent) versus the linear-form assembly of s, (ii)
+  // the submesh-vs-parent reaction consistency (R vs sᵀe), (iii) the cancellation of the
+  // sparse local-mass modal action against the −W_scalar term (assembled via different code
+  // paths), and (iv) MPI reductions.
+  CHECK(rel_err < 1.0e-8);
+}
+
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the
 // synthesis coordinate definition when IncludeInSynthesis is true. Verify that exposing
 // this unit operator does not accidentally reactivate the physical Robin termination.

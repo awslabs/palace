@@ -806,17 +806,32 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy)
 {
-  auto A2 = GetExtraSystemMatrix<ComplexOperator>(omega, diag_policy);
+  // Wave ports contribute to the applied operator as the sparse local boundary mass i·k_n·M
+  // (scalar-admittance n×H) plus the matrix-free modal correction W = Σ (W_full −
+  // W_scalar), which supplies the ∇ₜEₙ term the sparse mass drops so the port reproduces
+  // the full modal n×H on its own mode. The sparse mass is retained here
+  // (include_wave_ports=true) and also serves as the preconditioner's port block; the
+  // correction and the Floquet DtN are summed onto the sparse A2 via non-owning/owning
+  // SumComplexOperator.
+  auto A2 = GetExtraSystemMatrix<ComplexOperator>(omega, diag_policy,
+                                                  /*include_wave_ports=*/true);
+  auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
+                                                   nd_dbc_tdof_lists.back());
   auto F = floquet_port_op.GetExtraSystemOperator(omega);
-  if (A2 && F)
+  std::unique_ptr<ComplexOperator> op;
+  auto add = [&op](std::unique_ptr<ComplexOperator> term)
   {
-    return std::make_unique<SumComplexOperator>(std::move(A2), std::move(F));
-  }
-  if (A2)
-  {
-    return A2;
-  }
-  return F;
+    if (!term)
+    {
+      return;
+    }
+    op = op ? std::make_unique<SumComplexOperator>(std::move(op), std::move(term))
+            : std::move(term);
+  };
+  add(std::move(A2));
+  add(std::move(W));
+  add(std::move(F));
+  return op;
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
