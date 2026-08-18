@@ -68,6 +68,14 @@ public:
   double omega0;
   mfem::Vector port_normal;
 
+  // Unconjugated modal reactions R = ∫_Γ (n×H_mode)·E_mode = sᵀe, recomputed each
+  // Initialize(). Scale the rank-1 terms of the modal correction W_full − W_scalar added to
+  // the local boundary mass: W = (−iω/R) s sᵀ. `modal_reaction` uses the full modal n×H
+  // (incl. ∇ₜEₙ); `modal_reaction_scalar` uses the scalar-admittance n×H (i·k_n·E_t only),
+  // matching the local mass. Both zero until the first Initialize().
+  std::complex<double> modal_reaction = 0.0;
+  std::complex<double> modal_reaction_scalar = 0.0;
+
 private:
   // List of all boundary attributes making up this port boundary.
   mfem::Array<int> attr_list;
@@ -169,8 +177,14 @@ public:
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
-  std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientReal() const;
-  std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientImag() const;
+  // Modal n×H coefficient used to inject the excitation and to assemble the wave-port LHS
+  // operator. With include_gradient=false the ∇ₜEₙ longitudinal-gradient term is dropped
+  // (scalar-admittance n×H), matching the sparse local boundary mass; used to build
+  // W_scalar.
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetModeExcitationCoefficientReal(bool include_gradient = true) const;
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetModeExcitationCoefficientImag(bool include_gradient = true) const;
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientReal(double scaling = 1.0) const;
@@ -290,6 +304,20 @@ public:
   // excited port boundaries.
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
+
+  // Build the modal-correction wave-port operator W = Σ_ports (W_full − W_scalar) added to
+  // the sparse local boundary mass i·k_n·M in the applied driven/HDM system operator. Per
+  // active port W_full = (−iω/R) s_full s_fullᵀ uses the full modal n×H (incl. ∇ₜEₙ) and
+  // W_scalar the scalar-admittance n×H that reproduces the local mass's modal action; their
+  // difference supplies only the ∇ₜEₙ term the sparse mass drops, restoring S-parameter
+  // unitarity/reciprocity for reactive-impedance and TM (E_z≠0) modes while leaving TEM
+  // modes (E_n≈0, where s_full=s_scalar) exactly at baseline. Complex-symmetric
+  // (unconjugated s sᵀ). Triggers Initialize(ω). s is assembled on nd_fespace true-dofs
+  // with the essential dofs in nd_dbc_tdof_list eliminated; returns nullptr if no active
+  // wave port contributes.
+  std::unique_ptr<ComplexOperator>
+  GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
+                             const mfem::Array<int> &nd_dbc_tdof_list);
 };
 
 }  // namespace palace
