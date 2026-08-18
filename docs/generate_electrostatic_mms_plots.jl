@@ -11,6 +11,10 @@ committed verification data:
 julia --project=examples docs/generate_electrostatic_mms_plots.jl
 ```
 
+Run `make docs-mms-data BUILD_DIR=<build-dir>` first to refresh the numerical data from the
+Palace unit-test executable, or `make docs-mms-refresh BUILD_DIR=<build-dir>` to regenerate
+both data and figure.
+
 Use `--data <file>` to read another CSV and `--out <dir>` to write the SVG
 somewhere other than `docs/src/assets/verification`.
 =#
@@ -33,12 +37,6 @@ const TET_COLOR = "#006837"
 function mms_theme()
     return Theme(
         fontsize=18,
-        fonts=(
-            regular="Times",
-            italic="Times Italic",
-            bold="Times Bold",
-            bold_italic="Times Bold Italic"
-        ),
         Axis=(
             xgridcolor=(:black, 0.12),
             ygridcolor=(:black, 0.12),

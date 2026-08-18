@@ -37,9 +37,19 @@ e_E = \left\|\boldsymbol{E}_h-\boldsymbol{E}_{\mathrm{mms}}\right\|_{L^2}.
 The implementation is exercised by
 [`test-electrostaticmms.cpp`](https://github.com/awslabs/palace/blob/main/test/unit/test-electrostaticmms.cpp).
 The machine-readable results used below are available in
-[`electrostatic_mms.csv`](../assets/verification/electrostatic_mms.csv), and the figure can
-be regenerated with
+[`electrostatic_mms.csv`](../assets/verification/electrostatic_mms.csv). The numerical data
+are collected by
+[`generate_electrostatic_mms_data.jl`](https://github.com/awslabs/palace/blob/main/docs/generate_electrostatic_mms_data.jl),
+and the figure is produced by
 [`generate_electrostatic_mms_plots.jl`](https://github.com/awslabs/palace/blob/main/docs/generate_electrostatic_mms_plots.jl).
+From the repository root, refresh the numerical data and figure with
+
+```bash
+make docs-mms-refresh BUILD_DIR=build
+```
+
+Structured data reporting is disabled during normal test and documentation builds, so this
+explicit command is required only when updating the committed verification snapshot.
 
 ### Convergence on Cartesian and curved meshes
 
