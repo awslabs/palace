@@ -73,6 +73,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     wave-port simulations under nonconformal AMR on multiple MPI ranks. The check now
     validates only domains owned by a local volume element, ignoring ghost/neighbor
     bookkeeping attributes. [PR 888](https://github.com/awslabs/palace/pull/888).
+  - Fixed non-unitary wave-port S-parameters for modes with a longitudinal electric field
+    (`E_n` ≠ 0, e.g. TM modes). The assembled Robin operator enforced only the scalar surface
+    admittance `i·k_n·M`, while the excitation, normalization, and S-parameter projection used
+    the full modal `n×H` (including the `∇ₜE_n` term), so a lossless shorted guide could report
+    `|S11|` > 1. A complex-symmetric modal correction supplies the missing term, restoring
+    S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
