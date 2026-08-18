@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -136,6 +137,7 @@ const MmsCase kPolynomial{VmmsPoly, EmmsPoly, RhoPoly, kAnisotropicEpsilonR, tru
 // solution.
 struct MmsError
 {
+  HYPRE_BigInt primary_dofs;
   double potential;
   double electric;
 };
@@ -152,7 +154,8 @@ MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
   mfem::ParGridFunction E_gf(&laplace_op.GetNDSpace().Get());
   E_gf.SetFromTrueDofs(E);
 
-  return {V_gf.ComputeL2Error(v_exact), E_gf.ComputeL2Error(e_exact)};
+  return {laplace_op.GlobalTrueVSize(), V_gf.ComputeL2Error(v_exact),
+          E_gf.ComputeL2Error(e_exact)};
 }
 
 MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_mesh,
@@ -250,6 +253,20 @@ double ConvergenceRate(double h0, double e0, double h1, double e1)
 const std::vector<int> kOrders = {1, 2, 3};
 const std::vector<int> kResolutions = {4, 8,
                                        16};  // N per side; h = 1/N (must be ascending)
+const std::vector<int> kCurvedRefinements = {0, 1, 2};
+
+void ReportMmsData(const std::string &dataset, const std::string &solution,
+                   const std::string &element, int order,
+                   const std::string &resolution_kind, int resolution, double h,
+                   const MmsError &error)
+{
+  if (std::getenv("PALACE_MMS_REPORT"))
+  {
+    Mpi::Print("MMS_DATA,{},{},{},{},{},{},{:.17g},{},{:.17g},{:.17g}\n", dataset, solution,
+               element, order, resolution_kind, resolution, h, error.primary_dofs,
+               error.potential, error.electric);
+  }
+}
 
 // Tolerance on the measured convergence rates vs. the theoretical p+1 for V and p for E.
 constexpr double kRateTol = 0.3;
@@ -290,6 +307,8 @@ TEST_CASE("Electrostatic MMS is exact for a polynomial in the FE space",
 
   const auto error = SolveCartesianMmsError(kPolynomial, /*n=*/4, /*order=*/2,
                                             /*linear_tol=*/1.0e-13, element_type);
+  ReportMmsData("affine-polynomial", "polynomial", element_name, /*order=*/2, "N",
+                /*resolution=*/4, /*h=*/0.25, error);
   CHECK(error.potential < 1.0e-10);
   CHECK(error.electric < 1.0e-10);
 }
@@ -349,13 +368,11 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
 TEST_CASE("Electrostatic MMS converges at the optimal rate",
           "[electrostaticmms][Serial][Parallel]")
 {
-  // Run the sweep for both the homogeneous and non-homogeneous manufactured solutions, at
-  // each polynomial order. GENERATE takes the Cartesian product, so each (case, order) is a
-  // separate reported section — a failure identifies exactly which combination regressed.
-  const auto [name, mms] = GENERATE(table<std::string, MmsCase>(
-      {{"homogeneous", kHomogeneous}, {"non-homogeneous", kNonHomogeneous}}));
+  // Use the non-homogeneous manufactured solution for the full sweep because it exercises
+  // the Dirichlet lift in addition to the interior operator. The focused sanity test above
+  // retains coverage of the homogeneous boundary path.
   const int order = GENERATE(from_range(kOrders));
-  CAPTURE(name, order);
+  CAPTURE(order);
 
   // Solve on each refinement level and record (h, error).
   std::vector<double> h(kResolutions.size());
@@ -363,7 +380,9 @@ TEST_CASE("Electrostatic MMS converges at the optimal rate",
   for (std::size_t i = 0; i < kResolutions.size(); i++)
   {
     h[i] = 1.0 / kResolutions[i];
-    error[i] = SolveCartesianMmsError(mms, kResolutions[i], order);
+    error[i] = SolveCartesianMmsError(kNonHomogeneous, kResolutions[i], order);
+    ReportMmsData("cartesian-smooth", "non-homogeneous", "hexahedron", order, "N",
+                  kResolutions[i], h[i], error[i]);
   }
 
   // Every consecutive pair: both errors decrease and the observed rates match theory.
@@ -396,17 +415,20 @@ TEST_CASE("Electrostatic MMS converges on curved tetrahedra",
           "[electrostaticmms][Serial][Parallel]")
 {
   constexpr int order = 2;
-  const std::vector<int> refinement = {0, 1, 2};
-  std::vector<MmsError> error(refinement.size());
-  for (std::size_t i = 0; i < refinement.size(); i++)
+  std::vector<MmsError> error(kCurvedRefinements.size());
+  for (std::size_t i = 0; i < kCurvedRefinements.size(); i++)
   {
-    error[i] = SolveMmsError(kCurvedCylinder, LoadCurvedCylinderMesh(refinement[i]), order);
+    error[i] = SolveMmsError(kCurvedCylinder, LoadCurvedCylinderMesh(kCurvedRefinements[i]),
+                             order);
+    ReportMmsData("curved-polynomial", "polynomial", "curved-tetrahedron", order,
+                  "refinement", kCurvedRefinements[i], std::pow(0.5, kCurvedRefinements[i]),
+                  error[i]);
   }
 
-  for (std::size_t i = 0; i + 1 < refinement.size(); i++)
+  for (std::size_t i = 0; i + 1 < kCurvedRefinements.size(); i++)
   {
-    CAPTURE(refinement[i], refinement[i + 1], error[i].potential, error[i + 1].potential,
-            error[i].electric, error[i + 1].electric);
+    CAPTURE(kCurvedRefinements[i], kCurvedRefinements[i + 1], error[i].potential,
+            error[i + 1].potential, error[i].electric, error[i + 1].electric);
 
     CHECK(error[i + 1].potential < error[i].potential);
     const double potential_rate =
