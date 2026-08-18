@@ -26,11 +26,17 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
+#ifdef PALACE_WITH_ENZYME
+#include "mms-enzyme.hpp"
+#endif
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
 using namespace palace;
+#ifdef PALACE_WITH_ENZYME
+using namespace palace::testing;
+#endif
 using namespace Catch::Matchers;
 
 namespace
@@ -44,9 +50,14 @@ constexpr std::array<double, 3> kAnisotropicEpsilonR = {2.0, 3.0, 5.0};
 
 // sin(πx)sin(2πy)sin(πz): vanishes on ∂Ω (homogeneous Dirichlet). For ε = I,
 // ρ_mms = 6π²V_mms.
-double VmmsSin(const mfem::Vector &x)
+template <typename CoordinateVector>
+double VmmsSinValue(const CoordinateVector &x)
 {
   return std::sin(M_PI * x[0]) * std::sin(2.0 * M_PI * x[1]) * std::sin(M_PI * x[2]);
+}
+double VmmsSin(const mfem::Vector &x)
+{
+  return VmmsSinValue(x);
 }
 void EmmsSin(const mfem::Vector &x, mfem::Vector &E)
 {
@@ -66,9 +77,14 @@ double RhoSin(const mfem::Vector &x)
 
 // cos(πx)cos(2πy)cos(πz): nonzero on ∂Ω (non-homogeneous Dirichlet), with the
 // same isotropic source factor as VmmsSin.
-double VmmsCos(const mfem::Vector &x)
+template <typename CoordinateVector>
+double VmmsCosValue(const CoordinateVector &x)
 {
   return std::cos(M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]) * std::cos(M_PI * x[2]);
+}
+double VmmsCos(const mfem::Vector &x)
+{
+  return VmmsCosValue(x);
 }
 void EmmsCos(const mfem::Vector &x, mfem::Vector &E)
 {
@@ -84,12 +100,19 @@ double RhoCos(const mfem::Vector &x)
          VmmsCos(x);
 }
 
-// x² + 2y² + 3z²: a degree-2 polynomial, nonzero on ∂Ω. Thus
-// ρ_mms = -2(ε_x + 2ε_y + 3ε_z), and ∇V_mms = (2x, 4y, 6z).
-double VmmsPoly(const mfem::Vector &x)
+// x² + 2y² + 3z²: a degree-2 polynomial, nonzero on ∂Ω. This is the only
+// user-supplied function for the Enzyme-backed polynomial MMS.
+template <typename CoordinateVector>
+double VmmsPolyValue(const CoordinateVector &x)
 {
   return x[0] * x[0] + 2.0 * x[1] * x[1] + 3.0 * x[2] * x[2];
 }
+double VmmsPoly(const mfem::Vector &x)
+{
+  return VmmsPolyValue(x);
+}
+
+// Closed-form quantities are retained as an independent oracle for the generated values.
 void EmmsPoly(const mfem::Vector &x, mfem::Vector &E)
 {
   E[0] = -2.0 * x[0];
@@ -114,6 +137,30 @@ double NeumannPolyX1(const mfem::Vector &x)
   return 2.0 * kAnisotropicEpsilonR[0] * x[0];
 }
 
+#ifdef PALACE_WITH_ENZYME
+const EnzymeMmsScalar<VmmsSinValue<MmsCoordinates>> kSinMms(kIsotropicEpsilonR);
+const EnzymeMmsScalar<VmmsCosValue<MmsCoordinates>> kCosMms(kIsotropicEpsilonR);
+const EnzymeMmsScalar<VmmsPolyValue<MmsCoordinates>> kPolynomialMms(kAnisotropicEpsilonR);
+
+double VmmsPolyEnzyme(const mfem::Vector &x)
+{
+  return kPolynomialMms.Value(x);
+}
+void EmmsPolyEnzyme(const mfem::Vector &x, mfem::Vector &E)
+{
+  kPolynomialMms.ElectricField(x, E);
+}
+double RhoPolyEnzyme(const mfem::Vector &x)
+{
+  return kPolynomialMms.ChargeDensity(x);
+}
+double NeumannPolyX1Enzyme(const mfem::Vector &x)
+{
+  constexpr MmsCoordinates normal = {1.0, 0.0, 0.0};
+  return kPolynomialMms.NormalFlux(x, normal);
+}
+#endif
+
 // A manufactured case: exact solution V_mms, its source ρ_mms = -∇·(ε∇V_mms), constant
 // diagonal relative permittivity, and whether V_mms needs a non-homogeneous Dirichlet lift.
 struct MmsCase
@@ -129,7 +176,12 @@ const MmsCase kHomogeneous{VmmsSin, EmmsSin, RhoSin, kIsotropicEpsilonR, false};
 const MmsCase kNonHomogeneous{VmmsCos, EmmsCos, RhoCos, kIsotropicEpsilonR, true};
 const MmsCase kCurvedCylinder{VmmsPoly, EmmsPoly, RhoPolyIsotropic, kIsotropicEpsilonR,
                               true};
+#ifdef PALACE_WITH_ENZYME
+const MmsCase kPolynomial{VmmsPolyEnzyme, EmmsPolyEnzyme, RhoPolyEnzyme,
+                          kAnisotropicEpsilonR, true};
+#else
 const MmsCase kPolynomial{VmmsPoly, EmmsPoly, RhoPoly, kAnisotropicEpsilonR, true};
+#endif
 
 // Solve the manufactured electrostatic problem for the given case on an N×N×N unit cube and
 // return the L2 errors in the potential and electric field against the manufactured
@@ -259,6 +311,77 @@ constexpr double kCurvedRateTol = 0.35;
 
 }  // namespace
 
+#ifdef PALACE_WITH_ENZYME
+TEST_CASE("Electrostatic MMS Enzyme quantities match the trigonometric oracles",
+          "[electrostaticmms][enzyme][Serial]")
+{
+  const std::array<MmsCoordinates, 3> points = {MmsCoordinates{0.17, 0.23, 0.31},
+                                                MmsCoordinates{0.38, 0.41, 0.62},
+                                                MmsCoordinates{0.73, 0.14, 0.87}};
+  const auto check_generated_quantities =
+      [&points](const auto &mms, auto v_oracle, auto e_oracle, auto rho_oracle)
+  {
+    for (const auto &point : points)
+    {
+      mfem::Vector x(kMmsDimension);
+      for (int i = 0; i < kMmsDimension; i++)
+      {
+        x[i] = point[i];
+      }
+      mfem::Vector electric(kMmsDimension);
+      mfem::Vector electric_oracle(kMmsDimension);
+      mms.ElectricField(x, electric);
+      e_oracle(x, electric_oracle);
+
+      CHECK_THAT(mms.Value(x), WithinAbs(v_oracle(x), 1.0e-14));
+      for (int i = 0; i < kMmsDimension; i++)
+      {
+        CHECK_THAT(electric[i], WithinAbs(electric_oracle[i], 5.0e-13));
+      }
+      CHECK_THAT(mms.ChargeDensity(x), WithinAbs(rho_oracle(x), 5.0e-12));
+    }
+  };
+
+  SECTION("sine")
+  {
+    check_generated_quantities(kSinMms, VmmsSin, EmmsSin, RhoSin);
+  }
+  SECTION("cosine")
+  {
+    check_generated_quantities(kCosMms, VmmsCos, EmmsCos, RhoCos);
+  }
+}
+
+TEST_CASE("Electrostatic MMS Enzyme quantities match the polynomial oracle",
+          "[electrostaticmms][enzyme][Serial]")
+{
+  const std::array<MmsCoordinates, 3> points = {MmsCoordinates{1.0, 0.2, 0.3},
+                                                MmsCoordinates{1.0, 0.5, 0.7},
+                                                MmsCoordinates{1.0, 0.9, 0.1}};
+  for (const auto &point : points)
+  {
+    mfem::Vector x(kMmsDimension);
+    for (int i = 0; i < kMmsDimension; i++)
+    {
+      x[i] = point[i];
+    }
+    mfem::Vector electric(kMmsDimension);
+    mfem::Vector electric_oracle(kMmsDimension);
+    kPolynomialMms.ElectricField(x, electric);
+    EmmsPoly(x, electric_oracle);
+
+    CHECK_THAT(kPolynomialMms.Value(x), WithinAbs(VmmsPoly(x), 1.0e-14));
+    for (int i = 0; i < kMmsDimension; i++)
+    {
+      CHECK_THAT(electric[i], WithinAbs(electric_oracle[i], 1.0e-14));
+    }
+    CHECK_THAT(kPolynomialMms.ChargeDensity(x), WithinAbs(RhoPoly(x), 1.0e-14));
+    constexpr MmsCoordinates normal = {1.0, 0.0, 0.0};
+    CHECK_THAT(kPolynomialMms.NormalFlux(x, normal), WithinAbs(NeumannPolyX1(x), 1.0e-14));
+  }
+}
+#endif
+
 // Single-resolution sanity check: both the homogeneous and non-homogeneous manufactured
 // problems solve and reach small potential and electric-field L2 errors.
 TEST_CASE("Electrostatic MMS solves to small potential and field errors",
@@ -324,10 +447,17 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
   mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
 
   LaplaceOperator laplace_op(iodata, mesh);
+#ifdef PALACE_WITH_ENZYME
+  mfem::FunctionCoefficient v_exact(VmmsPolyEnzyme);
+  mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, EmmsPolyEnzyme);
+  mfem::FunctionCoefficient rho_coef(RhoPolyEnzyme);
+  mfem::FunctionCoefficient neumann_coef(NeumannPolyX1Enzyme);
+#else
   mfem::FunctionCoefficient v_exact(VmmsPoly);
   mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, EmmsPoly);
   mfem::FunctionCoefficient rho_coef(RhoPoly);
   mfem::FunctionCoefficient neumann_coef(NeumannPolyX1);
+#endif
   laplace_op.SetRhsSource(rho_coef);
   laplace_op.SetDbcCoefficient(v_exact);
   laplace_op.SetNeumannCoefficient(neumann_coef, {3});

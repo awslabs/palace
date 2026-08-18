@@ -34,7 +34,6 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticmms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
@@ -65,13 +64,22 @@ add_executable(unit-tests
 if(PALACE_WITH_ENZYME)
   add_library(enzyme-unit-tests OBJECT
     ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticmms.cpp
   )
   target_link_libraries(enzyme-unit-tests
     PRIVATE Catch2::Catch2
             ${LIB_TARGET_NAME}
             ClangEnzymeFlags
   )
+  target_compile_definitions(enzyme-unit-tests
+    PRIVATE PALACE_WITH_ENZYME
+            "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
+  )
   target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
+else()
+  target_sources(unit-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticmms.cpp
+  )
 endif()
 
 # Set output name for installed binary
