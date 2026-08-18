@@ -349,13 +349,11 @@ TEST_CASE("Electrostatic MMS handles a Neumann boundary",
 TEST_CASE("Electrostatic MMS converges at the optimal rate",
           "[electrostaticmms][Serial][Parallel]")
 {
-  // Run the sweep for both the homogeneous and non-homogeneous manufactured solutions, at
-  // each polynomial order. GENERATE takes the Cartesian product, so each (case, order) is a
-  // separate reported section — a failure identifies exactly which combination regressed.
-  const auto [name, mms] = GENERATE(table<std::string, MmsCase>(
-      {{"homogeneous", kHomogeneous}, {"non-homogeneous", kNonHomogeneous}}));
+  // Use the non-homogeneous manufactured solution for the full sweep because it exercises
+  // the Dirichlet lift in addition to the interior operator. The focused sanity test above
+  // retains coverage of the homogeneous boundary path.
   const int order = GENERATE(from_range(kOrders));
-  CAPTURE(name, order);
+  CAPTURE(order);
 
   // Solve on each refinement level and record (h, error).
   std::vector<double> h(kResolutions.size());
@@ -363,7 +361,7 @@ TEST_CASE("Electrostatic MMS converges at the optimal rate",
   for (std::size_t i = 0; i < kResolutions.size(); i++)
   {
     h[i] = 1.0 / kResolutions[i];
-    error[i] = SolveCartesianMmsError(mms, kResolutions[i], order);
+    error[i] = SolveCartesianMmsError(kNonHomogeneous, kResolutions[i], order);
   }
 
   // Every consecutive pair: both errors decrease and the observed rates match theory.
