@@ -377,18 +377,22 @@ void MaterialOperator::SetUpMaterialProperties(
 
   // Every domain retained in the mesh needs a material definition. This is normally
   // guaranteed by unused-element cleaning, but must also hold when cleaning is disabled.
-  // Attribute presence is rank-local, so report the globally smallest missing attribute
-  // only after every rank has participated in the reduction. Skip the local scan on an
-  // element-empty rank because BuildCeedAttributes inserts a synthetic attribute 1 there.
+  // Validate only attributes carried by a locally-owned volume element. loc_attr also holds
+  // ghost/shared-face neighbor attributes, and on a remapped boundary submesh (e.g. a wave-
+  // port cross-section) under nonconformal partitioning those can include the boundary tag
+  // itself, which has no material entry -- that is neighbor bookkeeping, not a retained
+  // domain. The rank owning the neighbor element validates it in its own scan, so scanning
+  // only local elements loses no coverage. Attribute presence is rank-local, so report the
+  // globally smallest missing attribute only after every rank has participated in the
+  // reduction (an element-empty rank naturally contributes nothing).
   int missing_attr = std::numeric_limits<int>::max();
-  if (mesh.GetNE() > 0)
+  for (int i = 0; i < mesh.GetNE(); i++)
   {
-    for (const auto &[attr, local_attr] : loc_attr)
+    const int attr = mesh.GetAttribute(i);
+    auto it = loc_attr.find(attr);
+    if (it != loc_attr.end() && attr_mat[it->second - 1] < 0)
     {
-      if (attr_mat[local_attr - 1] < 0)
-      {
-        missing_attr = std::min(missing_attr, attr);
-      }
+      missing_attr = std::min(missing_attr, attr);
     }
   }
   Mpi::GlobalMin(1, &missing_attr, mesh.GetComm());
