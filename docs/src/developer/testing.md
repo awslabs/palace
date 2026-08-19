@@ -41,6 +41,44 @@ test assertions. If you want to also measure test coverage, turn
 for more details on this. For Spack, these are the `mfem+exceptions` and the
 `palace+coverage` variants.
 
+### Enzyme-backed MMS tests
+
+The automatic-differentiation MMS tests are optional because they require the
+Enzyme compiler plugin. Enzyme must be built with the same upstream LLVM
+version as the Clang compiler used to build *Palace*. This integration cannot
+use the Xcode Apple Clang toolchain because it does not provide a matching
+upstream LLVM development package for building and loading the plugin. Upstream
+LLVM and Clang can still be used on macOS, for example through Homebrew.
+
+With matching `clang`, `clang++`, and `llvm-config` executables on `PATH`,
+configure the superbuild with:
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_C_COMPILER=clang \
+      -DCMAKE_CXX_COMPILER=clang++ \
+      -DLLVM_DIR="$(llvm-config --cmakedir)" \
+      -DPALACE_MFEM_USE_EXCEPTIONS=yes \
+      -DPALACE_WITH_ENZYME=yes ..
+make -j $(nproc) palace-tests
+```
+
+On macOS with Homebrew LLVM:
+
+```bash
+LLVM_PREFIX="$(brew --prefix llvm)"
+cmake -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+      -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+      -DLLVM_DIR="$("$LLVM_PREFIX/bin/llvm-config" --cmakedir)" \
+      -DPALACE_MFEM_USE_EXCEPTIONS=yes \
+      -DPALACE_WITH_ENZYME=yes ..
+```
+
+The superbuild downloads and installs Enzyme. To reuse an existing compatible
+installation, additionally set `ENZYME_DIR` to its CMake package directory.
+The Enzyme-specific tests are omitted entirely when `PALACE_WITH_ENZYME` is
+disabled.
+
 Once the build completes, the `palace-unit-tests` executable will be installed
 in the same `bin/` directory as the main `palace` executable, and you can run
 tests in two ways:

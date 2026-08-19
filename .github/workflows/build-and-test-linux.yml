@@ -82,6 +82,7 @@ jobs:
           with-eigensolver: slepc
           with-solver: superlu
           with-sanitizers: true
+          with-enzyme: true
         # Coverage build, x86 GCC.
         - arch: x86
           compiler: gcc
@@ -151,7 +152,7 @@ jobs:
       - name: Configure Clang compiler
         if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
         run: |
-          sudo apt-get install -y clang lld
+          sudo apt-get install -y clang lld llvm-dev
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             sudo apt-get install -y libomp-dev
           fi
@@ -302,7 +303,12 @@ jobs:
           [[ "${{ matrix.with-sanitizers }}" == 'true' ]] && WITH_SANITIZERS='ON' || WITH_SANITIZERS='OFF'
           [[ "${{ matrix.with-coverage }}" == 'true' ]] && WITH_COVERAGE='ON' || WITH_COVERAGE='OFF'
           [[ "${{ matrix.with-butterflypack }}" == 'true' ]] && WITH_BUTTERFLYPACK='ON' || WITH_BUTTERFLYPACK='OFF'
-
+          [[ "${{ matrix.with-enzyme }}" == 'true' ]] && WITH_ENZYME='ON' || WITH_ENZYME='OFF'
+          if [[ "$WITH_ENZYME" == 'ON' ]]; then
+            LLVM_CMAKE_DIR=$(llvm-config --cmakedir)
+          else
+            LLVM_CMAKE_DIR=''
+          fi
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
@@ -342,6 +348,8 @@ jobs:
             -DPALACE_MFEM_USE_EXCEPTIONS=ON \
             -DPALACE_BUILD_WITH_SANITIZERS=$WITH_SANITIZERS \
             -DPALACE_BUILD_WITH_COVERAGE=$WITH_COVERAGE \
+            -DPALACE_WITH_ENZYME=$WITH_ENZYME \
+            -DLLVM_DIR="$LLVM_CMAKE_DIR" \
             -DPALACE_MFEM_USE_EXCEPTIONS=ON
 
           make -j$NUM_PROC_BUILD palace-tests

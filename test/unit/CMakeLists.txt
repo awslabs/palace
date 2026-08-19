@@ -34,7 +34,6 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticmms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-electrostaticsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
@@ -43,6 +42,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
@@ -61,6 +62,19 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
+
+if(PALACE_WITH_ENZYME)
+  add_library(enzyme-unit-tests OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-enzyme.cpp
+  )
+  target_link_libraries(enzyme-unit-tests
+    PRIVATE Catch2::Catch2
+            ${LIB_TARGET_NAME}
+            ClangEnzymeFlags
+  )
+  target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
+endif()
 
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
@@ -294,4 +308,3 @@ endif()
 
 # Enable testing
 enable_testing()
-
