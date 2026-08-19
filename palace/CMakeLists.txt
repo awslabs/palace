@@ -219,14 +219,16 @@ if(PALACE_WITH_ENZYME)
     )
   endif()
   find_package(Enzyme REQUIRED CONFIG HINTS "${ENZYME_DIR}")
-  if(NOT TARGET ClangEnzymeFlags)
-    message(FATAL_ERROR
-      "The Enzyme package does not provide the ClangEnzymeFlags compiler plugin target"
-    )
-  endif()
   set(ENZYME_LLVM_VERSION
     "${Enzyme_LLVM_VERSION_MAJOR}.${Enzyme_LLVM_VERSION_MINOR}.${Enzyme_LLVM_VERSION_PATCH}"
   )
+  if(NOT TARGET ClangEnzymeFlags OR
+     NOT TARGET ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR})
+    message(FATAL_ERROR
+      "The Enzyme package does not provide its Clang compiler plugin targets. "
+      "Rebuild Enzyme with the matching Clang development package."
+    )
+  endif()
   if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL ENZYME_LLVM_VERSION)
     message(FATAL_ERROR
       "Enzyme requires matching Clang and LLVM versions: compiler is "

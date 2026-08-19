@@ -290,7 +290,7 @@ set(EXTERN_ENZYME_GIT_BRANCH
   "Git branch for external Enzyme build"
 )
 set(EXTERN_ENZYME_GIT_TAG
-  "v0.0.186" CACHE STRING
+  "v0.0.239" CACHE STRING
   "Git tag for external Enzyme build"
 )
 

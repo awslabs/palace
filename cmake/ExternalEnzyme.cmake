@@ -23,6 +23,14 @@ if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL LLVM_PACKAGE_VERSION)
   )
 endif()
 
+# Enzyme only builds its Clang compiler plugin when the Clang development
+# package is available. Locate the matching package explicitly instead of
+# relying on Enzyme's optional, library-file-based detection.
+get_filename_component(LLVM_CMAKE_PARENT "${LLVM_DIR}" DIRECTORY)
+find_package(Clang ${LLVM_PACKAGE_VERSION} EXACT REQUIRED CONFIG
+  HINTS "${LLVM_CMAKE_PARENT}/clang"
+)
+
 set(ENZYME_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND ENZYME_OPTIONS
   "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
@@ -30,6 +38,7 @@ list(APPEND ENZYME_OPTIONS
   "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
   "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
   "-DLLVM_DIR=${LLVM_DIR}"
+  "-DClang_DIR=${Clang_DIR}"
   "-DENZYME_ENABLE_PLUGINS=ON"
   "-DENZYME_CLANG=ON"
   "-DENZYME_EXTERNAL_SHARED_LIB=OFF"

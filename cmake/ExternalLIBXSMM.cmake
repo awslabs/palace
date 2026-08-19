@@ -21,6 +21,34 @@ set(LIBXSMM_OPTIONS
   "VERBOSE=1"
 )
 
+# Homebrew Clang loses its implicit macOS SDK when LIBXSMM adds an explicit
+# Apple target triple. Pass the SDK as a compiler flag so system headers remain
+# available without requiring callers to export SDKROOT.
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+  set(LIBXSMM_OSX_SYSROOT "${CMAKE_OSX_SYSROOT}")
+  if(NOT IS_ABSOLUTE "${LIBXSMM_OSX_SYSROOT}")
+    set(LIBXSMM_OSX_SDK "${LIBXSMM_OSX_SYSROOT}")
+    if(NOT LIBXSMM_OSX_SDK)
+      set(LIBXSMM_OSX_SDK macosx)
+    endif()
+    execute_process(
+      COMMAND xcrun --sdk "${LIBXSMM_OSX_SDK}" --show-sdk-path
+      OUTPUT_VARIABLE LIBXSMM_OSX_SYSROOT
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE LIBXSMM_XCRUN_RESULT
+    )
+    if(NOT LIBXSMM_XCRUN_RESULT EQUAL 0 OR NOT IS_ABSOLUTE "${LIBXSMM_OSX_SYSROOT}")
+      message(FATAL_ERROR
+        "Unable to determine the macOS SDK path for LIBXSMM using SDK "
+        "'${LIBXSMM_OSX_SDK}'"
+      )
+    endif()
+  endif()
+  list(APPEND LIBXSMM_OPTIONS
+    "RPM_OPT_FLAGS=-isysroot ${LIBXSMM_OSX_SYSROOT}"
+  )
+endif()
+
 # Always build LIBXSMM as a shared library
 list(APPEND LIBXSMM_OPTIONS
   "STATIC=0"
