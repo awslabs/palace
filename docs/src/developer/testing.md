@@ -45,10 +45,11 @@ for more details on this. For Spack, these are the `mfem+exceptions` and the
 
 The automatic-differentiation MMS tests are optional because they require the
 Enzyme compiler plugin. Enzyme must be built with the same upstream LLVM
-version as the Clang compiler used to build *Palace*. This integration cannot
-use the Xcode Apple Clang toolchain because it does not provide a matching
-upstream LLVM development package for building and loading the plugin. Upstream
-LLVM and Clang can still be used on macOS, for example through Homebrew.
+version as the Clang compiler used to build *Palace*, including the LLVM and
+Clang development packages. This integration cannot use the Xcode Apple Clang
+toolchain because it does not provide matching upstream development packages
+for building and loading the plugin. Upstream LLVM and Clang can still be used
+on macOS, for example through Homebrew.
 
 With matching `clang`, `clang++`, and `llvm-config` executables on `PATH`,
 configure the superbuild with:
