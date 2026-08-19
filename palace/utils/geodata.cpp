@@ -1971,6 +1971,9 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
       BlockTimer bt1(Timer::IO);
       if (Mpi::Root(comm))
       {
+        // Remove the symlink left by SaveIteration to avoid overwriting the archived mesh
+        // from the previous AMR iteration.
+        fs::remove(sfile);
         std::ofstream fo(sfile);
         // mfem::ofgzstream fo(sfile, true);  // Use zlib compression if available
         // fo << std::fixed;
