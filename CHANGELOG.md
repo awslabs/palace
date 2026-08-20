@@ -31,6 +31,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added Method of Manufactured Solutions (MMS) verification for the electrostatic solver,
+    confirming optimal `L2` convergence of the potential and recovered field on affine
+    hexahedra and curved (second-order) tetrahedra, with polynomial exactness checked on
+    affine hexahedra and tetrahedra, and covering non-homogeneous Dirichlet and Neumann
+    boundaries and anisotropic permittivity. The manufactured source terms are derived
+    either analytically or, optionally, via
+    [Enzyme-AD](https://github.com/EnzymeAD/Enzyme), an LLVM-level automatic
+    differentiation tool, enabled with a new `PALACE_WITH_ENZYME=ON` build option (used
+    only to build the unit tests).
+    [PR 901](https://github.com/awslabs/palace/pull/901).
 
 #### Interface Changes
 
