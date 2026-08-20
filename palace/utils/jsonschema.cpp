@@ -261,11 +261,9 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
   return values.empty() ? json() : values;
 }
 
-// Find a unique allowed string which differs from the input only by ASCII case. Returns
-// null when there is no match or when multiple spellings match case-insensitively.
+// Find an allowed string which differs from the input only by ASCII case.
 const json *FindCaseInsensitiveMatch(const json &allowed, std::string_view input)
 {
-  const json *match = nullptr;
   for (const auto &candidate : allowed)
   {
     if (!candidate.is_string())
@@ -279,14 +277,10 @@ const json *FindCaseInsensitiveMatch(const json &allowed, std::string_view input
                               { return std::tolower(a) == std::tolower(b); });
     if (matches)
     {
-      if (match != nullptr)
-      {
-        return nullptr;
-      }
-      match = &candidate;
+      return &candidate;
     }
   }
-  return match;
+  return nullptr;
 }
 
 }  // namespace
