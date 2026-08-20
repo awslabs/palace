@@ -639,6 +639,24 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     CHECK(err.find("valid values: \"Eigenmode\", \"Driven\", \"Transient\", "
                    "\"Electrostatic\", \"Magnetostatic\", \"BoundaryMode\"") !=
           std::string::npos);
+    CHECK(err.find("Did you mean") == std::string::npos);
+  }
+
+  SECTION("Enum value with incorrect case suggests canonical spelling")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", "superlu"}}}}}};
+
+    std::string err = ValidateConfig(config);
+    INFO(err);
+    CHECK(err.find("[\"Solver\"][\"Linear\"][\"Type\"]") != std::string::npos);
+    CHECK(err.find("Did you mean \"SuperLU\"?") != std::string::npos);
+    CHECK(err.find("valid values: \"Default\", \"AMS\", \"BoomerAMG\", \"MUMPS\", "
+                   "\"SuperLU\", \"STRUMPACK\", \"STRUMPACK-MP\", \"Jacobi\", "
+                   "\"cuDSS\"") != std::string::npos);
   }
 
   SECTION("Invalid enum in nested array")

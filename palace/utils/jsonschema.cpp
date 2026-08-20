@@ -4,6 +4,7 @@
 #include "jsonschema.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string_view>
 #include <nlohmann/json-schema.hpp>
@@ -256,6 +257,34 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
   return json();
 }
 
+// Find a unique allowed string which differs from the input only by ASCII case. Returns
+// null when there is no match or when multiple spellings match case-insensitively.
+const json *FindCaseInsensitiveMatch(const json &allowed, std::string_view input)
+{
+  const json *match = nullptr;
+  for (const auto &candidate : allowed)
+  {
+    if (!candidate.is_string())
+    {
+      continue;
+    }
+    const auto &value = candidate.get_ref<const std::string &>();
+    bool matches = input != value && input.size() == value.size() &&
+                   std::equal(input.begin(), input.end(), value.begin(),
+                              [](unsigned char a, unsigned char b)
+                              { return std::tolower(a) == std::tolower(b); });
+    if (matches)
+    {
+      if (match != nullptr)
+      {
+        return nullptr;
+      }
+      match = &candidate;
+    }
+  }
+  return match;
+}
+
 }  // namespace
 
 // Custom error handler that formats errors with documentation-style paths.
@@ -342,6 +371,14 @@ public:
             errors << ", ";
           }
           errors << enum_values[i].dump();
+        }
+        if (instance.is_string())
+        {
+          const auto &input = instance.get_ref<const std::string &>();
+          if (const json *suggestion = FindCaseInsensitiveMatch(enum_values, input))
+          {
+            errors << ". Did you mean " << suggestion->dump() << "?";
+          }
         }
       }
     }
