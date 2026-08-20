@@ -16,9 +16,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
-#include "drivers/electrostaticsolver.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "mms-solvers.hpp"
 #include "models/laplaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
