@@ -337,6 +337,8 @@ TEST_CASE("MaterialOperator ignores ghost-only submesh attributes",
   {
     CHECK(local_attributes.find(1) != local_attributes.end());
     CHECK(local_attributes.find(7) != local_attributes.end());
+    // The remap must refresh the cached distinct-attribute array.
+    CHECK(palace_mesh.Get().attributes.Max() == 7);
   }
   else
   {

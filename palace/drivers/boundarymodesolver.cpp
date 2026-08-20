@@ -45,8 +45,8 @@ ExtractBoundary2DSubmesh(mfem::Mesh &parent, const mfem::Array<int> &surface_att
   auto sub = std::make_unique<mfem::SubMesh>(
       mfem::SubMesh::CreateFromBoundary(parent, surface_attrs));
   // Project to 2D before remapping element attributes: ProjectSubmeshTo2D's call to
-  // GetSurfaceNormal walks the mesh's unique-attribute list, which RemapSubMeshAttributes
-  // leaves stale relative to the per-element attributes it just rewrote.
+  // GetSurfaceNormal walks the unique-attribute list, which the remap rewrites from the
+  // surface tags to the neighboring domain materials.
   frame.normal = mesh::ProjectSubmeshTo2D(*sub, frame.centroid, frame.e1, frame.e2);
   mesh::RemapSubMeshAttributes(*sub);
   mesh::RemapSubMeshBdrAttributes(*sub, surface_attrs);
