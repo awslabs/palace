@@ -34,8 +34,10 @@ e_V = \left\|V_h-V_{\mathrm{mms}}\right\|_{L^2},
 e_E = \left\|\boldsymbol{E}_h-\boldsymbol{E}_{\mathrm{mms}}\right\|_{L^2}.
 ```
 
-The implementation is exercised by
-[`test-electrostaticmms.cpp`](https://github.com/awslabs/palace/blob/main/test/unit/test-electrostaticmms.cpp).
+The implementation is exercised by the electrostatic MMS unit tests
+([`test-mms-electrostatic-analytic.cpp`](https://github.com/awslabs/palace/blob/main/test/unit/test-mms-electrostatic-analytic.cpp)
+and the shared harness in
+[`test-mms-electrostatic.cpp`](https://github.com/awslabs/palace/blob/main/test/unit/test-mms-electrostatic.cpp)).
 The machine-readable results used below are available in
 [`electrostatic_mms.csv`](../assets/verification/electrostatic_mms.csv). The numerical data
 are collected by
