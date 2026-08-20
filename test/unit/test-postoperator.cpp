@@ -490,6 +490,47 @@ TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
     CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
   }
 
+  SECTION("Driven multiple excitations")
+  {
+    // Create operator with two excitations.
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.save_indices = {0};
+    iodata.solver.driven.sample_f = {1.0};
+    json multi_port_boundaries = {{"LumpedPort",
+                                   {{{"Attributes", {2}},
+                                     {"Index", 1},
+                                     {"R", 50.0},
+                                     {"Direction", "+X"},
+                                     {"Excitation", 1}},
+                                    {{"Attributes", {3}},
+                                     {"Index", 2},
+                                     {"R", 50.0},
+                                     {"Direction", "+Y"},
+                                     {"Excitation", 2}}}}};
+    config::BoundaryData multi_port(multi_port_boundaries);
+    iodata.boundaries.lumpedport = multi_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
+    post_op.InitializeParaviewDataCollection(1);
+    post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    post_op.InitializeParaviewDataCollection(2);
+    post_op.MeasureAndPrintAll(2, 0, E, B, 1.0);
+
+    // Switching excitations must preserve both collections.
+    auto root = fs::path(iodata.problem.output) / "paraview";
+    for (int excitation : {1, 2})
+    {
+      auto folder = fmt::format("excitation_{}", excitation);
+      CHECK(fs::is_regular_file(root / "driven" / folder / (folder + ".pvd")));
+      CHECK(fs::is_regular_file(root / "driven_boundary" / folder / (folder + ".pvd")));
+    }
+  }
+
   SECTION("Eigenmode")
   {
     // Create operator.
