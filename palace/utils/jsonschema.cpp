@@ -333,6 +333,8 @@ public:
              const std::string &message) override
   {
     const std::string path = ptr.to_string();
+    // These message strings are implementation details of json-schema-validator 2.4.0;
+    // update them when upgrading the dependency.
     const bool is_enum_failure =
         message.find("instance not found in required enum") != std::string::npos ||
         message.find("instance not const") != std::string::npos ||
@@ -351,9 +353,8 @@ public:
     }
 
     errors << "At " << FormatPath(path) << ": " << message;
-    // Enhance type mismatch errors with actual type. These message strings are
-    // implementation details of json-schema-validator 2.4.0; update if upgrading.
-    // Use find() so the enhancement also fires for oneOf/anyOf-wrapped messages
+    // Enhance type mismatch errors with actual type. Use find() so the enhancement also
+    // fires for oneOf/anyOf-wrapped messages
     // like "[combination: oneOf / case#0] unexpected instance type".
     if (message.find("unexpected instance type") != std::string::npos)
     {

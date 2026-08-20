@@ -654,6 +654,7 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     INFO(err);
     CHECK(err.find("[\"Solver\"][\"Linear\"][\"Type\"]") != std::string::npos);
     CHECK(err.find("Did you mean \"SuperLU\"?") != std::string::npos);
+    CHECK(err.find("case#") == std::string::npos);
     CHECK(err.find("valid values: \"Default\", \"AMS\", \"BoomerAMG\", \"MUMPS\", "
                    "\"SuperLU\", \"STRUMPACK\", \"STRUMPACK-MP\", \"Jacobi\", "
                    "\"cuDSS\"") != std::string::npos);
