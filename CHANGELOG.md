@@ -56,6 +56,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Enable circuit synthesis with frequency-dependent boundary conditions, including
     wave ports with a new optional `IncludeInSynthesis` wave-port flag. SchemaVer 1-4-0
     [PR 811](https://github.com/awslabs/palace/pull/811).
+  - Added Method of Manufactured Solutions (MMS) verification for the electrostatic solver,
+    confirming optimal `L2` convergence of the potential and recovered field on affine and
+    curved (second-order) tetrahedra, and covering non-homogeneous Dirichlet and Neumann
+    boundaries and anisotropic permittivity. The manufactured source terms are derived
+    either analytically or, optionally, via
+    [Enzyme-AD](https://github.com/EnzymeAD/Enzyme), an LLVM-level automatic
+    differentiation tool, enabled with a new `PALACE_WITH_ENZYME=ON` build option (used
+    only to build the unit tests).
+    [PR 901](https://github.com/awslabs/palace/pull/901).
 
 #### Interface Changes
 
