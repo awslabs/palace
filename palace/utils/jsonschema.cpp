@@ -7,6 +7,7 @@
 #include <cctype>
 #include <sstream>
 #include <string_view>
+#include <unordered_set>
 #include <nlohmann/json-schema.hpp>
 #include "communication.hpp"
 #include "embedded_schema.hpp"
@@ -141,15 +142,102 @@ json ResolveRef(const json &node, const json &defs)
   return json();
 }
 
-// Find enum values in schema by following a JSON pointer path.
-json FindEnumInSchema(const json &schema, const std::string &ptr)
+void AppendUnique(json &values, const json &candidate)
 {
-  if (ptr.empty() || ptr == "/")
+  if (std::none_of(values.begin(), values.end(),
+                   [&candidate](const json &value) { return value == candidate; }))
   {
-    return json();
+    values.push_back(candidate);
+  }
+}
+
+// Collect enum-like values at an exact instance path. Composition branches are searched
+// with the same unconsumed path, so a property is never matched merely because it has the
+// same name elsewhere in the schema.
+void CollectEnumValues(const json &schema, const json &defs,
+                       const std::vector<std::string> &tokens, std::size_t token_index,
+                       json &values, int depth = 0)
+{
+  constexpr int kMaxDepth = 32;
+  if (!schema.is_object() || depth > kMaxDepth)
+  {
+    return;
   }
 
-  // Parse path into tokens (skip numeric indices for arrays).
+  const json &local_defs = schema.contains("$defs") ? schema["$defs"] : defs;
+  if (schema.contains("$ref"))
+  {
+    json resolved = ResolveRef(schema, local_defs);
+    if (!resolved.is_null())
+    {
+      CollectEnumValues(resolved, local_defs, tokens, token_index, values, depth + 1);
+    }
+    return;
+  }
+
+  if (token_index == tokens.size())
+  {
+    if (auto enum_it = schema.find("enum"); enum_it != schema.end() && enum_it->is_array())
+    {
+      for (const auto &value : *enum_it)
+      {
+        AppendUnique(values, value);
+      }
+    }
+    if (auto const_it = schema.find("const"); const_it != schema.end())
+    {
+      AppendUnique(values, *const_it);
+    }
+  }
+  else
+  {
+    const std::string &token = tokens[token_index];
+    bool is_index =
+        !token.empty() && std::all_of(token.begin(), token.end(),
+                                      [](unsigned char c) { return std::isdigit(c); });
+    if (is_index)
+    {
+      if (auto items_it = schema.find("items"); items_it != schema.end())
+      {
+        CollectEnumValues(*items_it, local_defs, tokens, token_index + 1, values,
+                          depth + 1);
+      }
+    }
+    else if (auto properties_it = schema.find("properties");
+             properties_it != schema.end() && properties_it->contains(token))
+    {
+      CollectEnumValues((*properties_it)[token], local_defs, tokens, token_index + 1,
+                        values, depth + 1);
+    }
+  }
+
+  // Composition can occur either at the enum itself or at an object/array containing the
+  // property. Preserve the current path position while exploring each possible branch.
+  for (const char *keyword : {"oneOf", "anyOf", "allOf"})
+  {
+    if (auto branches_it = schema.find(keyword);
+        branches_it != schema.end() && branches_it->is_array())
+    {
+      for (const auto &branch : *branches_it)
+      {
+        CollectEnumValues(branch, local_defs, tokens, token_index, values, depth + 1);
+      }
+    }
+  }
+  // A conditional predicate does not itself constrain the instance; either result branch
+  // can contribute a spelling. Schema validation remains responsible for applicability.
+  for (const char *keyword : {"then", "else"})
+  {
+    if (auto branch_it = schema.find(keyword); branch_it != schema.end())
+    {
+      CollectEnumValues(*branch_it, local_defs, tokens, token_index, values, depth + 1);
+    }
+  }
+}
+
+// Find enum values in schema by following an exact JSON pointer path.
+json FindEnumInSchema(const json &schema, const std::string &ptr)
+{
   std::vector<std::string> tokens;
   std::size_t pos = 0;
   while (pos < ptr.size())
@@ -161,100 +249,16 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
     }
     std::size_t next = ptr.find('/', pos);
     std::string token = ptr.substr(pos, next - pos);
-    // Skip array indices.
-    if (token.empty() || !std::all_of(token.begin(), token.end(), ::isdigit))
+    if (!token.empty())
     {
-      tokens.push_back(token);
+      tokens.push_back(std::move(token));
     }
     pos = next;
   }
 
-  // Get $defs from root schema for resolving internal refs.
-  json defs = schema.value("$defs", json::object());
-
-  // Navigate schema following the path.
-  json current = schema;
-  for (const auto &token : tokens)
-  {
-    // Resolve $ref chain.
-    while (current.contains("$ref"))
-    {
-      json resolved = ResolveRef(current, defs);
-      if (resolved.is_null())
-      {
-        return json();
-      }
-      // Pick up $defs from resolved schema.
-      if (resolved.contains("$defs"))
-      {
-        defs = resolved["$defs"];
-      }
-      current = resolved;
-    }
-
-    // Look in properties.
-    if (current.contains("properties") && current["properties"].contains(token))
-    {
-      current = current["properties"][token];
-      // Follow into array items.
-      if (current.contains("items"))
-      {
-        current = current["items"];
-      }
-    }
-    else
-    {
-      return json();
-    }
-  }
-
-  // Final $ref resolution.
-  while (current.contains("$ref"))
-  {
-    json resolved = ResolveRef(current, defs);
-    if (resolved.is_null())
-    {
-      break;
-    }
-    current = resolved;
-  }
-
-  // Extract enum values (handle anyOf).
-  if (current.contains("enum"))
-  {
-    return current["enum"];
-  }
-  if (current.contains("anyOf"))
-  {
-    for (const auto &opt : current["anyOf"])
-    {
-      if (opt.contains("enum"))
-      {
-        return opt["enum"];
-      }
-    }
-  }
-  // oneOf is used in two ways: the "usual" way to constrain types and as an emum
-  // replacement using the oneOf+const pattern, which allows us to add documentation fields
-  // to enum entries. For oneOf+const we want to collect all values into an array for
-  // consistent error formatting.
-  if (current.contains("oneOf"))
-  {
-    const auto &branches = current["oneOf"];
-    // Check if oneOf + const enum: all items in oneOf have "const" and no "properties"
-    if (!branches.empty() &&
-        std::all_of(branches.begin(), branches.end(), [](const json &b)
-                    { return b.contains("const") && !b.contains("properties"); }))
-    {
-      json consts = json::array();
-      for (const auto &branch : branches)
-      {
-        consts.push_back(branch["const"]);
-      }
-      return consts;
-    }
-  }
-  return json();
+  json values = json::array();
+  CollectEnumValues(schema, schema.value("$defs", json::object()), tokens, 0, values);
+  return values.empty() ? json() : values;
 }
 
 // Find a unique allowed string which differs from the input only by ASCII case. Returns
@@ -293,6 +297,7 @@ class SchemaErrorHandler : public error_handler
   std::ostringstream errors;
   bool has_error = false;
   const json *schema;
+  std::unordered_set<std::string> reported_enum_paths;
 
   // Convert JSON pointer "/Boundaries/LumpedPort/0" to ["Boundaries"]["LumpedPort"][0]
   static std::string FormatPath(const std::string &ptr)
@@ -333,18 +338,25 @@ public:
   void error(const json::json_pointer &ptr, const json &instance,
              const std::string &message) override
   {
-    // If a oneOf+const enum, we only want to print the top-level path, since that already
-    // contains all information. Individual schema mismatch of items has no new information.
-    if ((schema != nullptr) && message.find("[combination: oneOf") != std::string::npos)
+    const std::string path = ptr.to_string();
+    const bool is_enum_failure =
+        message.find("instance not found in required enum") != std::string::npos ||
+        message.find("instance not const") != std::string::npos ||
+        message.find("no subschema has succeeded") != std::string::npos;
+    json enum_values;
+    if ((schema != nullptr) && is_enum_failure)
     {
-      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
-      if (!enum_values.is_null() && !enum_values.empty())
+      enum_values = FindEnumInSchema(*schema, path);
+      if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty() &&
+          !reported_enum_paths.insert(path).second)
       {
+        // Logical combinations can report the same enum failure once per branch. The first
+        // message already contains the union of values at this exact instance path.
         return;
       }
     }
 
-    errors << "At " << FormatPath(ptr.to_string()) << ": " << message;
+    errors << "At " << FormatPath(path) << ": " << message;
     // Enhance type mismatch errors with actual type. These message strings are
     // implementation details of json-schema-validator 2.4.0; update if upgrading.
     // Use find() so the enhancement also fires for oneOf/anyOf-wrapped messages
@@ -353,32 +365,23 @@ public:
     {
       errors << " (got " << instance.type_name() << ")";
     }
-    // Enhance enum errors with valid values — handles flat "enum" arrays (including
-    // oneOf/anyOf-wrapped messages) and oneOf+const enum patterns (both resolve to a list
-    // of valid values via FindEnumInSchema).
-    else if ((schema != nullptr) &&
-             (message.find("instance not found in required enum") != std::string::npos ||
-              message.rfind("no subschema has succeeded", 0) == 0))
+    else if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
     {
-      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
-      if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
+      errors << "; valid values: ";
+      for (std::size_t i = 0; i < enum_values.size(); i++)
       {
-        errors << "; valid values: ";
-        for (std::size_t i = 0; i < enum_values.size(); i++)
+        if (i > 0)
         {
-          if (i > 0)
-          {
-            errors << ", ";
-          }
-          errors << enum_values[i].dump();
+          errors << ", ";
         }
-        if (instance.is_string())
+        errors << enum_values[i].dump();
+      }
+      if (instance.is_string())
+      {
+        const auto &input = instance.get_ref<const std::string &>();
+        if (const json *suggestion = FindCaseInsensitiveMatch(enum_values, input))
         {
-          const auto &input = instance.get_ref<const std::string &>();
-          if (const json *suggestion = FindCaseInsensitiveMatch(enum_values, input))
-          {
-            errors << ". Did you mean " << suggestion->dump() << "?";
-          }
+          errors << ". Did you mean " << suggestion->dump() << "?";
         }
       }
     }
