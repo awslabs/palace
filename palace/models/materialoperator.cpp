@@ -375,22 +375,23 @@ void MaterialOperator::SetUpMaterialProperties(
     count++;
   }
 
-  // Every domain retained in the mesh needs a material definition. This is normally
-  // guaranteed by unused-element cleaning, but must also hold when cleaning is disabled.
-  // Validate only attributes carried by a locally-owned volume element. loc_attr also holds
-  // ghost/shared-face neighbor attributes, and on a remapped boundary submesh (e.g. a wave-
-  // port cross-section) under nonconformal partitioning those can include the boundary tag
-  // itself, which has no material entry -- that is neighbor bookkeeping, not a retained
-  // domain. The rank owning the neighbor element validates it in its own scan, so scanning
-  // only local elements loses no coverage. Attribute presence is rank-local, so report the
-  // globally smallest missing attribute only after every rank has participated in the
-  // reduction (an element-empty rank naturally contributes nothing).
+  // Every retained domain needs a material. loc_attr also holds ghost/neighbor attributes
+  // that carry no material yet are not retained domains. Collect the material-less
+  // attributes first, usually none, then flag only those on a locally-owned volume element
+  // and reduce for the smallest globally-missing one.
+  std::unordered_set<int> unmatched_attrs;
+  for (const auto &[attr, idx] : loc_attr)
+  {
+    if (attr_mat[idx - 1] < 0)
+    {
+      unmatched_attrs.insert(attr);
+    }
+  }
   int missing_attr = std::numeric_limits<int>::max();
-  for (int i = 0; i < mesh.GetNE(); i++)
+  for (int i = 0; i < mesh.GetNE() && !unmatched_attrs.empty(); i++)
   {
     const int attr = mesh.GetAttribute(i);
-    auto it = loc_attr.find(attr);
-    if (it != loc_attr.end() && attr_mat[it->second - 1] < 0)
+    if (unmatched_attrs.find(attr) != unmatched_attrs.end())
     {
       missing_attr = std::min(missing_attr, attr);
     }

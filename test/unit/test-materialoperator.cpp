@@ -9,6 +9,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -290,6 +291,62 @@ TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")
       REQUIRE(!internal::mat::IsIsotropic(data));
     }
   }
+}
+
+TEST_CASE("MaterialOperator ignores ghost-only submesh attributes",
+          "[materialoperator][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm);
+  REQUIRE(Mpi::Size(comm) >= 2);
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    serial_mesh->SetAttribute(i, 7);
+  }
+  serial_mesh->SetAttributes();
+  serial_mesh->EnsureNCMesh(true);
+
+  int partitioning[2] = {0, 1};
+  auto parent = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning);
+  mfem::Array<mfem::Refinement> refinements;
+  if (rank == 0)
+  {
+    refinements.Append(mfem::Refinement(0));
+  }
+  parent->GeneralRefinement(refinements, -1);
+
+  mfem::Array<int> surface_attributes;
+  surface_attributes.Append(1);
+  auto submesh = std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromBoundary(*parent, surface_attributes));
+  Mesh palace_mesh(std::move(submesh));
+  mesh::RemapSubMeshAttributes(static_cast<mfem::ParSubMesh &>(palace_mesh.Get()));
+  palace_mesh.RebuildCeedAttributes();
+
+  const bool owns_elements = rank < 2;
+  CHECK((palace_mesh.GetNE() > 0) == owns_elements);
+  for (int i = 0; i < palace_mesh.GetNE(); i++)
+  {
+    CHECK(palace_mesh.Get().GetAttribute(i) == 7);
+  }
+  const auto &local_attributes = palace_mesh.GetCeedAttributes();
+  if (owns_elements)
+  {
+    CHECK(local_attributes.find(1) != local_attributes.end());
+    CHECK(local_attributes.find(7) != local_attributes.end());
+  }
+  else
+  {
+    CHECK(local_attributes.empty());
+  }
+
+  config::MaterialData material;
+  material.attributes = {7};
+  config::PeriodicBoundaryData periodic;
+  CHECK_NOTHROW(MaterialOperator({material}, periodic, ProblemType::DRIVEN, palace_mesh));
 }
 
 }  // namespace palace
