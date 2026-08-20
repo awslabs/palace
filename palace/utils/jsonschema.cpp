@@ -158,8 +158,8 @@ void CollectEnumValues(const json &schema, const json &defs,
                        const std::vector<std::string> &tokens, std::size_t token_index,
                        json &values, int depth = 0)
 {
-  constexpr int kMaxDepth = 32;
-  if (!schema.is_object() || depth > kMaxDepth)
+  constexpr int max_depth = 32;
+  if (!schema.is_object() || depth > max_depth)
   {
     return;
   }
