@@ -3,15 +3,17 @@ name: Containers
 # Build OCI/SIF containers.
 #
 # Non-tag events (push to main, PRs, manual dispatch) build the runner's native
-# microarchitecture:
+# microarchitecture plus a CUDA container:
 # - sapphirerapids   (x64,       c7i)
 # - neoverse_v1      (arm64,     c7g)
+# - x86_64_v3_cuda   (gpu,       c7i)
 #
 # Release tags (vX.Y.Z) build a full microarchitecture matrix instead
 # (build-containers-release):
 # - x86_64_v3, x86_64_v4, sapphirerapids   on the x64 (sapphirerapids) host
 # - aarch64, neoverse_v2                   on the arm64-8g (neoverse_v2) host
 # - neoverse_v1                            on the arm64 (neoverse_v1) host
+# - x86_64_v3_cuda                         on the gpu (x86_64_v3) host
 # Each target is at or below its host's native ISA, so build-time binaries run
 # on the host (no cross-compile-up). neoverse_v1 builds on its own native V1
 # host: the target pin is only a preference, and on the V2 host Spack ignored it
@@ -65,17 +67,28 @@ jobs:
               - '.github/actions/**'
               - '.github/workflows/containers.yml'
 
-  # Non-tag events (push to main, PRs, manual dispatch): build the runner's
-  # native microarchitecture. Release tags are handled by build-containers-
-  # release below, so this job is gated off for them to avoid double builds.
+  # Non-tag events (push to main, PRs, manual dispatch): build the native CPU
+  # containers and the CUDA container. Release tags are handled by
+  # build-containers-release below, so this job is gated off for them.
   build-containers:
     needs: filter
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    if: >-
+      ${{
+        !startsWith(github.ref, 'refs/tags/v') &&
+        (
+          needs.filter.outputs.test == 'true' ||
+          github.event_name == 'workflow_dispatch' ||
+          github.ref == 'refs/heads/main'
+        )
+      }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
-    runs-on: [self-hosted, '${{ matrix.arch }}']
+        include:
+          - {runner: arm64}
+          - {runner: x64}
+          - {runner: gpu, target: x86_64_v3}
+    runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       # Two events bypass the paths-filter:
       #
@@ -87,16 +100,16 @@ jobs:
       #   publisher with nothing to publish — and worse, it would move `main` off
       #   the SHA a real container build is still publishing, so that build's
       #   re-verify would fail and the rolling channel would stay stale until the
-      #   next container change landed. The cost is two cached builds on
+      #   next container change landed. The cost is three cached builds on
       #   docs-only pushes; the benefit is that a genuine build failure on main
       #   also shows up as a red `Containers` run.
       #
       # (Release tags are handled by build-containers-release, which has no
       # filter.)
       - uses: actions/checkout@v6
-        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
       - uses: ./.github/actions/build-container
-        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        with:
+          target: ${{ matrix.target }}
 
   # Release tags (vX.Y.Z): build the full microarchitecture matrix. No paths-
   # filter — a tag is usually cut on a commit already on main, so the diff is
@@ -114,6 +127,7 @@ jobs:
           - {runner: arm64-8g, target: aarch64}
           - {runner: arm64,    target: neoverse_v1}
           - {runner: arm64-8g, target: neoverse_v2}
+          - {runner: gpu,      target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       - uses: actions/checkout@v6

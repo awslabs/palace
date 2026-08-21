@@ -1,0 +1,25 @@
+diff --git a/repos/spack_repo/builtin/packages/camp/package.py b/repos/spack_repo/builtin/packages/camp/package.py
+index e93ec305b21..b766dd1780b 100644
+--- a/repos/spack_repo/builtin/packages/camp/package.py
++++ b/repos/spack_repo/builtin/packages/camp/package.py
+@@ -99,6 +99,7 @@ class Camp(CMakePackage, CudaPackage, ROCmPackage):
+ 
+     with when("+cuda"):
+         depends_on("cub", when="^cuda@:10")
++        depends_on("cmake@3.21:", type="build")
+ 
+     depends_on("blt", type="build")
+     depends_on("blt@0.7.1:", type="build", when="@2025.09.0:")
+@@ -138,10 +139,8 @@ def cmake_args(self):
+ 
+             if not spec.satisfies("cuda_arch=none"):
+                 cuda_arch = spec.variants["cuda_arch"].value
++                cuda_arch = ["{0}-real".format(arch) for arch in cuda_arch]
+-                options.append("-DCMAKE_CUDA_ARCHITECTURES={0}".format(cuda_arch[0]))
+-                options.append("-DCUDA_ARCH=sm_{0}".format(cuda_arch[0]))
+-                flag = "-arch sm_{0}".format(cuda_arch[0])
+-                options.append("-DCMAKE_CUDA_FLAGS:STRING={0}".format(flag))
++                options.append("-DCMAKE_CUDA_ARCHITECTURES={0}".format(";".join(cuda_arch)))
+ 
+         options.append(self.define_from_variant("ENABLE_HIP", "rocm"))
+         if spec.satisfies("+rocm"):
