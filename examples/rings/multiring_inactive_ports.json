@@ -1,0 +1,71 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/multiring_inactive_ports"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/multiring.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3]
+    },
+    "SurfaceCurrent":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],  // Inner ring
+        "Direction": [-0.5, 0.8660254037844386, 0.0]  // "+Y" rotated π/6 around (0,0,1)
+      },
+      {
+        "Index": 2,
+        "Attributes": [5],  // Middle ring
+        "Direction": [-0.5, 0.8660254037844386, 0.0]
+      },
+      {
+        "Index": 3,
+        "Attributes": [6],  // Outer ring
+        "Direction": [-0.5, 0.8660254037844386, 0.0],
+        // Per-port override: this port is shorted (PEC) when inactive. Ports 1 and 2 use the
+        // global "Open" default below. With two Open ports and one Short port, exciting port
+        // 1 and exciting port 2 both short the same set {port 3}, so they share an identical
+        // screened operator -- the redundancy the operator cache eliminates.
+        "InactiveMode": "Short"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 3,
+      // Global default applied to inactive ports without their own "InactiveMode".
+      "InactivePorts": "Open"
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}

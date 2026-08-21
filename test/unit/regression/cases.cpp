@@ -204,6 +204,17 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
 }
 
+TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("multiring", "multiring_inactive_ports.json",
+                                  "multiring_inactive_ports", opts);
+}
+
 TEST_CASE("circular_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

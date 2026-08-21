@@ -50,9 +50,19 @@ private:
   mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
-  // Per-level essential true DOF lists from the latest GetStiffnessMatrix(extra_dbc_attr).
-  // SetEssentialTrueDofs stores a shallow reference, so these must outlive that operator.
-  std::vector<mfem::Array<int>> extra_dbc_tdof_lists;
+  // Cache of screened stiffness operators keyed by their shorted-attribute set, so that
+  // excitation steps that short the same set of inactive ports (e.g. every Open-port
+  // excitation shorts the identical set of Short ports) reuse one assembled operator
+  // instead of reassembling it per step. Each entry owns the per-level essential true DOF
+  // lists as well: ParOperator::SetEssentialTrueDofs stores a shallow reference, so the
+  // lists must outlive the operator. std::map nodes are address-stable across later
+  // insertions, which keeps those references valid for the cache's lifetime.
+  struct ScreenedStiffnessCacheEntry
+  {
+    std::vector<mfem::Array<int>> dbc_tdof_lists;
+    std::unique_ptr<Operator> K;
+  };
+  std::map<std::vector<int>, ScreenedStiffnessCacheEntry> screened_stiffness_cache;
 
   // Objects defining the finite element spaces for the magnetic vector potential
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
@@ -125,10 +135,13 @@ public:
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
-  // Construct the stiffness matrix with extra essential (PEC) attributes beyond those set
-  // at construction, without mutating base boundary state. Used in Short mode to treat
-  // inactive surface current ports as PEC for a single excitation step.
-  std::unique_ptr<Operator> GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
+  // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
+  // construction, without mutating base boundary state. Used in Short mode to treat
+  // inactive surface current ports as PEC for a single excitation step. The operator is
+  // cached and owned by this object, keyed on the shorted-attribute set, so repeated calls
+  // with the same set return a stable reference to one assembled operator rather than
+  // reassembling it.
+  const Operator &GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
 
   // Zero v on the merged essential set (base Dirichlet plus extra_dbc_attr), clearing the
   // excitation on shorted inactive ports so DIAG_ONE elimination injects no spurious
