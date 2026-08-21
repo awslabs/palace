@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Improved configuration schema validation errors to list valid enum values through nested
+    schema alternatives and suggest the canonical capitalization for case-only mismatches
+    [PR 890](https://github.com/awslabs/palace/pull/890).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
