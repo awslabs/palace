@@ -430,9 +430,10 @@ data rather than reading from the source-tree `examples/` directory.
  3. Long tests (`long-tests.yml`): Expensive test cases (e.g.,
     `transmon/transmon_amr`) that are too slow to run on every push.
 
-Long tests are a required check for merging non-trivial pull requests and are
-not run by default. To run the Long tests, add the `trigger-long-tests` GitHub
-label. The typical workflow is:
+The `long-tests` check is required for merging, but long test execution is
+opt-in. The check passes when long testing is deferred. To request an
+authoritative result for the current revision, a maintainer adds the
+`trigger-long-tests` GitHub label. The typical workflow is:
 
  1. Develop and iterate using the default (short) tests that run automatically.
  2. When the PR is ready to merge, add the **`trigger-long-tests`** label.
@@ -440,12 +441,10 @@ label. The typical workflow is:
  4. If you push new commits while the label is present, the long tests re-run
     automatically.
 
-Two special cases bypass the long test requirement:
-
-  - Trivial changes: If a PR only touches documentation, README files, or
-    other non-code files, the long test status is automatically set to success.
-  - `no-long-tests` label: Adding this label bypasses the long test requirement
-    entirely.
+The workflow checks out the exact revision for which the label was applied,
+or which produced the synchronize event. Same-repository pull requests run
+immediately. Pull requests from forks run after a maintainer approves the
+workflow through GitHub's **Approve and run** prompt.
 
 ### Building and running regression tests
 
