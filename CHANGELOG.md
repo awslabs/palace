@@ -102,6 +102,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     filesystem changes at different times. [PR
     839](https://github.com/awslabs/palace/pull/839).
 
+#### Documentation
+
+  - Clarified how to interpret the elapsed time report: indented rows are exclusive
+    sub-categories, parent rows are remainders, and Min/Max/Avg are over MPI ranks.
+    [PR 885](https://github.com/awslabs/palace/pull/885).
+
 ## [0.17.0] - 2026-06-28
 
 #### New Features
