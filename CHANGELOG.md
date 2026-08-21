@@ -106,6 +106,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Corrected the configuration validation script name in the docs
     (`validate-config`).
+    [PR 891](https://github.com/awslabs/palace/pull/891).
 
 ## [0.17.0] - 2026-06-28
 
