@@ -106,7 +106,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Clarified how to interpret the elapsed time report: indented rows are exclusive
     sub-categories, parent rows are remainders, and Min/Max/Avg are over MPI ranks.
-    [Issue 472](https://github.com/awslabs/palace/issues/472).
+    [PR 885](https://github.com/awslabs/palace/pull/885).
 
 ## [0.17.0] - 2026-06-28
 

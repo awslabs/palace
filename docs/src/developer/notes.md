@@ -330,15 +330,13 @@ The (average) rows in the table should add up to the Total line at the bottom.
 The categories for breaking down the total simulation time are:
 
 ```
-Initialization                  // < Startup remainder (config parsing, etc.;
-                                //   mesh preprocessing is listed separately)
-  Mesh Preprocessing            // < Preprocessing and partitioning the mesh
+Initialization                  // < Time spent parsing the configuration file,
+                                //   preprocessing and partitioning the mesh
 Operator Construction           // < Time spent constructing finite element spaces and
                                 //   setting up linear and bilinear forms on those spaces
   Wave Ports                    // < Time spent configuring and computing the modes
                                 //   associated with wave port boundaries
-Linear Solve                    // < Remainder of linear solver time (not Setup,
-                                //   Preconditioner, or Coarse Solve)
+Linear Solve                    // < Linear solver time
   Setup                         // < Setup time for linear solver and preconditioner
   Preconditioner                // < Preconditioner application time for linear solve
   Coarse Solve                  // < Coarse solve time for geometric multigrid
@@ -354,8 +352,7 @@ PROM Construction               // < Offline PROM construction time for adaptive
                                 //   frequency sweep
 PROM Solve                      // < Online PROM solve and solution prolongation time for
                                 //   adaptive fast frequency sweep
-Estimation                      // < Remainder of error estimation (not Construction
-                                //   or Solve)
+Estimation                      // < Time spent computing element-wise error estimates
   Construction                  // < Construction time for error estimation global linear
                                 //   solve
   Solve                         // < Solve time for error estimation global linear solve
