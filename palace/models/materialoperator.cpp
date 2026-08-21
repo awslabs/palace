@@ -596,6 +596,19 @@ MaterialPropertyCoefficient::MaterialPropertyCoefficient(
   *this *= a;
 }
 
+bool MaterialPropertyCoefficient::IsExactlyZero() const
+{
+  const auto *data = mat_coeff.Data();
+  for (int i = 0; i < mat_coeff.TotalSize(); i++)
+  {
+    if (data[i] != 0.0)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 namespace
 {
 
