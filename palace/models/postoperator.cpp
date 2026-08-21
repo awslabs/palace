@@ -237,6 +237,13 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   RemovePreviousOutput(gridfunction_root, fem_op->GetComm());
   gridfunction_output_dir = (gridfunction_root / OutputFolderName(solver_t)).string();
 
+  // Clear previous ParaView output once per solve. Switching driven excitations only
+  // changes subdirectories and must preserve output from earlier excitations.
+  if (ShouldWriteParaviewFields())
+  {
+    RemovePreviousOutput(post_dir / "paraview", fem_op->GetComm());
+  }
+
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
 
@@ -380,11 +387,11 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     return;
   }
-  // Remove previous symlink/directory before writing (node-local filesystem aware, so
-  // stale artifacts are cleared on every node rather than only where the global root
-  // lives). Removing directory only happens when the output folder is dirty.
+  // Close any files held by the previous collection before switching output paths.
+  paraview.reset();
+  paraview_bdr.reset();
+
   auto paraview_root = post_dir / "paraview";
-  RemovePreviousOutput(paraview_root, fem_op->GetComm());
   fs::path paraview_dir_v = paraview_root / OutputFolderName(solver_t);
   fs::path paraview_dir_b =
       paraview_root / fmt::format("{}_boundary", OutputFolderName(solver_t));
