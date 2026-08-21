@@ -69,6 +69,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed a false-positive in the domain material-coverage check that could abort numeric
+    wave-port simulations under nonconformal AMR on multiple MPI ranks. The check now
+    validates only domains owned by a local volume element, ignoring ghost/neighbor
+    bookkeeping attributes. [PR 888](https://github.com/awslabs/palace/pull/888).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
