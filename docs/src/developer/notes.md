@@ -145,10 +145,10 @@ A JSON format [configuration file](../config/config.md), for example named
 `config.json`, can be validated against the provided Schema using:
 
 ```bash
-./scripts/validate_config config.json
+./scripts/validate-config config.json
 ```
 
-[This script](https://github.com/awslabs/palace/blob/main/scripts/validate_config) uses
+[This script](https://github.com/awslabs/palace/blob/main/scripts/validate-config) uses
 Julia's [`JSONSchema.jl`](https://github.com/fredo-dedup/JSONSchema.jl) and the Schema
 provided in [`scripts/schema/`](https://github.com/awslabs/palace/blob/main/scripts/schema)
 to parse the configuration file and check that the fields are correctly specified. This
