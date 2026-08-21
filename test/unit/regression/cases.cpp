@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -178,6 +179,48 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
+// Power-conservation check for a driven wave-port run on a lossless structure: for
+// each excitation j, require Sum_i |S_ij|^2 == 1 within rtol. Reference-free (asserts
+// the invariant directly), so it is insensitive to MPI partitioning. Guards the
+// wave-port n x H fix (GetModalCorrectionOperator): without it Sum|S|^2 > 1 for modes
+// with E_n != 0 (cylinder TM01, |S11| ~ 1.07). Column headers are "|S[i][j]| (dB)".
+palace::test::CustomCheck TestWavePortLossless(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &)
+  {
+    const std::size_t n_rows = actual.n_rows();
+    for (std::size_t r = 0; r < n_rows; ++r)
+    {
+      std::map<std::string, double> power_by_excitation;
+      for (auto &c : actual)
+      {
+        const std::string &hdr = c.header_text;
+        if (hdr.rfind("|S[", 0) != 0 || hdr.find("(dB)") == std::string::npos)
+        {
+          continue;
+        }
+        // Extract the excitation index j (second [..]) from "|S[i][j]| (dB)".
+        const auto b1 = hdr.find(']');
+        const auto b2 = hdr.find('[', b1);
+        const auto b2e = hdr.find(']', b2);
+        if (b1 == std::string::npos || b2 == std::string::npos || b2e == std::string::npos)
+        {
+          continue;
+        }
+        const std::string j = hdr.substr(b2 + 1, b2e - b2 - 1);
+        const double s_lin = std::pow(10.0, c.data[r] / 20.0);  // dB -> linear |S|
+        power_by_excitation[j] += s_lin * s_lin;
+      }
+      for (const auto &[j, sum_sq] : power_by_excitation)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << sum_sq);
+        CHECK_THAT(sum_sq, Catch::Matchers::WithinAbs(1.0, rtol));
+      }
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -266,6 +309,22 @@ TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   palace::test::RunRegressionCase("cylinder", "driven_wave.json", "driven_wave", opts);
+}
+
+// Drives the TM01 port mode (Mode 3) of a lossless PEC-shorted circular waveguide.
+// TM01 carries a longitudinal field (E_n != 0 on the port face), so a correct wave
+// port must still reflect all incident power: |S11| = 1. TestWavePortLossless asserts
+// Sum_i |S_i1|^2 = 1 directly. The dominant TE11 mode (Mode 1, E_n = 0) is a separate
+// case (cylinder_driven_wave).
+TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm.json", "driven_wave_tm",
+                                  opts);
 }
 
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
