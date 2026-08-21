@@ -102,6 +102,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     filesystem changes at different times. [PR
     839](https://github.com/awslabs/palace/pull/839).
 
+#### Documentation
+
+  - Corrected the configuration validation script name in the docs
+    (`validate-config`).
+
 ## [0.17.0] - 2026-06-28
 
 #### New Features
