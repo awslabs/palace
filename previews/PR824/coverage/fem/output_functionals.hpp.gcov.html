@@ -1,0 +1,324 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - fem/output_functionals.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">fem</a> - output_functionals.hpp<span style="font-size: 80%;"> (source / <a href="output_functionals.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">2</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-08-13 02:41:55</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_FEM_OUTPUT_FUNCTIONALS_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_FEM_OUTPUT_FUNCTIONALS_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;array&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;complex&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;deque&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;map&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;memory&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;vector&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;fem/ceed_group_operator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;utils/labels.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : namespace palace</span>
+<span id="L19"><span class="lineNum">      19</span>              : {</span>
+<span id="L20"><span class="lineNum">      20</span>              : </span>
+<span id="L21"><span class="lineNum">      21</span>              : class GridFunction;</span>
+<span id="L22"><span class="lineNum">      22</span>              : class MaterialOperator;</span>
+<span id="L23"><span class="lineNum">      23</span>              : class Mesh;</span>
+<span id="L24"><span class="lineNum">      24</span>              : class FaceNbrFieldExchange;</span>
+<span id="L25"><span class="lineNum">      25</span>              : </span>
+<span id="L26"><span class="lineNum">      26</span>              : // Description of a real vector-valued mode coefficient on a marked boundary surface.</span>
+<span id="L27"><span class="lineNum">      27</span>              : // UNIFORM represents scale * direction. COAXIAL represents scale * (x - origin) /</span>
+<span id="L28"><span class="lineNum">      28</span>              : // |x - origin|^2, matching CoaxialElementData::GetModeCoefficient.</span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC tlaBgGNC">        1731 : struct SurfaceModeCoefficient</span></span>
+<span id="L30"><span class="lineNum">      30</span>              : {</span>
+<span id="L31"><span class="lineNum">      31</span>              :   enum class Type</span>
+<span id="L32"><span class="lineNum">      32</span>              :   {</span>
+<span id="L33"><span class="lineNum">      33</span>              :     UNIFORM,</span>
+<span id="L34"><span class="lineNum">      34</span>              :     COAXIAL</span>
+<span id="L35"><span class="lineNum">      35</span>              :   };</span>
+<span id="L36"><span class="lineNum">      36</span>              : </span>
+<span id="L37"><span class="lineNum">      37</span>              :   Type type = Type::UNIFORM;</span>
+<span id="L38"><span class="lineNum">      38</span>              :   mfem::Array&lt;int&gt; attr_list;</span>
+<span id="L39"><span class="lineNum">      39</span>              :   double scale = 1.0;</span>
+<span id="L40"><span class="lineNum">      40</span>              :   std::array&lt;double, 3&gt; direction = {0.0, 0.0, 0.0};</span>
+<span id="L41"><span class="lineNum">      41</span>              :   std::array&lt;double, 3&gt; origin = {0.0, 0.0, 0.0};</span>
+<span id="L42"><span class="lineNum">      42</span>              : };</span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              : //</span>
+<span id="L45"><span class="lineNum">      45</span>              : // Class to compute reducing output functionals (integrals of functions of solution</span>
+<span id="L46"><span class="lineNum">      46</span>              : // fields) over boundary element sets using libCEED, supporting full (non-trace)</span>
+<span id="L47"><span class="lineNum">      47</span>              : // evaluation of volume fields at boundary element quadrature points. This enables</span>
+<span id="L48"><span class="lineNum">      48</span>              : // postprocessing measurements (interface dielectric energy participation, surface</span>
+<span id="L49"><span class="lineNum">      49</span>              : // fluxes, port powers, etc.) to execute on the device, in contrast to the legacy</span>
+<span id="L50"><span class="lineNum">      50</span>              : // mfem::Coefficient-based paths which are host-only.</span>
+<span id="L51"><span class="lineNum">      51</span>              : //</span>
+<span id="L52"><span class="lineNum">      52</span>              : // The key construction: for each boundary element, the field is evaluated from an</span>
+<span id="L53"><span class="lineNum">      53</span>              : // attached volume element (or both, with averaging or differencing, for interior</span>
+<span id="L54"><span class="lineNum">      54</span>              : // boundaries, following the conventions of BdrGridFunctionCoefficient and its derived</span>
+<span id="L55"><span class="lineNum">      55</span>              : // coefficients). AtPoints-capable groups keep mapped reference points as runtime data;</span>
+<span id="L56"><span class="lineNum">      56</span>              : // mapped-integration-rule groups use per-assembly registry identities plus finite</span>
+<span id="L57"><span class="lineNum">      57</span>              : // MFEM/NCMesh topology keys rather than rounded point-cloud keys. Processor-boundary</span>
+<span id="L58"><span class="lineNum">      58</span>              : // ghost values are requested through</span>
+<span id="L59"><span class="lineNum">      59</span>              : // FaceNbrFieldExchange with integer/topological reference-face orientation keys so point</span>
+<span id="L60"><span class="lineNum">      60</span>              : // identity never depends on fuzzy coordinate matching.</span>
+<span id="L61"><span class="lineNum">      61</span>              : //</span>
+<span id="L62"><span class="lineNum">      62</span>              : class SurfaceFunctional</span>
+<span id="L63"><span class="lineNum">      63</span>              : {</span>
+<span id="L64"><span class="lineNum">      64</span>              : public:</span>
+<span id="L65"><span class="lineNum">      65</span>              :   enum class Kind</span>
+<span id="L66"><span class="lineNum">      66</span>              :   {</span>
+<span id="L67"><span class="lineNum">      67</span>              :     AREA,           // ∫ dS (no field input, for validation)</span>
+<span id="L68"><span class="lineNum">      68</span>              :     HCURL_NORM2,    // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)</span>
+<span id="L69"><span class="lineNum">      69</span>              :     INTERFACE_EPR,  // Interface dielectric energy following InterfaceDielectricCoefficient</span>
+<span id="L70"><span class="lineNum">      70</span>              :     SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient</span>
+<span id="L71"><span class="lineNum">      71</span>              :     FARFIELD        // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement</span>
+<span id="L72"><span class="lineNum">      72</span>              :   };</span>
+<span id="L73"><span class="lineNum">      73</span>              : </span>
+<span id="L74"><span class="lineNum">      74</span>              : private:</span>
+<span id="L75"><span class="lineNum">      75</span>              :   enum class KernelKind</span>
+<span id="L76"><span class="lineNum">      76</span>              :   {</span>
+<span id="L77"><span class="lineNum">      77</span>              :     AREA,</span>
+<span id="L78"><span class="lineNum">      78</span>              :     HCURL_NORM2,</span>
+<span id="L79"><span class="lineNum">      79</span>              :     INTERFACE_EPR,</span>
+<span id="L80"><span class="lineNum">      80</span>              :     SURFACE_FLUX,</span>
+<span id="L81"><span class="lineNum">      81</span>              :     FARFIELD,</span>
+<span id="L82"><span class="lineNum">      82</span>              :     MODE_OVERLAP</span>
+<span id="L83"><span class="lineNum">      83</span>              :   };</span>
+<span id="L84"><span class="lineNum">      84</span>              : </span>
+<span id="L85"><span class="lineNum">      85</span>              :   static KernelKind ToKernelKind(Kind kind);</span>
+<span id="L86"><span class="lineNum">      86</span>              :   static const char *KindName(KernelKind kind);</span>
+<span id="L87"><span class="lineNum">      87</span>              : </span>
+<span id="L88"><span class="lineNum">      88</span>              :   // Computation kind and integrand parameters.</span>
+<span id="L89"><span class="lineNum">      89</span>              :   KernelKind kind;</span>
+<span id="L90"><span class="lineNum">      90</span>              :   InterfaceDielectric epr_type = InterfaceDielectric::DEFAULT;</span>
+<span id="L91"><span class="lineNum">      91</span>              :   double epr_t = 0.0, epr_epsilon = 0.0;</span>
+<span id="L92"><span class="lineNum">      92</span>              :   SurfaceFlux flux_type = SurfaceFlux::ELECTRIC;</span>
+<span id="L93"><span class="lineNum">      93</span>              :   bool flux_two_sided = false;</span>
+<span id="L94"><span class="lineNum">      94</span>              :   mfem::Vector flux_x0;</span>
+<span id="L95"><span class="lineNum">      95</span>              :   std::vector&lt;std::array&lt;double, 3&gt;&gt; farfield_dirs;</span>
+<span id="L96"><span class="lineNum">      96</span>              :   std::complex&lt;double&gt; farfield_omega = 0.0;</span>
+<span id="L97"><span class="lineNum">      97</span>              :   std::map&lt;int, SurfaceModeCoefficient&gt; mode_coeff_by_attr;</span>
+<span id="L98"><span class="lineNum">      98</span>              : </span>
+<span id="L99"><span class="lineNum">      99</span>              :   // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index</span>
+<span id="L100"><span class="lineNum">     100</span>              :   // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending</span>
+<span id="L101"><span class="lineNum">     101</span>              :   // on the functional kind. Material operator (not owned) for material property lookups</span>
+<span id="L102"><span class="lineNum">     102</span>              :   // and side selection.</span>
+<span id="L103"><span class="lineNum">     103</span>              :   const mfem::ParFiniteElementSpace *nd_fespace;</span>
+<span id="L104"><span class="lineNum">     104</span>              :   const mfem::ParFiniteElementSpace *rt_fespace;</span>
+<span id="L105"><span class="lineNum">     105</span>              :   const MaterialOperator *mat_op;</span>
+<span id="L106"><span class="lineNum">     106</span>              : </span>
+<span id="L107"><span class="lineNum">     107</span>              :   // Whether the functional could be assembled. False means the configuration is outside</span>
+<span id="L108"><span class="lineNum">     108</span>              :   // the current support matrix; model-level callers may explicitly use legacy code for</span>
+<span id="L109"><span class="lineNum">     109</span>              :   // those cases, but supported cases should treat invalid assembly as an error rather</span>
+<span id="L110"><span class="lineNum">     110</span>              :   // than silently falling back.</span>
+<span id="L111"><span class="lineNum">     111</span>              :   bool valid = true;</span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              :   // MPI communicator from the mesh.</span>
+<span id="L114"><span class="lineNum">     114</span>              :   MPI_Comm comm;</span>
+<span id="L115"><span class="lineNum">     115</span>              : </span>
+<span id="L116"><span class="lineNum">     116</span>              :   // Per-group assembled libCEED operators, accumulating per-element integrals into the</span>
+<span id="L117"><span class="lineNum">     117</span>              :   // local output vector. The element attribute vectors are operator inputs and must</span>
+<span id="L118"><span class="lineNum">     118</span>              :   // outlive the operators.</span>
+<span id="L119"><span class="lineNum">     119</span>              :   std::vector&lt;fem::CeedGroupOperator&gt; groups;</span>
+<span id="L120"><span class="lineNum">     120</span>              :   std::deque&lt;Vector&gt; elem_attrs;</span>
+<span id="L121"><span class="lineNum">     121</span>              : </span>
+<span id="L122"><span class="lineNum">     122</span>              :   // Face neighbor field exchange for two-sided interior boundaries crossing parallel</span>
+<span id="L123"><span class="lineNum">     123</span>              :   // interfaces: the owning process pulls the neighbor (ghost) volume field values at the</span>
+<span id="L124"><span class="lineNum">     124</span>              :   // face quadrature points, fed to the ghost side of the two-sided operators (nullptr</span>
+<span id="L125"><span class="lineNum">     125</span>              :   // when no marked boundary element has a ghost neighbor). Refilled before each apply.</span>
+<span id="L126"><span class="lineNum">     126</span>              :   std::unique_ptr&lt;FaceNbrFieldExchange&gt; face_nbr_exchange;</span>
+<span id="L127"><span class="lineNum">     127</span>              : </span>
+<span id="L128"><span class="lineNum">     128</span>              :   // Staging vector used to initialize the field input CeedVectors at construction. The</span>
+<span id="L129"><span class="lineNum">     129</span>              :   // field CeedVectors are re-pointed at the caller's data on each Eval() call.</span>
+<span id="L130"><span class="lineNum">     130</span>              :   mutable Vector field_staging;</span>
+<span id="L131"><span class="lineNum">     131</span>              : </span>
+<span id="L132"><span class="lineNum">     132</span>              :   // Local output vector with one slot per marked boundary element on this process.</span>
+<span id="L133"><span class="lineNum">     133</span>              :   // Integral functionals also keep the originating boundary attribute for each slot so</span>
+<span id="L134"><span class="lineNum">     134</span>              :   // batched model-level callers can recover several independent reductions from one</span>
+<span id="L135"><span class="lineNum">     135</span>              :   // assembled operator without changing the per-element libCEED kernels.</span>
+<span id="L136"><span class="lineNum">     136</span>              :   mutable Vector local_out;</span>
+<span id="L137"><span class="lineNum">     137</span>              :   std::vector&lt;int&gt; local_out_attrs;</span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span>              :   void Assemble(const Mesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;bdr_attr_marker);</span>
+<span id="L140"><span class="lineNum">     140</span>              :   void AssembleLocal(const Mesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;bdr_attr_marker);</span>
+<span id="L141"><span class="lineNum">     141</span>              : </span>
+<span id="L142"><span class="lineNum">     142</span>              :   // Apply all group operators with the field inputs pointed at the given source</span>
+<span id="L143"><span class="lineNum">     143</span>              :   // vectors, accumulating into the local output vector.</span>
+<span id="L144"><span class="lineNum">     144</span>              :   void ApplyAdd(const std::array&lt;const Vector *, 4&gt; &amp;srcs) const;</span>
+<span id="L145"><span class="lineNum">     145</span>              : </span>
+<span id="L146"><span class="lineNum">     146</span>              :   // Zero the local output vector, apply, and return the local sum (no MPI reduction).</span>
+<span id="L147"><span class="lineNum">     147</span>              :   double EvalLocal(const std::array&lt;const Vector *, 4&gt; &amp;srcs) const;</span>
+<span id="L148"><span class="lineNum">     148</span>              : </span>
+<span id="L149"><span class="lineNum">     149</span>              : public:</span>
+<span id="L150"><span class="lineNum">     150</span>              :   // Construct a functional over the boundary elements with marked attributes (marker</span>
+<span id="L151"><span class="lineNum">     151</span>              :   // over global mfem boundary attributes). For field-less functionals (AREA), fespace</span>
+<span id="L152"><span class="lineNum">     152</span>              :   // may be nullptr but the mesh is still required.</span>
+<span id="L153"><span class="lineNum">     153</span>              :   SurfaceFunctional(Kind kind, const Mesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;bdr_attr_marker,</span>
+<span id="L154"><span class="lineNum">     154</span>              :                     const mfem::ParFiniteElementSpace *fespace = nullptr);</span>
+<span id="L155"><span class="lineNum">     155</span>              : </span>
+<span id="L156"><span class="lineNum">     156</span>              :   // Construct an interface dielectric energy participation functional with the given</span>
+<span id="L157"><span class="lineNum">     157</span>              :   // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).</span>
+<span id="L158"><span class="lineNum">     158</span>              :   SurfaceFunctional(const Mesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;bdr_attr_marker,</span>
+<span id="L159"><span class="lineNum">     159</span>              :                     const mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L160"><span class="lineNum">     160</span>              :                     const MaterialOperator &amp;mat_op, InterfaceDielectric type, double t_i,</span>
+<span id="L161"><span class="lineNum">     161</span>              :                     double epsilon_i);</span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span>              :   // Construct a surface flux functional (see BdrSurfaceFluxCoefficient). The required</span>
+<span id="L164"><span class="lineNum">     164</span>              :   // finite element spaces depend on the flux type: ELECTRIC requires nd_fespace,</span>
+<span id="L165"><span class="lineNum">     165</span>              :   // MAGNETIC requires rt_fespace, POWER requires both.</span>
+<span id="L166"><span class="lineNum">     166</span>              :   SurfaceFunctional(const Mesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;bdr_attr_marker,</span>
+<span id="L167"><span class="lineNum">     167</span>              :                     const mfem::ParFiniteElementSpace *nd_fespace,</span>
+<span id="L168"><span class="lineNum">     168</span>              :                     const mfem::ParFiniteElementSpace *rt_fespace,</span>
+<span id="L169"><span class="lineNum">     169</span>              :                     const MaterialOperator &amp;mat_op, SurfaceFlux type, bool two_sided,</span>
+<span id="L170"><span class="lineNum">     170</span>              :                     const mfem::Vector &amp;x0);</span>
+<span id="L171"><span class="lineNum">     171</span>              : </span>
+<span id="L172"><span class="lineNum">     172</span>              :   // Construct a Stratton-Chu far-field functional for the given observation directions</span>
+<span id="L173"><span class="lineNum">     173</span>              :   // (see AddStrattonChuIntegrandAtElement; external boundaries only).</span>
+<span id="L174"><span class="lineNum">     174</span>              :   SurfaceFunctional(const Mesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;bdr_attr_marker,</span>
+<span id="L175"><span class="lineNum">     175</span>              :                     const mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L176"><span class="lineNum">     176</span>              :                     const mfem::ParFiniteElementSpace &amp;rt_fespace,</span>
+<span id="L177"><span class="lineNum">     177</span>              :                     const MaterialOperator &amp;mat_op,</span>
+<span id="L178"><span class="lineNum">     178</span>              :                     const std::vector&lt;std::array&lt;double, 3&gt;&gt; &amp;r_naughts);</span>
+<span id="L179"><span class="lineNum">     179</span>              : </span>
+<span id="L180"><span class="lineNum">     180</span>              :   // Construct a linear H(curl) mode-overlap functional, ∫ E · f_mode dS, for lumped-port</span>
+<span id="L181"><span class="lineNum">     181</span>              :   // voltage and S-parameter extraction. The mode coefficient data is real-valued; complex</span>
+<span id="L182"><span class="lineNum">     182</span>              :   // fields are evaluated by applying the same functional to the real and imaginary parts.</span>
+<span id="L183"><span class="lineNum">     183</span>              :   SurfaceFunctional(const Mesh &amp;mesh, const mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L184"><span class="lineNum">     184</span>              :                     const std::vector&lt;SurfaceModeCoefficient&gt; &amp;mode_coeffs);</span>
+<span id="L185"><span class="lineNum">     185</span>              : </span>
+<span id="L186"><span class="lineNum">     186</span>              :   ~SurfaceFunctional();</span>
+<span id="L187"><span class="lineNum">     187</span>              : </span>
+<span id="L188"><span class="lineNum">     188</span>              :   SurfaceFunctional(const SurfaceFunctional &amp;) = delete;</span>
+<span id="L189"><span class="lineNum">     189</span>              :   SurfaceFunctional &amp;operator=(const SurfaceFunctional &amp;) = delete;</span>
+<span id="L190"><span class="lineNum">     190</span>              : </span>
+<span id="L191"><span class="lineNum">     191</span>              :   // Whether the functional was successfully assembled. When false, evaluation is not</span>
+<span id="L192"><span class="lineNum">     192</span>              :   // possible. Supported model-level paths should error rather than silently falling back;</span>
+<span id="L193"><span class="lineNum">     193</span>              :   // explicit legacy/oracle paths remain available for unsupported configurations and</span>
+<span id="L194"><span class="lineNum">     194</span>              :   // validation.</span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">        1222 :   bool IsValid() const { return valid; }</span></span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span>              :   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a</span>
+<span id="L198"><span class="lineNum">     198</span>              :   // GridFunction on the field space). Collective on the mesh communicator. For</span>
+<span id="L199"><span class="lineNum">     199</span>              :   // field-less functionals, u is ignored and may be nullptr.</span>
+<span id="L200"><span class="lineNum">     200</span>              :   double Eval(const Vector *u = nullptr) const;</span>
+<span id="L201"><span class="lineNum">     201</span>              : </span>
+<span id="L202"><span class="lineNum">     202</span>              :   // Evaluate the functional for the given (possibly complex-valued) grid function. For</span>
+<span id="L203"><span class="lineNum">     203</span>              :   // complex fields, the real and imaginary part contributions add (the implemented</span>
+<span id="L204"><span class="lineNum">     204</span>              :   // integrands are quadratic in the field). Collective on the mesh communicator.</span>
+<span id="L205"><span class="lineNum">     205</span>              :   double Eval(const GridFunction &amp;u) const;</span>
+<span id="L206"><span class="lineNum">     206</span>              : </span>
+<span id="L207"><span class="lineNum">     207</span>              :   // Evaluate a surface flux functional for the given fields (either of which may be</span>
+<span id="L208"><span class="lineNum">     208</span>              :   // nullptr if not required by the flux type). For complex-valued fields, returns the</span>
+<span id="L209"><span class="lineNum">     209</span>              :   // real and imaginary parts of the flux (ELECTRIC, MAGNETIC), or the stationary real</span>
+<span id="L210"><span class="lineNum">     210</span>              :   // power (POWER). Collective on the mesh communicator.</span>
+<span id="L211"><span class="lineNum">     211</span>              :   std::complex&lt;double&gt; EvalFlux(const GridFunction *E, const GridFunction *B) const;</span>
+<span id="L212"><span class="lineNum">     212</span>              : </span>
+<span id="L213"><span class="lineNum">     213</span>              :   // Evaluate the complex power P = ∫ E ⋅ (n x H) dS following the conventions of</span>
+<span id="L214"><span class="lineNum">     214</span>              :   // LumpedPortData::GetPower (two-sided POWER flux functionals only). Collective on the</span>
+<span id="L215"><span class="lineNum">     215</span>              :   // mesh communicator.</span>
+<span id="L216"><span class="lineNum">     216</span>              :   std::complex&lt;double&gt; EvalComplexPower(const GridFunction &amp;E, const GridFunction &amp;B) const;</span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              :   // Same complex-power convention as EvalComplexPower, but return one result per</span>
+<span id="L219"><span class="lineNum">     219</span>              :   // boundary-attribute bin. attr_to_bin is indexed by boundary attribute - 1 and uses -1</span>
+<span id="L220"><span class="lineNum">     220</span>              :   // for attributes not assigned to any output bin. This enables safe batching of many</span>
+<span id="L221"><span class="lineNum">     221</span>              :   // disjoint port surfaces while retaining per-port scalar outputs. Collective on the</span>
+<span id="L222"><span class="lineNum">     222</span>              :   // mesh communicator.</span>
+<span id="L223"><span class="lineNum">     223</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt;</span>
+<span id="L224"><span class="lineNum">     224</span>              :   EvalComplexPowerByAttribute(const GridFunction &amp;E, const GridFunction &amp;B,</span>
+<span id="L225"><span class="lineNum">     225</span>              :                               const mfem::Array&lt;int&gt; &amp;attr_to_bin, int num_bins) const;</span>
+<span id="L226"><span class="lineNum">     226</span>              : </span>
+<span id="L227"><span class="lineNum">     227</span>              :   // Evaluate the far-field rE integrals for all observation directions at the given</span>
+<span id="L228"><span class="lineNum">     228</span>              :   // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when</span>
+<span id="L229"><span class="lineNum">     229</span>              :   // the frequency changes. Collective on the mesh communicator.</span>
+<span id="L230"><span class="lineNum">     230</span>              :   std::vector&lt;std::array&lt;std::complex&lt;double&gt;, 3&gt;&gt;</span>
+<span id="L231"><span class="lineNum">     231</span>              :   EvalFarField(const GridFunction &amp;E, const GridFunction &amp;B, std::complex&lt;double&gt; omega);</span>
+<span id="L232"><span class="lineNum">     232</span>              : </span>
+<span id="L233"><span class="lineNum">     233</span>              :   // Evaluate the linear mode-overlap functional, returning the complex integral when the</span>
+<span id="L234"><span class="lineNum">     234</span>              :   // supplied field has real and imaginary parts.</span>
+<span id="L235"><span class="lineNum">     235</span>              :   std::complex&lt;double&gt; EvalModeOverlap(const GridFunction &amp;E) const;</span>
+<span id="L236"><span class="lineNum">     236</span>              : };</span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span>              : }  // namespace palace</span>
+<span id="L239"><span class="lineNum">     239</span>              : </span>
+<span id="L240"><span class="lineNum">     240</span>              : #endif  // PALACE_FEM_OUTPUT_FUNCTIONALS_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

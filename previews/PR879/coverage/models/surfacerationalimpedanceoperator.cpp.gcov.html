@@ -1,0 +1,457 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/surfacerationalimpedanceoperator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - surfacerationalimpedanceoperator.cpp<span style="font-size: 80%;"> (source / <a href="surfacerationalimpedanceoperator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryMed">75.6&nbsp;%</td>
+            <td class="headerCovTableEntry">131</td>
+            <td class="headerCovTableEntry">99</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-08-11 17:38:26</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">66.7&nbsp;%</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntry">8</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;surfacerationalimpedanceoperator.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;cmath&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;complex&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;set&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;utils/geodata.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;utils/prettyprint.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : </span>
+<span id="L15"><span class="lineNum">      15</span>              : namespace palace</span>
+<span id="L16"><span class="lineNum">      16</span>              : {</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : namespace</span>
+<span id="L19"><span class="lineNum">      19</span>              : {</span>
+<span id="L20"><span class="lineNum">      20</span>              : </span>
+<span id="L21"><span class="lineNum">      21</span>              : // Horner evaluation of a polynomial with real coefficients stored highest-degree-first,</span>
+<span id="L22"><span class="lineNum">      22</span>              : // i.e. coeffs = {c_n, ..., c_1, c_0} represents c_n s^n + ... + c_1 s + c_0.</span>
+<span id="L23"><span class="lineNum">      23</span>              : std::complex&lt;double&gt; EvalPoly(const std::vector&lt;double&gt; &amp;coeffs, std::complex&lt;double&gt; s)</span>
+<span id="L24"><span class="lineNum">      24</span>              : {</span>
+<span id="L25"><span class="lineNum">      25</span>              :   std::complex&lt;double&gt; val = 0.0;</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC tlaBgGNC">         108 :   for (double c : coeffs)</span></span>
+<span id="L27"><span class="lineNum">      27</span>              :   {</span>
+<span id="L28"><span class="lineNum">      28</span>              :     val = val * s + c;</span>
+<span id="L29"><span class="lineNum">      29</span>              :   }</span>
+<span id="L30"><span class="lineNum">      30</span>              :   return val;</span>
+<span id="L31"><span class="lineNum">      31</span>              : }</span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span>              : // Effective polynomial degree (ignoring leading zero coefficients). Returns -1 if all zero.</span>
+<span id="L34"><span class="lineNum">      34</span>              : int EffectiveDegree(const std::vector&lt;double&gt; &amp;coeffs)</span>
+<span id="L35"><span class="lineNum">      35</span>              : {</span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">         144 :   const int n = static_cast&lt;int&gt;(coeffs.size());</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">         144 :   for (int i = 0; i &lt; n; i++)</span></span>
+<span id="L38"><span class="lineNum">      38</span>              :   {</span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">         144 :     if (coeffs[i] != 0.0)</span></span>
+<span id="L40"><span class="lineNum">      40</span>              :     {</span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">         144 :       return (n - 1) - i;</span></span>
+<span id="L42"><span class="lineNum">      42</span>              :     }</span>
+<span id="L43"><span class="lineNum">      43</span>              :   }</span>
+<span id="L44"><span class="lineNum">      44</span>              :   return -1;</span>
+<span id="L45"><span class="lineNum">      45</span>              : }</span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span>              : // Polynomial long division a = q·b + r with deg(r) &lt; deg(b), real coefficients stored</span>
+<span id="L48"><span class="lineNum">      48</span>              : // highest-degree-first. An empty vector is the zero polynomial.</span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">          24 : void PolyDivMod(std::vector&lt;double&gt; a, std::vector&lt;double&gt; b, std::vector&lt;double&gt; &amp;q,</span></span>
+<span id="L50"><span class="lineNum">      50</span>              :                 std::vector&lt;double&gt; &amp;r)</span>
+<span id="L51"><span class="lineNum">      51</span>              : {</span>
+<span id="L52"><span class="lineNum">      52</span>              :   // Strip leading zero coefficients of the divisor.</span>
+<span id="L53"><span class="lineNum">      53</span>              :   std::size_t lead = 0;</span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">          24 :   while (lead &lt; b.size() &amp;&amp; b[lead] == 0.0)</span></span>
+<span id="L55"><span class="lineNum">      55</span>              :   {</span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaUNC tlaBgUNC">           0 :     lead++;</span></span>
+<span id="L57"><span class="lineNum">      57</span>              :   }</span>
+<span id="L58"><span class="lineNum">      58</span>              :   b.erase(b.begin(), b.begin() + lead);</span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC tlaBgGNC">          24 :   MFEM_VERIFY(!b.empty(), &quot;Polynomial long division requires a nonzero divisor!&quot;);</span></span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">          24 :   const std::size_t db = b.size() - 1;</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">          24 :   if (a.size() &lt;= db)</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :   {</span>
+<span id="L63"><span class="lineNum">      63</span>              :     q.clear();</span>
+<span id="L64"><span class="lineNum">      64</span>              :     r = std::move(a);</span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">           3 :     return;</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :   }</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">          21 :   q.assign(a.size() - db, 0.0);</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">          75 :   for (std::size_t i = 0; i + db &lt; a.size(); i++)</span></span>
+<span id="L69"><span class="lineNum">      69</span>              :   {</span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">          54 :     const double c = a[i] / b[0];</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">          54 :     q[i] = c;</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">         159 :     for (std::size_t j = 0; j &lt;= db; j++)</span></span>
+<span id="L73"><span class="lineNum">      73</span>              :     {</span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">         105 :       a[i + j] -= c * b[j];</span></span>
+<span id="L75"><span class="lineNum">      75</span>              :     }</span>
+<span id="L76"><span class="lineNum">      76</span>              :   }</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">          21 :   r.assign(a.end() - db, a.end());</span></span>
+<span id="L78"><span class="lineNum">      78</span>              : }</span>
+<span id="L79"><span class="lineNum">      79</span>              : </span>
+<span id="L80"><span class="lineNum">      80</span>              : }  // namespace</span>
+<span id="L81"><span class="lineNum">      81</span>              : </span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">         243 : SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(</span></span>
+<span id="L83"><span class="lineNum">      83</span>              :     const std::vector&lt;config::RationalImpedanceData&gt; &amp;impedance,</span>
+<span id="L84"><span class="lineNum">      84</span>              :     const std::unordered_set&lt;int&gt; &amp;cracked_attributes, ProblemType problem_type,</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">         243 :     const Units &amp;units, const MaterialOperator &amp;mat_op, const mfem::ParMesh &amp;mesh)</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">         243 :   : mat_op(mat_op), freq_scale(units.GetScaleFactor&lt;Units::ValueType::FREQUENCY&gt;())</span></span>
+<span id="L87"><span class="lineNum">      87</span>              : {</span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">         243 :   SetUpBoundaryProperties(impedance, cracked_attributes, problem_type, mesh);</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">         240 :   PrintBoundaryInfo(units, mesh);</span></span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaGNC">         243 : }</span></span>
+<span id="L91"><span class="lineNum">      91</span>              : </span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">           5 : SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">           5 :     const IoData &amp;iodata, const MaterialOperator &amp;mat_op, const mfem::ParMesh &amp;mesh)</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaGNC">           5 :   : SurfaceRationalImpedanceOperator(iodata.boundaries.rational_impedance,</span></span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">           5 :                                      iodata.boundaries.cracked_attributes,</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">           5 :                                      iodata.problem.type, iodata.units, mat_op, mesh)</span></span>
+<span id="L97"><span class="lineNum">      97</span>              : {</span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">           5 : }</span></span>
+<span id="L99"><span class="lineNum">      99</span>              : </span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">         243 : void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :     const std::vector&lt;config::RationalImpedanceData&gt; &amp;impedance,</span>
+<span id="L102"><span class="lineNum">     102</span>              :     const std::unordered_set&lt;int&gt; &amp;cracked_attributes, ProblemType problem_type,</span>
+<span id="L103"><span class="lineNum">     103</span>              :     const mfem::ParMesh &amp;mesh)</span>
+<span id="L104"><span class="lineNum">     104</span>              : {</span>
+<span id="L105"><span class="lineNum">     105</span>              :   // Check that rational impedance boundary attributes have been specified correctly.</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">         243 :   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :   mfem::Array&lt;int&gt; bdr_attr_marker;</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">         243 :   if (!impedance.empty())</span></span>
+<span id="L109"><span class="lineNum">     109</span>              :   {</span>
+<span id="L110"><span class="lineNum">     110</span>              :     mfem::Array&lt;int&gt; impedance_marker(bdr_attr_max);</span>
+<span id="L111"><span class="lineNum">     111</span>              :     bdr_attr_marker.SetSize(bdr_attr_max);</span>
+<span id="L112"><span class="lineNum">     112</span>              :     bdr_attr_marker = 0;</span>
+<span id="L113"><span class="lineNum">     113</span>              :     impedance_marker = 0;</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">         189 :     for (auto attr : mesh.bdr_attributes)</span></span>
+<span id="L115"><span class="lineNum">     115</span>              :     {</span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">         162 :       bdr_attr_marker[attr - 1] = 1;</span></span>
+<span id="L117"><span class="lineNum">     117</span>              :     }</span>
+<span id="L118"><span class="lineNum">     118</span>              :     std::set&lt;int&gt; bdr_warn_list;</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">          54 :     for (const auto &amp;data : impedance)</span></span>
+<span id="L120"><span class="lineNum">     120</span>              :     {</span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">          81 :       for (auto attr : data.attributes)</span></span>
+<span id="L122"><span class="lineNum">     122</span>              :       {</span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">          54 :         if (attr &lt;= 0 || attr &gt; bdr_attr_max || !bdr_attr_marker[attr - 1])</span></span>
+<span id="L124"><span class="lineNum">     124</span>              :         {</span>
+<span id="L125"><span class="lineNum">     125</span>              :           bdr_warn_list.insert(attr);</span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaUNC tlaBgUNC">           0 :           continue;</span></span>
+<span id="L127"><span class="lineNum">     127</span>              :         }</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC tlaBgGNC">          54 :         MFEM_VERIFY(!impedance_marker[attr - 1],</span></span>
+<span id="L129"><span class="lineNum">     129</span>              :                     &quot;Multiple definitions of rational impedance boundary properties for &quot;</span>
+<span id="L130"><span class="lineNum">     130</span>              :                     &quot;boundary attribute &quot;</span>
+<span id="L131"><span class="lineNum">     131</span>              :                         &lt;&lt; attr &lt;&lt; &quot;!&quot;);</span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">          54 :         impedance_marker[attr - 1] = 1;</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :       }</span>
+<span id="L134"><span class="lineNum">     134</span>              :     }</span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">          27 :     if (!bdr_warn_list.empty())</span></span>
+<span id="L136"><span class="lineNum">     136</span>              :     {</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaUNC tlaBgUNC">           0 :       Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Unknown rational impedance boundary attributes!\nSolver will just &quot;</span></span>
+<span id="L139"><span class="lineNum">     139</span>              :                    &quot;ignore them!&quot;);</span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaUNC">           0 :       utils::PrettyPrint(bdr_warn_list, &quot;Boundary attribute list:&quot;);</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L142"><span class="lineNum">     142</span>              :     }</span>
+<span id="L143"><span class="lineNum">     143</span>              :   }</span>
+<span id="L144"><span class="lineNum">     144</span>              : </span>
+<span id="L145"><span class="lineNum">     145</span>              :   // A rational surface impedance contributes only to the frequency-dependent system matrix</span>
+<span id="L146"><span class="lineNum">     146</span>              :   // A2(ω) in 3D simulations; it has no time-domain (transient) or static realization here.</span>
+<span id="L147"><span class="lineNum">     147</span>              :   // In boundary mode (and the wave port 2D eigenproblem) the operating frequency is fixed,</span>
+<span id="L148"><span class="lineNum">     148</span>              :   // so Zs(iω) is simply evaluated there.</span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC tlaBgGNC">         252 :   MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :                   problem_type == ProblemType::EIGENMODE ||</span>
+<span id="L151"><span class="lineNum">     151</span>              :                   problem_type == ProblemType::BOUNDARYMODE,</span>
+<span id="L152"><span class="lineNum">     152</span>              :               &quot;Rational impedance boundaries are only available for frequency-domain &quot;</span>
+<span id="L153"><span class="lineNum">     153</span>              :               &quot;simulation types!&quot;);</span>
+<span id="L154"><span class="lineNum">     154</span>              : </span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">         240 :   boundaries.reserve(impedance.size());</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">         264 :   for (const auto &amp;data : impedance)</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :   {</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">          24 :     MFEM_VERIFY(!data.num.empty() &amp;&amp; !data.den.empty(),</span></span>
+<span id="L159"><span class="lineNum">     159</span>              :                 &quot;Rational impedance boundary requires nonempty \&quot;Numerator\&quot; and &quot;</span>
+<span id="L160"><span class="lineNum">     160</span>              :                 &quot;\&quot;Denominator\&quot; coefficient lists!&quot;);</span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">          24 :     auto &amp;bdr = boundaries.emplace_back();</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">          24 :     bdr.num = data.num;</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">          24 :     bdr.den = data.den;</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :     // Long division of the Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s): the</span>
+<span id="L165"><span class="lineNum">     165</span>              :     // polynomial part P is exactly representable in a polynomial eigenvalue pencil, while</span>
+<span id="L166"><span class="lineNum">     166</span>              :     // the strictly proper remainder R/N carries the poles of g (the zeros of Zs). Used by</span>
+<span id="L167"><span class="lineNum">     167</span>              :     // the nonlinear eigensolver seed to fit or freeze the pole part.</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">          24 :     std::vector&lt;double&gt; sD = bdr.den;</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">          24 :     sD.push_back(0.0);  // s·D(s)</span></span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">          72 :     PolyDivMod(std::move(sD), bdr.num, bdr.robin_quotient, bdr.robin_remainder);</span></span>
+<span id="L171"><span class="lineNum">     171</span>              :     // Passivity necessary condition at infinity: a positive-real (passive) impedance has</span>
+<span id="L172"><span class="lineNum">     172</span>              :     // numerator and denominator degrees differing by at most one.</span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">          24 :     const int dN = EffectiveDegree(bdr.num);</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">          24 :     const int dD = EffectiveDegree(bdr.den);</span></span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">          24 :     if (dN &gt;= 0 &amp;&amp; dD &gt;= 0 &amp;&amp; std::abs(dN - dD) &gt; 1)</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :     {</span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">           3 :       Mpi::Warning(&quot;Rational impedance boundary (attribute {:d}) has numerator/denominator &quot;</span></span>
+<span id="L178"><span class="lineNum">     178</span>              :                    &quot;degree difference |{:d} - {:d}| &gt; 1; Zs cannot be a passive &quot;</span>
+<span id="L179"><span class="lineNum">     179</span>              :                    &quot;(positive-real) impedance!\n&quot;,</span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">           6 :                    data.attributes.empty() ? -1 : data.attributes.front(), dN, dD);</span></span>
+<span id="L181"><span class="lineNum">     181</span>              :     }</span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">          24 :     bdr.attr_list.Reserve(static_cast&lt;int&gt;(data.attributes.size()));</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">          72 :     for (auto attr : data.attributes)</span></span>
+<span id="L184"><span class="lineNum">     184</span>              :     {</span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">          48 :       if (attr &lt;= 0 || attr &gt; bdr_attr_max || !bdr_attr_marker[attr - 1])</span></span>
+<span id="L186"><span class="lineNum">     186</span>              :       {</span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaUNC tlaBgUNC">           0 :         continue;  // Can just ignore if wrong</span></span>
+<span id="L188"><span class="lineNum">     188</span>              :       }</span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC tlaBgGNC">          48 :       bdr.attr_list.Append(attr);</span></span>
+<span id="L190"><span class="lineNum">     190</span>              :       // Per-attribute scaling to account for increased area when using mesh cracking.</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">          48 :       bdr.attr_scaling[attr] =</span></span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">          48 :           (cracked_attributes.find(attr) != cracked_attributes.end()) ? 2.0 : 1.0;</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :     }</span>
+<span id="L194"><span class="lineNum">     194</span>              :   }</span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">         240 : }</span></span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">         240 : void SurfaceRationalImpedanceOperator::PrintBoundaryInfo(const Units &amp;units,</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :                                                          const mfem::ParMesh &amp;mesh)</span>
+<span id="L199"><span class="lineNum">     199</span>              : {</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC">         240 :   if (boundaries.empty())</span></span>
+<span id="L201"><span class="lineNum">     201</span>              :   {</span>
+<span id="L202"><span class="lineNum">     202</span>              :     return;</span>
+<span id="L203"><span class="lineNum">     203</span>              :   }</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">          24 :   Mpi::Print(&quot;\nConfiguring Robin rational impedance BC at attributes:\n&quot;);</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">          48 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L206"><span class="lineNum">     206</span>              :   {</span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">          72 :     for (auto attr : bdr.attr_list)</span></span>
+<span id="L208"><span class="lineNum">     208</span>              :     {</span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">          48 :       Mpi::Print(&quot; {:d}: Zs(iω) = N(iω)/D(iω), N deg = {:d}, D deg = {:d}, n = ({:+.1f})\n&quot;,</span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">         144 :                  attr, EffectiveDegree(bdr.num), EffectiveDegree(bdr.den),</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">          96 :                  fmt::join(mesh::GetSurfaceNormal(mesh, attr), &quot;,&quot;));</span></span>
+<span id="L212"><span class="lineNum">     212</span>              :     }</span>
+<span id="L213"><span class="lineNum">     213</span>              :   }</span>
+<span id="L214"><span class="lineNum">     214</span>              : }</span>
+<span id="L215"><span class="lineNum">     215</span>              : </span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">         174 : mfem::Array&lt;int&gt; SurfaceRationalImpedanceOperator::GetAttrList() const</span></span>
+<span id="L217"><span class="lineNum">     217</span>              : {</span>
+<span id="L218"><span class="lineNum">     218</span>              :   mfem::Array&lt;int&gt; attr_list;</span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">         174 :   for (const auto &amp;bdr : boundaries)</span></span>
+<span id="L220"><span class="lineNum">     220</span>              :   {</span>
+<span id="L221"><span class="lineNum">     221</span>              :     attr_list.Append(bdr.attr_list);</span>
+<span id="L222"><span class="lineNum">     222</span>              :   }</span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">         174 :   return attr_list;</span></span>
+<span id="L224"><span class="lineNum">     224</span>              : }</span>
+<span id="L225"><span class="lineNum">     225</span>              : </span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaUNC tlaBgUNC">           0 : void SurfaceRationalImpedanceOperator::AddUnitBdrCoefficients(</span></span>
+<span id="L227"><span class="lineNum">     227</span>              :     int idx, MaterialPropertyCoefficient &amp;fb) const</span>
+<span id="L228"><span class="lineNum">     228</span>              : {</span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaUNC">           0 :   const auto &amp;bdr = boundaries[idx];</span></span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaUNC">           0 :   for (auto attr : bdr.attr_list)</span></span>
+<span id="L231"><span class="lineNum">     231</span>              :   {</span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaUNC">           0 :     fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr),</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC">           0 :                            1.0 / bdr.attr_scaling.at(attr));</span></span>
+<span id="L234"><span class="lineNum">     234</span>              :   }</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L236"><span class="lineNum">     236</span>              : </span>
+<span id="L237"><span class="lineNum">     237</span>              : std::complex&lt;double&gt;</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 : SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :                                                        std::complex&lt;double&gt; s) const</span>
+<span id="L240"><span class="lineNum">     240</span>              : {</span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :   const auto &amp;bdr = boundaries[idx];</span></span>
+<span id="L242"><span class="lineNum">     242</span>              :   const std::complex&lt;double&gt; N = EvalPoly(bdr.num, s);</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(std::abs(N) &gt; 0.0,</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :               &quot;Rational impedance boundary has a transmission zero (Zs = 0) at the &quot;</span>
+<span id="L245"><span class="lineNum">     245</span>              :               &quot;evaluation frequency; the admittance iω/Zs is singular!&quot;);</span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaUNC">           0 :   return s * EvalPoly(bdr.den, s) / N;</span></span>
+<span id="L247"><span class="lineNum">     247</span>              : }</span>
+<span id="L248"><span class="lineNum">     248</span>              : </span>
+<span id="L249"><span class="lineNum">     249</span>              : std::complex&lt;double&gt;</span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaUNC">           0 : SurfaceRationalImpedanceOperator::EvalRobinRemainder(int idx, std::complex&lt;double&gt; s) const</span></span>
+<span id="L251"><span class="lineNum">     251</span>              : {</span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaUNC">           0 :   const auto &amp;bdr = boundaries[idx];</span></span>
+<span id="L253"><span class="lineNum">     253</span>              :   const std::complex&lt;double&gt; N = EvalPoly(bdr.num, s);</span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(std::abs(N) &gt; 0.0,</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :               &quot;Rational impedance boundary has a transmission zero (Zs = 0) at the &quot;</span>
+<span id="L256"><span class="lineNum">     256</span>              :               &quot;evaluation frequency; the admittance iω/Zs is singular!&quot;);</span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaUNC">           0 :   return EvalPoly(bdr.robin_remainder, s) / N;</span></span>
+<span id="L258"><span class="lineNum">     258</span>              : }</span>
+<span id="L259"><span class="lineNum">     259</span>              : </span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaUNC">           0 : int SurfaceRationalImpedanceOperator::GetRobinQuotientDegree(int idx) const</span></span>
+<span id="L261"><span class="lineNum">     261</span>              : {</span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaUNC">           0 :   return EffectiveDegree(boundaries[idx].robin_quotient);</span></span>
+<span id="L263"><span class="lineNum">     263</span>              : }</span>
+<span id="L264"><span class="lineNum">     264</span>              : </span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC tlaBgGNC">         135 : void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(</span></span>
+<span id="L266"><span class="lineNum">     266</span>              :     std::complex&lt;double&gt; omega, MaterialPropertyCoefficient &amp;fbr,</span>
+<span id="L267"><span class="lineNum">     267</span>              :     MaterialPropertyCoefficient &amp;fbi)</span>
+<span id="L268"><span class="lineNum">     268</span>              : {</span>
+<span id="L269"><span class="lineNum">     269</span>              :   // Complex-ω overload: the rational Robin coefficient s·D(s)/N(s) with s = iω continues</span>
+<span id="L270"><span class="lineNum">     270</span>              :   // analytically to complex ω with no change to the evaluation (rational in s). The</span>
+<span id="L271"><span class="lineNum">     271</span>              :   // passivity check is a real-ω-axis criterion and is skipped off-axis; the DC-limit</span>
+<span id="L272"><span class="lineNum">     272</span>              :   // branch is likewise only reachable through the real-ω overload.</span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">         135 :   if (omega.imag() == 0.0)</span></span>
+<span id="L274"><span class="lineNum">     274</span>              :   {</span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">         124 :     AddExtraSystemBdrCoefficients(omega.real(), fbr, fbi);</span></span>
+<span id="L276"><span class="lineNum">     276</span>              :     return;</span>
+<span id="L277"><span class="lineNum">     277</span>              :   }</span>
+<span id="L278"><span class="lineNum">     278</span>              :   const std::complex&lt;double&gt; s = std::complex&lt;double&gt;(0.0, 1.0) * omega;  // s = iω</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">          11 :   for (auto &amp;bdr : boundaries)</span></span>
+<span id="L280"><span class="lineNum">     280</span>              :   {</span>
+<span id="L281"><span class="lineNum">     281</span>              :     const std::complex&lt;double&gt; N = EvalPoly(bdr.num, s);</span>
+<span id="L282"><span class="lineNum">     282</span>              :     const std::complex&lt;double&gt; D = EvalPoly(bdr.den, s);</span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaUNC tlaBgUNC">           0 :     MFEM_VERIFY(std::abs(N) &gt; 0.0,</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :                 &quot;Rational impedance boundary has a transmission zero (Zs = 0) at the &quot;</span>
+<span id="L285"><span class="lineNum">     285</span>              :                 &quot;evaluation frequency; the admittance iω/Zs is singular!&quot;);</span>
+<span id="L286"><span class="lineNum">     286</span>              :     // Surface admittance Ys = 1/Zs = D/N (see the real-ω overload for the rationale).</span>
+<span id="L287"><span class="lineNum">     287</span>              :     const std::complex&lt;double&gt; Y = D / N;</span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaUNC">           0 :     for (auto attr : bdr.attr_list)</span></span>
+<span id="L289"><span class="lineNum">     289</span>              :     {</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaUNC">           0 :       const double sc = bdr.attr_scaling.at(attr);</span></span>
+<span id="L291"><span class="lineNum">     291</span>              :       const std::complex&lt;double&gt; coef = s * Y / sc;  // iω·Ys per square</span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaUNC">           0 :       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());</span></span>
+<span id="L294"><span class="lineNum">     294</span>              :     }</span>
+<span id="L295"><span class="lineNum">     295</span>              :   }</span>
+<span id="L296"><span class="lineNum">     296</span>              : }</span>
+<span id="L297"><span class="lineNum">     297</span>              : </span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC tlaBgGNC">         197 : void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(</span></span>
+<span id="L299"><span class="lineNum">     299</span>              :     double omega, MaterialPropertyCoefficient &amp;fbr, MaterialPropertyCoefficient &amp;fbi)</span>
+<span id="L300"><span class="lineNum">     300</span>              : {</span>
+<span id="L301"><span class="lineNum">     301</span>              :   // Rational surface impedance boundaries Zs(s) = N(s)/D(s) with s = iω. The Robin BC adds</span>
+<span id="L302"><span class="lineNum">     302</span>              :   // the term iω / Zs(iω) per square to the frequency-dependent system matrix A2(ω), exactly</span>
+<span id="L303"><span class="lineNum">     303</span>              :   // as the parallel admittance Ys = 1/Rs + 1/(iωLs) + iωCs contributes iω·Ys to</span>
+<span id="L304"><span class="lineNum">     304</span>              :   // K + iωC - ω²M. Coefficients are stored nondimensionalized and highest-degree-first.</span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaGNC">         197 :   if (omega == 0.0)</span></span>
+<span id="L306"><span class="lineNum">     306</span>              :   {</span>
+<span id="L307"><span class="lineNum">     307</span>              :     // DC limit of the Robin coefficient iω/Zs = s·D(s)/N(s) as s → 0. This is 0 when</span>
+<span id="L308"><span class="lineNum">     308</span>              :     // N(0) != 0 (finite Zs at DC), but a rational Zs may have a transmission zero at</span>
+<span id="L309"><span class="lineNum">     309</span>              :     // s = 0 (N(0) = 0, i.e. Zs → 0), in which case s·D/N → D(0)/N'(0), finite and nonzero,</span>
+<span id="L310"><span class="lineNum">     310</span>              :     // and must still be assembled. A double (or higher) zero of N at s = 0 makes the limit</span>
+<span id="L311"><span class="lineNum">     311</span>              :     // diverge, which is non-physical at DC. Driven sweeps may sample MinFreq = 0.0, so this</span>
+<span id="L312"><span class="lineNum">     312</span>              :     // branch is reachable.</span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">          15 :     for (auto &amp;bdr : boundaries)</span></span>
+<span id="L314"><span class="lineNum">     314</span>              :     {</span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaGNC">           9 :       const double n0 = bdr.num.back();  // N(0), constant term (highest-degree-first)</span></span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaGNC">           9 :       std::complex&lt;double&gt; coef0(0.0, 0.0);</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">           9 :       if (n0 == 0.0)</span></span>
+<span id="L318"><span class="lineNum">     318</span>              :       {</span>
+<span id="L319"><span class="lineNum">     319</span>              :         const double n1 =</span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">           6 :             (bdr.num.size() &gt;= 2) ? bdr.num[bdr.num.size() - 2] : 0.0;  // N'(0)</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">          15 :         MFEM_VERIFY(n1 != 0.0,</span></span>
+<span id="L322"><span class="lineNum">     322</span>              :                     &quot;Rational impedance boundary has a transmission zero of order &gt;= 2 at &quot;</span>
+<span id="L323"><span class="lineNum">     323</span>              :                     &quot;s = 0; the DC admittance iω/Zs is singular!&quot;);</span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">           3 :         coef0 = bdr.den.back() / n1;  // lim_{s→0} s·D/N = D(0)/N'(0)</span></span>
+<span id="L325"><span class="lineNum">     325</span>              :       }</span>
+<span id="L326"><span class="lineNum">     326</span>              :       if (coef0 != 0.0)</span>
+<span id="L327"><span class="lineNum">     327</span>              :       {</span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">           9 :         for (auto attr : bdr.attr_list)</span></span>
+<span id="L329"><span class="lineNum">     329</span>              :         {</span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">           6 :           const double sc = bdr.attr_scaling.at(attr);</span></span>
+<span id="L331"><span class="lineNum">     331</span>              :           const std::complex&lt;double&gt; coef = coef0 / sc;</span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC">           6 :           fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());</span></span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">          12 :           fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());</span></span>
+<span id="L334"><span class="lineNum">     334</span>              :         }</span>
+<span id="L335"><span class="lineNum">     335</span>              :       }</span>
+<span id="L336"><span class="lineNum">     336</span>              :     }</span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaGNC">           6 :     return;</span></span>
+<span id="L338"><span class="lineNum">     338</span>              :   }</span>
+<span id="L339"><span class="lineNum">     339</span>              :   const std::complex&lt;double&gt; s(0.0, omega);  // s = iω (nondimensional)</span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">         203 :   for (auto &amp;bdr : boundaries)</span></span>
+<span id="L341"><span class="lineNum">     341</span>              :   {</span>
+<span id="L342"><span class="lineNum">     342</span>              :     const std::complex&lt;double&gt; N = EvalPoly(bdr.num, s);</span>
+<span id="L343"><span class="lineNum">     343</span>              :     const std::complex&lt;double&gt; D = EvalPoly(bdr.den, s);</span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">          27 :     MFEM_VERIFY(std::abs(N) &gt; 0.0,</span></span>
+<span id="L345"><span class="lineNum">     345</span>              :                 &quot;Rational impedance boundary has a transmission zero (Zs = 0) at the &quot;</span>
+<span id="L346"><span class="lineNum">     346</span>              :                 &quot;evaluation frequency; the admittance iω/Zs is singular!&quot;);</span>
+<span id="L347"><span class="lineNum">     347</span>              :     // Surface admittance Ys = 1/Zs = D/N (finite since N != 0). Working with the admittance</span>
+<span id="L348"><span class="lineNum">     348</span>              :     // directly avoids forming Zs = N/D, which is infinite at an impedance pole (D = 0) even</span>
+<span id="L349"><span class="lineNum">     349</span>              :     // though the Robin contribution iω/Zs = iω·Ys is well-defined (and zero) there.</span>
+<span id="L350"><span class="lineNum">     350</span>              :     const std::complex&lt;double&gt; Y = D / N;</span>
+<span id="L351"><span class="lineNum">     351</span>              : </span>
+<span id="L352"><span class="lineNum">     352</span>              :     // Passivity necessary condition on the imaginary axis: Re{Zs} &gt;= 0 &lt;=&gt; Re{Ys} &gt;= 0.</span>
+<span id="L353"><span class="lineNum">     353</span>              :     // Warn once per boundary (relative tolerance avoids false alarms on lossless reactive</span>
+<span id="L354"><span class="lineNum">     354</span>              :     // terminations).</span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaGNC">          15 :     if (!bdr.warned_passivity &amp;&amp; Y.real() &lt; -1.0e-9 * std::abs(Y))</span></span>
+<span id="L356"><span class="lineNum">     356</span>              :     {</span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaUNC tlaBgUNC">           0 :       const double f_ghz = omega * freq_scale / (2.0 * M_PI);</span></span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Rational impedance boundary (attribute {:d}) is not passive at &quot;</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :                    &quot;f = {:.4f} GHz: Re(Zs) = {:.3e} &lt; 0!\n&quot;,</span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaUNC">           0 :                    bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, (1.0 / Y).real());</span></span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaUNC">           0 :       bdr.warned_passivity = true;</span></span>
+<span id="L362"><span class="lineNum">     362</span>              :     }</span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC tlaBgGNC">          45 :     for (auto attr : bdr.attr_list)</span></span>
+<span id="L364"><span class="lineNum">     364</span>              :     {</span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">          30 :       const double sc = bdr.attr_scaling.at(attr);</span></span>
+<span id="L366"><span class="lineNum">     366</span>              :       const std::complex&lt;double&gt; coef = s * Y / sc;  // iω·Ys per square</span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">          30 :       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">          60 :       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());</span></span>
+<span id="L369"><span class="lineNum">     369</span>              :     }</span>
+<span id="L370"><span class="lineNum">     370</span>              :   }</span>
+<span id="L371"><span class="lineNum">     371</span>              : }</span>
+<span id="L372"><span class="lineNum">     372</span>              : </span>
+<span id="L373"><span class="lineNum">     373</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
