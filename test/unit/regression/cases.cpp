@@ -179,14 +179,20 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
-// Power-conservation check for a driven wave-port run on a lossless structure: for
-// each excitation j, require Sum_i |S_ij|^2 == 1 within rtol. Reference-free (asserts
-// the invariant directly), so it is insensitive to MPI partitioning. Guards the
-// wave-port n x H fix (GetModalCorrectionOperator): without it Sum|S|^2 > 1 for modes
-// with E_n != 0 (cylinder TM01, |S11| ~ 1.07). Column headers are "|S[i][j]| (dB)".
-palace::test::CustomCheck TestWavePortLossless(double rtol)
+// S-parameter check for a driven wave-port run on a lossless structure. Two guards:
+//   (1) Reference-free power conservation: for each excitation j, Sum_i |S_ij|^2 == 1
+//       within rtol. Insensitive to MPI partitioning; catches the wave-port n x H fix
+//       (GetModalCorrectionOperator) regressing (without it Sum|S|^2 > 1 for E_n != 0
+//       modes, e.g. cylinder TM01 |S11| ~ 1.07).
+//   (2) Reference diff of the S-parameter PHASE columns "arg(S[i][j]) (deg.)" within
+//       rtol/atol. For a lossless structure power conservation already pins the
+//       magnitudes, so the phase is the discriminating quantity (it encodes the port
+//       reactance/impedance): a wrong-phase result that still conserves power is caught
+//       here. The magnitude column is skipped — |S|=1 is ~0 dB, where a relative diff is
+//       meaningless.
+palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
 {
-  return [rtol](palace::Table &actual, palace::Table &)
+  return [rtol, atol](palace::Table &actual, palace::Table &reference)
   {
     const std::size_t n_rows = actual.n_rows();
     for (std::size_t r = 0; r < n_rows; ++r)
@@ -216,6 +222,24 @@ palace::test::CustomCheck TestWavePortLossless(double rtol)
         INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
                     << "]|^2 = " << sum_sq);
         CHECK_THAT(sum_sq, Catch::Matchers::WithinAbs(1.0, rtol));
+      }
+    }
+    // (2) Reference diff of the phase columns only.
+    const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
+    const std::size_t n_cmp = std::min(actual.n_rows(), reference.n_rows());
+    for (std::size_t c = 0; c < n_cols; ++c)
+    {
+      const palace::Column &ac = actual[c];
+      const palace::Column &rc = reference[c];
+      if (rc.header_text.rfind("arg(S", 0) != 0)
+      {
+        continue;
+      }
+      for (std::size_t r = 0; r < n_cmp; ++r)
+      {
+        INFO("row " << r + 1 << " column '" << rc.header_text << "'");
+        CHECK_THAT(ac.data[r], Catch::Matchers::WithinRel(rc.data[r], rtol) ||
+                                   Catch::Matchers::WithinAbs(rc.data[r], atol));
       }
     }
   };
