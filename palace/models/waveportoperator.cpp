@@ -421,7 +421,9 @@ public:
       }
     }
 
-    // Scale by 1/(ωμ) with μ evaluated in the neighboring element.
+    // Scale by 1/(ωμ) with μ evaluated in the neighboring element. Note U uses the scalar kₙ
+    // from the cross-section EVP; for a rotated μ tensor that couples axes this reconstruction
+    // is approximate.
     V.SetSize(U.Size());
     mat_op.GetInvPermeability(attr).Mult(U, V);
     V *= (1.0 / omega);
@@ -1567,11 +1569,17 @@ WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_f
     {
       continue;
     }
-    MFEM_VERIFY(
-        std::abs(data.modal_reaction) > 0.0 && std::abs(data.modal_reaction_scalar) > 0.0,
-        "Wave port " << idx
-                     << " has zero modal reaction; cannot build the modal-correction "
-                        "operator!");
+    // The reaction R = sᵀe is generically nonzero for a propagating mode, but can vanish for
+    // an evanescent/degenerate mode. Skip the correction for such a port (falling back to the
+    // scalar-admittance baseline) rather than dividing by zero.
+    if (!(std::abs(data.modal_reaction) > 0.0) ||
+        !(std::abs(data.modal_reaction_scalar) > 0.0))
+    {
+      Mpi::Warning(nd_fespace.GetComm(),
+                   "Wave port {:d} has zero modal reaction; skipping its modal correction!\n",
+                   idx);
+      continue;
+    }
     // W_port = W_full − W_scalar = (−iω/R_full) s_full s_fullᵀ − (−iω/R_scalar) s_scalar
     // s_scalarᵀ. Added to the sparse local mass i·k_n·M (whose modal action equals W_scalar
     // e_mode), the port sees the full modal n×H on its own mode: a matched port satisfies
