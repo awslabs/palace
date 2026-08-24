@@ -5,9 +5,9 @@
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <string_view>
 #include <unordered_set>
+#include <fmt/format.h>
 #include <nlohmann/json-schema.hpp>
 #include "communication.hpp"
 #include "embedded_schema.hpp"
@@ -295,7 +295,7 @@ const json *FindCaseInsensitiveMatch(const json &allowed, std::string_view input
 // Custom error handler that formats errors with documentation-style paths.
 class SchemaErrorHandler : public error_handler
 {
-  std::ostringstream errors;
+  fmt::memory_buffer errors;
   bool has_error = false;
   const json *schema;
   std::unordered_set<std::string> reported_enum_paths;
@@ -307,7 +307,8 @@ class SchemaErrorHandler : public error_handler
     {
       return "config";
     }
-    std::ostringstream result;
+    fmt::memory_buffer result;
+    auto out = fmt::appender{result};
     std::size_t pos = 0;
     while (pos < ptr.size())
     {
@@ -322,15 +323,15 @@ class SchemaErrorHandler : public error_handler
       bool is_index = !token.empty() && std::all_of(token.begin(), token.end(), ::isdigit);
       if (is_index)
       {
-        result << "[" << token << "]";
+        fmt::format_to(out, "[{}]", token);
       }
       else
       {
-        result << "[\"" << token << "\"]";
+        fmt::format_to(out, "[\"{}\"]", token);
       }
       pos = next;
     }
-    return result.str();
+    return fmt::to_string(result);
   }
 
 public:
@@ -362,48 +363,49 @@ public:
       }
     }
 
-    errors << "At " << FormatPath(path) << ": ";
+    auto out = fmt::appender{errors};
+    fmt::format_to(out, "At {}: ", FormatPath(path));
     if (has_enum_values)
     {
-      errors << "invalid value " << instance.dump();
+      fmt::format_to(out, "invalid value {}", instance.dump());
     }
     else
     {
-      errors << message;
+      fmt::format_to(out, "{}", message);
     }
     // Enhance type mismatch errors with actual type. Use find() so the enhancement also
     // fires for oneOf/anyOf-wrapped messages
     // like "[combination: oneOf / case#0] unexpected instance type".
     if (message.find("unexpected instance type") != std::string::npos)
     {
-      errors << " (got " << instance.type_name() << ")";
+      fmt::format_to(out, " (got {})", instance.type_name());
     }
     else if (has_enum_values)
     {
-      errors << "; valid values: ";
+      fmt::format_to(out, "; valid values: ");
       for (std::size_t i = 0; i < enum_values.size(); i++)
       {
         if (i > 0)
         {
-          errors << ", ";
+          fmt::format_to(out, ", ");
         }
-        errors << enum_values[i].dump();
+        fmt::format_to(out, "{}", enum_values[i].dump());
       }
       if (instance.is_string())
       {
         const auto &input = instance.get_ref<const std::string &>();
         if (const json *suggestion = FindCaseInsensitiveMatch(enum_values, input))
         {
-          errors << ". Did you mean " << suggestion->dump() << "?";
+          fmt::format_to(out, ". Did you mean {}?", suggestion->dump());
         }
       }
     }
-    errors << "\n";
+    fmt::format_to(out, "\n");
     has_error = true;
   }
 
   explicit operator bool() const { return has_error; }
-  std::string get_errors() const { return errors.str(); }
+  std::string get_errors() const { return fmt::to_string(errors); }
 };
 
 std::string GetSchemaVersion()
