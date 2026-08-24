@@ -236,13 +236,13 @@ const Operator &
 CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
 {
   // Key the cache on the sorted, deduplicated shorted-attribute set so that different call
-  // orderings of the same ports map to one entry. Every Open-port excitation shorts the
-  // identical set of Short ports, so they all hit the same cached operator.
+  // orderings of the same ports map to one entry. Steps sharing a key are solved
+  // back-to-back, so the newest entry is the only reuse candidate.
   std::set<int> unique_attr(extra_dbc_attr.begin(), extra_dbc_attr.end());
   std::vector<int> key(unique_attr.begin(), unique_attr.end());
-  if (auto it = screened_stiffness_cache.find(key); it != screened_stiffness_cache.end())
+  if (!screened_stiffness_cache.empty() && screened_stiffness_cache.back().key == key)
   {
-    return *it->second.K;
+    return *screened_stiffness_cache.back().K;
   }
 
   // Assemble the stiffness matrix with the base plus extra essential attributes. Size the
@@ -261,11 +261,15 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
 
-  // Insert the cache entry before binding essential DOFs: SetEssentialTrueDofs stores a
-  // shallow reference to the tdof list, so the list must live at its final address.
-  // std::map nodes are address-stable across later insertions, so the operator's references
-  // stay valid for the cache's lifetime.
-  auto &entry = screened_stiffness_cache[key];
+  // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
+  // shallow reference to the tdof list and that list must stay put. Drop the older entry
+  // once two are cached; the one left behind is untouched, so its operator stays valid.
+  if (screened_stiffness_cache.size() == 2)
+  {
+    screened_stiffness_cache.pop_front();
+  }
+  auto &entry = screened_stiffness_cache.emplace_back();
+  entry.key = std::move(key);
   entry.dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)

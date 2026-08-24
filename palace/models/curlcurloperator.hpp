@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_CURL_CURL_OPERATOR_HPP
 #define PALACE_MODELS_CURL_CURL_OPERATOR_HPP
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <vector>
@@ -50,19 +51,19 @@ private:
   mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
-  // Cache of screened stiffness operators keyed by their shorted-attribute set, so that
-  // excitation steps that short the same set of inactive ports (e.g. every Open-port
-  // excitation shorts the identical set of Short ports) reuse one assembled operator
-  // instead of reassembling it per step. Each entry owns the per-level essential true DOF
-  // lists as well: ParOperator::SetEssentialTrueDofs stores a shallow reference, so the
-  // lists must outlive the operator. std::map nodes are address-stable across later
-  // insertions, which keeps those references valid for the cache's lifetime.
+  // Rolling two-entry cache of screened stiffness operators, tagged by shorted-attribute
+  // set. Steps that short the same ports are solved back-to-back, so equal keys are
+  // adjacent and matching the newest entry reuses its operator. Two entries bound memory to
+  // O(1) hierarchies while keeping the previously bound operator alive. std::deque never
+  // relocates elements, so the shallow tdof references ParOperator::SetEssentialTrueDofs
+  // holds stay valid.
   struct ScreenedStiffnessCacheEntry
   {
+    std::vector<int> key;
     std::vector<mfem::Array<int>> dbc_tdof_lists;
     std::unique_ptr<Operator> K;
   };
-  std::map<std::vector<int>, ScreenedStiffnessCacheEntry> screened_stiffness_cache;
+  std::deque<ScreenedStiffnessCacheEntry> screened_stiffness_cache;
 
   // Objects defining the finite element spaces for the magnetic vector potential
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
