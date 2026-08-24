@@ -1527,15 +1527,15 @@ void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double o
   }
 }
 
-std::unique_ptr<ComplexOperator>
-WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
-                                             const mfem::Array<int> &nd_dbc_tdof_list)
+std::vector<WavePortOperator::ModalCorrectionTerm>
+WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_fespace,
+                                          const mfem::Array<int> &nd_dbc_tdof_list)
 {
   // Assemble the modal correction W = Σ_ports (W_full − W_scalar) over the active wave
   // ports. Needs the current per-port modes and reactions, so refresh them.
   Initialize(omega);
   const int n = nd_fespace.GetTrueVSize();
-  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(), n);
+  std::vector<ModalCorrectionTerm> terms;
 
   // Assemble s = ∫_Γ φ·(n×H_mode) on the parent ND true-dof space from an n×H coefficient
   // pair, the same n×H the excitation injects (GetModeExcitationCoefficient), so the
@@ -1580,16 +1580,30 @@ WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &n
     // preserved).
     auto cr = data.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
     auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
-    op->AddTerm(assemble_s(*cr, *ci),
-                std::complex<double>(0.0, -omega) / data.modal_reaction);
+    terms.push_back({assemble_s(*cr, *ci),
+                     std::complex<double>(0.0, -omega) / data.modal_reaction});
     auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
     auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
-    op->AddTerm(assemble_s(*cr_s, *ci_s),
-                std::complex<double>(0.0, omega) / data.modal_reaction_scalar);
+    terms.push_back({assemble_s(*cr_s, *ci_s),
+                     std::complex<double>(0.0, omega) / data.modal_reaction_scalar});
   }
-  if (op->Empty())
+  return terms;
+}
+
+std::unique_ptr<ComplexOperator>
+WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
+                                             const mfem::Array<int> &nd_dbc_tdof_list)
+{
+  auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
+  if (terms.empty())
   {
     return nullptr;
+  }
+  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
+                                                      nd_fespace.GetTrueVSize());
+  for (auto &term : terms)
+  {
+    op->AddTerm(std::move(term.s), term.g);
   }
   return op;
 }

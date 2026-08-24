@@ -327,6 +327,25 @@ TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
+// 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
+// TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
+// error-indicators.csv / domain-E.csv are kept for the file-set check but not diffed.
+// Omits [GPU] like cpw_wave_adaptive (awslabs/palace#375).
+TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_adaptive.json",
+                                  "driven_wave_tm_adaptive", opts);
+}
+
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
 // (phase, evanescent-NaN and negligible entries skipped). Tolerances from the
 // driven_wave block.

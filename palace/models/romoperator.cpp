@@ -1279,6 +1279,20 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       const double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
       Ar += std::complex<double>(kn, 0.0) * Mp_r;
     }
+
+    // Add the low-rank wave-port modal correction Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the
+    // Galerkin projection of the complex-symmetric W = Σ_k g_k s_k s_kᵀ that the uniform path
+    // applies via GetExtraSystemOperator (V is real, so Vᴴ = Vᵀ). Reassembled per ω since the
+    // modal fields and reactions change with frequency. Without it Aᵣ carries only i·kₙ·M
+    // while the reduced RHS carries the full modal n×H, breaking unitarity for reactive/TM
+    // modes; for TEM modes s_full = s_scalar and Wᵣ ≡ 0.
+    auto wp_terms = space_op.GetModalCorrectionTerms(omega);
+    Eigen::VectorXcd sV(V.size());
+    for (auto &term : wp_terms)
+    {
+      ProjectVecInternal(space_op.GetComm(), V, *term.s, sV, 0);
+      Ar.noalias() += term.g * sV * sV.transpose();
+    }
   }
 
   // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^T v_k) conj(V^T v_k)^T

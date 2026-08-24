@@ -78,8 +78,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     admittance `i·k_n·M`, while the excitation, normalization, and S-parameter projection used
     the full modal `n×H` (including the `∇ₜE_n` term), so a lossless shorted guide could report
     `|S11|` > 1. A complex-symmetric modal correction supplies the missing term, restoring
-    S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged.
-    [PR 886](https://github.com/awslabs/palace/pull/886).
+    S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged. The
+    correction is also projected into the reduced-order operator so the adaptive fast frequency
+    sweep is corrected as well. [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.

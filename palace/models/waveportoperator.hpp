@@ -305,6 +305,23 @@ public:
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
 
+  // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so the
+  // PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k (Vᵀs_k)(Vᵀs_k)ᵀ
+  // directly instead of applying the matrix-free operator. `s` lives on the parent ND
+  // true-dof space with essential dofs eliminated; `g = ±iω/R`.
+  struct ModalCorrectionTerm
+  {
+    std::unique_ptr<ComplexVector> s;
+    std::complex<double> g;
+  };
+
+  // Assemble the rank-1 terms of the modal correction W = Σ_ports (W_full − W_scalar) over
+  // the active wave ports (see GetModalCorrectionOperator for the physics). Triggers
+  // Initialize(ω). Returns an empty vector if no active wave port contributes.
+  std::vector<ModalCorrectionTerm>
+  GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_fespace,
+                          const mfem::Array<int> &nd_dbc_tdof_list);
+
   // Build the modal-correction wave-port operator W = Σ_ports (W_full − W_scalar) added to
   // the sparse local boundary mass i·k_n·M in the applied driven/HDM system operator. Per
   // active port W_full = (−iω/R) s_full s_fullᵀ uses the full modal n×H (incl. ∇ₜEₙ) and

@@ -834,6 +834,13 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   return op;
 }
 
+std::vector<WavePortOperator::ModalCorrectionTerm>
+SpaceOperator::GetModalCorrectionTerms(double omega)
+{
+  return wave_port_op.GetModalCorrectionTerms(omega, GetNDSpace(),
+                                              nd_dbc_tdof_lists.back());
+}
+
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
                                                                const ComplexOperator *K,
                                                                const ComplexOperator *M)
