@@ -260,6 +260,53 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   CHECK(rel_err < 1.0e-8);
 }
 
+// The complex-ω modal correction (eigenmode / synthesis path) is derived to reduce exactly
+// to the real-ω correction at ω=ω0. Verify both operators produce the same action there.
+TEST_CASE("WavePortOperator-ModalCorrectionComplexReducesToReal",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+  auto &nd_fespace = space_op.GetNDSpace();
+  const int n = nd_fespace.GetTrueVSize();
+  const double omega =
+      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+
+  // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing the
+  // frozen reference; use the same (empty) essential-dof list for both so any difference is
+  // purely the ω-dependence formula.
+  mfem::Array<int> dbc;
+  auto W_real = wp_op.GetModalCorrectionOperator(omega, nd_fespace, dbc);
+  auto W_cplx = wp_op.GetModalCorrectionOperator(std::complex<double>(omega, 0.0), nd_fespace,
+                                                 dbc);
+  REQUIRE(W_real);
+  REQUIRE(W_cplx);
+
+  // Apply both to a fixed nonzero vector and compare (each is Σ_k g_k (s_kᵀx) s_k).
+  ComplexVector x(n), yr(n), yc(n), diff(n);
+  for (auto *v : {&x, &yr, &yc, &diff})
+  {
+    v->UseDevice(true);
+  }
+  x = 1.0;
+  x.Real().Randomize(1);
+  x.Imag().Randomize(2);
+  yr = 0.0;
+  yc = 0.0;
+  W_real->Mult(x, yr);
+  W_cplx->Mult(x, yc);
+  diff = yc;
+  linalg::AXPY(std::complex<double>(-1.0, 0.0), yr, diff);
+  double rel_err = linalg::Norml2(comm, diff) / std::max(linalg::Norml2(comm, yr), 1e-300);
+  CAPTURE(omega, rel_err);
+  CHECK(rel_err < 1.0e-10);
+}
+
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the
 // synthesis coordinate definition when IncludeInSynthesis is true. Verify that exposing
 // this unit operator does not accidentally reactivate the physical Robin termination.

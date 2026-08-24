@@ -322,6 +322,14 @@ public:
   GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &nd_dbc_tdof_list);
 
+  // Complex-ω overload for the eigenmode / synthesis path. n×H is linear in kₙ, so the
+  // ω-dependence is carried by kₙ(ω)=SolveKnComplex(ω) while the mode-shape vectors stay
+  // frozen at the last Initialize(ω0); reduces exactly to the real-ω terms at ω=ω0. Does not
+  // call Initialize — the caller must Initialize(target) once beforehand.
+  std::vector<ModalCorrectionTerm>
+  GetModalCorrectionTerms(std::complex<double> omega, FiniteElementSpace &nd_fespace,
+                          const mfem::Array<int> &nd_dbc_tdof_list);
+
   // Build the modal-correction wave-port operator W = Σ_ports (W_full − W_scalar) added to
   // the sparse local boundary mass i·k_n·M in the applied driven/HDM system operator. Per
   // active port W_full = (−iω/R) s_full s_fullᵀ uses the full modal n×H (incl. ∇ₜEₙ) and
@@ -334,6 +342,12 @@ public:
   // wave port contributes.
   std::unique_ptr<ComplexOperator>
   GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
+                             const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Complex-ω overload (see the complex GetModalCorrectionTerms). Caller must
+  // Initialize(target) once beforehand.
+  std::unique_ptr<ComplexOperator>
+  GetModalCorrectionOperator(std::complex<double> omega, FiniteElementSpace &nd_fespace,
                              const mfem::Array<int> &nd_dbc_tdof_list);
 };
 
