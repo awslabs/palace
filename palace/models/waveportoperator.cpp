@@ -421,9 +421,9 @@ public:
       }
     }
 
-    // Scale by 1/(ωμ) with μ evaluated in the neighboring element. Note U uses the scalar kₙ
-    // from the cross-section EVP; for a rotated μ tensor that couples axes this reconstruction
-    // is approximate.
+    // Scale by 1/(ωμ) with μ evaluated in the neighboring element. Note U uses the scalar
+    // kₙ from the cross-section EVP; for a rotated μ tensor that couples axes this
+    // reconstruction is approximate.
     V.SetSize(U.Size());
     mat_op.GetInvPermeability(attr).Mult(U, V);
     V *= (1.0 / omega);
@@ -1536,9 +1536,10 @@ namespace
 // pair, the same n×H the excitation injects (GetModeExcitationCoefficient), so the enforced
 // BC, excitation, normalization, and S-projection share one modal calibration. Essential
 // (PEC) dofs are eliminated to match the system operator.
-std::unique_ptr<ComplexVector>
-AssembleNxHVector(FiniteElementSpace &nd_fespace, const mfem::Array<int> &nd_dbc_tdof_list,
-                  mfem::VectorCoefficient &cr, mfem::VectorCoefficient &ci)
+std::unique_ptr<ComplexVector> AssembleNxHVector(FiniteElementSpace &nd_fespace,
+                                                 const mfem::Array<int> &nd_dbc_tdof_list,
+                                                 mfem::VectorCoefficient &cr,
+                                                 mfem::VectorCoefficient &ci)
 {
   auto s = std::make_unique<ComplexVector>(nd_fespace.GetTrueVSize());
   s->UseDevice(true);
@@ -1575,15 +1576,15 @@ WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_f
     {
       continue;
     }
-    // The reaction R = sᵀe is generically nonzero for a propagating mode, but can vanish for
-    // an evanescent/degenerate mode. Skip the correction for such a port (falling back to the
-    // scalar-admittance baseline) rather than dividing by zero.
+    // The reaction R = sᵀe is generically nonzero for a propagating mode, but can vanish
+    // for an evanescent/degenerate mode. Skip the correction for such a port (falling back
+    // to the scalar-admittance baseline) rather than dividing by zero.
     if (!(std::abs(data.modal_reaction) > 0.0) ||
         !(std::abs(data.modal_reaction_scalar) > 0.0))
     {
-      Mpi::Warning(nd_fespace.GetComm(),
-                   "Wave port {:d} has zero modal reaction; skipping its modal correction!\n",
-                   idx);
+      Mpi::Warning(
+          nd_fespace.GetComm(),
+          "Wave port {:d} has zero modal reaction; skipping its modal correction!\n", idx);
       continue;
     }
     // W_port = W_full − W_scalar = (−iω/R_full) s_full s_fullᵀ − (−iω/R_scalar) s_scalar
@@ -1609,15 +1610,17 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
                                           FiniteElementSpace &nd_fespace,
                                           const mfem::Array<int> &nd_dbc_tdof_list)
 {
-  // Complex-ω modal correction for the eigenmode / synthesis path. Does not call Initialize:
-  // n×H = (1/ωμ)(−kₙ·Eₜ + i∇ₜEₙ) is linear in kₙ, so the ω-dependence is carried entirely by
-  // kₙ(ω) while the mode-shape vectors stay frozen at the last Initialize(ω0). Writing the
-  // two rank-1 terms of W_full − W_scalar in the frozen reference vectors P=∫φ·μ⁻¹(−Eₜ),
-  // Q=∫φ·μ⁻¹(i∇ₜEₙ) (assembled here as s_scalar, s_full − s_scalar) gives, per port,
+  // Complex-ω modal correction for the eigenmode / synthesis path. Does not call
+  // Initialize: n×H = (1/ωμ)(−kₙ·Eₜ + i∇ₜEₙ) is linear in kₙ, so the ω-dependence is
+  // carried entirely by kₙ(ω) while the mode-shape vectors stay frozen at the last
+  // Initialize(ω0). Writing the two rank-1 terms of W_full − W_scalar in the frozen
+  // reference vectors P=∫φ·μ⁻¹(−Eₜ), Q=∫φ·μ⁻¹(i∇ₜEₙ) (assembled here as s_scalar, s_full −
+  // s_scalar) gives, per port,
   //   s1(ω) = ω0·[s_full + (kₙ/kₙ0 − 1)·s_scalar],  g1 = −i/(kₙ·R_P + R_Q)
   //   s2(ω) = (ω0/kₙ0)·s_scalar,                     g2 = +i·kₙ/R_P
   // with R_P = ω0·R_scalar/kₙ0, R_Q = ω0·(R_full − R_scalar) and complex kₙ0. At ω=ω0
-  // (kₙ=kₙ0) these reduce exactly to the real-ω terms above. Caller must Initialize(target).
+  // (kₙ=kₙ0) these reduce exactly to the real-ω terms above. Caller must
+  // Initialize(target).
   std::vector<ModalCorrectionTerm> terms;
   for (auto &[idx, data] : ports)  // non-const: SolveKnComplex re-solves the EVP
   {
@@ -1629,9 +1632,9 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
     if (!(std::abs(data.modal_reaction) > 0.0) ||
         !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(kn0) > 0.0))
     {
-      Mpi::Warning(nd_fespace.GetComm(),
-                   "Wave port {:d} has zero modal reaction; skipping its modal correction!\n",
-                   idx);
+      Mpi::Warning(
+          nd_fespace.GetComm(),
+          "Wave port {:d} has zero modal reaction; skipping its modal correction!\n", idx);
       continue;
     }
     auto cr = data.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
@@ -1650,7 +1653,8 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
     // s1 = ω0·[s_full + (kₙ/kₙ0 − 1)·s_scalar], built in place in s_full.
     s_full->Add(kn / kn0 - 1.0, *s_scalar);
     *s_full *= std::complex<double>(omega0, 0.0);
-    terms.push_back({std::move(s_full), std::complex<double>(0.0, -1.0) / (kn * R_P + R_Q)});
+    terms.push_back(
+        {std::move(s_full), std::complex<double>(0.0, -1.0) / (kn * R_P + R_Q)});
 
     // s2 = (ω0/kₙ0)·s_scalar, built in place in s_scalar.
     *s_scalar *= omega0 / kn0;

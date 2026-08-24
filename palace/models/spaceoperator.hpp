@@ -188,6 +188,13 @@ public:
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
 
+  // Complex-ω overload for the eigenmode nonlinear solve: the sparse local wave-port mass
+  // i·k_n(ω)·M evaluated at the complex ω plus the matrix-free modal correction W frozen at
+  // the last WavePortOperator::Initialize (the caller must Initialize the wave ports at the
+  // real target once beforehand). No Floquet DtN term.
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemOperator(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+
   // Get the rank-1 terms of the wave-port modal correction W = Σ_k g_k s_k s_kᵀ at ω, for
   // callers that project onto a reduced basis (the PROM / adaptive sweep) rather than
   // applying the matrix-free operator built by GetExtraSystemOperator. Forwards to

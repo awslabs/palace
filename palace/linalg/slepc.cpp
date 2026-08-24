@@ -2138,9 +2138,9 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
     ctx->opA2_pc = (*ctx->funcA2)(ctx->lambda);
-    ctx->opA_pc = palace::BuildParSumOperator(
-        {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
-        {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true);
+    ctx->opA_pc =
+        palace::BuildOperatorWithA2({1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda},
+                                    {ctx->opK, ctx->opC, ctx->opM}, ctx->opA2_pc.get());
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
                                 ctx->lambda * ctx->lambda,
                                 ctx->lambda / std::complex<double>(0.0, 1.0));
@@ -2170,9 +2170,9 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(λ).
   ctxF->opA2 = (*ctxF->funcA2)(lambda);
-  ctxF->opA = palace::BuildParSumOperator(
-      {1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
-      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()}, true);
+  ctxF->opA =
+      palace::BuildOperatorWithA2({1.0 + 0.0i, lambda, lambda * lambda},
+                                  {ctxF->opK, ctxF->opC, ctxF->opM}, ctxF->opA2.get());
   ctxF->lambda = lambda;
   ctxF->new_lambda = true;  // flag to update the preconditioner in SLP
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2185,15 +2185,20 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(λ).
   // J(λ) = C + 2 λ M + A2'(λ).
+  // The A2 finite difference is a matrix-free sum (each A2 may itself be a matrix-free
+  // SumComplexOperator carrying the wave-port correction).
   ctxF->opA2 = (*ctxF->funcA2)(lambda);
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   ctxF->opA2p = (*ctxF->funcA2)(lambda * (1.0 + eps));
   std::complex<double> denom = eps * lambda;
-  ctxF->opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
-                                           {ctxF->opA2p.get(), ctxF->opA2.get()}, true);
-  ctxF->opJ = palace::BuildParSumOperator(
-      {0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda, 1.0 + 0.0i},
-      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()}, true);
+  auto opAJ = std::make_unique<palace::SumComplexOperator>(ctxF->opA2p->Height(),
+                                                           ctxF->opA2p->Width());
+  opAJ->AddOperator(*ctxF->opA2p, 1.0 / denom);
+  opAJ->AddOperator(*ctxF->opA2, -1.0 / denom);
+  ctxF->opAJ = std::move(opAJ);
+  ctxF->opJ =
+      palace::BuildOperatorWithA2({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda},
+                                  {ctxF->opK, ctxF->opC, ctxF->opM}, ctxF->opAJ.get());
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 

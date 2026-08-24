@@ -834,6 +834,27 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   return op;
 }
 
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemOperator(std::complex<double> omega,
+                                      Operator::DiagonalPolicy diag_policy)
+{
+  // Complex-ω counterpart: sparse local wave-port mass i·k_n(ω)·M plus the matrix-free
+  // modal correction W frozen at the last Initialize, summed via an owning
+  // SumComplexOperator.
+  auto A2 = GetExtraSystemMatrix(omega, diag_policy);
+  auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
+                                                   nd_dbc_tdof_lists.back());
+  if (!W)
+  {
+    return A2;
+  }
+  if (!A2)
+  {
+    return W;
+  }
+  return std::make_unique<SumComplexOperator>(std::move(A2), std::move(W));
+}
+
 std::vector<WavePortOperator::ModalCorrectionTerm>
 SpaceOperator::GetModalCorrectionTerms(double omega)
 {

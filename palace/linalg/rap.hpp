@@ -253,6 +253,15 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
                     const std::vector<const ComplexOperator *> &ops,
                     bool set_essential = true);
 
+// Build (Σ coeff[i]·ops[i]) + A2, where A2 may be matrix-free (e.g. the wave-port modal
+// correction) and would otherwise be dropped by BuildParSumOperator's dynamic_cast. A
+// sparse ComplexParOperator A2 folds into the sum directly; an abstract ComplexOperator is
+// appended via a non-owning SumComplexOperator. Mirrors SpaceOperator::GetSystemMatrix.
+std::unique_ptr<ComplexOperator>
+BuildOperatorWithA2(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexOperator *> &ops,
+                    const ComplexOperator *A2);
+
 // Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
 // and types.
 template <std::size_t N, typename ScalarType, typename OperType>

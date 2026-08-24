@@ -277,13 +277,13 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexReducesToReal",
   const double omega =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
-  // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing the
-  // frozen reference; use the same (empty) essential-dof list for both so any difference is
-  // purely the ω-dependence formula.
+  // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing
+  // the frozen reference; use the same (empty) essential-dof list for both so any
+  // difference is purely the ω-dependence formula.
   mfem::Array<int> dbc;
   auto W_real = wp_op.GetModalCorrectionOperator(omega, nd_fespace, dbc);
-  auto W_cplx = wp_op.GetModalCorrectionOperator(std::complex<double>(omega, 0.0), nd_fespace,
-                                                 dbc);
+  auto W_cplx =
+      wp_op.GetModalCorrectionOperator(std::complex<double>(omega, 0.0), nd_fespace, dbc);
   REQUIRE(W_real);
   REQUIRE(W_cplx);
 

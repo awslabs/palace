@@ -255,6 +255,11 @@ public:
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
 
+  // Freeze the per-port modal reference state (mode field, k_n0, reactions) at a real
+  // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
+  // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
+  void InitializeModalReference(double omega) { Initialize(omega); }
+
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;
 
@@ -305,10 +310,10 @@ public:
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
 
-  // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so the
-  // PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k (Vᵀs_k)(Vᵀs_k)ᵀ
-  // directly instead of applying the matrix-free operator. `s` lives on the parent ND
-  // true-dof space with essential dofs eliminated; `g = ±iω/R`.
+  // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
+  // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k
+  // (Vᵀs_k)(Vᵀs_k)ᵀ directly instead of applying the matrix-free operator. `s` lives on the
+  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`.
   struct ModalCorrectionTerm
   {
     std::unique_ptr<ComplexVector> s;
@@ -324,8 +329,8 @@ public:
 
   // Complex-ω overload for the eigenmode / synthesis path. n×H is linear in kₙ, so the
   // ω-dependence is carried by kₙ(ω)=SolveKnComplex(ω) while the mode-shape vectors stay
-  // frozen at the last Initialize(ω0); reduces exactly to the real-ω terms at ω=ω0. Does not
-  // call Initialize — the caller must Initialize(target) once beforehand.
+  // frozen at the last Initialize(ω0); reduces exactly to the real-ω terms at ω=ω0. Does
+  // not call Initialize — the caller must Initialize(target) once beforehand.
   std::vector<ModalCorrectionTerm>
   GetModalCorrectionTerms(std::complex<double> omega, FiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &nd_dbc_tdof_list);
