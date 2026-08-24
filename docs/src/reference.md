@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
   - Boundary mode: guided modes on a waveguide cross section.
 
 Here, we will summarize the mathematics of each, provide a description of boundary conditions, and
-specify convention choices. This should be read in conjunction with the "User Guide" and
-"Configuration File" documentation.
+specify convention choices. This should be read in conjunction with the [User
+Guide](guide/guide.md) and [Configuration File](config/config.md) documentation.
 
 ## Mathematical background
 
@@ -302,8 +302,9 @@ The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 ```
 
 where ``\bm{E}^{inc}(\bm{x})`` is identical to the spatial excitation in the frequency domain
-formulation, and ``p(t)`` describes the temporal shape of the excitation. Possible options include a
-sinusoidal, Gaussian, modulated Gaussian, or step excitation.
+formulation, and ``p(t)`` describes the temporal shape of the excitation. Possible options for
+[`config["Solver"]["Transient"]["Excitation"]`](config/reference.md#config-solver-transient-excitation)
+include a sinusoidal, Gaussian, modulated Gaussian, or step excitation.
 
 For AC simulations, a surface-current source and a resistive lumped port with the same geometry
 produce right-hand-side source terms with the same spatial form, up to an overall normalization. A
