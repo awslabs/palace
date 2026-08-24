@@ -243,6 +243,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
                     "mfem_pr4983.diff",
                     sha256="530532da3ae8815d004bb6ce19f6f08a1248c3d585503551c90d0eeae7fb3f87",
+                    when="@:4.9",
                 ),
                 # https://github.com/mfem/mfem/pull/5124
                 patch(
