@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-1",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3156,6 +3156,16 @@
               ],
               "description": "Behavior when a detected edge cluster has no compatible coupon model. `Warn` disables correction for the affected interface group; `Error` terminates the simulation.",
               "default": "Warn"
+            },
+            "CorrectionMode": {
+              "type": "string",
+              "enum": [
+                "PostprocessOnly",
+                "SelfConsistent",
+                "Both"
+              ],
+              "description": "Select fixed-trace/fixed-flux postprocessing only, a self-consistent corrected solve only, or both. `Both` preserves the historical behavior and means all correction families available for the problem type. Boundary mode supports `PostprocessOnly` and `Both`, but rejects `SelfConsistent` because it has no corrected boundary-mode eigenproblem.",
+              "default": "Both"
             },
             "SolveTol": {
               "type": "number",

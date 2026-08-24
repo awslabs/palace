@@ -95,8 +95,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  const bool self_consistent_response =
+      response_correction &&
+      iodata.solver.surface_response_correction->IncludesSelfConsistent();
   std::unique_ptr<ComplexWrapperOperator> response_mass;
-  if (response_correction)
+  if (self_consistent_response)
   {
     response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
   }
@@ -106,7 +109,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // The operators are constructed for each frequency step and used to initialize the ksp.
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
   std::unique_ptr<ComplexKspSolver> corrected_ksp;
-  if (response_correction)
+  if (self_consistent_response)
   {
     corrected_ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                        &space_op.GetH1Spaces());
@@ -124,7 +127,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   D.UseDevice(true);
   E = 0.0;
   B = 0.0;
-  if (response_correction)
+  if (self_consistent_response)
   {
     E_corrected.SetSize(Curl.Width());
     E_corrected.UseDevice(true);
@@ -223,7 +226,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
                                         K.get(), C.get(), M.get(), A2.get());
       std::unique_ptr<SumComplexOperator> corrected_A;
-      if (response_correction)
+      if (self_consistent_response)
       {
         corrected_A = std::make_unique<SumComplexOperator>(*A);
         corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
@@ -310,12 +313,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     SaveMetadata(ksp);
   }
   post_op.MeasureFinalize(indicator);
-  if (response_correction)
+  if (self_consistent_response)
   {
     MFEM_ASSERT(corrected_ksp, "Missing corrected driven linear solver!");
     SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Driven",
                                       corrected_ksp->NumTotalMult(),
                                       corrected_ksp->NumTotalMultIterations());
+  }
+  if (response_correction)
+  {
     SaveMetadata(*response_correction);
   }
   return indicator;
@@ -331,6 +337,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
                                             &surface_post_geometry);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  const bool self_consistent_response =
+      response_correction &&
+      iodata.solver.surface_response_correction->IncludesSelfConsistent();
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -353,7 +362,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   E = 0.0;
   Eh = 0.0;
   B = 0.0;
-  if (response_correction)
+  if (self_consistent_response)
   {
     E_corrected.SetSize(Curl.Width());
     Eh_corrected.SetSize(Curl.Width());
@@ -434,7 +443,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
              omega_sample.back() * unit_GHz);
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   std::unique_ptr<RomOperator> corrected_prom_op;
-  if (response_correction)
+  if (self_consistent_response)
   {
     corrected_prom_op = std::make_unique<RomOperator>(
         iodata, space_op, max_size_per_excitation,
@@ -672,13 +681,16 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     SaveMetadata(prom_op.GetLinearSolver());
   }
   post_op.MeasureFinalize(indicator);
-  if (response_correction)
+  if (self_consistent_response)
   {
     MFEM_ASSERT(corrected_prom_op, "Missing corrected adaptive driven solver!");
     const auto &corrected_solver = corrected_prom_op->GetLinearSolver();
     SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "AdaptiveDrivenHDM",
                                       corrected_solver.NumTotalMult(),
                                       corrected_solver.NumTotalMultIterations());
+  }
+  if (response_correction)
+  {
     SaveMetadata(*response_correction);
   }
   return indicator;

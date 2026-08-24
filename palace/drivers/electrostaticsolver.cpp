@@ -32,15 +32,25 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   LaplaceOperator laplace_op(iodata, mesh);
   auto K = laplace_op.GetStiffnessMatrix();
+  const auto *response_config = iodata.solver.electrostatic.response_correction
+                                    ? &*iodata.solver.electrostatic.response_correction
+                                    : nullptr;
+  const bool postprocess_response =
+      response_config && response_config->IncludesPostprocessing();
+  const bool self_consistent_response =
+      response_config && response_config->IncludesSelfConsistent();
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
-  if (iodata.solver.electrostatic.response_correction)
+  if (response_config)
   {
     response_correction =
         std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
-    corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
-    system_K = corrected_K.get();
+    if (self_consistent_response)
+    {
+      corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
+      system_K = corrected_K.get();
+    }
   }
   const auto &Grad = laplace_op.GetGradMatrix();
   SaveMetadata(laplace_op.GetH1Spaces());
@@ -63,7 +73,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Vector RHS(Grad.Width()), E(Grad.Height()), D(laplace_op.GetRTSpace().GetTrueVSize());
   D.UseDevice(true);
   std::vector<Vector> V(n_step);
-  std::vector<Vector> V_corrected(response_correction ? n_step : 0);
+  std::vector<Vector> V_corrected(self_consistent_response ? n_step : 0);
   std::vector<Vector> D_basis(post_op.NeedsRecoveredElectricFlux() &&
                                       iodata.solver.electrostatic.response_matrix
                                   ? n_step
@@ -80,10 +90,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     double maximum_trace_closure_spread;
     double response_weighted_trace_closure_spread;
     double trace_closure_response_failure_fraction;
+    bool has_postprocessed;
+    bool has_self_consistent;
     bool confident;
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
+  long long int raw_linear_solves = 0;
+  long long int raw_linear_iterations = 0;
   long long int corrected_linear_solves = 0;
   long long int corrected_linear_iterations = 0;
 
@@ -118,7 +132,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       V[step] = 0.0;
     }
     Vector corrected_rhs;
-    if (response_correction)
+    if (self_consistent_response)
     {
       V_corrected[step] = V[step];
       corrected_rhs = RHS;
@@ -126,7 +140,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     if (!zero_response)
     {
+      const auto solves_before = ksp.NumTotalMult();
+      const auto iterations_before = ksp.NumTotalMultIterations();
       ksp.Mult(RHS, V[step]);
+      raw_linear_solves += ksp.NumTotalMult() - solves_before;
+      raw_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
     }
 
     // Start Post-processing.
@@ -162,6 +180,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
       SurfaceResponseOperator::ElectrostaticResponse response;
+      if (postprocess_response)
       {
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         response = response_correction->GetElectrostaticResponse(V[step]);
@@ -188,12 +207,28 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                     "Response-corrected electrostatic energy is not positive!");
         return energies;
       };
-      auto postprocessed_fixed_trace = ApplyResponse(
-          raw_energies, response.domain_correction, response.fabricated_surface_energy);
+      auto Unavailable = [](EnergyData energies)
+      {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        energies.domain = nan;
+        for (auto &[interface, data] : energies.interfaces)
+        {
+          (void)interface;
+          data.energy = nan;
+          data.edge_energies.clear();
+        }
+        return energies;
+      };
+      auto postprocessed_fixed_trace =
+          postprocess_response ? ApplyResponse(raw_energies, response.domain_correction,
+                                               response.fabricated_surface_energy)
+                               : Unavailable(raw_energies);
       auto postprocessed_fixed_flux =
-          ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
-                        response.fabricated_surface_energy_fixed_flux);
-      if (!response.confident)
+          postprocess_response
+              ? ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
+                              response.fabricated_surface_energy_fixed_flux)
+              : Unavailable(raw_energies);
+      if (postprocess_response && !response.confident)
       {
         Mpi::Warning(
             "Electrostatic postprocessing-only surface-response confidence limits were "
@@ -208,48 +243,51 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             response.trace_closure_response_failure_fraction);
       }
 
-      Mpi::Print(" Solving fabrication-response corrected field\n");
-      V_corrected[step] = V[step];
-      const double solve_tol = ksp.GetRelTol();
-      ksp.SetRelTol(iodata.solver.electrostatic.response_correction->solve_tol);
-      ksp.SetOperator(*system_K);
-      ksp.SetInitialGuess(true);
-      const auto solves_before = ksp.NumTotalMult();
-      const auto iterations_before = ksp.NumTotalMultIterations();
-      ksp.Mult(corrected_rhs, V_corrected[step]);
-      corrected_linear_solves += ksp.NumTotalMult() - solves_before;
-      corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
-      ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
-      ksp.SetOperator(*K);
-      ksp.SetRelTol(solve_tol);
-      Vector E_corrected(Grad.Height()), D_corrected;
-      E_corrected = 0.0;
-      Grad.AddMult(V_corrected[step], E_corrected, -1.0);
-      const Vector *D_corrected_ptr = nullptr;
-      if (post_op.NeedsRecoveredElectricFlux())
+      EnergyData corrected_energies = Unavailable(raw_energies);
+      if (self_consistent_response)
       {
-        D_corrected.SetSize(laplace_op.GetRTSpace().GetTrueVSize());
-        D_corrected.UseDevice(true);
-        estimator.RecoverFlux(E_corrected, D_corrected);
-        D_corrected_ptr = &D_corrected;
-      }
+        Mpi::Print(" Solving fabrication-response corrected field\n");
+        V_corrected[step] = V[step];
+        const double solve_tol = ksp.GetRelTol();
+        ksp.SetRelTol(response_config->solve_tol);
+        ksp.SetOperator(*system_K);
+        ksp.SetInitialGuess(true);
+        const auto solves_before = ksp.NumTotalMult();
+        const auto iterations_before = ksp.NumTotalMultIterations();
+        ksp.Mult(corrected_rhs, V_corrected[step]);
+        corrected_linear_solves += ksp.NumTotalMult() - solves_before;
+        corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
+        ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
+        ksp.SetOperator(*K);
+        ksp.SetRelTol(solve_tol);
+        Vector E_corrected(Grad.Height()), D_corrected;
+        E_corrected = 0.0;
+        Grad.AddMult(V_corrected[step], E_corrected, -1.0);
+        const Vector *D_corrected_ptr = nullptr;
+        if (post_op.NeedsRecoveredElectricFlux())
+        {
+          D_corrected.SetSize(laplace_op.GetRTSpace().GetTrueVSize());
+          D_corrected.UseDevice(true);
+          estimator.RecoverFlux(E_corrected, D_corrected);
+          D_corrected_ptr = &D_corrected;
+        }
 
-      const auto target_interfaces = response_correction->GetTargetInterfaces();
-      EnergyData corrected_energies;
-      {
-        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
-        corrected_energies = post_op.GetElectrostaticEnergies(
-            V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
+        const auto target_interfaces = response_correction->GetTargetInterfaces();
+        {
+          BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+          corrected_energies = post_op.GetElectrostaticEnergies(
+              V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
+        }
+        SurfaceResponseOperator::ElectrostaticResponse corrected_response;
+        {
+          BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+          corrected_response =
+              response_correction->GetElectrostaticResponse(V_corrected[step], false);
+        }
+        corrected_energies = ApplyResponse(std::move(corrected_energies),
+                                           corrected_response.domain_correction,
+                                           corrected_response.fabricated_surface_energy);
       }
-      SurfaceResponseOperator::ElectrostaticResponse corrected_response;
-      {
-        BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        corrected_response =
-            response_correction->GetElectrostaticResponse(V_corrected[step], false);
-      }
-      corrected_energies =
-          ApplyResponse(std::move(corrected_energies), corrected_response.domain_correction,
-                        corrected_response.fabricated_surface_energy);
 
       if (response_correction->HasSurfaceResponse())
       {
@@ -258,7 +296,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             std::move(postprocessed_fixed_flux), std::move(corrected_energies),
             response.trace_closure_spread, response.maximum_trace_closure_spread,
             response.response_weighted_trace_closure_spread,
-            response.trace_closure_response_failure_fraction, response.confident});
+            response.trace_closure_response_failure_fraction, postprocess_response,
+            self_consistent_response, response.confident});
       }
     }
 
@@ -280,7 +319,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocess the capacitance matrix only for equipotential terminal solutions.
   BlockTimer bt1(Timer::POSTPRO);
-  SaveMetadata(ksp);
+  SaveLinearSolverMetadata(laplace_op.GetComm(), raw_linear_solves, raw_linear_iterations);
   if (iodata.boundaries.prescribed_potential.empty())
   {
     PostprocessTerminals(post_op, laplace_op.GetSources(), V);
@@ -342,6 +381,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       output.table.insert(fmt::format("trace_closure_spread_{}", interface),
                           fmt::format("trace closure spread[{}]", interface));
     }
+    const double nan = std::numeric_limits<double>::quiet_NaN();
     for (const auto &result : corrected_results)
     {
       output.table["source"] << result.source;
@@ -355,12 +395,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  result.postprocessed_fixed_flux.domain);
       output.table["domain_corrected"]
           << iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain);
-      output.table["maximum_trace_closure_spread"] << result.maximum_trace_closure_spread;
+      output.table["maximum_trace_closure_spread"]
+          << (result.has_postprocessed ? result.maximum_trace_closure_spread : nan);
       output.table["weighted_trace_closure_spread"]
-          << result.response_weighted_trace_closure_spread;
+          << (result.has_postprocessed ? result.response_weighted_trace_closure_spread
+                                       : nan);
       output.table["trace_closure_failure_fraction"]
-          << result.trace_closure_response_failure_fraction;
-      output.table["confidence_pass"] << (result.confident ? 1.0 : 0.0);
+          << (result.has_postprocessed ? result.trace_closure_response_failure_fraction
+                                       : nan);
+      output.table["confidence_pass"]
+          << (result.has_postprocessed ? (result.confident ? 1.0 : 0.0) : nan);
       MFEM_VERIFY(
           result.raw.interfaces.size() == interfaces.size() &&
               result.postprocessed_fixed_trace.interfaces.size() == interfaces.size() &&
@@ -408,18 +452,22 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             << Quality(p_corrected, corrected.loss_tangent);
         const auto closure_spread = result.trace_closure_spread.find(interface);
         output.table[fmt::format("trace_closure_spread_{}", interface)]
-            << (closure_spread == result.trace_closure_spread.end()
-                    ? 0.0
+            << (!result.has_postprocessed ||
+                        closure_spread == result.trace_closure_spread.end()
+                    ? nan
                     : closure_spread->second);
       }
     }
     output.WriteFullTableTrunc();
   }
   post_op.MeasureFinalize(indicator);
-  if (response_correction)
+  if (self_consistent_response)
   {
     SaveSurfaceResponseSolverMetadata(laplace_op.GetComm(), "Electrostatic",
                                       corrected_linear_solves, corrected_linear_iterations);
+  }
+  if (response_correction)
+  {
     SaveMetadata(*response_correction);
   }
   return {indicator, laplace_op.GlobalTrueVSize()};

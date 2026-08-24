@@ -1450,6 +1450,24 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   {
     const auto &correction = *it;
     ResponseCorrectionData data;
+    const std::string correction_mode = correction.value("CorrectionMode", "Both");
+    if (correction_mode == "PostprocessOnly")
+    {
+      data.correction_mode = ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY;
+    }
+    else if (correction_mode == "SelfConsistent")
+    {
+      data.correction_mode = ResponseCorrectionData::CorrectionMode::SELF_CONSISTENT;
+    }
+    else if (correction_mode == "Both")
+    {
+      data.correction_mode = ResponseCorrectionData::CorrectionMode::BOTH;
+    }
+    else
+    {
+      MFEM_ABORT("Electrostatic response-correction \"CorrectionMode\" must be "
+                 "\"PostprocessOnly\", \"SelfConsistent\", or \"Both\"!");
+    }
     data.solve_tol = correction.value("SolveTol", data.solve_tol);
     MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
                 "Electrostatic response-correction \"SolveTol\" must be positive!");

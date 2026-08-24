@@ -369,10 +369,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              type == EigenSolverBackend::ARPACK ? "ARPACK" : "SLEPc");
   auto eigen = MakeEigenvalueSolver();
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  const bool self_consistent_response =
+      response_correction &&
+      iodata.solver.surface_response_correction->IncludesSelfConsistent();
   std::unique_ptr<ComplexWrapperOperator> response_mass;
   internal::ResponseCorrectedMass corrected_M, corrected_Mp;
   std::unique_ptr<EigenvalueSolver> corrected_eigen;
-  if (response_correction)
+  if (self_consistent_response)
   {
     Mpi::Print("Configuring self-consistent response-corrected eigenvalue solver:\n");
     response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
@@ -902,12 +905,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       post_op.MeasureFinalize(indicator);
     }
   }
-  if (response_correction)
+  if (self_consistent_response)
   {
     MFEM_ASSERT(corrected_ksp, "Missing corrected eigenmode linear solver!");
     SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Eigenmode",
                                       corrected_ksp->NumTotalMult(),
                                       corrected_ksp->NumTotalMultIterations());
+  }
+  if (response_correction)
+  {
     SaveMetadata(*response_correction);
   }
   MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "

@@ -5,6 +5,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -617,6 +618,11 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   const config::ElectrostaticSolverData electrostatic(
       json{{"ResponseCorrection", correction}});
   REQUIRE(electrostatic.response_correction);
+  using CorrectionMode =
+      config::ElectrostaticSolverData::ResponseCorrectionData::CorrectionMode;
+  CHECK(electrostatic.response_correction->correction_mode == CorrectionMode::BOTH);
+  CHECK(electrostatic.response_correction->IncludesPostprocessing());
+  CHECK(electrostatic.response_correction->IncludesSelfConsistent());
   CHECK(electrostatic.response_correction->solve_tol == 1.0e-6);
   REQUIRE(electrostatic.response_correction->models.size() == 1);
   CHECK(electrostatic.response_correction->models[0].idx == 1);
@@ -641,6 +647,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   sparse["Solver"]["Electrostatic"].erase("ResponseCorrection");
   sparse = IoData::ConcretizeDefaults(iodata, sparse);
   auto concretized_correction = correction;
+  concretized_correction["CorrectionMode"] = "Both";
   concretized_correction["SolveTol"] = 1.0e-6;
   CHECK(sparse["Solver"]["Electrostatic"]["ResponseCorrection"] == concretized_correction);
 
@@ -699,6 +706,25 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_policy}}));
 
+  for (const auto &[name, mode, postprocess, self_consistent] :
+       std::vector<std::tuple<const char *, CorrectionMode, bool, bool>>{
+           {"PostprocessOnly", CorrectionMode::POSTPROCESS_ONLY, true, false},
+           {"SelfConsistent", CorrectionMode::SELF_CONSISTENT, false, true},
+           {"Both", CorrectionMode::BOTH, true, true}})
+  {
+    auto mode_config = automatic_correction;
+    mode_config["CorrectionMode"] = name;
+    const config::ElectrostaticSolverData mode_data(
+        json{{"ResponseCorrection", mode_config}});
+    REQUIRE(mode_data.response_correction);
+    CHECK(mode_data.response_correction->correction_mode == mode);
+    CHECK(mode_data.response_correction->IncludesPostprocessing() == postprocess);
+    CHECK(mode_data.response_correction->IncludesSelfConsistent() == self_consistent);
+  }
+  auto invalid_mode = automatic_correction;
+  invalid_mode["CorrectionMode"] = "postprocessonly";
+  CHECK_THROWS(config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_mode}}));
+
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;
   CHECK_THROWS(
@@ -723,6 +749,12 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   boundary_mode_config["Solver"].erase("Eigenmode");
   boundary_mode_config["Solver"]["BoundaryMode"] = {{"Freq", 5.0}};
   CHECK_NOTHROW(IoData(boundary_mode_config, false));
+  boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
+      "PostprocessOnly";
+  CHECK_NOTHROW(IoData(boundary_mode_config, false));
+  boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
+      "SelfConsistent";
+  CHECK_THROWS(IoData(boundary_mode_config, false));
 
   maxwell_config["Problem"]["Type"] = "Electrostatic";
   maxwell_config["Solver"].erase("Eigenmode");

@@ -162,6 +162,23 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                            ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
 }
 
+const char *CorrectionModeName(
+    config::ElectrostaticSolverData::ResponseCorrectionData::CorrectionMode mode)
+{
+  using CorrectionMode =
+      config::ElectrostaticSolverData::ResponseCorrectionData::CorrectionMode;
+  switch (mode)
+  {
+    case CorrectionMode::POSTPROCESS_ONLY:
+      return "PostprocessOnly";
+    case CorrectionMode::SELF_CONSISTENT:
+      return "SelfConsistent";
+    case CorrectionMode::BOTH:
+      return "Both";
+  }
+  return "Both";
+}
+
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
                              json &j_electrostatic)
 {
@@ -174,10 +191,14 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
     const auto &response = *electrostatic.response_correction;
     if (j_electrostatic.contains("ResponseCorrection"))
     {
+      auto &j_response = j_electrostatic["ResponseCorrection"];
+      Concretize(j_response, "CorrectionMode",
+                 CorrectionModeName(response.correction_mode));
       return;
     }
 
     auto &j_response = j_electrostatic["ResponseCorrection"] = json::object();
+    j_response["CorrectionMode"] = CorrectionModeName(response.correction_mode);
     j_response["SolveTol"] = response.solve_tol;
     if (response.IsAutomatic())
     {
@@ -590,22 +611,27 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
   {
     Concretize(j_solver, "Backend", iodata.solver.ceed_backend);
   }
-  if (iodata.solver.surface_response_correction &&
-      !j_solver.contains("SurfaceResponseCorrection"))
+  if (iodata.solver.surface_response_correction)
   {
     const auto &response = *iodata.solver.surface_response_correction;
-    auto &j_response = j_solver["SurfaceResponseCorrection"] = json::object();
-    j_response["Library"] = response.library;
-    j_response["SolveTol"] = response.solve_tol;
-    if (!response.target_interfaces.empty())
+    const bool existing = j_solver.contains("SurfaceResponseCorrection");
+    auto &j_response = existing ? j_solver["SurfaceResponseCorrection"]
+                                : (j_solver["SurfaceResponseCorrection"] = json::object());
+    Concretize(j_response, "CorrectionMode", CorrectionModeName(response.correction_mode));
+    if (!existing)
     {
-      j_response["TargetInterfaces"] = response.target_interfaces;
+      j_response["Library"] = response.library;
+      j_response["SolveTol"] = response.solve_tol;
+      if (!response.target_interfaces.empty())
+      {
+        j_response["TargetInterfaces"] = response.target_interfaces;
+      }
+      j_response["UnmatchedPolicy"] =
+          response.unmatched_policy == config::ElectrostaticSolverData::
+                                           ResponseCorrectionData::UnmatchedPolicy::ERROR
+              ? "Error"
+              : "Warn";
     }
-    j_response["UnmatchedPolicy"] =
-        response.unmatched_policy == config::ElectrostaticSolverData::
-                                         ResponseCorrectionData::UnmatchedPolicy::ERROR
-            ? "Error"
-            : "Warn";
   }
 
   if (!j_solver.contains("Linear"))

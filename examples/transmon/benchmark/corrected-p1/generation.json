@@ -1,0 +1,46 @@
+{
+  "Version": 1,
+  "Purpose": "Deterministic software/performance benchmark only",
+  "Qualified": false,
+  "FEMOrder": 1,
+  "MeshOrder": 2,
+  "MatchingRadius": 2.0,
+  "RequestedBasisSize": 12,
+  "EffectiveBasisSizes": {
+    "IsolatedEdge": 11,
+    "SameConductorStrip@2.0um": 12
+  },
+  "TraceSamples": 48,
+  "CouponDepth": 1055.0,
+  "Mesh": {
+    "FineSize": 0.02,
+    "FarSize": 0.2
+  },
+  "Fabrication": {
+    "MetalThickness": 0.1,
+    "OveretchDepth": 0.05,
+    "SidewallAngleDegrees": 80.0,
+    "TopRoundingRadius": 0.01,
+    "BottomRoundingRadius": 0.01,
+    "SubstratePermittivity": 11.47,
+    "InterfaceLayers": {
+      "SA": {
+        "Thickness": 0.002,
+        "Permittivity": 4.0
+      },
+      "MS": {
+        "Thickness": 0.002,
+        "Permittivity": 11.47
+      },
+      "MA": {
+        "Thickness": 0.002,
+        "Permittivity": 10.0
+      }
+    }
+  },
+  "Models": [
+    "IsolatedEdge",
+    "SameConductorStrip@2.0um"
+  ],
+  "GenerationCommand": "python3 examples/cpw2d/build_surface_process_library.py --output OUTPUT --name transmon-p1-benchmark --palace build/bin/palace --ranks 1 --matching-radius 2.0 --metal-thickness 0.1 --overetch 0.05 --sidewall-angle 80 --top-radius 0.01 --bottom-radius 0.01 --substrate-permittivity 11.47 --sa-thickness 0.002 --sa-permittivity 4.0 --ms-thickness 0.002 --ms-permittivity 11.47 --ma-thickness 0.002 --ma-permittivity 10.0 --same-conductor-gaps --different-conductor-gaps --same-conductor-strips 2.0 --lc-fine 0.02 --lc-far 0.2 --mesh-order 2 --basis-size 12 --samples 48 --order 1"
+}

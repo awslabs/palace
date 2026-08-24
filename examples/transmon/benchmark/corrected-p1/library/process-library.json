@@ -1,0 +1,104 @@
+{
+  "Version": 3,
+  "Name": "transmon-p1-benchmark",
+  "MatchingRadius": 2.0,
+  "Models": [
+    {
+      "Name": "isolated-edge",
+      "Topology": "IsolatedEdge",
+      "FabricatedMatrix": "models/001-isolated-edge/fabricated-domain-response-matrix.csv",
+      "ThinMatrix": "models/001-isolated-edge/thin-domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "models/001-isolated-edge/fabricated-surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "models/001-isolated-edge/thin-surface-response-matrix.csv",
+      "BasisPoints": "models/001-isolated-edge/basis-points.csv",
+      "Interfaces": [
+        {
+          "Type": "SA",
+          "Coupon": 1
+        },
+        {
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Type": "MA",
+          "Coupon": 3
+        }
+      ],
+      "CouponDepth": 1055.0,
+      "BoundaryLawQualification": {
+        "Version": 1,
+        "Status": "Unqualified",
+        "Calibration": "BenchmarkOnly",
+        "FrequencyUniversal": false
+      }
+    },
+    {
+      "Name": "same-conductor-strip-2um",
+      "Topology": "SameConductorStrip",
+      "Separation": 2.0,
+      "SeparationTolerance": 0.001,
+      "FabricatedMatrix": "models/002-same-conductor-strip-2um/fabricated-domain-response-matrix.csv",
+      "ThinMatrix": "models/002-same-conductor-strip-2um/thin-domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "models/002-same-conductor-strip-2um/fabricated-surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "models/002-same-conductor-strip-2um/thin-surface-response-matrix.csv",
+      "BasisPoints": "models/002-same-conductor-strip-2um/basis-points.csv",
+      "Interfaces": [
+        {
+          "Type": "SA",
+          "Coupon": 1
+        },
+        {
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Type": "MA",
+          "Coupon": 3
+        }
+      ],
+      "Reference": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "CouponDepth": 1055.0,
+      "BoundaryLawQualification": {
+        "Version": 1,
+        "Status": "Unqualified",
+        "Calibration": "BenchmarkOnly",
+        "FrequencyUniversal": false
+      }
+    }
+  ],
+  "Fabrication": {
+    "LengthUnit": "um",
+    "MetalThickness": 0.1,
+    "OveretchDepth": 0.05,
+    "SidewallAngleDegrees": 80.0,
+    "TopRoundingRadius": 0.01,
+    "BottomRoundingRadius": 0.01,
+    "SubstratePermittivity": 11.47,
+    "InterfaceLayers": {
+      "SA": {
+        "Thickness": 0.002,
+        "Permittivity": 4.0
+      },
+      "MS": {
+        "Thickness": 0.002,
+        "Permittivity": 11.47
+      },
+      "MA": {
+        "Thickness": 0.002,
+        "Permittivity": 10.0
+      }
+    }
+  },
+  "PairedEdgeSampling": {
+    "same-conductor-gap": [],
+    "different-conductor-gap": [],
+    "same-conductor-strip": [
+      2.0
+    ]
+  }
+}

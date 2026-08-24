@@ -411,6 +411,24 @@ void BaseSolver::SaveMetadata(const SolverType &ksp) const
   }
 }
 
+void BaseSolver::SaveLinearSolverMetadata(MPI_Comm comm, long long int solves,
+                                          long long int iterations) const
+{
+  long long int minimum[2] = {solves, iterations};
+  long long int maximum[2] = {solves, iterations};
+  Mpi::GlobalMin(2, minimum, comm);
+  Mpi::GlobalMax(2, maximum, comm);
+  MFEM_VERIFY(minimum[0] == maximum[0] && minimum[1] == maximum[1],
+              "Rank-inconsistent linear solver statistics!");
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    meta["LinearSolver"]["TotalSolves"] = minimum[0];
+    meta["LinearSolver"]["TotalIts"] = minimum[1];
+    WriteMetadata(post_dir, meta);
+  }
+}
+
 void BaseSolver::SaveMetadata(const Timer &timer) const
 {
   if (root)

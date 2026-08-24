@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <iterator>
+#include <limits>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
@@ -141,6 +142,24 @@ TEST_CASE("TableCSV", "[tablecsv][Serial]")
   col_2.min_left_padding.reset();
   col_2.float_precision.reset();
   CHECK(table.format_table() == table_str1);
+}
+
+TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
+{
+  Table table;
+  table.insert(Column("status", "status", 0, 0, 0, ""));
+  table["status"].print_as_int = true;
+  table["status"] << std::numeric_limits<double>::quiet_NaN();
+  CHECK(table.format_table() == "status\n   nan\n");
+
+  Table floating;
+  floating.insert("quality", "quality");
+  floating["quality"] << std::numeric_limits<double>::infinity();
+  floating["quality"] << -std::numeric_limits<double>::infinity();
+  const auto formatted = floating.format_table();
+  CHECK(formatted.find("+inf") != std::string::npos);
+  CHECK(formatted.find("-inf") != std::string::npos);
+  CHECK(formatted.find("nan") == std::string::npos);
 }
 
 TEST_CASE("TableCSVParsing1_Basic", "[tablecsv][Serial]")

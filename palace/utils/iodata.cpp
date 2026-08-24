@@ -302,6 +302,13 @@ void IoData::CheckConfiguration()
                   solver.surface_response_correction->IsAutomatic(),
               "Maxwell \"SurfaceResponseCorrection\" requires automatic fabrication-"
               "process library matching!");
+  MFEM_VERIFY(!solver.surface_response_correction ||
+                  problem.type != ProblemType::BOUNDARYMODE ||
+                  solver.surface_response_correction->correction_mode !=
+                      config::ElectrostaticSolverData::ResponseCorrectionData::
+                          CorrectionMode::SELF_CONSISTENT,
+              "Boundary mode does not support SurfaceResponseCorrection CorrectionMode "
+              "\"SelfConsistent\"; use \"PostprocessOnly\" or \"Both\"!");
 
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.

@@ -313,6 +313,10 @@ PostOperator<solver_t>::PostOperator(
   {
     if (iodata.solver.surface_response_correction)
     {
+      const auto &response = *iodata.solver.surface_response_correction;
+      surface_response_postprocess_enabled = response.IncludesPostprocessing();
+      surface_response_self_consistent_enabled =
+          solver_t != ProblemType::BOUNDARYMODE && response.IncludesSelfConsistent();
       surface_response_op =
           std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
       MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
@@ -1726,74 +1730,95 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
 
     MaxwellSurfaceResponseMeasurement result;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
     result.raw_normalization_energy = measurement_cache.domain_E_field_energy_all +
                                       measurement_cache.lumped_port_capacitor_energy;
-    result.confidence = surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
-    result.corrected_normalization_energy =
-        result.raw_normalization_energy + result.confidence.domain_correction;
-    result.corrected_normalization_energy_fixed_flux =
-        result.raw_normalization_energy + result.confidence.domain_correction_fixed_flux;
-    MFEM_VERIFY(result.raw_normalization_energy > 0.0 &&
-                    result.corrected_normalization_energy > 0.0 &&
-                    result.corrected_normalization_energy_fixed_flux > 0.0,
+    MFEM_VERIFY(result.raw_normalization_energy > 0.0,
                 "Maxwell surface-response normalization energy must be positive!");
+    result.corrected_normalization_energy = nan;
+    result.corrected_normalization_energy_fixed_flux = nan;
+    result.self_consistent_normalization_energy = nan;
+    result.self_consistent_frequency = {nan, nan};
+    result.self_consistent_mode_overlap = nan;
+    if (surface_response_postprocess_enabled)
+    {
+      result.confidence =
+          surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
+      result.corrected_normalization_energy =
+          result.raw_normalization_energy + result.confidence.domain_correction;
+      result.corrected_normalization_energy_fixed_flux =
+          result.raw_normalization_energy + result.confidence.domain_correction_fixed_flux;
+      MFEM_VERIFY(result.corrected_normalization_energy > 0.0 &&
+                      result.corrected_normalization_energy_fixed_flux > 0.0,
+                  "Maxwell postprocessed surface-response normalization energy must be "
+                  "positive!");
+      result.has_postprocessed = true;
+    }
 
     const auto target_interfaces = surface_response_op->GetTargetInterfaces();
     for (const auto &raw : measurement_cache.interface_eps_i)
     {
       auto &interface = result.interfaces[raw.idx];
       interface.raw_energy = raw.energy;
-      interface.corrected_energy = raw.energy;
-      interface.corrected_energy_fixed_flux = raw.energy;
+      interface.corrected_energy = nan;
+      interface.corrected_energy_fixed_flux = nan;
+      interface.self_consistent_energy = nan;
+      interface.trace_closure_spread = nan;
       interface.loss_tangent = raw.tandelta;
     }
-    for (const int target : target_interfaces)
+    if (surface_response_postprocess_enabled)
     {
-      auto interface = result.interfaces.find(target);
-      MFEM_VERIFY(interface != result.interfaces.end(),
-                  "Maxwell surface response refers to target interface "
-                      << target << " which is not configured for postprocessing!");
-      auto fabricated = result.confidence.fabricated_surface_energy.find(target);
-      MFEM_VERIFY(fabricated != result.confidence.fabricated_surface_energy.end(),
-                  "Maxwell surface response produced no fabricated energy for target "
-                      << target << "!");
-      auto fabricated_fixed_flux =
-          result.confidence.fabricated_surface_energy_fixed_flux.find(target);
-      MFEM_VERIFY(
-          fabricated_fixed_flux !=
-              result.confidence.fabricated_surface_energy_fixed_flux.end(),
-          "Maxwell surface response produced no fixed-flux fabricated energy for target "
-              << target << "!");
-
-      const double radius = surface_response_op->GetMatchingRadius();
-      auto outside = std::find_if(measurement_cache.interface_edge_i.begin(),
-                                  measurement_cache.interface_edge_i.end(),
-                                  [&](const auto &edge)
-                                  {
-                                    return edge.idx == target &&
-                                           std::abs(edge.distance - radius) <=
-                                               1.0e-10 * std::max(edge.distance, radius);
-                                  });
-      MFEM_VERIFY(outside != measurement_cache.interface_edge_i.end(),
-                  "Maxwell response-corrected target interface "
-                      << target
-                      << " requires EdgeDistances containing the coupon matching radius!");
-      interface->second.corrected_energy = outside->energy_outside + fabricated->second;
-      interface->second.corrected_energy_fixed_flux =
-          outside->energy_outside + fabricated_fixed_flux->second;
-      const double closure_scale =
-          std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
-      if (closure_scale > 0.0)
+      for (const int target : target_interfaces)
       {
-        interface->second.trace_closure_spread =
-            std::abs(fabricated->second - fabricated_fixed_flux->second) / closure_scale;
+        auto interface = result.interfaces.find(target);
+        MFEM_VERIFY(interface != result.interfaces.end(),
+                    "Maxwell surface response refers to target interface "
+                        << target << " which is not configured for postprocessing!");
+        auto fabricated = result.confidence.fabricated_surface_energy.find(target);
+        MFEM_VERIFY(fabricated != result.confidence.fabricated_surface_energy.end(),
+                    "Maxwell surface response produced no fabricated energy for target "
+                        << target << "!");
+        auto fabricated_fixed_flux =
+            result.confidence.fabricated_surface_energy_fixed_flux.find(target);
+        MFEM_VERIFY(
+            fabricated_fixed_flux !=
+                result.confidence.fabricated_surface_energy_fixed_flux.end(),
+            "Maxwell surface response produced no fixed-flux fabricated energy for target "
+                << target << "!");
+
+        const double radius = surface_response_op->GetMatchingRadius();
+        auto outside = std::find_if(measurement_cache.interface_edge_i.begin(),
+                                    measurement_cache.interface_edge_i.end(),
+                                    [&](const auto &edge)
+                                    {
+                                      return edge.idx == target &&
+                                             std::abs(edge.distance - radius) <=
+                                                 1.0e-10 * std::max(edge.distance, radius);
+                                    });
+        MFEM_VERIFY(
+            outside != measurement_cache.interface_edge_i.end(),
+            "Maxwell response-corrected target interface "
+                << target
+                << " requires EdgeDistances containing the coupon matching radius!");
+        interface->second.corrected_energy = outside->energy_outside + fabricated->second;
+        interface->second.corrected_energy_fixed_flux =
+            outside->energy_outside + fabricated_fixed_flux->second;
+        const double closure_scale =
+            std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
+        if (closure_scale > 0.0)
+        {
+          interface->second.trace_closure_spread =
+              std::abs(fabricated->second - fabricated_fixed_flux->second) / closure_scale;
+        }
       }
     }
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
     {
-      if (has_surface_response_corrected_field)
+      if (surface_response_self_consistent_enabled)
       {
+        MFEM_VERIFY(has_surface_response_corrected_field,
+                    "Self-consistent surface response mode requires a corrected field!");
         auto &corrected_field = *surface_response_corrected_field;
         const GridFunction *corrected_flux = has_surface_response_corrected_flux
                                                  ? surface_response_corrected_flux.get()
@@ -1867,7 +1892,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           self_consistent_confident &&
           result.self_consistent_mode_overlap >= minimum_eigenmode_response_overlap;
     }
-    if (!result.confidence.confident && !surface_response_warning_printed)
+    if (result.has_postprocessed && !result.confidence.confident &&
+        !surface_response_warning_printed)
     {
       const std::string self_consistent_status =
           !result.has_self_consistent
@@ -1901,6 +1927,27 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           result.confidence.response_weighted_trace_closure_spread,
           result.confidence.trace_closure_response_failure_fraction,
           self_consistent_status);
+      surface_response_warning_printed = true;
+    }
+    if (!result.has_postprocessed && result.has_self_consistent &&
+        !self_consistent_confident && !surface_response_warning_printed)
+    {
+      Mpi::Warning(
+          "Self-consistent Maxwell surface-response confidence limits were exceeded: "
+          "kR = {:.3e}, response-weighted loop residual = {:.3e}, loop-response "
+          "fraction above limit = {:.3e}, matched fraction = {:.6f}, unmodeled corner "
+          "fraction = {:.3e}, max R/rho = {:.3e}, library distance = {:.3e}, "
+          "boundary-law parameters verified = {:d}, mode overlap = {:.3e}. Corrected "
+          "values are reported but should not be treated as validated.\n",
+          result.self_consistent_confidence.kR,
+          result.self_consistent_confidence.response_weighted_loop_residual,
+          result.self_consistent_confidence.loop_response_failure_fraction,
+          result.self_consistent_confidence.matched_length_fraction,
+          result.self_consistent_confidence.corner_neighborhood_fraction,
+          result.self_consistent_confidence.maximum_curvature_ratio,
+          result.self_consistent_confidence.maximum_library_distance,
+          result.self_consistent_confidence.boundary_law_verified ? 1 : 0,
+          result.self_consistent_mode_overlap);
       surface_response_warning_printed = true;
     }
     surface_response_measurement = std::move(result);
@@ -2074,22 +2121,36 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   auto &table = surface_response_confidence->table;
   table["idx"] << output_index;
   table["excitation"] << excitation;
-  table["kR"] << confidence.kR;
-  table["loop_residual"] << confidence.loop_residual;
-  table["weighted_loop_residual"] << confidence.response_weighted_loop_residual;
-  table["loop_failure_fraction"] << confidence.loop_response_failure_fraction;
-  table["matched_fraction"] << confidence.matched_length_fraction;
-  table["corner_fraction"] << confidence.corner_neighborhood_fraction;
-  table["curvature"] << confidence.maximum_curvature_ratio;
-  table["library_distance"] << confidence.maximum_library_distance;
-  table["boundary_law_verified"] << (confidence.boundary_law_verified ? 1.0 : 0.0);
-  table["trace_closure_spread"] << confidence.maximum_trace_closure_spread;
-  table["weighted_trace_closure_spread"]
-      << confidence.response_weighted_trace_closure_spread;
-  table["trace_closure_failure_fraction"]
-      << confidence.trace_closure_response_failure_fraction;
-  table["confident"] << (confidence.confident ? 1.0 : 0.0);
   const double nan = std::numeric_limits<double>::quiet_NaN();
+  table["kR"] << (result.has_postprocessed ? confidence.kR : nan);
+  table["loop_residual"] << (result.has_postprocessed ? confidence.loop_residual : nan);
+  table["weighted_loop_residual"]
+      << (result.has_postprocessed ? confidence.response_weighted_loop_residual : nan);
+  table["loop_failure_fraction"]
+      << (result.has_postprocessed ? confidence.loop_response_failure_fraction : nan);
+  table["matched_fraction"] << (result.has_postprocessed
+                                    ? confidence.matched_length_fraction
+                                    : nan);
+  table["corner_fraction"] << (result.has_postprocessed
+                                   ? confidence.corner_neighborhood_fraction
+                                   : nan);
+  table["curvature"] << (result.has_postprocessed ? confidence.maximum_curvature_ratio
+                                                  : nan);
+  table["library_distance"] << (result.has_postprocessed
+                                    ? confidence.maximum_library_distance
+                                    : nan);
+  table["boundary_law_verified"]
+      << (result.has_postprocessed ? (confidence.boundary_law_verified ? 1.0 : 0.0) : nan);
+  table["trace_closure_spread"]
+      << (result.has_postprocessed ? confidence.maximum_trace_closure_spread : nan);
+  table["weighted_trace_closure_spread"]
+      << (result.has_postprocessed ? confidence.response_weighted_trace_closure_spread
+                                   : nan);
+  table["trace_closure_failure_fraction"]
+      << (result.has_postprocessed ? confidence.trace_closure_response_failure_fraction
+                                   : nan);
+  table["confident"] << (result.has_postprocessed ? (confidence.confident ? 1.0 : 0.0)
+                                                  : nan);
   table["self_consistent_weighted_loop_residual"]
       << (result.has_self_consistent
               ? result.self_consistent_confidence.response_weighted_loop_residual

@@ -255,6 +255,8 @@ protected:
   // Optional Maxwell surface response correction. The ordinary measurement cache,
   // surface-Q.csv, and primary E/D fields remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
+  bool surface_response_postprocess_enabled = false;
+  bool surface_response_self_consistent_enabled = false;
   std::unique_ptr<GridFunction> surface_response_corrected_field;
   std::unique_ptr<GridFunction> surface_response_corrected_flux;
   bool has_surface_response_corrected_field = false;
@@ -281,6 +283,7 @@ protected:
     double self_consistent_normalization_energy = 0.0;
     std::complex<double> self_consistent_frequency = 0.0;
     double self_consistent_mode_overlap = 0.0;
+    bool has_postprocessed = false;
     bool has_self_consistent = false;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;

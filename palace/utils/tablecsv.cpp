@@ -5,6 +5,7 @@
 #include "utils/filesystem.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <utility>
@@ -49,6 +50,14 @@ namespace palace
   if ((i >= 0) && (i < data.size()))
   {
     auto val = data[i];
+    if (std::isnan(val))
+    {
+      return fmt::format("{:>{}}", "nan", width_);
+    }
+    if (print_as_int && std::isinf(val))
+    {
+      return fmt::format("{:>{}}", std::signbit(val) ? "-inf" : "inf", width_);
+    }
     if (print_as_int)
     {  // Quick-fix to force int printing
       auto fmt_str = fmt::format("{{:>{width}d}}", fmt::arg("width", width_));

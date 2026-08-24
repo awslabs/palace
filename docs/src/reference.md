@@ -829,6 +829,7 @@ and `Patches` lists:
   "Library": "process-library.json",
   "TargetInterfaces": [1, 2, 3],
   "UnmatchedPolicy": "Warn",
+  "CorrectionMode": "Both",
   "SolveTol": 1.0e-6
 }
 ```
@@ -841,6 +842,14 @@ radius. Palace intersects the perimeter of each group with the perimeter of the 
 of all configured metal boundary conditions. This removes points introduced only by a
 change in boundary attribute, such as a ground plane continuing into a bump bond. It
 also removes endpoints on exterior simulation-domain truncations.
+
+`CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
+Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field
+without constructing a corrected global solver. Self-consistent mode solves only the
+globally coupled corrected field; fixed-trace/fixed-flux and their confidence columns are
+retained in the output schema as `NaN`. `Both` preserves the historical behavior and
+computes both families. The raw field, ordinary output, and raw AMR estimator remain
+unchanged in every mode.
 
 `SolveTol` controls only the optional self-consistent corrected-field solve. The raw
 thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
@@ -1384,7 +1393,8 @@ fabrication-process library to a complex Maxwell field:
   "SurfaceResponseCorrection": {
     "Library": "process-library.json",
     "TargetInterfaces": [1, 2, 3],
-    "UnmatchedPolicy": "Error"
+    "UnmatchedPolicy": "Error",
+    "CorrectionMode": "Both"
   }
 }
 ```
@@ -1393,7 +1403,13 @@ The standard `surface-Q.csv`, saved fields, error indicator, and AMR sequence re
 raw thin-metal result. `surface-Q-corrected.csv` is an additional long-form table
 containing raw, fixed-trace, fixed-flux, and, when available, self-consistent
 normalization energies, interface energies, participations, and quality factors for each
-frequency and excitation, eigenmode, or boundary mode.
+frequency and excitation, eigenmode, or boundary mode. The same `CorrectionMode`
+semantics apply as for electrostatics. `PostprocessOnly` avoids corrected KSP, PROM, and
+eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux evaluation;
+`Both` computes all correction families available to the problem type. Boundary mode has
+no self-consistent corrected eigensolver: it accepts `PostprocessOnly` and `Both`, where
+`Both` means all available boundary-mode correction paths, and rejects
+`SelfConsistent`.
 
 In 3D, Palace maps the selected coupon contour into the plane transverse to the physical
 edge at every longitudinal edge quadrature point. A corner coupon instead maps its full
@@ -1613,21 +1629,21 @@ result. Electrostatic correction has the same distinction: the fixed-trace/fixed
 spread is diagnostic of the postprocessed thin field, while the separately reported
 corrected solution is globally self-consistent.
 
-| Column | Meaning | Current limit |
-|:---|:---|:---|
-| `kR` | Electrical size of the coupon, ``|\omega|R/v_{min}`` | ``\leq 0.1`` |
-| `loop residual` | Maximum ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals over all contour paths | diagnostic only |
-| `response-weighted loop residual` | RMS loop residual weighted by the fabricated surface response carried by each contour path | ``\leq 0.05`` |
-| `loop-response fraction above limit` | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05 | ``\leq 0.01`` |
-| `matched edge fraction` | Minimum, over target interfaces, of the selected physical edge length assigned a library model | effectively 1 |
-| `unmodeled corner neighborhood fraction` | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction | ``\leq 0.1`` |
-| `max R/rho` | Largest matching-radius to local-curvature-radius ratio | ``\leq 0.25`` |
-| `max library distance` | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span | ``\leq 0.8`` |
-| `boundary-law parameters verified` | One when every selected coupon declares PEC or object-form numerical boundary parameters matching the simulation | 1 |
-| `max trace closure spread` | Largest relative difference between interface-aggregated fixed-trace and fixed-flux surface response | ``\leq 0.05`` |
-| `response-weighted local trace closure spread` | RMS patch/interface closure spread weighted by the larger-magnitude fixed-trace or fixed-flux response | ``\leq 0.05`` |
-| `trace-closure response fraction above limit` | Fraction of patch/interface response weight whose local closure spread exceeds 0.05 | ``\leq 0.01`` |
-| `self-consistent M-overlap` | Raw-``M`` normalized overlap between paired raw and corrected eigenmodes | ``\geq 0.8`` (eigenmode only) |
+| Column                                         | Meaning                                                                                                                       | Current limit                 |
+|:---------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------- |:----------------------------- |
+| `kR`                                           | Electrical size of the coupon, ``|\omega|R/v_{min}``                                                                          | ``\leq 0.1``                  |
+| `loop residual`                                | Maximum ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals over all contour paths       | diagnostic only               |
+| `response-weighted loop residual`              | RMS loop residual weighted by the fabricated surface response carried by each contour path                                    | ``\leq 0.05``                 |
+| `loop-response fraction above limit`           | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05                                    | ``\leq 0.01``                 |
+| `matched edge fraction`                        | Minimum, over target interfaces, of the selected physical edge length assigned a library model                                | effectively 1                 |
+| `unmodeled corner neighborhood fraction`       | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction        | ``\leq 0.1``                  |
+| `max R/rho`                                    | Largest matching-radius to local-curvature-radius ratio                                                                       | ``\leq 0.25``                 |
+| `max library distance`                         | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span | ``\leq 0.8``                  |
+| `boundary-law parameters verified`             | One when every selected coupon declares PEC or object-form numerical boundary parameters matching the simulation              | 1                             |
+| `max trace closure spread`                     | Largest relative difference between interface-aggregated fixed-trace and fixed-flux surface response                          | ``\leq 0.05``                 |
+| `response-weighted local trace closure spread` | RMS patch/interface closure spread weighted by the larger-magnitude fixed-trace or fixed-flux response                        | ``\leq 0.05``                 |
+| `trace-closure response fraction above limit`  | Fraction of patch/interface response weight whose local closure spread exceeds 0.05                                           | ``\leq 0.01``                 |
+| `self-consistent M-overlap`                    | Raw-``M`` normalized overlap between paired raw and corrected eigenmodes                                                      | ``\geq 0.8`` (eigenmode only) |
 
 The maximum loop residual identifies the worst local violation of the quasi-electrostatic
 approximation or contour resolution. It does not gate confidence because an arbitrarily

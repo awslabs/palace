@@ -50,3 +50,10 @@ exactly the 1/2/4-rank set and refuses to overwrite the checked-in baseline dire
 
 Do not add `EdgeRefinement`, uniform refinement, or AMR to this benchmark. Refinement is
 validated separately on small meshes with explicit resource bounds.
+
+## Corrected p=1 eigenmode benchmark
+
+[`corrected-p1/`](corrected-p1/README.md) contains the fixed-mesh p=1 benchmark for the
+full response operator and self-consistent corrected eigenmode path. It uses a small,
+unqualified benchmark-only isolated-edge/strip library and checks numerical output plus
+patch, trace, contour, point, and stencil workload invariants at one, two, and four ranks.

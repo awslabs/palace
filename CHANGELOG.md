@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `"CorrectionMode"` for electrostatic and Maxwell surface-response correction,
+    with `"PostprocessOnly"`, `"SelfConsistent"`, and backward-compatible `"Both"`
+    execution modes. SchemaVer 1-6-0.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

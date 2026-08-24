@@ -64,6 +64,8 @@ public:
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
+  void SaveLinearSolverMetadata(MPI_Comm comm, long long int solves,
+                                long long int iterations) const;
   void SaveMetadata(const Timer &timer) const;
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;

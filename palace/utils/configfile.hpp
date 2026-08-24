@@ -1067,6 +1067,13 @@ public:
       ERROR
     };
 
+    enum class CorrectionMode : char
+    {
+      POSTPROCESS_ONLY,
+      SELF_CONSISTENT,
+      BOTH
+    };
+
     // Optional fabrication-process response library. When specified, Palace extracts and
     // classifies the target edges and constructs models and patches automatically.
     std::string library;
@@ -1079,6 +1086,10 @@ public:
     // edge topology.
     UnmatchedPolicy unmatched_policy = UnmatchedPolicy::WARN;
 
+    // Select postprocessing-only fixed-trace/fixed-flux evaluation, a self-consistent
+    // corrected solve, or both. Both preserves the historical behavior.
+    CorrectionMode correction_mode = CorrectionMode::BOTH;
+
     // Relative tolerance for an optional self-consistent corrected-field solve. The raw
     // field solve continues to use Solver.Linear.Tol.
     double solve_tol = 1.0e-6;
@@ -1089,6 +1100,14 @@ public:
     std::vector<ResponseCorrectionPatchData> patches;
 
     bool IsAutomatic() const { return !library.empty(); }
+    bool IncludesPostprocessing() const
+    {
+      return correction_mode != CorrectionMode::SELF_CONSISTENT;
+    }
+    bool IncludesSelfConsistent() const
+    {
+      return correction_mode != CorrectionMode::POSTPROCESS_ONLY;
+    }
   };
 
   // Number of fields to write to disk.

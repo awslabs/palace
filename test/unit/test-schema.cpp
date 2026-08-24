@@ -912,6 +912,16 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
                         {"UnmatchedPolicy", "Warn"}}}};
     CHECK(ValidateConfig(automatic, "Electrostatic").empty());
 
+    for (const auto *mode : {"PostprocessOnly", "SelfConsistent", "Both"})
+    {
+      auto mode_config = automatic;
+      mode_config["ResponseCorrection"]["CorrectionMode"] = mode;
+      CHECK(ValidateConfig(mode_config, "Electrostatic").empty());
+    }
+    auto invalid_mode = automatic;
+    invalid_mode["ResponseCorrection"]["CorrectionMode"] = "postprocessonly";
+    CHECK(!ValidateConfig(invalid_mode, "Electrostatic").empty());
+
     auto response_solve_tol = automatic;
     response_solve_tol["ResponseCorrection"]["SolveTol"] = 1.0e-7;
     CHECK(ValidateConfig(response_solve_tol, "Electrostatic").empty());
@@ -939,6 +949,12 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
          {{"Eigenmode", {{"Target", 1.0}}},
           {"SurfaceResponseCorrection", automatic["ResponseCorrection"]}}}};
     CHECK(ValidateConfig(maxwell_config).empty());
+    for (const auto *mode : {"PostprocessOnly", "SelfConsistent", "Both"})
+    {
+      auto mode_config = maxwell_config;
+      mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = mode;
+      CHECK(ValidateConfig(mode_config).empty());
+    }
     auto boundary_mode_config = maxwell_config;
     boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
     boundary_mode_config["Solver"].erase("Eigenmode");
