@@ -1499,6 +1499,9 @@ void RemapSubMeshAttributes(SubMeshT &submesh)
     }
     submesh.SetAttribute(i, nbr_attr);
   }
+  // Refresh the cached distinct-attribute array to match the rewritten per-element
+  // attributes.
+  submesh.SetAttributes();
 }
 
 template <class SubMeshT>

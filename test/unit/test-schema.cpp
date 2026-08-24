@@ -260,6 +260,25 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(!err.empty());
   }
 
+  SECTION("RationalImpedance polynomials require a nonzero coefficient")
+  {
+    json impedance = {
+        {"Attributes", {1}}, {"Numerator", {1.0, 0.0}}, {"Denominator", {0.0, 2.0}}};
+    CHECK(ValidateConfig(impedance, "RationalImpedance").empty());
+
+    for (const char *polynomial : {"Numerator", "Denominator"})
+    {
+      CAPTURE(polynomial);
+      for (const json &zeros : {json{0, 0}, json{0.0, 0.0}})
+      {
+        CAPTURE(zeros);
+        impedance[polynomial] = zeros;
+        CHECK(!ValidateConfig(impedance, "RationalImpedance").empty());
+        impedance[polynomial] = {1.0};
+      }
+    }
+  }
+
   SECTION("Invalid Direction strings")
   {
     std::vector<std::string> invalid_dirs = {"a",  "+a", "-a",  "xx", "~x",

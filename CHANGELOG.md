@@ -69,6 +69,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed a false-positive in the domain material-coverage check that could abort numeric
+    wave-port simulations under nonconformal AMR on multiple MPI ranks. The check now
+    validates only domains owned by a local volume element, ignoring ghost/neighbor
+    bookkeeping attributes. [PR 888](https://github.com/awslabs/palace/pull/888).
+  - Reject all-zero numerator or denominator polynomial coefficients in
+    `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
+    existing checks in the configuration parser and providing users with earlier feedback.
+    SchemaVer 1-5-1 [PR 874](https://github.com/awslabs/palace/pull/874).
   - Fixed validation of domain material coverage so postprocessing and retained mesh
     attributes without a corresponding `config["Domains"]["Materials"]` entry are rejected
     instead of silently assigning zero material coefficients to retained volumes. [PR
@@ -97,6 +105,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed intermittent MPI deadlocks in output-directory unit tests when ranks observed
     filesystem changes at different times. [PR
     839](https://github.com/awslabs/palace/pull/839).
+
+#### Documentation
+
+  - Clarified how to interpret the elapsed time report: indented rows are exclusive
+    sub-categories, parent rows are remainders, and Min/Max/Avg are over MPI ranks.
+    [PR 885](https://github.com/awslabs/palace/pull/885).
 
 ## [0.17.0] - 2026-06-28
 

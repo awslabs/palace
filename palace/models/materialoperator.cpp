@@ -375,20 +375,25 @@ void MaterialOperator::SetUpMaterialProperties(
     count++;
   }
 
-  // Every domain retained in the mesh needs a material definition. This is normally
-  // guaranteed by unused-element cleaning, but must also hold when cleaning is disabled.
-  // Attribute presence is rank-local, so report the globally smallest missing attribute
-  // only after every rank has participated in the reduction. Skip the local scan on an
-  // element-empty rank because BuildCeedAttributes inserts a synthetic attribute 1 there.
-  int missing_attr = std::numeric_limits<int>::max();
-  if (mesh.GetNE() > 0)
+  // Every retained domain needs a material. loc_attr also holds ghost/neighbor attributes
+  // that carry no material yet are not retained domains. Collect the material-less
+  // attributes first, usually none, then flag only those on a locally-owned volume element
+  // and reduce for the smallest globally-missing one.
+  std::unordered_set<int> unmatched_attrs;
+  for (const auto &[attr, idx] : loc_attr)
   {
-    for (const auto &[attr, local_attr] : loc_attr)
+    if (attr_mat[idx - 1] < 0)
     {
-      if (attr_mat[local_attr - 1] < 0)
-      {
-        missing_attr = std::min(missing_attr, attr);
-      }
+      unmatched_attrs.insert(attr);
+    }
+  }
+  int missing_attr = std::numeric_limits<int>::max();
+  for (int i = 0; i < mesh.GetNE() && !unmatched_attrs.empty(); i++)
+  {
+    const int attr = mesh.GetAttribute(i);
+    if (unmatched_attrs.find(attr) != unmatched_attrs.end())
+    {
+      missing_attr = std::min(missing_attr, attr);
     }
   }
   Mpi::GlobalMin(1, &missing_attr, mesh.GetComm());

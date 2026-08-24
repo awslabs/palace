@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-5-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -942,14 +942,16 @@
           "type": "array",
           "items": { "type": "number" },
           "minItems": 1,
-          "description": "Real polynomial coefficients of the numerator N(s) of the rational surface impedance per square Zs(s) = N(s)/D(s), with s = iω, ordered from highest to lowest degree. The roots of N are the zeros of Zs. SI units (s in rad/s, Zs in Ω/sq); only the ratio N/D is physical."
+          "contains": { "not": { "const": 0 } },
+          "description": "Real polynomial coefficients of the numerator N(s) of the rational surface impedance per square Zs(s) = N(s)/D(s), with s = iω, ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of N are the zeros of Zs. SI units (s in rad/s, Zs in Ω/sq); only the ratio N/D is physical."
         },
         "Denominator":
         {
           "type": "array",
           "items": { "type": "number" },
           "minItems": 1,
-          "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. The roots of D are the poles of Zs."
+          "contains": { "not": { "const": 0 } },
+          "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of D are the poles of Zs."
         }
       }
     },
