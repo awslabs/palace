@@ -652,7 +652,8 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
 
     std::string err = ValidateConfig(config);
     INFO(err);
-    CHECK(err.find("[\"Solver\"][\"Linear\"][\"Type\"]") != std::string::npos);
+    CHECK(err.find("At [\"Solver\"][\"Linear\"][\"Type\"]: invalid value \"superlu\"") !=
+          std::string::npos);
     CHECK(err.find("Did you mean \"SuperLU\"?") != std::string::npos);
     CHECK(err.find("case#") == std::string::npos);
     CHECK(err.find("valid values: \"Default\", \"AMS\", \"BoomerAMG\", \"MUMPS\", "
@@ -676,10 +677,13 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
 
     std::string err = ValidateConfig(config);
     INFO(err);
-    CHECK(err.find("[\"Solver\"][\"Driven\"][\"Samples\"][0][\"Type\"]") !=
-          std::string::npos);
-    CHECK(err.find("valid values: \"Point\", \"Linear\", \"Log\"") != std::string::npos);
-    CHECK(err.find("Did you mean \"Linear\"?") != std::string::npos);
+    const std::string enum_error =
+        "At [\"Solver\"][\"Driven\"][\"Samples\"][0][\"Type\"]: invalid value "
+        "\"linear\"; valid values: \"Point\", \"Linear\", \"Log\". Did you mean "
+        "\"Linear\"?";
+    const auto enum_error_pos = err.find(enum_error);
+    REQUIRE(enum_error_pos != std::string::npos);
+    CHECK(err.find(enum_error, enum_error_pos + enum_error.size()) == std::string::npos);
     CHECK(err.find("\"SuperLU\"") == std::string::npos);
   }
 

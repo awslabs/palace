@@ -159,7 +159,14 @@ void CollectEnumValues(const json &schema, const json &defs,
                        json &values, int depth = 0)
 {
   constexpr int max_depth = 32;
-  if (!schema.is_object() || depth > max_depth)
+  if (depth > max_depth)
+  {
+    Mpi::Warning("Schema enum search exceeded max depth {}; check for a self-referential "
+                 "$defs cycle\n",
+                 max_depth);
+    return;
+  }
+  if (!schema.is_object())
   {
     return;
   }
@@ -340,19 +347,30 @@ public:
         message.find("instance not const") != std::string::npos ||
         message.find("no subschema has succeeded") != std::string::npos;
     json enum_values;
+    bool has_enum_values = false;
     if ((schema != nullptr) && is_enum_failure)
     {
       enum_values = FindEnumInSchema(*schema, path);
-      if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty() &&
-          !reported_enum_paths.insert(path).second)
+      has_enum_values =
+          !enum_values.is_null() && enum_values.is_array() && !enum_values.empty();
+      if (has_enum_values && !reported_enum_paths.insert(path).second)
       {
-        // Logical combinations can report the same enum failure once per branch. The first
-        // message already contains the union of values at this exact instance path.
+        // Logical combinations can report the same enum failure once per branch. Every
+        // enriched line uses the same user-facing message, so the first report is useful
+        // regardless of the validator's error emission order.
         return;
       }
     }
 
-    errors << "At " << FormatPath(path) << ": " << message;
+    errors << "At " << FormatPath(path) << ": ";
+    if (has_enum_values)
+    {
+      errors << "invalid value " << instance.dump();
+    }
+    else
+    {
+      errors << message;
+    }
     // Enhance type mismatch errors with actual type. Use find() so the enhancement also
     // fires for oneOf/anyOf-wrapped messages
     // like "[combination: oneOf / case#0] unexpected instance type".
@@ -360,7 +378,7 @@ public:
     {
       errors << " (got " << instance.type_name() << ")";
     }
-    else if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
+    else if (has_enum_values)
     {
       errors << "; valid values: ";
       for (std::size_t i = 0; i < enum_values.size(); i++)
