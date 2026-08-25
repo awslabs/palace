@@ -92,6 +92,8 @@ jobs:
           toolchain: gcc
           run-regression-tests: 'true'
           spack-version: 'develop'
+          # Keep this job on the moving spack-packages tip as well.
+          spack-packages-commit: ''
 
   # Refresh the palace-develop buildcache index after its sole cache-producing
   # job. Runs even if a later test in that job failed, so the index includes

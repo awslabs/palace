@@ -8,7 +8,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: '3dcad5bb860184c91c17b97a9f3b13252d26d309'
+    default: '5f1445e7f83215840ebab5c911301cad164c59d9'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -27,6 +27,7 @@ runs:
         # Pin to the Spack 1.2 release series for reproducible CI (instead of
         # the moving `develop` branch).
         spack-version: 'releases/v1.2'
+        spack-packages-commit: ${{ inputs.spack-packages-commit }}
         llvm-version: 'dont-install'
         setup-intel: 'false'
 
