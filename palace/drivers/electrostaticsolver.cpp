@@ -500,8 +500,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : data.fabricated_surface_energy;
         const auto energy = energies.find(interface);
         model_output.table[fmt::format("interface_{}", interface)]
-            << (available && energy != energies.end()
-                    ? iodata.units.Dimensionalize<VT::ENERGY>(energy->second)
+            << (available
+                    ? iodata.units.Dimensionalize<VT::ENERGY>(
+                          energy != energies.end() ? energy->second : 0.0)
                     : nan);
       }
     };
