@@ -9,6 +9,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/ksp.hpp"
@@ -396,12 +397,13 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
     }
     const mfem::FiniteElement *fe = fes->GetBE(be);
     mfem::ElementTransformation *Tr = pmesh->GetBdrElementTransformation(be);
-    auto geom_order = std::make_pair(fe->GetGeomType(), fe->GetOrder());
+    const int int_order = fem::DefaultIntegrationOrder::Get(*Tr);
+    auto geom_order = std::make_pair(fe->GetGeomType(), int_order);
     const mfem::IntegrationRule *ir;
     auto it = ir_map.find(geom_order);
     if (it == ir_map.end())
     {
-      ir = &mfem::IntRules.Get(fe->GetGeomType(), fe->GetOrder());
+      ir = &mfem::IntRules.Get(fe->GetGeomType(), int_order);
       ir_map[geom_order] = ir;
     }
     else
@@ -464,54 +466,9 @@ void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &
       double target_flux =
           (loop_idx == current_flux_loop_idx) ? flux_data.flux_amounts[h] : 0.0;
 
-      // Direct integration
-      mfem::Array<int> hole_marker(mesh.Get().bdr_attributes.Max());
-      hole_marker = 0;
-      hole_marker[hole_attr - 1] = 1;
-
-      // Use the direction from flux_data
       mfem::Vector flux_direction(const_cast<double *>(flux_data.direction.data()), 3);
-      BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC> flux_coeff(
-          nullptr, &B_gf, mat_op, false, flux_direction,
-          BdrSurfaceFluxCoefficient<
-              SurfaceFlux::MAGNETIC>::OrientationMode::DIRECTION_BASED);
-
-      double local_flux = 0.0;
-      mfem::ParMesh *pmesh = const_cast<mfem::ParMesh *>(&mesh.Get());
-      mfem::ParFiniteElementSpace *fes =
-          const_cast<mfem::ParFiniteElementSpace *>(B_gf.ParFESpace());
-      int nbdr = pmesh->GetNBE();
-      // Precompute integration rules for each geometry/order combination
-      std::map<std::pair<mfem::Geometry::Type, int>, const mfem::IntegrationRule *> ir_map;
-      for (int be = 0; be < nbdr; ++be)
-      {
-        int attr = pmesh->GetBdrAttribute(be);
-        if (attr != hole_attr)
-          continue;
-        const mfem::FiniteElement *fe = fes->GetBE(be);
-        mfem::ElementTransformation *Tr = pmesh->GetBdrElementTransformation(be);
-        auto geom_order = std::make_pair(fe->GetGeomType(), fe->GetOrder());
-        const mfem::IntegrationRule *ir;
-        auto it = ir_map.find(geom_order);
-        if (it == ir_map.end())
-        {
-          ir = &mfem::IntRules.Get(fe->GetGeomType(), fe->GetOrder());
-          ir_map[geom_order] = ir;
-        }
-        else
-        {
-          ir = it->second;
-        }
-        for (int q = 0; q < ir->GetNPoints(); ++q)
-        {
-          const mfem::IntegrationPoint &ip = ir->IntPoint(q);
-          Tr->SetIntPoint(&ip);
-          double val = flux_coeff.Eval(*Tr, ip);
-          local_flux += val * ip.weight * Tr->Weight();
-        }
-      }
-      double computed_flux = local_flux;
-      Mpi::GlobalSum(1, &computed_flux, comm);
+      double computed_flux =
+          ComputeFluxThroughSurface(B_gf, {hole_attr}, mesh, mat_op, flux_direction, comm);
 
       Mpi::Print(
           "  Loop {:d} Hole {:d}: Target = {:.6e}, Computed = {:.6e}, Error = {:.6e}\n",

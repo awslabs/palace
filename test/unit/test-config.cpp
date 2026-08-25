@@ -498,37 +498,64 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(config::Validate(boundary_data).has_value());
   }
 
-  SECTION("SurfaceCurrent and FluxLoop combination passes validation")
+  SECTION("SurfaceCurrent and FluxLoop combination parses")
   {
-    json boundaries = {
-        {"SurfaceCurrent", {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}}}},
-        {"FluxLoop",
-         {{{"Index", 2},
-           {"FluxLoopPEC", {8}},
-           {"HoleAttributes", {9}},
-           {"FluxAmounts", {1.0}},
-           {"Direction", "+Z"}}}}};
+    json boundaries = {{"SurfaceCurrent",
+                        {{{"Attributes", {6}},
+                          {"Index", 1},
+                          {"Direction", "+X"},
+                          {"Aperture", {{"Attributes", {7}}, {"Direction", "+Z"}}}}}},
+                       {"FluxLoop",
+                        {{{"Index", 2},
+                          {"FluxLoopPEC", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}}}}};
     config::BoundaryData boundary_data(boundaries);
     CHECK(!config::Validate(boundary_data).has_value());
     CHECK(boundary_data.current.size() == 1);
     CHECK(boundary_data.fluxloop.size() == 1);
-    // Without ApertureAttributes the mutual inductances are not measurable, but the
-    // configuration itself is still valid.
-    CHECK(boundary_data.current.at(1).aperture_attributes.empty());
+    REQUIRE(boundary_data.current.at(1).elements.at(0).aperture);
+    CHECK(boundary_data.current.at(1).elements.at(0).aperture->attributes ==
+          std::vector<int>{7});
   }
 
-  SECTION("SurfaceCurrent ApertureAttributes is optional and sorted when present")
+  SECTION("SurfaceCurrent Aperture is element-owned, sorted, and normalized")
   {
-    json boundaries = {{"SurfaceCurrent",
-                        {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}},
-                         {{"Attributes", {7}},
-                          {"Index", 2},
-                          {"Direction", "+X"},
-                          {"ApertureAttributes", {7, 5, 6}}}}}};
+    json boundaries = {
+        {"SurfaceCurrent",
+         {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}},
+          {{"Attributes", {7}},
+           {"Index", 2},
+           {"Direction", "+X"},
+           {"Aperture", {{"Attributes", {7, 5, 6}}, {"Direction", {0.0, 0.0, 2.0}}}}},
+          {{"Index", 3},
+           {"Elements",
+            {{{"Attributes", {8}},
+              {"Direction", "+X"},
+              {"Aperture", {{"Attributes", {10}}, {"Direction", "+Z"}}}},
+             {{"Attributes", {9}},
+              {"Direction", "-X"},
+              {"Aperture", {{"Attributes", {12, 11}}, {"Direction", "-Z"}}}}}}}}}};
     config::BoundaryData boundary_data(boundaries);
     CHECK(!config::Validate(boundary_data).has_value());
-    CHECK(boundary_data.current.at(1).aperture_attributes.empty());
-    CHECK(boundary_data.current.at(2).aperture_attributes == std::vector<int>{5, 6, 7});
+    CHECK(!boundary_data.current.at(1).elements.at(0).aperture);
+
+    const auto &single = boundary_data.current.at(2).elements.at(0).aperture;
+    REQUIRE(single);
+    CHECK(single->attributes == std::vector<int>{5, 6, 7});
+    CHECK(single->direction[0] == 0.0);
+    CHECK(single->direction[1] == 0.0);
+    CHECK(single->direction[2] == 1.0);
+
+    const auto &multi = boundary_data.current.at(3).elements;
+    REQUIRE(multi.size() == 2);
+    REQUIRE(multi[0].aperture);
+    REQUIRE(multi[1].aperture);
+    CHECK(multi[0].aperture->attributes == std::vector<int>{10});
+    CHECK(multi[0].aperture->direction[2] == 1.0);
+    CHECK(multi[1].aperture->attributes == std::vector<int>{11, 12});
+    CHECK(multi[1].aperture->direction[2] == -1.0);
   }
 
   SECTION("SurfaceCurrent InactiveMode is optional and parses per port")
@@ -726,6 +753,26 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
+  auto MixedConfig = []()
+  {
+    return json{{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                {"Model", {{"Mesh", "test.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                {"Boundaries",
+                 {{"SurfaceCurrent",
+                   {{{"Attributes", {4}},
+                     {"Index", 1},
+                     {"Direction", "+X"},
+                     {"Aperture", {{"Attributes", {5}}, {"Direction", "+Z"}}}}}},
+                  {"FluxLoop",
+                   {{{"Index", 2},
+                     {"FluxLoopPEC", {6}},
+                     {"HoleAttributes", {7}},
+                     {"FluxAmounts", {1.0}},
+                     {"Direction", "+Z"}}}}}},
+                {"Solver", json::object()}};
+  };
+
   SECTION("Defaults to Open when unspecified")
   {
     config::MagnetostaticSolverData magnetostatic(json::object());
@@ -759,6 +806,49 @@ TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
     { return boundary_data.current.at(idx).inactive_port_mode.value_or(global_mode); };
     CHECK(resolve(1) == InactivePortMode::SHORT);  // inherits global
     CHECK(resolve(2) == InactivePortMode::OPEN);   // per-port override wins
+  }
+
+  SECTION("Mixed extraction requires complete apertures")
+  {
+    auto config = MixedConfig();
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Boundaries"]["SurfaceCurrent"][0].erase("Aperture");
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Mixed extraction requires effectively Open current ports")
+  {
+    auto config = MixedConfig();
+    config["Solver"]["Magnetostatic"] = {{"InactivePorts", "Short"}};
+    CHECK_THROWS(IoData(config, false));
+
+    config["Boundaries"]["SurfaceCurrent"][0]["InactiveMode"] = "Open";
+    CHECK_NOTHROW(IoData(config, false));
+
+    config["Boundaries"]["SurfaceCurrent"][0]["InactiveMode"] = "Short";
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Aperture is rejected outside mixed extraction")
+  {
+    auto config = MixedConfig();
+    config["Boundaries"].erase("FluxLoop");
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Aperture direction must be finite, nonzero, and Cartesian")
+  {
+    CHECK_THROWS(config::SurfaceCurrentApertureData(
+        json{{"Attributes", {1}}, {"Direction", {0.0, 0.0, 0.0}}}));
+    CHECK_THROWS(
+        config::SurfaceCurrentApertureData(json{{"Attributes", {1}}, {"Direction", "+R"}}));
+
+    config::SurfaceCurrentApertureData aperture(
+        json{{"Attributes", {1}}, {"Direction", {0.0, 3.0, 4.0}}});
+    CHECK(aperture.direction[0] == 0.0);
+    CHECK(aperture.direction[1] == Catch::Approx(0.6));
+    CHECK(aperture.direction[2] == Catch::Approx(0.8));
   }
 }
 

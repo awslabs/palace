@@ -276,11 +276,16 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
   SECTION("SurfaceCurrent InactiveMode enum")
   {
     // Valid values are the enumerated modes; anything else is rejected by the schema.
-    json open = {{"Index", 1}, {"Attributes", {1}}, {"InactiveMode", "Open"}};
+    json open = {
+        {"Index", 1}, {"Attributes", {1}}, {"Direction", "+X"}, {"InactiveMode", "Open"}};
     CHECK(ValidateConfig(open, "SurfaceCurrent").empty());
-    json shorted = {{"Index", 1}, {"Attributes", {1}}, {"InactiveMode", "Short"}};
+    json shorted = {
+        {"Index", 1}, {"Attributes", {1}}, {"Direction", "+X"}, {"InactiveMode", "Short"}};
     CHECK(ValidateConfig(shorted, "SurfaceCurrent").empty());
-    json invalid = {{"Index", 1}, {"Attributes", {1}}, {"InactiveMode", "Floating"}};
+    json invalid = {{"Index", 1},
+                    {"Attributes", {1}},
+                    {"Direction", "+X"},
+                    {"InactiveMode", "Floating"}};
     CHECK(!ValidateConfig(invalid, "SurfaceCurrent").empty());
   }
 
@@ -289,6 +294,55 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(ValidateConfig(json{{"InactivePorts", "Open"}}, "Magnetostatic").empty());
     CHECK(ValidateConfig(json{{"InactivePorts", "Short"}}, "Magnetostatic").empty());
     CHECK(!ValidateConfig(json{{"InactivePorts", "Floating"}}, "Magnetostatic").empty());
+  }
+
+  SECTION("SurfaceCurrent Aperture has Attributes and Cartesian Direction")
+  {
+    json current = {{"Index", 1},
+                    {"Attributes", {1}},
+                    {"Direction", "+X"},
+                    {"Aperture", {{"Attributes", {2, 3}}, {"Direction", "+Z"}}}};
+    CHECK(ValidateConfig(current, "SurfaceCurrent").empty());
+
+    current["Aperture"]["Direction"] = {0.0, 1.0, 1.0};
+    CHECK(ValidateConfig(current, "SurfaceCurrent").empty());
+    current["Aperture"]["Direction"] = "+R";
+    CHECK(!ValidateConfig(current, "SurfaceCurrent").empty());
+
+    current["Aperture"] = {{"Attributes", {2}}};
+    CHECK(!ValidateConfig(current, "SurfaceCurrent").empty());
+    current["Aperture"] = {{"Direction", "+Z"}};
+    CHECK(!ValidateConfig(current, "SurfaceCurrent").empty());
+
+    current.erase("Aperture");
+    current["ApertureAttributes"] = {2};
+    CHECK(!ValidateConfig(current, "SurfaceCurrent").empty());
+  }
+
+  SECTION("SurfaceCurrent multielement apertures are element-owned")
+  {
+    json current = {
+        {"Index", 1},
+        {"Elements",
+         json::array(
+             {{{"Attributes", {1}},
+               {"Direction", "+X"},
+               {"Aperture", {{"Attributes", {3}}, {"Direction", "+Z"}}}},
+              {{"Attributes", {2}},
+               {"Direction", "-X"},
+               {"Aperture", {{"Attributes", {4}}, {"Direction", {0.0, 0.0, -1.0}}}}}})}};
+    CHECK(ValidateConfig(current, "SurfaceCurrent").empty());
+
+    current["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
+    CHECK(!ValidateConfig(current, "SurfaceCurrent").empty());
+
+    json lumped = {
+        {"Index", 1},
+        {"Elements",
+         json::array({{{"Attributes", {1}},
+                       {"Direction", "+X"},
+                       {"Aperture", {{"Attributes", {2}}, {"Direction", "+Z"}}}}})}};
+    CHECK(!ValidateConfig(lumped, "LumpedPort").empty());
   }
 
   SECTION("CurrentDipole rejects cylindrical R direction")

@@ -42,11 +42,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     from the usual cross-energies, while the current-flux mutual inductance is measured from
     the magnetic flux linked through each current port's aperture during the flux excitations,
     since the two excitation types are energy-orthogonal and their coupling does not appear in
-    the cross-energy matrix. A new optional
-    `config["Boundaries"]["SurfaceCurrent"][...]["ApertureAttributes"]` specifies the surface
-    spanning a port's current loop; without it the mutual inductance is reported as `NaN` and
-    the port's self-inductance is reported screened by the zero-flux loops. SchemaVer 1-6-0
-    [PR 861](https://github.com/awslabs/palace/pull/861).
+    the cross-energy matrix. Every surface-current element in a mixed simulation specifies
+    an oriented `"Aperture"` containing its spanning-surface `"Attributes"` and Cartesian
+    `"Direction"`; multielement ports combine the element linkages using the same weights as
+    their parallel current excitations. Mixed extraction requires all current ports to be
+    open when inactive and always reports one complete bare inductance matrix. SchemaVer
+    1-6-0 [PR 861](https://github.com/awslabs/palace/pull/861).
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Enable circuit synthesis with frequency-dependent boundary conditions, including

@@ -266,11 +266,12 @@ flux loop boundary condition works by:
 
 Flux-loop excitations can be combined with surface-current excitations in the same
 magnetostatic simulation, in which case Palace reports a single inductance matrix covering
-both port types. Recovering the mutual inductance between the two port types additionally
-requires `"ApertureAttributes"` on each surface-current port; see
-[Magnetostatic problems](problem.md#Magnetostatic-problems) for details. The `"FluxAmounts"` entries are nondimensional internal
-excitation amplitudes, analogous to unit-current excitations for current-driven
-magnetostatic solves. Palace reports `terminal-Phi.csv` in physical webers.
+both port types. Every surface-current element must provide an oriented `"Aperture"` with
+`"Attributes"` and a Cartesian `"Direction"`, and all current ports must be `"Open"` when
+inactive; see [Magnetostatic problems](problem.md#Magnetostatic-problems) for details. The
+`"FluxAmounts"` entries are nondimensional internal excitation amplitudes, analogous to
+unit-current excitations for current-driven magnetostatic solves. Palace reports
+`terminal-Phi.csv` in physical webers.
 
 !!! note "Flux loop requirements"
 

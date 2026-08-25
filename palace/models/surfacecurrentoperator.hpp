@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
@@ -24,17 +25,34 @@ struct SurfaceCurrentData;
 }  // namespace config
 
 //
-// Helper class for surface current boundaries in a model.
+// Helper classes for surface current boundaries in a model.
 //
+struct SurfaceCurrentAperture
+{
+  // Boundary attributes tiling the spanning surface, and a normalized Cartesian reference
+  // direction defining its positive oriented normal.
+  std::vector<int> attributes;
+  mfem::Vector direction;
+};
+
+struct SurfaceCurrentElement
+{
+  std::unique_ptr<LumpedElementData> source;
+  std::optional<SurfaceCurrentAperture> aperture;
+
+  // Fraction of the total port current carried by this parallel element. This same weight
+  // must be used when combining the element flux linkages into the generalized port flux.
+  double current_fraction;
+};
+
 class SurfaceCurrentData
 {
 public:
-  // To accommodate multielement surface current sources, a current source may be made up
-  // of elements with different attributes and directions which add to deliver the same
-  // total source current.
-  std::vector<std::unique_ptr<LumpedElementData>> elems;
+  // A multielement source consists of parallel elements which add to deliver the total
+  // source current. Each element owns its corresponding aperture when mixed current/flux
+  // inductance extraction is configured.
+  std::vector<SurfaceCurrentElement> elements;
 
-public:
   SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);
 
   double GetExcitationCurrent() const;
