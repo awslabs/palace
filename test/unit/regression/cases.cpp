@@ -387,6 +387,29 @@ TEST_CASE("cylinder_driven_wave_tm_eigen", "[Serial][Parallel][Regression]")
                                   "driven_wave_tm_eigen", opts);
 }
 
+// Circuit-synthesis counterpart of cylinder_driven_wave_tm: the TM01 (longitudinal-E) port
+// exercises the modal correction W in the synthesis export. The synthesized resonance
+// (rom-eigenvalues, ~3.61 GHz, Q ~ 4.3) is the W-dependent regression signal; raw synthesis
+// matrices and eigenvectors are basis/partition-dependent (presence-checked only).
+TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
+  opts.excluded_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-eigenvectors"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_synth.json",
+                                  "driven_wave_tm_synth", opts);
+}
+
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
 // (phase, evanescent-NaN and negligible entries skipped). Tolerances from the
 // driven_wave block.

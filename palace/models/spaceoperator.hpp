@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_SPACE_OPERATOR_HPP
 #define PALACE_MODELS_SPACE_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <memory>
 #include <vector>
@@ -200,6 +201,13 @@ public:
   // applying the matrix-free operator built by GetExtraSystemOperator. Forwards to
   // WavePortOperator::GetModalCorrectionTerms on the finest ND space.
   std::vector<WavePortOperator::ModalCorrectionTerm> GetModalCorrectionTerms(double omega);
+
+  // Circuit-synthesis form of the wave-port modal correction W (see
+  // WavePortOperator::GetModalCorrectionSynthesisTerms), forwarded on the finest ND space.
+  std::vector<WavePortOperator::ModalCorrectionSynthesisTerm>
+  GetModalCorrectionSynthesisTerms(double omega_ref);
+  std::array<std::complex<double>, 3>
+  EvalModalCorrectionSynthesisCoefficients(int port_idx, std::complex<double> omega);
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 

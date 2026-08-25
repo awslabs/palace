@@ -1700,4 +1700,77 @@ WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
   return op;
 }
 
+std::vector<WavePortOperator::ModalCorrectionSynthesisTerm>
+WavePortOperator::GetModalCorrectionSynthesisTerms(double omega_ref,
+                                                   FiniteElementSpace &nd_fespace,
+                                                   const mfem::Array<int> &nd_dbc_tdof_list)
+{
+  // Freeze the per-port modal reference at ω_ref, then return the frozen decomposition
+  // vectors u = ω0·(s_full − s_scalar), w = (ω0/kₙ0)·s_scalar (see the header and the
+  // complex GetModalCorrectionTerms for s₁(ω)=u+kₙ(ω)·w). Sampling the coefficients later
+  // uses SolveKnComplex, which leaves this reference untouched.
+  Initialize(omega_ref);
+  std::vector<ModalCorrectionSynthesisTerm> terms;
+  for (auto &[idx, data] : ports)
+  {
+    if (!data.active)
+    {
+      continue;
+    }
+    if (!(std::abs(data.modal_reaction) > 0.0) ||
+        !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(data.kn0) > 0.0))
+    {
+      Mpi::Warning(nd_fespace.GetComm(),
+                   "Wave port {:d} has zero modal reaction; skipping its modal correction "
+                   "in synthesis!\n",
+                   idx);
+      continue;
+    }
+    auto cr = data.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
+    auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
+    auto s_full = AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr, *ci);
+    auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
+    auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
+    auto s_scalar = AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr_s, *ci_s);
+    const double omega0 = data.omega0;
+    const std::complex<double> kn0 = data.kn0;
+    // u = ω0·(s_full − s_scalar) (built in s_full), w = (ω0/kₙ0)·s_scalar (built in
+    // s_scalar). The correction is carried entirely by u (the ∇ₜEₙ term): skip TE/TEM modes
+    // where s_full ≈ s_scalar (E_n ≈ 0) so synthesis stays exactly at baseline.
+    const double norm_full = linalg::Norml2(nd_fespace.GetComm(), *s_full);
+    s_full->Add(std::complex<double>(-1.0, 0.0), *s_scalar);
+    if (norm_full == 0.0 ||
+        linalg::Norml2(nd_fespace.GetComm(), *s_full) <= 1.0e-9 * norm_full)
+    {
+      continue;
+    }
+    *s_full *= std::complex<double>(omega0, 0.0);
+    *s_scalar *= omega0 / kn0;
+    terms.push_back({idx, std::move(s_full), std::move(s_scalar)});
+  }
+  return terms;
+}
+
+std::array<std::complex<double>, 3>
+WavePortOperator::EvalModalCorrectionSynthesisCoefficients(int port_idx,
+                                                           std::complex<double> omega)
+{
+  auto it = ports.find(port_idx);
+  MFEM_VERIFY(it != ports.end(),
+              "EvalModalCorrectionSynthesisCoefficients called with unknown port index "
+                  << port_idx << "!");
+  auto &data = it->second;
+  // Same g₁, g₂ and R_P, R_Q as the complex GetModalCorrectionTerms, evaluated against the
+  // frozen reference: c_uu = g₁, c_uw = g₁·kₙ, c_ww = g₁·kₙ² + g₂.
+  const std::complex<double> kn0 = data.kn0;
+  const double omega0 = data.omega0;
+  const std::complex<double> R_P = omega0 * data.modal_reaction_scalar / kn0;
+  const std::complex<double> R_Q =
+      omega0 * (data.modal_reaction - data.modal_reaction_scalar);
+  const std::complex<double> kn = data.SolveKnComplex(omega);
+  const std::complex<double> g1 = std::complex<double>(0.0, -1.0) / (kn * R_P + R_Q);
+  const std::complex<double> g2 = std::complex<double>(0.0, 1.0) * kn / R_P;
+  return {g1, g1 * kn, g1 * kn * kn + g2};
+}
+
 }  // namespace palace

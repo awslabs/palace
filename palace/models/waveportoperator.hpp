@@ -354,6 +354,25 @@ public:
   std::unique_ptr<ComplexOperator>
   GetModalCorrectionOperator(std::complex<double> omega, FiniteElementSpace &nd_fespace,
                              const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Circuit-synthesis form of W. With the reference frozen at ω_ref and s₁(ω)=u+kₙ(ω)·w,
+  // each active port's W(ω) expands into three fixed reduced matrices with scalar
+  // dispersion:
+  //   W(ω) = c_uu·u·uᵀ + c_uw·(u·wᵀ+w·uᵀ) + c_ww·w·wᵀ.
+  // GetModalCorrectionSynthesisTerms freezes the reference and returns the frozen vectors
+  // u = ω0·(s_full − s_scalar), w = (ω0/kₙ0)·s_scalar;
+  // EvalModalCorrectionSynthesisCoefficients gives {c_uu, c_uw, c_ww} at ω (via
+  // SolveKnComplex, so it does not disturb the reference).
+  struct ModalCorrectionSynthesisTerm
+  {
+    int port_idx;
+    std::unique_ptr<ComplexVector> u, w;
+  };
+  std::vector<ModalCorrectionSynthesisTerm>
+  GetModalCorrectionSynthesisTerms(double omega_ref, FiniteElementSpace &nd_fespace,
+                                   const mfem::Array<int> &nd_dbc_tdof_list);
+  std::array<std::complex<double>, 3>
+  EvalModalCorrectionSynthesisCoefficients(int port_idx, std::complex<double> omega);
 };
 
 }  // namespace palace

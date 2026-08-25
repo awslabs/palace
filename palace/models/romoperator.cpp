@@ -4,6 +4,7 @@
 #include "romoperator.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -1938,6 +1939,81 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
         port_load.aux_blocks.push_back(*fit.aux);
       }
       pending_port_loads.push_back(std::move(port_load));
+    }
+  }
+
+  // Wave-port modal correction W = Σ_ports (W_full − W_scalar), folded into synthesis.
+  // Freeze the reference at band center; each active port's W(ω) is a fixed rank-≤2
+  // complex-symmetric reduced pencil c_uu·U·Uᵀ + c_uw·(U·Wᵀ+W·Uᵀ) + c_ww·W·Wᵀ with scalar
+  // dispersion c(ω), fit per coefficient to a quadratic in ω (poly-only; the aux
+  // augmentation carries only real symmetric matrices). Zero for TEM (E_n≈0) modes. Added
+  // to the loaded pencil AND the matching removable per-port load.
+  if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
+  {
+    const double omega_c = 0.5 * (sweep_omega_min + sweep_omega_max);
+    auto synth_terms = space_op.GetModalCorrectionSynthesisTerms(omega_c);
+    const int n_fit = std::max(12, 2 * static_cast<int>(waveport_synthesis_order_max) + 4);
+    const auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
+    for (auto &term : synth_terms)
+    {
+      // Project the frozen mode-shape vectors onto the reduced basis and form the three
+      // fixed complex-symmetric reduced matrices.
+      Eigen::VectorXcd U = Eigen::VectorXcd::Zero(Kr.rows()),
+                       Wv = Eigen::VectorXcd::Zero(Kr.rows());
+      ProjectVecInternal(space_op.GetComm(), V, *term.u, U, 0);
+      ProjectVecInternal(space_op.GetComm(), V, *term.w, Wv, 0);
+      const std::array<Eigen::MatrixXcd, 3> S = {
+          U * U.transpose(), U * Wv.transpose() + Wv * U.transpose(), Wv * Wv.transpose()};
+
+      // Sample the three scalar dispersion coefficients once (via SolveKnComplex, leaving
+      // the frozen reference intact) and fit each to a quadratic in ω.
+      std::array<Eigen::VectorXcd, 3> c = {Eigen::VectorXcd(n_fit), Eigen::VectorXcd(n_fit),
+                                           Eigen::VectorXcd(n_fit)};
+      for (int i = 0; i < n_fit; i++)
+      {
+        auto ci = space_op.EvalModalCorrectionSynthesisCoefficients(
+            term.port_idx, std::complex<double>(fit_omegas[i], 0.0));
+        for (int k = 0; k < 3; k++)
+        {
+          c[k](i) = ci[k];
+        }
+      }
+      std::array<Eigen::Vector3cd, 3> a;
+      double max_res = 0.0, max_ref = 0.0;
+      for (int k = 0; k < 3; k++)
+      {
+        a[k] = FitQuadratic(fit_omegas, c[k]);
+        for (int i = 0; i < n_fit; i++)
+        {
+          const double w = fit_omegas[i];
+          max_res = std::max(max_res,
+                             std::abs(a[k](0) + a[k](1) * w + a[k](2) * w * w - c[k](i)));
+          max_ref = std::max(max_ref, std::abs(c[k](i)));
+        }
+      }
+      if (max_ref > 0.0 && max_res > waveport_synthesis_tol * max_ref)
+      {
+        Mpi::Warning(space_op.GetComm(),
+                     "Wave port {:d} modal-correction dispersion is poorly captured by a "
+                     "quadratic fit (relative residual {:.2e} > tol {:.2e}); synthesized "
+                     "S-parameters may be inaccurate near band edges!\n",
+                     term.port_idx, max_res / max_ref, waveport_synthesis_tol);
+      }
+
+      // Fold each coefficient·matrix into the loaded pencil and the matching per-port load.
+      const auto load_label = fmt::format("waveport_{:d}_re", term.port_idx);
+      auto pl = std::find_if(pending_port_loads.begin(), pending_port_loads.end(),
+                             [&](const auto &p) { return p.label == load_label; });
+      for (int k = 0; k < 3; k++)
+      {
+        ApplyComplexPolynomialFitCorrections(a[k](0), a[k](1), a[k](2), S[k], Kr_total_corr,
+                                             Cr_total_corr, Mr_total_corr);
+        if (pl != pending_port_loads.end())
+        {
+          ApplyComplexPolynomialFitCorrections(a[k](0), a[k](1), a[k](2), S[k], pl->Kr_corr,
+                                               pl->Cr_corr, pl->Mr_corr);
+        }
+      }
     }
   }
 
