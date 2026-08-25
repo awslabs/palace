@@ -3,7 +3,9 @@
 """Plan, build, qualify, cache, and merge surface-response coupons."""
 
 import argparse
+import concurrent.futures
 import copy
+import csv
 import hashlib
 import json
 import math
@@ -54,10 +56,11 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def run(command, check=True):
+def run(command, check=True, cwd=None):
     command = [str(value) for value in command]
-    print("+ " + shlex.join(command), flush=True)
-    return subprocess.run(command, check=check).returncode
+    location = f" (cwd={cwd})" if cwd else ""
+    print("+ " + shlex.join(command) + location, flush=True)
+    return subprocess.run(command, check=check, cwd=cwd).returncode
 
 
 def slug(value):
@@ -712,6 +715,79 @@ def stamp_library_boundary_conditions(path, coupons):
     write_json(path, library)
 
 
+def stamp_geometry_coverage_only(path):
+    library = load_json(path)
+    for model in library.get("Models", []):
+        model["BoundaryLawQualification"] = {
+            "Version": 1,
+            "Status": "Unqualified",
+            "Calibration": "GeometryCoverageOnly",
+            "FrequencyUniversal": False,
+        }
+    write_json(path, library)
+
+
+def pad_missing_surface_response_matrices(root, interface_count, matching_radius):
+    """Add exact-zero blocks for interfaces absent from a generated coupon mesh."""
+    for kind in ("thin", "fabricated"):
+        postpro = root / "postpro" / f"spatial_{kind}"
+        domain_path = postpro / "domain-response-matrix.csv"
+        surface_path = postpro / "surface-response-matrix.csv"
+        with domain_path.open(newline="") as stream:
+            domain_rows = list(csv.DictReader(stream, skipinitialspace=True))
+        basis_size = max(
+            max(int(float(row["basis_i"])), int(float(row["basis_j"])))
+            for row in domain_rows
+        )
+        rows = []
+        fieldnames = [
+            "interface",
+            "edge",
+            "R (m)",
+            "basis_i",
+            "basis_j",
+            "Q_ij (J)",
+            "Q_ij normal (J)",
+            "Q_ij tangential (J)",
+            "Q_total_ij (J)",
+            "Q_total_ij normal (J)",
+            "Q_total_ij tangential (J)",
+        ]
+        if surface_path.is_file():
+            with surface_path.open(newline="") as stream:
+                reader = csv.DictReader(stream, skipinitialspace=True)
+                fieldnames = [name.strip() for name in reader.fieldnames]
+                rows = [
+                    {name.strip(): value for name, value in row.items()}
+                    for row in reader
+                ]
+        present = {int(float(row["interface"])) for row in rows}
+        for interface in range(1, interface_count + 1):
+            if interface in present:
+                continue
+            for i in range(1, basis_size + 1):
+                for j in range(i, basis_size + 1):
+                    rows.append(
+                        {
+                            "interface": interface,
+                            "edge": 1,
+                            "R (m)": matching_radius * 1.0e-6,
+                            "basis_i": i,
+                            "basis_j": j,
+                            "Q_ij (J)": 0.0,
+                            "Q_ij normal (J)": 0.0,
+                            "Q_ij tangential (J)": 0.0,
+                            "Q_total_ij (J)": 0.0,
+                            "Q_total_ij normal (J)": 0.0,
+                            "Q_total_ij tangential (J)": 0.0,
+                        }
+                    )
+        with surface_path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+
 def normalize_parallel_edges(coupon, matching_radius):
     raw_edges = coupon.get("Geometry", {}).get("Edges")
     if not isinstance(raw_edges, list) or len(raw_edges) < 3:
@@ -856,11 +932,17 @@ def build_straight(coupons, args, parameters, cache):
     if (
         qualification
         and qualification.get("Fingerprint") == key
-        and qualification.get("Passed")
+        and (
+            qualification.get("Passed")
+            or (
+                getattr(args, "coverage_only", False)
+                and qualification.get("GeometryComplete")
+            )
+        )
         and final_library.is_file()
         and not args.force
     ):
-        print(f"Reusing qualified straight-edge cache {root}")
+        print(f"Reusing completed straight-edge cache {root}")
         return final_library, qualification_path
 
     root.mkdir(parents=True, exist_ok=True)
@@ -918,6 +1000,21 @@ def build_straight(coupons, args, parameters, cache):
             command.append(f"--{option}")
             command.extend(separations[topology])
         run(command)
+
+    if getattr(args, "coverage_only", False):
+        stamp_library_boundary_conditions(final_library, coupons)
+        stamp_geometry_coverage_only(final_library)
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "straight",
+            "Library": str(final_library),
+            "GeometryComplete": True,
+            "Passed": False,
+            "Reason": "Geometry-coverage generation does not perform convergence qualification",
+        }
+        write_json(qualification_path, qualification)
+        return final_library, qualification_path
 
     previous = order_roots[args.orders[-2]]
     current = order_roots[args.orders[-1]]
@@ -1153,12 +1250,25 @@ def build_parallel_cluster(coupon, args, parameters, cache):
     if (
         qualification
         and qualification.get("Fingerprint") == key
-        and qualification.get("Passed")
-        and final_library.is_file()
+        and (
+            qualification.get("Passed")
+            or (
+                getattr(args, "coverage_only", False)
+                and qualification.get("GeometryComplete")
+            )
+            or (
+                getattr(args, "probe_study_only", False)
+                and qualification.get("ProbeStudyComplete")
+            )
+        )
+        and (final_library.is_file() or getattr(args, "probe_study_only", False))
         and not args.force
     ):
-        print(f"Reusing qualified parallel-cluster cache {root}")
-        return final_library, qualification_path
+        print(f"Reusing completed parallel-cluster cache {root}")
+        return (
+            None if getattr(args, "probe_study_only", False) else final_library,
+            qualification_path,
+        )
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
@@ -1210,6 +1320,26 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             *material_options(parameters),
         ]
     )
+    if getattr(args, "coverage_only", False):
+        for name in ("cluster_thin", "cluster_fabricated"):
+            run(
+                palace_command(args, final_root / f"{name}.json"),
+                cwd=final_root,
+            )
+        stamp_library_boundary_conditions(final_library, [coupon])
+        stamp_geometry_coverage_only(final_library)
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "parallel-edge-cluster",
+            "Library": str(final_library),
+            "GeometryComplete": True,
+            "Passed": False,
+            "Reason": "Geometry-coverage generation does not perform convergence qualification",
+        }
+        write_json(qualification_path, qualification)
+        return final_library, qualification_path
+
     convergence_root = root / "probe-convergence"
     convergence_code, convergence_report, convergence = run_probe_convergence(
         final_root, convergence_root, args
@@ -1265,6 +1395,20 @@ def build_parallel_cluster(coupon, args, parameters, cache):
         raise RuntimeError(
             f"Parallel-cluster mesh convergence failed: {qualification_path}"
         )
+    if getattr(args, "probe_study_only", False):
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "parallel-edge-cluster",
+            "Library": None,
+            "ResponseReport": None,
+            "ConvergenceReport": str(convergence_report),
+            "MeshConvergenceReport": str(mesh_convergence_report),
+            "ProbeStudyComplete": True,
+            "Passed": False,
+        }
+        write_json(qualification_path, qualification)
+        return None, qualification_path
 
     if cluster_complete(final_root) and not args.force:
         print(f"Reusing completed p{final_order} parallel-cluster responses")
@@ -1275,7 +1419,10 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             "heldout_cluster_thin",
             "heldout_cluster_fabricated",
         ):
-            run(palace_command(args, final_root / f"{name}.json"))
+            run(
+                palace_command(args, final_root / f"{name}.json"),
+                cwd=final_root,
+            )
         if not cluster_complete(final_root):
             raise RuntimeError(
                 f"Palace did not complete parallel-cluster responses in {final_root}"
@@ -1431,12 +1578,25 @@ def build_corner(coupon, args, parameters, cache):
     if (
         qualification
         and qualification.get("Fingerprint") == key
-        and qualification.get("Passed")
-        and library_path.is_file()
+        and (
+            qualification.get("Passed")
+            or (
+                getattr(args, "coverage_only", False)
+                and qualification.get("GeometryComplete")
+            )
+            or (
+                getattr(args, "probe_study_only", False)
+                and qualification.get("ProbeStudyComplete")
+            )
+        )
+        and (library_path.is_file() or getattr(args, "probe_study_only", False))
         and not args.force
     ):
-        print(f"Reusing qualified corner cache {root}")
-        return library_path, qualification_path
+        print(f"Reusing completed corner cache {root}")
+        return (
+            None if getattr(args, "probe_study_only", False) else library_path,
+            qualification_path,
+        )
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
@@ -1485,6 +1645,24 @@ def build_corner(coupon, args, parameters, cache):
             *material_options(parameters),
         ]
     )
+    if getattr(args, "coverage_only", False):
+        for name in ("thin", "fabricated"):
+            run(palace_command(args, root / f"{name}.json"), cwd=root)
+        run([sys.executable, CORNER_FINALIZER, root])
+        stamp_library_boundary_conditions(library_path, [coupon])
+        stamp_geometry_coverage_only(library_path)
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "corner",
+            "Library": str(library_path),
+            "GeometryComplete": True,
+            "Passed": False,
+            "Reason": "Geometry-coverage generation does not perform convergence qualification",
+        }
+        write_json(qualification_path, qualification)
+        return library_path, qualification_path
+
     convergence_root = root / "convergence"
     convergence_code, convergence_report, convergence = run_probe_convergence(
         root, convergence_root, args
@@ -1545,12 +1723,26 @@ def build_corner(coupon, args, parameters, cache):
         raise RuntimeError(
             f"Corner mesh convergence failed: {qualification_path}"
         )
+    if getattr(args, "probe_study_only", False):
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "corner",
+            "Library": None,
+            "HeldoutReport": None,
+            "ConvergenceReport": str(convergence_report),
+            "MeshConvergenceReport": str(mesh_convergence_report),
+            "ProbeStudyComplete": True,
+            "Passed": False,
+        }
+        write_json(qualification_path, qualification)
+        return None, qualification_path
 
     for name in ("thin", "fabricated"):
-        run(palace_command(args, root / f"{name}.json"))
+        run(palace_command(args, root / f"{name}.json"), cwd=root)
     run([sys.executable, CORNER_FINALIZER, root])
     for name in ("heldout-thin", "heldout-fabricated"):
-        run(palace_command(args, root / f"{name}.json"))
+        run(palace_command(args, root / f"{name}.json"), cwd=root)
     heldout_report = root / "heldout-qualification.json"
     heldout_code = run(
         [
@@ -1742,12 +1934,25 @@ def build_spatial(coupon, args, parameters, cache):
     if (
         qualification
         and qualification.get("Fingerprint") == key
-        and qualification.get("Passed")
-        and library_path.is_file()
+        and (
+            qualification.get("Passed")
+            or (
+                getattr(args, "coverage_only", False)
+                and qualification.get("GeometryComplete")
+            )
+            or (
+                getattr(args, "probe_study_only", False)
+                and qualification.get("ProbeStudyComplete")
+            )
+        )
+        and (library_path.is_file() or getattr(args, "probe_study_only", False))
         and not args.force
     ):
-        print(f"Reusing qualified spatial cache {root}")
-        return library_path, qualification_path
+        print(f"Reusing completed spatial cache {root}")
+        return (
+            None if getattr(args, "probe_study_only", False) else library_path,
+            qualification_path,
+        )
 
     root.mkdir(parents=True, exist_ok=True)
     coupon_path = root / "coupon.json"
@@ -1818,6 +2023,33 @@ def build_spatial(coupon, args, parameters, cache):
             meshes["fabricated"],
         ]
     )
+    if getattr(args, "coverage_only", False):
+        for name in ("spatial_thin", "spatial_fabricated"):
+            run(palace_command(args, root / f"{name}.json"), cwd=root)
+        interface_count = len(
+            {
+                (int(interface.get("Slot", 0)), interface["Type"])
+                for interface in coupon.get("Interfaces", [])
+            }
+        )
+        pad_missing_surface_response_matrices(
+            root, interface_count, args.matching_radius
+        )
+        stamp_library_boundary_conditions(library_path, [coupon])
+        stamp_geometry_coverage_only(library_path)
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "spatial",
+            "Topology": coupon["Topology"],
+            "Library": str(library_path),
+            "GeometryComplete": True,
+            "Passed": False,
+            "Reason": "Geometry-coverage generation does not perform convergence qualification",
+        }
+        write_json(qualification_path, qualification)
+        return library_path, qualification_path
+
     convergence_root = root / "probe-convergence"
     convergence_code, convergence_report, convergence = run_probe_convergence(
         root, convergence_root, args
@@ -1880,6 +2112,21 @@ def build_spatial(coupon, args, parameters, cache):
         raise RuntimeError(
             f"Spatial mesh convergence failed: {qualification_path}"
         )
+    if getattr(args, "probe_study_only", False):
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "spatial",
+            "Topology": coupon["Topology"],
+            "Library": None,
+            "HeldoutReport": None,
+            "ConvergenceReport": str(convergence_report),
+            "MeshConvergenceReport": str(mesh_convergence_report),
+            "ProbeStudyComplete": True,
+            "Passed": False,
+        }
+        write_json(qualification_path, qualification)
+        return None, qualification_path
 
     if spatial_complete(root) and not args.force:
         print(f"Reusing completed spatial responses in {root}")
@@ -1890,7 +2137,7 @@ def build_spatial(coupon, args, parameters, cache):
             "heldout_spatial_thin",
             "heldout_spatial_fabricated",
         ):
-            run(palace_command(args, root / f"{name}.json"))
+            run(palace_command(args, root / f"{name}.json"), cwd=root)
         if not spatial_complete(root):
             raise RuntimeError(f"Palace did not complete spatial responses in {root}")
 
@@ -1951,9 +2198,11 @@ def execute(plan, library_path, args):
         for coupon in unsupported
     ]
 
-    def attempt(coupons, method, builder):
+    def evaluate(task):
+        coupons, method, builder = task
         try:
             generated, qualification = builder()
+            return generated, qualification, None
         except Exception as error:
             failure = {
                 "Ids": [coupon["Id"] for coupon in coupons],
@@ -1963,6 +2212,11 @@ def execute(plan, library_path, args):
                 "Method": method,
                 "Reason": f"{type(error).__name__}: {error}",
             }
+            return None, None, failure
+
+    def collect(result):
+        generated, qualification, failure = result
+        if failure:
             failures.append(failure)
             print(
                 "Coupon qualification failed for "
@@ -1973,50 +2227,66 @@ def execute(plan, library_path, args):
                 flush=True,
             )
             return
-        libraries.append(generated)
+        if generated is not None:
+            libraries.append(generated)
         qualifications.append(qualification)
 
+    # Build the straight-edge family first. Besides normally being inexpensive, this
+    # avoids concurrent first-use Julia package precompilation before independent corner
+    # and spatial coupon workers start.
     straight = [
         coupon
         for coupon in missing
         if coupon["Preparation"]["Method"] == "StraightEdgeBuilder"
     ]
     if straight:
-        attempt(
-            straight,
-            "StraightEdgeBuilder",
-            lambda: build_straight(straight, args, parameters, cache),
+        collect(
+            evaluate(
+                (
+                    straight,
+                    "StraightEdgeBuilder",
+                    lambda: build_straight(straight, args, parameters, cache),
+                )
+            )
         )
+
+    tasks = []
     for coupon in missing:
-        if coupon["Preparation"]["Method"] != "ParallelClusterCoupon":
-            continue
-        attempt(
-            [coupon],
-            "ParallelClusterCoupon",
-            lambda coupon=coupon: build_parallel_cluster(
+        method = coupon["Preparation"]["Method"]
+        if method == "ParallelClusterCoupon":
+            builder = lambda coupon=coupon: build_parallel_cluster(
                 coupon, args, parameters, cache
-            ),
-        )
-    for coupon in missing:
-        if coupon["Preparation"]["Method"] != "CornerCoupon":
-            continue
-        attempt(
-            [coupon],
-            "CornerCoupon",
-            lambda coupon=coupon: build_corner(
+            )
+        elif method == "CornerCoupon":
+            builder = lambda coupon=coupon: build_corner(
                 coupon, args, parameters, cache
-            ),
-        )
-    for coupon in missing:
-        if coupon["Preparation"]["Method"] != "SpatialCoupon":
-            continue
-        attempt(
-            [coupon],
-            "SpatialCoupon",
-            lambda coupon=coupon: build_spatial(
+            )
+        elif method == "SpatialCoupon":
+            builder = lambda coupon=coupon: build_spatial(
                 coupon, args, parameters, cache
-            ),
+            )
+        else:
+            continue
+        tasks.append(([coupon], method, builder))
+
+    coupon_jobs = getattr(args, "coupon_jobs", 1)
+    if coupon_jobs == 1:
+        results = map(evaluate, tasks)
+        for result in results:
+            collect(result)
+    else:
+        print(
+            f"Executing {len(tasks)} independent coupon families with "
+            f"{coupon_jobs} concurrent workers",
+            flush=True,
         )
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=coupon_jobs
+        ) as executor:
+            # executor.map preserves deterministic task order for library combination even
+            # though subprocesses run concurrently.
+            for result in executor.map(evaluate, tasks):
+                collect(result)
 
     destination = args.output / "library"
     run(
@@ -2031,6 +2301,10 @@ def execute(plan, library_path, args):
             *libraries,
         ]
     )
+    coverage_only = getattr(args, "coverage_only", False)
+    probe_study_only = getattr(args, "probe_study_only", False)
+    geometry_complete = not failures and not probe_study_only
+    probe_study_complete = not failures and probe_study_only
     qualification_manifest = {
         "Version": 1,
         "SourceManifest": plan["SourceManifest"],
@@ -2038,23 +2312,31 @@ def execute(plan, library_path, args):
         "GeneratedLibraries": [str(path) for path in libraries[1:]],
         "QualificationReports": [str(path) for path in qualifications],
         "Failures": failures,
+        "GeometryComplete": geometry_complete,
+        "ProbeStudyComplete": probe_study_complete,
+        "QualificationRequired": not coverage_only and not probe_study_only,
         "BoundaryLawPhysics": {
             "Complete": not any(uses_finite_impedance(coupon) for coupon in missing),
             "UnqualifiedCoupons": [
                 coupon["Id"] for coupon in missing if uses_finite_impedance(coupon)
             ],
         },
-        "Passed": not failures,
+        "Passed": (geometry_complete and not coverage_only) or probe_study_complete,
     }
     qualification_path = destination / "qualification-manifest.json"
     write_json(qualification_path, qualification_manifest)
     plan["Execution"] = {
-        "Complete": not failures,
+        "Complete": geometry_complete and not coverage_only,
+        "GeometryComplete": geometry_complete,
+        "ProbeStudyComplete": probe_study_complete,
+        "QualificationRequired": not coverage_only and not probe_study_only,
         "Library": str(destination / "process-library.json"),
         "QualificationManifest": str(qualification_path),
         "Failures": failures,
     }
-    return not failures
+    if probe_study_only:
+        return probe_study_complete
+    return geometry_complete if coverage_only else not failures
 
 
 def parse_args():
@@ -2067,11 +2349,36 @@ def parse_args():
         help="Include exact and interpolated requirements as validation coupons",
     )
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument(
+        "--coverage-only",
+        action="store_true",
+        help=(
+            "Generate every required response model without convergence or held-out "
+            "qualification; entries are explicitly marked GeometryCoverageOnly/Unqualified"
+        ),
+    )
+    parser.add_argument(
+        "--probe-study-only",
+        action="store_true",
+        help=(
+            "Run FEM-order and mesh-resolution probes for every coupon, but stop before "
+            "assembling full corner/spatial response matrices"
+        ),
+    )
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--palace", type=Path)
     parser.add_argument("--julia", default="julia")
     parser.add_argument("--julia-project", type=Path)
     parser.add_argument("--ranks", type=int, default=1)
+    parser.add_argument(
+        "--coupon-jobs",
+        type=int,
+        default=1,
+        help=(
+            "Number of independent corner/spatial coupon families to execute concurrently; "
+            "total MPI ranks can reach --coupon-jobs times --ranks"
+        ),
+    )
     parser.add_argument("--name", default="qualified-fabrication-process")
     parser.add_argument("--orders", type=int, nargs="+", default=[2, 3])
     parser.add_argument("--mesh-order", type=int, default=1)
@@ -2133,12 +2440,21 @@ def parse_args():
         else args.output / "cache"
     )
     args.orders = sorted(set(args.orders))
+    if args.coverage_only and args.probe_study_only:
+        parser.error("--coverage-only and --probe-study-only are mutually exclusive")
     if args.execute and args.palace is None:
         parser.error("--palace is required with --execute")
     if args.ranks <= 0:
         parser.error("--ranks must be positive")
-    if len(args.orders) < 2 or any(order <= 0 for order in args.orders):
-        parser.error("--orders requires at least two positive FEM orders")
+    if args.coupon_jobs <= 0:
+        parser.error("--coupon-jobs must be positive")
+    if any(order <= 0 for order in args.orders) or (
+        not args.coverage_only and len(args.orders) < 2
+    ):
+        parser.error(
+            "--orders requires positive FEM orders and at least two unless "
+            "--coverage-only is selected"
+        )
     if args.basis_size <= 0 or args.basis_size % 2:
         parser.error("--basis-size must be a positive even number")
     if args.ring_size < 8 or args.ring_size % 8:
@@ -2218,8 +2534,15 @@ def main():
             write_json(destination, plan)
         print(plan["Execution"]["Library"])
         if not complete:
+            description = (
+                "geometry generation"
+                if args.coverage_only
+                else "probe study"
+                if args.probe_study_only
+                else "qualification"
+            )
             print(
-                "One or more coupon requirements failed qualification; "
+                f"One or more coupon requirements failed {description}; "
                 "see coupon-plan.json",
                 file=sys.stderr,
             )

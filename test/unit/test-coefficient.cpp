@@ -206,4 +206,31 @@ TEST_CASE("InterfaceDielectricCoefficient recovered normal flux", "[coefficient]
                                         1.0e-12));
   CHECK_THAT(sa_normal.Eval(*T, ip) + sa_tangential.Eval(*T, ip),
              Catch::Matchers::WithinAbs(sa_recovered.Eval(*T, ip), 1.0e-12));
+
+  // The real-valued amplitudes used by batched response-matrix assembly reproduce the
+  // ordinary quadratic coefficients exactly.
+  GridFunction E_batch(nd_fespace), D_batch(rt_fespace);
+  E_batch.Real().ProjectCoefficient(Er);
+  D_batch.Real().ProjectCoefficient(Dr);
+  E_batch.Real().ExchangeFaceNbrData();
+  D_batch.Real().ExchangeFaceNbrData();
+  mfem::Vector field;
+  auto CheckBatched = [&](auto &coefficient)
+  {
+    coefficient.EvalEnergyField(*T, ip, field);
+    CHECK_THAT(0.5 * (field * field),
+               Catch::Matchers::WithinAbs(coefficient.Eval(*T, ip), 1.0e-12));
+  };
+  InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT> default_batch(
+      E_batch, mat_op, thickness, interface_epsilon);
+  InterfaceDielectricCoefficient<InterfaceDielectric::MA> ma_batch(
+      E_batch, mat_op, thickness, interface_epsilon, &D_batch);
+  InterfaceDielectricCoefficient<InterfaceDielectric::MS> ms_batch(
+      E_batch, mat_op, thickness, interface_epsilon, &D_batch);
+  InterfaceDielectricCoefficient<InterfaceDielectric::SA> sa_batch(
+      E_batch, mat_op, thickness, interface_epsilon, &D_batch);
+  CheckBatched(default_batch);
+  CheckBatched(ma_batch);
+  CheckBatched(ms_batch);
+  CheckBatched(sa_batch);
 }

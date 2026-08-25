@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import csv
 import importlib.util
 import json
 import sys
@@ -1085,6 +1086,9 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(
             SPATIAL.edge_attributes(edges, True, 0, {3100}), [3100]
         )
+        self.assertEqual(
+            SPATIAL.edge_attributes(edges, False, 0, {3001}), [3001]
+        )
         self.assertEqual(SPATIAL.conductor_attributes(edges, False, 2), [4002])
         self.assertEqual(
             SPATIAL.conductor_attributes(edges, True, 2), [5002, 6002]
@@ -1105,6 +1109,60 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "SA interface slot 1"):
             SPATIAL.interface_attributes(edges, True, 1, "SA", {3100})
+        self.assertEqual(
+            SPATIAL.interface_attributes(
+                edges, True, 1, "SA", {3100}, allow_empty=True
+            ),
+            [],
+        )
+
+    def test_spatial_config_omits_physically_absent_interface(self):
+        edges = [
+            {
+                "Conductor": 1,
+                "InterfaceSlot": 0,
+                "ProcessNormal": [0.0, 1.0, 0.0],
+            },
+            {
+                "Conductor": 1,
+                "InterfaceSlot": 1,
+                "ProcessNormal": [0.0, 1.0, 0.0],
+            },
+        ]
+        interfaces = [
+            {"Slot": 0, "Type": "MS"},
+            {"Slot": 1, "Type": "SA"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trace = root / "trace.csv"
+            trace.write_text("0,0,0,0\n")
+            config = SPATIAL.make_config(
+                root,
+                "test",
+                root / "mesh.msh",
+                [trace],
+                trace,
+                [],
+                True,
+                1,
+                2.0,
+                11.47,
+                {
+                    "SA": (0.002, 4.0),
+                    "MS": (0.002, 11.47),
+                    "MA": (0.002, 10.0),
+                },
+                interfaces,
+                edges,
+                available_attributes={1, 3101, 6001},
+            )
+        dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"]
+        self.assertEqual(config["Solver"]["Linear"]["EstimatorTol"], 5.0e-1)
+        self.assertEqual(config["Solver"]["Linear"]["EstimatorMaxIts"], 5)
+        self.assertEqual([entry["Index"] for entry in dielectric], [2])
+        self.assertEqual(dielectric[0]["Attributes"], [3101])
+        self.assertNotIn("EdgeExcludeAttributes", dielectric[0])
 
     def test_spatial_mesh_boundary_attributes_reads_named_surface_groups(self):
         contents = (
@@ -1573,6 +1631,50 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(result["MeshConvergenceReport"], str(h_report))
             self.assertFalse(result["Passed"])
 
+    def test_geometry_coverage_padding_adds_missing_zero_interface(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for kind in ("thin", "fabricated"):
+                postpro = root / "postpro" / f"spatial_{kind}"
+                postpro.mkdir(parents=True)
+                (postpro / "domain-response-matrix.csv").write_text(
+                    "basis_i,basis_j,Q_ij (J)\n"
+                    "1,1,1.0\n1,2,0.0\n2,2,1.0\n"
+                )
+                (postpro / "surface-response-matrix.csv").write_text(
+                    "interface,edge,R (m),basis_i,basis_j,Q_ij (J),"
+                    "Q_ij normal (J),Q_ij tangential (J),Q_total_ij (J),"
+                    "Q_total_ij normal (J),Q_total_ij tangential (J)\n"
+                    "2,1,2e-6,1,1,1,1,0,1,1,0\n"
+                    "2,1,2e-6,1,2,0,0,0,0,0,0\n"
+                    "2,1,2e-6,2,2,1,1,0,1,1,0\n"
+                )
+            PREPARE.pad_missing_surface_response_matrices(root, 2, 2.0)
+            for kind in ("thin", "fabricated"):
+                path = root / "postpro" / f"spatial_{kind}" / "surface-response-matrix.csv"
+                with path.open(newline="") as stream:
+                    rows = list(csv.DictReader(stream))
+                zero = [row for row in rows if int(row["interface"]) == 1]
+                self.assertEqual(len(zero), 3)
+                self.assertTrue(
+                    all(float(row["Q_total_ij (J)"]) == 0.0 for row in zero)
+                )
+
+    def test_geometry_coverage_stamp_is_explicitly_unqualified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "process-library.json"
+            path.write_text(
+                '{"Version": 3, "Models": [{"Name": "model"}]}\n'
+            )
+            PREPARE.stamp_geometry_coverage_only(path)
+            qualification = PREPARE.load_json(path)["Models"][0][
+                "BoundaryLawQualification"
+            ]
+            self.assertEqual(qualification["Status"], "Unqualified")
+            self.assertEqual(
+                qualification["Calibration"], "GeometryCoverageOnly"
+            )
+
     def test_execute_preserves_successes_after_independent_coupon_failure(self):
         failed = endpoint_coupon()
         failed["Id"] = "failed"
@@ -1617,6 +1719,125 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 manifest["GeneratedLibraries"], [str(root / "qualified.json")]
             )
             self.assertFalse(manifest["Passed"])
+
+    def test_execute_parallel_coupon_jobs_preserves_plan_order(self):
+        coupons = []
+        for index in range(3):
+            coupon = endpoint_coupon()
+            coupon["Id"] = f"coupon-{index}"
+            coupon["Preparation"] = {"Method": "SpatialCoupon"}
+            coupons.append(coupon)
+        plan = {"SourceManifest": "requirements.json", "Coupons": coupons}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(
+                cache=root / "cache",
+                output=root / "output",
+                name="parallel-library",
+                coupon_jobs=2,
+                coverage_only=False,
+            )
+
+            def build(coupon, args, parameters, cache):
+                index = coupon["Id"].split("-")[-1]
+                return root / f"library-{index}.json", root / f"report-{index}.json"
+
+            with (
+                mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                mock.patch.object(PREPARE, "build_spatial", side_effect=build),
+                mock.patch.object(PREPARE, "run", return_value=0),
+            ):
+                self.assertTrue(PREPARE.execute(plan, source, args))
+
+            manifest = PREPARE.load_json(
+                root / "output" / "library" / "qualification-manifest.json"
+            )
+            self.assertEqual(
+                manifest["GeneratedLibraries"],
+                [str(root / f"library-{index}.json") for index in range(3)],
+            )
+
+    def test_execute_coverage_only_reports_geometry_complete_not_qualified(self):
+        coupon = endpoint_coupon()
+        coupon["Id"] = "coverage"
+        coupon["Preparation"] = {"Method": "SpatialCoupon"}
+        plan = {
+            "SourceManifest": "requirements.json",
+            "Coupons": [coupon],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(
+                cache=root / "cache",
+                output=root / "output",
+                name="coverage-library",
+                coverage_only=True,
+            )
+            with (
+                mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                mock.patch.object(
+                    PREPARE,
+                    "build_spatial",
+                    return_value=(
+                        root / "coverage.json",
+                        root / "qualification.json",
+                    ),
+                ),
+                mock.patch.object(PREPARE, "run", return_value=0),
+            ):
+                complete = PREPARE.execute(plan, source, args)
+
+            self.assertTrue(complete)
+            self.assertTrue(plan["Execution"]["GeometryComplete"])
+            self.assertFalse(plan["Execution"]["Complete"])
+            self.assertFalse(plan["Execution"]["QualificationRequired"])
+            manifest = PREPARE.load_json(
+                root / "output" / "library" / "qualification-manifest.json"
+            )
+            self.assertTrue(manifest["GeometryComplete"])
+            self.assertFalse(manifest["Passed"])
+
+    def test_execute_probe_study_stops_without_generated_library(self):
+        coupon = endpoint_coupon()
+        coupon["Id"] = "probe"
+        coupon["Preparation"] = {"Method": "SpatialCoupon"}
+        plan = {"SourceManifest": "requirements.json", "Coupons": [coupon]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(
+                cache=root / "cache",
+                output=root / "output",
+                name="probe-library",
+                coupon_jobs=1,
+                coverage_only=False,
+                probe_study_only=True,
+            )
+            with (
+                mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                mock.patch.object(
+                    PREPARE,
+                    "build_spatial",
+                    return_value=(None, root / "probe-report.json"),
+                ),
+                mock.patch.object(PREPARE, "run", return_value=0),
+            ):
+                self.assertTrue(PREPARE.execute(plan, source, args))
+
+            self.assertTrue(plan["Execution"]["ProbeStudyComplete"])
+            self.assertFalse(plan["Execution"]["GeometryComplete"])
+            self.assertFalse(plan["Execution"]["Complete"])
+            manifest = PREPARE.load_json(
+                root / "output" / "library" / "qualification-manifest.json"
+            )
+            self.assertEqual(manifest["GeneratedLibraries"], [])
+            self.assertTrue(manifest["ProbeStudyComplete"])
+            self.assertTrue(manifest["Passed"])
 
     def test_execute_reports_unqualified_boundary_law_physics(self):
         coupon = endpoint_coupon()

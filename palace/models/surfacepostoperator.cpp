@@ -811,6 +811,170 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
   return energies;
 }
 
+template <InterfaceDielectric Type>
+std::vector<SurfacePostOperator::InterfaceResponseMatrix>
+SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
+    const InterfaceDielectricData &data, const std::vector<const GridFunction *> &E,
+    const std::vector<const GridFunction *> &D) const
+{
+  MFEM_VERIFY(!E.empty() && (D.empty() || D.size() == E.size()),
+              "Invalid batched interface response fields!");
+  MFEM_VERIFY(!data.flux_recovery || !D.empty(),
+              "Batched interface response requires recovered electric flux!");
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int sdim = mesh.SpaceDimension();
+  const int basis_size = static_cast<int>(E.size());
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+
+  std::vector<std::unique_ptr<InterfaceDielectricCoefficient<Type>>> evaluators;
+  evaluators.reserve(E.size());
+  for (std::size_t i = 0; i < E.size(); i++)
+  {
+    evaluators.push_back(std::make_unique<InterfaceDielectricCoefficient<Type>>(
+        *E[i], mat_op, data.t, data.epsilon, data.flux_recovery ? D[i] : nullptr));
+  }
+
+  std::vector<double> weights, distances, amplitudes;
+  mfem::Vector point(sdim), field;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int attr = mesh.GetBdrAttribute(be);
+    if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+    {
+      continue;
+    }
+    auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(be);
+    const auto *fe = h1_fespace.GetBE(be);
+    const auto &ir =
+        mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      T->Transform(ip, point);
+      const auto nearest = data.edge_distance_tree->Nearest(point);
+      distances.push_back(std::sqrt(nearest.distance_squared));
+      weights.push_back(ip.weight * T->Weight());
+      for (const auto &evaluator : evaluators)
+      {
+        evaluator->EvalEnergyField(*T, ip, field);
+        MFEM_ASSERT(field.Size() == sdim + 1,
+                    "Invalid batched interface energy field size!");
+        amplitudes.insert(amplitudes.end(), field.begin(), field.end());
+      }
+    }
+  }
+
+  const int sample_count = static_cast<int>(weights.size());
+  auto Assemble = [&](const std::vector<double> *inside_weights, mfem::DenseMatrix &normal,
+                      mfem::DenseMatrix &tangential)
+  {
+    normal.SetSize(basis_size);
+    normal = 0.0;
+    tangential.SetSize(basis_size);
+    tangential = 0.0;
+    if (sample_count == 0)
+    {
+      return;
+    }
+    mfem::DenseMatrix normal_samples(basis_size, sample_count);
+    mfem::DenseMatrix tangential_samples(basis_size, sdim * sample_count);
+    for (int sample = 0; sample < sample_count; sample++)
+    {
+      const double window = inside_weights ? (*inside_weights)[sample] : 1.0;
+      const double scale = std::sqrt(0.5 * weights[sample] * window);
+      for (int basis = 0; basis < basis_size; basis++)
+      {
+        const std::size_t offset =
+            (static_cast<std::size_t>(sample) * basis_size + basis) * (sdim + 1);
+        normal_samples(basis, sample) = scale * amplitudes[offset];
+        for (int d = 0; d < sdim; d++)
+        {
+          tangential_samples(basis, sdim * sample + d) = scale * amplitudes[offset + d + 1];
+        }
+      }
+    }
+    mfem::AddMult_a_AAt(1.0, normal_samples, normal);
+    mfem::AddMult_a_AAt(1.0, tangential_samples, tangential);
+  };
+  auto Reduce = [&](mfem::DenseMatrix &matrix)
+  {
+    Mpi::GlobalSum(matrix.Height() * matrix.Width(), matrix.GetData(),
+                   E.front()->GetComm());
+  };
+
+  mfem::DenseMatrix total_normal, total_tangential;
+  Assemble(nullptr, total_normal, total_tangential);
+  Reduce(total_normal);
+  Reduce(total_tangential);
+
+  std::vector<InterfaceResponseMatrix> result;
+  result.reserve(data.edge_distances.size());
+  std::vector<double> inside_weights(sample_count);
+  for (const double radius : data.edge_distances)
+  {
+    for (int sample = 0; sample < sample_count; sample++)
+    {
+      inside_weights[sample] =
+          1.0 - EdgeDistanceOutsideWeight(distances[sample], radius,
+                                          data.edge_distance_smoothing);
+    }
+    InterfaceResponseMatrix entry;
+    entry.distance = radius;
+    entry.energy_total_normal = total_normal;
+    entry.energy_total_tangential = total_tangential;
+    Assemble(&inside_weights, entry.energy_inside_normal, entry.energy_inside_tangential);
+    Reduce(entry.energy_inside_normal);
+    Reduce(entry.energy_inside_tangential);
+    entry.energy_total = entry.energy_total_normal;
+    entry.energy_total += entry.energy_total_tangential;
+    entry.energy_inside = entry.energy_inside_normal;
+    entry.energy_inside += entry.energy_inside_tangential;
+    result.push_back(std::move(entry));
+  }
+  return result;
+}
+
+std::map<int, std::vector<SurfacePostOperator::InterfaceResponseMatrix>>
+SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices(
+    const std::vector<const GridFunction *> &E,
+    const std::vector<const GridFunction *> &D) const
+{
+  std::map<int, std::vector<InterfaceResponseMatrix>> result;
+  for (const auto &[idx, data] : eps_surfs)
+  {
+    if (!data.localize_edge_energy)
+    {
+      continue;
+    }
+    switch (data.type)
+    {
+      case InterfaceDielectric::DEFAULT:
+        result.emplace(
+            idx, GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::DEFAULT>(
+                     data, E, D));
+        break;
+      case InterfaceDielectric::MA:
+        result.emplace(idx,
+                       GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::MA>(
+                           data, E, D));
+        break;
+      case InterfaceDielectric::MS:
+        result.emplace(idx,
+                       GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::MS>(
+                           data, E, D));
+        break;
+      case InterfaceDielectric::SA:
+        result.emplace(idx,
+                       GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::SA>(
+                           data, E, D));
+        break;
+    }
+  }
+  return result;
+}
+
 const SurfacePostOperator::LocalVolumeEdgeEnergyCache &
 SurfacePostOperator::GetLocalVolumeEdgeElectricFieldEnergies(
     const InterfaceDielectricData &data, const GridFunction &E) const

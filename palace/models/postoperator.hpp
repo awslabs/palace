@@ -736,6 +736,50 @@ public:
     return energies;
   }
 
+  // Batch aggregate interface response matrices for electrostatic basis fields. Grid
+  // functions are materialized once and reused for one quadrature traversal per interface.
+  template <ProblemType U = solver_t>
+  auto GetInterfaceElectricFieldEnergyMatrices(const std::vector<Vector> &e,
+                                               const std::vector<Vector> *d = nullptr)
+      -> std::enable_if_t<
+          U == ProblemType::ELECTROSTATIC,
+          std::map<int, std::vector<SurfacePostOperator::InterfaceResponseMatrix>>>
+  {
+    MFEM_VERIFY(!e.empty() && (!d || d->size() == e.size()),
+                "Invalid batched electrostatic response fields!");
+    MFEM_VERIFY(!NeedsRecoveredElectricFlux() || d,
+                "Recovered electric flux is required for interface postprocessing!");
+    MFEM_VERIFY(!d || D_recovered,
+                "Recovered electric flux fields were supplied but not configured!");
+
+    std::vector<std::unique_ptr<GridFunction>> e_grid, d_grid;
+    std::vector<const GridFunction *> e_ptr, d_ptr;
+    e_grid.reserve(e.size());
+    e_ptr.reserve(e.size());
+    if (d)
+    {
+      d_grid.reserve(d->size());
+      d_ptr.reserve(d->size());
+    }
+    for (std::size_t i = 0; i < e.size(); i++)
+    {
+      auto field = std::make_unique<GridFunction>(*E->ParFESpace());
+      field->Real().SetFromTrueDofs(e[i]);
+      field->Real().ExchangeFaceNbrData();
+      e_ptr.push_back(field.get());
+      e_grid.push_back(std::move(field));
+      if (d)
+      {
+        auto flux = std::make_unique<GridFunction>(*D_recovered->ParFESpace());
+        flux->Real().SetFromTrueDofs((*d)[i]);
+        flux->Real().ExchangeFaceNbrData();
+        d_ptr.push_back(flux.get());
+        d_grid.push_back(std::move(flux));
+      }
+    }
+    return surf_post_op.GetInterfaceElectricFieldEnergyMatrices(e_ptr, d_ptr);
+  }
+
   // Whether impedance/voltage postprocessing is configured (mode analysis).
   bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }
   bool HasCurrent() const

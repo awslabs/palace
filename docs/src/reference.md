@@ -1497,13 +1497,20 @@ python3 examples/cpw2d/prepare_surface_response_coupons.py \
   --orders 2 3
 ```
 
-The generated library is written under `library/process-library.json`.
+The generated library is written under `library/process-library.json`. Coupon FEM order
+is independent of device FEM order: qualify candidate orders with `--probe-study-only`,
+then assemble a full dense library only once at the lowest converged order. The planner
+can execute independent non-straight families concurrently with `--coupon-jobs`; the
+maximum simultaneous MPI rank count is `--coupon-jobs` times `--ranks`.
+
 Content-addressed cache entries include the complete local geometry, fabrication
 metadata, discretization settings, and generator sources. Cheap thin/fabricated probe
-FEM-order convergence is required before a full response matrix is assembled. Corner
+FEM-order convergence is required before a full response matrix is assembled. Corner,
 parallel-cluster, and spatial candidates also compare the highest requested FEM order
-across independent mesh resolutions. Matrix and held-out trace qualification is required
-before an entry is merged. The current automatic builders can construct candidate
+across independent mesh resolutions. Aggregated electrostatic response matrices use a
+batched Gram assembly over all basis traces, avoiding a full surface traversal for each
+basis pair. Matrix and held-out trace qualification is required before an entry is
+merged. The current automatic builders can construct candidate
 isolated and paired edges, parallel edge clusters, convex and concave corners with
 angles strictly between zero and 180 degrees, and exact spatial edge clusters. Cluster
 and corner candidates use at least quadratic mesh geometry; corner and spatial

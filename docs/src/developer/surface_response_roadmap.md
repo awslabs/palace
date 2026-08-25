@@ -316,6 +316,14 @@ global L1+L2 or SA+MS+MA aggregates are not acceptance metrics.
  4. Add solver-level regression cases for preflight, correction output, and raw-output
     invariance.
  5. Freeze the process-library schema and document migration/versioning.
+ 6. Use probe-only order/h studies before dense matrix generation, and build only one
+    converged coupon library for all device FEM orders.
+ 7. Batch aggregated interface response matrices as local Gram products with one dense
+    MPI reduction, and schedule independent coupon families concurrently within node
+    memory and rank limits.
+ 8. Develop an energy-norm reduced trace basis only after held-out errors demonstrate that
+    it preserves every material response channel; do not reduce basis size by an
+    unqualified ring-count heuristic.
 
 ## Validation and acceptance gates
 

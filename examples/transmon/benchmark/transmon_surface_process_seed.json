@@ -6,9 +6,9 @@
     "LengthUnit": "um",
     "MetalThickness": 0.1,
     "OveretchDepth": 0.05,
-    "SidewallAngleDegrees": 80.0,
-    "TopRoundingRadius": 0.01,
-    "BottomRoundingRadius": 0.01,
+    "SidewallAngleDegrees": 90.0,
+    "TopRoundingRadius": 0.0,
+    "BottomRoundingRadius": 0.0,
     "SubstratePermittivity": 11.47,
     "InterfaceLayers": {
       "SA": {

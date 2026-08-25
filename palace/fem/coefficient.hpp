@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_COEFFICIENT_HPP
 #define PALACE_FEM_COEFFICIENT_HPP
 
+#include <cmath>
 #include <complex>
 #include <memory>
 #include <utility>
@@ -417,6 +418,13 @@ public:
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override;
+
+  // Evaluate real field amplitudes scaled so that one half of their Euclidean inner
+  // product is the interface energy density. Entry zero is the normal amplitude and the
+  // remaining entries store tangential amplitudes. This supports batched response-matrix
+  // Gram assembly without reevaluating a quadratic coefficient for every basis pair.
+  void EvalEnergyField(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
+                       mfem::Vector &field);
 };
 
 template <>
@@ -586,6 +594,113 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
     return tangential_energy;
   }
   return normal_energy + tangential_energy;
+}
+
+template <>
+inline void InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::EvalEnergyField(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, mfem::Vector &field)
+{
+  MFEM_VERIFY(!E.HasImag(), "Batched interface response matrices require real fields!");
+  const int sdim = T.GetSpaceDim();
+  field.SetSize(sdim + 1);
+  field = 0.0;
+  Initialize(T, ip, nullptr);
+  double value_data[3], neighbor_data[3];
+  mfem::Vector value(value_data, sdim), neighbor(neighbor_data, sdim);
+  E.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), value);
+  if (FET.Elem2)
+  {
+    E.Real().GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), neighbor);
+    add(0.5, value, neighbor, value);
+  }
+  const double scale = std::sqrt(t_i * epsilon_i);
+  for (int d = 0; d < sdim; d++)
+  {
+    field[d + 1] = scale * value[d];
+  }
+}
+
+template <>
+inline void InterfaceDielectricCoefficient<InterfaceDielectric::MA>::EvalEnergyField(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, mfem::Vector &field)
+{
+  MFEM_VERIFY(!E.HasImag() && (!D || !D->HasImag()),
+              "Batched interface response matrices require real fields!");
+  const int sdim = T.GetSpaceDim();
+  field.SetSize(sdim + 1);
+  field = 0.0;
+  double value_data[3], normal_data[3];
+  mfem::Vector value(value_data, sdim), normal(normal_data, sdim);
+  Initialize(T, ip, &normal);
+  const GridFunction &normal_field = D ? *D : E;
+  if (GetLocalVectorValue(normal_field.Real(), value, true) > 0)
+  {
+    field[0] = std::sqrt(t_i / epsilon_i) * (value * normal);
+  }
+}
+
+template <>
+inline void InterfaceDielectricCoefficient<InterfaceDielectric::MS>::EvalEnergyField(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, mfem::Vector &field)
+{
+  MFEM_VERIFY(!E.HasImag() && (!D || !D->HasImag()),
+              "Batched interface response matrices require real fields!");
+  const int sdim = T.GetSpaceDim();
+  field.SetSize(sdim + 1);
+  field = 0.0;
+  double value_data[3], displacement_data[3], normal_data[3];
+  mfem::Vector value(value_data, sdim), displacement(displacement_data, sdim),
+      normal(normal_data, sdim);
+  Initialize(T, ip, &normal);
+  const GridFunction &normal_field = D ? *D : E;
+  const int attr = GetLocalVectorValue(normal_field.Real(), value, false);
+  if (attr > 0)
+  {
+    if (D)
+    {
+      displacement = value;
+    }
+    else
+    {
+      mat_op.GetPermittivityReal(attr).Mult(value, displacement);
+    }
+    field[0] = std::sqrt(t_i / epsilon_i) * (displacement * normal);
+  }
+}
+
+template <>
+inline void InterfaceDielectricCoefficient<InterfaceDielectric::SA>::EvalEnergyField(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, mfem::Vector &field)
+{
+  MFEM_VERIFY(!E.HasImag() && (!D || !D->HasImag()),
+              "Batched interface response matrices require real fields!");
+  const int sdim = T.GetSpaceDim();
+  field.SetSize(sdim + 1);
+  field = 0.0;
+  double value_data[3], displacement_data[3], normal_data[3];
+  mfem::Vector value(value_data, sdim), displacement(displacement_data, sdim),
+      normal(normal_data, sdim);
+  Initialize(T, ip, &normal);
+  if (GetLocalVectorValue(E.Real(), value, true) <= 0)
+  {
+    return;
+  }
+  double normal_value = value * normal;
+  value.Add(-normal_value, normal);
+  if (D)
+  {
+    if (GetLocalVectorValue(D->Real(), displacement, true) <= 0)
+    {
+      return;
+    }
+    normal_value = displacement * normal;
+  }
+  field[0] = std::sqrt(t_i / epsilon_i) * normal_value;
+  const double tangential_scale = std::sqrt(t_i * epsilon_i);
+  for (int d = 0; d < sdim; d++)
+  {
+    field[d + 1] = tangential_scale * value[d];
+  }
 }
 
 // Helper for EnergyDensityCoefficient.

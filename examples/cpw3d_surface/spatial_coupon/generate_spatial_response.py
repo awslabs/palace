@@ -733,8 +733,9 @@ def dielectric(
     permittivity,
     edge_frame_normal,
     edge_attributes,
+    edge_exclude_attributes=(1,),
 ):
-    return {
+    result = {
         "Index": index,
         "Attributes": attributes,
         "Type": interface_type,
@@ -744,10 +745,12 @@ def dielectric(
         "LocalizeEdgeEnergy": True,
         "SaveLocalEdgeEnergy": False,
         "EdgeAttributes": edge_attributes,
-        "EdgeExcludeAttributes": [1],
         "EdgeDistances": [radius],
         "EdgeFrameNormal": edge_frame_normal,
     }
+    if edge_exclude_attributes:
+        result["EdgeExcludeAttributes"] = list(edge_exclude_attributes)
+    return result
 
 
 def mesh_boundary_attributes(mesh):
@@ -767,13 +770,13 @@ def mesh_boundary_attributes(mesh):
     return attributes
 
 
-def existing_attributes(candidates, available, description):
+def existing_attributes(candidates, available, description, allow_empty=False):
     result = (
         candidates
         if available is None
         else [attribute for attribute in candidates if attribute in available]
     )
-    if not result:
+    if not result and not allow_empty:
         raise ValueError(f"The mesh has no boundary attributes for {description}")
     return result
 
@@ -787,7 +790,9 @@ def conductor_attributes(edges, fabricated, conductor, available=None):
     return existing_attributes(candidates, available, f"conductor {conductor}")
 
 
-def interface_attributes(edges, fabricated, slot, interface_type, available=None):
+def interface_attributes(
+    edges, fabricated, slot, interface_type, available=None, allow_empty=False
+):
     conductors = sorted({edge["Conductor"] for edge in edges})
     if interface_type == "SA":
         candidates = (
@@ -799,7 +804,10 @@ def interface_attributes(edges, fabricated, slot, interface_type, available=None
     else:
         candidates = [4000 + conductor for conductor in conductors]
     return existing_attributes(
-        candidates, available, f"{interface_type} interface slot {slot}"
+        candidates,
+        available,
+        f"{interface_type} interface slot {slot}",
+        allow_empty,
     )
 
 
@@ -807,8 +815,25 @@ def edge_attributes(edges, fabricated, slot, available=None):
     candidates = (
         [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
     )
+    result = existing_attributes(
+        candidates, available, f"edge interface slot {slot}", True
+    )
+    if result or available is None:
+        return result
+
+    # An exact spatial neighborhood can contain a metal interface whose own plan-view
+    # slot has no exposed SA/trench surface in the clipped coupon. Use the complete local
+    # edge set to define its matching-radius tube instead of rejecting an otherwise valid
+    # response geometry. The interface surface attributes remain slot-specific.
+    slots = sorted({int(edge["InterfaceSlot"]) for edge in edges})
+    fallback = [
+        3000 + candidate_slot
+        for candidate_slot in slots
+    ]
+    if fabricated:
+        fallback.extend(3100 + candidate_slot for candidate_slot in slots)
     return existing_attributes(
-        candidates, available, f"edge interface slot {slot}"
+        fallback, available, f"edge interface slot {slot} or spatial-neighbor slot"
     )
 
 
@@ -844,7 +869,7 @@ def make_config(
                 "DataFile": str(zero_trace),
             }
         )
-    dielectric_data = []
+    active_interfaces = []
     for index, interface in enumerate(interfaces, start=1):
         interface_type = interface["Type"]
         slot_normals = {
@@ -856,26 +881,54 @@ def make_config(
             raise ValueError(
                 f"Interface slot {interface['Slot']} has inconsistent process normals"
             )
+        attributes = interface_attributes(
+            edges,
+            fabricated,
+            interface["Slot"],
+            interface_type,
+            available_attributes,
+            True,
+        )
+        # A fabrication operation can remove one requested local interface entirely (for
+        # example, an MS patch inside an exact overetched mask). Keep its coupon index
+        # reserved and omit the empty Palace postprocessor; the coupon planner pads the
+        # resulting response matrix with an exact zero block after the solve.
+        if not attributes:
+            continue
+        active_interfaces.append(
+            (
+                index,
+                interface,
+                interface_type,
+                attributes,
+                list(next(iter(slot_normals))),
+            )
+        )
+
+    # If clipping/fabrication removes an interface, the surviving local edge surface can
+    # terminate entirely on the matching contour. In that case excluding the contour
+    # removes its complete perimeter. Retain that perimeter for the geometry-coverage
+    # response; the absent interface itself is represented by an exact zero matrix block.
+    edge_exclude_attributes = (
+        [] if len(active_interfaces) != len(interfaces) else [1]
+    )
+    dielectric_data = []
+    for index, interface, interface_type, attributes, normal in active_interfaces:
         dielectric_data.append(
             dielectric(
                 index,
-                interface_attributes(
-                    edges,
-                    fabricated,
-                    interface["Slot"],
-                    interface_type,
-                    available_attributes,
-                ),
+                attributes,
                 interface_type,
                 radius,
                 *interface_layers[interface_type],
-                list(next(iter(slot_normals))),
+                normal,
                 edge_attributes(
                     edges,
                     fabricated,
                     interface["Slot"],
                     available_attributes,
                 ),
+                edge_exclude_attributes,
             )
         )
     conductor_count = max(edge["Conductor"] for edge in edges)

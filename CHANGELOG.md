@@ -22,6 +22,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added `"CorrectionMode"` for electrostatic and Maxwell surface-response correction,
     with `"PostprocessOnly"`, `"SelfConsistent"`, and backward-compatible `"Both"`
     execution modes. SchemaVer 1-6-0.
+  - Accelerated aggregated electrostatic coupon response matrices with batched surface
+    Gram assembly and one collective domain-matrix reduction. Added probe-only and
+    concurrent-coupon controls to the process-library planner.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

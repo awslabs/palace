@@ -18,9 +18,13 @@ KINDS = ("thin", "fabricated")
 OUTPUT_FILES = ("domain-response-matrix.csv", "surface-response-matrix.csv")
 
 
-def run(command):
-    print("+ " + shlex.join(str(value) for value in command), flush=True)
-    subprocess.run([str(value) for value in command], check=True)
+def run(command, cwd=None):
+    location = f" (cwd={cwd})" if cwd else ""
+    print(
+        "+ " + shlex.join(str(value) for value in command) + location,
+        flush=True,
+    )
+    subprocess.run([str(value) for value in command], check=True, cwd=cwd)
 
 
 def prepare_case(calibration, output, name, order):
@@ -256,7 +260,7 @@ def main():
             command = [args.palace]
             command.extend(["--serial"] if args.ranks == 1 else ["-np", args.ranks])
             command.append(config)
-            run(command)
+            run(command, cwd=case)
         if not complete(case):
             raise RuntimeError(f"Palace did not complete probe responses in {case}")
 

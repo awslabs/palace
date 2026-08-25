@@ -292,16 +292,44 @@ size must place at least two elements across the metal thickness and overetch.
 Rounded curves instead use a minimum geometric sampling requirement, so a
 small rounding radius does not force that size throughout the volume.
 
+A coupon library is independent of the FEM order of the device simulation. Do
+not build a complete dense library at every candidate order. First run only the
+order- and mesh-convergence probes:
+
+```text
+python3 prepare_surface_response_coupons.py \
+  /path/to/surface-response-requirements.json \
+  --output /tmp/process-probe-study \
+  --execute --probe-study-only \
+  --palace ../../build/bin/palace \
+  --orders 2 3 4
+```
+
+After selecting the lowest converged coupon order, build the full response
+library once at that order.
+
+Independent corner and spatial families can run concurrently. For example, on
+a 192-core node, `--ranks 64 --coupon-jobs 3` permits up to three 64-rank
+coupon jobs. The product of these values should not exceed the available MPI
+ranks, and aggregate memory must fit on the node. Output libraries and
+qualification reports retain deterministic plan order even when jobs finish in
+a different order.
+
 Each cache key includes the complete coupon geometry, fabrication process,
 mesh and FEM settings, and generator source fingerprints. A six-field
-thin/fabricated probe must pass the p-order convergence limits before the full
-trace response matrices are computed. Parallel-edge clusters, corners, and
-spatial coupons must also pass a fixed-final-order mesh-resolution study. Their
-default coarse-to-fine factors are `2 1`; use `--cluster-h-factors`,
-`--corner-h-factors`, or `--spatial-h-factors` to add levels. Curved fabrication
-details in these generated coupons use at least quadratic mesh geometry. The
-full matrices must then pass definiteness and independent held-out trace tests.
-Only qualified entries are merged into `library/process-library.json`;
+thin/fabricated probe must pass the p-order
+convergence limits before the full trace response matrices are computed.
+Parallel-edge clusters, corners, and spatial coupons must also pass a
+fixed-final-order mesh-resolution study. Their default coarse-to-fine factors
+are `2 1`; use `--cluster-h-factors`, `--corner-h-factors`, or
+`--spatial-h-factors` to add levels. Curved fabrication details in these
+generated coupons use at least quadratic mesh geometry. The full matrices must
+then pass definiteness and independent held-out trace tests. For aggregated
+response matrices, Palace evaluates all basis traces once at surface quadrature
+points and assembles the dense energy matrix as batched Gram products. This
+replaces one complete surface-postprocessing traversal per basis pair while
+preserving the localized non-aggregated fallback and CSV schema. Only qualified
+entries are merged into `library/process-library.json`;
 `qualification-manifest.json` records every source report. `--force`
 invalidates completed solves as well as the qualification result.
 

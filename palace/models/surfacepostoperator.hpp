@@ -48,6 +48,18 @@ private:
 //
 class SurfacePostOperator
 {
+public:
+  struct InterfaceResponseMatrix
+  {
+    double distance;
+    mfem::DenseMatrix energy_total;
+    mfem::DenseMatrix energy_inside;
+    mfem::DenseMatrix energy_total_normal;
+    mfem::DenseMatrix energy_inside_normal;
+    mfem::DenseMatrix energy_total_tangential;
+    mfem::DenseMatrix energy_inside_tangential;
+  };
+
 private:
   // Mapping from surface index to data structure containing surface postprocessing
   // information for surface flux or interface dielectric participation.
@@ -129,6 +141,11 @@ private:
   GetLocalVolumeEdgeElectricFieldEnergies(const InterfaceDielectricData &data,
                                           const GridFunction &E) const;
 
+  template <InterfaceDielectric Type>
+  std::vector<InterfaceResponseMatrix> GetInterfaceElectricFieldEnergyMatricesImpl(
+      const InterfaceDielectricData &data, const std::vector<const GridFunction *> &E,
+      const std::vector<const GridFunction *> &D) const;
+
 public:
   struct InterfaceEdgeEnergy
   {
@@ -205,6 +222,14 @@ public:
   GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                              const GridFunction *D = nullptr,
                                              bool include_volume = true) const;
+
+  // Assemble aggregate interface response matrices for many real basis fields in one
+  // quadrature pass per interface. This avoids reevaluating the surface postprocessor for
+  // every pair of basis fields.
+  std::map<int, std::vector<InterfaceResponseMatrix>>
+  GetInterfaceElectricFieldEnergyMatrices(
+      const std::vector<const GridFunction *> &E,
+      const std::vector<const GridFunction *> &D = {}) const;
 
   std::size_t GetNInterfaceEdgeEntries() const;
   std::size_t GetNInterfaceLocalEdgeEntries() const;

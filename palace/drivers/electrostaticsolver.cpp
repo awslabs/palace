@@ -568,10 +568,13 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
                                                                    : "localized",
              static_cast<int>(V.size()));
   std::vector<EnergyMap> diagonal;
-  diagonal.reserve(V.size());
-  for (std::size_t i = 0; i < V.size(); i++)
+  if (!iodata.solver.electrostatic.aggregate_response_matrix)
   {
-    diagonal.push_back(Evaluate(i));
+    diagonal.reserve(V.size());
+    for (std::size_t i = 0; i < V.size(); i++)
+    {
+      diagonal.push_back(Evaluate(i));
+    }
   }
 
   TableWithCSVFile output;
@@ -593,7 +596,7 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
   }
 
   using VT = Units::ValueType;
-  auto Append = [&](int interface, const LocalEnergy &energy, std::size_t i, std::size_t j,
+  auto Append = [&](int interface, int edge, double distance, std::size_t i, std::size_t j,
                     double q, double q_normal, double q_tangential, double q_total,
                     double q_total_normal, double q_total_tangential)
   {
@@ -602,8 +605,8 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
       return;
     }
     output.table["interface"] << interface;
-    output.table["edge"] << energy.edge;
-    output.table["distance"] << iodata.units.Dimensionalize<VT::LENGTH>(energy.distance);
+    output.table["edge"] << edge;
+    output.table["distance"] << iodata.units.Dimensionalize<VT::LENGTH>(distance);
     output.table["basis_i"] << basis_indices[i];
     output.table["basis_j"] << basis_indices[j];
     output.table["Q"] << iodata.units.Dimensionalize<VT::ENERGY>(q);
@@ -619,70 +622,110 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
   const std::size_t pair_count = V.size() * (V.size() + 1) / 2;
   const std::size_t progress_interval = std::max<std::size_t>(pair_count / 20, 1);
   std::size_t completed_pairs = 0;
-  for (std::size_t i = 0; i < V.size(); i++)
+  if (iodata.solver.electrostatic.aggregate_response_matrix)
   {
-    for (std::size_t j = i; j < V.size(); j++)
+    Mpi::Print(" Using batched surface Gram-matrix assembly\n");
+    std::vector<Vector> E_basis(V.size());
+    for (std::size_t i = 0; i < V.size(); i++)
     {
-      std::optional<EnergyMap> combined;
-      if (i != j)
+      E_basis[i].SetSize(Grad.Height());
+      E_basis[i] = 0.0;
+      Grad.AddMult(V[i], E_basis[i], -1.0);
+    }
+    const auto matrices =
+        post_op.GetInterfaceElectricFieldEnergyMatrices(E_basis, D.empty() ? nullptr : &D);
+    for (std::size_t i = 0; i < V.size(); i++)
+    {
+      for (std::size_t j = i; j < V.size(); j++)
       {
-        combined = Evaluate(i, j);
+        for (const auto &[interface, entries] : matrices)
+        {
+          for (const auto &entry : entries)
+          {
+            Append(interface, 1, entry.distance, i, j, entry.energy_inside(i, j),
+                   entry.energy_inside_normal(i, j), entry.energy_inside_tangential(i, j),
+                   entry.energy_total(i, j), entry.energy_total_normal(i, j),
+                   entry.energy_total_tangential(i, j));
+          }
+        }
+        completed_pairs++;
+        if (completed_pairs % progress_interval == 0 || completed_pairs == pair_count)
+        {
+          Mpi::Print(" Interface response matrix: {:d}/{:d} basis pairs ({:.0f}%)\n",
+                     static_cast<int>(completed_pairs), static_cast<int>(pair_count),
+                     100.0 * completed_pairs / pair_count);
+        }
       }
-      MFEM_VERIFY(diagonal[i].size() == diagonal[j].size() &&
-                      (!combined || combined->size() == diagonal[i].size()),
-                  "Inconsistent localized interface response data!");
+    }
+  }
+  else
+  {
+    for (std::size_t i = 0; i < V.size(); i++)
+    {
+      for (std::size_t j = i; j < V.size(); j++)
+      {
+        std::optional<EnergyMap> combined;
+        if (i != j)
+        {
+          combined = Evaluate(i, j);
+        }
+        MFEM_VERIFY(diagonal[i].size() == diagonal[j].size() &&
+                        (!combined || combined->size() == diagonal[i].size()),
+                    "Inconsistent localized interface response data!");
 
-      for (const auto &[interface, energy_i] : diagonal[i])
-      {
-        const auto it_j = diagonal[j].find(interface);
-        const std::vector<LocalEnergy> *energy_sum = nullptr;
-        if (combined)
+        for (const auto &[interface, energy_i] : diagonal[i])
         {
-          const auto it_sum = combined->find(interface);
-          MFEM_VERIFY(it_sum != combined->end(),
-                      "Missing combined-field localized interface response entries!");
-          energy_sum = &it_sum->second;
-        }
-        MFEM_VERIFY(it_j != diagonal[j].end() && energy_i.size() == it_j->second.size() &&
-                        (!energy_sum || energy_i.size() == energy_sum->size()),
-                    "Inconsistent localized interface response entries!");
-        for (std::size_t entry = 0; entry < energy_i.size(); entry++)
-        {
-          const auto &ei = energy_i[entry];
-          const auto &ej = it_j->second[entry];
-          MFEM_VERIFY(ei.edge == ej.edge && ei.distance == ej.distance,
-                      "Inconsistent localized interface response metadata!");
-          if (i == j)
+          const auto it_j = diagonal[j].find(interface);
+          const std::vector<LocalEnergy> *energy_sum = nullptr;
+          if (combined)
           {
-            Append(interface, ei, i, j, ei.energy_inside, ei.energy_inside_polarized[0],
-                   ei.energy_inside_polarized[1], ei.energy_total,
-                   ei.energy_total_polarized[0], ei.energy_total_polarized[1]);
+            const auto it_sum = combined->find(interface);
+            MFEM_VERIFY(it_sum != combined->end(),
+                        "Missing combined-field localized interface response entries!");
+            energy_sum = &it_sum->second;
           }
-          else
+          MFEM_VERIFY(it_j != diagonal[j].end() && energy_i.size() == it_j->second.size() &&
+                          (!energy_sum || energy_i.size() == energy_sum->size()),
+                      "Inconsistent localized interface response entries!");
+          for (std::size_t entry = 0; entry < energy_i.size(); entry++)
           {
-            const auto &es = (*energy_sum)[entry];
-            MFEM_VERIFY(ei.edge == es.edge && ei.distance == es.distance,
+            const auto &ei = energy_i[entry];
+            const auto &ej = it_j->second[entry];
+            MFEM_VERIFY(ei.edge == ej.edge && ei.distance == ej.distance,
                         "Inconsistent localized interface response metadata!");
-            Append(interface, ei, i, j,
-                   0.5 * (es.energy_inside - ei.energy_inside - ej.energy_inside),
-                   0.5 * (es.energy_inside_polarized[0] - ei.energy_inside_polarized[0] -
-                          ej.energy_inside_polarized[0]),
-                   0.5 * (es.energy_inside_polarized[1] - ei.energy_inside_polarized[1] -
-                          ej.energy_inside_polarized[1]),
-                   0.5 * (es.energy_total - ei.energy_total - ej.energy_total),
-                   0.5 * (es.energy_total_polarized[0] - ei.energy_total_polarized[0] -
-                          ej.energy_total_polarized[0]),
-                   0.5 * (es.energy_total_polarized[1] - ei.energy_total_polarized[1] -
-                          ej.energy_total_polarized[1]));
+            if (i == j)
+            {
+              Append(interface, ei.edge, ei.distance, i, j, ei.energy_inside,
+                     ei.energy_inside_polarized[0], ei.energy_inside_polarized[1],
+                     ei.energy_total, ei.energy_total_polarized[0],
+                     ei.energy_total_polarized[1]);
+            }
+            else
+            {
+              const auto &es = (*energy_sum)[entry];
+              MFEM_VERIFY(ei.edge == es.edge && ei.distance == es.distance,
+                          "Inconsistent localized interface response metadata!");
+              Append(interface, ei.edge, ei.distance, i, j,
+                     0.5 * (es.energy_inside - ei.energy_inside - ej.energy_inside),
+                     0.5 * (es.energy_inside_polarized[0] - ei.energy_inside_polarized[0] -
+                            ej.energy_inside_polarized[0]),
+                     0.5 * (es.energy_inside_polarized[1] - ei.energy_inside_polarized[1] -
+                            ej.energy_inside_polarized[1]),
+                     0.5 * (es.energy_total - ei.energy_total - ej.energy_total),
+                     0.5 * (es.energy_total_polarized[0] - ei.energy_total_polarized[0] -
+                            ej.energy_total_polarized[0]),
+                     0.5 * (es.energy_total_polarized[1] - ei.energy_total_polarized[1] -
+                            ej.energy_total_polarized[1]));
+            }
           }
         }
-      }
-      completed_pairs++;
-      if (completed_pairs % progress_interval == 0 || completed_pairs == pair_count)
-      {
-        Mpi::Print(" Interface response matrix: {:d}/{:d} basis pairs ({:.0f}%)\n",
-                   static_cast<int>(completed_pairs), static_cast<int>(pair_count),
-                   100.0 * completed_pairs / pair_count);
+        completed_pairs++;
+        if (completed_pairs % progress_interval == 0 || completed_pairs == pair_count)
+        {
+          Mpi::Print(" Interface response matrix: {:d}/{:d} basis pairs ({:.0f}%)\n",
+                     static_cast<int>(completed_pairs), static_cast<int>(pair_count),
+                     100.0 * completed_pairs / pair_count);
+        }
       }
     }
   }
@@ -705,19 +748,34 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
 
   auto &V_gf = post_op.GetVGridFunction().Real();
   auto &D_gf = post_op.GetDomainPostOp().D;
+  std::vector<Vector> V_local(V.size());
   for (std::size_t i = 0; i < V.size(); i++)
   {
     V_gf.SetFromTrueDofs(V[i]);
-    post_op.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);
+    V_local[i] = V_gf;
+  }
+  mfem::DenseMatrix domain_matrix(static_cast<int>(V.size()));
+  domain_matrix = 0.0;
+  for (std::size_t i = 0; i < V.size(); i++)
+  {
+    post_op.GetDomainPostOp().M_elec->Mult(V_local[i], D_gf);
     for (std::size_t j = i; j < V.size(); j++)
     {
-      V_gf.SetFromTrueDofs(V[j]);
-      const double q = 0.5 * linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf);
-      if (root)
+      domain_matrix(i, j) = 0.5 * linalg::LocalDot(V_local[j], D_gf);
+    }
+  }
+  Mpi::GlobalSum(domain_matrix.Height() * domain_matrix.Width(), domain_matrix.GetData(),
+                 post_op.GetComm());
+  if (root)
+  {
+    for (std::size_t i = 0; i < V.size(); i++)
+    {
+      for (std::size_t j = i; j < V.size(); j++)
       {
         domain_output.table["basis_i"] << basis_indices[i];
         domain_output.table["basis_j"] << basis_indices[j];
-        domain_output.table["Q"] << iodata.units.Dimensionalize<VT::ENERGY>(q);
+        domain_output.table["Q"]
+            << iodata.units.Dimensionalize<VT::ENERGY>(domain_matrix(i, j));
       }
     }
   }
