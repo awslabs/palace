@@ -388,9 +388,11 @@ TEST_CASE("cylinder_driven_wave_tm_eigen", "[Serial][Parallel][Regression]")
 }
 
 // Circuit-synthesis counterpart of cylinder_driven_wave_tm: the TM01 (longitudinal-E) port
-// exercises the modal correction W in the synthesis export. The synthesized resonance
-// (rom-eigenvalues, ~3.61 GHz, Q ~ 4.3) is the W-dependent regression signal; raw synthesis
-// matrices and eigenvectors are basis/partition-dependent (presence-checked only).
+// exercises the modal correction W in the synthesis export. The synthesized S-parameters
+// (port-S: |S11| = 0 dB unitary + phase) are the W-dependent regression signal. ROM
+// internals (eigenvalues/vectors, pencil matrices) are basis/partition/arithmetic-dependent
+// -- their count and ordering vary across environments -- so they are presence-checked
+// only.
 TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -404,6 +406,7 @@ TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
                          "rom-C-",
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
+                         "rom-eigenvalues",
                          "rom-eigenvectors"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_synth.json",
