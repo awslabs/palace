@@ -86,6 +86,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     EnergyData postprocessed_fixed_trace;
     EnergyData postprocessed_fixed_flux;
     EnergyData corrected;
+    std::vector<SurfaceResponseOperator::ModelContribution> raw_model_contributions;
+    std::vector<SurfaceResponseOperator::ModelContribution> corrected_model_contributions;
     std::map<int, double> trace_closure_spread;
     double maximum_trace_closure_spread;
     double response_weighted_trace_closure_spread;
@@ -244,6 +246,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
 
       EnergyData corrected_energies = Unavailable(raw_energies);
+      std::vector<SurfaceResponseOperator::ModelContribution> corrected_contributions;
       if (self_consistent_response)
       {
         Mpi::Print(" Solving fabrication-response corrected field\n");
@@ -287,6 +290,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         corrected_energies = ApplyResponse(std::move(corrected_energies),
                                            corrected_response.domain_correction,
                                            corrected_response.fabricated_surface_energy);
+        corrected_contributions = std::move(corrected_response.model_contributions);
       }
 
       if (response_correction->HasSurfaceResponse())
@@ -294,6 +298,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         corrected_results.push_back(CorrectedResult{
             idx, std::move(raw_energies), std::move(postprocessed_fixed_trace),
             std::move(postprocessed_fixed_flux), std::move(corrected_energies),
+            std::move(response.model_contributions), std::move(corrected_contributions),
             response.trace_closure_spread, response.maximum_trace_closure_spread,
             response.response_weighted_trace_closure_spread,
             response.trace_closure_response_failure_fraction, postprocess_response,
@@ -459,6 +464,61 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
     }
     output.WriteFullTableTrunc();
+
+    TableWithCSVFile model_output(post_dir / "surface-response-model-energy.csv");
+    model_output.table.insert(Column("source", "source", 0, 0, 2, ""));
+    model_output.table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
+    model_output.table.insert(Column("model", "model", 0, 0, 2, ""));
+    model_output.table.insert(Column("patch_count", "patch count", 0, 0, 2, ""));
+    model_output.table.insert("patch_weight", "patch weight");
+    model_output.table.insert("domain_correction", "domain correction (J)");
+    for (const auto &[interface, data] : interfaces)
+    {
+      (void)data;
+      model_output.table.insert(
+          fmt::format("interface_{}", interface),
+          fmt::format("fabricated surface energy[{}] (J)", interface));
+    }
+    auto AppendContribution = [&](int source, int evaluation,
+                                  const SurfaceResponseOperator::ModelContribution &data,
+                                  bool available, bool fixed_flux)
+    {
+      model_output.table["source"] << source;
+      model_output.table["evaluation"] << evaluation;
+      model_output.table["model"] << data.model;
+      model_output.table["patch_count"] << data.patch_count;
+      model_output.table["patch_weight"] << data.patch_weight;
+      model_output.table["domain_correction"]
+          << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
+                              fixed_flux ? data.domain_correction_fixed_flux
+                                         : data.domain_correction)
+                        : nan);
+      for (const auto &[interface, interface_data] : interfaces)
+      {
+        (void)interface_data;
+        const auto &energies = fixed_flux ? data.fabricated_surface_energy_fixed_flux
+                                          : data.fabricated_surface_energy;
+        const auto energy = energies.find(interface);
+        model_output.table[fmt::format("interface_{}", interface)]
+            << (available && energy != energies.end()
+                    ? iodata.units.Dimensionalize<VT::ENERGY>(energy->second)
+                    : nan);
+      }
+    };
+    for (const auto &result : corrected_results)
+    {
+      for (const auto &contribution : result.raw_model_contributions)
+      {
+        AppendContribution(result.source, 0, contribution, result.has_postprocessed, false);
+        AppendContribution(result.source, 1, contribution, result.has_postprocessed, true);
+      }
+      for (const auto &contribution : result.corrected_model_contributions)
+      {
+        AppendContribution(result.source, 2, contribution, result.has_self_consistent,
+                           false);
+      }
+    }
+    model_output.WriteFullTableTrunc();
   }
   post_op.MeasureFinalize(indicator);
   if (self_consistent_response)

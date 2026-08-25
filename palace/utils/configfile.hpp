@@ -1027,6 +1027,11 @@ public:
 
     int idx = 0;
 
+    // Internal automatic-library identity retained for diagnostics and contribution
+    // attribution. Explicit models may leave these empty.
+    std::string name;
+    std::string topology;
+
     // Matched fabricated- and thin-coupon domain response matrices and optional surface
     // response matrices. Surface matrices are required to emit corrected participations.
     std::string fabricated_matrix;

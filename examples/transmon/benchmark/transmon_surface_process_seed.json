@@ -9,7 +9,7 @@
     "SidewallAngleDegrees": 90.0,
     "TopRoundingRadius": 0.0,
     "BottomRoundingRadius": 0.0,
-    "SubstratePermittivity": 11.47,
+    "SubstratePermittivity": 11.45,
     "InterfaceLayers": {
       "SA": {
         "Thickness": 0.002,
@@ -17,7 +17,7 @@
       },
       "MS": {
         "Thickness": 0.002,
-        "Permittivity": 11.47
+        "Permittivity": 11.45
       },
       "MA": {
         "Thickness": 0.002,

@@ -382,7 +382,15 @@ mesh-size convergence. `--spatial-h-factors` gives coarse-to-fine multipliers on
 `--spatial-lc-fine`; its default `2 1` compares both thin and fabricated probes at
 the maximum requested FEM order and reuses the finest completed FEM-order solve.
 Probe and held-out qualification reject a coupon when either resolved response is
-not stable.
+not stable. Multi-slot spatial coupons partition thin, MA, and MS metal surfaces by both
+interface slot and conductor; reusing one conductor-wide metal attribute for multiple slots
+is rejected because it duplicates interface matrices. After a coverage-only generation,
+run all direct spatial held-out traces with:
+
+```text
+python3 qualify_spatial_response_heldout.py /path/to/generation \
+  --palace ../../build/bin/palace --ranks 32 --jobs 4
+```
 
 For the rounded-endpoint development coupon at p=3, reducing `lc_fine` from
 `0.025 um` to `0.0125 um` changed the fabricated domain matrix by `0.067%`, MA

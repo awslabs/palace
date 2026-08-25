@@ -781,34 +781,95 @@ def existing_attributes(candidates, available, description, allow_empty=False):
     return result
 
 
-def conductor_attributes(edges, fabricated, conductor, available=None):
-    candidates = (
-        [5000 + conductor, 6000 + conductor]
-        if fabricated
-        else [4000 + conductor]
+METAL_SLOT_STRIDE = 100
+
+
+def metal_surface_attribute(base, slot, conductor):
+    if not 0 <= int(slot) < 10:
+        raise ValueError("metal interface slot must lie in [0, 10)")
+    if not 1 <= int(conductor) < METAL_SLOT_STRIDE:
+        raise ValueError(
+            f"metal conductor label must lie in [1, {METAL_SLOT_STRIDE})"
+        )
+    return base + METAL_SLOT_STRIDE * int(slot) + int(conductor)
+
+
+def slots_for_conductor(edges, conductor):
+    return sorted(
+        {
+            int(edge["InterfaceSlot"])
+            for edge in edges
+            if int(edge["Conductor"]) == int(conductor)
+        }
     )
-    return existing_attributes(candidates, available, f"conductor {conductor}")
+
+
+def conductor_attributes(edges, fabricated, conductor, available=None):
+    slots = slots_for_conductor(edges, conductor)
+    if not slots:
+        raise ValueError(f"spatial coupon has no edges for conductor {conductor}")
+    candidates = []
+    for slot in slots:
+        candidates.append(
+            metal_surface_attribute(5000 if fabricated else 4000, slot, conductor)
+        )
+        if fabricated:
+            candidates.append(metal_surface_attribute(6000, slot, conductor))
+    return existing_attributes(
+        sorted(set(candidates)), available, f"conductor {conductor} across all slots"
+    )
 
 
 def interface_attributes(
     edges, fabricated, slot, interface_type, available=None, allow_empty=False
 ):
-    conductors = sorted({edge["Conductor"] for edge in edges})
+    conductors = sorted(
+        {
+            int(edge["Conductor"])
+            for edge in edges
+            if int(edge["InterfaceSlot"]) == int(slot)
+        }
+    )
+    if not conductors:
+        raise ValueError(f"interface slot {slot} has no spatial edges")
     if interface_type == "SA":
         candidates = (
             [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
         )
     elif fabricated:
         base = 5000 if interface_type == "MS" else 6000
-        candidates = [base + conductor for conductor in conductors]
+        candidates = [
+            metal_surface_attribute(base, slot, conductor) for conductor in conductors
+        ]
     else:
-        candidates = [4000 + conductor for conductor in conductors]
+        candidates = [
+            metal_surface_attribute(4000, slot, conductor) for conductor in conductors
+        ]
     return existing_attributes(
         candidates,
         available,
         f"{interface_type} interface slot {slot}",
         allow_empty,
     )
+
+
+def validate_metal_slot_partitioning(edges, fabricated, available):
+    slots = sorted({int(edge["InterfaceSlot"]) for edge in edges})
+    if available is None or len(slots) < 2:
+        return
+    bases = (5000, 6000) if fabricated else (4000,)
+    expected_nonzero_slot = {
+        metal_surface_attribute(base, slot, int(edge["Conductor"]))
+        for edge in edges
+        for base in bases
+        for slot in (int(edge["InterfaceSlot"]),)
+        if slot > 0
+    }
+    if expected_nonzero_slot and not expected_nonzero_slot.intersection(available):
+        raise ValueError(
+            "Multi-slot spatial coupon mesh uses legacy conductor-wide metal "
+            "attributes; regenerate it with slot-partitioned MA/MS surfaces"
+        )
 
 
 def edge_attributes(edges, fabricated, slot, available=None):
@@ -854,6 +915,7 @@ def make_config(
     response_matrix=True,
     available_attributes=None,
 ):
+    validate_metal_slot_partitioning(edges, fabricated, available_attributes)
     potentials = [
         {"Index": index, "Attributes": [1], "DataFile": str(trace)}
         for index, trace in enumerate(traces, start=1)
@@ -870,6 +932,7 @@ def make_config(
             }
         )
     active_interfaces = []
+    metal_attributes_by_type = {"MA": {}, "MS": {}}
     for index, interface in enumerate(interfaces, start=1):
         interface_type = interface["Type"]
         slot_normals = {
@@ -895,6 +958,18 @@ def make_config(
         # resulting response matrix with an exact zero block after the solve.
         if not attributes:
             continue
+        if interface_type in metal_attributes_by_type:
+            used = metal_attributes_by_type[interface_type]
+            overlap = set(attributes).intersection(
+                attribute for values in used.values() for attribute in values
+            )
+            if overlap:
+                raise ValueError(
+                    f"{interface_type} interface slots reuse metal attributes "
+                    f"{sorted(overlap)}; regenerate the coupon mesh with slot-partitioned "
+                    "metal surfaces"
+                )
+            used[int(interface["Slot"])] = list(attributes)
         active_interfaces.append(
             (
                 index,

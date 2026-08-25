@@ -4340,6 +4340,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         const auto &source = library.models[selection.library_model];
         auto model = source.response;
         model.idx = next_model_index++;
+        model.name = source.name;
+        model.topology = TopologyName(source.topology);
         MapLibraryInterfaces(source, {{0, group.targets}}, model);
         result.models.push_back(std::move(model));
       }
@@ -5904,6 +5906,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     auto model = source.response;
     model.idx = next_model_index++;
+    model.name = source.name;
+    model.topology = TopologyName(source.topology);
     MapLibraryInterfaces(source, selection.targets_by_slot, model);
     result.models.push_back(std::move(model));
 
@@ -8507,6 +8511,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         const auto &source = library.models[selection.library_model];
         auto model = source.response;
         model.idx = next_model_index++;
+        model.name = source.name;
+        model.topology = TopologyName(source.topology);
         MapLibraryInterfaces(source, {{0, group.targets}}, model);
         result.models.push_back(std::move(model));
       }
@@ -9201,6 +9207,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     auto points = ReadBasisPoints(model_config.basis_points);
     ResponseModel model;
     model.idx = model_config.idx;
+    model.name =
+        model_config.name.empty() ? fmt::format("model-{}", model.idx) : model_config.name;
+    model.topology = model_config.topology.empty() ? "Explicit" : model_config.topology;
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
     MFEM_VERIFY(model.conductor_state_count >= 0,
@@ -9555,6 +9564,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "Maxwell response-correction contours require at least three points!");
     ResponseModel model;
     model.idx = model_config.idx;
+    model.name =
+        model_config.name.empty() ? fmt::format("model-{}", model.idx) : model_config.name;
+    model.topology = model_config.topology.empty() ? "Explicit" : model_config.topology;
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
     MFEM_VERIFY(model.conductor_state_count >= 0,
@@ -11202,41 +11214,55 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
   Vector fixed_flux;
   for (const auto &model : models)
   {
+    ModelContribution contribution;
+    contribution.model = model.idx;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       (void)matrix;
       result.fabricated_surface_energy.try_emplace(interface, 0.0);
+      contribution.fabricated_surface_energy.try_emplace(interface, 0.0);
       if (include_fixed_flux)
       {
         result.fabricated_surface_energy_fixed_flux.try_emplace(interface, 0.0);
+        contribution.fabricated_surface_energy_fixed_flux.try_emplace(interface, 0.0);
       }
     }
+    result.model_contributions.push_back(std::move(contribution));
   }
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
+    auto &contribution = result.model_contributions[patch.model];
+    contribution.patch_count += 1.0;
+    contribution.patch_weight += patch.weight;
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
-    result.domain_correction +=
+    const double domain_correction =
         0.5 * patch.weight * QuadraticForm(model.domain_defect, patch_trace, response);
+    result.domain_correction += domain_correction;
+    contribution.domain_correction += domain_correction;
     if (include_fixed_flux)
     {
       fixed_flux.SetSize(model.basis_size);
       model.fixed_flux_transform.Mult(patch_trace, fixed_flux);
-      result.domain_correction_fixed_flux +=
+      const double domain_correction_fixed_flux =
           0.5 * patch.weight *
           (QuadraticForm(model.fabricated_domain, fixed_flux, response) -
            QuadraticForm(model.thin_domain, patch_trace, response));
+      result.domain_correction_fixed_flux += domain_correction_fixed_flux;
+      contribution.domain_correction_fixed_flux += domain_correction_fixed_flux;
     }
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           patch.weight * QuadraticForm(matrix, patch_trace, response);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
+      contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
       if (include_fixed_flux)
       {
         const double fixed_flux_energy =
             patch.weight * QuadraticForm(matrix, fixed_flux, response);
         result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
+        contribution.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
         const double weight =
             std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
         if (weight > 0.0)
@@ -11252,8 +11278,11 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
   }
   const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
   std::vector<double> reduction;
-  reduction.reserve(1 + (include_fixed_flux ? 4 : 0) +
-                    values_per_interface * result.fabricated_surface_energy.size());
+  reduction.reserve(
+      1 + (include_fixed_flux ? 4 : 0) +
+      values_per_interface * result.fabricated_surface_energy.size() +
+      result.model_contributions.size() *
+          (4 + values_per_interface * result.fabricated_surface_energy.size()));
   reduction.push_back(result.domain_correction);
   if (include_fixed_flux)
   {
@@ -11268,6 +11297,26 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
     if (include_fixed_flux)
     {
       reduction.push_back(result.fabricated_surface_energy_fixed_flux.at(interface));
+    }
+  }
+  for (const auto &contribution : result.model_contributions)
+  {
+    reduction.push_back(contribution.patch_count);
+    reduction.push_back(contribution.patch_weight);
+    reduction.push_back(contribution.domain_correction);
+    if (include_fixed_flux)
+    {
+      reduction.push_back(contribution.domain_correction_fixed_flux);
+    }
+    for (const auto &[interface, fixed_trace] : contribution.fabricated_surface_energy)
+    {
+      (void)interface;
+      reduction.push_back(fixed_trace);
+      if (include_fixed_flux)
+      {
+        reduction.push_back(
+            contribution.fabricated_surface_energy_fixed_flux.at(interface));
+      }
     }
   }
   Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), fespace.GetComm());
@@ -11295,6 +11344,25 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       result.fabricated_surface_energy_fixed_flux.at(interface) = reduction[i++];
     }
   }
+  for (auto &contribution : result.model_contributions)
+  {
+    contribution.patch_count = reduction[i++];
+    contribution.patch_weight = reduction[i++];
+    contribution.domain_correction = reduction[i++];
+    if (include_fixed_flux)
+    {
+      contribution.domain_correction_fixed_flux = reduction[i++];
+    }
+    for (auto &[interface, fixed_trace] : contribution.fabricated_surface_energy)
+    {
+      fixed_trace = reduction[i++];
+      if (include_fixed_flux)
+      {
+        contribution.fabricated_surface_energy_fixed_flux.at(interface) = reduction[i++];
+      }
+    }
+  }
+  MFEM_ASSERT(i == reduction.size(), "Incorrect batched model-contribution reduction!");
 
   if (!include_fixed_flux)
   {
@@ -11604,6 +11672,28 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
 
   nlohmann::json result = automatic_statistics.is_null() ? nlohmann::json{{"Version", 1}}
                                                          : automatic_statistics;
+  std::vector<long long int> model_patch_counts(models.size(), 0);
+  std::vector<double> model_patch_weights(models.size(), 0.0);
+  for (const auto &patch : patches)
+  {
+    model_patch_counts[patch.model]++;
+    model_patch_weights[patch.model] += patch.weight;
+  }
+  Mpi::GlobalSum(static_cast<int>(model_patch_counts.size()), model_patch_counts.data(),
+                 comm);
+  Mpi::GlobalSum(static_cast<int>(model_patch_weights.size()), model_patch_weights.data(),
+                 comm);
+  nlohmann::json model_catalog = nlohmann::json::array();
+  for (std::size_t i = 0; i < models.size(); i++)
+  {
+    model_catalog.push_back({{"Index", models[i].idx},
+                             {"Name", models[i].name},
+                             {"Topology", models[i].topology},
+                             {"BasisSize", models[i].basis_size},
+                             {"PatchCount", model_patch_counts[i]},
+                             {"PatchWeight", model_patch_weights[i]}});
+  }
+  result["ModelCatalog"] = std::move(model_catalog);
   result["Correction"] = {{"Models", Replicated(models.size(), "Models")},
                           {"Patches", global_patch_count},
                           {"TraceCoefficients", global_basis_size},

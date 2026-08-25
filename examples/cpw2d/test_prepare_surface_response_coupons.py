@@ -1089,17 +1089,22 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(
             SPATIAL.edge_attributes(edges, False, 0, {3001}), [3001]
         )
-        self.assertEqual(SPATIAL.conductor_attributes(edges, False, 2), [4002])
         self.assertEqual(
-            SPATIAL.conductor_attributes(edges, True, 2), [5002, 6002]
+            SPATIAL.conductor_attributes(edges, False, 2), [4002, 4102]
+        )
+        self.assertEqual(
+            SPATIAL.conductor_attributes(edges, True, 2),
+            [5002, 5102, 6002, 6102],
         )
         self.assertEqual(
             SPATIAL.interface_attributes(edges, False, 0, "MS"),
             [4001, 4002],
         )
         self.assertEqual(
-            SPATIAL.interface_attributes(edges, True, 1, "MA"),
-            [6001, 6002],
+            SPATIAL.interface_attributes(edges, True, 1, "MA"), [6102]
+        )
+        self.assertEqual(
+            SPATIAL.interface_attributes(edges, True, 1, "MS"), [5102]
         )
         self.assertEqual(
             SPATIAL.interface_attributes(
@@ -1115,6 +1120,52 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             ),
             [],
         )
+
+    def test_spatial_multislot_interface_attributes_are_disjoint(self):
+        edges = [
+            {"Conductor": 1, "InterfaceSlot": 0},
+            {"Conductor": 1, "InterfaceSlot": 1},
+        ]
+        for fabricated in (False, True):
+            for interface_type in ("MA", "MS"):
+                first = set(
+                    SPATIAL.interface_attributes(
+                        edges, fabricated, 0, interface_type
+                    )
+                )
+                second = set(
+                    SPATIAL.interface_attributes(
+                        edges, fabricated, 1, interface_type
+                    )
+                )
+                self.assertTrue(first.isdisjoint(second))
+
+    def test_spatial_multislot_legacy_mesh_fails_closed(self):
+        edges = [
+            {
+                "Conductor": 1,
+                "InterfaceSlot": slot,
+                "ProcessNormal": [0.0, 1.0, 0.0],
+            }
+            for slot in (0, 1)
+        ]
+        with self.assertRaisesRegex(ValueError, "legacy conductor-wide"):
+            SPATIAL.make_config(
+                Path("."),
+                "legacy",
+                Path("mesh.msh"),
+                [Path("trace.csv")],
+                Path("zero.csv"),
+                [],
+                True,
+                1,
+                2.0,
+                11.45,
+                {"SA": (0.002, 4.0), "MS": (0.002, 11.45), "MA": (0.002, 10.0)},
+                [{"Slot": 0, "Type": "MA"}, {"Slot": 1, "Type": "MA"}],
+                edges,
+                available_attributes={1, 3000, 3001, 5001, 6001},
+            )
 
     def test_spatial_config_omits_physically_absent_interface(self):
         edges = [
@@ -1155,7 +1206,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 },
                 interfaces,
                 edges,
-                available_attributes={1, 3101, 6001},
+                available_attributes={1, 3101, 6001, 6101},
             )
         dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"]
         self.assertEqual(config["Solver"]["Linear"]["EstimatorTol"], 5.0e-1)
@@ -1206,15 +1257,18 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         contents = (
             b"$MeshFormat\n2.2 1 8\n"
             b"$EndMeshFormat\n$PhysicalNames\n"
-            b"4\n3 1 \"substrate\"\n2 1 \"matching_surface\"\n"
+            b"7\n3 1 \"substrate\"\n2 1 \"matching_surface\"\n"
             b"2 3100 \"surface_3100\"\n2 5001 \"surface_5001\"\n"
+            b"2 4101 \"surface_4101\"\n2 5101 \"surface_5101\"\n"
+            b"2 6101 \"surface_6101\"\n"
             b"$EndPhysicalNames\n$Nodes\n"
         )
         with tempfile.TemporaryDirectory() as directory:
             mesh = Path(directory) / "coupon.msh"
             mesh.write_bytes(contents)
             self.assertEqual(
-                SPATIAL.mesh_boundary_attributes(mesh), {1, 3100, 5001}
+                SPATIAL.mesh_boundary_attributes(mesh),
+                {1, 3100, 4101, 5001, 5101, 6101},
             )
 
     def test_spatial_cache_key_reuses_exact_coupon_and_invalidates_geometry(self):

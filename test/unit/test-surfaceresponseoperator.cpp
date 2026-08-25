@@ -1072,6 +1072,20 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                        1.0e-12));
   CHECK(local_electrostatic_response.confident ==
         (local_electrostatic_response.maximum_trace_closure_spread <= 0.05));
+  REQUIRE(local_electrostatic_response.model_contributions.size() == 1);
+  const auto &model_contribution = local_electrostatic_response.model_contributions.front();
+  CHECK(model_contribution.model == 1);
+  CHECK_THAT(model_contribution.patch_count, WithinAbs(1.0, 1.0e-12));
+  CHECK_THAT(model_contribution.domain_correction,
+             WithinRel(local_electrostatic_response.domain_correction, 1.0e-12));
+  CHECK_THAT(
+      model_contribution.fabricated_surface_energy.at(4),
+      WithinRel(local_electrostatic_response.fabricated_surface_energy.at(4), 1.0e-12));
+  const auto statistics = response.GetStatistics();
+  REQUIRE(statistics["ModelCatalog"].size() == 1);
+  CHECK(statistics["ModelCatalog"][0]["Name"] == "model-1");
+  CHECK(statistics["ModelCatalog"][0]["Topology"] == "Explicit");
+  CHECK(statistics["ModelCatalog"][0]["PatchCount"] == 1);
 
   auto separated_config = config;
   separated_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Patches"].push_back(

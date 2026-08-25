@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -98,6 +99,8 @@ private:
   struct ResponseModel
   {
     int idx = 0;
+    std::string name;
+    std::string topology;
     int contour_size = 0;
     int basis_size = 0;
     int conductor_state_count = 0;
@@ -215,6 +218,17 @@ public:
     std::map<int, double> interfaces;
   };
 
+  struct ModelContribution
+  {
+    int model = 0;
+    double patch_count = 0.0;
+    double patch_weight = 0.0;
+    double domain_correction = 0.0;
+    double domain_correction_fixed_flux = 0.0;
+    std::map<int, double> fabricated_surface_energy;
+    std::map<int, double> fabricated_surface_energy_fixed_flux;
+  };
+
   struct ElectrostaticResponse
   {
     double domain_correction = 0.0;
@@ -222,6 +236,7 @@ public:
     std::map<int, double> fabricated_surface_energy;
     std::map<int, double> fabricated_surface_energy_fixed_flux;
     std::map<int, double> trace_closure_spread;
+    std::vector<ModelContribution> model_contributions;
     double maximum_trace_closure_spread = 0.0;
     double response_weighted_trace_closure_spread = 0.0;
     double trace_closure_response_failure_fraction = 0.0;

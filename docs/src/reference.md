@@ -1377,6 +1377,15 @@ interface therefore requires an edge source and `EdgeDistances` containing the c
 matching radius. The corrected total electric energy adds the matched
 fabricated-minus-thin domain-response defect.
 
+Electrostatic correction also writes `surface-response-model-energy.csv`. Numeric
+`evaluation` codes 0, 1, and 2 denote raw-field fixed-trace, raw-field fixed-flux, and
+self-consistent corrected-field evaluations. Each row reports additive domain correction
+and fabricated interface energy for one runtime model. Model index, source-library name,
+topology, basis size, patch count, and patch weight are recorded in
+`palace.json` under `SurfaceResponse.ModelCatalog`. Summing model rows reproduces the
+aggregate coupon response and makes straight, corner, and spatial over-correction
+observable without rerunning filtered libraries.
+
 `EdgeExcludeAttributes` may be used to remove perimeter segments that lie on artificial
 boundaries, such as the front and back faces of an extruded geometry. In 3D, the
 perimeter is represented by straight segments joining the endpoints of the selected

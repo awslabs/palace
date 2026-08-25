@@ -871,6 +871,27 @@ function nearest_edge(edges, point, radius)
     return edges[argmin(segment_distance(edge, point, radius) for edge in edges)]
 end
 
+const METAL_SLOT_STRIDE = 100
+function metal_surface_attribute(base, slot, conductor)
+    0 <= slot < 10 || error("Metal interface slot must lie in [0, 10)")
+    1 <= conductor < METAL_SLOT_STRIDE ||
+        error("Metal conductor label must lie in [1, $METAL_SLOT_STRIDE)")
+    return base + METAL_SLOT_STRIDE * slot + conductor
+end
+
+function nearest_metal_edge(edges, facets, point, radius, tolerance)
+    candidates = if isempty(facets)
+        edges
+    else
+        [
+            edge for edge in edges if
+            point_in_mask(facets, point, edge.conductor, edge.point[3], tolerance)
+        ]
+    end
+    isempty(candidates) && error("Unable to assign a metal surface to a conductor mask")
+    return nearest_edge(candidates, point, radius)
+end
+
 function point_in_metal(edge, point, radius, tolerance, facets)
     abs(point[3] - edge.point[3]) <= tolerance || return false
     delta = (point[1] - edge.point[1], point[2] - edge.point[2], point[3] - edge.point[3])
@@ -1179,19 +1200,20 @@ function generate_spatial_coupon(;
                     abs(zmax - edge.point[3]) < tolerance ? 3000 + edge.slot :
                     3100 + edge.slot
             elseif !isempty(adjacent_substrate)
-                attribute = 5000 + edge.conductor
+                owner = nearest_metal_edge(edges, facets, point, radius, tolerance)
+                attribute = metal_surface_attribute(5000, owner.slot, owner.conductor)
             elseif !isempty(adjacent_vacuum)
-                attribute = 6000 + edge.conductor
+                owner = nearest_metal_edge(edges, facets, point, radius, tolerance)
+                attribute = metal_surface_attribute(6000, owner.slot, owner.conductor)
             end
         else
-            metal_edge = findfirst(
-                candidate ->
-                    point_in_metal(candidate, point, radius, tolerance, facets),
-                edges
-            )
-            if metal_edge !== nothing
-                owner = edges[metal_edge]
-                attribute = 4000 + owner.conductor
+            metal_edges = [
+                candidate for candidate in edges if
+                point_in_metal(candidate, point, radius, tolerance, facets)
+            ]
+            if !isempty(metal_edges)
+                owner = nearest_edge(metal_edges, point, radius)
+                attribute = metal_surface_attribute(4000, owner.slot, owner.conductor)
             elseif !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
                 attribute = 3000 + edge.slot
             end
