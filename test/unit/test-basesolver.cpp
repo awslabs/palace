@@ -234,6 +234,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   fs::create_directories(temp_dir / "iteration1" / "paraview" / "driven");
   CreateFile(temp_dir / "iteration1" / "paraview" / "driven" / "old.vtu", "old");
   CreateFile(temp_dir / "iteration1" / "domain-E.csv", "old_data");
+  fs::create_directories(temp_dir / "iteration1" / ".palace-archive-claim");
 
   // New run produces fresh output.
   CreateFile(temp_dir / "domain-E.csv", "new_data");
@@ -254,6 +255,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   {
     CHECK(fs::is_symlink(temp_dir / "domain-E.csv"));
     CHECK(ReadFile(temp_dir / "domain-E.csv") == "new_data");
+  }
+
+  SECTION("Stale archive claims are removed")
+  {
+    CHECK_FALSE(fs::exists(temp_dir / "iteration1" / ".palace-archive-claim"));
   }
 }
 

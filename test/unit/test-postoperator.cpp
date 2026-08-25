@@ -346,8 +346,8 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   }
 }
 
-TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
-                 "[gridfunction][Serial][Parallel]")
+TEST_CASE_METHOD(test::SharedTempDir, "Field export",
+                 "[gridfunction][paraview][Serial][Parallel]")
 {
   // Create iodata.
   Units units(0.496, 1.453);

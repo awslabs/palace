@@ -37,6 +37,9 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
   auto rel_step = step_output.filename();
   auto operation =
       fmt::format("archiving adaptive iteration output in \"{}\"", step_output.string());
+  ApplyOnEachNodeFilesystem(
+      comm, fmt::format("Creating adaptive iteration output \"{}\"", step_output.string()),
+      [&]() { fs::create_directories(step_output); });
   ApplyOnceOnEachNodeFilesystem(
       comm, step_output / ".palace-archive-claim", operation,
       [&]()

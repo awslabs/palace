@@ -70,9 +70,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Bug Fixes
 
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
-    filesystem updates more robust.
+    filesystem updates more robust. [PR 892](https://github.com/awslabs/palace/pull/892).
   - Fixed ParaView output for multiple driven excitations deleting fields from earlier
-    excitations.
+    excitations. [PR 892](https://github.com/awslabs/palace/pull/892).
   - Fixed a false-positive in the domain material-coverage check that could abort numeric
     wave-port simulations under nonconformal AMR on multiple MPI ranks. The check now
     validates only domains owned by a local volume element, ignoring ghost/neighbor

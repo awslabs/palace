@@ -110,60 +110,32 @@ inline void ApplyOnEachNodeFilesystem(MPI_Comm comm, const std::string &operatio
   internal::AbortOnNodeFilesystemError(comm, operation, local_error);
 }
 
-// Apply a non-idempotent operation exactly once to each distinct filesystem view. An
-// atomic directory claim makes all node roots sharing an NFS/SMB mount agree on one
-// writer, while roots with node-local storage each acquire their own claim.
+// Apply a non-idempotent operation exactly once to each distinct filesystem view. The
+// global root attempts the claim first; later node roots sharing its NFS/SMB mount observe
+// the claim and skip the operation, while roots with node-local storage each acquire their
+// own claim. Directory creation is a portable atomic create-if-absent operation, avoiding
+// platform-specific file-lock APIs. The caller must first create the claim's parent
+// directory on every filesystem view.
 template <typename Func>
-inline void ApplyOnceOnEachNodeFilesystem(MPI_Comm comm, const fs::path &claim,
-                                          const std::string &operation, Func &&func)
+inline void ApplyOnceOnEachNodeFilesystem(MPI_Comm comm, const fs::path &claim_path,
+                                          const std::string &operation,
+                                          Func &&operation_func)
 {
-  ApplyOnEachNodeFilesystem(comm,
-                            fmt::format("Preparing filesystem operation: {}", operation),
+  ApplyOnEachNodeFilesystem(comm, "Removing stale claims for " + operation,
+                            [&]() { fs::remove_all(claim_path); });
+
+  ApplyOnEachNodeFilesystem(comm, operation,
                             [&]()
                             {
-                              fs::create_directories(claim.parent_path());
-                              fs::remove_all(claim);
+                              const bool acquired_claim = fs::create_directory(claim_path);
+                              if (acquired_claim)
+                              {
+                                operation_func();
+                              }
                             });
 
-  std::string local_error;
-  auto apply_here = [&]()
-  {
-    try
-    {
-      if (fs::create_directory(claim))
-      {
-        func();
-      }
-    }
-    catch (const std::exception &e)
-    {
-      local_error = e.what();
-    }
-    catch (...)
-    {
-      local_error = "Unknown filesystem error";
-    }
-  };
-
-  if (Mpi::Root(comm))
-  {
-    apply_here();
-  }
-  Mpi::Barrier(comm);
-
-  MPI_Comm node_comm = MPI_COMM_NULL;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                      &node_comm);
-  if (Mpi::Root(node_comm) && !Mpi::Root(comm))
-  {
-    apply_here();
-  }
-  MPI_Comm_free(&node_comm);
-
-  internal::AbortOnNodeFilesystemError(comm, operation, local_error);
-  ApplyOnEachNodeFilesystem(comm,
-                            fmt::format("Cleaning up filesystem operation: {}", operation),
-                            [&]() { fs::remove_all(claim); });
+  ApplyOnEachNodeFilesystem(comm, "Cleaning up " + operation,
+                            [&]() { fs::remove_all(claim_path); });
 }
 
 // Ensure an output directory exists on every node's filesystem. This is
@@ -208,7 +180,7 @@ inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
 // symlink at the path can be removed. Open and write failures are propagated collectively
 // to keep all ranks on the same MPI control path.
 template <typename Func>
-inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write)
+inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func)
 {
   BlockTimer bt(Timer::IO);
   ApplyOnRootFilesystem(
@@ -222,7 +194,7 @@ inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&writ
           throw fs::filesystem_error("Could not open output file", path,
                                      std::make_error_code(std::errc::io_error));
         }
-        write(stream);
+        write_func(stream);
         stream.close();
         if (stream.fail())
         {
