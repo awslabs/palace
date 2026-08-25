@@ -12,13 +12,12 @@ ENV PALACE_CUDA=$PALACE_CUDA
 # runtime image is unaffected. Remove with the spack.yaml `compilers` group
 # fix.
 #
-# noble's default archive does not carry gcc-14 or gcc-16 yet; pull them from
-# the ubuntu-toolchain-r/test PPA. CUDA 12.9 requires GCC 14 or older.
+# noble's default archive does not carry gcc-16 yet; pull it from the
+# ubuntu-toolchain-r/test PPA. The Spack base image provides GCC 13.3 for CUDA.
 RUN apt-get -yqq update && \
     apt-get -yqq install --no-install-recommends software-properties-common && \
     add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
-    apt-get -yqq install --no-install-recommends \
-      gcc-14 g++-14 gfortran-14 gcc-16 g++-16 gfortran-16 && \
+    apt-get -yqq install --no-install-recommends gcc-16 g++-16 gfortran-16 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy the Palace source tree

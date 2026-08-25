@@ -3,7 +3,7 @@
 
 # Template to build a fully configured Palace with Spack.
 # 
-# - Compiler: GCC 16 (CPU), GCC 14 (CUDA)
+# - Compiler: GCC 16 (CPU), GCC 13.3 (CUDA)
 # - Math library: OpenBlas
 # - MPI Implementation: OpenMPI (with AWS EFA)
 
@@ -60,7 +60,7 @@ spack:
   - cpu_compiler:
     - "%gcc@16"
   - cuda_compiler:
-    - "%gcc@14"
+    - "%gcc@13.3.0"
   - cuda_constraints:
     - >-
       +cuda cuda_arch=80 ^cuda@12.9
