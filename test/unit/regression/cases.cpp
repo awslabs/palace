@@ -351,6 +351,33 @@ TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// TM01 (E_n != 0) driven through a uniaxial-anisotropic mu (mu_t != mu_z); mu_x = mu_y keeps
+// TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1. Rotated mu is
+// covered by the WavePortData reconstruction unit test.
+TEST_CASE("cylinder_driven_wave_tm_aniso", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_aniso.json",
+                                  "driven_wave_tm_aniso", opts);
+}
+
+// TM01 (E_n != 0) swept just above cutoff (~2.9 GHz): small k_n stresses the modal-correction
+// conditioning while the port propagates, so Sum_i |S_i1|^2 = 1 must hold across the sweep.
+TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_cutoff.json",
+                                  "driven_wave_tm_cutoff", opts);
+}
+
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
 // 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
 // TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
