@@ -17,12 +17,11 @@ to local copies of both *Palace* and MFEM simultaneously. This guide walks you
 through both using Spack to develop *Palace* itself and working on *Palace*'s
 Spack package recipe.
 
-Before diving in, this guide assumes you already have Spack installed and
-understand the basics of how it works. If you're completely new to Spack, you
-should start with their official documentation to get familiar with concepts
-like specs, variants, and environments. Check the [official
-tutorials](https://spack-tutorial.readthedocs.io/en/latest/index.html) out to
-get started.
+The macOS section below includes a complete setup. The remaining sections
+assume you already have Spack installed and understand the basics of how it
+works. If you're completely new to Spack, start with the [official
+tutorials](https://spack-tutorial.readthedocs.io/en/latest/index.html) to learn
+about specs, variants, and environments.
 
 ## Developing Palace with Spack Environments
 
@@ -71,7 +70,7 @@ the first build.
     While using external packages can save hours of compilation time, Spack
     does not always handle them correctly, and incompatibilities are possible.
     If you find issues, you can try removing the external packages and letting
-    Spack compile everythin.
+    Spack compile everything.
 
 Now you're ready to install *Palace* by running:
 
@@ -85,6 +84,16 @@ just *Palace* but all of its dependencies from source. Spack caches everything
 it builds, so subsequent installations will be much faster. Even if you change
 variants or make other modifications to your environment, Spack is smart enough
 to only rebuild what's actually affected by your changes.
+
+!!! note "Failing installation?"
+
+    The commands above install *Palace* using the public version of
+    `spack-packages` (the recipes used to describe how packages need to be
+    compiled). It is often the case that the public version lags behind the
+    development version, leading to compilation failures. If that is the case,
+    follow the instructions in [Developing Palace's Package
+    Recipe](#Developing-Palace's-Package-Recipe) to install *Palace* with the
+    local recipe.
 
 Once the installation completes, you can activate the environment and load
 *Palace* into your shell:
@@ -104,6 +113,98 @@ well. If you need to modify MFEM alongside *Palace*, you can add another entry
 to the `develop` section of your `spack.yaml` pointing to your local MFEM
 checkout. Spack will then manage both packages in development mode, rebuilding
 each as needed when you make changes.
+
+## Developing Palace with Spack on macOS
+
+Using Spack on macOS requires some attention as several of the packages macOS
+come with cannot be used to compile Palace. In this section, we present a recipe
+to get a working configuration.
+
+!!! warning "Pre-existing Spack configuration"
+
+    In the following, we use Spack enviroments to fully capture the configuration
+    needed to identify a Spack set up. Spack normally merges an environment with
+    configuration from `~/.spack` and `/etc/spack`. Do not use this setup with
+    global Spack configuration: existing compiler, provider, package, or repository
+    settings can conflict with the environment or change its concretization.
+    Either remove those configuration files or, as shown above, export
+    `SPACK_DISABLE_LOCAL_CONFIG=true` before running any `spack` command. Keep
+    it exported in every shell used with this environment.
+
+Assuming you have [Homebrew](https://brew.sh/) and the Xcode command-line tools,
+install `Spack`:
+
+```sh
+git clone -c feature.manyFiles=true https://github.com/spack/spack.git
+cd spack
+git checkout releases/v1.2
+source share/spack/setup-env.sh
+export SPACK_DISABLE_LOCAL_CONFIG=true
+```
+
+Copy the macOS environment used by CI into a development directory:
+
+```sh
+mkdir -p ~/spack-environments/palace
+cp ~/repos/palace/docs/src/developer/spack/spack.yaml \
+  ~/spack-environments/palace/spack.yaml
+cd ~/spack-environments/palace
+```
+
+The checked-in [`spack.yaml`](spack/spack.yaml) is included below:
+
+```@eval
+import Markdown
+path = joinpath("spack", "spack.yaml")
+Markdown.parse("```yaml\n$(read(path, String))\n```")
+```
+
+Run the checked-in [`setup-macos.sh`](spack/setup-macos.sh) script from the
+environment directory. It installs or upgrades the Homebrew compiler and build
+tools, then registers them with Spack:
+
+```@eval
+import Markdown
+path = joinpath("spack", "setup-macos.sh")
+Markdown.parse("```bash\n$(read(path, String))\n```")
+```
+
+```sh
+~/repos/palace/docs/src/developer/spack/setup-macos.sh
+spack -e . develop --path=~/repos/palace palace@develop
+```
+
+!!! note "Using Palace's local package recipe"
+
+    The commands above use the public `builtin.palace` recipe. To use the recipe
+    from your *Palace* checkout instead, apply the [Spack MFEM
+    workaround](#Working-Around-a-Spack-Bug-with-Patches), register the local
+    repository within the environment, and select `local.palace` explicitly:
+
+    ```sh
+    ln -sf "$(spack location --repo builtin)"/packages/mfem \
+      ~/repos/palace/spack_repo/local/packages/
+    spack -e . repo add --scope="env:$(pwd)" ~/repos/palace/spack_repo/local
+    spack -e . develop --path=~/repos/palace local.palace@develop
+    ```
+
+    The environment scope keeps the repository registration out of your global
+    Spack configuration.
+
+The script discovers the concrete Homebrew versions and adds them to your copy
+of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
+alone and upgrades outdated ones. GNU Make and GNU sed remain Spack-built
+because Homebrew installs them as `gmake` and `gsed`, while Spack expects `make`
+and `sed`.
+
+Concretize and install the environment, then load *Palace*:
+
+```sh
+spack -e . concretize -f
+spack -e . install
+spack env activate .
+spack load palace
+```
 
 ## Developing Palace's Package Recipe
 
@@ -147,8 +248,8 @@ using the explicit `local.` prefix in examples for clarity.
 
 #### Working Around a Spack Bug with Patches
 
-There's currently a known issue in Spack version <=1.2.0 that affects packages
-using patches when they come from non-builtin repositories (see the [bug
+There's currently a known issue in Spack that affects packages using patches
+when they come from non-builtin repositories (see the [bug
 report](https://github.com/spack/spack/issues/51505)). Since *Palace* uses
 patches, you'll run into this problem. The workaround is straightforward but a
 bit inelegant: you need to add a copy of the MFEM package to your local
