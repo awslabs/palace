@@ -374,8 +374,8 @@ TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
 // through the TM01 (longitudinal-E) wave port. Eigenvalues are genuinely complex (Q ~ 4),
 // and the modal correction W enters the nonlinear eigensolver (SLEPc NEP seed +
 // Quasi-Newton refinement) -- guarding that the fix does not break NEP convergence for E_n
-// != 0 modes.
-TEST_CASE("cylinder_driven_wave_tm_eigen", "[Serial][Parallel][Regression]")
+// != 0 modes. [Long]: ARPACK overruns the 40-min per-PR budget on this spectrum.
+TEST_CASE("cylinder_driven_wave_tm_eigen", "[Serial][Parallel][Regression][Long]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
