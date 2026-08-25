@@ -370,6 +370,23 @@ TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
                                   "driven_wave_tm_adaptive", opts);
 }
 
+// Eigenmode counterpart of cylinder_driven_wave_tm: the same lossless guide radiating
+// through the TM01 (longitudinal-E) wave port. Eigenvalues are genuinely complex (Q ~ 4),
+// and the modal correction W enters the nonlinear eigensolver (SLEPc NEP seed +
+// Quasi-Newton refinement) -- guarding that the fix does not break NEP convergence for E_n
+// != 0 modes.
+TEST_CASE("cylinder_driven_wave_tm_eigen", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = kEigenExcluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_eigen.json",
+                                  "driven_wave_tm_eigen", opts);
+}
+
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
 // (phase, evanescent-NaN and negligible entries skipped). Tolerances from the
 // driven_wave block.
