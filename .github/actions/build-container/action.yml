@@ -2,6 +2,10 @@ name: Build Palace Containers
 description: Build a Palace container image from the stored Spack environment
 
 inputs:
+  cuda:
+    description: 'Build the CUDA profile; requires an NVIDIA GPU runner'
+    required: false
+    default: 'false'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -22,6 +26,20 @@ runs:
         spack-version: 'releases/v1.2'
         llvm-version: 'dont-install'
         setup-intel: 'false'
+
+    - name: Select build profile
+      shell: bash
+      env:
+        CUDA_BUILD: ${{ inputs.cuda }}
+      run: |
+        if [ "$CUDA_BUILD" = "true" ]; then
+          nvidia-smi
+          echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
+          echo "Building the CUDA profile."
+        else
+          echo "PALACE_CUDA=" >> "$GITHUB_ENV"
+          echo "Building the CPU profile."
+        fi
 
     - name: Install Podman
       shell: bash
@@ -45,6 +63,7 @@ runs:
       env:
         # Requested Spack microarchitecture; empty means build native.
         TARGET: ${{ inputs.target }}
+        CUDA_BUILD: ${{ inputs.cuda }}
         # The commit being built. Only makes the image name unique/readable —
         # not load-bearing (the publish workflow takes the authoritative sha
         # from the workflow_run payload, not this name).
@@ -56,6 +75,9 @@ runs:
         # The arch label names the image, from which the publish workflow later
         # recovers it to tag/key this build's artifacts.
         ARCH_LABEL="${TARGET:-$(spack arch -t)}"
+        if [ "$CUDA_BUILD" = "true" ]; then
+          ARCH_LABEL="${ARCH_LABEL}_cuda"
+        fi
         IMAGE_NAME="palace-${ARCH_LABEL}-${SOURCE_SHA:0:7}"
         echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
         echo "Image name: ${IMAGE_NAME}"
@@ -102,6 +124,7 @@ runs:
         sudo podman build --format docker \
           --build-arg GITHUB_USER=$GITHUB_USER \
           --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
+          --build-arg PALACE_CUDA=$PALACE_CUDA \
           -t ${{ steps.name.outputs.image_name }} .
 
         end_timer "Build OCI container"

@@ -3,7 +3,7 @@
 
 # Template to build a fully configured Palace with Spack.
 # 
-# - Compiler: GCC 15
+# - Compiler: GCC 16 (CPU), GCC 14 (CUDA)
 # - Math library: OpenBlas
 # - MPI Implementation: OpenMPI (with AWS EFA)
 
@@ -52,6 +52,29 @@ spack:
       access_pair:
         id_variable: GITHUB_USER
         secret_variable: GITHUB_TOKEN
+  definitions:
+  - palace_base:
+    - >-
+      palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
+      ^openblas ^openmpi schedulers=none fabrics=ofi
+  - cpu_compiler:
+    - "%gcc@16"
+  - cuda_constraints:
+    - >-
+      %gcc@14 +cuda cuda_arch=80 ^cuda@12.9
+      ^openmpi+cuda
+      ^libfabric+cuda+cuda_dlopen
+      ^libceed@develop
+  - when: not env.get("PALACE_CUDA")
+    palace:
+    - matrix:
+      - [$palace_base]
+      - [$cpu_compiler]
+  - when: env.get("PALACE_CUDA")
+    palace:
+    - matrix:
+      - [$palace_base]
+      - [$cuda_constraints]
   specs:
     # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
     # underlying Spack spec-groups bug is fixed; gcc-16 is currently apt-
@@ -75,7 +98,7 @@ spack:
     # FIXME(awslabs/palace#731): re-enable with `compilers` group above.
     # needs: [compilers]
     specs:
-    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@16 ^openblas ^openmpi schedulers=none fabrics=ofi
+    - $palace
     override:
       packages:
         # Enable AWS EFA
