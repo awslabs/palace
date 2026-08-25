@@ -70,7 +70,7 @@ the first build.
     While using external packages can save hours of compilation time, Spack
     does not always handle them correctly, and incompatibilities are possible.
     If you find issues, you can try removing the external packages and letting
-    Spack compile everythin.
+    Spack compile everything.
 
 Now you're ready to install *Palace* by running:
 
@@ -84,6 +84,16 @@ just *Palace* but all of its dependencies from source. Spack caches everything
 it builds, so subsequent installations will be much faster. Even if you change
 variants or make other modifications to your environment, Spack is smart enough
 to only rebuild what's actually affected by your changes.
+
+!!! note "Failing installation?"
+
+    The commands above install *Palace* using the public version of
+    `spack-packages` (the recipes used to describe how packages need to be
+    compiled). It is often the case that the public version lags behind the
+    development version, leading to compilation failures. If that is the case,
+    follow the instructions in [Developing Palace's Package
+    Recipe](#Developing-Palace's-Package-Recipe) to install *Palace* with the
+    local recipe.
 
 Once the installation completes, you can activate the environment and load
 *Palace* into your shell:
@@ -164,6 +174,23 @@ Markdown.parse("```bash\n$(read(path, String))\n```")
 spack -e . develop --path=~/repos/palace palace@develop
 ```
 
+!!! note "Using Palace's local package recipe"
+
+    The commands above use the public `builtin.palace` recipe. To use the recipe
+    from your *Palace* checkout instead, apply the [Spack MFEM
+    workaround](#Working-Around-a-Spack-Bug-with-Patches), register the local
+    repository within the environment, and select `local.palace` explicitly:
+
+    ```sh
+    ln -sf "$(spack location --repo builtin)"/packages/mfem \
+      ~/repos/palace/spack_repo/local/packages/
+    spack -e . repo add --scope="env:$(pwd)" ~/repos/palace/spack_repo/local
+    spack -e . develop --path=~/repos/palace local.palace@develop
+    ```
+
+    The environment scope keeps the repository registration out of your global
+    Spack configuration.
+
 The script discovers the concrete Homebrew versions and adds them to your copy
 of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
 alone and upgrades outdated ones. GNU Make and GNU sed remain Spack-built
@@ -221,8 +248,8 @@ using the explicit `local.` prefix in examples for clarity.
 
 #### Working Around a Spack Bug with Patches
 
-There's currently a known issue in Spack version <=1.2.0 that affects packages
-using patches when they come from non-builtin repositories (see the [bug
+There's currently a known issue in Spack that affects packages using patches
+when they come from non-builtin repositories (see the [bug
 report](https://github.com/spack/spack/issues/51505)). Since *Palace* uses
 patches, you'll run into this problem. The workaround is straightforward but a
 bit inelegant: you need to add a copy of the MFEM package to your local
