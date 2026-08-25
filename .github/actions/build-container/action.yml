@@ -29,10 +29,20 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
 
-        sudo add-apt-repository -y ppa:apptainer/ppa
-        sudo apt update
-
-        sudo apt install -y podman apptainer
+        for attempt in 1 2 3 4; do
+          if sudo add-apt-repository -y ppa:apptainer/ppa && \
+             sudo apt update && \
+             sudo apt install -y podman apptainer; then
+            break
+          fi
+          if [ "$attempt" -eq 4 ]; then
+            echo "Apptainer PPA setup failed after ${attempt} attempts" >&2
+            exit 1
+          fi
+          delay=$((15 * attempt))
+          echo "Apptainer PPA setup attempt ${attempt} failed; retrying in ${delay}s" >&2
+          sleep "$delay"
+        done
 
         # Configure podman to resolve short image names from Docker Hub
         echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
