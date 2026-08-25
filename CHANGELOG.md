@@ -26,6 +26,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Gram assembly and one collective domain-matrix reduction. Added probe-only and
     concurrent-coupon controls to the process-library planner, plus exhaustive virtual
     closure discovery so a partial library cannot hide nested geometry requirements.
+    Multi-slot spatial models now sum repeated target-interface contributions.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

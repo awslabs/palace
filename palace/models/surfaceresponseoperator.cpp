@@ -8934,15 +8934,24 @@ SurfaceResponseMatrices BuildSurfaceResponseMatrices(
                     fabricated_it != fabricated.end() && thin_it != thin.end(),
                 "Response-correction interface mapping refers to a missing coupon "
                 "surface response!");
-    MFEM_VERIFY(result.defects.find(mapping.target) == result.defects.end(),
-                "Duplicate target interface in one response-correction model!");
+    mfem::DenseMatrix fabricated_contribution(fabricated_it->second);
+    fabricated_contribution *= scale;
     auto [fabricated_target, fabricated_inserted] =
-        result.fabricated.emplace(mapping.target, fabricated_it->second);
-    fabricated_target->second *= scale;
+        result.fabricated.emplace(mapping.target, fabricated_contribution);
+    if (!fabricated_inserted)
+    {
+      fabricated_target->second += fabricated_contribution;
+    }
+
+    mfem::DenseMatrix defect_contribution(fabricated_it->second);
+    defect_contribution.Add(-1.0, thin_it->second);
+    defect_contribution *= scale;
     auto [defect, defect_inserted] =
-        result.defects.emplace(mapping.target, fabricated_it->second);
-    defect->second.Add(-1.0, thin_it->second);
-    defect->second *= scale;
+        result.defects.emplace(mapping.target, defect_contribution);
+    if (!defect_inserted)
+    {
+      defect->second += defect_contribution;
+    }
   }
   return result;
 }
