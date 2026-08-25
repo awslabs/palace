@@ -59,9 +59,11 @@ spack:
       ^openblas ^openmpi schedulers=none fabrics=ofi
   - cpu_compiler:
     - "%gcc@16"
+  - cuda_compiler:
+    - "%gcc@14"
   - cuda_constraints:
     - >-
-      %gcc@14 +cuda cuda_arch=80 ^cuda@12.9
+      +cuda cuda_arch=80 ^cuda@12.9
       ^openmpi+cuda
       ^libfabric+cuda+cuda_dlopen
       ^libceed@develop
@@ -74,6 +76,7 @@ spack:
     palace:
     - matrix:
       - [$palace_base]
+      - [$cuda_compiler]
       - [$cuda_constraints]
   specs:
     # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
