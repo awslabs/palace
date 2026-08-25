@@ -500,7 +500,7 @@ void MagnetostaticSolver::PostprocessTerminals(
         M(n_current + a, n_current + b) = flux_invertible ? Mff(a, b) : nan;
       }
     }
-    // M_cf = G*M_ff, and its transpose M_fc. NaN propagates for ports with no aperture.
+    // M_cf = G*M_ff, and its transpose M_fc.
     for (int i = 0; i < n_current; i++)
     {
       for (int b = 0; b < n_flux; b++)
