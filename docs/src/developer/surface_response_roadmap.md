@@ -324,6 +324,9 @@ global L1+L2 or SA+MS+MA aggregates are not acceptance metrics.
  8. Develop an energy-norm reduced trace basis only after held-out errors demonstrate that
     it preserves every material response channel; do not reduce basis size by an
     unqualified ring-count heuristic.
+ 9. Discover the canonical requirement closure with virtual model descriptors before any
+    coupon solve. Empty, partial, and complete libraries must produce the same final
+    geometry signature set; only selection status may differ.
 
 ## Validation and acceptance gates
 

@@ -1485,12 +1485,30 @@ missing library selection. Its `Complete` field is true only when no requirement
 missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
 missing requirements can be reported in one pass.
 
-The example coupon planner can turn this manifest into a deterministic work plan and,
-for PEC libraries, generate and qualify missing coupons:
+A direct preflight uses the configured library's production partition. To discover the
+complete geometry inventory from an empty or partial seed in one user-visible operation,
+run exhaustive closure discovery:
+
+```text
+python3 examples/cpw2d/discover_surface_response_requirements.py config.json \
+  --output /tmp/device-requirements \
+  --palace build/bin/palace
+```
+
+The helper adds in-memory/on-disk virtual model descriptors and repeats only the cheap
+geometry preflight until the canonical partition is stable. It performs no coupon mesh or
+field solve. The final `surface-response-requirements.json` is relabeled against the
+original source library, so model availability changes `Exact`/`Interpolated`/`Missing`
+status but does not hide nested geometry requirements. `closure-history.json` records the
+internal passes. The final generated library should still receive one direct preflight as
+a verification gate.
+
+The example coupon planner can turn this exhaustive manifest into a deterministic work
+plan and, for PEC libraries, generate and qualify missing coupons:
 
 ```text
 python3 examples/cpw2d/prepare_surface_response_coupons.py \
-  postpro/device/surface-response-requirements.json \
+  /tmp/device-requirements/surface-response-requirements.json \
   --output /tmp/device-process-coupons \
   --execute \
   --palace build/bin/palace \

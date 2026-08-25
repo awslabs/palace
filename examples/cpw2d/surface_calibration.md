@@ -238,14 +238,28 @@ topology-specific option with no values to omit that topology.
 ### Coverage preflight and coupon planning
 
 Run Palace with `--surface-response-preflight` to classify a device without
-assembling or solving its field equations. The resulting
+assembling or solving its field equations. A direct preflight verifies coverage
+against an existing library. For an empty or partial seed, first discover the
+library-independent canonical closure in one user-visible operation:
+
+```text
+python3 discover_surface_response_requirements.py \
+  /path/to/device-config.json \
+  --output /tmp/process-requirements \
+  --palace ../../build/bin/palace
+```
+
+The helper performs only cheap geometry preflights with virtual model
+descriptors; it never meshes or solves a coupon. This prevents adding a corner
+or spatial model from changing the residual partition and exposing new coupon
+requirements after expensive generation. Its final
 `surface-response-requirements.json` records exact, interpolated, and missing
-coupon coverage. Convert the missing entries into a fabrication-aware work plan
-with:
+coverage against the original source library. Convert those entries into a
+fabrication-aware work plan with:
 
 ```text
 python3 prepare_surface_response_coupons.py \
-  /path/to/surface-response-requirements.json \
+  /tmp/process-requirements/surface-response-requirements.json \
   --output /tmp/process-coupon-plan
 ```
 
