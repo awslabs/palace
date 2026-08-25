@@ -29,15 +29,15 @@ namespace
 void FindAllSchemasByKey(const json &schema, const std::string &key, const json &root_defs,
                          std::vector<json> &results, int depth = 0)
 {
-  constexpr int kMaxDepth = 32;
-  if (depth > kMaxDepth)
+  constexpr int max_depth = 32;
+  if (depth > max_depth)
   {
     // Hitting the cap means a self-referential $defs cycle in the schema, which
     // is a developer error rather than bad user input. Warn so it surfaces
     // instead of silently truncating the search.
     Mpi::Warning("Schema search for key '{}' exceeded max depth {}; check for a "
                  "self-referential $defs cycle\n",
-                 key, kMaxDepth);
+                 key, max_depth);
     return;
   }
   if (!schema.is_object())
