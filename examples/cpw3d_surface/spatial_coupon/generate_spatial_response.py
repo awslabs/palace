@@ -1062,7 +1062,10 @@ def write_library(
             model["Edges"].append(edge)
         model["EdgePositionTolerance"] = 1.0e-6 * radius
         model["EdgeAngleTolerance"] = 1.0e-6
-        model["ConductorReferences"] = references
+        if len(references) == 1:
+            model["Reference"] = references[0]
+        else:
+            model["ConductorReferences"] = references
     else:
         raise ValueError(f"Unsupported spatial topology {topology}")
     if "PlanViewBoundary" in geometry:

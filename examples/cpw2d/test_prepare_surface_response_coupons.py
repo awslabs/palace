@@ -1164,6 +1164,44 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(dielectric[0]["Attributes"], [3101])
         self.assertNotIn("EdgeExcludeAttributes", dielectric[0])
 
+    def test_spatial_library_uses_reference_for_single_conductor(self):
+        coupon = {
+            "Topology": "SpatialEdgeCluster",
+            "BoundaryCondition": pec(),
+            "Geometry": {
+                "Edges": [
+                    {
+                        "Conductor": 1,
+                        "InterfaceSlot": 0,
+                        "Point": [0.0, 0.0, 0.0],
+                        "GapDirection": [1.0, 0.0, 0.0],
+                        "ProcessNormal": [0.0, 1.0, 0.0],
+                        "Interval": [-1.0, 1.0],
+                    }
+                ]
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            basis = root / "basis-points.csv"
+            basis.write_text("x,y,z\n0,0,0\n")
+            path = SPATIAL.write_library(
+                root,
+                coupon,
+                2.0,
+                basis,
+                [1],
+                [],
+                [],
+                [[0.0, 0.0, 0.0]],
+                [{"Slot": 0, "Type": "SA"}],
+                process_parameters(),
+                "single-conductor",
+            )
+            model = PREPARE.load_json(path)["Models"][0]
+        self.assertEqual(model["Reference"], [0.0, 0.0, 0.0])
+        self.assertNotIn("ConductorReferences", model)
+
     def test_spatial_mesh_boundary_attributes_reads_named_surface_groups(self):
         contents = (
             b"$MeshFormat\n2.2 1 8\n"
