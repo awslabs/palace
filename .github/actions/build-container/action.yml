@@ -31,20 +31,24 @@ runs:
         llvm-version: 'dont-install'
         setup-intel: 'false'
 
-    - name: Detect CUDA build
+    - name: Select and validate build profile
       shell: bash
       run: |
-        # Build the CUDA profile on runners that actually have an NVIDIA GPU,
-        # detected with nvidia-smi; everything else builds CPU-only. The CUDA
-        # architectures themselves are fixed in spack.yaml (cuda_constraints);
-        # this step only selects which profile spack.yaml concretizes. Exported
-        # via $GITHUB_ENV so every later step (and the podman build-arg) sees it.
-        if nvidia-smi >/dev/null 2>&1; then
+        # The runner matrix selects the profile; validate that GPU runners have
+        # a working NVIDIA GPU rather than silently falling back to CPU-only.
+        # The CUDA architectures themselves are fixed in spack.yaml
+        # (cuda_constraints). PALACE_CUDA is exported via $GITHUB_ENV so every
+        # later step (and the podman build-arg) sees it.
+        if [[ "${{ startsWith(matrix.runner, 'gpu') }}" == "true" ]]; then
+          if ! nvidia-smi >/dev/null 2>&1; then
+            echo "::error::GPU runner selected, but nvidia-smi failed."
+            exit 1
+          fi
           echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
           echo "NVIDIA GPU detected: building the CUDA profile."
         else
           echo "PALACE_CUDA=" >> "$GITHUB_ENV"
-          echo "No NVIDIA GPU detected: building CPU-only."
+          echo "Building the CPU-only profile."
         fi
 
     - name: Install Podman
@@ -81,7 +85,7 @@ runs:
       run: |
         # CUDA images retain the CPU ISA compatibility dimension. The publish
         # workflow recovers this label to tag and key the build artifacts.
-        # PALACE_CUDA is set by the Detect CUDA build step above.
+        # PALACE_CUDA is set by the Select and validate build profile step above.
         if [ -n "$PALACE_CUDA" ]; then
           CPU_LABEL="${TARGET:-$(spack arch -t)}"
           ARCH_LABEL="${CPU_LABEL}_cuda"
