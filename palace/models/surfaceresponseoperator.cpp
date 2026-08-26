@@ -9579,8 +9579,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       continue;
     }
     local_patch_indices.push_back(patch_idx);
-    patches.push_back(
-        Patch{model_it->second, point_count, basis_size, patch_config.weight});
+    patches.push_back(Patch{static_cast<int>(patch_idx), model_it->second, point_count,
+                            basis_size, patch_config.weight});
     point_count += model.contour_size + 1 + model.conductor_state_count;
     basis_size += model.basis_size;
   }
@@ -10038,7 +10038,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       anchors.push_back(std::move(anchor));
     }
 
-    patches.push_back(Patch{model_it->second, 0, basis_size, patch_config.weight});
+    patches.push_back(Patch{static_cast<int>(patches.size()), model_it->second, 0,
+                            basis_size, patch_config.weight});
     basis_size += model.basis_size;
   }
 
@@ -11673,6 +11674,73 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       result.trace_closure_response_failure_fraction <=
           maximum_trace_closure_response_failure_fraction;
   return result;
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
+{
+  MFEM_VERIFY(!maxwell,
+              "Spatial patch-trace export currently supports electrostatic response "
+              "correction only!");
+  ApplyTrace(x, trace);
+  std::vector<double> local_records;
+  for (const auto &patch : patches)
+  {
+    const auto &model = models[patch.model];
+    if (!model.spatial_basis)
+    {
+      continue;
+    }
+    local_records.push_back(static_cast<double>(patch.global_index));
+    local_records.push_back(static_cast<double>(model.idx));
+    local_records.push_back(static_cast<double>(model.contour_size));
+    local_records.push_back(static_cast<double>(model.basis_size));
+    for (int i = 0; i < model.basis_size; i++)
+    {
+      local_records.push_back(trace(patch.trace_offset + i));
+    }
+  }
+
+  MFEM_VERIFY(local_records.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local spatial patch-trace data exceeds the MPI count limit!");
+  const int local_value_count = static_cast<int>(local_records.size());
+  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
+  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
+  std::vector<int> value_offsets(value_counts.size());
+  int total_values = 0;
+  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
+  {
+    value_offsets[rank] = total_values;
+    MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
+                "Global spatial patch-trace data exceeds the MPI count limit!");
+    total_values += value_counts[rank];
+  }
+  std::vector<double> records(total_values);
+  Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
+                  value_counts.data(), value_offsets.data(), fespace.GetComm());
+
+  std::vector<PatchTrace> traces;
+  std::size_t offset = 0;
+  while (offset < records.size())
+  {
+    MFEM_VERIFY(records.size() - offset >= 4, "Truncated spatial patch-trace record!");
+    PatchTrace entry;
+    entry.patch = static_cast<int>(std::llround(records[offset++]));
+    entry.model = static_cast<int>(std::llround(records[offset++]));
+    entry.contour_size = static_cast<int>(std::llround(records[offset++]));
+    const auto basis = static_cast<std::size_t>(std::llround(records[offset++]));
+    MFEM_VERIFY(entry.patch >= 0 && entry.model > 0 && entry.contour_size >= 0 &&
+                    static_cast<std::size_t>(entry.contour_size) <= basis &&
+                    basis <= records.size() - offset,
+                "Invalid gathered spatial patch-trace record!");
+    entry.coefficients.assign(records.begin() + offset, records.begin() + offset + basis);
+    offset += basis;
+    traces.push_back(std::move(entry));
+  }
+  std::sort(traces.begin(), traces.end(), [](const auto &first, const auto &second)
+            { return first.patch < second.patch; });
+  return traces;
 }
 
 SurfaceResponseOperator::MaxwellResponse

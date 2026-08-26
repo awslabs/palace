@@ -131,6 +131,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
+  std::vector<std::pair<int, std::vector<SurfaceResponseOperator::PatchTrace>>>
+      spatial_patch_traces;
   long long int raw_linear_solves = 0;
   long long int raw_linear_iterations = 0;
   long long int corrected_linear_solves = 0;
@@ -219,6 +221,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         response = response_correction->GetElectrostaticResponse(V[step]);
+        auto traces = response_correction->GetSpatialPatchTraces(V[step]);
+        if (!traces.empty())
+        {
+          spatial_patch_traces.emplace_back(idx, std::move(traces));
+        }
       }
       auto ApplyResponse = [&](EnergyData energies, double domain_correction,
                                const std::map<int, double> &fabricated_surface)
@@ -365,6 +372,36 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else if (iodata.solver.electrostatic.response_matrix)
   {
     PostprocessResponseMatrix(post_op, laplace_op, Grad, V, D_basis);
+  }
+
+  if (root && !spatial_patch_traces.empty())
+  {
+    using VT = Units::ValueType;
+    TableWithCSVFile traces(post_dir / "surface-response-traces.csv");
+    traces.table.insert(Column("source", "i", 0, 0, 2, ""));
+    traces.table.insert(Column("patch", "patch", 0, 0, 2, ""));
+    traces.table.insert(Column("model", "model", 0, 0, 2, ""));
+    traces.table.insert(Column("coefficient", "coefficient", 0, 0, 2, ""));
+    traces.table.insert(Column("conductor_state", "conductor state", 0, 0, 2, ""));
+    traces.table.insert("value", "value (V)");
+    for (const auto &[source, entries] : spatial_patch_traces)
+    {
+      for (const auto &entry : entries)
+      {
+        for (std::size_t i = 0; i < entry.coefficients.size(); i++)
+        {
+          traces.table["source"] << source;
+          traces.table["patch"] << entry.patch + 1;
+          traces.table["model"] << entry.model;
+          traces.table["coefficient"] << static_cast<int>(i) + 1;
+          traces.table["conductor_state"]
+              << (static_cast<int>(i) >= entry.contour_size ? 1 : 0);
+          traces.table["value"]
+              << iodata.units.Dimensionalize<VT::VOLTAGE>(entry.coefficients[i]);
+        }
+      }
+    }
+    traces.WriteFullTableTrunc();
   }
 
   if (root && !corrected_results.empty())

@@ -105,6 +105,29 @@ def family(topology):
     return "straight"
 
 
+def support_footprint(patch, support_points):
+    """Transform local SupportPoints corners into a chip-plane polygon in microns."""
+    origin = [patch[f"origin {axis} (m)"] * 1.0e6 for axis in "xyz"]
+    axes = [
+        [patch[f"axis {name} {axis}"] for axis in "xyz"] for name in ("u", "v", "w")
+    ]
+    corners = []
+    for local in support_points:
+        point = list(origin)
+        for axis in range(3):
+            for direction in range(3):
+                point[direction] += local[axis] * axes[axis][direction]
+        corners.append(point)
+    xs = [corner[0] for corner in corners]
+    ys = [corner[1] for corner in corners]
+    return [
+        (min(xs), min(ys)),
+        (max(xs), min(ys)),
+        (max(xs), max(ys)),
+        (min(xs), max(ys)),
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=Path, required=True)
@@ -117,6 +140,11 @@ def main():
         "--chip-z", type=float, default=0.0, help="Chip plane in mesh units"
     )
     parser.add_argument("--matching-radius", type=float, default=2.0, help="Microns")
+    parser.add_argument(
+        "--library",
+        type=Path,
+        help="Process library used by the run; enables exact SupportPoints footprints",
+    )
     parser.add_argument("--xlim", type=float, nargs=2)
     parser.add_argument("--ylim", type=float, nargs=2)
     parser.add_argument(
@@ -140,6 +168,12 @@ def main():
         for model in metadata["SurfaceResponse"]["ModelCatalog"]
     }
     patches = read_patches(args.patches)
+    support_by_name = {}
+    if args.library:
+        library = json.loads(args.library.expanduser().read_text())
+        for model in library.get("Models", []):
+            if model.get("SupportPoints"):
+                support_by_name[model["Name"]] = model["SupportPoints"]
     colors = {"straight": "#2878b5", "corner": "#f28e2b", "spatial": "#d62728"}
 
     figure, axis = plt.subplots(figsize=(12, 10))
@@ -152,12 +186,16 @@ def main():
 
     grouped = {name: [] for name in colors}
     labels = []
+    footprints = []
     for patch in patches:
         model_index = int(patch["model"])
         model = catalog[model_index]
         assigned_family = family(model["Topology"])
         point = (1.0e6 * patch["origin x (m)"], 1.0e6 * patch["origin y (m)"])
         grouped[assigned_family].append(point)
+        support = support_by_name.get(model["Name"])
+        if assigned_family == "spatial" and support:
+            footprints.append(support_footprint(patch, support))
         if args.label_models and assigned_family != "straight":
             labels.append((*point, model_index))
     if grouped["straight"]:
@@ -165,6 +203,8 @@ def main():
         axis.scatter(x, y, s=1.0, color=colors["straight"], alpha=0.65, linewidths=0)
     for name in ("corner", "spatial"):
         for x, y in grouped[name]:
+            if name == "spatial" and footprints:
+                continue
             axis.add_patch(
                 Circle(
                     (x, y),
@@ -177,6 +217,16 @@ def main():
         if grouped[name]:
             x, y = zip(*grouped[name])
             axis.scatter(x, y, s=7, color=colors[name], linewidths=0)
+    if footprints:
+        axis.add_collection(
+            PolyCollection(
+                footprints,
+                facecolor=colors["spatial"],
+                edgecolor=colors["spatial"],
+                alpha=0.20,
+                linewidths=1.0,
+            )
+        )
     for x, y, model in labels:
         axis.annotate(str(model), (x, y), xytext=(3, 3), textcoords="offset points", fontsize=6)
 
@@ -193,7 +243,14 @@ def main():
         handles=[
             Patch(facecolor=colors["straight"], label="Straight-edge quadrature"),
             Patch(facecolor=colors["corner"], label="Corner neighborhood"),
-            Patch(facecolor=colors["spatial"], label="Spatial edge-cluster neighborhood"),
+            Patch(
+                facecolor=colors["spatial"],
+                label=(
+                    "Spatial edge-cluster support"
+                    if footprints
+                    else "Spatial edge-cluster neighborhood"
+                ),
+            ),
         ],
         loc="best",
     )

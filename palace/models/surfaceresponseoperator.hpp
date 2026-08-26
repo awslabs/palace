@@ -129,6 +129,7 @@ private:
 
   struct Patch
   {
+    int global_index = -1;
     int model = -1;
     int point_offset = 0;
     int trace_offset = 0;
@@ -230,6 +231,14 @@ public:
     std::map<int, double> interfaces;
   };
 
+  struct PatchTrace
+  {
+    int patch = 0;
+    int model = 0;
+    int contour_size = 0;
+    std::vector<double> coefficients;
+  };
+
   struct ModelContribution
   {
     int model = 0;
@@ -309,6 +318,11 @@ public:
   // Maxwell correction.
   ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
                                                  bool include_fixed_flux = true) const;
+
+  // Collect the actual local contour and conductor-state coefficients for every
+  // three-dimensional spatial response patch. The result is ordered by global patch
+  // index and replicated on all ranks.
+  std::vector<PatchTrace> GetSpatialPatchTraces(const Vector &x) const;
 
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through
