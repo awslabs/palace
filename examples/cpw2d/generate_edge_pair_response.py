@@ -483,6 +483,7 @@ def write_library(
         model["Reference"] = [-reference_offset, 0.0, 0.0]
     library = {
         "Version": 3,
+        "TraceLiftVersion": 2,
         "Name": name,
         "MatchingRadius": radius,
         "CouponDepth": coupon_depth,

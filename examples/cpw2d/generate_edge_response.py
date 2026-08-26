@@ -284,6 +284,7 @@ def write_library(
 ):
     library = {
         "Version": 3,
+        "TraceLiftVersion": 2,
         "Name": name,
         "MatchingRadius": radius,
         "CouponDepth": coupon_depth,

@@ -488,6 +488,7 @@ def write_library(
         model["ZeroTraceIndices"] = zero_trace_indices
     library = {
         "Version": 3,
+        "TraceLiftVersion": 2,
         "Name": (
             "100nm-metal-50nm-overetch-10nm-rounding-"
             f"{topology}-corner-r{corner_radius:g}um-prototype"

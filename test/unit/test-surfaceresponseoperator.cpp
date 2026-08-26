@@ -237,6 +237,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     write_compact_surface_matrix(compact_fabricated_surface_path, fabricated);
     write_compact_surface_matrix(compact_thin_surface_path, thin);
     const json library = {{"Version", 3},
+                          {"TraceLiftVersion", 2},
                           {"Name", "unit-test-process"},
                           {"MatchingRadius", 0.1},
                           {"Fabrication",

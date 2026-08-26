@@ -110,6 +110,9 @@ def main():
             )
 
     version = max(library["Version"] for _, library in loaded)
+    trace_lift_version = max(
+        int(library.get("TraceLiftVersion", 0)) for _, library in loaded
+    )
     fabrication = [library.get("Fabrication") for _, library in loaded]
     known_fabrication = [entry for entry in fabrication if entry is not None]
     merged_fabrication = None
@@ -132,6 +135,8 @@ def main():
         "MatchingRadius": matching_radius,
         "Models": [],
     }
+    if trace_lift_version:
+        result["TraceLiftVersion"] = trace_lift_version
     if known_fabrication and len(known_fabrication) == len(fabrication):
         result["Fabrication"] = merged_fabrication
     names = set()
@@ -141,6 +146,14 @@ def main():
         source_root = source_path.parent
         default_depth = library.get("CouponDepth")
         for source_model in library["Models"]:
+            if (
+                len(source_model.get("ConductorReferences", [])) > 1
+                and int(library.get("TraceLiftVersion", 0)) < 2
+            ):
+                raise ValueError(
+                    f"{source_path} contains multiconductor model "
+                    f"{source_model.get('Name')!r} without TraceLiftVersion >= 2"
+                )
             index += 1
             model = dict(source_model)
             name = model.get("Name", "")

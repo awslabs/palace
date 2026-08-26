@@ -621,6 +621,7 @@ struct LibraryModel
 struct ProcessLibrary
 {
   int version = 0;
+  int trace_lift_version = 0;
   std::string name;
   double matching_radius = 0.0;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
@@ -1318,6 +1319,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
 
   ProcessLibrary library;
   library.version = version;
+  library.trace_lift_version = data.value("TraceLiftVersion", 0);
+  MFEM_VERIFY(library.trace_lift_version >= 0,
+              "Fabrication-process response-library TraceLiftVersion must be "
+              "nonnegative!");
   library.name = data.value("Name", std::filesystem::path(path).stem().string());
   const double coordinate_scale = units.GetMeshLengthRelativeScale();
   library.matching_radius = data.at("MatchingRadius").get<double>() / coordinate_scale;
@@ -1756,6 +1761,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       }
       model.response.conductor_state_count =
           static_cast<int>(model.conductor_references.size()) - 1;
+      MFEM_VERIFY(library.trace_lift_version >= 2,
+                  "Multiconductor fabrication-process response model \""
+                      << model.name
+                      << "\" was generated without the corrected trace/conductor "
+                         "boundary lift. Regenerate the library with TraceLiftVersion "
+                         "equal to 2 or newer!");
     }
     else
     {
