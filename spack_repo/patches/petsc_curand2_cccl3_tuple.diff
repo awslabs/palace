@@ -1,0 +1,34 @@
+diff --git a/repos/spack_repo/builtin/packages/petsc/curand2-cccl3-tuple.patch b/repos/spack_repo/builtin/packages/petsc/curand2-cccl3-tuple.patch
+new file mode 100644
+index 0000000000..47c5256990
+--- /dev/null
++++ b/repos/spack_repo/builtin/packages/petsc/curand2-cccl3-tuple.patch
+@@ -0,0 +1,9 @@
++diff --git a/src/sys/classes/random/impls/curand/curand2.cu b/src/sys/classes/random/impls/curand/curand2.cu
++--- a/src/sys/classes/random/impls/curand/curand2.cu
+++++ b/src/sys/classes/random/impls/curand/curand2.cu
++@@ -1,4 +1,5 @@
++ #include <petsc/private/randomimpl.h>
+++#include <thrust/tuple.h>
++ #include <thrust/transform.h>
++ #include <thrust/device_ptr.h>
++ #include <thrust/iterator/counting_iterator.h>
+diff --git a/repos/spack_repo/builtin/packages/petsc/package.py b/repos/spack_repo/builtin/packages/petsc/package.py
+index 608cd71226..e324b66c8b 100644
+--- a/repos/spack_repo/builtin/packages/petsc/package.py
++++ b/repos/spack_repo/builtin/packages/petsc/package.py
+@@ -231,6 +231,14 @@ class Petsc(Package, CudaPackage, ROCmPackage):
+     patch("petsc_modifiable_lvalue.patch", when="@3.21.6:3.22.4+rocm")
+     patch("petsc_modifiable_lvalue.patch", when="@3.21.6:3.22.4+cuda")
+ 
++    # curand2.cu references thrust::tuple/get/make_tuple but only includes
++    # thrust/transform.h etc. CUDA 13.3 (CCCL 3.3) stopped pulling
++    # <thrust/tuple.h> in transitively, so nvcc fails with
++    # 'namespace "thrust" has no member "tuple"'. Mirror the upstream fix from
++    # petsc!9321 (which added the include to aijcupm.hpp) for the cuRAND
++    # random source. Remove once a PETSc release ships the include upstream.
++    patch("curand2-cccl3-tuple.patch", when="+cuda ^cuda@13.3:")
++
+     # These require +mpi
+     mpi_msg = "Requires +mpi"
+     conflicts("+cgns", when="~mpi", msg=mpi_msg)
