@@ -210,7 +210,7 @@ TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("multiring", "multiring_inactive_ports.json",
                                   "multiring_inactive_ports", opts);
 }
