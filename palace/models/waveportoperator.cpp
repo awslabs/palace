@@ -391,13 +391,14 @@ public:
     }();
 
     // Compute U = -1/i (ik_n Eₜ + ∇ₜ Eₙ) = -kₙEₜ + i∇ₜEₙ (t-gradient in boundary element).
-    // The ∇ₜEₙ term is omitted when IncludeGradient=false (scalar-admittance-only n×H). kₙ
-    // and ω may be complex (eigenmode nonlinear solve), so carry both real and imag parts
-    // of U: with Eₜ = Etr + i·Eti and kₙ = kr + i·ki,
-    //   Re{-kₙEₜ} = -(kr·Etr - ki·Eti),  Im{-kₙEₜ} = -(kr·Eti + ki·Etr),
-    // and i∇ₜEₙ = i∇ₜ(Enr + i·Eni) = -∇ₜEni + i·∇ₜEnr. For real kₙ, ω the split reduces
-    // bit-for-bit to Re/Im{-kₙEₜ ± ∇ₜE_{n,im/re}} with a real 1/ω scale.
-    const double kr = kn.real(), ki = kn.imag();
+    // The ∇ₜEₙ term is omitted when IncludeGradient=false (scalar-admittance-only n×H). Use
+    // Re{kₙ} in the -kₙEₜ term to stay consistent with the i·Re{kₙ}·M boundary mass this
+    // correction cancels against; Im{kₙ} (line attenuation) is carried by the sparse mass,
+    // not the modal shape. ω may be complex (eigenmode solve), so carry both parts of U:
+    // with Eₜ = Etr + i·Eti, -Re{kₙ}Eₜ = -kr·Etr - i·kr·Eti, and i∇ₜEₙ = i∇ₜ(Enr + i·Eni)
+    // = -∇ₜEni + i·∇ₜEnr. For real ω the split reduces bit-for-bit to Re/Im with a real
+    // 1/ω.
+    const double kr = kn.real();
     double Etr_data[3], Eti_data[3];
     mfem::Vector Etr(Etr_data, vdim), Eti(Eti_data, vdim);
     Et.Real().GetVectorValue(*T_submesh, ip, Etr);
@@ -406,8 +407,8 @@ public:
     mfem::Vector Ure(Ure_data, vdim), Uim(Uim_data, vdim);
     for (int d = 0; d < vdim; d++)
     {
-      Ure[d] = -(kr * Etr[d] - ki * Eti[d]);
-      Uim[d] = -(kr * Eti[d] + ki * Etr[d]);
+      Ure[d] = -kr * Etr[d];
+      Uim[d] = -kr * Eti[d];
     }
     if constexpr (IncludeGradient)
     {
