@@ -106,6 +106,17 @@ public:
     double sigma;
   };
 
+  struct ReducedModelStats
+  {
+    std::size_t exact_solves = 0;
+    std::size_t complex_exact_solves = 0;
+    std::size_t reduced_solves = 0;
+    std::size_t reduced_fallbacks = 0;
+    std::size_t periodic_exact_checks = 0;
+    double last_residual = 0.0;
+    double worst_accepted_residual = 0.0;
+  };
+
   // Bare FE space constructor (WavePort). No multigrid — Att/Ann are re-assembled at
   // each Solve via mode_assembly free functions. `solver_comm` restricts solver setup to
   // port ranks; pass MPI_COMM_NULL to fall back to the FE space comm. For 3D wave port
@@ -143,6 +154,20 @@ public:
   // assembly and solve reduce bit-for-bit to the real-frequency form.
   SolveResult Solve(std::complex<double> omega, double sigma,
                     const ComplexVector *initial_space = nullptr);
+
+  // Collect exact real-frequency eigenvectors for a per-port reduced model. Reduced
+  // evaluation remains disabled until EnableReducedModel is called, so adaptive offline
+  // HDM samples always use the exact eigensolver while seeding the basis.
+  void SetReducedModelTraining(bool enable = true, std::size_t max_basis_size = 32);
+
+  // Enable guarded Rayleigh-Ritz evaluation for subsequent real-frequency solves. The
+  // reduced tolerance is derived conservatively from the adaptive driven tolerance and
+  // the configured eigensolver tolerance. Complex-frequency solves always remain exact.
+  void EnableReducedModel(double adaptive_tol);
+
+  const ReducedModelStats &GetReducedModelStats() const { return reduced_stats; }
+  std::size_t GetReducedBasisSize() const { return reduced_basis.size(); }
+  double GetReducedTolerance() const { return reduced_tol; }
 
   std::complex<double> GetEigenvalue(int i) const;
   void GetEigenvector(int i, ComplexVector &x) const;
@@ -218,6 +243,26 @@ private:
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
+  // Communicator used by the eigensolver. For wave ports this is the sub-communicator of
+  // ranks owning port unknowns, not the parent FE-space communicator.
+  MPI_Comm solver_comm = MPI_COMM_NULL;
+
+  // Guarded reduced generalized eigensolver state. Basis vectors are stored in the raw
+  // Vardapetyan-Demkowicz coordinates [e_t; e_n_tilde], before physical-field recovery.
+  bool reduced_training = false;
+  bool reduced_enabled = false;
+  bool reduced_solution = false;
+  std::size_t reduced_basis_cap = 32;
+  std::size_t reduced_solves_since_exact = 0;
+  static constexpr std::size_t REDUCED_EXACT_CHECK_INTERVAL = 20;
+  double reduced_tol = 0.0;
+  std::vector<ComplexVector> reduced_basis;
+  std::vector<std::complex<double>> reduced_eigenvalues;
+  std::vector<ComplexVector> reduced_eigenvectors;
+  std::vector<double> reduced_errors;
+  ComplexVector warm_start;
+  ReducedModelStats reduced_stats;
+
   // Permutation that maps external mode index to eigensolver index, sorted by ascending
   // Re{kn}. This ensures consistent mode ordering regardless of eigensolver backend.
   std::vector<int> mode_perm;
@@ -227,6 +272,14 @@ private:
   // mode_assembly:: free functions on the bare path. omega may be complex (reduces to the
   // real-frequency assembly when imag = 0).
   void AssembleFrequencyDependent(std::complex<double> omega, double sigma);
+
+  // Attempt a reduced solve of B x = lambda A_sigma x. The projected residual vanishes by
+  // construction, so acceptance uses the reconstructed full-space backward residual.
+  bool TryReducedSolve(double sigma);
+
+  // Add exact raw eigenvectors to the reduced basis and update the exact-solve warm start.
+  void EnrichReducedBasis(int num_converged);
+  bool AddReducedBasisVector(const ComplexVector &x);
 
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
                                            std::unique_ptr<mfem::HypreParMatrix>>;

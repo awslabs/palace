@@ -3,6 +3,11 @@
 
 #include "modeeigensolver.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numeric>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -30,6 +35,14 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+
+extern "C"
+{
+  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
+              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
+              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
+              int *);
+}
 
 namespace palace
 {
@@ -476,6 +489,7 @@ void ModeEigenSolver::Init(MPI_Comm solver_comm)
   MPI_Comm configure_comm = (solver_comm != MPI_COMM_NULL) ? solver_comm
                             : (nd_size > 0)                ? nd_fespace.GetComm()
                                                            : MPI_COMM_NULL;
+  this->solver_comm = configure_comm;
   if (configure_comm != MPI_COMM_NULL)
   {
     if (use_mg)
@@ -528,14 +542,41 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
                                                     const ComplexVector *initial_space)
 {
   sigma_cached = sigma;
+  reduced_solution = false;
 
-  // Frequency-dependent matrices assemble on the FE space communicator.
+  // Frequency-dependent matrices assemble on the FE space communicator. The first reduced
+  // implementation intentionally retains this exact assembly and removes the substantially
+  // more expensive sparse factorization and iterative eigensolve.
   AssembleFrequencyDependent(omega, sigma);
 
   // Ranks configured without a solver (wave port non-port ranks) return after assembly.
   if (!ksp || !eigen)
   {
     return {0, sigma};
+  }
+
+  const bool real_frequency = (omega.imag() == 0.0);
+  if (real_frequency && reduced_enabled &&
+      reduced_basis.size() >= static_cast<std::size_t>(num_modes))
+  {
+    if (reduced_solves_since_exact < REDUCED_EXACT_CHECK_INTERVAL)
+    {
+      if (TryReducedSolve(sigma))
+      {
+        reduced_solution = true;
+        reduced_stats.reduced_solves++;
+        reduced_solves_since_exact++;
+        return {static_cast<int>(reduced_eigenvalues.size()), sigma};
+      }
+      reduced_stats.reduced_fallbacks++;
+    }
+    else
+    {
+      // Periodically refresh the truth subspace even when every reduced residual passes.
+      // A residual can certify a represented Ritz pair but cannot prove that a new mode has
+      // not entered the requested rank from outside the current reduced basis.
+      reduced_stats.periodic_exact_checks++;
+    }
   }
 
   if (block_pc_ptr)
@@ -573,12 +614,25 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
-  if (initial_space)
+  if (real_frequency && warm_start.Size() > 0)
+  {
+    eigen->SetInitialSpace(warm_start);
+  }
+  else if (initial_space)
   {
     eigen->SetInitialSpace(*initial_space);
   }
 
   int num_conv = eigen->Solve();
+  if (real_frequency)
+  {
+    reduced_stats.exact_solves++;
+    reduced_solves_since_exact = 0;
+  }
+  else
+  {
+    reduced_stats.complex_exact_solves++;
+  }
 
   // Build a permutation sorted by proximity to the shift target so that mode ordering is
   // consistent across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently).
@@ -595,27 +649,272 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
               return std::abs(kn_a.real() - kn_target) < std::abs(kn_b.real() - kn_target);
             });
 
+  if (real_frequency)
+  {
+    EnrichReducedBasis(num_conv);
+  }
   return {num_conv, sigma};
+}
+
+void ModeEigenSolver::SetReducedModelTraining(bool enable, std::size_t max_basis_size)
+{
+  reduced_training = enable;
+  reduced_basis_cap = std::max(max_basis_size, static_cast<std::size_t>(num_modes));
+}
+
+void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
+{
+  reduced_training = true;
+  reduced_enabled = !reduced_basis.empty();
+  // Do not ask the reduced model to be more accurate than the truth eigensolves used to
+  // construct it. For loose adaptive sweeps, cap the port backward error at 1e-4.
+  reduced_tol = std::max(10.0 * eig_tol, std::min(1.0e-4, 0.01 * adaptive_tol));
+}
+
+bool ModeEigenSolver::AddReducedBasisVector(const ComplexVector &x)
+{
+  if (reduced_basis.size() >= reduced_basis_cap || solver_comm == MPI_COMM_NULL)
+  {
+    return false;
+  }
+
+  ComplexVector q(x);
+  const double norm0 = linalg::Norml2(solver_comm, q);
+  if (!(norm0 > 0.0))
+  {
+    return false;
+  }
+  // Two-pass modified Gram-Schmidt is sufficient for the deliberately small basis and
+  // avoids making the port ROM depend on the real-valued 3D PROM orthogonalization code.
+  for (int pass = 0; pass < 2; pass++)
+  {
+    for (const auto &v : reduced_basis)
+    {
+      const std::complex<double> alpha = linalg::Dot(solver_comm, q, v);
+      q.Add(-alpha, v);
+    }
+  }
+  const double norm = linalg::Norml2(solver_comm, q);
+  if (!(norm > 1.0e-10 * norm0))
+  {
+    return false;
+  }
+  q *= 1.0 / norm;
+  reduced_basis.push_back(std::move(q));
+  return true;
+}
+
+void ModeEigenSolver::EnrichReducedBasis(int num_converged)
+{
+  if (num_converged <= 0)
+  {
+    return;
+  }
+
+  // The selected highest requested mode is the best portable single-vector warm start for
+  // the next exact ARPACK/SLEPc solve. Capture it before WavePortData applies the VD
+  // back-transform to its separate output copy.
+  const int selected = std::min(num_modes - 1, num_converged - 1);
+  warm_start.SetSize(nd_size + h1_size);
+  warm_start.UseDevice(true);
+  eigen->GetEigenvector(mode_perm[selected], warm_start);
+  linalg::Normalize(solver_comm, warm_start);
+
+  if (!reduced_training)
+  {
+    return;
+  }
+  const int n = std::min(num_modes, num_converged);
+  ComplexVector x(nd_size + h1_size);
+  x.UseDevice(true);
+  for (int i = 0; i < n && reduced_basis.size() < reduced_basis_cap; i++)
+  {
+    eigen->GetEigenvector(mode_perm[i], x);
+    AddReducedBasisVector(x);
+  }
+}
+
+bool ModeEigenSolver::TryReducedSolve(double sigma)
+{
+  int n = static_cast<int>(reduced_basis.size());
+  if (n < num_modes || solver_comm == MPI_COMM_NULL)
+  {
+    return false;
+  }
+
+  Eigen::MatrixXcd Ar(n, n), Br(n, n);
+  std::vector<ComplexVector> AV, BV;
+  AV.reserve(n);
+  BV.reserve(n);
+  for (int j = 0; j < n; j++)
+  {
+    auto &av = AV.emplace_back(opA->Height());
+    auto &bv = BV.emplace_back(opB->Height());
+    av.UseDevice(true);
+    bv.UseDevice(true);
+    opA->Mult(reduced_basis[j], av);
+    opB->Mult(reduced_basis[j], bv);
+    for (int i = 0; i < n; i++)
+    {
+      // linalg::Dot(comm, x, y) computes y^H x.
+      Ar(i, j) = linalg::Dot(solver_comm, av, reduced_basis[i]);
+      Br(i, j) = linalg::Dot(solver_comm, bv, reduced_basis[i]);
+    }
+  }
+
+  // The full eigensolver solves B x = lambda A_sigma x. Preserve that orientation in the
+  // dense QZ solve and avoid forming A_sigma^{-1} B because the projected pair can be
+  // singular near cutoff.
+  Eigen::MatrixXcd Bq = Br, Aq = Ar;
+  Eigen::VectorXcd alpha(n), beta(n);
+  Eigen::MatrixXcd vl_dummy(1, 1), vr(n, n);
+  int ldvl = 1, ldvr = n, lwork = std::max(4 * n, 1), info = 0;
+  Eigen::VectorXcd work(lwork);
+  Eigen::VectorXd rwork(std::max(8 * n, 1));
+  char job_n = 'N', job_v = 'V';
+  zggev_(&job_n, &job_v, &n, Bq.data(), &n, Aq.data(), &n, alpha.data(), beta.data(),
+         vl_dummy.data(), &ldvl, vr.data(), &ldvr, work.data(), &lwork, rwork.data(),
+         &info);
+  if (info != 0)
+  {
+    return false;
+  }
+
+  struct Candidate
+  {
+    std::complex<double> lambda;
+    std::complex<double> kn;
+    ComplexVector vector;
+    double residual;
+    double distance;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(n);
+  const double kn_target = std::sqrt(-sigma);
+  double best_rejected_residual = std::numeric_limits<double>::infinity();
+  for (int k = 0; k < n; k++)
+  {
+    const double scale = std::max(std::abs(alpha(k)), std::abs(beta(k)));
+    if (!(scale > 0.0) || std::abs(beta(k)) <= 1.0e-13 * scale ||
+        std::abs(alpha(k)) <= 1.0e-13 * scale)
+    {
+      continue;
+    }
+    const std::complex<double> lambda = alpha(k) / beta(k);
+    const std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+    if (!std::isfinite(lambda.real()) || !std::isfinite(lambda.imag()) ||
+        !std::isfinite(kn.real()) || !std::isfinite(kn.imag()) ||
+        std::abs(kn) <= 1.0e-10 * std::max(kn_target, 1.0))
+    {
+      continue;
+    }
+
+    ComplexVector x(nd_size + h1_size);
+    x.UseDevice(true);
+    x = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      x.Add(vr(j, k), reduced_basis[j]);
+    }
+    const double xnorm = linalg::Norml2(solver_comm, x);
+    if (!(xnorm > 0.0))
+    {
+      continue;
+    }
+    x *= 1.0 / xnorm;
+
+    ComplexVector ax(opA->Height()), bx(opB->Height()), residual(opA->Height());
+    ax.UseDevice(true);
+    bx.UseDevice(true);
+    residual.UseDevice(true);
+    opA->Mult(x, ax);
+    opB->Mult(x, bx);
+    residual = bx;
+    residual.Add(-lambda, ax);
+    const double denom = linalg::Norml2(solver_comm, bx) +
+                         std::abs(lambda) * linalg::Norml2(solver_comm, ax);
+    const double eta = linalg::Norml2(solver_comm, residual) /
+                       std::max(denom, std::numeric_limits<double>::min());
+    if (!std::isfinite(eta))
+    {
+      continue;
+    }
+    if (eta > reduced_tol)
+    {
+      // Projection can introduce spurious Ritz roots, especially for the singular,
+      // non-normal block pencil. Filter them by the reconstructed full-space residual
+      // before applying the physical mode-ordering rule; otherwise a spurious root closer
+      // to the shift target can mask an accurate represented mode.
+      best_rejected_residual = std::min(best_rejected_residual, eta);
+      continue;
+    }
+    candidates.push_back({lambda, kn, std::move(x), eta, std::abs(kn.real() - kn_target)});
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate &a, const Candidate &b) { return a.distance < b.distance; });
+  if (candidates.size() < static_cast<std::size_t>(num_modes))
+  {
+    reduced_stats.last_residual = std::isfinite(best_rejected_residual)
+                                      ? best_rejected_residual
+                                      : std::numeric_limits<double>::infinity();
+    return false;
+  }
+  // A nearly tied mode just outside the requested set makes rank-based identification
+  // ambiguous. Let the exact eigensolver resolve and enrich that local mode cluster.
+  if (candidates.size() > static_cast<std::size_t>(num_modes))
+  {
+    const double gap = candidates[num_modes].distance - candidates[num_modes - 1].distance;
+    if (gap <= 1.0e-10 * std::max(kn_target, 1.0))
+    {
+      return false;
+    }
+  }
+
+  reduced_eigenvalues.clear();
+  reduced_eigenvectors.clear();
+  reduced_errors.clear();
+  for (int i = 0; i < num_modes; i++)
+  {
+    reduced_stats.last_residual = candidates[i].residual;
+    reduced_stats.worst_accepted_residual =
+        std::max(reduced_stats.worst_accepted_residual, candidates[i].residual);
+    reduced_eigenvalues.push_back(candidates[i].lambda);
+    reduced_eigenvectors.push_back(std::move(candidates[i].vector));
+    reduced_errors.push_back(candidates[i].residual);
+  }
+  return true;
 }
 
 std::complex<double> ModeEigenSolver::GetEigenvalue(int i) const
 {
-  return eigen->GetEigenvalue(mode_perm[i]);
+  return reduced_solution ? reduced_eigenvalues.at(i) : eigen->GetEigenvalue(mode_perm[i]);
 }
 
 double ModeEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
+  if (reduced_solution)
+  {
+    return reduced_errors.at(i);
+  }
   return eigen->GetError(mode_perm[i], type);
 }
 
 void ModeEigenSolver::GetEigenvector(int i, ComplexVector &x) const
 {
-  eigen->GetEigenvector(mode_perm[i], x);
+  if (reduced_solution)
+  {
+    x = reduced_eigenvectors.at(i);
+  }
+  else
+  {
+    eigen->GetEigenvector(mode_perm[i], x);
+  }
 }
 
 std::complex<double> ModeEigenSolver::GetPropagationConstant(int i) const
 {
-  return std::sqrt(-sigma_cached - 1.0 / eigen->GetEigenvalue(mode_perm[i]));
+  return std::sqrt(-sigma_cached - 1.0 / GetEigenvalue(i));
 }
 bool ModeEigenSolver::IsPropagating(std::complex<double> kn)
 {

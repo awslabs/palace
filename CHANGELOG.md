@@ -87,6 +87,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Accelerated numeric wave ports in adaptive driven sweeps with a guarded per-port
+    reduced generalized eigensolver. Exact offline modes train a complex cross-section
+    basis; online frequencies use a dense Rayleigh–Ritz solve with a reconstructed
+    full-space residual, periodic exact checks, and transparent exact fallback/enrichment.
+    The complete frequency-dependent port mode is reconstructed for excitation and
+    postprocessing, rather than approximating only its propagation constant.
   - Omit material terms with mathematically exact-zero coefficients from fine-level partial
     assembly while retaining the configured coarse sparse structure for symbolic reuse.
     [PR 876](https://github.com/awslabs/palace/pull/876).
@@ -101,6 +107,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigensolver. Affected `√(μ⁻¹ε)`, `(με)^(-1/2)`, `ε·√(I + tanδ·tanδᵀ)` in the material
     operator and the flux error-estimator weights.
     [PR 912](https://github.com/awslabs/palace/pull/912).
+  - Fixed numeric wave-port `MaxIts` and `KSPTol` settings being parsed but ignored by the
+    boundary-mode linear solver.
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
     filesystem updates more robust. [PR 892](https://github.com/awslabs/palace/pull/892).
   - Fixed ParaView output for multiple driven excitations deleting fields from earlier
