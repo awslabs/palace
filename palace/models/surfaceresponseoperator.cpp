@@ -86,6 +86,25 @@ struct ElementBox
     return true;
   }
 
+  bool InteriorOverlaps(const ElementBox &other, int dimension) const
+  {
+    double scale = 1.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      scale = std::max({scale, std::abs(min[d]), std::abs(max[d]), std::abs(other.min[d]),
+                        std::abs(other.max[d])});
+    }
+    const double tolerance = 1.0e-12 * scale;
+    for (int d = 0; d < dimension; d++)
+    {
+      if (std::min(max[d], other.max[d]) - std::max(min[d], other.min[d]) <= tolerance)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool IntersectsSegment(const std::array<double, 3> &p0, const std::array<double, 3> &p1,
                          int dimension, double tolerance) const
   {
@@ -4901,6 +4920,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
   int next_model_index = 1;
+  int next_interpolation_group = 1;
   int matched_intervals = 0;
   int matched_segments = 0;
   int unmatched_groups = 0;
@@ -7274,6 +7294,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         patch.axis_w = process_normal;
         patch.conductor_references = model_selection->conductor_references;
         patch.weight = 1.0;
+        if (model_selection->IsInterpolated())
+        {
+          patch.interpolation_group = next_interpolation_group++;
+        }
         patch.maxwell_reference_is_pec =
             boundary_condition.type == MetalBoundaryConditionType::PEC;
         for (const auto &reference : patch.conductor_references)
@@ -8193,6 +8217,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             patch.maxwell_conductor_anchors = {first_point, *paired_point};
           }
           const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
+          if (model_selection.IsInterpolated())
+          {
+            patch.interpolation_group = next_interpolation_group++;
+          }
           for (const auto &weighted_model : model_selection.models)
           {
             const auto &source = library.models[weighted_model.index];
@@ -9278,6 +9306,71 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   dbc_tdof_list = laplace_op.GetDbcTDofList();
 
+  // A three-dimensional spatial response represents one complete coupon volume and has
+  // unit weight. Such volumes must never overlap: adding both dense defects would count
+  // the shared physical domain twice. Use transformed matching-contour bounds as a
+  // conservative fail-closed ownership check until an explicit partition-of-unity
+  // representation is available.
+  const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+  struct SpatialSupport
+  {
+    std::size_t patch = 0;
+    ElementBox box;
+  };
+  std::vector<SpatialSupport> spatial_supports;
+  if (dimension == 3)
+  {
+    for (std::size_t patch_idx = 0; patch_idx < config->patches.size(); patch_idx++)
+    {
+      const auto &patch_config = config->patches[patch_idx];
+      const auto model_it = model_indices.find(patch_config.model);
+      MFEM_ASSERT(model_it != model_indices.end(), "Unknown response model!");
+      const auto &model = models[model_it->second];
+      if (!model.spatial_basis)
+      {
+        continue;
+      }
+      auto &support = spatial_supports.emplace_back();
+      support.patch = patch_idx;
+      for (const auto &local : basis_points[model_it->second])
+      {
+        ElementBox point_box;
+        for (int d = 0; d < dimension; d++)
+        {
+          const double coordinate =
+              patch_config.origin[d] +
+              (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d] +
+               local[2] * patch_config.axis_w[d]) /
+                  coordinate_scale;
+          point_box.min[d] = point_box.max[d] = coordinate;
+        }
+        support.box.Add(point_box);
+      }
+    }
+    for (std::size_t i = 0; i < spatial_supports.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < spatial_supports.size(); j++)
+      {
+        const auto first = spatial_supports[i].patch;
+        const auto second = spatial_supports[j].patch;
+        const int interpolation_group = config->patches[first].interpolation_group;
+        if (interpolation_group > 0 &&
+            interpolation_group == config->patches[second].interpolation_group)
+        {
+          continue;
+        }
+        MFEM_VERIFY(!spatial_supports[i].box.InteriorOverlaps(spatial_supports[j].box, 3),
+                    "Three-dimensional response-correction matching volumes for patches "
+                        << first + 1 << " ("
+                        << models[model_indices.at(config->patches[first].model)].name
+                        << ") and " << second + 1 << " ("
+                        << models[model_indices.at(config->patches[second].model)].name
+                        << ") overlap. Replace them with one coupled spatial model or an "
+                           "explicit nonoverlapping partition!");
+      }
+    }
+  }
+
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
   int point_count = 0;
@@ -9316,7 +9409,6 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   Mpi::GlobalSum(1, &global_basis_size, fespace.GetComm());
 
   mfem::Vector xyz(dimension * point_count);
-  const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   std::vector<std::vector<Point2D>> polygons;
   if (dimension == 2)
   {

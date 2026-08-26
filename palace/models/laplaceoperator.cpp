@@ -328,6 +328,9 @@ LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
     source_data_files(ConstructSourceDataFiles(boundaries.prescribed_potential)),
     source_terminal_attr_lists(
         ConstructSourceTerminalAttributes(boundaries.prescribed_potential)),
+    source_zero_attr_list(ConstructSourceZeroAttributes(boundaries.pec, boundaries.terminal,
+                                                        boundaries.prescribed_potential,
+                                                        *mesh.back())),
     mesh_coordinate_scale(1.0), voltage_scale(1.0)
 {
   // Print essential BC information.
@@ -511,6 +514,35 @@ std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSourceTerminalAttribut
   return attributes;
 }
 
+mfem::Array<int> LaplaceOperator::ConstructSourceZeroAttributes(
+    const config::PecBoundaryData &pec, const std::map<int, config::TerminalData> &terminal,
+    const std::map<int, config::PrescribedPotentialData> &potential,
+    const mfem::ParMesh &mesh)
+{
+  std::set<int> existing(mesh.bdr_attributes.begin(), mesh.bdr_attributes.end());
+  std::set<int> attributes;
+  for (const int attribute : pec.attributes)
+  {
+    if (existing.find(attribute) != existing.end())
+    {
+      attributes.insert(attribute);
+    }
+  }
+  for (const auto &[idx, data] : terminal)
+  {
+    (void)idx;
+    attributes.insert(data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : potential)
+  {
+    (void)idx;
+    attributes.insert(data.terminal_attributes.begin(), data.terminal_attributes.end());
+  }
+  mfem::Array<int> result(static_cast<int>(attributes.size()));
+  std::copy(attributes.begin(), attributes.end(), result.begin());
+  return result;
+}
+
 namespace
 {
 void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
@@ -608,6 +640,16 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
     TracePotentialCoefficient trace(it->second, mesh.SpaceDimension(),
                                     mesh_coordinate_scale, voltage_scale);
     x.ProjectBdrCoefficient(trace, source_marker);  // Values only correct on master
+    // ProjectBdrCoefficient writes shared boundary dofs as well as the interiors of the
+    // selected trace attributes. Reimpose every grounded/conductor boundary before
+    // activating this source's conductor state so that separate trace and conductor
+    // basis lifts add exactly at matching-surface intersections.
+    if (source_zero_attr_list.Size() > 0)
+    {
+      auto zero_marker = mesh::AttrToMarker(bdr_attr_max, source_zero_attr_list);
+      mfem::ConstantCoefficient zero(0.0);
+      x.ProjectBdrCoefficient(zero, zero_marker);  // Values only correct on master
+    }
     if (auto terminal = source_terminal_attr_lists.find(idx);
         terminal != source_terminal_attr_lists.end())
     {

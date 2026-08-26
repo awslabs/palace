@@ -102,6 +102,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "cluster-fabricated-surface.csv";
   const auto cluster_thin_surface_path = temp.temp_dir / "cluster-thin-surface.csv";
   const auto zero_trace_path = temp.temp_dir / "zero-trace.csv";
+  const auto shared_boundary_trace_path = temp.temp_dir / "shared-boundary-trace.csv";
   const auto corner_points_path = temp.temp_dir / "corner-basis-points.csv";
   const auto corner_fabricated_path = temp.temp_dir / "corner-fabricated.csv";
   const auto corner_thin_path = temp.temp_dir / "corner-thin.csv";
@@ -378,6 +379,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                  << "0.0,0.0,0.0,0.0\n"
                  << "0.5,0.5,0.0,0.0\n"
                  << "1.0,1.0,0.0,0.0\n";
+      std::ofstream shared_trace(shared_boundary_trace_path);
+      shared_trace << "x,y,z,V\n"
+                   << "1.0,0.0,0.0,0.0\n"
+                   << "1.0,0.5,0.0,0.5\n"
+                   << "1.0,1.0,0.0,1.0\n";
     }
     auto coupled_model = coupled_library_3d["Models"][0];
     coupled_model["Name"] = "terminal-ground-gap-12um";
@@ -981,6 +987,50 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       prescribed_max,
       WithinRel(1.0 / prescribed_iodata.units.GetScaleFactor<Units::ValueType::VOLTAGE>(),
                 1.0e-12));
+
+  // A trace surface and conductor surface can share boundary dofs. The lift for one
+  // combined prescribed-potential source must equal the sum of independently generated
+  // trace and conductor-state lifts; response matrices rely on this exact superposition.
+  auto split_source_config = prescribed_config;
+  split_source_config["Boundaries"] = {
+      {"Ground", {{"Attributes", {1, 4}}}},
+      {"PrescribedPotential",
+       {{{"Index", 1},
+         {"Attributes", {2}},
+         {"DataFile", shared_boundary_trace_path.string()}},
+        {{"Index", 2},
+         {"Attributes", {2}},
+         {"TerminalAttributes", {3}},
+         {"DataFile", zero_trace_path.string()}}}}};
+  IoData split_source_iodata(split_source_config, false);
+  LaplaceOperator split_source_laplace(split_source_iodata, meshes);
+  auto split_source_stiffness = split_source_laplace.GetStiffnessMatrix();
+  Vector trace_excitation, trace_rhs, conductor_excitation, conductor_rhs;
+  split_source_laplace.GetExcitationVector(1, *split_source_stiffness, trace_excitation,
+                                           trace_rhs);
+  split_source_laplace.GetExcitationVector(2, *split_source_stiffness, conductor_excitation,
+                                           conductor_rhs);
+
+  auto combined_source_config = prescribed_config;
+  combined_source_config["Boundaries"] = {
+      {"Ground", {{"Attributes", {1, 4}}}},
+      {"PrescribedPotential",
+       {{{"Index", 1},
+         {"Attributes", {2}},
+         {"TerminalAttributes", {3}},
+         {"DataFile", shared_boundary_trace_path.string()}}}}};
+  IoData combined_source_iodata(combined_source_config, false);
+  LaplaceOperator combined_source_laplace(combined_source_iodata, meshes);
+  auto combined_source_stiffness = combined_source_laplace.GetStiffnessMatrix();
+  Vector combined_excitation, combined_rhs;
+  combined_source_laplace.GetExcitationVector(1, *combined_source_stiffness,
+                                              combined_excitation, combined_rhs);
+  trace_excitation += conductor_excitation;
+  trace_excitation -= combined_excitation;
+  trace_rhs += conductor_rhs;
+  trace_rhs -= combined_rhs;
+  CHECK(linalg::Norml2(Mpi::World(), trace_excitation) == 0.0);
+  CHECK(linalg::Norml2(Mpi::World(), trace_rhs) == 0.0);
 
   SurfaceResponseOperator response(iodata, laplace_op);
   REQUIRE(response.GetBasisSize() == 4);

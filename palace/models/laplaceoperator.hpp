@@ -65,6 +65,10 @@ private:
   // CSV potential trace file for prescribed-potential sources.
   std::map<int, std::string> source_data_files;
   std::map<int, mfem::Array<int>> source_terminal_attr_lists;
+  // Conductor and ground attributes are reimposed after projecting a nonuniform trace.
+  // This gives prescribed trace and conductor-state excitations an exactly linear
+  // boundary lift at shared boundary degrees of freedom.
+  mfem::Array<int> source_zero_attr_list;
   double mesh_coordinate_scale;
   double voltage_scale;
 
@@ -80,6 +84,11 @@ private:
   ConstructSourceDataFiles(const std::map<int, config::PrescribedPotentialData> &potential);
   std::map<int, mfem::Array<int>> ConstructSourceTerminalAttributes(
       const std::map<int, config::PrescribedPotentialData> &potential);
+  mfem::Array<int> ConstructSourceZeroAttributes(
+      const config::PecBoundaryData &pec,
+      const std::map<int, config::TerminalData> &terminal,
+      const std::map<int, config::PrescribedPotentialData> &potential,
+      const mfem::ParMesh &mesh);
 
 public:
   LaplaceOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
