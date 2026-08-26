@@ -506,6 +506,10 @@ void ModeEigenSolver::Init(MPI_Comm solver_comm)
 
 void ModeEigenSolver::AssembleFrequencyDependent(std::complex<double> omega, double sigma)
 {
+  reduced_stats.full_operator_assemblies++;
+  last_assembled_omega = omega;
+  last_assembled_sigma = sigma;
+
   // Frequency-dependent Att/Ann: delegate to BMO on the 2D domain path; otherwise
   // assemble locally via the shared free functions.
   std::unique_ptr<mfem::HypreParMatrix> Attr, Atti, Annr_local, Anni_local;
@@ -544,39 +548,38 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   sigma_cached = sigma;
   reduced_solution = false;
 
-  // Frequency-dependent matrices assemble on the FE space communicator. The first reduced
-  // implementation intentionally retains this exact assembly and removes the substantially
-  // more expensive sparse factorization and iterative eigensolve.
+  const bool real_frequency = (omega.imag() == 0.0);
+  const bool can_reduce = real_frequency && reduced_enabled && affine_model_ready &&
+                          reduced_basis.size() >= static_cast<std::size_t>(num_modes);
+  if (can_reduce && reduced_solves_since_exact < REDUCED_EXACT_CHECK_INTERVAL)
+  {
+    // The accepted online path evaluates only preprojected exact affine components. It does
+    // not assemble the full finite-element operator.
+    if (TryAffineReducedSolve(omega.real(), sigma))
+    {
+      reduced_solution = true;
+      reduced_stats.reduced_solves++;
+      reduced_stats.affine_reduced_solves++;
+      reduced_solves_since_exact++;
+      return {static_cast<int>(reduced_eigenvalues.size()), sigma};
+    }
+    reduced_stats.reduced_fallbacks++;
+  }
+  else if (can_reduce)
+  {
+    // Periodically refresh the truth subspace even when every reduced residual passes.
+    // A residual can certify a represented Ritz pair but cannot prove that a new mode has
+    // not entered the requested rank from outside the current reduced basis.
+    reduced_stats.periodic_exact_checks++;
+  }
+
+  // Truth/fallback and all complex-frequency queries retain the original exact assembly.
   AssembleFrequencyDependent(omega, sigma);
 
   // Ranks configured without a solver (wave port non-port ranks) return after assembly.
   if (!ksp || !eigen)
   {
     return {0, sigma};
-  }
-
-  const bool real_frequency = (omega.imag() == 0.0);
-  if (real_frequency && reduced_enabled &&
-      reduced_basis.size() >= static_cast<std::size_t>(num_modes))
-  {
-    if (reduced_solves_since_exact < REDUCED_EXACT_CHECK_INTERVAL)
-    {
-      if (TryReducedSolve(sigma))
-      {
-        reduced_solution = true;
-        reduced_stats.reduced_solves++;
-        reduced_solves_since_exact++;
-        return {static_cast<int>(reduced_eigenvalues.size()), sigma};
-      }
-      reduced_stats.reduced_fallbacks++;
-    }
-    else
-    {
-      // Periodically refresh the truth subspace even when every reduced residual passes.
-      // A residual can certify a represented Ritz pair but cannot prove that a new mode has
-      // not entered the requested rank from outside the current reduced basis.
-      reduced_stats.periodic_exact_checks++;
-    }
   }
 
   if (block_pc_ptr)
@@ -652,6 +655,20 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   if (real_frequency)
   {
     EnrichReducedBasis(num_conv);
+    if (affine_model_ready)
+    {
+      const double discrepancy = ValidateAffineModel(omega.real(), sigma);
+      reduced_stats.worst_affine_discrepancy =
+          std::max(reduced_stats.worst_affine_discrepancy, discrepancy);
+      if (!(discrepancy <= 1.0e-9))
+      {
+        affine_model_ready = false;
+        Mpi::Warning(solver_comm,
+                     "Disabling affine wave-port reduced operator after exact refresh: "
+                     "component/action discrepancy {:.3e} exceeds 1e-9.\n",
+                     discrepancy);
+      }
+    }
   }
   return {num_conv, sigma};
 }
@@ -669,6 +686,413 @@ void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
   // Do not ask the reduced model to be more accurate than the truth eigensolves used to
   // construct it. For loose adaptive sweeps, cap the port backward error at 1e-4.
   reduced_tol = std::max(10.0 * eig_tol, std::min(1.0e-4, 0.01 * adaptive_tol));
+  if (reduced_enabled && !bmo)
+  {
+    BuildAffineModel();
+  }
+}
+
+void ModeEigenSolver::BuildAffineModel()
+{
+  affine_model_ready = false;
+  affine_components.clear();
+  affine_BV.clear();
+  affine_Br.resize(0, 0);
+
+  // The explicit component construction is currently for the bare wave-port path. The
+  // BoundaryMode path owns a separate hierarchy/operator assembly and never enables the
+  // adaptive wave-port reduced model.
+  if (bmo || reduced_basis.empty())
+  {
+    return;
+  }
+
+  auto assemble_nd = [&](BilinearForm &form)
+  {
+    return ParOperator(form.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
+  };
+  auto assemble_h1 = [&](BilinearForm &form)
+  {
+    return ParOperator(form.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
+  };
+  auto add_component =
+      [&](AffineCoefficientType type, int index, std::unique_ptr<mfem::HypreParMatrix> Attr,
+          std::unique_ptr<mfem::HypreParMatrix> Atti, const mfem::HypreParMatrix *Atn_real,
+          const mfem::HypreParMatrix *Atn_imag, std::unique_ptr<mfem::HypreParMatrix> Annr,
+          std::unique_ptr<mfem::HypreParMatrix> Anni,
+          std::unique_ptr<mfem::HypreParMatrix> lower_left,
+          Operator::DiagonalPolicy diag_policy)
+  {
+    auto [Ar, Ai] =
+        BuildSystemMatrixA(Attr.get(), Atti.get(), Atn_real, Atn_imag, Annr.get(),
+                           Anni.get(), lower_left.get(), diag_policy);
+    if (Ar || Ai)
+    {
+      AffineComponent component;
+      component.type = type;
+      component.index = index;
+      component.op = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
+      affine_components.push_back(std::move(component));
+    }
+  };
+
+  const auto &attr_to_mat = mat_op.GetAttributeToMaterial();
+  const int n_attr = attr_to_mat.Size();
+  const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
+
+  // Constant block: curl-curl / diffusion, London mass, surface inductance, and Atn.
+  {
+    MaterialPropertyCoefficient muinv_cc(attr_to_mat,
+                                         normal ? mat_op.GetInvPermeability()
+                                                : mat_op.GetCurlCurlInvPermeability());
+    if (normal)
+    {
+      muinv_cc.NormalProjectedCoefficient(*normal);
+    }
+    BilinearForm att(nd_fespace);
+    att.AddDomainIntegrator<CurlCurlIntegrator>(muinv_cc);
+    MaterialPropertyCoefficient london_t(n_attr);
+    if (mat_op.HasLondonDepth())
+    {
+      london_t.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepth());
+      att.AddDomainIntegrator<VectorFEMassIntegrator>(london_t);
+    }
+    MaterialPropertyCoefficient surf_k_t(max_bdr_attr);
+    surf_z_op.AddStiffnessBdrCoefficients(1.0, surf_k_t);
+    if (!surf_k_t.empty())
+    {
+      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(surf_k_t);
+    }
+    auto Attr = assemble_nd(att);
+
+    MaterialPropertyCoefficient neg_muinv(attr_to_mat, mat_op.GetInvPermeability(), -1.0);
+    if (normal)
+    {
+      neg_muinv.NormalProjectedCoefficient(*normal);
+    }
+    BilinearForm ann(h1_fespace);
+    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_muinv);
+    MaterialPropertyCoefficient london_n(n_attr);
+    if (mat_op.HasLondonDepth())
+    {
+      if (!normal)
+      {
+        london_n.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepthScalar());
+      }
+      else
+      {
+        const auto &ild = mat_op.GetInvLondonDepth();
+        mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
+        for (int k = 0; k < ild.SizeK(); k++)
+        {
+          ild_scalar(0, 0, k) = ild(0, 0, k);
+        }
+        london_n.AddCoefficient(attr_to_mat, ild_scalar);
+        london_n.NormalProjectedCoefficient(*normal);
+      }
+      ann.AddDomainIntegrator<MassIntegrator>(london_n);
+    }
+    MaterialPropertyCoefficient surf_k_n(max_bdr_attr);
+    surf_z_op.AddStiffnessBdrCoefficients(-1.0, surf_k_n);
+    if (!surf_k_n.empty())
+    {
+      ann.AddBoundaryIntegrator<MassIntegrator>(surf_k_n);
+    }
+    auto Annr = assemble_h1(ann);
+
+    add_component(AffineCoefficientType::CONSTANT, -1, std::move(Attr), nullptr, Atnr, Atni,
+                  std::move(Annr), nullptr, nullptr, Operator::DIAG_ONE);
+  }
+
+  // Linear-in-omega block: bulk conductivity plus resistive/farfield damping. The factor i
+  // is stored in the component's imaginary matrix, so the online scalar is real omega.
+  if (mat_op.HasConductivity() || surf_z_op.GetRsAttrList().Size() > 0 ||
+      farfield_op.GetAttrList().Size() > 0)
+  {
+    BilinearForm atti(nd_fespace);
+    MaterialPropertyCoefficient cond_t(n_attr);
+    if (mat_op.HasConductivity())
+    {
+      cond_t.AddCoefficient(attr_to_mat, mat_op.GetConductivity());
+      atti.AddDomainIntegrator<VectorFEMassIntegrator>(cond_t);
+    }
+    MaterialPropertyCoefficient damp_t(max_bdr_attr);
+    surf_z_op.AddDampingBdrCoefficients(1.0, damp_t);
+    farfield_op.AddDampingBdrCoefficients(1.0, damp_t);
+    if (!damp_t.empty())
+    {
+      atti.AddBoundaryIntegrator<VectorFEMassIntegrator>(damp_t);
+    }
+    auto Atti = assemble_nd(atti);
+
+    BilinearForm anni(h1_fespace);
+    MaterialPropertyCoefficient cond_n(n_attr);
+    if (mat_op.HasConductivity())
+    {
+      cond_n.AddCoefficient(
+          attr_to_mat, normal ? mat_op.GetConductivity() : mat_op.GetConductivityScalar(),
+          -1.0);
+      if (normal)
+      {
+        cond_n.NormalProjectedCoefficient(*normal);
+      }
+      anni.AddDomainIntegrator<MassIntegrator>(cond_n);
+    }
+    MaterialPropertyCoefficient damp_n(max_bdr_attr);
+    surf_z_op.AddDampingBdrCoefficients(-1.0, damp_n);
+    if (farfield_op.GetAttrList().Size() > 0)
+    {
+      const auto &inv_z = mat_op.GetInvImpedance();
+      const auto &bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
+      for (auto attr : farfield_op.GetAttrList())
+      {
+        int mat_idx =
+            (attr > 0 && attr <= bdr_attr_to_mat.Size()) ? bdr_attr_to_mat[attr - 1] : -1;
+        const double inv_z0 = (mat_idx >= 0) ? inv_z(0, 0, mat_idx) : 1.0;
+        auto ceed_attrs = mat_op.GetCeedBdrAttributes(attr);
+        if (ceed_attrs.Size() > 0)
+        {
+          damp_n.AddMaterialProperty(ceed_attrs, inv_z0, -1.0);
+        }
+      }
+    }
+    if (!damp_n.empty())
+    {
+      anni.AddBoundaryIntegrator<MassIntegrator>(damp_n);
+    }
+    auto Anni = assemble_h1(anni);
+
+    add_component(AffineCoefficientType::OMEGA, -1, nullptr, std::move(Atti), nullptr,
+                  nullptr, nullptr, std::move(Anni), nullptr, Operator::DIAG_ZERO);
+  }
+
+  // Quadratic block: real permittivity/surface capacitance and dielectric loss. Signs in
+  // the transverse and normal blocks follow the original VD formulation.
+  {
+    BilinearForm attr(nd_fespace), atti(nd_fespace);
+    MaterialPropertyCoefficient neg_eps(attr_to_mat, mat_op.GetPermittivityReal(), -1.0);
+    attr.AddDomainIntegrator<VectorFEMassIntegrator>(neg_eps);
+    MaterialPropertyCoefficient surf_m_t(max_bdr_attr);
+    surf_z_op.AddMassBdrCoefficients(-1.0, surf_m_t);
+    if (!surf_m_t.empty())
+    {
+      attr.AddBoundaryIntegrator<VectorFEMassIntegrator>(surf_m_t);
+    }
+    std::unique_ptr<mfem::HypreParMatrix> Atti;
+    if (mat_op.HasLossTangent())
+    {
+      MaterialPropertyCoefficient neg_eps_i(attr_to_mat, mat_op.GetPermittivityImag(),
+                                            -1.0);
+      atti.AddDomainIntegrator<VectorFEMassIntegrator>(neg_eps_i);
+      Atti = assemble_nd(atti);
+    }
+    auto Attr = assemble_nd(attr);
+
+    BilinearForm annr(h1_fespace), anni(h1_fespace);
+    MaterialPropertyCoefficient eps_n(attr_to_mat, normal ? mat_op.GetPermittivityReal()
+                                                          : mat_op.GetPermittivityScalar());
+    if (normal)
+    {
+      eps_n.NormalProjectedCoefficient(*normal);
+    }
+    annr.AddDomainIntegrator<MassIntegrator>(eps_n);
+    MaterialPropertyCoefficient surf_m_n(max_bdr_attr);
+    surf_z_op.AddMassBdrCoefficients(1.0, surf_m_n);
+    if (!surf_m_n.empty())
+    {
+      annr.AddBoundaryIntegrator<MassIntegrator>(surf_m_n);
+    }
+    std::unique_ptr<mfem::HypreParMatrix> Anni;
+    if (mat_op.HasLossTangent())
+    {
+      MaterialPropertyCoefficient eps_i_n(attr_to_mat,
+                                          normal ? mat_op.GetPermittivityImag()
+                                                 : mat_op.GetPermittivityImagScalar());
+      if (normal)
+      {
+        eps_i_n.NormalProjectedCoefficient(*normal);
+      }
+      anni.AddDomainIntegrator<MassIntegrator>(eps_i_n);
+      Anni = assemble_h1(anni);
+    }
+    auto Annr = assemble_h1(annr);
+
+    add_component(AffineCoefficientType::OMEGA_SQUARED, -1, std::move(Attr),
+                  std::move(Atti), nullptr, nullptr, std::move(Annr), std::move(Anni),
+                  nullptr, Operator::DIAG_ZERO);
+  }
+
+  // Algebraic shift block: -sigma*Btt in Att and -sigma*Btn in the lower-left block.
+  {
+    auto Attr = std::make_unique<mfem::HypreParMatrix>(*Bttr);
+    *Attr *= -1.0;
+    auto lower_left = std::make_unique<mfem::HypreParMatrix>(*Btnr);
+    *lower_left *= -1.0;
+    add_component(AffineCoefficientType::SHIFT, -1, std::move(Attr), nullptr, nullptr,
+                  nullptr, nullptr, nullptr, std::move(lower_left), Operator::DIAG_ZERO);
+  }
+
+  auto add_boundary_component =
+      [&](AffineCoefficientType type, int index, MaterialPropertyCoefficient &unit)
+  {
+    BilinearForm att(nd_fespace), ann(h1_fespace);
+    att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+    auto Attr = assemble_nd(att);
+    unit *= -1.0;
+    ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+    auto Annr = assemble_h1(ann);
+    add_component(type, index, std::move(Attr), nullptr, nullptr, nullptr, std::move(Annr),
+                  nullptr, nullptr, Operator::DIAG_ZERO);
+  };
+
+  // Non-polynomial scalar laws remain exact: one fixed boundary mass per configured group.
+  for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
+  {
+    if (surf_sigma_op.IsActive(g))
+    {
+      MaterialPropertyCoefficient unit(max_bdr_attr);
+      surf_sigma_op.AddBoundaryMassBdrCoefficients(g, unit);
+      add_boundary_component(AffineCoefficientType::SURFACE_CONDUCTIVITY,
+                             static_cast<int>(g), unit);
+    }
+  }
+  for (int b = 0; b < surf_rz_op.GetNumBoundaries(); b++)
+  {
+    MaterialPropertyCoefficient unit(max_bdr_attr);
+    surf_rz_op.AddUnitBdrCoefficients(b, unit);
+    add_boundary_component(AffineCoefficientType::RATIONAL_IMPEDANCE, b, unit);
+  }
+
+  reduced_stats.affine_model_builds++;
+  UpdateAffineProjection(0);
+  affine_model_ready = solver_comm == MPI_COMM_NULL || !affine_components.empty();
+
+  // Validate the decomposition against the last truth operator assembled during offline
+  // sampling. Any mismatch disables the affine path rather than silently omitting physics.
+  if (solver_comm != MPI_COMM_NULL && opA && last_assembled_omega.imag() == 0.0)
+  {
+    const double discrepancy =
+        ValidateAffineModel(last_assembled_omega.real(), last_assembled_sigma);
+    reduced_stats.worst_affine_discrepancy =
+        std::max(reduced_stats.worst_affine_discrepancy, discrepancy);
+    if (!(discrepancy <= 1.0e-9))
+    {
+      affine_model_ready = false;
+      Mpi::Warning(solver_comm,
+                   "Disabling affine wave-port reduced operator: component/action "
+                   "discrepancy {:.3e} exceeds 1e-9.\n",
+                   discrepancy);
+    }
+  }
+}
+
+std::complex<double>
+ModeEigenSolver::EvaluateAffineCoefficient(const AffineComponent &component, double omega,
+                                           double sigma) const
+{
+  switch (component.type)
+  {
+    case AffineCoefficientType::CONSTANT:
+      return 1.0;
+    case AffineCoefficientType::OMEGA:
+      return omega;
+    case AffineCoefficientType::OMEGA_SQUARED:
+      return omega * omega;
+    case AffineCoefficientType::SHIFT:
+      return sigma;
+    case AffineCoefficientType::SURFACE_CONDUCTIVITY:
+      return surf_sigma_op.EvaluateScalar(static_cast<std::size_t>(component.index),
+                                          std::complex<double>(omega, 0.0));
+    case AffineCoefficientType::RATIONAL_IMPEDANCE:
+      return surf_rz_op.EvalRobinCoefficient(component.index,
+                                             std::complex<double>(0.0, omega));
+  }
+  MFEM_ABORT("Unknown affine mode-operator coefficient type!");
+  return 0.0;
+}
+
+void ModeEigenSolver::UpdateAffineProjection(std::size_t old_basis_size)
+{
+  if (solver_comm == MPI_COMM_NULL)
+  {
+    return;
+  }
+  const std::size_t n = reduced_basis.size();
+  MFEM_VERIFY(old_basis_size <= n, "Invalid old affine basis size!");
+
+  affine_BV.resize(n);
+  for (std::size_t j = old_basis_size; j < n; j++)
+  {
+    affine_BV[j].SetSize(opB->Height());
+    affine_BV[j].UseDevice(true);
+    opB->Mult(reduced_basis[j], affine_BV[j]);
+  }
+  affine_Br.resize(n, n);
+  for (std::size_t j = 0; j < n; j++)
+  {
+    for (std::size_t i = 0; i < n; i++)
+    {
+      affine_Br(i, j) = linalg::Dot(solver_comm, affine_BV[j], reduced_basis[i]);
+    }
+  }
+
+  for (auto &component : affine_components)
+  {
+    component.AV.resize(n);
+    for (std::size_t j = old_basis_size; j < n; j++)
+    {
+      component.AV[j].SetSize(component.op->Height());
+      component.AV[j].UseDevice(true);
+      component.op->Mult(reduced_basis[j], component.AV[j]);
+    }
+    component.Ar.resize(n, n);
+    for (std::size_t j = 0; j < n; j++)
+    {
+      for (std::size_t i = 0; i < n; i++)
+      {
+        component.Ar(i, j) = linalg::Dot(solver_comm, component.AV[j], reduced_basis[i]);
+      }
+    }
+  }
+  if (old_basis_size > 0 && n > old_basis_size)
+  {
+    reduced_stats.affine_projection_extensions++;
+  }
+}
+
+double ModeEigenSolver::ValidateAffineModel(double omega, double sigma) const
+{
+  if (solver_comm == MPI_COMM_NULL || !opA || affine_components.empty())
+  {
+    return 0.0;
+  }
+  ComplexVector x(opA->Width()), exact(opA->Height()), affine(opA->Height()),
+      component_action(opA->Height());
+  x.UseDevice(true);
+  exact.UseDevice(true);
+  affine.UseDevice(true);
+  component_action.UseDevice(true);
+  double discrepancy = 0.0;
+  // Deterministic random probes measure operator-level agreement without the misleading
+  // relative amplification obtained from an eigenvector for which A*x is nearly null.
+  for (int probe = 0; probe < 2; probe++)
+  {
+    linalg::SetRandom(solver_comm, x, 9137 + probe);
+    linalg::SetSubVector(x, dbc_tdof_list, 0.0);
+    linalg::Normalize(solver_comm, x);
+    opA->Mult(x, exact);
+    affine = 0.0;
+    for (const auto &component : affine_components)
+    {
+      component.op->Mult(x, component_action);
+      affine.Add(EvaluateAffineCoefficient(component, omega, sigma), component_action);
+    }
+    affine.Add(-1.0, exact);
+    const double relative = linalg::Norml2(solver_comm, affine) /
+                            std::max(linalg::Norml2(solver_comm, exact), 1.0e-300);
+    discrepancy = std::max(discrepancy, relative);
+  }
+  return discrepancy;
 }
 
 bool ModeEigenSolver::AddReducedBasisVector(const ComplexVector &x)
@@ -724,6 +1148,7 @@ void ModeEigenSolver::EnrichReducedBasis(int num_converged)
   {
     return;
   }
+  const std::size_t old_basis_size = reduced_basis.size();
   const int n = std::min(num_modes, num_converged);
   ComplexVector x(nd_size + h1_size);
   x.UseDevice(true);
@@ -732,9 +1157,13 @@ void ModeEigenSolver::EnrichReducedBasis(int num_converged)
     eigen->GetEigenvector(mode_perm[i], x);
     AddReducedBasisVector(x);
   }
+  if (!affine_components.empty() && reduced_basis.size() > old_basis_size)
+  {
+    UpdateAffineProjection(old_basis_size);
+  }
 }
 
-bool ModeEigenSolver::TryReducedSolve(double sigma)
+bool ModeEigenSolver::TryAssembledReducedSolve(double sigma)
 {
   int n = static_cast<int>(reduced_basis.size());
   if (n < num_modes || solver_comm == MPI_COMM_NULL)
@@ -761,6 +1190,48 @@ bool ModeEigenSolver::TryReducedSolve(double sigma)
       Br(i, j) = linalg::Dot(solver_comm, bv, reduced_basis[i]);
     }
   }
+
+  return TryReducedSolveFromActions(sigma, Ar, Br, AV, BV);
+}
+
+bool ModeEigenSolver::TryAffineReducedSolve(double omega, double sigma)
+{
+  const int n = static_cast<int>(reduced_basis.size());
+  if (!affine_model_ready || n < num_modes || solver_comm == MPI_COMM_NULL)
+  {
+    return false;
+  }
+
+  Eigen::MatrixXcd Ar = Eigen::MatrixXcd::Zero(n, n);
+  std::vector<ComplexVector> AV(n);
+  for (int j = 0; j < n; j++)
+  {
+    AV[j].SetSize(nd_size + h1_size);
+    AV[j].UseDevice(true);
+    AV[j] = 0.0;
+  }
+  for (const auto &component : affine_components)
+  {
+    const std::complex<double> coeff = EvaluateAffineCoefficient(component, omega, sigma);
+    Ar.noalias() += coeff * component.Ar;
+    for (int j = 0; j < n; j++)
+    {
+      AV[j].Add(coeff, component.AV[j]);
+    }
+  }
+  return TryReducedSolveFromActions(sigma, Ar, affine_Br, AV, affine_BV);
+}
+
+bool ModeEigenSolver::TryReducedSolveFromActions(double sigma, const Eigen::MatrixXcd &Ar,
+                                                 const Eigen::MatrixXcd &Br,
+                                                 const std::vector<ComplexVector> &AV,
+                                                 const std::vector<ComplexVector> &BV)
+{
+  int n = static_cast<int>(reduced_basis.size());
+  MFEM_VERIFY(Ar.rows() == n && Ar.cols() == n && Br.rows() == n && Br.cols() == n &&
+                  AV.size() == static_cast<std::size_t>(n) &&
+                  BV.size() == static_cast<std::size_t>(n),
+              "Invalid reduced mode-operator dimensions!");
 
   // The full eigensolver solves B x = lambda A_sigma x. Preserve that orientation in the
   // dense QZ solve and avoid forming A_sigma^{-1} B because the projected pair can be
@@ -823,12 +1294,17 @@ bool ModeEigenSolver::TryReducedSolve(double sigma)
     }
     x *= 1.0 / xnorm;
 
-    ComplexVector ax(opA->Height()), bx(opB->Height()), residual(opA->Height());
+    ComplexVector ax(nd_size + h1_size), bx(nd_size + h1_size), residual(nd_size + h1_size);
     ax.UseDevice(true);
     bx.UseDevice(true);
     residual.UseDevice(true);
-    opA->Mult(x, ax);
-    opB->Mult(x, bx);
+    ax = 0.0;
+    bx = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      ax.Add(vr(j, k), AV[j]);
+      bx.Add(vr(j, k), BV[j]);
+    }
     residual = bx;
     residual.Add(-lambda, ax);
     const double denom = linalg::Norml2(solver_comm, bx) +
@@ -924,17 +1400,40 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixA(
     const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
     const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
-    const mfem::HypreParMatrix *shifted_Btnr) const
+    const mfem::HypreParMatrix *shifted_Btnr, Operator::DiagonalPolicy diag_policy) const
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = lambda B e.
   // The (1,0) block is -sigma * Btn from the shift-and-invert transformation.
   // Without shift (sigma=0), this block is zero (upper block-triangular).
   mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-  blocks(0, 0) = Attr;
-  blocks(0, 1) = Atnr;
-  blocks(1, 0) = shifted_Btnr;  // -sigma * Btn (nullptr when sigma=0)
-  blocks(1, 1) = Annr;
-  std::unique_ptr<mfem::HypreParMatrix> Ar(mfem::HypreParMatrixFromBlocks(blocks));
+
+  // Zero diagonal placeholders let affine components contain only one block while keeping
+  // HypreParMatrixFromBlocks informed of both block-row/column dimensions. Their backing
+  // storage must outlive every FromBlocks call below.
+  std::unique_ptr<mfem::HypreParMatrix> Dtt_zero, Dnn_zero;
+  Vector dtt(nd_size), dnn(h1_size);
+  dtt.UseDevice(false);
+  dnn.UseDevice(false);
+  dtt = 0.0;
+  dnn = 0.0;
+  auto diag_tt = std::make_unique<mfem::SparseMatrix>(dtt);
+  auto diag_nn = std::make_unique<mfem::SparseMatrix>(dnn);
+  Dtt_zero = std::make_unique<mfem::HypreParMatrix>(
+      nd_fespace.Get().GetComm(), nd_fespace.Get().GlobalTrueVSize(),
+      nd_fespace.Get().GetTrueDofOffsets(), diag_tt.get());
+  Dnn_zero = std::make_unique<mfem::HypreParMatrix>(
+      h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
+      h1_fespace.Get().GetTrueDofOffsets(), diag_nn.get());
+
+  std::unique_ptr<mfem::HypreParMatrix> Ar;
+  if (Attr || Atnr || Annr || shifted_Btnr)
+  {
+    blocks(0, 0) = Attr ? Attr : Dtt_zero.get();
+    blocks(0, 1) = Atnr;
+    blocks(1, 0) = shifted_Btnr;  // -sigma * Btn (nullptr when sigma=0)
+    blocks(1, 1) = Annr ? Annr : Dnn_zero.get();
+    Ar.reset(mfem::HypreParMatrixFromBlocks(blocks));
+  }
 
   std::unique_ptr<mfem::HypreParMatrix> Ai;
   if (Atti || Atni || Anni)
@@ -950,29 +1449,6 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixA(
     // reads each block's diag via hypre_MergeDiagAndOffd). Keep them in this outer scope
     // — declaring them inside the `if` blocks would free them before FromBlocks runs,
     // leaving the placeholder pointing at freed memory (use-after-free → segfault).
-    std::unique_ptr<mfem::HypreParMatrix> Dtt_zero, Dnn_zero;
-    Vector dtt, dnn;
-    std::unique_ptr<mfem::SparseMatrix> diag_tt, diag_nn;
-    if (!Atti && !Atni)
-    {
-      dtt.SetSize(nd_size);
-      dtt.UseDevice(false);
-      dtt = 0.0;
-      diag_tt = std::make_unique<mfem::SparseMatrix>(dtt);
-      Dtt_zero = std::make_unique<mfem::HypreParMatrix>(
-          nd_fespace.Get().GetComm(), nd_fespace.Get().GlobalTrueVSize(),
-          nd_fespace.Get().GetTrueDofOffsets(), diag_tt.get());
-    }
-    if (!Anni)
-    {
-      dnn.SetSize(h1_size);
-      dnn.UseDevice(false);
-      dnn = 0.0;
-      diag_nn = std::make_unique<mfem::SparseMatrix>(dnn);
-      Dnn_zero = std::make_unique<mfem::HypreParMatrix>(
-          h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
-          h1_fespace.Get().GetTrueDofOffsets(), diag_nn.get());
-    }
     blocks(0, 0) = Atti ? Atti : Dtt_zero.get();
     blocks(0, 1) = Atni;
     blocks(1, 0) = nullptr;  // Shifted Btn is real-only
@@ -981,7 +1457,10 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixA(
   }
 
   // Eliminate boundary true dofs constrained by Dirichlet BCs.
-  Ar->EliminateBC(dbc_tdof_list, Operator::DIAG_ONE);
+  if (Ar)
+  {
+    Ar->EliminateBC(dbc_tdof_list, diag_policy);
+  }
   if (Ai)
   {
     Ai->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);

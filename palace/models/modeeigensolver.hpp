@@ -8,6 +8,7 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -113,8 +114,13 @@ public:
     std::size_t reduced_solves = 0;
     std::size_t reduced_fallbacks = 0;
     std::size_t periodic_exact_checks = 0;
+    std::size_t full_operator_assemblies = 0;
+    std::size_t affine_model_builds = 0;
+    std::size_t affine_projection_extensions = 0;
+    std::size_t affine_reduced_solves = 0;
     double last_residual = 0.0;
     double worst_accepted_residual = 0.0;
+    double worst_affine_discrepancy = 0.0;
   };
 
   // Bare FE space constructor (WavePort). No multigrid — Att/Ann are re-assembled at
@@ -263,6 +269,35 @@ private:
   ComplexVector warm_start;
   ReducedModelStats reduced_stats;
 
+  // Exact affine decomposition of the real-frequency wave-port pencil. Each component is
+  // a frequency-independent full-space operator A_q together with its cached actions A_q V
+  // and projection V^H A_q V. Only these actions/projections are used online; the sparse
+  // component operators are retained solely to extend the cache when an exact fallback
+  // enriches V. Nonlinear coefficient laws remain exact scalar evaluations.
+  enum class AffineCoefficientType
+  {
+    CONSTANT,
+    OMEGA,
+    OMEGA_SQUARED,
+    SHIFT,
+    SURFACE_CONDUCTIVITY,
+    RATIONAL_IMPEDANCE
+  };
+  struct AffineComponent
+  {
+    AffineCoefficientType type;
+    int index = -1;
+    std::unique_ptr<ComplexOperator> op;
+    std::vector<ComplexVector> AV;
+    Eigen::MatrixXcd Ar;
+  };
+  bool affine_model_ready = false;
+  std::vector<AffineComponent> affine_components;
+  std::vector<ComplexVector> affine_BV;
+  Eigen::MatrixXcd affine_Br;
+  std::complex<double> last_assembled_omega = 0.0;
+  double last_assembled_sigma = 0.0;
+
   // Permutation that maps external mode index to eigensolver index, sorted by ascending
   // Re{kn}. This ensures consistent mode ordering regardless of eigensolver backend.
   std::vector<int> mode_perm;
@@ -273,9 +308,21 @@ private:
   // real-frequency assembly when imag = 0).
   void AssembleFrequencyDependent(std::complex<double> omega, double sigma);
 
-  // Attempt a reduced solve of B x = lambda A_sigma x. The projected residual vanishes by
-  // construction, so acceptance uses the reconstructed full-space backward residual.
-  bool TryReducedSolve(double sigma);
+  // Attempt reduced solves of B x = lambda A_sigma x. Both paths share the same dense QZ,
+  // root filtering, ordering, and reconstructed full-space residual acceptance.
+  bool TryAssembledReducedSolve(double sigma);
+  bool TryAffineReducedSolve(double omega, double sigma);
+  bool TryReducedSolveFromActions(double sigma, const Eigen::MatrixXcd &Ar,
+                                  const Eigen::MatrixXcd &Br,
+                                  const std::vector<ComplexVector> &AV,
+                                  const std::vector<ComplexVector> &BV);
+
+  // Build exact fixed operator components, project them, and evaluate their scalar laws.
+  void BuildAffineModel();
+  void UpdateAffineProjection(std::size_t old_basis_size);
+  std::complex<double> EvaluateAffineCoefficient(const AffineComponent &component,
+                                                 double omega, double sigma) const;
+  double ValidateAffineModel(double omega, double sigma) const;
 
   // Add exact raw eigenvectors to the reduced basis and update the exact-solve warm start.
   void EnrichReducedBasis(int num_converged);
@@ -290,7 +337,8 @@ private:
   BuildSystemMatrixA(const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
                      const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
                      const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
-                     const mfem::HypreParMatrix *shifted_Btnr = nullptr) const;
+                     const mfem::HypreParMatrix *shifted_Btnr = nullptr,
+                     Operator::DiagonalPolicy diag_policy = Operator::DIAG_ONE) const;
 
   // Build the 2x2 block B matrix: [Btt, 0; Btn, 0].
   ComplexHypreParMatrix BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,

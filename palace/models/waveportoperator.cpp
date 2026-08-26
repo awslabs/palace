@@ -770,19 +770,49 @@ void WavePortData::EnableReducedModel(double adaptive_tol)
   mode_solver->EnableReducedModel(adaptive_tol);
 }
 
-const ModeEigenSolver::ReducedModelStats &WavePortData::GetReducedModelStats() const
+ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
 {
-  return mode_solver->GetReducedModelStats();
+  auto stats = mode_solver->GetReducedModelStats();
+  unsigned long long counts[] = {
+      stats.exact_solves,          stats.complex_exact_solves,
+      stats.reduced_solves,        stats.reduced_fallbacks,
+      stats.periodic_exact_checks, stats.full_operator_assemblies,
+      stats.affine_model_builds,   stats.affine_projection_extensions,
+      stats.affine_reduced_solves,
+  };
+  double values[] = {stats.last_residual, stats.worst_accepted_residual,
+                     stats.worst_affine_discrepancy};
+  Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
+                 port_mesh->GetComm());
+  Mpi::Broadcast(static_cast<int>(std::size(values)), values, port_root,
+                 port_mesh->GetComm());
+  stats.exact_solves = counts[0];
+  stats.complex_exact_solves = counts[1];
+  stats.reduced_solves = counts[2];
+  stats.reduced_fallbacks = counts[3];
+  stats.periodic_exact_checks = counts[4];
+  stats.full_operator_assemblies = counts[5];
+  stats.affine_model_builds = counts[6];
+  stats.affine_projection_extensions = counts[7];
+  stats.affine_reduced_solves = counts[8];
+  stats.last_residual = values[0];
+  stats.worst_accepted_residual = values[1];
+  stats.worst_affine_discrepancy = values[2];
+  return stats;
 }
 
 std::size_t WavePortData::GetReducedBasisSize() const
 {
-  return mode_solver->GetReducedBasisSize();
+  unsigned long long size = mode_solver->GetReducedBasisSize();
+  Mpi::Broadcast(1, &size, port_root, port_mesh->GetComm());
+  return static_cast<std::size_t>(size);
 }
 
 double WavePortData::GetReducedTolerance() const
 {
-  return mode_solver->GetReducedTolerance();
+  double tol = mode_solver->GetReducedTolerance();
+  Mpi::Broadcast(1, &tol, port_root, port_mesh->GetComm());
+  return tol;
 }
 
 std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
@@ -1290,13 +1320,17 @@ void WavePortOperator::PrintReducedModelStats() const
   Mpi::Print("\nWave-port reduced model statistics:\n");
   for (const auto &[idx, data] : ports)
   {
-    const auto &stats = data.GetReducedModelStats();
-    Mpi::Print(" Port {:d}: basis = {:d}, exact = {:d}, reduced = {:d}, fallbacks = "
-               "{:d}, periodic checks = {:d}, last residual = {:.3e}, worst accepted "
-               "residual = {:.3e}\n",
-               idx, data.GetReducedBasisSize(), stats.exact_solves, stats.reduced_solves,
-               stats.reduced_fallbacks, stats.periodic_exact_checks, stats.last_residual,
-               stats.worst_accepted_residual);
+    const auto stats = data.GetReducedModelStats();
+    Mpi::Print(" Port {:d}: basis = {:d}, exact = {:d}, affine reduced = {:d}, "
+               "fallbacks = {:d}, periodic checks = {:d}, full assemblies = {:d}, "
+               "affine builds/extensions = {:d}/{:d}, last/worst residual = "
+               "{:.3e}/{:.3e}, affine discrepancy = {:.3e}\n",
+               idx, data.GetReducedBasisSize(), stats.exact_solves,
+               stats.affine_reduced_solves, stats.reduced_fallbacks,
+               stats.periodic_exact_checks, stats.full_operator_assemblies,
+               stats.affine_model_builds, stats.affine_projection_extensions,
+               stats.last_residual, stats.worst_accepted_residual,
+               stats.worst_affine_discrepancy);
   }
 }
 

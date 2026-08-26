@@ -153,7 +153,7 @@ public:
 
   // Enable guarded reduced real-frequency evaluation after adaptive offline training.
   void EnableReducedModel(double adaptive_tol);
-  const ModeEigenSolver::ReducedModelStats &GetReducedModelStats() const;
+  ModeEigenSolver::ReducedModelStats GetReducedModelStats() const;
   std::size_t GetReducedBasisSize() const;
   double GetReducedTolerance() const;
 
