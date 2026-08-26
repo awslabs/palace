@@ -42,7 +42,7 @@ struct SurfaceCurrentElement
 
   // Fraction of the total port current carried by this parallel element. This same weight
   // must be used when combining the element flux linkages into the generalized port flux.
-  double current_fraction;
+  double current_fraction = 0.0;
 };
 
 class SurfaceCurrentData
