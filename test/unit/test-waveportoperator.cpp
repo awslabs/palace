@@ -304,7 +304,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexReducesToReal",
   linalg::AXPY(std::complex<double>(-1.0, 0.0), yr, diff);
   double rel_err = linalg::Norml2(comm, diff) / std::max(linalg::Norml2(comm, yr), 1e-300);
   CAPTURE(omega, rel_err);
-  CHECK(rel_err < 1.0e-10);
+  // Floor set by the complex path's independent EVP re-solve.
+  CHECK(rel_err < 1.0e-7);
 }
 
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the
