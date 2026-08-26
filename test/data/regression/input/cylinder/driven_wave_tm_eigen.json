@@ -61,9 +61,9 @@
     "Device": "CPU",
     "Eigenmode":
     {
-      "N": 2,
+      "N": 1,
       "Tol": 1.0e-8,
-      "Target": 3.4,  // GHz, near the driven TM01 excitation band
+      "Target": 3.55,  // GHz; targets the physical TM01 pole basin
       "Save": 0
     },
     "Linear":

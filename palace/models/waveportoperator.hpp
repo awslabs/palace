@@ -77,6 +77,20 @@ public:
   std::complex<double> modal_reaction_scalar = 0.0;
 
 private:
+  // Raw-gauge reference reactions of the frozen e0 at ω0, cached for
+  // ComputeComplexReactions to transport reactions into the ω0 gauge. Recomputed when
+  // omega0 changes.
+  std::complex<double> R_full_ref = 0.0, R_scalar_ref = 0.0;
+  double ref_reaction_omega0 = -1.0;
+
+  // Mode field recomputed at the last ComputeComplexReactions(ω), with the (kₙ, ω) of that
+  // solve. Used to assemble the full-mode modal-correction shape vectors s_full/s_scalar at
+  // ω (eigenmode path), so the correction tracks the true mode shape instead of freezing it
+  // at ω0. Populated only on port ranks. W = (−iω/R) s sᵀ is invariant to the mode's
+  // arbitrary EVP scale/phase, so no gauge-lock is needed for these.
+  std::unique_ptr<GridFunction> port_Et_omega, port_En_omega;
+  std::complex<double> kn_recompute = 0.0, omega_recompute = 0.0;
+
   // List of all boundary attributes making up this port boundary.
   mfem::Array<int> attr_list;
 
@@ -174,6 +188,21 @@ public:
   // loss), whereas GetWavePortKn truncates to the real part.
   std::complex<double> SolveKnComplex(std::complex<double> omega);
 
+  // kₙ(ω) with the TRUE unconjugated modal reactions R_full(ω), R_scalar(ω) of the mode
+  // recomputed at complex ω, phase/scale-locked to the frozen ω0 reference. Pole-free (the
+  // reaction has no spurious zero away from ω0) unlike freezing the reaction shape. Does
+  // not disturb the cached reference; MPI-collective. Reduces to (kn0, modal_reaction,
+  // modal_reaction_scalar) at ω=ω0.
+  struct ComplexReactions
+  {
+    // kₙ(ω), the unit-power transported reactions R_full/R_scalar (paired with the frozen
+    // ω0-shape pencil in the synthesis path), and the raw recomputed-field reactions
+    // R_*_raw (paired with the recomputed shape vectors in the eigenmode modal correction,
+    // where the mode's arbitrary EVP scale/phase cancels in W = (−iω/R) s sᵀ).
+    std::complex<double> kn, R_full, R_scalar, R_full_raw, R_scalar_raw;
+  };
+  ComplexReactions ComputeComplexReactions(std::complex<double> omega);
+
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
@@ -185,6 +214,14 @@ public:
   GetModeExcitationCoefficientReal(bool include_gradient = true) const;
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeExcitationCoefficientImag(bool include_gradient = true) const;
+
+  // As GetModeExcitationCoefficient* but from the mode recomputed at ω by the last
+  // ComputeComplexReactions (port_Et_omega/port_En_omega at kₙ(ω), ω).
+  // Full-mode modal correction for the eigenmode path.
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetOmegaModeExcitationCoefficientReal(bool include_gradient = true) const;
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetOmegaModeExcitationCoefficientImag(bool include_gradient = true) const;
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientReal(double scaling = 1.0) const;

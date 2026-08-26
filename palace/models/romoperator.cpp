@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string_view>
 #include <tuple>
@@ -1944,16 +1945,16 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 
   // Wave-port modal correction W = Σ_ports (W_full − W_scalar), folded into synthesis.
   // Freeze the reference at band center; each active port's W(ω) is a fixed rank-≤2
-  // complex-symmetric reduced pencil c_uu·U·Uᵀ + c_uw·(U·Wᵀ+W·Uᵀ) + c_ww·W·Wᵀ with scalar
-  // dispersion c(ω), fit per coefficient to a quadratic in ω (poly-only; the aux
-  // augmentation carries only real symmetric matrices). Zero for TEM (E_n≈0) modes. Added
-  // to the loaded pencil AND the matching removable per-port load.
+  // complex-symmetric reduced pencil c_uu·U·Uᵀ + c_uw·(U·Wᵀ+W·Uᵀ) + c_ww·W·Wᵀ. Each scalar
+  // coefficient c_k(ω) is rational in kₙ(ω) (poles near cutoff), so fit it with the same
+  // complex poly + AAA machinery as the other dispersive BCs (FitScalarDispersion). The aux
+  // augmentation carries real symmetric matrices, so split the complex-symmetric S_k =
+  // Re(S_k) + i·Im(S_k) and fold c_k·Re(S_k) + (i·c_k)·Im(S_k). Zero for TEM (E_n≈0) modes.
+  // Added to the loaded pencil AND the matching removable per-port load.
   if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
   {
     const double omega_c = 0.5 * (sweep_omega_min + sweep_omega_max);
     auto synth_terms = space_op.GetModalCorrectionSynthesisTerms(omega_c);
-    const int n_fit = std::max(12, 2 * static_cast<int>(waveport_synthesis_order_max) + 4);
-    const auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
     for (auto &term : synth_terms)
     {
       // Project the frozen mode-shape vectors onto the reduced basis and form the three
@@ -1965,53 +1966,65 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       const std::array<Eigen::MatrixXcd, 3> S = {
           U * U.transpose(), U * Wv.transpose() + Wv * U.transpose(), Wv * Wv.transpose()};
 
-      // Sample the three scalar dispersion coefficients once (via SolveKnComplex, leaving
-      // the frozen reference intact) and fit each to a quadratic in ω.
-      std::array<Eigen::VectorXcd, 3> c = {Eigen::VectorXcd(n_fit), Eigen::VectorXcd(n_fit),
-                                           Eigen::VectorXcd(n_fit)};
-      for (int i = 0; i < n_fit; i++)
-      {
-        auto ci = space_op.EvalModalCorrectionSynthesisCoefficients(
-            term.port_idx, std::complex<double>(fit_omegas[i], 0.0));
-        for (int k = 0; k < 3; k++)
-        {
-          c[k](i) = ci[k];
-        }
-      }
-      std::array<Eigen::Vector3cd, 3> a;
-      double max_res = 0.0, max_ref = 0.0;
-      for (int k = 0; k < 3; k++)
-      {
-        a[k] = FitQuadratic(fit_omegas, c[k]);
-        for (int i = 0; i < n_fit; i++)
-        {
-          const double w = fit_omegas[i];
-          max_res = std::max(max_res,
-                             std::abs(a[k](0) + a[k](1) * w + a[k](2) * w * w - c[k](i)));
-          max_ref = std::max(max_ref, std::abs(c[k](i)));
-        }
-      }
-      if (max_ref > 0.0 && max_res > waveport_synthesis_tol * max_ref)
-      {
-        Mpi::Warning(space_op.GetComm(),
-                     "Wave port {:d} modal-correction dispersion is poorly captured by a "
-                     "quadratic fit (relative residual {:.2e} > tol {:.2e}); synthesized "
-                     "S-parameters may be inaccurate near band edges!\n",
-                     term.port_idx, max_res / max_ref, waveport_synthesis_tol);
-      }
-
-      // Fold each coefficient·matrix into the loaded pencil and the matching per-port load.
       const auto load_label = fmt::format("waveport_{:d}_re", term.port_idx);
       auto pl = std::find_if(pending_port_loads.begin(), pending_port_loads.end(),
                              [&](const auto &p) { return p.label == load_label; });
+
+      // One EvalModalCorrectionSynthesisCoefficients call (via SolveKnComplex, leaving the
+      // frozen reference intact) yields all three coefficients; FitScalarDispersion samples
+      // the six real/imag parts on the same real-ω nodes, so cache by ω.
+      std::map<double, std::array<std::complex<double>, 3>> coeff_cache;
+      auto eval_coeff = [this, &coeff_cache, port_idx = term.port_idx](double w)
+      {
+        auto it = coeff_cache.find(w);
+        if (it == coeff_cache.end())
+        {
+          it = coeff_cache
+                   .emplace(w, space_op.EvalModalCorrectionSynthesisCoefficients(
+                                   port_idx, std::complex<double>(w, 0.0)))
+                   .first;
+        }
+        return it->second;
+      };
       for (int k = 0; k < 3; k++)
       {
-        ApplyComplexPolynomialFitCorrections(a[k](0), a[k](1), a[k](2), S[k], Kr_total_corr,
-                                             Cr_total_corr, Mr_total_corr);
-        if (pl != pending_port_loads.end())
+        const std::array<std::pair<Eigen::MatrixXcd, std::complex<double>>, 2> parts = {
+            std::make_pair(Eigen::MatrixXcd(S[k].real().cast<std::complex<double>>()),
+                           std::complex<double>(1.0, 0.0)),
+            std::make_pair(Eigen::MatrixXcd(S[k].imag().cast<std::complex<double>>()),
+                           std::complex<double>(0.0, 1.0))};
+        const char *suffix[2] = {"re", "im"};
+        for (int p = 0; p < 2; p++)
         {
-          ApplyComplexPolynomialFitCorrections(a[k](0), a[k](1), a[k](2), S[k], pl->Kr_corr,
-                                               pl->Cr_corr, pl->Mr_corr);
+          const auto &M_real = parts[p].first;
+          const std::complex<double> scale = parts[p].second;
+          if (M_real.norm() == 0.0)
+          {
+            continue;
+          }
+          const int kk = k;
+          auto f = [&eval_coeff, kk, scale](std::complex<double> omega)
+          { return scale * eval_coeff(omega.real())[kk]; };
+          const auto label =
+              fmt::format("waveport_{:d}_modal_c{:d}_{}", term.port_idx, k, suffix[p]);
+          auto fit = FitScalarDispersion(label, M_real, f, /*allow_augment=*/true);
+          ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
+                                               M_real, Kr_total_corr, Cr_total_corr,
+                                               Mr_total_corr);
+          if (fit.aux)
+          {
+            aux_blocks_total.push_back(*fit.aux);
+          }
+          if (pl != pending_port_loads.end())
+          {
+            ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
+                                                 M_real, pl->Kr_corr, pl->Cr_corr,
+                                                 pl->Mr_corr);
+            if (fit.aux)
+            {
+              pl->aux_blocks.push_back(*fit.aux);
+            }
+          }
         }
       }
     }
@@ -2706,7 +2719,9 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   // eigenvector have no HDM image and are dropped from the prolongation; for a converged
   // physical mode their rational contribution is reproduced by the true A2(ω), while for
   // a spurious aux-dominated root the truncated u cannot satisfy the HDM equation and the
-  // backward error is O(1). Collective on the space communicator.
+  // backward error is O(1). The wave-port modal correction W is included via
+  // GetExtraSystemOperator (not GetExtraSystemMatrix) so the residual accounts for it.
+  // Collective on the space communicator.
   if (estimates.empty() || V.empty())
   {
     return;
@@ -2785,8 +2800,9 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
       C->AddMult(u, res, 1i * omega);
     }
     M->AddMult(u, res, -omega * omega);
-    // The frequency-dependent boundary terms at complex ω (null when absent).
-    auto A2_omega = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    // The frequency-dependent boundary terms at complex ω (null when absent), including
+    // the wave-port modal correction W (GetExtraSystemOperator, not GetExtraSystemMatrix).
+    auto A2_omega = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
     if (A2_omega)
     {
       A2_omega->AddMult(u, res, 1.0);

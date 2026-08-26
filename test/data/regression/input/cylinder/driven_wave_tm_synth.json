@@ -52,8 +52,8 @@
     "Device": "CPU",
     "Driven":
     {
-      "MinFreq": 3.50,  // GHz
-      "MaxFreq": 3.62,
+      "MinFreq": 3.40,  // GHz
+      "MaxFreq": 3.52,
       "FreqStep": 0.01,
       "AdaptiveTol": 1.0e-6,
       "AdaptiveCircuitSynthesis": true

@@ -245,6 +245,55 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
   };
 }
 
+// Assert the synthesized model reproduces the eigenmode resonant frequency. Among the
+// physical resonances (Q > 1, which excludes the aux-realization's critically-damped
+// spurious roots), the one nearest f_re_eigen must match it in Re{f} within rtol. The
+// imaginary part (radiation loss) is not asserted: this broad off-axis TM01 pole (eigenmode
+// Q ~ 4) is under-determined by a real-frequency ROM fit, so the synthesized Im{f}/Q is a
+// loose, band-dependent diagnostic. Robust to the basis/partition-dependent root count and
+// ordering.
+palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol)
+{
+  return [f_re_eigen, rtol](palace::Table &actual, palace::Table & /*reference*/)
+  {
+    int col_re = -1, col_q = -1;
+    for (std::size_t c = 0; c < actual.n_cols(); ++c)
+    {
+      const std::string &hdr = actual[c].header_text;
+      if (hdr.find("Re{f}") != std::string::npos)
+      {
+        col_re = static_cast<int>(c);
+      }
+      else if (hdr.find("Q") != std::string::npos)
+      {
+        col_q = static_cast<int>(c);
+      }
+    }
+    REQUIRE(col_re >= 0);
+    REQUIRE(col_q >= 0);
+    const auto &re = actual[col_re].data;
+    const auto &q = actual[col_q].data;
+    double best = -1.0, best_re = 0.0;
+    for (std::size_t r = 0; r < re.size(); ++r)
+    {
+      if (q[r] <= 1.0)  // skip critically-damped spurious roots
+      {
+        continue;
+      }
+      const double d = std::abs(re[r] - f_re_eigen);
+      if (best < 0.0 || d < best)
+      {
+        best = d;
+        best_re = re[r];
+      }
+    }
+    REQUIRE(best >= 0.0);  // at least one physical resonance present
+    INFO("nearest physical (Q>1) synth root Re{f} = " << best_re << " GHz vs eigenmode "
+                                                      << f_re_eigen << " GHz");
+    CHECK_THAT(best_re, Catch::Matchers::WithinRel(f_re_eigen, rtol));
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -351,9 +400,9 @@ TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-// TM01 (E_n != 0) driven through a uniaxial-anisotropic mu (mu_t != mu_z); mu_x = mu_y keeps
-// TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1. Rotated mu is
-// covered by the WavePortData reconstruction unit test.
+// TM01 (E_n != 0) driven through a uniaxial-anisotropic mu (mu_t != mu_z); mu_x = mu_y
+// keeps TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1.
+// Rotated mu is covered by the WavePortData reconstruction unit test.
 TEST_CASE("cylinder_driven_wave_tm_aniso", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -365,8 +414,9 @@ TEST_CASE("cylinder_driven_wave_tm_aniso", "[Serial][Parallel][GPU][Regression]"
                                   "driven_wave_tm_aniso", opts);
 }
 
-// TM01 (E_n != 0) swept just above cutoff (~2.9 GHz): small k_n stresses the modal-correction
-// conditioning while the port propagates, so Sum_i |S_i1|^2 = 1 must hold across the sweep.
+// TM01 (E_n != 0) swept just above cutoff (~2.9 GHz): small k_n stresses the
+// modal-correction conditioning while the port propagates, so Sum_i |S_i1|^2 = 1 must hold
+// across the sweep.
 TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -416,10 +466,11 @@ TEST_CASE("cylinder_driven_wave_tm_eigen", "[Serial][Parallel][Regression][Long]
 
 // Circuit-synthesis counterpart of cylinder_driven_wave_tm: the TM01 (longitudinal-E) port
 // exercises the modal correction W in the synthesis export. The synthesized S-parameters
-// (port-S: |S11| = 0 dB unitary + phase) are the W-dependent regression signal. ROM
-// internals (eigenvalues/vectors, pencil matrices) are basis/partition/arithmetic-dependent
-// -- their count and ordering vary across environments -- so they are presence-checked
-// only.
+// (port-S: |S11| = 0 dB unitary + phase) are the W-dependent regression signal.
+// TestRomEigenvalueMatchesEigenmode guards that the synthesized QEP root reproduces the
+// eigenmode resonant frequency (Re{f}, cf. cylinder_driven_wave_tm_eigen). The pencil
+// matrices and eigenvectors are basis/partition/arithmetic-dependent -- their count and
+// ordering vary across environments -- so they are presence-checked only.
 TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -433,8 +484,9 @@ TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
                          "rom-C-",
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
-                         "rom-eigenvalues",
                          "rom-eigenvectors"};
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      TestRomEigenvalueMatchesEigenmode(3.458984, 5.0e-3);
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_synth.json",
                                   "driven_wave_tm_synth", opts);
