@@ -182,11 +182,17 @@ def heldout_checks(response, maximum_error):
         quantities = [("domain", direct_domain, predicted_domain)]
         surface_row = read_one_row(surface_path)
         for interface, matrix in sorted(data["surfaces"].items()):
-            direct = surface_row[f"p_surf[{interface}]"] * direct_domain
+            direct = surface_row.get(f"p_surf[{interface}]", 0.0) * direct_domain
             predicted = coefficients @ matrix @ coefficients
             quantities.append((f"interface-{interface}", direct, predicted))
         for quantity, direct, predicted in quantities:
-            error = 100.0 * (predicted / direct - 1.0)
+            scale = max(abs(direct), abs(predicted), np.finfo(float).tiny)
+            if max(abs(direct), abs(predicted)) <= 1.0e-14 * abs(direct_domain):
+                error = 0.0
+            elif abs(direct) <= 1.0e-14 * scale:
+                error = math.copysign(math.inf, predicted)
+            else:
+                error = 100.0 * (predicted / direct - 1.0)
             checks.append(
                 {
                     "Kind": kind,
@@ -265,7 +271,7 @@ def main():
                 "Kind": kind,
                 "Quantity": "domain",
                 **minimum_eigenvalue_check(
-                    restrict(response["domain"], active), True
+                    restrict(response["domain"], active), kind == "fabricated"
                 ),
             }
         )
