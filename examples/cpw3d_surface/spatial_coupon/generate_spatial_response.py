@@ -1581,13 +1581,14 @@ def main():
         parser.error(str(error))
     failure_path.unlink(missing_ok=True)
     write_mesh_signature(output / "mesh-signature.csv", edges)
+    lower, upper = coupon_bounds(
+        edges, args.radius, args.metal_thickness, args.overetch_depth
+    )
+    support_points = matching_support_points(lower, upper, frame, args.radius)
     mask_path = output / "plan-view-mask.csv"
     boundary_path = output / "plan-view-boundary.csv"
     if facets:
         write_plan_view_mask(mask_path, facets)
-        lower, upper = coupon_bounds(
-            edges, args.radius, args.metal_thickness, args.overetch_depth
-        )
         write_plan_view_boundary(
             boundary_path,
             plan_view_boundary_loops(
@@ -1609,10 +1610,6 @@ def main():
     if args.thin_mesh is None or args.fabricated_mesh is None:
         parser.error("--thin-mesh and --fabricated-mesh are required")
 
-    lower, upper = coupon_bounds(
-        edges, args.radius, args.metal_thickness, args.overetch_depth
-    )
-    support_points = matching_support_points(lower, upper, frame, args.radius)
     bounds = np.vstack((lower, upper))
     levels = [lower[2], upper[2]]
     for edge in edges:
