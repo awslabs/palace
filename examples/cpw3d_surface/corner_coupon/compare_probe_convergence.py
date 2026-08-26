@@ -117,9 +117,15 @@ def load_case(specification):
             "domain": read_matrix(domain_path, size, "Q_ij (J)"),
             "surfaces": read_surface_matrices(surface_path, size),
         }
-        if responses[kind]["surfaces"].keys() != interface_names.keys():
+        # Fabrication can remove one requested local interface entirely. Treat an absent
+        # coupon interface as an exact zero matrix, matching coverage-library padding.
+        for interface in interface_names:
+            responses[kind]["surfaces"].setdefault(
+                interface, np.zeros((size, size))
+            )
+        if not responses[kind]["surfaces"].keys() <= interface_names.keys():
             raise ValueError(
-                f"{surface_path} does not contain the configured coupon interfaces"
+                f"{surface_path} contains an unconfigured coupon interface"
             )
     return {
         "name": name,
