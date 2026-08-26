@@ -1215,6 +1215,23 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(dielectric[0]["Attributes"], [3101])
         self.assertNotIn("EdgeExcludeAttributes", dielectric[0])
 
+    def test_spatial_matching_support_is_explicit_and_bounded(self):
+        frame = np.eye(3)
+        points = SPATIAL.matching_support_points(
+            np.asarray([-4.0, -3.0, -1.0]),
+            np.asarray([4.0, 3.0, 1.0]),
+            frame,
+            1.0,
+        )
+        self.assertEqual(len(points), 8)
+        with self.assertRaisesRegex(ValueError, "exceeds 8R"):
+            SPATIAL.matching_support_points(
+                np.asarray([-4.1, -3.0, -1.0]),
+                np.asarray([4.1, 3.0, 1.0]),
+                frame,
+                1.0,
+            )
+
     def test_spatial_library_uses_reference_for_single_conductor(self):
         coupon = {
             "Topology": "SpatialEdgeCluster",
@@ -1241,6 +1258,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 coupon,
                 2.0,
                 basis,
+                [[x, y, z] for x in (-2.0, 2.0) for y in (-2.0, 2.0) for z in (-2.0, 2.0)],
                 [1],
                 [],
                 [],
@@ -1251,6 +1269,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             )
             model = PREPARE.load_json(path)["Models"][0]
         self.assertEqual(model["Reference"], [0.0, 0.0, 0.0])
+        self.assertEqual(len(model["SupportPoints"]), 8)
         self.assertNotIn("ConductorReferences", model)
 
     def test_spatial_mesh_boundary_attributes_reads_named_surface_groups(self):

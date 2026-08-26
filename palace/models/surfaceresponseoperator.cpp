@@ -86,6 +86,25 @@ struct ElementBox
     return true;
   }
 
+  bool Contains(const ElementBox &other, int dimension) const
+  {
+    double scale = 1.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      scale = std::max({scale, std::abs(min[d]), std::abs(max[d]), std::abs(other.min[d]),
+                        std::abs(other.max[d])});
+    }
+    const double tolerance = 1.0e-12 * scale;
+    for (int d = 0; d < dimension; d++)
+    {
+      if (other.min[d] < min[d] - tolerance || other.max[d] > max[d] + tolerance)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool InteriorOverlaps(const ElementBox &other, int dimension) const
   {
     double scale = 1.0;
@@ -610,6 +629,7 @@ struct LibraryModel
   std::vector<LibraryClusterEdge> cluster_edges;
   double cluster_offset_tolerance = 0.0;
   std::vector<LibrarySpatialEdge> spatial_edges;
+  std::vector<Point3D> support_points;
   double spatial_position_tolerance = 0.0;
   double spatial_angle_tolerance = 0.0;
   bool boundary_law_physics_qualified = true;
@@ -1522,6 +1542,25 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           }
           model.spatial_edges.push_back(spatial_edge);
         }
+        if (auto support = entry.find("SupportPoints"); support != entry.end())
+        {
+          MFEM_VERIFY(support->is_array() && support->size() == 8,
+                      "SpatialEdgeCluster SupportPoints must contain the eight corners "
+                      "of its matching volume!");
+          model.support_points = support->get<std::vector<Point3D>>();
+          for (auto &point : model.support_points)
+          {
+            for (double &value : point)
+            {
+              MFEM_VERIFY(std::isfinite(value),
+                          "SpatialEdgeCluster SupportPoints must be finite!");
+              value /= coordinate_scale;
+            }
+          }
+        }
+        MFEM_VERIFY(library.trace_lift_version < 2 || !model.support_points.empty(),
+                    "New SpatialEdgeCluster models require explicit SupportPoints "
+                    "matching-volume metadata!");
       }
     }
     const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
@@ -4533,6 +4572,36 @@ Point3D TransformLocalPoint(const Point3D &origin, const std::array<Point3D, 3> 
   return Add(origin, TransformLocalVector(axes, local));
 }
 
+ElementBox SpatialSupportBox(const SpatialClusterSelection3D &selection,
+                             const LibraryModel &model)
+{
+  ElementBox box;
+  for (const auto &local : model.support_points)
+  {
+    const auto point = TransformLocalPoint(selection.origin, selection.axes, local);
+    ElementBox point_box;
+    point_box.min = point;
+    point_box.max = point;
+    box.Add(point_box);
+  }
+  return box;
+}
+
+std::set<int> SpatialTargetAttributes(const SpatialClusterSelection3D &selection)
+{
+  std::set<int> targets;
+  for (const auto &[slot, interfaces] : selection.targets_by_slot)
+  {
+    (void)slot;
+    for (const auto &[type, target] : interfaces)
+    {
+      (void)type;
+      targets.insert(target);
+    }
+  }
+  return targets;
+}
+
 std::pair<Point3D, std::array<Point3D, 3>> AlignSpatialFrame(const Point3D &model_point,
                                                              const Point3D &model_gap,
                                                              const Point3D &model_normal,
@@ -5819,6 +5888,21 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
     }
 
+    double event_diameter = 0.0;
+    for (std::size_t i = 0; i < event_component.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < event_component.size(); j++)
+      {
+        event_diameter = std::max(
+            event_diameter, Distance(global_spatial_events[event_component[i]].center,
+                                     global_spatial_events[event_component[j]].center));
+      }
+    }
+    MFEM_VERIFY(event_diameter <= 4.0 * global_interaction_distance * (1.0 + 1.0e-12),
+                "Transitive cross-interface spatial-event clustering produced a "
+                "component wider than 8R. Split the component or increase the matching "
+                "radius!");
+
     std::map<int, std::vector<Point3D>> points_by_chain;
     for (const std::size_t event_index : event_component)
     {
@@ -5922,6 +6006,23 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       selection->interactions.push_back({first_chain, second_chain, event.center});
     }
     cross_interface_selections.push_back(std::move(*selection));
+  }
+
+  struct ClaimedSpatialSupport
+  {
+    ElementBox box;
+    std::set<int> targets;
+    std::string model;
+  };
+  std::vector<ClaimedSpatialSupport> claimed_spatial_supports;
+  for (const auto &selection : cross_interface_selections)
+  {
+    const auto &source = library.models[selection.response.models.front().index];
+    if (!source.support_points.empty())
+    {
+      claimed_spatial_supports.push_back({SpatialSupportBox(selection, source),
+                                          SpatialTargetAttributes(selection), source.name});
+    }
   }
 
   for (const auto &selection : cross_interface_selections)
@@ -6320,6 +6421,20 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
       }
 
+      double event_diameter = 0.0;
+      for (std::size_t i = 0; i < event_component.size(); i++)
+      {
+        for (std::size_t j = i + 1; j < event_component.size(); j++)
+        {
+          event_diameter =
+              std::max(event_diameter, Distance(spatial_events[event_component[i]].center,
+                                                spatial_events[event_component[j]].center));
+        }
+      }
+      MFEM_VERIFY(event_diameter <= 4.0 * interaction_distance * (1.0 + 1.0e-12),
+                  "Transitive spatial-event clustering produced a component wider than "
+                  "8R. Split the component or increase the matching radius!");
+
       std::map<int, std::vector<Point3D>> points_by_chain;
       for (const std::size_t event_index : event_component)
       {
@@ -6385,6 +6500,52 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
 
       auto selection = FindMatchingSpatialModel(sites);
+      bool support_owned = false;
+      if (selection)
+      {
+        const auto &source = library.models[selection->response.models.front().index];
+        if (!source.support_points.empty())
+        {
+          const auto candidate_box = SpatialSupportBox(*selection, source);
+          const auto candidate_targets = SpatialTargetAttributes(*selection);
+          for (const auto &claimed : claimed_spatial_supports)
+          {
+            if (!candidate_box.InteriorOverlaps(claimed.box, 3))
+            {
+              continue;
+            }
+            const bool targets_covered =
+                std::includes(claimed.targets.begin(), claimed.targets.end(),
+                              candidate_targets.begin(), candidate_targets.end());
+            if (claimed.box.Contains(candidate_box, 3) && targets_covered)
+            {
+              support_owned = true;
+              break;
+            }
+            MFEM_ABORT("Spatial response matching volumes for models \""
+                       << claimed.model << "\" and \"" << source.name
+                       << "\" overlap without one model owning the complete support and "
+                          "interface mapping. Generate one unified spatial cluster!");
+          }
+        }
+      }
+      if (support_owned)
+      {
+        for (const std::size_t event_index : event_component)
+        {
+          const auto &event = spatial_events[event_index];
+          int first_chain =
+              geometry.segments[segments[event.first].geometry_index].physical_chain;
+          int second_chain =
+              geometry.segments[segments[event.second].geometry_index].physical_chain;
+          if (first_chain > second_chain)
+          {
+            std::swap(first_chain, second_chain);
+          }
+          described_spatial_pairs.emplace(first_chain, second_chain);
+        }
+        continue;
+      }
       if (!selection)
       {
         if (requirements)
@@ -6425,6 +6586,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
         described_spatial_pairs.emplace(first_chain, second_chain);
         selection->interactions.push_back({first_chain, second_chain, event.center});
+      }
+      const auto &source = library.models[selection->response.models.front().index];
+      if (!source.support_points.empty())
+      {
+        claimed_spatial_supports.push_back({SpatialSupportBox(*selection, source),
+                                            SpatialTargetAttributes(*selection),
+                                            source.name});
       }
       spatial_cluster_selections.push_back(std::move(*selection));
     }

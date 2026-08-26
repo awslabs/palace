@@ -652,6 +652,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     spatial_cluster_model["BasisPoints"] = spatial_cluster_points_path.string();
     spatial_cluster_model["EdgePositionTolerance"] = 1.0e-6;
     spatial_cluster_model["EdgeAngleTolerance"] = 1.0e-6;
+    spatial_cluster_model["SupportPoints"] = {{-0.25, -0.25, -0.05}, {-0.25, -0.25, 0.05},
+                                              {-0.25, 0.25, -0.05},  {-0.25, 0.25, 0.05},
+                                              {0.25, -0.25, -0.05},  {0.25, -0.25, 0.05},
+                                              {0.25, 0.25, -0.05},   {0.25, 0.25, 0.05}};
     spatial_cluster_model["ConductorReferences"] = {{0.0, 0.0, 0.0}, {0.125, -0.125, 0.0}};
     spatial_cluster_model["OpenContourPaths"] = {
         {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}},

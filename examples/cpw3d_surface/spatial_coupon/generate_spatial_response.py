@@ -349,6 +349,24 @@ def coupon_bounds(edges, radius, metal_thickness, overetch):
     return lower, upper
 
 
+def matching_support_points(lower, upper, frame, radius):
+    plan_span = np.max(upper[:2] - lower[:2])
+    if plan_span > 8.0 * radius * (1.0 + 1.0e-12):
+        raise ValueError(
+            "Spatial coupon matching support exceeds 8R in the process plane; "
+            "split the interaction component or increase the matching radius"
+        )
+    local = np.asarray(
+        [
+            (x, y, z)
+            for x in (lower[0], upper[0])
+            for y in (lower[1], upper[1])
+            for z in (lower[2], upper[2])
+        ]
+    )
+    return canonical_points(local, frame).tolist()
+
+
 def rectangle_perimeter_point(bounds, z, coordinate):
     xmin, ymin, _ = bounds[0]
     xmax, ymax, _ = bounds[1]
@@ -1085,6 +1103,7 @@ def write_library(
     coupon,
     radius,
     basis_path,
+    support_points,
     contour_groups,
     zero_indices,
     paths,
@@ -1126,6 +1145,7 @@ def write_library(
             coupon["BoundaryCondition"]
         )
     elif topology == "SpatialEdgeCluster":
+        model["SupportPoints"] = support_points
         model["Edges"] = []
         for source in geometry["Edges"]:
             edge = dict(source)
@@ -1592,6 +1612,7 @@ def main():
     lower, upper = coupon_bounds(
         edges, args.radius, args.metal_thickness, args.overetch_depth
     )
+    support_points = matching_support_points(lower, upper, frame, args.radius)
     bounds = np.vstack((lower, upper))
     levels = [lower[2], upper[2]]
     for edge in edges:
@@ -1810,6 +1831,7 @@ def main():
         coupon,
         args.radius,
         basis_path,
+        support_points,
         contour_groups,
         zero_indices,
         paths,
