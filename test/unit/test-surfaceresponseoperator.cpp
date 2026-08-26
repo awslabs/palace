@@ -3675,9 +3675,28 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   auto &exact_mask_model = exact_mask_library["Models"].back();
   exact_mask_model["Name"] = "offset-corner-pair-exact-mask";
   exact_mask_model["Edges"] = spatial_edges;
+  std::map<int, json> spatial_references;
   for (auto &edge : exact_mask_model["Edges"])
   {
     edge["BoundaryCondition"] = "PEC";
+    spatial_references.try_emplace(edge["Conductor"].get<int>(), edge["Point"]);
+  }
+  if (spatial_references.size() == 1)
+  {
+    exact_mask_model.erase("ConductorReferences");
+    exact_mask_model.erase("OpenContourPaths");
+    exact_mask_model["ContourGroups"] = {4};
+    exact_mask_model["Reference"] = spatial_references.begin()->second;
+  }
+  else
+  {
+    exact_mask_model.erase("Reference");
+    exact_mask_model["ConductorReferences"] = json::array();
+    for (const auto &[conductor, reference] : spatial_references)
+    {
+      (void)conductor;
+      exact_mask_model["ConductorReferences"].push_back(reference);
+    }
   }
   exact_mask_model["PlanViewBoundary"] = plan_view_boundary;
   const auto exact_mask_library_path =

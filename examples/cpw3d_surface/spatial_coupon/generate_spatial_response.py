@@ -351,9 +351,11 @@ def coupon_bounds(edges, radius, metal_thickness, overetch):
 
 def matching_support_points(lower, upper, frame, radius):
     plan_span = np.max(upper[:2] - lower[:2])
-    if plan_span > 8.0 * radius * (1.0 + 1.0e-12):
+    # Event components are bounded to 8R. The rectangular coupon adds up to 2R of
+    # continuation/padding on either side, so its matching box is bounded to 12R.
+    if plan_span > 12.0 * radius * (1.0 + 1.0e-12):
         raise ValueError(
-            "Spatial coupon matching support exceeds 8R in the process plane; "
+            "Spatial coupon matching support exceeds 12R in the process plane; "
             "split the interaction component or increase the matching radius"
         )
     local = np.asarray(

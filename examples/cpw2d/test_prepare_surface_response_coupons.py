@@ -1224,10 +1224,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             1.0,
         )
         self.assertEqual(len(points), 8)
-        with self.assertRaisesRegex(ValueError, "exceeds 8R"):
+        with self.assertRaisesRegex(ValueError, "exceeds 12R"):
             SPATIAL.matching_support_points(
-                np.asarray([-4.1, -3.0, -1.0]),
-                np.asarray([4.1, 3.0, 1.0]),
+                np.asarray([-6.1, -3.0, -1.0]),
+                np.asarray([6.1, 3.0, 1.0]),
                 frame,
                 1.0,
             )

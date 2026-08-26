@@ -132,6 +132,11 @@ def placeholder_model(requirement, matching_radius):
             model["Reference"] = [0.0, 0.0, 0.0]
     elif topology == "ParallelEdgeCluster":
         edges = copy.deepcopy(geometry["Edges"])
+        for edge in edges:
+            if isinstance(edge.get("Offset"), list):
+                edge["Offset"] = float(edge["Offset"][0])
+            if isinstance(edge.get("GapDirection"), list):
+                edge["GapDirection"] = int(edge["GapDirection"][0])
         model["Edges"] = edges
         model["EdgeOffsetTolerance"] = max(1.0e-9 * matching_radius, 1.0e-12)
         model["BoundaryCondition"] = boundary
@@ -153,17 +158,22 @@ def placeholder_model(requirement, matching_radius):
         edges = copy.deepcopy(geometry["Edges"])
         model["Edges"] = edges
         model["EdgePositionTolerance"] = max(
-            1.0e-9 * matching_radius, 1.0e-12
+            1.0e-4 * matching_radius, 1.0e-12
         )
-        model["EdgeAngleTolerance"] = 1.0e-6
+        model["EdgeAngleTolerance"] = 1.0e-3
         references = conductor_references(edges, matching_radius)
         if len(references) == 1:
             model["Reference"] = references[0]
         else:
             model["ConductorReferences"] = references
-        for key in ("PlanViewBoundary", "MaskRegularization"):
-            if key in geometry:
-                model[key] = copy.deepcopy(geometry[key])
+        # Multi-conductor signatures need the exact mask to disambiguate ownership.
+        # For a single conductor, edge geometry is sufficient for virtual closure and
+        # avoids round-trip sensitivity in canonicalized sampled face loops. The full
+        # PlanViewFacets remain in the final requirement fingerprint.
+        if len(references) > 1:
+            for key in ("PlanViewBoundary", "MaskRegularization"):
+                if key in geometry:
+                    model[key] = copy.deepcopy(geometry[key])
     elif topology in ("Endpoint", "Junction"):
         model["Reference"] = [0.0, 0.0, 0.0]
         model["BoundaryCondition"] = boundary

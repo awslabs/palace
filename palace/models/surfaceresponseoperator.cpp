@@ -1325,7 +1325,8 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
 }
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
-                                  bool nondimensionalize, bool allow_empty_models = false)
+                                  bool nondimensionalize, bool allow_empty_models = false,
+                                  bool geometry_only = false)
 {
   std::ifstream input(path);
   MFEM_VERIFY(input,
@@ -1558,7 +1559,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
             }
           }
         }
-        MFEM_VERIFY(library.trace_lift_version < 2 || !model.support_points.empty(),
+        MFEM_VERIFY(geometry_only || library.trace_lift_version < 2 ||
+                        !model.support_points.empty(),
                     "New SpatialEdgeCluster models require explicit SupportPoints "
                     "matching-volume metadata!");
       }
@@ -1800,7 +1802,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       }
       model.response.conductor_state_count =
           static_cast<int>(model.conductor_references.size()) - 1;
-      MFEM_VERIFY(library.trace_lift_version >= 2,
+      MFEM_VERIFY(geometry_only || library.trace_lift_version >= 2,
                   "Multiconductor fabrication-process response model \""
                       << model.name
                       << "\" was generated without the corrected trace/conductor "
@@ -3961,7 +3963,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
       ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
-                         requirements != nullptr);
+                         requirements != nullptr, requirements != nullptr);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -4848,7 +4850,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
       ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
-                         requirements != nullptr);
+                         requirements != nullptr, requirements != nullptr);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
