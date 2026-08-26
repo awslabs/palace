@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_CURL_CURL_OPERATOR_HPP
 #define PALACE_MODELS_CURL_CURL_OPERATOR_HPP
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <vector>
@@ -50,9 +51,19 @@ private:
   mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
-  // Per-level essential true DOF lists from the latest GetStiffnessMatrix(extra_dbc_attr).
-  // SetEssentialTrueDofs stores a shallow reference, so these must outlive that operator.
-  std::vector<mfem::Array<int>> extra_dbc_tdof_lists;
+  // Rolling two-entry cache of screened stiffness operators, tagged by shorted-attribute
+  // set. Steps that short the same ports are solved back-to-back, so equal keys are
+  // adjacent and matching the newest entry reuses its operator. Two entries bound memory to
+  // O(1) hierarchies while keeping the previously bound operator alive. std::deque never
+  // relocates elements, so the shallow tdof references ParOperator::SetEssentialTrueDofs
+  // holds stay valid.
+  struct ScreenedStiffnessCacheEntry
+  {
+    std::vector<int> key;
+    std::vector<mfem::Array<int>> dbc_tdof_lists;
+    std::unique_ptr<Operator> K;
+  };
+  std::deque<ScreenedStiffnessCacheEntry> screened_stiffness_cache;
 
   // Objects defining the finite element spaces for the magnetic vector potential
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
@@ -125,10 +136,13 @@ public:
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
-  // Construct the stiffness matrix with extra essential (PEC) attributes beyond those set
-  // at construction, without mutating base boundary state. Used in Short mode to treat
-  // inactive surface current ports as PEC for a single excitation step.
-  std::unique_ptr<Operator> GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
+  // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
+  // construction, without mutating base boundary state. Used in Short mode to treat
+  // inactive surface current ports as PEC for a single excitation step. The operator is
+  // cached and owned by this object, keyed on the shorted-attribute set, so repeated calls
+  // with the same set return a stable reference to one assembled operator rather than
+  // reassembling it.
+  const Operator &GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
 
   // Zero v on the merged essential set (base Dirichlet plus extra_dbc_attr), clearing the
   // excitation on shorted inactive ports so DIAG_ONE elimination injects no spurious

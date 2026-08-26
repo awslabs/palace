@@ -260,6 +260,25 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(!err.empty());
   }
 
+  SECTION("RationalImpedance polynomials require a nonzero coefficient")
+  {
+    json impedance = {
+        {"Attributes", {1}}, {"Numerator", {1.0, 0.0}}, {"Denominator", {0.0, 2.0}}};
+    CHECK(ValidateConfig(impedance, "RationalImpedance").empty());
+
+    for (const char *polynomial : {"Numerator", "Denominator"})
+    {
+      CAPTURE(polynomial);
+      for (const json &zeros : {json{0, 0}, json{0.0, 0.0}})
+      {
+        CAPTURE(zeros);
+        impedance[polynomial] = zeros;
+        CHECK(!ValidateConfig(impedance, "RationalImpedance").empty());
+        impedance[polynomial] = {1.0};
+      }
+    }
+  }
+
   SECTION("Invalid Direction strings")
   {
     std::vector<std::string> invalid_dirs = {"a",  "+a", "-a",  "xx", "~x",
@@ -674,6 +693,98 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     CHECK(err.find("valid values: \"Eigenmode\", \"Driven\", \"Transient\", "
                    "\"Electrostatic\", \"Magnetostatic\", \"BoundaryMode\"") !=
           std::string::npos);
+    CHECK(err.find("Did you mean") == std::string::npos);
+  }
+
+  SECTION("Enum value with incorrect case suggests canonical spelling")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", "superlu"}}}}}};
+
+    std::string err = ValidateConfig(config);
+    INFO(err);
+    CHECK(err.find("At [\"Solver\"][\"Linear\"][\"Type\"]: invalid value \"superlu\"") !=
+          std::string::npos);
+    CHECK(err.find("Did you mean \"SuperLU\"?") != std::string::npos);
+    CHECK(err.find("case#") == std::string::npos);
+    CHECK(err.find("valid values: \"Default\", \"AMS\", \"BoomerAMG\", \"MUMPS\", "
+                   "\"SuperLU\", \"STRUMPACK\", \"STRUMPACK-MP\", \"Jacobi\", "
+                   "\"cuDSS\"") != std::string::npos);
+  }
+
+  SECTION("Enum lookup follows object alternatives at the exact instance path")
+  {
+    json config = {{"Problem", {{"Type", "Driven"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven",
+                      {{"Samples",
+                        {{{"Type", "linear"},
+                          {"MinFreq", 1.0},
+                          {"MaxFreq", 2.0},
+                          {"NSample", 2}}}}}}}}};
+
+    std::string err = ValidateConfig(config);
+    INFO(err);
+    const std::string enum_error =
+        "At [\"Solver\"][\"Driven\"][\"Samples\"][0][\"Type\"]: invalid value "
+        "\"linear\"; valid values: \"Point\", \"Linear\", \"Log\". Did you mean "
+        "\"Linear\"?";
+    const auto enum_error_pos = err.find(enum_error);
+    REQUIRE(enum_error_pos != std::string::npos);
+    CHECK(err.find(enum_error, enum_error_pos + enum_error.size()) == std::string::npos);
+    CHECK(err.find("\"SuperLU\"") == std::string::npos);
+  }
+
+  SECTION("Enum lookup recurses through nested arrays and references")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries",
+                    {{"LumpedPort",
+                      {{{"Index", 1},
+                        {"Elements",
+                         {{{"Attributes", {1}},
+                           {"Direction", {1.0, 0.0, 0.0}},
+                           {"CoordinateSystem", "cylindrical"}}}}}}}}},
+                   {"Solver", json::object()}};
+
+    std::string err = ValidateConfig(config);
+    INFO(err);
+    CHECK(err.find("[\"Boundaries\"][\"LumpedPort\"][0][\"Elements\"][0]"
+                   "[\"CoordinateSystem\"]") != std::string::npos);
+    CHECK(err.find("valid values: \"Cartesian\", \"Cylindrical\"") != std::string::npos);
+    CHECK(err.find("Did you mean \"Cylindrical\"?") != std::string::npos);
+    CHECK(err.find("\"Open\"") == std::string::npos);
+  }
+
+  SECTION("Enum lookup resolves references within anyOf")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials", {{{"Attributes", {1}}}}},
+                     {"CurrentDipole",
+                      {{{"Index", 1},
+                        {"Moment", 1.0},
+                        {"Center", {0.0, 0.0, 0.0}},
+                        {"Direction", "BadDir"}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    std::string err = ValidateConfig(config);
+    INFO(err);
+    CHECK(err.find("[\"Domains\"][\"CurrentDipole\"][0][\"Direction\"]") !=
+          std::string::npos);
+    CHECK(err.find("valid values: \"X\", \"Y\", \"Z\"") != std::string::npos);
+    CHECK(err.find("\"-z\"") != std::string::npos);
+    CHECK(err.find("Did you mean") == std::string::npos);
   }
 
   SECTION("Invalid enum in nested array")

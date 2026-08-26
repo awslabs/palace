@@ -25,6 +25,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/meshio.hpp"
 #include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
@@ -1499,6 +1500,9 @@ void RemapSubMeshAttributes(SubMeshT &submesh)
     }
     submesh.SetAttribute(i, nbr_attr);
   }
+  // Refresh the cached distinct-attribute array to match the rewritten per-element
+  // attributes.
+  submesh.SetAttributes();
 }
 
 template <class SubMeshT>
@@ -1968,18 +1972,18 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 
     auto PrintSerial = [&](mfem::Mesh &smesh)
     {
-      BlockTimer bt1(Timer::IO);
-      if (Mpi::Root(comm))
-      {
-        std::ofstream fo(sfile);
-        // mfem::ofgzstream fo(sfile, true);  // Use zlib compression if available
-        // fo << std::fixed;
-        fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(smesh, iodata.units.GetMeshLengthRelativeScale());
-        smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
-      }
-      Mpi::Barrier(comm);
+      WriteRootOutputFile(
+          sfile, comm,
+          [&](std::ostream &stream)
+          {
+            // mfem::ofgzstream stream(sfile, true);  // Use zlib compression if available
+            // stream << std::fixed;
+            stream << std::scientific;
+            stream.precision(MSH_FLT_PRECISION);
+            mesh::DimensionalizeMesh(smesh, iodata.units.GetMeshLengthRelativeScale());
+            smesh.Mesh::Print(
+                stream);  // Do not need to nondimensionalize the temporary mesh
+          });
     };
 
     if (mesh->Nonconforming())
