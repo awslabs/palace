@@ -73,7 +73,7 @@ spack:
     # architecture constraint. This is the single source of truth for the CUDA
     # fat-binary architectures the container is built for.
     - >-
-      +cuda+cudss cuda_arch=80,86,89,90 ^cuda@13
+      +cuda cuda_arch=80,86,89,90 ^cuda@13
       ^openmpi+cuda
       ^libfabric+cuda+cuda_dlopen
       ^libceed@develop
