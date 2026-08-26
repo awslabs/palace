@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
 #include "embedded_schema.hpp"
 #include "fixtures.hpp"
@@ -17,6 +23,88 @@ using json = nlohmann::json;
 using namespace palace;
 
 namespace fs = std::filesystem;
+
+namespace
+{
+
+using json_validator = nlohmann::json_schema::json_validator;
+
+// Collect (JSON-pointer path, subschema) for every object in the schema tree
+// that declares a "default". The path is a plain RFC 6901 JSON pointer (with
+// "~0"/"~1" escaping) and is used only for diagnostics.
+void CollectDefaultNodes(const json &node, const std::string &ptr,
+                         std::vector<std::pair<std::string, json>> &out)
+{
+  if (node.is_object())
+  {
+    if (node.contains("default"))
+    {
+      out.emplace_back(ptr, node);
+    }
+    for (const auto &[key, value] : node.items())
+    {
+      std::string token = key;
+      // RFC 6901 escaping: "~" -> "~0" (must run before the "/" pass), "/" -> "~1".
+      for (std::size_t pos = 0; (pos = token.find('~', pos)) != std::string::npos; pos += 2)
+      {
+        token.replace(pos, 1, "~0");
+      }
+      for (std::size_t pos = 0; (pos = token.find('/', pos)) != std::string::npos; pos += 2)
+      {
+        token.replace(pos, 1, "~1");
+      }
+      CollectDefaultNodes(value, ptr + "/" + token, out);
+    }
+  }
+  else if (node.is_array())
+  {
+    for (std::size_t i = 0; i < node.size(); i++)
+    {
+      CollectDefaultNodes(node[i], ptr + "/" + std::to_string(i), out);
+    }
+  }
+}
+
+// Validate every "default" in the embedded config schema against the subschema
+// that declares it. Returns a newline-separated report of inconsistencies, or an
+// empty string when all defaults are consistent. The root "$defs" is attached to
+// each subschema so its internal "#/$defs/..." refs resolve when it is validated
+// as a standalone root schema (the schema uses only internal refs).
+std::string ValidateSchemaDefaults()
+{
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find("config-schema.json");
+  if (it == schema_map.end())
+  {
+    return "Root schema not found in embedded schemas";
+  }
+  const json root = json::parse(it->second);
+  const json defs = root.contains("$defs") ? root["$defs"] : json::object();
+
+  std::vector<std::pair<std::string, json>> default_nodes;
+  CollectDefaultNodes(root, "", default_nodes);
+
+  std::ostringstream errors;
+  for (const auto &[ptr, node] : default_nodes)
+  {
+    json sub = node;
+    sub["$defs"] = defs;
+    json_validator validator;
+    try
+    {
+      validator.set_root_schema(sub);
+      validator.validate(node.at("default"));
+    }
+    catch (const std::exception &e)
+    {
+      errors << "At " << ptr << ": default does not satisfy its schema: " << e.what()
+             << "\n";
+    }
+  }
+  return errors.str();
+}
+
+}  // namespace
 
 TEST_CASE("Schema Validation - Embedded Schema Matches Source", "[schema][Serial]")
 {
@@ -791,4 +879,17 @@ TEST_CASE("Schema Version", "[schema][Serial]")
   }
 
   CHECK(version == fmt::format("{}-{}-{}", parts[0], parts[1], parts[2]));
+}
+
+TEST_CASE("Schema Validation - Defaults Match Their Subschemas", "[schema][Serial]")
+{
+  // JSON Schema treats "default" as an annotation and does NOT check it against
+  // the subschema that declares it, so a typo like
+  //   {"type": "integer", "default": "many"}
+  // passes the schema's own meta-schema and only misbehaves once the default is
+  // applied. Guard the embedded config schema: every "default" must be valid
+  // against the subschema it sits in.
+  std::string err = ValidateSchemaDefaults();
+  INFO("Inconsistent schema defaults:\n" << err);
+  CHECK(err.empty());
 }
