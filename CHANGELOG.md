@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Improved configuration schema validation errors to list valid enum values through nested
+    schema alternatives and suggest the canonical capitalization for case-only mismatches
+    [PR 890](https://github.com/awslabs/palace/pull/890).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
@@ -66,6 +69,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     unit-reference values, where previously both were zero. These are bookkeeping
     quantities referenced to the internal unit impedance, not physical incident waves.
     [PR 841](https://github.com/awslabs/palace/pull/841).
+
+#### Performance Improvements
+
+  - Omit material terms with mathematically exact-zero coefficients from fine-level partial
+    assembly while retaining the configured coarse sparse structure for symbolic reuse.
+    [PR 876](https://github.com/awslabs/palace/pull/876).
 
 #### Bug Fixes
 

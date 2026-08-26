@@ -266,38 +266,59 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   print_hdr = false;
 }
 
-void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
-                    const MaterialPropertyCoefficient *f,
-                    const MaterialPropertyCoefficient *dfb,
-                    const MaterialPropertyCoefficient *fb,
-                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+const MaterialPropertyCoefficient *
+ActiveCoefficient(const MaterialPropertyCoefficient *coeff)
 {
-  if (df && !df->empty() && f && !f->empty())
+  return (coeff && !coeff->IsExactlyZero()) ? coeff : nullptr;
+}
+
+template <typename... CoeffType>
+bool AreExactlyZero(const CoeffType &...coeff)
+{
+  return (... && coeff.IsExactlyZero());
+}
+
+// Add every configured (non-empty) term, including terms whose current value is exactly
+// zero. This storage-based selection is used only for coarse preconditioner assembly below;
+// normal operator assembly uses AddIntegrators and filters exact zeros.
+void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
+                              const MaterialPropertyCoefficient *f,
+                              const MaterialPropertyCoefficient *dfb,
+                              const MaterialPropertyCoefficient *fb,
+                              const MaterialPropertyCoefficient *fp,
+                              bool assemble_q_data = false)
+{
+  const bool has_df = df && !df->empty();
+  const bool has_f = f && !f->empty();
+  if (has_df && has_f)
   {
     a.AddDomainIntegrator<CurlCurlMassIntegrator>(*df, *f);
   }
   else
   {
-    if (df && !df->empty())
+    if (has_df)
     {
       a.AddDomainIntegrator<CurlCurlIntegrator>(*df);
     }
-    if (f && !f->empty())
+    if (has_f)
     {
       a.AddDomainIntegrator<VectorFEMassIntegrator>(*f);
     }
   }
-  if (dfb && !dfb->empty() && fb && !fb->empty())
+
+  const bool has_dfb = dfb && !dfb->empty();
+  const bool has_fb = fb && !fb->empty();
+  if (has_dfb && has_fb)
   {
     a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(*dfb, *fb);
   }
   else
   {
-    if (dfb && !dfb->empty())
+    if (has_dfb)
     {
       a.AddBoundaryIntegrator<CurlCurlIntegrator>(*dfb);
     }
-    if (fb && !fb->empty())
+    if (has_fb)
     {
       a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
     }
@@ -313,8 +334,20 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
   }
 }
 
-void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
-                       const MaterialPropertyCoefficient *fb, bool assemble_q_data = false)
+void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
+                    const MaterialPropertyCoefficient *f,
+                    const MaterialPropertyCoefficient *dfb,
+                    const MaterialPropertyCoefficient *fb,
+                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+{
+  AddConfiguredIntegrators(a, ActiveCoefficient(df), ActiveCoefficient(f),
+                           ActiveCoefficient(dfb), ActiveCoefficient(fb),
+                           ActiveCoefficient(fp), assemble_q_data);
+}
+
+void AddConfiguredAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
+                                 const MaterialPropertyCoefficient *fb,
+                                 bool assemble_q_data = false)
 {
   if (f && !f->empty())
   {
@@ -328,6 +361,13 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
   {
     a.AssembleQuadratureData();
   }
+}
+
+void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
+                       const MaterialPropertyCoefficient *fb, bool assemble_q_data = false)
+{
+  AddConfiguredAuxIntegrators(a, ActiveCoefficient(f), ActiveCoefficient(fb),
+                              assemble_q_data);
 }
 
 auto AssembleOperator(const FiniteElementSpace &fespace,
@@ -349,21 +389,55 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
                        const MaterialPropertyCoefficient *dfb,
                        const MaterialPropertyCoefficient *fb,
                        const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
-                       bool assemble_q_data = false, std::size_t l0 = 0)
+                       bool assemble_q_data = false)
 {
-  BilinearForm a(fespaces.GetFinestFESpace());
-  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
-  return a.Assemble(fespaces, skip_zeros, l0);
+  // Keep configured coefficient support on the coarse sparse level. This is required for
+  // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
+  // the corresponding full-domain imaginary mass term becomes nonzero once Re(λ) != 0.
+  // Its off-diagonal block graph must exist before the first symbolic factorization. Use
+  // the same rule for real-approximate coarse solves to keep this hierarchy assembly
+  // independent of the chosen sparse-solver representation. Fine partial-assembly levels
+  // have no symbolic structure to preserve, so exact-zero terms are omitted there.
+  BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
+  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, assemble_q_data);
+  std::vector<std::unique_ptr<Operator>> ops;
+  ops.reserve(fespaces.GetNumLevels());
+  ops.push_back(coarse.Assemble(skip_zeros));
+  if (fespaces.GetNumLevels() > 1)
+  {
+    BilinearForm fine(fespaces.GetFinestFESpace());
+    AddIntegrators(fine, df, f, dfb, fb, fp, assemble_q_data);
+    auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
+    for (auto &op : fine_ops)
+    {
+      ops.push_back(std::move(op));
+    }
+  }
+  return ops;
 }
 
 auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
-                          bool assemble_q_data = false, std::size_t l0 = 0)
+                          bool assemble_q_data = false)
 {
-  BilinearForm a(fespaces.GetFinestFESpace());
-  AddAuxIntegrators(a, f, fb, assemble_q_data);
-  return a.Assemble(fespaces, skip_zeros, l0);
+  // Match the configured coarse-support policy of the primary hierarchy above.
+  BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
+  AddConfiguredAuxIntegrators(coarse, f, fb, assemble_q_data);
+  std::vector<std::unique_ptr<Operator>> ops;
+  ops.reserve(fespaces.GetNumLevels());
+  ops.push_back(coarse.Assemble(skip_zeros));
+  if (fespaces.GetNumLevels() > 1)
+  {
+    BilinearForm fine(fespaces.GetFinestFESpace());
+    AddAuxIntegrators(fine, f, fb, assemble_q_data);
+    auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
+    for (auto &op : fine_ops)
+    {
+      ops.push_back(std::move(op));
+    }
+  }
+  return ops;
 }
 
 }  // namespace
@@ -382,7 +456,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     AddRealPeriodicCoefficients(1.0, f);
     AddImagPeriodicCoefficients(1.0, fc);
   }
-  int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
+  int empty[2] = {AreExactlyZero(df, f, fb), fc.IsExactlyZero()};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -429,7 +503,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   {
     AddImagPeriodicCoefficients(1.0, fp);
   }
-  int empty = (f.empty() && fb.empty() && fp.empty());
+  int empty = AreExactlyZero(f, fb, fp);
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
@@ -467,7 +541,7 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
-  int empty[2] = {(fr.empty() && fbr.empty()), (fi.empty() && fbi.empty())};
+  int empty[2] = {AreExactlyZero(fr, fbr), AreExactlyZero(fi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -515,7 +589,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
-  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -561,7 +635,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -593,7 +667,7 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   wave_port_op.AddBoundaryMassBdrCoefficients(port_idx, fb);
-  int empty = fb.empty();
+  int empty = fb.IsExactlyZero();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
@@ -632,7 +706,7 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
-  int empty = df.empty();
+  int empty = df.IsExactlyZero();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
@@ -674,7 +748,7 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   surf_sigma_op.AddBoundaryMassBdrCoefficients(static_cast<std::size_t>(group_idx), fb);
-  int empty = fb.empty();
+  int empty = fb.IsExactlyZero();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
@@ -713,7 +787,7 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   surf_rz_op.AddUnitBdrCoefficients(idx, fb);
-  int empty = fb.empty();
+  int empty = fb.IsExactlyZero();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
@@ -760,7 +834,7 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
   fb.AddCoefficient(muinv_func.GetAttributeToMaterial(), muinv_func.GetMaterialProperties(),
                     1.0);
-  int empty = fb.empty();
+  int empty = fb.IsExactlyZero();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
@@ -884,7 +958,7 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
     fb_mass.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), 1.0);
   }
   BilinearForm m_bdr(nd_fespace);
-  if (!fb_mass.empty())
+  if (!fb_mass.IsExactlyZero())
   {
     m_bdr.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_mass);
   }
