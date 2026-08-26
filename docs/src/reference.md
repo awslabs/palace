@@ -1384,7 +1384,18 @@ and fabricated interface energy for one runtime model. Model index, source-libra
 topology, basis size, patch count, and patch weight are recorded in
 `palace.json` under `SurfaceResponse.ModelCatalog`. Summing model rows reproduces the
 aggregate coupon response and makes straight, corner, and spatial over-correction
-observable without rerunning filtered libraries.
+observable without rerunning filtered libraries. Electrostatic runs also write
+`surface-response-patches.csv` with each patch origin, frame, model index, and weight. The
+single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
+
+```text
+python3 examples/transmon/plot_surface_response_assignments.py \
+  --mesh mesh/transmon_surface_electrostatic.msh \
+  --patches postpro/surface-response-patches.csv \
+  --metadata postpro/palace.json \
+  --output postpro/surface-response-assignment.png \
+  --gmsh /path/to/gmsh
+```
 
 `EdgeExcludeAttributes` may be used to remove perimeter segments that lie on artificial
 boundaries, such as the front and back faces of an extruded geometry. In 3D, the

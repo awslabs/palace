@@ -9289,6 +9289,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     MFEM_VERIFY(model_it != model_indices.end(),
                 "Response-correction patch refers to an unknown model index!");
     const auto &model = models[model_it->second];
+    if (rank == 0)
+    {
+      patch_assignments.push_back({model.idx, patch_config.origin, patch_config.axis_u,
+                                   patch_config.axis_v, patch_config.axis_w,
+                                   patch_config.weight});
+    }
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
     MFEM_VERIFY(static_cast<int>(patch_config.conductor_references.size()) ==
@@ -9670,6 +9676,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(model_it != model_indices.end(),
                 "Response-correction patch refers to an unknown model index!");
     const auto &model = models[model_it->second];
+    if (rank == 0)
+    {
+      patch_assignments.push_back({model.idx, patch_config.origin, patch_config.axis_u,
+                                   patch_config.axis_v, patch_config.axis_w,
+                                   patch_config.weight});
+    }
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
     const std::size_t anchor_count = patch_config.maxwell_conductor_anchors.empty()

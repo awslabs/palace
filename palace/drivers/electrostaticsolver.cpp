@@ -46,6 +46,39 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     response_correction =
         std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
+    if (root && !response_correction->GetPatchAssignments().empty())
+    {
+      TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
+      patches.table.insert(Column("model", "model", 0, 0, 2, ""));
+      for (const char *coordinate : {"x", "y", "z"})
+      {
+        patches.table.insert(fmt::format("origin_{}", coordinate),
+                             fmt::format("origin {} (m)", coordinate));
+      }
+      for (const char *axis : {"u", "v", "w"})
+      {
+        for (const char *coordinate : {"x", "y", "z"})
+        {
+          patches.table.insert(fmt::format("axis_{}_{}", axis, coordinate),
+                               fmt::format("axis {} {}", axis, coordinate));
+        }
+      }
+      patches.table.insert("weight", "weight");
+      for (const auto &patch : response_correction->GetPatchAssignments())
+      {
+        patches.table["model"] << patch.model;
+        for (int d = 0; d < 3; d++)
+        {
+          patches.table[fmt::format("origin_{}", "xyz"[d])]
+              << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(patch.origin[d]);
+          patches.table[fmt::format("axis_u_{}", "xyz"[d])] << patch.axis_u[d];
+          patches.table[fmt::format("axis_v_{}", "xyz"[d])] << patch.axis_v[d];
+          patches.table[fmt::format("axis_w_{}", "xyz"[d])] << patch.axis_w[d];
+        }
+        patches.table["weight"] << patch.weight;
+      }
+      patches.WriteFullTableTrunc();
+    }
     if (self_consistent_response)
     {
       corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
@@ -500,10 +533,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : data.fabricated_surface_energy;
         const auto energy = energies.find(interface);
         model_output.table[fmt::format("interface_{}", interface)]
-            << (available
-                    ? iodata.units.Dimensionalize<VT::ENERGY>(
-                          energy != energies.end() ? energy->second : 0.0)
-                    : nan);
+            << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
+                                energy != energies.end() ? energy->second : 0.0)
+                          : nan);
       }
     };
     for (const auto &result : corrected_results)

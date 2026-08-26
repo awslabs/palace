@@ -56,6 +56,17 @@ private:
 //
 class SurfaceResponseOperator : public Operator
 {
+public:
+  struct PatchAssignment
+  {
+    int model = 0;
+    std::array<double, 3> origin{};
+    std::array<double, 3> axis_u{};
+    std::array<double, 3> axis_v{};
+    std::array<double, 3> axis_w{};
+    double weight = 0.0;
+  };
+
 private:
   struct MaxwellLine
   {
@@ -131,6 +142,7 @@ private:
   int basis_size;
   int global_basis_size = 0;
   int global_patch_count = 0;
+  std::vector<PatchAssignment> patch_assignments;
   int point_query_count = 0;
   std::vector<int> point_send_counts;
   std::vector<int> point_send_offsets;
@@ -309,6 +321,10 @@ public:
 
   int GetBasisSize() const { return global_basis_size; }
   int GetPatchCount() const { return global_patch_count; }
+  const std::vector<PatchAssignment> &GetPatchAssignments() const
+  {
+    return patch_assignments;
+  }
   int GetEdgeCount() const { return GetPatchCount(); }
   double GetPatchWeight() const;
   double GetMatchingRadius() const { return matching_radius; }
