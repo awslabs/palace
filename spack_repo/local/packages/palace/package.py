@@ -291,9 +291,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("cudss", when="+cudss")
 
     with when("+libxsmm"):
-        # NOTE: @=main != @main since libxsmm has a version main-2023-22, which matches @2:
-        depends_on("libxsmm@=main blas=0")
-        # TODO: depends_on("libxsmm@2: blas=0") when spack-package > 2026.06 is relased
+        depends_on("libxsmm@2: blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
         # NOTE: libxsmm builds on MacOS have linker issues

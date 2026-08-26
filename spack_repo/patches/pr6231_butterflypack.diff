@@ -1,0 +1,26 @@
+diff --git a/repos/spack_repo/builtin/packages/butterflypack/package.py b/repos/spack_repo/builtin/packages/butterflypack/package.py
+index 577de9580f8..be0c401850a 100644
+--- a/repos/spack_repo/builtin/packages/butterflypack/package.py
++++ b/repos/spack_repo/builtin/packages/butterflypack/package.py
+@@ -64,6 +64,12 @@ class Butterflypack(CMakePackage):
+ 
+     conflicts("%gcc@:7", when="@2.2.1:")
+ 
++    # Fix an invalid comparison in BF_block_MVP_dat_batch_mkl.
++    patch(
++        "https://github.com/liuyangzhuan/ButterflyPACK/commit/757dcb23d88d27fa24a9ad3078100ebcccad3d6f.patch?full_index=1",
++        sha256="48ad9acbf96d625cff53a485bd64bdc32ae391b266292fa35f2a863892d0c459",
++        when="@4.1.0",
++    )
+     patch(
+         "https://github.com/liuyangzhuan/ButterflyPACK/commit/1393fc11b390934cbb020700397cc75bab87c783.patch?full_index=1",
+         sha256="a662fc51552eac3911cd7987bb2ebb283f6513e1bde094769f1fe9eba6878a18",
+@@ -71,7 +77,7 @@ class Butterflypack(CMakePackage):
+     )
+     # ifx rejects SIZEOF on components of assumed-size dummy arrays.
+     patch(
+-        "https://github.com/liuyangzhuan/ButterflyPACK/pull/42.patch?full_index=1",
++        "https://github.com/liuyangzhuan/ButterflyPACK/commit/19fc92ec31a9e13c699dce5092e94750238f9862.patch?full_index=1",
+         sha256="c7a22ed21b7eb3f2f295e7ed2b04099a108151c64da61b87c823dc8e0b3f950d",
+         when="@4.1.0 %oneapi",
+     )
