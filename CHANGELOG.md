@@ -70,6 +70,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     quantities referenced to the internal unit impedance, not physical incident waves.
     [PR 841](https://github.com/awslabs/palace/pull/841).
 
+#### Performance Improvements
+
+  - Omit material terms with mathematically exact-zero coefficients from fine-level partial
+    assembly while retaining the configured coarse sparse structure for symbolic reuse.
+    [PR 876](https://github.com/awslabs/palace/pull/876).
+
 #### Bug Fixes
 
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
