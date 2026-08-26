@@ -597,24 +597,39 @@ public:
   FloquetPortData(const json &port);
 };
 
+struct SurfaceCurrentApertureData
+{
+public:
+  // List of boundary attributes tiling the surface spanning this current element's loop.
+  std::vector<int> attributes = {};
+
+  // Cartesian reference direction defining the aperture's positive oriented normal.
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  SurfaceCurrentApertureData() = default;
+  SurfaceCurrentApertureData(const json &aperture);
+};
+
+struct SurfaceCurrentElementData : internal::ElementData
+{
+public:
+  // The aperture is omitted for pure surface-current simulations and required for every
+  // element when surface-current and flux-loop excitations are combined.
+  std::optional<SurfaceCurrentApertureData> aperture = std::nullopt;
+};
+
 struct SurfaceCurrentData
 {
 public:
-  // For each surface current source index, each element contains a list of attributes
-  // making up a single element of a potentially multielement current source.
-  std::vector<internal::ElementData> elements = {};
+  // For each surface current source index, each element contains its source geometry and,
+  // when needed, the oriented aperture conjugate to that element's share of the port
+  // current.
+  std::vector<SurfaceCurrentElementData> elements = {};
 
   // Per-port override for how this port is treated when inactive during a magnetostatic
   // inductance sweep. If unset, the global `/Solver/Magnetostatic/InactivePorts` value is
   // used.
   std::optional<InactivePortMode> inactive_port_mode = std::nullopt;
-
-  // List of boundary attributes for the surface spanning this port's current loop. Only
-  // used for magnetostatic inductance extraction in a mixed current/flux simulation, where
-  // the flux linked through this surface during a flux excitation is what determines the
-  // current-flux mutual inductance. If empty, the mutual inductance to flux loops cannot be
-  // measured and the port's self-inductance is reported screened by the zero-flux loops.
-  std::vector<int> aperture_attributes = {};
 
   SurfaceCurrentData() = default;
   SurfaceCurrentData(const json &source);

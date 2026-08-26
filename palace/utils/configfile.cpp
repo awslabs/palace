@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <sstream>
 #include <string_view>
@@ -116,6 +117,15 @@ void ParseElementData(const json &elem, bool required, internal::ElementData &da
                 "Cannot specify \"CoordinateSystem\" with string \"Direction\"!");
     std::tie(data.direction, data.coordinate_system) =
         ParseStringAsDirection(elem.value("Direction", ""), required);
+  }
+}
+
+void ParseSurfaceCurrentElementData(const json &elem, SurfaceCurrentElementData &data)
+{
+  ParseElementData(elem, true, data);
+  if (auto aperture = elem.find("Aperture"); aperture != elem.end())
+  {
+    data.aperture.emplace(*aperture);
   }
 }
 
@@ -582,29 +592,58 @@ FloquetPortData::FloquetPortData(const json &port)
   max_order = port.value("MaxOrder", max_order);
 }
 
+SurfaceCurrentApertureData::SurfaceCurrentApertureData(const json &aperture)
+{
+  attributes = aperture.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+
+  const auto &input_direction = aperture.at("Direction");  // Required
+  if (input_direction.is_array())
+  {
+    direction = input_direction.get<std::array<double, 3>>();
+  }
+  else
+  {
+    CoordinateSystem coordinate_system;
+    std::tie(direction, coordinate_system) =
+        ParseStringAsDirection(input_direction.get<std::string>(), true);
+    MFEM_VERIFY(coordinate_system == CoordinateSystem::CARTESIAN,
+                "SurfaceCurrent Aperture \"Direction\" must be Cartesian!");
+  }
+
+  double norm2 = 0.0;
+  for (double x : direction)
+  {
+    MFEM_VERIFY(std::isfinite(x),
+                "SurfaceCurrent Aperture \"Direction\" must contain finite values!");
+    norm2 += x * x;
+  }
+  MFEM_VERIFY(norm2 > 0.0, "SurfaceCurrent Aperture \"Direction\" must be nonzero!");
+  const double inv_norm = 1.0 / std::sqrt(norm2);
+  for (double &x : direction)
+  {
+    x *= inv_norm;
+  }
+}
+
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
   if (source.find("Attributes") != source.end())
   {
     auto &elem = elements.emplace_back();
-    ParseElementData(source, true, elem);
+    ParseSurfaceCurrentElementData(source, elem);
   }
   else
   {
     for (const auto &e : source.at("Elements"))
     {
       auto &elem = elements.emplace_back();
-      ParseElementData(e, true, elem);
+      ParseSurfaceCurrentElementData(e, elem);
     }
   }
   if (source.find("InactiveMode") != source.end())
   {
     inactive_port_mode = source.at("InactiveMode").get<InactivePortMode>();
-  }
-  if (source.find("ApertureAttributes") != source.end())
-  {
-    aperture_attributes = source.at("ApertureAttributes").get<std::vector<int>>();
-    std::sort(aperture_attributes.begin(), aperture_attributes.end());
   }
 }
 

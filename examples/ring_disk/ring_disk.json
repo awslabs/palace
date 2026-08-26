@@ -34,10 +34,14 @@
         "Index": 1,
         "Attributes": [4],  // Ring terminal
         "Direction": [0.0, 1.0, 0.0],
-        // Surfaces tiling the ring's interior, through which the flux linked by the ring is
-        // measured to recover the current-flux mutual inductance. The disk and hole
-        // contributions cancel, leaving the coupling through the annular gap.
-        "ApertureAttributes": [5, 6, 7]  // Disk + hole + gap
+        // Oriented surfaces tiling the ring's interior, through which the flux linked by
+        // the ring is measured to recover the current-flux mutual inductance. The disk and
+        // hole contributions cancel, leaving the coupling through the annular gap.
+        "Aperture":
+        {
+          "Attributes": [5, 6, 7],  // Disk + hole + gap
+          "Direction": "+Z"
+        }
       }
     ],
     "FluxLoop":
