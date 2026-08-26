@@ -206,10 +206,14 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
       1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21);
   REQUIRE(reduced.num_converged >= num_modes);
   REQUIRE(reduced.reduced_basis_size >= num_modes);
-  CHECK(reduced.reduced_stats.reduced_solves >= 1);
+  CHECK(reduced.reduced_stats.reduced_solves == 20);
+  CHECK(reduced.reduced_stats.affine_reduced_solves == 20);
   CHECK(reduced.reduced_stats.last_residual <= reduced.reduced_tol);
   CHECK(reduced.reduced_stats.worst_accepted_residual <= reduced.reduced_tol);
   CHECK(reduced.reduced_stats.periodic_exact_checks == 1);
+  CHECK(reduced.reduced_stats.full_operator_assemblies == 4);
+  CHECK(reduced.reduced_stats.affine_model_builds == 1);
+  CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
   CHECK(reduced.reduced_stats.complex_exact_solves == 1);
   for (int i = 0; i < num_modes; i++)
   {
@@ -240,6 +244,30 @@ TEST_CASE("ModeEigenSolver Impedance shifts kn", "[boundarymodeoperator][Serial]
   CHECK(imp_result.kn[0].real() > pec_result.kn[0].real());
 }
 
+TEST_CASE("ModeEigenSolver rational impedance affine component",
+          "[boundarymodeoperator][Serial]")
+{
+  auto configure_rational = [](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3, 4};
+    auto &rz = iodata.boundaries.rational_impedance.emplace_back();
+    rz.attributes = {2};
+    rz.num = {50.0};
+    rz.den = {1.0};
+  };
+  auto exact = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_rational);
+  auto reduced =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_rational, true);
+
+  REQUIRE(exact.num_converged >= 1);
+  REQUIRE(reduced.num_converged >= 1);
+  CHECK(reduced.reduced_stats.affine_reduced_solves == 1);
+  CHECK(reduced.reduced_stats.full_operator_assemblies == 3);
+  CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
+  CHECK_THAT(reduced.kn[0].real(), WithinRel(exact.kn[0].real(), 1.0e-6));
+  CHECK_THAT(reduced.kn[0].imag(), WithinAbs(exact.kn[0].imag(), 1.0e-8));
+}
+
 TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Serial]")
 {
   auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
@@ -262,7 +290,10 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   REQUIRE(cond_reduced.num_converged >= 1);
 
   CHECK(std::abs(cond_result.kn[0].imag()) > std::abs(pec_result.kn[0].imag()));
-  CHECK(cond_reduced.reduced_stats.reduced_solves >= 1);
+  CHECK(cond_reduced.reduced_stats.reduced_solves == 1);
+  CHECK(cond_reduced.reduced_stats.affine_reduced_solves == 1);
+  CHECK(cond_reduced.reduced_stats.full_operator_assemblies == 3);
+  CHECK(cond_reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
   CHECK(cond_reduced.reduced_stats.last_residual <= cond_reduced.reduced_tol);
   CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
