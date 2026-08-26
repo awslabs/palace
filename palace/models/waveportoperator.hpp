@@ -182,8 +182,9 @@ public:
   // 3D submesh constructor: extracts submesh from parent mesh.
   WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
                const config::DomainData &domains, ProblemType problem_type,
-               const config::LinearSolverData &linear, const Units &units,
-               const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
+               const config::LinearSolverData &linear, bool train_reduced_model,
+               const Units &units, const MaterialOperator &mat_op,
+               mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
 
   ~WavePortData();
@@ -200,6 +201,12 @@ public:
   // fit—and the eigenvalues derived from it—depend on the MPI partition). Invalidates the
   // cached real-ω solve so the next Initialize re-solves at the new tolerance.
   void SetSynthesisEigTol(double eig_tol, double ksp_tol);
+
+  // Enable guarded reduced real-frequency evaluation after adaptive offline training.
+  void EnableReducedModel(double adaptive_tol);
+  const ModeEigenSolver::ReducedModelStats &GetReducedModelStats() const;
+  std::size_t GetReducedBasisSize() const;
+  double GetReducedTolerance() const;
 
   // Compute the sign of the modal E-field projected on the (high → low) direction
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
@@ -337,6 +344,11 @@ public:
   // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
   // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
   void InitializeModalReference(double omega) { Initialize(omega); }
+
+  // Switch all trained port models to guarded reduced evaluation. Called only after the
+  // adaptive 3D offline phase so HDM snapshots always use exact port modes.
+  void EnableReducedModel(double adaptive_tol);
+  void PrintReducedModelStats() const;
 
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;

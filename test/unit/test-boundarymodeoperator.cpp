@@ -36,11 +36,16 @@ struct ModeResult
 {
   std::vector<std::complex<double>> kn;
   int num_converged;
+  ModeEigenSolver::ReducedModelStats reduced_stats;
+  std::size_t reduced_basis_size = 0;
+  double reduced_tol = 0.0;
 };
 
 ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  double epsilon_r, int order, int num_modes,
-                                 const std::function<void(IoData &)> &configure_bcs)
+                                 const std::function<void(IoData &)> &configure_bcs,
+                                 bool exercise_reduced_model = false,
+                                 int reduced_evaluations = 1)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -101,7 +106,6 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   double omega =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
-  double kn_target = omega * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon());
 
   // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
   // formula used by IoData::CheckConfiguration for eigenmode.max_size.
@@ -112,16 +116,46 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                               iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
                               nd_fespace.GetComm());
 
-  double sigma = -kn_target * kn_target;
-  auto result = mode_solver.Solve(omega, sigma);
+  auto solve_at = [&](std::complex<double> w)
+  {
+    const double kn_target = w.real() * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon());
+    const double sigma = -kn_target * kn_target;
+    return std::make_pair(mode_solver.Solve(w, sigma), sigma);
+  };
 
+  if (exercise_reduced_model)
+  {
+    mode_solver.SetReducedModelTraining(true, 16);
+    // Homogeneous PEC waveguide modes have smooth (in fact frequency-independent in shape)
+    // transverse fields, making this a deterministic reduced-model acceptance test.
+    solve_at(0.9 * omega);
+    solve_at(1.1 * omega);
+    mode_solver.EnableReducedModel(1.0e-3);
+  }
+
+  auto result = solve_at(omega).first;
   ModeResult out;
   out.num_converged = result.num_converged;
   for (int i = 0; i < result.num_converged; i++)
   {
-    auto lambda = mode_solver.GetEigenvalue(i);
-    out.kn.push_back(std::sqrt(-sigma - 1.0 / lambda));
+    // Capture the first in-band evaluation, which is the reduced result under test. Any
+    // subsequent calls below exist only to exercise the periodic exact-refresh guard.
+    out.kn.push_back(mode_solver.GetPropagationConstant(i));
   }
+
+  if (exercise_reduced_model)
+  {
+    for (int i = 1; i < reduced_evaluations; i++)
+    {
+      solve_at(omega);
+    }
+    // Complex-frequency queries must bypass the real-axis reduced model. Issue one complex
+    // query solely to verify stats after retaining the reduced real-frequency result above.
+    solve_at(std::complex<double>(omega, 1.0e-3 * omega));
+  }
+  out.reduced_stats = mode_solver.GetReducedModelStats();
+  out.reduced_basis_size = mode_solver.GetReducedBasisSize();
+  out.reduced_tol = mode_solver.GetReducedTolerance();
   return out;
 }
 
@@ -157,6 +191,33 @@ TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
   CHECK_THAT(kn_real, WithinRel(0.02071, 0.05));
 }
 
+TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  constexpr int num_modes = 3;
+  auto exact =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {});
+  REQUIRE(exact.num_converged >= num_modes);
+  CHECK(exact.reduced_basis_size == 0);
+  CHECK(exact.reduced_stats.reduced_solves == 0);
+  CHECK(exact.reduced_stats.exact_solves == 1);
+
+  auto reduced = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21);
+  REQUIRE(reduced.num_converged >= num_modes);
+  REQUIRE(reduced.reduced_basis_size >= num_modes);
+  CHECK(reduced.reduced_stats.reduced_solves >= 1);
+  CHECK(reduced.reduced_stats.last_residual <= reduced.reduced_tol);
+  CHECK(reduced.reduced_stats.worst_accepted_residual <= reduced.reduced_tol);
+  CHECK(reduced.reduced_stats.periodic_exact_checks == 1);
+  CHECK(reduced.reduced_stats.complex_exact_solves == 1);
+  for (int i = 0; i < num_modes; i++)
+  {
+    CHECK_THAT(reduced.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+    CHECK_THAT(reduced.kn[i].imag(), WithinAbs(exact.kn[i].imag(), 1.0e-8));
+  }
+}
+
 TEST_CASE("ModeEigenSolver Impedance shifts kn", "[boundarymodeoperator][Serial]")
 {
   auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
@@ -183,21 +244,28 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
 {
   auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 
+  auto configure_conductivity = [](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3, 4};
+    auto &cond = iodata.boundaries.conductivity.emplace_back();
+    cond.attributes = {2};
+    cond.sigma = 5.0e7;
+    cond.h = 0.001;
+  };
   auto cond_result =
-      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3,
-                            [](IoData &iodata)
-                            {
-                              iodata.boundaries.pec.attributes = {1, 3, 4};
-                              auto &cond = iodata.boundaries.conductivity.emplace_back();
-                              cond.attributes = {2};
-                              cond.sigma = 5.0e7;
-                              cond.h = 0.001;
-                            });
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, configure_conductivity);
+  auto cond_reduced =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_conductivity, true);
 
   REQUIRE(pec_result.num_converged >= 1);
   REQUIRE(cond_result.num_converged >= 1);
+  REQUIRE(cond_reduced.num_converged >= 1);
 
   CHECK(std::abs(cond_result.kn[0].imag()) > std::abs(pec_result.kn[0].imag()));
+  CHECK(cond_reduced.reduced_stats.reduced_solves >= 1);
+  CHECK(cond_reduced.reduced_stats.last_residual <= cond_reduced.reduced_tol);
+  CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
+  CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
 }
 
 }  // namespace palace
