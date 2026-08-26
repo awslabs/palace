@@ -117,6 +117,13 @@ def main():
         "--chip-z", type=float, default=0.0, help="Chip plane in mesh units"
     )
     parser.add_argument("--matching-radius", type=float, default=2.0, help="Microns")
+    parser.add_argument("--xlim", type=float, nargs=2)
+    parser.add_argument("--ylim", type=float, nargs=2)
+    parser.add_argument(
+        "--label-models",
+        action="store_true",
+        help="Annotate corner and spatial patches with runtime model indices",
+    )
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory() as temporary:
@@ -144,11 +151,15 @@ def main():
     )
 
     grouped = {name: [] for name in colors}
+    labels = []
     for patch in patches:
-        model = catalog[int(patch["model"])]
-        grouped[family(model["Topology"])].append(
-            (1.0e6 * patch["origin x (m)"], 1.0e6 * patch["origin y (m)"])
-        )
+        model_index = int(patch["model"])
+        model = catalog[model_index]
+        assigned_family = family(model["Topology"])
+        point = (1.0e6 * patch["origin x (m)"], 1.0e6 * patch["origin y (m)"])
+        grouped[assigned_family].append(point)
+        if args.label_models and assigned_family != "straight":
+            labels.append((*point, model_index))
     if grouped["straight"]:
         x, y = zip(*grouped["straight"])
         axis.scatter(x, y, s=1.0, color=colors["straight"], alpha=0.65, linewidths=0)
@@ -166,8 +177,14 @@ def main():
         if grouped[name]:
             x, y = zip(*grouped[name])
             axis.scatter(x, y, s=7, color=colors[name], linewidths=0)
+    for x, y, model in labels:
+        axis.annotate(str(model), (x, y), xytext=(3, 3), textcoords="offset points", fontsize=6)
 
     axis.autoscale()
+    if args.xlim:
+        axis.set_xlim(args.xlim)
+    if args.ylim:
+        axis.set_ylim(args.ylim)
     axis.set_aspect("equal")
     axis.set_xlabel("x (µm)")
     axis.set_ylabel("y (µm)")
