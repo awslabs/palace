@@ -5,6 +5,7 @@
 
 import Gmsh: gmsh
 using DelimitedFiles
+using LinearAlgebra
 
 function read_edges(path)
     data, header = readdlm(path, ',', header=true)
