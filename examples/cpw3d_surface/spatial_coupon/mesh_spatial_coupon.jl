@@ -1343,6 +1343,9 @@ function generate_spatial_coupon(;
     for (name, value) in [
         ("Mesh.MeshSizeMin", lc_fine),
         ("Mesh.MeshSizeMax", lc_far),
+        # MMG3D is the available 3D algorithm which respects anisotropic metric tensors.
+        # The default Delaunay + Netgen path tends to isotropize AttractorAnisoCurve.
+        ("Mesh.Algorithm3D", lc_tangent > 0.0 ? 7 : 1),
         ("Mesh.MeshSizeExtendFromBoundary", 0),
         ("Mesh.MeshSizeFromPoints", 0),
         ("Mesh.MeshSizeFromCurvature", 0),
@@ -1354,7 +1357,9 @@ function generate_spatial_coupon(;
         gmsh.option.setNumber(name, value)
     end
     gmsh.model.mesh.generate(3)
-    gmsh.model.mesh.optimize("Netgen")
+    if lc_tangent == 0.0
+        gmsh.model.mesh.optimize("Netgen")
+    end
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
@@ -1393,6 +1398,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
         println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
+        println(stream, "  \"Algorithm3D\": $(lc_tangent > 0.0 ? 7 : 1),")
         println(stream, "  \"MeshOrder\": $mesh_order")
         println(stream, "}")
     end
