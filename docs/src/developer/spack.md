@@ -191,6 +191,24 @@ spack -e . develop --path=~/repos/palace palace@develop
     The environment scope keeps the repository registration out of your global
     Spack configuration.
 
+!!! note "Building the Enzyme-backed tests"
+
+    The optional `+enzyme` variant requires upstream LLVM instead of the
+    default GCC C/C++ toolchain:
+
+    ```sh
+    brew install llvm@19
+    spack -e . compiler find "$(brew --prefix llvm@19)/bin"
+    ```
+
+    Add `+enzyme` to the Palace spec, require `llvm@19` for `c` and `cxx`, and
+    keep `gcc` for `fortran`. Then build with:
+
+    ```sh
+    spack -e . concretize -f --test root
+    spack -e . install --test root
+    ```
+
 The script discovers the concrete Homebrew versions and adds them to your copy
 of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
 alone and upgrades outdated ones. GNU Make and GNU sed remain Spack-built

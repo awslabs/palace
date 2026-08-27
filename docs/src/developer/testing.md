@@ -91,6 +91,15 @@ mpirun -np 2 bin/palace-unit-tests \
 In an Enzyme-enabled build, replace `[analytic]` with `[enzyme]` to run the
 Enzyme-backed tests.
 
+With Palace's local Spack recipe registered, enable `+enzyme`, select a
+supported upstream LLVM compiler, and request root-package tests:
+
+```bash
+spack install --test root local.palace@develop+enzyme %llvm@19
+```
+
+The Clang compiler and Enzyme's `libllvm` versions must match.
+
 Once the build completes, the `palace-unit-tests` executable will be installed
 in the same `bin/` directory as the main `palace` executable, and you can run
 tests in two ways:
