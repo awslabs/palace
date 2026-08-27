@@ -116,6 +116,21 @@ private:
   std::unique_ptr<ModeEigenSolver> mode_solver;
   ComplexVector v0, e0;
 
+  // Cache of the last complex-ω EVP solve, so kₙ (SolveKnComplex) and the reactions
+  // (ComputeComplexReactions) at the same ω share one solve on the same eigenbranch. Keyed
+  // by exact ω; the solve is independent of the ω0 reference. e is port-ranks only.
+  struct ModeSolveCache
+  {
+    bool valid = false;
+    std::complex<double> omega = 0.0;
+    std::complex<double> kn = 0.0;
+    ComplexVector e;
+  };
+  ModeSolveCache mode_cache;
+
+  // Solve the cross-section modal EVP at complex ω once and cache (kₙ, eigenvector).
+  const ModeSolveCache &EvalModeSolve(std::complex<double> omega);
+
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;
   int port_root = 0;

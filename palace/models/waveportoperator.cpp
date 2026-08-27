@@ -942,42 +942,19 @@ void WavePortData::Initialize(double omega)
   }
 }
 
-std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
+const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<double> omega)
 {
-  // Complex-frequency propagation constant. Mirrors the EVP solve + recovery in
-  // Initialize() but skips all field reconstruction / normalization and does NOT touch
-  // the cached real-ω state (omega0, kn0, port_E0t/E0n). The spectral shift sigma stays
-  // REAL — it is a pure algebraic centering of the linearization (exact for any real
-  // sigma), so we derive it from the real part of the requested frequency. The
-  // cross-section EVP carries the full complex ω. Used by the eigenmode nonlinear
-  // solver to evaluate the wave-port BC at the genuinely complex eigenvalue.
-  const double omega_ref = omega.real();
-  const double sigma = -omega_ref * omega_ref * mu_eps_max;
-  std::complex<double> lambda;
+  // Solve the cross-section EVP once at complex ω and cache (kₙ, eigenvector), reusing the
+  // cached result on a repeat call at the same ω. Mirrors the EVP solve + recovery in
+  // Initialize() but skips field reconstruction / normalization and does NOT touch the
+  // cached real-ω state (omega0, kn0, port_E0t/E0n). The spectral shift sigma stays REAL —
+  // it is a pure algebraic centering of the linearization (exact for any real sigma), so we
+  // derive it from the real part of the requested frequency; the cross-section EVP carries
+  // the full complex ω.
+  if (mode_cache.valid && mode_cache.omega == omega)
   {
-    const bool has_solver = (port_comm != MPI_COMM_NULL);
-    auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
-    if (has_solver)
-    {
-      MFEM_VERIFY(result.num_converged >= mode_idx,
-                  "Wave port eigensolver did not converge in SolveKnComplex!");
-      lambda = mode_solver->GetEigenvalue(mode_idx - 1);
-    }
+    return mode_cache;
   }
-  Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
-  // k_n = √(−σ − 1/λ_evp). Principal branch gives Re(k_n) ≥ 0 (forward-propagating /
-  // forward-decaying sheet), which is the physical convention for the +z mode.
-  return std::sqrt(-sigma - 1.0 / lambda);
-}
-
-WavePortData::ComplexReactions
-WavePortData::ComputeComplexReactions(std::complex<double> omega)
-{
-  // Solve the cross-section EVP at complex ω (real spectral shift, as in SolveKnComplex),
-  // recover kₙ, and on the port ranks recompute the complete mode, scale-lock it to the
-  // frozen reference e0, and transport the frozen unit-power reactions by the reaction
-  // ratio. Broadcast (kn, R_full, R_scalar) from the port root; falls back to the frozen
-  // reactions on ranks/paths without a solver.
   const double omega_ref = omega.real();
   const double sigma = -omega_ref * omega_ref * mu_eps_max;
   const bool has_solver = (port_comm != MPI_COMM_NULL);
@@ -988,7 +965,7 @@ WavePortData::ComputeComplexReactions(std::complex<double> omega)
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
-                  "Wave port eigensolver did not converge in ComputeComplexReactions!");
+                  "Wave port eigensolver did not converge in EvalModeSolve!");
       lambda = mode_solver->GetEigenvalue(mode_idx - 1);
       e_tmp.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
       e_tmp.UseDevice(true);
@@ -996,7 +973,38 @@ WavePortData::ComputeComplexReactions(std::complex<double> omega)
     }
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
-  const std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+  // k_n = √(−σ − 1/λ_evp). Principal branch gives Re(k_n) ≥ 0 (forward-propagating /
+  // forward-decaying sheet), which is the physical convention for the +z mode.
+  mode_cache.kn = std::sqrt(-sigma - 1.0 / lambda);
+  mode_cache.e = std::move(e_tmp);
+  mode_cache.omega = omega;
+  mode_cache.valid = true;
+  return mode_cache;
+}
+
+std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
+{
+  // Complex-frequency propagation constant, from the shared cached EVP solve. Used by the
+  // eigenmode nonlinear solver to evaluate the wave-port BC at the genuinely complex
+  // eigenvalue. For real ω this returns the same k_n as Initialize(ω).
+  return EvalModeSolve(omega).kn;
+}
+
+WavePortData::ComplexReactions
+WavePortData::ComputeComplexReactions(std::complex<double> omega)
+{
+  // Recover kₙ and the eigenvector from the shared cached EVP solve at ω (so kₙ and the
+  // reactions come from the same eigenbranch as SolveKnComplex), then on the port ranks
+  // recompute the complete mode, scale-lock it to the frozen reference e0, and transport
+  // the frozen unit-power reactions by the reaction ratio. Broadcast (kn, R_full, R_scalar)
+  // from the port root; falls back to the frozen reactions on ranks/paths without a solver.
+  const bool has_solver = (port_comm != MPI_COMM_NULL);
+  const auto &solve = EvalModeSolve(omega);
+  const std::complex<double> kn = solve.kn;
+  // Copy the cached eigenvector: the back-transform below mutates it in place, and the
+  // cache must stay pristine for a later SolveKnComplex / ComputeComplexReactions at the
+  // same ω.
+  ComplexVector e_tmp(solve.e);
 
   std::complex<double> results[5] = {kn, modal_reaction, modal_reaction_scalar, 0.0, 0.0};
   if (has_solver)
