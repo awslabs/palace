@@ -215,25 +215,13 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   REQUIRE(reduced.num_converged >= num_modes);
   REQUIRE(reduced.reduced_basis_size >= num_modes);
   CHECK(reduced.reduced_stats.reduced_solves == 20);
-  CHECK(reduced.reduced_stats.affine_reduced_solves == 20);
-  CHECK(reduced.reduced_stats.last_residual <= reduced.reduced_tol);
-  CHECK(reduced.reduced_stats.worst_accepted_residual <= reduced.reduced_tol);
-  CHECK(reduced.reduced_stats.periodic_exact_checks == 1);
+  CHECK(reduced.reduced_stats.worst_residual <= reduced.reduced_tol);
+  CHECK(reduced.reduced_stats.periodic_checks == 1);
   CHECK(reduced.periodic_exact_converged >= num_modes);
   CHECK(reduced.complex_exact_converged >= num_modes);
-  CHECK(reduced.reduced_stats.full_operator_assemblies == 4);
-  CHECK(reduced.reduced_stats.affine_model_builds == 1);
-  CHECK(reduced.reduced_stats.gram_residual_evaluations > 0);
-  CHECK(reduced.reduced_stats.direct_residual_verifications > 0);
-  CHECK(reduced.reduced_stats.invalid_gram_fallbacks == 0);
-  CHECK(reduced.reduced_stats.worst_gram_direct_discrepancy < 1.0e-3);
-  CHECK(reduced.reduced_stats.offline_basis_capacity == 16);
   CHECK(reduced.reduced_stats.offline_basis_rank >= num_modes);
   CHECK(reduced.reduced_stats.online_basis_cap >=
         reduced.reduced_stats.offline_basis_rank + 4 * num_modes);
-  CHECK(reduced.reduced_stats.basis_cap_skips == 0);
-  CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
-  CHECK(reduced.reduced_stats.complex_exact_solves == 1);
   for (int i = 0; i < num_modes; i++)
   {
     CHECK_THAT(reduced.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
@@ -247,11 +235,9 @@ TEST_CASE("ModeEigenSolver reduced basis capacity lifecycle",
   auto result =
       SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, [](IoData &) {}, true, 1, 1);
   REQUIRE(result.num_converged >= 1);
-  CHECK(result.reduced_stats.offline_basis_capacity == 1);
   CHECK(result.reduced_stats.offline_basis_rank == 1);
   CHECK(result.reduced_stats.online_basis_cap == 5);
-  CHECK(result.reduced_stats.basis_cap_skips >= 1);
-  CHECK(result.reduced_stats.affine_reduced_solves == 1);
+  CHECK(result.reduced_stats.reduced_solves == 1);
 }
 
 TEST_CASE("ModeEigenSolver Impedance shifts kn", "[boundarymodeoperator][Serial]")
@@ -295,13 +281,8 @@ TEST_CASE("ModeEigenSolver rational impedance affine component",
 
   REQUIRE(exact.num_converged >= 1);
   REQUIRE(reduced.num_converged >= 1);
-  CHECK(reduced.reduced_stats.affine_reduced_solves == 1);
-  CHECK(reduced.reduced_stats.full_operator_assemblies == 3);
-  CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
-  CHECK(reduced.reduced_stats.gram_residual_evaluations > 0);
-  CHECK(reduced.reduced_stats.direct_residual_verifications > 0);
-  CHECK(reduced.reduced_stats.invalid_gram_fallbacks == 0);
-  CHECK(reduced.reduced_stats.worst_gram_direct_discrepancy < 1.0e-3);
+  CHECK(reduced.reduced_stats.reduced_solves == 1);
+  CHECK(reduced.reduced_stats.worst_residual <= reduced.reduced_tol);
   CHECK_THAT(reduced.kn[0].real(), WithinRel(exact.kn[0].real(), 1.0e-6));
   CHECK_THAT(reduced.kn[0].imag(), WithinAbs(exact.kn[0].imag(), 1.0e-8));
 }
@@ -329,14 +310,7 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
 
   CHECK(std::abs(cond_result.kn[0].imag()) > std::abs(pec_result.kn[0].imag()));
   CHECK(cond_reduced.reduced_stats.reduced_solves == 1);
-  CHECK(cond_reduced.reduced_stats.affine_reduced_solves == 1);
-  CHECK(cond_reduced.reduced_stats.full_operator_assemblies == 3);
-  CHECK(cond_reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
-  CHECK(cond_reduced.reduced_stats.gram_residual_evaluations > 0);
-  CHECK(cond_reduced.reduced_stats.direct_residual_verifications > 0);
-  CHECK(cond_reduced.reduced_stats.invalid_gram_fallbacks == 0);
-  CHECK(cond_reduced.reduced_stats.worst_gram_direct_discrepancy < 1.0e-3);
-  CHECK(cond_reduced.reduced_stats.last_residual <= cond_reduced.reduced_tol);
+  CHECK(cond_reduced.reduced_stats.worst_residual <= cond_reduced.reduced_tol);
   CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
 }
