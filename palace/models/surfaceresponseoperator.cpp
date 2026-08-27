@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <Eigen/Dense>
 #include <nlohmann/json.hpp>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
@@ -8944,6 +8945,57 @@ mfem::DenseMatrix BuildDenseMatrix(const std::vector<MatrixEntry> &entries, int 
   return matrix;
 }
 
+mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &matrix,
+                                                     const mfem::DenseMatrix &rhs)
+{
+  MFEM_VERIFY(matrix.Height() == matrix.Width() && rhs.Height() == matrix.Height(),
+              "Incompatible response matrices for quotient-space inverse!");
+  const int size = matrix.Height();
+  Eigen::MatrixXd A(size, size), B(size, rhs.Width());
+  for (int i = 0; i < size; i++)
+  {
+    for (int j = 0; j < size; j++)
+    {
+      A(i, j) = matrix(i, j);
+    }
+    for (int j = 0; j < rhs.Width(); j++)
+    {
+      B(i, j) = rhs(i, j);
+    }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A);
+  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
+              "Failed to diagonalize a response matrix on its active quotient space!");
+  const auto eigenvalues = eigensystem.eigenvalues();
+  const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
+  const double negative_tolerance = 1.0e-9 * scale;
+  const double active_tolerance = 1.0e-12 * scale;
+  MFEM_VERIFY(eigenvalues.minCoeff() >= -negative_tolerance,
+              "Fabricated response matrix has a negative-energy mode beyond roundoff!");
+  Eigen::VectorXd inverse = Eigen::VectorXd::Zero(size);
+  int numerical_rank = 0;
+  for (int i = 0; i < size; i++)
+  {
+    if (eigenvalues(i) > active_tolerance)
+    {
+      inverse(i) = 1.0 / eigenvalues(i);
+      numerical_rank++;
+    }
+  }
+  MFEM_VERIFY(numerical_rank > 0, "Fabricated response matrix has no active energy modes!");
+  const Eigen::MatrixXd result = eigensystem.eigenvectors() * inverse.asDiagonal() *
+                                 eigensystem.eigenvectors().transpose() * B;
+  mfem::DenseMatrix output(size, rhs.Width());
+  for (int i = 0; i < output.Height(); i++)
+  {
+    for (int j = 0; j < output.Width(); j++)
+    {
+      output(i, j) = result(i, j);
+    }
+  }
+  return output;
+}
+
 struct DomainResponseMatrices
 {
   mfem::DenseMatrix fabricated;
@@ -8980,7 +9032,7 @@ BuildDomainResponseMatrices(const std::string &fabricated_path,
   fixed_flux_transform = 0.0;
   if (zero_trace_indices.empty())
   {
-    mfem::DenseMatrixInverse(fabricated, true).Mult(thin, fixed_flux_transform);
+    fixed_flux_transform = PositiveSemidefiniteInverseProduct(fabricated, thin);
   }
   else
   {
@@ -9013,8 +9065,8 @@ BuildDomainResponseMatrices(const std::string &fabricated_path,
         thin_free(i, j) = thin(free_indices[i], free_indices[j]);
       }
     }
-    mfem::DenseMatrix fixed_flux_free;
-    mfem::DenseMatrixInverse(fabricated_free, true).Mult(thin_free, fixed_flux_free);
+    mfem::DenseMatrix fixed_flux_free =
+        PositiveSemidefiniteInverseProduct(fabricated_free, thin_free);
     for (int i = 0; i < free_size; i++)
     {
       for (int j = 0; j < free_size; j++)

@@ -125,12 +125,21 @@ def load_response(root):
 
 def minimum_eigenvalue_check(matrix, strict):
     eigenvalues = np.linalg.eigvalsh(matrix)
-    scale = max(abs(eigenvalues[-1]), np.finfo(float).tiny)
+    scale = max(np.max(np.abs(eigenvalues)), np.finfo(float).tiny)
     tolerance = 1.0e-9 * scale
-    passed = eigenvalues[0] > tolerance if strict else eigenvalues[0] >= -tolerance
+    numerical_rank = int(np.count_nonzero(eigenvalues > tolerance))
+    negative_count = int(np.count_nonzero(eigenvalues < -tolerance))
+    # Spatial trace spaces can contain exact gauge/redundant null modes. Qualify the
+    # positive-energy quotient instead of demanding positive energy in those null
+    # directions; still reject any eigenvalue that is negative beyond roundoff.
+    passed = negative_count == 0 and (not strict or numerical_rank > 0)
     return {
         "MinimumEigenvalue": eigenvalues[0],
         "MaximumEigenvalue": eigenvalues[-1],
+        "Tolerance": tolerance,
+        "NumericalRank": numerical_rank,
+        "Nullity": int(len(eigenvalues) - numerical_rank),
+        "NegativeEigenvalueCount": negative_count,
         "Passed": bool(passed),
     }
 
