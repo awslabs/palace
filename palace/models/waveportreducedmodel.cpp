@@ -58,14 +58,12 @@ void WavePortReducedModel::Enable(bool enable, double adaptive_tol,
 void WavePortReducedModel::RecordExactSolve()
 {
   stats.exact_solves++;
-  solves_since_exact = 0;
 }
 
 void WavePortReducedModel::RecordReducedSolve()
 {
   has_solution = true;
   stats.reduced_solves++;
-  solves_since_exact++;
 }
 
 void WavePortReducedModel::BuildAffineModel(const ComplexOperator *truth_operator,

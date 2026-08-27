@@ -177,24 +177,22 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // FE-space communicator so non-port ranks skip (or enter) the exact assembly in lockstep.
   int reduce_not_ready =
       (local_solver_rank && reduced_model->IsEnabled() && !local_can_reduce) ? 1 : 0;
-  int force_exact = (local_can_reduce && reduced_model->ExactCheckDue()) ? 1 : 0;
   Mpi::GlobalMax(1, &reduce_not_ready, nd_fespace.GetComm());
-  Mpi::GlobalMax(1, &force_exact, nd_fespace.GetComm());
 
   bool local_reduced_accepted = false;
-  if (local_can_reduce && !reduce_not_ready && !force_exact)
+  if (local_can_reduce && !reduce_not_ready)
   {
     // The accepted online path evaluates only preprojected exact affine components. It does
     // not assemble the full finite-element operator.
     local_reduced_accepted = reduced_model->TrySolve(omega.real(), sigma);
   }
-  int reduced_rejected = (local_solver_rank && reduced_model->IsEnabled() && !force_exact &&
-                          !local_reduced_accepted)
+  int reduced_rejected = (local_solver_rank && reduced_model->IsEnabled() &&
+                          !reduce_not_ready && !local_reduced_accepted)
                              ? 1
                              : 0;
   Mpi::GlobalMax(1, &reduced_rejected, nd_fespace.GetComm());
 
-  if (reduced_model->IsEnabled() && !reduce_not_ready && !force_exact && !reduced_rejected)
+  if (reduced_model->IsEnabled() && !reduce_not_ready && !reduced_rejected)
   {
     if (local_solver_rank)
     {
@@ -205,14 +203,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     // because the port ranks accepted the affine solve.
     return {0, sigma};
   }
-  if (local_can_reduce && force_exact)
-  {
-    // Periodically refresh the truth subspace even when every reduced residual passes.
-    // A residual can certify a represented Ritz pair but cannot prove that a new mode has
-    // not entered the requested rank from outside the current reduced basis.
-    reduced_model->RecordPeriodicCheck();
-  }
-  else if (local_can_reduce && reduced_rejected)
+  if (local_can_reduce && reduced_rejected)
   {
     reduced_model->RecordFallback();
   }
