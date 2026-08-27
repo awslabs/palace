@@ -941,6 +941,7 @@ function generate_spatial_coupon(;
     lc_fine::Float64         = 0.02,
     lc_far::Float64          = 0.3,
     process_core_width::Float64 = 0.0,
+    process_fine_width::Float64 = 0.0,
     max_nodes::Int           = 500_000,
     max_elements::Int        = 2_000_000,
     mesh_order::Int          = 1,
@@ -958,8 +959,13 @@ function generate_spatial_coupon(;
     process_core_width = process_core_width > 0.0 ?
                          process_core_width :
                          max(2metal_thickness, 4overetch, 8lc_fine)
-    process_core_width > 2lc_fine ||
-        error("process core width must exceed twice the fine mesh size")
+    process_fine_width = process_fine_width > 0.0 ?
+                         process_fine_width :
+                         max(0.5metal_thickness, overetch, 2lc_fine)
+    process_fine_width >= 2lc_fine ||
+        error("process fine width must be at least twice the fine mesh size")
+    process_core_width > process_fine_width ||
+        error("process core width must exceed the fully fine region width")
     max_nodes > 0 || error("maximum node budget must be positive")
     max_elements > 0 || error("maximum element budget must be positive")
 
@@ -1302,7 +1308,7 @@ function generate_spatial_coupon(;
         "Spatial mesh features: candidates=$(length(candidate_curves)), " *
         "physical=$(length(feature_curves)), " *
         "discarded_coplanar_seams=$(length(discarded_seams)), " *
-        "core_width=$process_core_width"
+        "fine_width=$process_fine_width, core_width=$process_core_width"
     )
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
@@ -1310,7 +1316,7 @@ function generate_spatial_coupon(;
     gmsh.model.mesh.field.setNumber(2, "InField", 1)
     gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_fine)
     gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
-    gmsh.model.mesh.field.setNumber(2, "DistMin", 2lc_fine)
+    gmsh.model.mesh.field.setNumber(2, "DistMin", process_fine_width)
     gmsh.model.mesh.field.setNumber(2, "DistMax", process_core_width)
     gmsh.model.mesh.field.setAsBackgroundMesh(2)
     for (name, value) in [
@@ -1363,6 +1369,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"FineSize\": $lc_fine,")
         println(stream, "  \"FarSize\": $lc_far,")
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
+        println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
         println(stream, "  \"MeshOrder\": $mesh_order")
         println(stream, "}")
     end
@@ -1397,6 +1404,7 @@ function parse_options(args)
         "--lc-fine" => ("lc_fine", Float64),
         "--lc-far" => ("lc_far", Float64),
         "--process-core-width" => ("process_core_width", Float64),
+        "--process-fine-width" => ("process_fine_width", Float64),
         "--max-nodes" => ("max_nodes", Int),
         "--max-elements" => ("max_elements", Int),
         "--mesh-order" => ("mesh_order", Int)
@@ -1431,6 +1439,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         lc_fine         = get(options, "lc_fine", 0.02),
         lc_far          = get(options, "lc_far", 0.3),
         process_core_width = get(options, "process_core_width", 0.0),
+        process_fine_width = get(options, "process_fine_width", 0.0),
         max_nodes       = get(options, "max_nodes", 500_000),
         max_elements    = get(options, "max_elements", 2_000_000),
         mesh_order      = get(options, "mesh_order", 1)

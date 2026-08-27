@@ -1833,6 +1833,7 @@ def spatial_spec(coupon, args, parameters):
             "FineSize": args.spatial_lc_fine,
             "FarSize": args.spatial_lc_far,
             "ProcessCoreWidth": getattr(args, "spatial_process_core_width", 0.0),
+            "ProcessFineWidth": getattr(args, "spatial_process_fine_width", 0.0),
             "MaxNodes": getattr(args, "spatial_max_nodes", 500_000),
             "MaxElements": getattr(args, "spatial_max_elements", 2_000_000),
             "Order": max(2, args.mesh_order),
@@ -1905,6 +1906,8 @@ def generate_spatial_meshes(
                 args.spatial_lc_far,
                 "--process-core-width",
                 getattr(args, "spatial_process_core_width", 0.0),
+                "--process-fine-width",
+                getattr(args, "spatial_process_fine_width", 0.0),
                 "--max-nodes",
                 getattr(args, "spatial_max_nodes", 500_000),
                 "--max-elements",
@@ -2424,8 +2427,17 @@ def parse_args():
         type=float,
         default=0.0,
         help=(
-            "Width of the nanometer-resolved process-edge tube; 0 selects "
+            "Width over which the mesh grades from fine to far size; 0 selects "
             "max(2*metal thickness, 4*overetch, 8*lc-fine)"
+        ),
+    )
+    parser.add_argument(
+        "--spatial-process-fine-width",
+        type=float,
+        default=0.0,
+        help=(
+            "Physical width retained at lc-fine; 0 selects "
+            "max(0.5*metal thickness, overetch, 2*lc-fine)"
         ),
     )
     parser.add_argument("--spatial-max-nodes", type=int, default=500_000)
@@ -2491,6 +2503,8 @@ def parse_args():
         parser.error("--min-process-feature-elements must be positive")
     if args.spatial_process_core_width < 0.0:
         parser.error("--spatial-process-core-width must be nonnegative")
+    if args.spatial_process_fine_width < 0.0:
+        parser.error("--spatial-process-fine-width must be nonnegative")
     if args.spatial_max_nodes <= 0 or args.spatial_max_elements <= 0:
         parser.error("spatial mesh budgets must be positive")
     args.cluster_h_factors = sorted(
