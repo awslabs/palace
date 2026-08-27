@@ -906,6 +906,27 @@ function point_in_metal(edge, point, radius, tolerance, facets)
            )
 end
 
+function surface_family(attribute::Int)
+    # Ignore conductor/slot suffixes when deciding whether a curve is a physical process
+    # feature. Attributes 5001 and 5101, for example, are both MS surfaces; the curve
+    # separating their bookkeeping patches is not a material or geometric edge.
+    return div(attribute, 1000)
+end
+
+function coplanar_surfaces(surfaces::Vector{Int32}, tolerance::Float64)
+    length(surfaces) >= 2 || return false
+    boxes = [gmsh.model.getBoundingBox(2, surface) for surface in surfaces]
+    for axis in 1:3
+        if all(abs(box[axis + 3] - box[axis]) <= tolerance for box in boxes)
+            coordinate = boxes[1][axis]
+            if all(abs(box[axis] - coordinate) <= tolerance for box in boxes)
+                return true
+            end
+        end
+    end
+    return false
+end
+
 function generate_spatial_coupon(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
@@ -919,6 +940,9 @@ function generate_spatial_coupon(;
     trench_rounding::Float64 = 0.01,
     lc_fine::Float64         = 0.02,
     lc_far::Float64          = 0.3,
+    process_core_width::Float64 = 0.0,
+    max_nodes::Int           = 500_000,
+    max_elements::Int        = 2_000_000,
     mesh_order::Int          = 1,
     filename::String
 )
@@ -929,6 +953,15 @@ function generate_spatial_coupon(;
     0.0 <= top_rounding < metal_thickness ||
         error("top rounding must be smaller than metal thickness")
     0.0 <= trench_rounding <= overetch || error("trench rounding must not exceed overetch")
+    lc_fine > 0.0 || error("fine mesh size must be positive")
+    lc_far >= lc_fine || error("far mesh size must not be smaller than fine mesh size")
+    process_core_width = process_core_width > 0.0 ?
+                         process_core_width :
+                         max(4metal_thickness, 4overetch, 8lc_fine)
+    process_core_width > 2lc_fine ||
+        error("process core width must exceed twice the fine mesh size")
+    max_nodes > 0 || error("maximum node budget must be positive")
+    max_elements > 0 || error("maximum element budget must be positive")
 
     edges = read_edges(signature)
     facets = read_mask(mask)
@@ -1230,24 +1263,47 @@ function generate_spatial_coupon(;
         gmsh.model.addPhysicalGroup(2, surfaces, attribute, "surface_$attribute")
     end
 
-    feature_surfaces = collect(Iterators.flatten(values(boundary_groups)))
-    feature_curves = Int32[]
-    for surface in feature_surfaces
-        for (curve_dim, curve) in
-            gmsh.model.getBoundary([(2, surface)], false, false, false)
-            if curve_dim == 1 &&
-               !on_outer_box(
-                gmsh.model.getBoundingBox(curve_dim, curve),
-                lower,
-                upper,
-                outer_tolerance
-            )
-                push!(feature_curves, curve)
+    # Build the refinement source from physical process edges, not every OCC fragment
+    # curve. Exact plan-view masks and slot-partitioned interface surfaces can introduce
+    # thousands of coplanar bookkeeping seams; treating those as fabrication features
+    # makes the nanometer-scale size field cover most of a large coupon.
+    curve_surfaces = Dict{Int32, Vector{Tuple{Int, Int32}}}()
+    candidate_curves = Set{Int32}()
+    for (attribute, surfaces) in boundary_groups
+        for surface in surfaces
+            for (curve_dim, curve) in
+                gmsh.model.getBoundary([(2, surface)], false, false, false)
+                curve_dim == 1 || continue
+                on_outer_box(
+                    gmsh.model.getBoundingBox(curve_dim, curve),
+                    lower,
+                    upper,
+                    outer_tolerance
+                ) && continue
+                push!(candidate_curves, curve)
+                push!(get!(curve_surfaces, curve, Tuple{Int, Int32}[]), (attribute, surface))
             end
         end
     end
-    unique!(feature_curves)
-    isempty(feature_curves) && error("No process-feature curves were generated")
+    feature_curves = Int32[]
+    discarded_seams = Int32[]
+    for curve in candidate_curves
+        records = unique(curve_surfaces[curve])
+        attributes = unique(first(record) for record in records)
+        surfaces = unique(last(record) for record in records)
+        families = unique(surface_family(attribute) for attribute in attributes)
+        artificial_seam = length(surfaces) >= 2 && length(families) == 1 &&
+                          coplanar_surfaces(surfaces, tolerance)
+        push!(artificial_seam ? discarded_seams : feature_curves, curve)
+    end
+    sort!(feature_curves)
+    isempty(feature_curves) && error("No physical process-feature curves were generated")
+    println(
+        "Spatial mesh features: candidates=$(length(candidate_curves)), " *
+        "physical=$(length(feature_curves)), " *
+        "discarded_coplanar_seams=$(length(discarded_seams)), " *
+        "core_width=$process_core_width"
+    )
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
     gmsh.model.mesh.field.add("Threshold", 2)
@@ -1255,7 +1311,7 @@ function generate_spatial_coupon(;
     gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_fine)
     gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
     gmsh.model.mesh.field.setNumber(2, "DistMin", 2lc_fine)
-    gmsh.model.mesh.field.setNumber(2, "DistMax", 0.5radius)
+    gmsh.model.mesh.field.setNumber(2, "DistMax", process_core_width)
     gmsh.model.mesh.field.setAsBackgroundMesh(2)
     for (name, value) in [
         ("Mesh.MeshSizeMin", lc_fine),
@@ -1273,6 +1329,18 @@ function generate_spatial_coupon(;
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.optimize("Netgen")
     gmsh.model.mesh.setOrder(mesh_order)
+    node_tags, _, _ = gmsh.model.mesh.getNodes()
+    _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
+    node_count = length(node_tags)
+    element_count = sum(length(tags) for tags in volume_element_tags)
+    println(
+        "Spatial mesh budget: nodes=$node_count/$max_nodes, " *
+        "volume_elements=$element_count/$max_elements"
+    )
+    node_count <= max_nodes ||
+        error("Spatial coupon exceeds node budget: $node_count > $max_nodes")
+    element_count <= max_elements ||
+        error("Spatial coupon exceeds element budget: $element_count > $max_elements")
     if mesh_order > 1
         gmsh.model.mesh.optimize("HighOrderElastic", true, 20)
         gmsh.model.mesh.optimize("HighOrder", true, 20)
@@ -1314,6 +1382,9 @@ function parse_options(args)
         "--bottom-radius" => ("trench_rounding", Float64),
         "--lc-fine" => ("lc_fine", Float64),
         "--lc-far" => ("lc_far", Float64),
+        "--process-core-width" => ("process_core_width", Float64),
+        "--max-nodes" => ("max_nodes", Int),
+        "--max-elements" => ("max_elements", Int),
         "--mesh-order" => ("mesh_order", Int)
     )
     index = 4
@@ -1345,6 +1416,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
         trench_rounding = get(options, "trench_rounding", 0.01),
         lc_fine         = get(options, "lc_fine", 0.02),
         lc_far          = get(options, "lc_far", 0.3),
+        process_core_width = get(options, "process_core_width", 0.0),
+        max_nodes       = get(options, "max_nodes", 500_000),
+        max_elements    = get(options, "max_elements", 2_000_000),
         mesh_order      = get(options, "mesh_order", 1)
     )
 end
