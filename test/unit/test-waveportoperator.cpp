@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <complex>
+#include <fstream>
 #include <memory>
 #include <vector>
 #include <Eigen/Dense>
-#include <fmt/core.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -61,6 +61,23 @@ json LoadCpwWaveConfig()
   auto mesh_rel = setup["Model"]["Mesh"].get<std::string>();
   setup["Model"]["Mesh"] = (cpw_dir / mesh_rel).string();
   // Avoid writing any postprocessing output during unit tests.
+  setup["Problem"]["Output"] = "";
+  return setup;
+}
+
+// Dielectric-slab-loaded rectangular guide (see the slab_waveguide regression fixture). Its
+// hybrid/LSM port mode has a frequency-rotating transverse shape, so the modal correction
+// is genuinely multi-vector -- the case exercised by ModalCorrectionRotationSubspace below.
+json LoadSlabWaveConfig()
+{
+  auto slab_dir =
+      fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "slab_waveguide";
+  std::ifstream f(slab_dir / "driven_wave_synth.json");
+  REQUIRE(f.good());
+  json setup = json::parse(f, /*cb=*/nullptr, /*allow_exceptions=*/true,
+                           /*ignore_comments=*/true);
+  auto mesh_rel = setup["Model"]["Mesh"].get<std::string>();
+  setup["Model"]["Mesh"] = (slab_dir / mesh_rel).string();
   setup["Problem"]["Output"] = "";
   return setup;
 }
@@ -364,4 +381,101 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
   auto A2_complex = space_op.GetExtraSystemMatrix(std::complex<double>(omega, 1.0e-3),
                                                   Operator::DIAG_ZERO);
   CHECK_FALSE(A2_complex);
+}
+
+// The circuit-synthesis modal correction W(ω) = Σ_p g_full,p s_full,p s_full,pᵀ −
+// g_scalar,p s_scalar,p s_scalar,pᵀ is folded into a fixed reduced pencil by tracking the
+// port modal vectors s(ω) across the band. A homogeneous cross-section has a separable mode
+// whose transverse shape is fixed (only k_n(ω) scales), so the sampled s(ω) span a rank-1
+// subspace and a center-frozen shape is exact. A transversely inhomogeneous guide (slab)
+// supports hybrid modes whose shape rotates with ω, so the samples span rank>=2 and a
+// center-frozen single vector is inadequate. Verify both on the slab: (a) the s_full
+// samples are genuinely rank>=2, (b) projecting onto the band-center shape leaves a large
+// residual.
+TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadSlabWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  auto nd = [&](double f)
+  { return iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f); };
+  // Sample from just above the mode cutoff (~6.3 GHz), where the hybrid shape redistributes
+  // fastest between slab and air, up through well-separated, to expose the rotation.
+  const double f_lo = 6.5, f_hi = 13.0;
+  const double w_ref = 2.0 * M_PI * nd(0.5 * (f_lo + f_hi));
+
+  auto ports = space_op.GetModalCorrectionSynthesisPorts(w_ref);
+  REQUIRE(!ports.empty());
+
+  const int msamp = 9;
+  bool checked_any = false;
+  for (int port_idx : ports)
+  {
+    // Sample the full modal vector across the band (the band-center sample is the "frozen"
+    // reference shape, picked as i_ref below).
+    std::vector<std::unique_ptr<ComplexVector>> sf;
+    std::vector<double> nf;
+    for (int i = 0; i < msamp; i++)
+    {
+      const double fi = f_lo + (f_hi - f_lo) * i / (msamp - 1);
+      auto smp = space_op.SampleModalCorrectionVectors(
+          port_idx, std::complex<double>(2.0 * M_PI * nd(fi), 0.0));
+      if (!smp.active)
+      {
+        continue;
+      }
+      nf.push_back(linalg::Norml2(comm, *smp.s_full));
+      sf.push_back(std::move(smp.s_full));
+    }
+    const int m = static_cast<int>(sf.size());
+    if (m < 2)
+    {
+      continue;  // inactive/cutoff port modes carry no correction to track
+    }
+    checked_any = true;
+
+    // (a) Rank of the sampled subspace: the Hermitian Gram of the unit-normalized samples
+    // has eigenvalues equal to the squared singular values of the stacked matrix. A
+    // rotating mode has a non-negligible second singular value; a separable one is rank-1
+    // (σ₂/σ₁ ~ 0).
+    Eigen::MatrixXcd G(m, m);
+    for (int i = 0; i < m; i++)
+    {
+      for (int j = 0; j < m; j++)
+      {
+        G(i, j) = linalg::Dot(comm, *sf[i], *sf[j]) / (nf[i] * nf[j]);
+      }
+    }
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> es(G);
+    const auto sv = es.eigenvalues();  // ascending
+    const double sigma1 = std::sqrt(std::max(0.0, sv(m - 1)));
+    const double sigma2 = std::sqrt(std::max(0.0, sv(m - 2)));
+    const double rank_ratio = sigma2 / std::max(sigma1, 1e-300);
+    INFO("s_full sampled subspace σ₂/σ₁ = " << rank_ratio);
+    CHECK(rank_ratio > 1.0e-3);  // decisively above the rank-1 numerical floor (~1e-13)
+
+    // (b) Center-freeze error: project each sample onto the 1-D span of the band-center
+    // shape and measure the relative residual. A frozen (rank-1) model would represent the
+    // whole band by this single direction, so a large residual quantifies the rotation it
+    // misses.
+    const int i_ref = m / 2;
+    const std::complex<double> ref_sq =
+        linalg::Dot(comm, *sf[i_ref], *sf[i_ref]);  // ‖s_ref‖²
+    double max_resid = 0.0;
+    for (int i = 0; i < m; i++)
+    {
+      // Least-squares coefficient c = <s_ref, s_i> / ‖s_ref‖². linalg::Dot(a,b) = <b,a>
+      // (conjugate on the first arg), so <s_ref, s_i> = Dot(s_i, s_ref).
+      const std::complex<double> proj = linalg::Dot(comm, *sf[i], *sf[i_ref]) / ref_sq;
+      ComplexVector d(*sf[i]);
+      d.AXPY(-proj, *sf[i_ref]);  // s_i − proj·s_ref
+      max_resid = std::max(max_resid, linalg::Norml2(comm, d) / nf[i]);
+    }
+    INFO("center-freeze max relative residual over band = " << max_resid);
+    CHECK(max_resid > 0.1);  // freezing the shape at band center is inadequate
+  }
+  REQUIRE(checked_any);  // the slab hybrid port mode must be active and tracked
 }

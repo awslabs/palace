@@ -247,14 +247,18 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
 
 // Assert the synthesized model reproduces the eigenmode resonant frequency. Among the
 // physical resonances (Q > 1, which excludes the aux-realization's critically-damped
-// spurious roots), the one nearest f_re_eigen must match it in Re{f} within rtol. The
-// imaginary part (radiation loss) is not asserted: this broad off-axis TM01 pole (eigenmode
-// Q ~ 4) is under-determined by a real-frequency ROM fit, so the synthesized Im{f}/Q is a
-// loose, band-dependent diagnostic. Robust to the basis/partition-dependent root count and
-// ordering.
-palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol)
+// spurious roots), the one nearest f_re_eigen must match it in Re{f} within rtol. Robust to
+// the basis/partition-dependent root count and ordering.
+//
+// q_eigen > 0 additionally asserts that same root's Q within q_rtol. Only pass it when the
+// pole is extractable from a real-frequency fit (a moderate-to-high-Q resonance sampled by
+// a band that brackets it); for a broad off-axis pole (e.g. the cylinder TM01, Q ~ 4) the
+// synthesized Im{f}/Q is under-determined and band-dependent, so leave q_eigen < 0 to skip.
+palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol,
+                                                            double q_eigen = -1.0,
+                                                            double q_rtol = 0.0)
 {
-  return [f_re_eigen, rtol](palace::Table &actual, palace::Table & /*reference*/)
+  return [f_re_eigen, rtol, q_eigen, q_rtol](palace::Table &actual, palace::Table &)
   {
     int col_re = -1, col_q = -1;
     for (std::size_t c = 0; c < actual.n_cols(); ++c)
@@ -273,7 +277,7 @@ palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, d
     REQUIRE(col_q >= 0);
     const auto &re = actual[col_re].data;
     const auto &q = actual[col_q].data;
-    double best = -1.0, best_re = 0.0;
+    double best = -1.0, best_re = 0.0, best_q = 0.0;
     for (std::size_t r = 0; r < re.size(); ++r)
     {
       if (q[r] <= 1.0)  // skip critically-damped spurious roots
@@ -285,12 +289,18 @@ palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, d
       {
         best = d;
         best_re = re[r];
+        best_q = q[r];
       }
     }
     REQUIRE(best >= 0.0);  // at least one physical resonance present
-    INFO("nearest physical (Q>1) synth root Re{f} = " << best_re << " GHz vs eigenmode "
-                                                      << f_re_eigen << " GHz");
+    INFO("nearest physical (Q>1) synth root Re{f} = " << best_re << " GHz (Q = " << best_q
+                                                      << ") vs eigenmode " << f_re_eigen
+                                                      << " GHz (Q = " << q_eigen << ")");
     CHECK_THAT(best_re, Catch::Matchers::WithinRel(f_re_eigen, rtol));
+    if (q_eigen > 0.0)
+    {
+      CHECK_THAT(best_q, Catch::Matchers::WithinRel(q_eigen, q_rtol));
+    }
   };
 }
 
@@ -490,6 +500,34 @@ TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_synth.json",
                                   "driven_wave_tm_synth", opts);
+}
+
+// Circuit synthesis of a dielectric-slab-loaded guide driven through its hybrid/LSM port
+// mode. The transverse inhomogeneity rotates the mode shape with frequency, so the modal
+// correction W is rank>=2 and band-varying. The band (7.5-8.2 GHz) brackets a moderate-Q
+// resonance (eigenmode pole 7.730 GHz, Q ~ 20) extractable from the real-frequency fit, so
+// TestRomEigenvalueMatchesEigenmode asserts the synthesized root matches it in both Re{f}
+// and Q. Pencil matrices/eigenvectors are basis/partition-dependent, so presence-checked
+// only.
+TEST_CASE("slab_waveguide_driven_wave_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
+  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
+                         "rom-orthogonalization-matrix-R", "rom-eigenvectors",
+                         // Sharp resonance: swept S is partition/arithmetic-sensitive near
+                         // the pole, so the W-dependent signal is the synthesized
+                         // eigenvalue (custom check) rather than a pointwise S diff.
+                         "port-S"};
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      TestRomEigenvalueMatchesEigenmode(7.730, 5.0e-3, /*q_eigen=*/20.4, /*q_rtol=*/0.30);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("slab_waveguide", "driven_wave_synth.json",
+                                  "driven_wave_synth", opts);
 }
 
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
