@@ -1305,9 +1305,27 @@ function generate_spatial_coupon(;
     end
     sort!(feature_curves)
     isempty(feature_curves) && error("No physical process-feature curves were generated")
+    longitudinal_curves = Int32[]
+    if lc_tangent > 0.0
+        for curve in feature_curves
+            lower_parameter, upper_parameter =
+                gmsh.model.getParametrizationBounds(1, curve)
+            parameter = 0.5 * (lower_parameter[1] + upper_parameter[1])
+            derivative = gmsh.model.getDerivative(1, curve, [parameter])
+            tangent = derivative[1:3]
+            tangent ./= norm(tangent)
+            if any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
+                curve_length = gmsh.model.occ.getMass(1, curve)
+                point_count = max(2, ceil(Int, curve_length / lc_tangent) + 1)
+                gmsh.model.mesh.setTransfiniteCurve(curve, point_count)
+                push!(longitudinal_curves, curve)
+            end
+        end
+    end
     println(
         "Spatial mesh features: candidates=$(length(candidate_curves)), " *
         "physical=$(length(feature_curves)), " *
+        "longitudinal=$(length(longitudinal_curves)), " *
         "discarded_coplanar_seams=$(length(discarded_seams)), " *
         "fine_width=$process_fine_width, core_width=$process_core_width, " *
         "grading_power=$process_grading_power"
@@ -1343,9 +1361,7 @@ function generate_spatial_coupon(;
     for (name, value) in [
         ("Mesh.MeshSizeMin", lc_fine),
         ("Mesh.MeshSizeMax", lc_far),
-        # MMG3D is the available 3D algorithm which respects anisotropic metric tensors.
-        # The default Delaunay + Netgen path tends to isotropize AttractorAnisoCurve.
-        ("Mesh.Algorithm3D", lc_tangent > 0.0 ? 7 : 1),
+        ("Mesh.Algorithm3D", 1),
         ("Mesh.MeshSizeExtendFromBoundary", 0),
         ("Mesh.MeshSizeFromPoints", 0),
         ("Mesh.MeshSizeFromCurvature", 0),
@@ -1398,7 +1414,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
         println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
-        println(stream, "  \"Algorithm3D\": $(lc_tangent > 0.0 ? 7 : 1),")
+        println(stream, "  \"Algorithm3D\": 1,")
         println(stream, "  \"MeshOrder\": $mesh_order")
         println(stream, "}")
     end
