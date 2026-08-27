@@ -125,10 +125,22 @@ def main():
     zero_rows = read_rows(coupon / "zero-trace.csv")
     values = {(row["x"], row["y"], row["z"]): 0.0 for row in zero_rows}
     canonical = np.atleast_2d(basis_points)
+    if model.get("Topology") == "SpatialEdgeCluster":
+        first_edge = model["Edges"][0]
+        gap = np.asarray(first_edge["GapDirection"], dtype=float)
+        normal = np.asarray(first_edge["ProcessNormal"], dtype=float)
+        tangent = np.cross(normal, gap)
+        tangent /= np.linalg.norm(tangent)
+        frame = np.vstack((gap, tangent, normal))
+        # Generation writes BasisPoints as local_points @ frame, while trace files use
+        # the local coupon frame. Undo that canonical rotation before matching knots.
+        local_basis = canonical @ frame.T
+    else:
+        local_basis = canonical
     frame_points = {}
-    for index, point in enumerate(canonical):
+    for index, point in enumerate(local_basis):
         frame_points[tuple(round(value, 12) for value in point)] = coefficients[index]
-    # Coupon trace files store local (already canonical) coordinates.
+    # Coupon trace files store local matching-surface coordinates.
     matched = 0
     for key in list(values):
         rounded = tuple(round(value, 12) for value in key)
