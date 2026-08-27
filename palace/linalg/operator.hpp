@@ -6,7 +6,6 @@
 
 #include <complex>
 #include <memory>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -262,9 +261,8 @@ public:
 using SumOperator = BaseSumOperator<Operator>;
 using SumComplexOperator = BaseSumOperator<ComplexOperator>;
 
-// Wraps a sequence of operators such that: (ABC)ᵀ = CᵀBᵀAᵀ and, for complex symmetric
-// operators, the Hermitian transpose operation is (ABC)ᴴ = CᴴBᴴAᴴ. The caller must
-// ensure the referenced operators outlive this object.
+// Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
+// Hermitian transpose operation is (AB)ᴴ = BᴴAᴴ.
 template <typename ProductOperator, typename OperType>
 class ProductOperatorHelper : public OperType
 {
@@ -316,35 +314,13 @@ class BaseProductOperator
                                 std::complex<double>, double>::type;
 
 private:
-  std::unique_ptr<BaseProductOperator> data_B;
   const OperType &A, &B;
   mutable VecType z;
 
 public:
   BaseProductOperator(const OperType &A, const OperType &B)
     : ProductOperatorHelper<BaseProductOperator<OperType>, OperType>(A.Height(), B.Width()),
-      data_B(nullptr), A(A), B(B), z(B.Height())
-  {
-    z.UseDevice(true);
-  }
-
-  BaseProductOperator(const BaseProductOperator &other)
-    : ProductOperatorHelper<BaseProductOperator<OperType>, OperType>(other.Height(),
-                                                                     other.Width()),
-      data_B(other.data_B ? std::make_unique<BaseProductOperator>(*other.data_B) : nullptr),
-      A(other.A), B(data_B ? *data_B : other.B), z(other.z)
-  {
-  }
-
-  BaseProductOperator(BaseProductOperator &&) = default;
-
-  template <typename... T>
-  BaseProductOperator(const OperType &A, const OperType &B, const OperType &C,
-                      const T &...input)
-    : ProductOperatorHelper<BaseProductOperator<OperType>, OperType>(
-          A.Height(), std::get<sizeof...(T)>(std::tie(C, input...)).Width()),
-      data_B(std::make_unique<BaseProductOperator>(B, C, input...)), A(A), B(*data_B),
-      z(data_B->Height())
+      A(A), B(B), z(B.Height())
   {
     z.UseDevice(true);
   }

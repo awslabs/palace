@@ -3,6 +3,7 @@
 
 #include "jacobi.hpp"
 
+#include <cmath>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -11,14 +12,40 @@ namespace palace
 namespace
 {
 
+bool HasPositiveFiniteDiagonal(MPI_Comm comm, const Vector &real,
+                               const Vector *imag = nullptr)
+{
+  int valid = 1;
+  if (real.Size() > 0)
+  {
+    const auto *R = real.HostRead();
+    const auto *I = imag ? imag->HostRead() : nullptr;
+    for (int i = 0; i < real.Size(); i++)
+    {
+      if (!(std::isfinite(R[i]) && R[i] > 0.0) ||
+          (I && !(std::isfinite(I[i]) && I[i] == 0.0)))
+      {
+        valid = 0;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalMin(1, &valid, comm);
+  return valid;
+}
+
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
   // D⁻¹A is generally not Hermitian, but is similar to the Hermitian operator
-  // D⁻¹ᐟ²AD⁻¹ᐟ² under the existing SPD assumption.
+  // D⁻¹ᐟ²AD⁻¹ᐟ² when A has a finite, strictly positive diagonal.
+  MFEM_VERIFY(HasPositiveFiniteDiagonal(comm, dinv),
+              "Jacobi smoother spectral estimation requires a finite, strictly positive "
+              "operator diagonal!");
   Vector dinv_sqrt(dinv);
   linalg::Sqrt(dinv_sqrt);
   DiagonalOperator DinvSqrt(dinv_sqrt);
-  ProductOperator S(DinvSqrt, A, DinvSqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
   return linalg::SpectralNorm(comm, S, true);
 }
 
@@ -26,10 +53,14 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
 {
   if (A.IsReal())
   {
+    MFEM_VERIFY(HasPositiveFiniteDiagonal(comm, dinv.Real(), &dinv.Imag()),
+                "Jacobi smoother spectral estimation requires a finite, strictly positive "
+                "real operator diagonal!");
     ComplexVector dinv_sqrt(dinv);
     linalg::Sqrt(dinv_sqrt.Real());
     ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
-    ComplexProductOperator S(DinvSqrt, A, DinvSqrt);
+    ComplexProductOperator ADinvSqrt(A, DinvSqrt);
+    ComplexProductOperator S(DinvSqrt, ADinvSqrt);
     return linalg::SpectralNorm(comm, S, true);
   }
   ComplexDiagonalOperator Dinv(dinv);
@@ -93,9 +124,15 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
   // damping factor.
   if (omega == 0.0)
   {
-    auto lambda_max = GetLambdaMax(comm, op, dinv);
-    auto lambda_min = (sf_max - 1.0) * lambda_max;
-    omega = 2.0 / (lambda_min + lambda_max);
+    const auto lambda_max = GetLambdaMax(comm, op, dinv);
+    MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
+                "Encountered invalid maximum eigenvalue in Jacobi smoother!");
+    const auto lambda_min = (sf_max - 1.0) * lambda_max;
+    const auto denominator = lambda_min + lambda_max;
+    MFEM_VERIFY(std::isfinite(denominator) && denominator > 0.0,
+                "Automatic Jacobi damping requires a finite, strictly positive damping "
+                "denominator!");
+    omega = 2.0 / denominator;
   }
   if (omega != 1.0)
   {

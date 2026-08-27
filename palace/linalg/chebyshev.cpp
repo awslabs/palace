@@ -3,6 +3,7 @@
 
 #include "chebyshev.hpp"
 
+#include <cmath>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -11,14 +12,40 @@ namespace palace
 namespace
 {
 
+bool HasPositiveFiniteDiagonal(MPI_Comm comm, const Vector &real,
+                               const Vector *imag = nullptr)
+{
+  int valid = 1;
+  if (real.Size() > 0)
+  {
+    const auto *R = real.HostRead();
+    const auto *I = imag ? imag->HostRead() : nullptr;
+    for (int i = 0; i < real.Size(); i++)
+    {
+      if (!(std::isfinite(R[i]) && R[i] > 0.0) ||
+          (I && !(std::isfinite(I[i]) && I[i] == 0.0)))
+      {
+        valid = 0;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalMin(1, &valid, comm);
+  return valid;
+}
+
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
   // D⁻¹A is generally not Hermitian, but is similar to the Hermitian operator
-  // D⁻¹ᐟ²AD⁻¹ᐟ² under the existing SPD assumption.
+  // D⁻¹ᐟ²AD⁻¹ᐟ² when A has a finite, strictly positive diagonal.
+  MFEM_VERIFY(HasPositiveFiniteDiagonal(comm, dinv),
+              "Chebyshev smoother spectral estimation requires a finite, strictly "
+              "positive operator diagonal!");
   Vector dinv_sqrt(dinv);
   linalg::Sqrt(dinv_sqrt);
   DiagonalOperator DinvSqrt(dinv_sqrt);
-  ProductOperator S(DinvSqrt, A, DinvSqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
   return linalg::SpectralNorm(comm, S, true);
 }
 
@@ -26,10 +53,14 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
 {
   if (A.IsReal())
   {
+    MFEM_VERIFY(HasPositiveFiniteDiagonal(comm, dinv.Real(), &dinv.Imag()),
+                "Chebyshev smoother spectral estimation requires a finite, strictly "
+                "positive real operator diagonal!");
     ComplexVector dinv_sqrt(dinv);
     linalg::Sqrt(dinv_sqrt.Real());
     ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
-    ComplexProductOperator S(DinvSqrt, A, DinvSqrt);
+    ComplexProductOperator ADinvSqrt(A, DinvSqrt);
+    ComplexProductOperator S(DinvSqrt, ADinvSqrt);
     return linalg::SpectralNorm(comm, S, true);
   }
   ComplexDiagonalOperator Dinv(dinv);
@@ -190,8 +221,8 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
   lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
-  MFEM_VERIFY(lambda_max > 0.0,
-              "Encountered zero maximum eigenvalue in Chebyshev smoother!");
+  MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
+              "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
   this->height = op.Height();
   this->width = op.Width();
@@ -257,8 +288,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
   const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
-  MFEM_VERIFY(lambda_max > 0.0,
-              "Encountered zero maximum eigenvalue in Chebyshev smoother!");
+  MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
+              "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;
   theta = 0.5 * (lambda_max + lambda_min);
   delta = 0.5 * (lambda_max - lambda_min);
