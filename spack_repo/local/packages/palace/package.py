@@ -291,9 +291,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("cudss", when="+cudss")
 
     with when("+libxsmm"):
-        # NOTE: @=main != @main since libxsmm has a version main-2023-22, which matches @2:
-        depends_on("libxsmm@=main blas=0")
-        # TODO: depends_on("libxsmm@2: blas=0") when spack-package > 2026.06 is relased
+        depends_on("libxsmm@2: blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
         # NOTE: libxsmm builds on MacOS have linker issues
@@ -336,6 +334,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("magma+shared", when="+shared")
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
+
+    # Umpire 2026.07 requires C++20, while Palace's GPU dependencies use C++17.
+    depends_on("umpire@:2025.12", when="@0.16: +cuda")
+    depends_on("umpire@:2025.12", when="@0.16: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI

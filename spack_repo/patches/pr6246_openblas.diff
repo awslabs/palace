@@ -1,0 +1,19 @@
+diff --git a/repos/spack_repo/builtin/packages/openblas/package.py b/repos/spack_repo/builtin/packages/openblas/package.py
+index 36a62ad324..9e0b28dea2 100644
+--- a/repos/spack_repo/builtin/packages/openblas/package.py
++++ b/repos/spack_repo/builtin/packages/openblas/package.py
+@@ -164,6 +164,14 @@ class Openblas(CMakePackage, MakefilePackage):
+     depends_on("fortran", when="@:0.3.20", type="build")
+     depends_on("perl", when="@:0.3.20", type="build")
+ 
++    # https://github.com/OpenMathLib/OpenBLAS/issues/5947
++    # https://github.com/OpenMathLib/OpenBLAS/pull/5949
++    patch(
++        "https://github.com/OpenMathLib/OpenBLAS/commit/842189bf3f4fe62624bdb6d0186699dd4689f891.diff?full_index=1",
++        when="@0.3.34",
++        sha256="e1923356044ba7d0f41662735a841352cc655a993538b243ae0a03afd4210820",
++    )
++
+     # https://github.com/OpenMathLib/OpenBLAS/pull/5796
+     patch(
+         "https://github.com/OpenMathLib/OpenBLAS/commit/88705a932831c0de1ed136b461c6c239802828b2.diff?full_index=1",
