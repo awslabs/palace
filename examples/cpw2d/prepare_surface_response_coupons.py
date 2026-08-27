@@ -1831,6 +1831,7 @@ def spatial_spec(coupon, args, parameters):
         "Orders": args.orders,
         "Mesh": {
             "FineSize": args.spatial_lc_fine,
+            "TangentialSize": getattr(args, "spatial_lc_tangent", 0.0),
             "FarSize": args.spatial_lc_far,
             "ProcessCoreWidth": getattr(args, "spatial_process_core_width", 0.0),
             "ProcessFineWidth": getattr(args, "spatial_process_fine_width", 0.0),
@@ -1903,6 +1904,8 @@ def generate_spatial_meshes(
                 parameters["bottom_radius"],
                 "--lc-fine",
                 factor * args.spatial_lc_fine,
+                "--lc-tangent",
+                getattr(args, "spatial_lc_tangent", 0.0),
                 "--lc-far",
                 args.spatial_lc_far,
                 "--process-core-width",
@@ -2424,6 +2427,12 @@ def parse_args():
         ),
     )
     parser.add_argument("--spatial-lc-fine", type=float, default=0.02)
+    parser.add_argument(
+        "--spatial-lc-tangent",
+        type=float,
+        default=0.0,
+        help="Near-edge longitudinal size; 0 uses isotropic size",
+    )
     parser.add_argument("--spatial-lc-far", type=float, default=0.3)
     parser.add_argument(
         "--spatial-process-core-width",
@@ -2507,6 +2516,12 @@ def parse_args():
         parser.error("--edge-offset-tolerance must be nonnegative")
     if args.min_process_feature_elements <= 0.0:
         parser.error("--min-process-feature-elements must be positive")
+    if args.spatial_lc_tangent < 0.0:
+        parser.error("--spatial-lc-tangent must be nonnegative")
+    if args.spatial_lc_tangent and not (
+        args.spatial_lc_fine <= args.spatial_lc_tangent <= args.spatial_lc_far
+    ):
+        parser.error("--spatial-lc-tangent must lie between fine and far sizes")
     if args.spatial_process_core_width < 0.0:
         parser.error("--spatial-process-core-width must be nonnegative")
     if args.spatial_process_fine_width < 0.0:

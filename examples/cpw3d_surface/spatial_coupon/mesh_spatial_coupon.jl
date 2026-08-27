@@ -939,6 +939,7 @@ function generate_spatial_coupon(;
     top_rounding::Float64    = 0.01,
     trench_rounding::Float64 = 0.01,
     lc_fine::Float64         = 0.02,
+    lc_tangent::Float64      = 0.0,
     lc_far::Float64          = 0.3,
     process_core_width::Float64 = 0.0,
     process_fine_width::Float64 = 0.0,
@@ -957,6 +958,8 @@ function generate_spatial_coupon(;
     0.0 <= trench_rounding <= overetch || error("trench rounding must not exceed overetch")
     lc_fine > 0.0 || error("fine mesh size must be positive")
     lc_far >= lc_fine || error("far mesh size must not be smaller than fine mesh size")
+    (lc_tangent == 0.0 || lc_fine <= lc_tangent <= lc_far) ||
+        error("tangential mesh size must lie between fine and far sizes")
     process_core_width = process_core_width > 0.0 ?
                          process_core_width :
                          max(2metal_thickness, 4overetch, 8lc_fine)
@@ -1309,20 +1312,34 @@ function generate_spatial_coupon(;
         "fine_width=$process_fine_width, core_width=$process_core_width, " *
         "grading_power=$process_grading_power"
     )
-    gmsh.model.mesh.field.add("Distance", 1)
-    gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
-    # Grade immediately away from the process edge instead of maintaining an
-    # isotropically nanometer-resolved 3D tube. An optional process_fine_width retains a
-    # flat inner band, but the default is zero. The same physical grading profile is used
-    # for every lc_fine in an h-refinement study; only the wall intercept changes.
-    transition_width = process_core_width - process_fine_width
-    distance_expression = "max(F1-$(process_fine_width),0)"
-    size_expression =
-        "min($(lc_far),$(lc_fine)+($(lc_far)-$(lc_fine))*" *
-        "($(distance_expression)/$(transition_width))^$(process_grading_power))"
-    gmsh.model.mesh.field.add("MathEval", 2)
-    gmsh.model.mesh.field.setString(2, "F", size_expression)
-    gmsh.model.mesh.field.setAsBackgroundMesh(2)
+    if lc_tangent > 0.0
+        # Gmsh's curve-attractor metric resolves the process cross-section normally while
+        # keeping the smooth longitudinal edge direction coarse. The metric follows the
+        # nearest curve tangent, so differently oriented cluster edges do not require a
+        # single global frame; intersections naturally receive the stricter local metric.
+        gmsh.model.mesh.field.add("AttractorAnisoCurve", 1)
+        gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
+        gmsh.model.mesh.field.setNumber(1, "DistMin", process_fine_width)
+        gmsh.model.mesh.field.setNumber(1, "DistMax", process_core_width)
+        gmsh.model.mesh.field.setNumber(1, "SizeMinNormal", lc_fine)
+        gmsh.model.mesh.field.setNumber(1, "SizeMaxNormal", lc_far)
+        gmsh.model.mesh.field.setNumber(1, "SizeMinTangent", lc_tangent)
+        gmsh.model.mesh.field.setNumber(1, "SizeMaxTangent", lc_far)
+        gmsh.model.mesh.field.setNumber(1, "Sampling", 100)
+        gmsh.model.mesh.field.setAsBackgroundMesh(1)
+    else
+        gmsh.model.mesh.field.add("Distance", 1)
+        gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
+        # Isotropic fallback with immediate power-law grading away from process edges.
+        transition_width = process_core_width - process_fine_width
+        distance_expression = "max(F1-$(process_fine_width),0)"
+        size_expression =
+            "min($(lc_far),$(lc_fine)+($(lc_far)-$(lc_fine))*" *
+            "($(distance_expression)/$(transition_width))^$(process_grading_power))"
+        gmsh.model.mesh.field.add("MathEval", 2)
+        gmsh.model.mesh.field.setString(2, "F", size_expression)
+        gmsh.model.mesh.field.setAsBackgroundMesh(2)
+    end
     for (name, value) in [
         ("Mesh.MeshSizeMin", lc_fine),
         ("Mesh.MeshSizeMax", lc_far),
@@ -1371,6 +1388,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"NodeCount\": $node_count,")
         println(stream, "  \"VolumeElementCount\": $element_count,")
         println(stream, "  \"FineSize\": $lc_fine,")
+        println(stream, "  \"TangentialSize\": $lc_tangent,")
         println(stream, "  \"FarSize\": $lc_far,")
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
@@ -1407,6 +1425,7 @@ function parse_options(args)
         "--top-radius" => ("top_rounding", Float64),
         "--bottom-radius" => ("trench_rounding", Float64),
         "--lc-fine" => ("lc_fine", Float64),
+        "--lc-tangent" => ("lc_tangent", Float64),
         "--lc-far" => ("lc_far", Float64),
         "--process-core-width" => ("process_core_width", Float64),
         "--process-fine-width" => ("process_fine_width", Float64),
@@ -1443,6 +1462,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         top_rounding    = get(options, "top_rounding", 0.01),
         trench_rounding = get(options, "trench_rounding", 0.01),
         lc_fine         = get(options, "lc_fine", 0.02),
+        lc_tangent      = get(options, "lc_tangent", 0.0),
         lc_far          = get(options, "lc_far", 0.3),
         process_core_width = get(options, "process_core_width", 0.0),
         process_fine_width = get(options, "process_fine_width", 0.0),
