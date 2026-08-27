@@ -225,6 +225,19 @@ TEST_CASE("circular_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("circular_hole", "circular_hole.json", "", opts);
 }
 
+// Mixed current-flux excitation. The aperture integral recovering M[1][2] is
+// reduced over surfaces the partitioner may split, so this case catches a
+// double-counted contribution.
+TEST_CASE("ring_disk_mixed_current_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("ring_disk", "ring_disk.json", "", opts);
+}
+
 // --- cylinder: reltol=1e-4, abstol=1e-16 for the four eigen-style cases ---
 
 TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
