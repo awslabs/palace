@@ -111,25 +111,12 @@ public:
   struct ReducedModelStats
   {
     std::size_t exact_solves = 0;
-    std::size_t complex_exact_solves = 0;
     std::size_t reduced_solves = 0;
-    std::size_t reduced_fallbacks = 0;
-    std::size_t periodic_exact_checks = 0;
-    std::size_t full_operator_assemblies = 0;
-    std::size_t affine_model_builds = 0;
-    std::size_t affine_projection_extensions = 0;
-    std::size_t affine_reduced_solves = 0;
-    std::size_t gram_residual_evaluations = 0;
-    std::size_t direct_residual_verifications = 0;
-    std::size_t invalid_gram_fallbacks = 0;
-    std::size_t offline_basis_capacity = 0;
+    std::size_t fallbacks = 0;
+    std::size_t periodic_checks = 0;
     std::size_t offline_basis_rank = 0;
     std::size_t online_basis_cap = 0;
-    std::size_t basis_cap_skips = 0;
-    double last_residual = 0.0;
-    double worst_accepted_residual = 0.0;
-    double worst_affine_discrepancy = 0.0;
-    double worst_gram_direct_discrepancy = 0.0;
+    double worst_residual = 0.0;
   };
 
   // Bare FE space constructor (WavePort). No multigrid — Att/Ann are re-assembled at
