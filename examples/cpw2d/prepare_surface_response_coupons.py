@@ -2425,7 +2425,7 @@ def parse_args():
         default=0.0,
         help=(
             "Width of the nanometer-resolved process-edge tube; 0 selects "
-            "max(4*metal thickness, 4*overetch, 8*lc-fine)"
+            "max(2*metal thickness, 4*overetch, 8*lc-fine)"
         ),
     )
     parser.add_argument("--spatial-max-nodes", type=int, default=500_000)

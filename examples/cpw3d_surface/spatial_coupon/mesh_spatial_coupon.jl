@@ -957,7 +957,7 @@ function generate_spatial_coupon(;
     lc_far >= lc_fine || error("far mesh size must not be smaller than fine mesh size")
     process_core_width = process_core_width > 0.0 ?
                          process_core_width :
-                         max(4metal_thickness, 4overetch, 8lc_fine)
+                         max(2metal_thickness, 4overetch, 8lc_fine)
     process_core_width > 2lc_fine ||
         error("process core width must exceed twice the fine mesh size")
     max_nodes > 0 || error("maximum node budget must be positive")
