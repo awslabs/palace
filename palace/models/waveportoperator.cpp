@@ -360,8 +360,8 @@ public:
 WavePortData::WavePortData(const config::WavePortData &data,
                            const config::BoundaryData &boundaries,
                            const config::DomainData &domains, ProblemType problem_type,
-                           const config::LinearSolverData &linear, bool train_reduced_model,
-                           const Units &units, const MaterialOperator &mat_op,
+                           const config::LinearSolverData &linear, const Units &units,
+                           const MaterialOperator &mat_op,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
@@ -539,10 +539,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
         data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, port_linear,
         data.eigen_solver, data.verbose, port_comm);
-    if (train_reduced_model)
-    {
-      mode_solver->SetReducedModelTraining(true);
-    }
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -765,6 +761,25 @@ void WavePortData::Initialize(double omega)
   }
 }
 
+void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
+                                                 std::size_t num_excitations,
+                                                 bool synthesis_seed)
+{
+  const std::size_t seed = synthesis_seed ? 1 : 0;
+  MFEM_VERIFY(num_excitations > 0, "Wave-port PROM training requires an excitation!");
+  MFEM_VERIFY(max_samples <=
+                  (std::numeric_limits<std::size_t>::max() - seed) / num_excitations,
+              "Wave-port PROM training snapshot capacity overflow!");
+  const std::size_t snapshots = max_samples * num_excitations + seed;
+  MFEM_VERIFY(static_cast<std::size_t>(mode_idx) <=
+                  std::numeric_limits<std::size_t>::max() /
+                      std::max(snapshots, std::size_t{1}),
+              "Wave-port PROM basis capacity overflow!");
+  const std::size_t capacity = static_cast<std::size_t>(mode_idx) * snapshots;
+  mode_solver->SetReducedModelTraining(
+      true, std::max(capacity, static_cast<std::size_t>(mode_idx)));
+}
+
 void WavePortData::EnableReducedModel(double adaptive_tol)
 {
   mode_solver->EnableReducedModel(adaptive_tol);
@@ -774,14 +789,25 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
 {
   auto stats = mode_solver->GetReducedModelStats();
   unsigned long long counts[] = {
-      stats.exact_solves,          stats.complex_exact_solves,
-      stats.reduced_solves,        stats.reduced_fallbacks,
-      stats.periodic_exact_checks, stats.full_operator_assemblies,
-      stats.affine_model_builds,   stats.affine_projection_extensions,
+      stats.exact_solves,
+      stats.complex_exact_solves,
+      stats.reduced_solves,
+      stats.reduced_fallbacks,
+      stats.periodic_exact_checks,
+      stats.full_operator_assemblies,
+      stats.affine_model_builds,
+      stats.affine_projection_extensions,
       stats.affine_reduced_solves,
+      stats.gram_residual_evaluations,
+      stats.direct_residual_verifications,
+      stats.invalid_gram_fallbacks,
+      stats.offline_basis_capacity,
+      stats.offline_basis_rank,
+      stats.online_basis_cap,
+      stats.basis_cap_skips,
   };
   double values[] = {stats.last_residual, stats.worst_accepted_residual,
-                     stats.worst_affine_discrepancy};
+                     stats.worst_affine_discrepancy, stats.worst_gram_direct_discrepancy};
   Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
                  port_mesh->GetComm());
   Mpi::Broadcast(static_cast<int>(std::size(values)), values, port_root,
@@ -795,9 +821,17 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
   stats.affine_model_builds = counts[6];
   stats.affine_projection_extensions = counts[7];
   stats.affine_reduced_solves = counts[8];
+  stats.gram_residual_evaluations = counts[9];
+  stats.direct_residual_verifications = counts[10];
+  stats.invalid_gram_fallbacks = counts[11];
+  stats.offline_basis_capacity = counts[12];
+  stats.offline_basis_rank = counts[13];
+  stats.online_basis_cap = counts[14];
+  stats.basis_cap_skips = counts[15];
   stats.last_residual = values[0];
   stats.worst_accepted_residual = values[1];
   stats.worst_affine_discrepancy = values[2];
+  stats.worst_gram_direct_discrepancy = values[3];
   return stats;
 }
 
@@ -1227,10 +1261,8 @@ void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &bound
     }
     port_dbc_bcs.Sort();
     port_dbc_bcs.Unique();
-    ports.try_emplace(idx, data, boundaries, domains, problem_type, solver.linear,
-                      problem_type == ProblemType::DRIVEN &&
-                          solver.driven.adaptive_tol > 0.0,
-                      units, mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
+    ports.try_emplace(idx, data, boundaries, domains, problem_type, solver.linear, units,
+                      mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
   }
   MFEM_VERIFY(
       ports.empty() || problem_type == ProblemType::DRIVEN ||
@@ -1295,6 +1327,16 @@ const WavePortData &WavePortOperator::GetPort(int idx) const
   return it->second;
 }
 
+void WavePortOperator::ConfigureReducedModelTraining(std::size_t max_samples,
+                                                     std::size_t num_excitations,
+                                                     bool synthesis_seed)
+{
+  for (auto &[idx, data] : ports)
+  {
+    data.ConfigureReducedModelTraining(max_samples, num_excitations, synthesis_seed);
+  }
+}
+
 void WavePortOperator::EnableReducedModel(double adaptive_tol)
 {
   if (ports.empty())
@@ -1306,8 +1348,12 @@ void WavePortOperator::EnableReducedModel(double adaptive_tol)
   for (auto &[idx, data] : ports)
   {
     data.EnableReducedModel(adaptive_tol);
-    Mpi::Print(" Port {:d}: basis = {:d}, backward tolerance = {:.3e}\n", idx,
-               data.GetReducedBasisSize(), data.GetReducedTolerance());
+    const auto stats = data.GetReducedModelStats();
+    Mpi::Print(" Port {:d}: basis = {:d}, offline capacity/rank = {:d}/{:d}, online cap = "
+               "{:d}, backward tolerance = {:.3e}\n",
+               idx, data.GetReducedBasisSize(), stats.offline_basis_capacity,
+               stats.offline_basis_rank, stats.online_basis_cap,
+               data.GetReducedTolerance());
   }
 }
 
@@ -1321,16 +1367,19 @@ void WavePortOperator::PrintReducedModelStats() const
   for (const auto &[idx, data] : ports)
   {
     const auto stats = data.GetReducedModelStats();
-    Mpi::Print(" Port {:d}: basis = {:d}, exact = {:d}, affine reduced = {:d}, "
-               "fallbacks = {:d}, periodic checks = {:d}, full assemblies = {:d}, "
-               "affine builds/extensions = {:d}/{:d}, last/worst residual = "
-               "{:.3e}/{:.3e}, affine discrepancy = {:.3e}\n",
-               idx, data.GetReducedBasisSize(), stats.exact_solves,
-               stats.affine_reduced_solves, stats.reduced_fallbacks,
-               stats.periodic_exact_checks, stats.full_operator_assemblies,
-               stats.affine_model_builds, stats.affine_projection_extensions,
-               stats.last_residual, stats.worst_accepted_residual,
-               stats.worst_affine_discrepancy);
+    Mpi::Print(
+        " Port {:d}: basis/cap = {:d}/{:d}, exact = {:d}, affine reduced = {:d}, "
+        "fallbacks = {:d}, periodic checks = {:d}, full assemblies = {:d}, "
+        "affine builds/extensions = {:d}/{:d}, Gram/direct/invalid = {:d}/{:d}/{:d}, "
+        "last/worst residual = {:.3e}/{:.3e}, affine discrepancy = {:.3e}, "
+        "Gram/direct discrepancy = {:.3e}, cap skips = {:d}\n",
+        idx, data.GetReducedBasisSize(), stats.online_basis_cap, stats.exact_solves,
+        stats.affine_reduced_solves, stats.reduced_fallbacks, stats.periodic_exact_checks,
+        stats.full_operator_assemblies, stats.affine_model_builds,
+        stats.affine_projection_extensions, stats.gram_residual_evaluations,
+        stats.direct_residual_verifications, stats.invalid_gram_fallbacks,
+        stats.last_residual, stats.worst_accepted_residual, stats.worst_affine_discrepancy,
+        stats.worst_gram_direct_discrepancy, stats.basis_cap_skips);
   }
 }
 

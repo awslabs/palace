@@ -541,8 +541,10 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       auto custom_it = effective_opts.custom_checks.find(rel);
       if (custom_it != effective_opts.custom_checks.end())
       {
-        if (ValidateCSVTables(a, r, effective_opts) &&
-            !SkipNumericComparison(effective_opts))
+        // A custom check owns its numeric tolerance policy. Run it even when the generic
+        // table comparison is disabled with infinite tolerances (adaptive smoke tests can
+        // still require a targeted physical observable such as complex S-parameters).
+        if (ValidateCSVTables(a, r, effective_opts))
         {
           custom_it->second(a, r);
         }

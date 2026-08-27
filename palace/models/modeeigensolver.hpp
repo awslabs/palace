@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <optional>
 #include <tuple>
 #include <vector>
 #include <Eigen/Dense>
@@ -118,9 +119,17 @@ public:
     std::size_t affine_model_builds = 0;
     std::size_t affine_projection_extensions = 0;
     std::size_t affine_reduced_solves = 0;
+    std::size_t gram_residual_evaluations = 0;
+    std::size_t direct_residual_verifications = 0;
+    std::size_t invalid_gram_fallbacks = 0;
+    std::size_t offline_basis_capacity = 0;
+    std::size_t offline_basis_rank = 0;
+    std::size_t online_basis_cap = 0;
+    std::size_t basis_cap_skips = 0;
     double last_residual = 0.0;
     double worst_accepted_residual = 0.0;
     double worst_affine_discrepancy = 0.0;
+    double worst_gram_direct_discrepancy = 0.0;
   };
 
   // Bare FE space constructor (WavePort). No multigrid — Att/Ann are re-assembled at
@@ -164,7 +173,7 @@ public:
   // Collect exact real-frequency eigenvectors for a per-port reduced model. Reduced
   // evaluation remains disabled until EnableReducedModel is called, so adaptive offline
   // HDM samples always use the exact eigensolver while seeding the basis.
-  void SetReducedModelTraining(bool enable = true, std::size_t max_basis_size = 32);
+  void SetReducedModelTraining(bool enable, std::size_t max_basis_size);
 
   // Enable guarded Rayleigh-Ritz evaluation for subsequent real-frequency solves. The
   // reduced tolerance is derived conservatively from the adaptive driven tolerance and
@@ -258,7 +267,7 @@ private:
   bool reduced_training = false;
   bool reduced_enabled = false;
   bool reduced_solution = false;
-  std::size_t reduced_basis_cap = 32;
+  std::size_t reduced_basis_cap = 0;
   std::size_t reduced_solves_since_exact = 0;
   static constexpr std::size_t REDUCED_EXACT_CHECK_INTERVAL = 20;
   double reduced_tol = 0.0;
@@ -268,6 +277,9 @@ private:
   std::vector<double> reduced_errors;
   ComplexVector warm_start;
   ReducedModelStats reduced_stats;
+  bool basis_cap_warned = false;
+  bool gram_direct_self_checked = false;
+  bool gram_residual_trusted = true;
 
   // Exact affine decomposition of the real-frequency wave-port pencil. Each component is
   // a frequency-independent full-space operator A_q together with its cached actions A_q V
@@ -295,6 +307,9 @@ private:
   std::vector<AffineComponent> affine_components;
   std::vector<ComplexVector> affine_BV;
   Eigen::MatrixXcd affine_Br;
+  // Gram matrix for the block action multivector Z = [BV, A_1V, ..., A_QV]. It permits
+  // exact full-space backward residual evaluation using only reduced dense arithmetic.
+  Eigen::MatrixXcd affine_action_gram;
   std::complex<double> last_assembled_omega = 0.0;
   double last_assembled_sigma = 0.0;
 
@@ -316,13 +331,22 @@ private:
                                   const Eigen::MatrixXcd &Br,
                                   const std::vector<ComplexVector> &AV,
                                   const std::vector<ComplexVector> &BV);
+  bool TryReducedSolveFromGram(double sigma, const Eigen::MatrixXcd &Ar,
+                               const std::vector<std::complex<double>> &coefficients);
 
   // Build exact fixed operator components, project them, and evaluate their scalar laws.
   void BuildAffineModel();
   void UpdateAffineProjection(std::size_t old_basis_size);
+  void BuildAffineActionGram();
   std::complex<double> EvaluateAffineCoefficient(const AffineComponent &component,
                                                  double omega, double sigma) const;
   double ValidateAffineModel(double omega, double sigma) const;
+  std::optional<double>
+  EvaluateAffineGramResidual(const Eigen::VectorXcd &y, std::complex<double> lambda,
+                             const std::vector<std::complex<double>> &coefficients);
+  double
+  EvaluateAffineDirectResidual(const Eigen::VectorXcd &y, std::complex<double> lambda,
+                               const std::vector<std::complex<double>> &coefficients) const;
 
   // Add exact raw eigenvectors to the reduced basis and update the exact-solve warm start.
   void EnrichReducedBasis(int num_converged);

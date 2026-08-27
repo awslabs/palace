@@ -89,10 +89,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Accelerated numeric wave ports in adaptive driven sweeps with a guarded per-port
     reduced generalized eigensolver. Exact offline modes train a complex cross-section
-    basis; online frequencies use a dense Rayleigh–Ritz solve with a reconstructed
-    full-space residual, periodic exact checks, and transparent exact fallback/enrichment.
-    The complete frequency-dependent port mode is reconstructed for excitation and
-    postprocessing, rather than approximating only its propagation constant.
+    basis; online frequencies use a dense Rayleigh–Ritz solve with an offline-precomputed
+    full-space residual Gram matrix, periodic exact checks, and transparent exact
+    fallback/enrichment. Near-threshold or invalid Gram residuals are verified by direct
+    full-vector evaluation. The complete frequency-dependent port mode is reconstructed for
+    excitation and postprocessing, rather than approximating only its propagation constant.
+    Per-port training capacity follows `AdaptiveMaxSamples`, excitation count, and requested
+    mode count; online enrichment headroom follows the actual offline basis rank instead of
+    a fixed basis-size limit.
   - Omit material terms with mathematically exact-zero coefficients from fine-level partial
     assembly while retaining the configured coarse sparse structure for symbolic reuse.
     [PR 876](https://github.com/awslabs/palace/pull/876).

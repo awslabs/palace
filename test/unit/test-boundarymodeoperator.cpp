@@ -47,7 +47,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  double epsilon_r, int order, int num_modes,
                                  const std::function<void(IoData &)> &configure_bcs,
                                  bool exercise_reduced_model = false,
-                                 int reduced_evaluations = 1)
+                                 int reduced_evaluations = 1,
+                                 std::size_t reduced_training_capacity = 16)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -127,7 +128,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   if (exercise_reduced_model)
   {
-    mode_solver.SetReducedModelTraining(true, 16);
+    mode_solver.SetReducedModelTraining(true, reduced_training_capacity);
     // Homogeneous PEC waveguide modes have smooth (in fact frequency-independent in shape)
     // transverse fields, making this a deterministic reduced-model acceptance test.
     solve_at(0.9 * omega);
@@ -222,6 +223,15 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   CHECK(reduced.complex_exact_converged >= num_modes);
   CHECK(reduced.reduced_stats.full_operator_assemblies == 4);
   CHECK(reduced.reduced_stats.affine_model_builds == 1);
+  CHECK(reduced.reduced_stats.gram_residual_evaluations > 0);
+  CHECK(reduced.reduced_stats.direct_residual_verifications > 0);
+  CHECK(reduced.reduced_stats.invalid_gram_fallbacks == 0);
+  CHECK(reduced.reduced_stats.worst_gram_direct_discrepancy < 1.0e-3);
+  CHECK(reduced.reduced_stats.offline_basis_capacity == 16);
+  CHECK(reduced.reduced_stats.offline_basis_rank >= num_modes);
+  CHECK(reduced.reduced_stats.online_basis_cap >=
+        reduced.reduced_stats.offline_basis_rank + 4 * num_modes);
+  CHECK(reduced.reduced_stats.basis_cap_skips == 0);
   CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
   CHECK(reduced.reduced_stats.complex_exact_solves == 1);
   for (int i = 0; i < num_modes; i++)
@@ -229,6 +239,19 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
     CHECK_THAT(reduced.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
     CHECK_THAT(reduced.kn[i].imag(), WithinAbs(exact.kn[i].imag(), 1.0e-8));
   }
+}
+
+TEST_CASE("ModeEigenSolver reduced basis capacity lifecycle",
+          "[boundarymodeoperator][Serial]")
+{
+  auto result =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, [](IoData &) {}, true, 1, 1);
+  REQUIRE(result.num_converged >= 1);
+  CHECK(result.reduced_stats.offline_basis_capacity == 1);
+  CHECK(result.reduced_stats.offline_basis_rank == 1);
+  CHECK(result.reduced_stats.online_basis_cap == 5);
+  CHECK(result.reduced_stats.basis_cap_skips >= 1);
+  CHECK(result.reduced_stats.affine_reduced_solves == 1);
 }
 
 TEST_CASE("ModeEigenSolver Impedance shifts kn", "[boundarymodeoperator][Serial]")
@@ -275,6 +298,10 @@ TEST_CASE("ModeEigenSolver rational impedance affine component",
   CHECK(reduced.reduced_stats.affine_reduced_solves == 1);
   CHECK(reduced.reduced_stats.full_operator_assemblies == 3);
   CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
+  CHECK(reduced.reduced_stats.gram_residual_evaluations > 0);
+  CHECK(reduced.reduced_stats.direct_residual_verifications > 0);
+  CHECK(reduced.reduced_stats.invalid_gram_fallbacks == 0);
+  CHECK(reduced.reduced_stats.worst_gram_direct_discrepancy < 1.0e-3);
   CHECK_THAT(reduced.kn[0].real(), WithinRel(exact.kn[0].real(), 1.0e-6));
   CHECK_THAT(reduced.kn[0].imag(), WithinAbs(exact.kn[0].imag(), 1.0e-8));
 }
@@ -305,6 +332,10 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   CHECK(cond_reduced.reduced_stats.affine_reduced_solves == 1);
   CHECK(cond_reduced.reduced_stats.full_operator_assemblies == 3);
   CHECK(cond_reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
+  CHECK(cond_reduced.reduced_stats.gram_residual_evaluations > 0);
+  CHECK(cond_reduced.reduced_stats.direct_residual_verifications > 0);
+  CHECK(cond_reduced.reduced_stats.invalid_gram_fallbacks == 0);
+  CHECK(cond_reduced.reduced_stats.worst_gram_direct_discrepancy < 1.0e-3);
   CHECK(cond_reduced.reduced_stats.last_residual <= cond_reduced.reduced_tol);
   CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));

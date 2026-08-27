@@ -708,6 +708,7 @@ void ModeEigenSolver::SetReducedModelTraining(bool enable, std::size_t max_basis
 {
   reduced_training = enable;
   reduced_basis_cap = std::max(max_basis_size, static_cast<std::size_t>(num_modes));
+  reduced_stats.offline_basis_capacity = reduced_basis_cap;
 }
 
 void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
@@ -719,6 +720,20 @@ void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
   // component assembly; only port-solver ranks own basis/projection data.
   Mpi::GlobalMax(1, &has_basis, nd_fespace.GetComm());
   reduced_enabled = (has_basis != 0);
+  std::size_t offline_rank = reduced_basis.size();
+  Mpi::GlobalMax(1, &offline_rank, nd_fespace.GetComm());
+  reduced_stats.offline_basis_rank = offline_rank;
+  const std::size_t half_rank = offline_rank / 2 + offline_rank % 2;
+  MFEM_VERIFY(static_cast<std::size_t>(num_modes) <=
+                  std::numeric_limits<std::size_t>::max() / 4,
+              "Wave-port PROM basis headroom overflow!");
+  const std::size_t mode_headroom = 4 * static_cast<std::size_t>(num_modes);
+  const std::size_t headroom = std::max(mode_headroom, half_rank);
+  MFEM_VERIFY(offline_rank <= std::numeric_limits<std::size_t>::max() - headroom,
+              "Wave-port PROM online basis capacity overflow!");
+  reduced_basis_cap =
+      std::max(offline_rank + headroom, static_cast<std::size_t>(num_modes));
+  reduced_stats.online_basis_cap = reduced_basis_cap;
   // Do not ask the reduced model to be more accurate than the truth eigensolves used to
   // construct it. For loose adaptive sweeps, cap the port backward error at 1e-4.
   reduced_tol = std::max(10.0 * eig_tol, std::min(1.0e-4, 0.01 * adaptive_tol));
@@ -1090,10 +1105,47 @@ void ModeEigenSolver::UpdateAffineProjection(std::size_t old_basis_size)
       }
     }
   }
+  BuildAffineActionGram();
   if (old_basis_size > 0 && n > old_basis_size)
   {
     reduced_stats.affine_projection_extensions++;
   }
+}
+
+void ModeEigenSolver::BuildAffineActionGram()
+{
+  if (solver_comm == MPI_COMM_NULL)
+  {
+    return;
+  }
+  const std::size_t n = reduced_basis.size();
+  const std::size_t n_families = 1 + affine_components.size();
+  MFEM_VERIFY(n > 0 && affine_BV.size() == n,
+              "Invalid affine action data for Gram construction!");
+  const std::size_t dim = n_families * n;
+  MFEM_VERIFY(dim <= static_cast<std::size_t>(
+                         std::sqrt(static_cast<double>(std::numeric_limits<int>::max()))),
+              "Affine action Gram matrix exceeds MPI count range!");
+
+  auto action = [&](std::size_t family, std::size_t j) -> const ComplexVector &
+  { return (family == 0) ? affine_BV[j] : affine_components[family - 1].AV[j]; };
+
+  affine_action_gram.resize(dim, dim);
+  for (std::size_t col = 0; col < dim; col++)
+  {
+    const std::size_t col_family = col / n, col_j = col % n;
+    for (std::size_t row = 0; row < dim; row++)
+    {
+      const std::size_t row_family = row / n, row_i = row % n;
+      // LocalDot(x,y) = yᴴx, so this is W_rowᴴ W_col.
+      affine_action_gram(row, col) =
+          linalg::LocalDot(action(col_family, col_j), action(row_family, row_i));
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(dim * dim), affine_action_gram.data(), solver_comm);
+  affine_action_gram = 0.5 * (affine_action_gram + affine_action_gram.adjoint()).eval();
+  gram_direct_self_checked = false;
+  gram_residual_trusted = true;
 }
 
 double ModeEigenSolver::ValidateAffineModel(double omega, double sigma) const
@@ -1133,8 +1185,21 @@ double ModeEigenSolver::ValidateAffineModel(double omega, double sigma) const
 
 bool ModeEigenSolver::AddReducedBasisVector(const ComplexVector &x)
 {
-  if (reduced_basis.size() >= reduced_basis_cap || solver_comm == MPI_COMM_NULL)
+  if (solver_comm == MPI_COMM_NULL)
   {
+    return false;
+  }
+  if (reduced_basis.size() >= reduced_basis_cap)
+  {
+    reduced_stats.basis_cap_skips++;
+    if (!basis_cap_warned)
+    {
+      Mpi::Warning(solver_comm,
+                   "Wave-port PROM basis reached its capacity ({:d}); exact solves remain "
+                   "authoritative but further enrichment is disabled.\n",
+                   reduced_basis_cap);
+      basis_cap_warned = true;
+    }
     return false;
   }
 
@@ -1188,7 +1253,7 @@ void ModeEigenSolver::EnrichReducedBasis(int num_converged)
   const int n = std::min(num_modes, num_converged);
   ComplexVector x(nd_size + h1_size);
   x.UseDevice(true);
-  for (int i = 0; i < n && reduced_basis.size() < reduced_basis_cap; i++)
+  for (int i = 0; i < n; i++)
   {
     eigen->GetEigenvector(mode_perm[i], x);
     AddReducedBasisVector(x);
@@ -1239,23 +1304,260 @@ bool ModeEigenSolver::TryAffineReducedSolve(double omega, double sigma)
   }
 
   Eigen::MatrixXcd Ar = Eigen::MatrixXcd::Zero(n, n);
-  std::vector<ComplexVector> AV(n);
-  for (int j = 0; j < n; j++)
-  {
-    AV[j].SetSize(nd_size + h1_size);
-    AV[j].UseDevice(true);
-    AV[j] = 0.0;
-  }
+  std::vector<std::complex<double>> coefficients;
+  coefficients.reserve(affine_components.size());
   for (const auto &component : affine_components)
   {
-    const std::complex<double> coeff = EvaluateAffineCoefficient(component, omega, sigma);
+    const auto coeff = EvaluateAffineCoefficient(component, omega, sigma);
+    coefficients.push_back(coeff);
     Ar.noalias() += coeff * component.Ar;
+  }
+  return TryReducedSolveFromGram(sigma, Ar, coefficients);
+}
+
+std::optional<double> ModeEigenSolver::EvaluateAffineGramResidual(
+    const Eigen::VectorXcd &y, std::complex<double> lambda,
+    const std::vector<std::complex<double>> &coefficients)
+{
+  reduced_stats.gram_residual_evaluations++;
+  const long n = static_cast<long>(reduced_basis.size());
+  const long n_families = 1 + static_cast<long>(affine_components.size());
+  const long dim = n * n_families;
+  MFEM_VERIFY(y.size() == n && coefficients.size() == affine_components.size() &&
+                  affine_action_gram.rows() == dim && affine_action_gram.cols() == dim,
+              "Invalid affine Gram residual dimensions!");
+
+  Eigen::VectorXcd cb = Eigen::VectorXcd::Zero(dim);
+  Eigen::VectorXcd ca = Eigen::VectorXcd::Zero(dim);
+  cb.head(n) = y;
+  for (long q = 0; q < static_cast<long>(coefficients.size()); q++)
+  {
+    ca.segment((q + 1) * n, n) = coefficients[q] * y;
+  }
+  const Eigen::VectorXcd cr = cb - lambda * ca;
+
+  auto norm_from_gram = [&](const Eigen::VectorXcd &c) -> std::optional<double>
+  {
+    const std::complex<double> value = c.dot(affine_action_gram * c);
+    const double scale =
+        std::max(1.0, c.squaredNorm() * affine_action_gram.cwiseAbs().maxCoeff() * dim);
+    const double roundoff = 256.0 * std::numeric_limits<double>::epsilon() * scale;
+    if (!std::isfinite(value.real()) || !std::isfinite(value.imag()) ||
+        std::abs(value.imag()) > roundoff || value.real() < -roundoff)
+    {
+      return std::nullopt;
+    }
+    return std::sqrt(std::max(value.real(), 0.0));
+  };
+
+  const auto norm_b = norm_from_gram(cb);
+  const auto norm_a = norm_from_gram(ca);
+  const auto norm_r = norm_from_gram(cr);
+  if (!norm_b || !norm_a || !norm_r)
+  {
+    reduced_stats.invalid_gram_fallbacks++;
+    return std::nullopt;
+  }
+  const double denom = *norm_b + std::abs(lambda) * *norm_a;
+  const double eta = *norm_r / std::max(denom, std::numeric_limits<double>::min());
+  if (!std::isfinite(eta))
+  {
+    reduced_stats.invalid_gram_fallbacks++;
+    return std::nullopt;
+  }
+  return eta;
+}
+
+double ModeEigenSolver::EvaluateAffineDirectResidual(
+    const Eigen::VectorXcd &y, std::complex<double> lambda,
+    const std::vector<std::complex<double>> &coefficients) const
+{
+  const int n = static_cast<int>(reduced_basis.size());
+  MFEM_VERIFY(y.size() == n && coefficients.size() == affine_components.size(),
+              "Invalid affine direct residual dimensions!");
+  ComplexVector ax(nd_size + h1_size), bx(nd_size + h1_size), residual(nd_size + h1_size);
+  ax.UseDevice(true);
+  bx.UseDevice(true);
+  residual.UseDevice(true);
+  ax = 0.0;
+  bx = 0.0;
+  for (int j = 0; j < n; j++)
+  {
+    bx.Add(y(j), affine_BV[j]);
+  }
+  for (std::size_t q = 0; q < affine_components.size(); q++)
+  {
     for (int j = 0; j < n; j++)
     {
-      AV[j].Add(coeff, component.AV[j]);
+      ax.Add(coefficients[q] * y(j), affine_components[q].AV[j]);
     }
   }
-  return TryReducedSolveFromActions(sigma, Ar, affine_Br, AV, affine_BV);
+  residual = bx;
+  residual.Add(-lambda, ax);
+  const double denom =
+      linalg::Norml2(solver_comm, bx) + std::abs(lambda) * linalg::Norml2(solver_comm, ax);
+  return linalg::Norml2(solver_comm, residual) /
+         std::max(denom, std::numeric_limits<double>::min());
+}
+
+bool ModeEigenSolver::TryReducedSolveFromGram(
+    double sigma, const Eigen::MatrixXcd &Ar,
+    const std::vector<std::complex<double>> &coefficients)
+{
+  int n = static_cast<int>(reduced_basis.size());
+  MFEM_VERIFY(Ar.rows() == n && Ar.cols() == n && affine_Br.rows() == n &&
+                  affine_Br.cols() == n,
+              "Invalid reduced affine mode-operator dimensions!");
+
+  Eigen::MatrixXcd Bq = affine_Br, Aq = Ar;
+  Eigen::VectorXcd alpha(n), beta(n);
+  Eigen::MatrixXcd vl_dummy(1, 1), vr(n, n);
+  int ldvl = 1, ldvr = n, lwork = std::max(4 * n, 1), info = 0;
+  Eigen::VectorXcd work(lwork);
+  Eigen::VectorXd rwork(std::max(8 * n, 1));
+  char job_n = 'N', job_v = 'V';
+  zggev_(&job_n, &job_v, &n, Bq.data(), &n, Aq.data(), &n, alpha.data(), beta.data(),
+         vl_dummy.data(), &ldvl, vr.data(), &ldvr, work.data(), &lwork, rwork.data(),
+         &info);
+  if (info != 0)
+  {
+    return false;
+  }
+
+  struct Candidate
+  {
+    std::complex<double> lambda;
+    std::complex<double> kn;
+    Eigen::VectorXcd coefficients;
+    double residual;
+    double distance;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(n);
+  const double kn_target = std::sqrt(-sigma);
+  double best_rejected_residual = std::numeric_limits<double>::infinity();
+  for (int k = 0; k < n; k++)
+  {
+    const double scale = std::max(std::abs(alpha(k)), std::abs(beta(k)));
+    if (!(scale > 0.0) || std::abs(beta(k)) <= 1.0e-13 * scale ||
+        std::abs(alpha(k)) <= 1.0e-13 * scale)
+    {
+      continue;
+    }
+    const std::complex<double> lambda = alpha(k) / beta(k);
+    const std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+    if (!std::isfinite(lambda.real()) || !std::isfinite(lambda.imag()) ||
+        !std::isfinite(kn.real()) || !std::isfinite(kn.imag()) ||
+        std::abs(kn) <= 1.0e-10 * std::max(kn_target, 1.0))
+    {
+      continue;
+    }
+
+    Eigen::VectorXcd y = vr.col(k);
+    const double ynorm = y.norm();
+    if (!(ynorm > 0.0))
+    {
+      continue;
+    }
+    y /= ynorm;
+
+    const auto gram_eta = EvaluateAffineGramResidual(y, lambda, coefficients);
+    double eta = gram_eta.value_or(std::numeric_limits<double>::infinity());
+    const bool near_acceptance_threshold =
+        eta >= 0.25 * reduced_tol && eta <= 4.0 * reduced_tol;
+    const bool unchecked_acceptance_candidate =
+        !gram_direct_self_checked && eta <= reduced_tol;
+    const bool verify_direct = !gram_eta || !gram_residual_trusted ||
+                               unchecked_acceptance_candidate || near_acceptance_threshold;
+    if (verify_direct)
+    {
+      reduced_stats.direct_residual_verifications++;
+      const double direct_eta = EvaluateAffineDirectResidual(y, lambda, coefficients);
+      if (gram_eta && std::isfinite(direct_eta))
+      {
+        // Normalize by the acceptance scale: relative error against a residual already at
+        // roundoff is not meaningful, while disagreement comparable to reduced_tol can
+        // change the accept/fallback decision.
+        const double discrepancy =
+            std::abs(*gram_eta - direct_eta) / std::max(direct_eta, reduced_tol);
+        reduced_stats.worst_gram_direct_discrepancy =
+            std::max(reduced_stats.worst_gram_direct_discrepancy, discrepancy);
+        if (discrepancy > 5.0e-2 && gram_residual_trusted)
+        {
+          gram_residual_trusted = false;
+          reduced_stats.invalid_gram_fallbacks++;
+          Mpi::Warning(solver_comm,
+                       "Wave-port residual Gram verification disagrees with direct "
+                       "evaluation (scaled discrepancy {:.3e}); using direct residuals "
+                       "for the remaining basis lifetime.\n",
+                       discrepancy);
+        }
+      }
+      eta = direct_eta;
+      if (gram_eta && (*gram_eta <= reduced_tol || near_acceptance_threshold))
+      {
+        gram_direct_self_checked = true;
+      }
+    }
+    if (!std::isfinite(eta))
+    {
+      continue;
+    }
+    if (eta > reduced_tol)
+    {
+      best_rejected_residual = std::min(best_rejected_residual, eta);
+      continue;
+    }
+    candidates.push_back({lambda, kn, std::move(y), eta, std::abs(kn.real() - kn_target)});
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate &a, const Candidate &b) { return a.distance < b.distance; });
+  if (candidates.size() < static_cast<std::size_t>(num_modes))
+  {
+    reduced_stats.last_residual = std::isfinite(best_rejected_residual)
+                                      ? best_rejected_residual
+                                      : std::numeric_limits<double>::infinity();
+    return false;
+  }
+  if (candidates.size() > static_cast<std::size_t>(num_modes))
+  {
+    const double gap = candidates[num_modes].distance - candidates[num_modes - 1].distance;
+    if (gap <= 1.0e-10 * std::max(kn_target, 1.0))
+    {
+      return false;
+    }
+  }
+
+  reduced_eigenvalues.clear();
+  reduced_eigenvectors.clear();
+  reduced_errors.clear();
+  for (int i = 0; i < num_modes; i++)
+  {
+    ComplexVector x(nd_size + h1_size);
+    x.UseDevice(true);
+    x = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      x.Add(candidates[i].coefficients(j), reduced_basis[j]);
+    }
+    const double xnorm = linalg::Norml2(solver_comm, x);
+    if (!(xnorm > 0.0))
+    {
+      reduced_eigenvalues.clear();
+      reduced_eigenvectors.clear();
+      reduced_errors.clear();
+      return false;
+    }
+    x *= 1.0 / xnorm;
+    reduced_stats.last_residual = candidates[i].residual;
+    reduced_stats.worst_accepted_residual =
+        std::max(reduced_stats.worst_accepted_residual, candidates[i].residual);
+    reduced_eigenvalues.push_back(candidates[i].lambda);
+    reduced_eigenvectors.push_back(std::move(x));
+    reduced_errors.push_back(candidates[i].residual);
+  }
+  return true;
 }
 
 bool ModeEigenSolver::TryReducedSolveFromActions(double sigma, const Eigen::MatrixXcd &Ar,

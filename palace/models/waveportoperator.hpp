@@ -137,9 +137,8 @@ public:
   // 3D submesh constructor: extracts submesh from parent mesh.
   WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
                const config::DomainData &domains, ProblemType problem_type,
-               const config::LinearSolverData &linear, bool train_reduced_model,
-               const Units &units, const MaterialOperator &mat_op,
-               mfem::ParFiniteElementSpace &nd_fespace,
+               const config::LinearSolverData &linear, const Units &units,
+               const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
 
   ~WavePortData();
@@ -151,7 +150,10 @@ public:
 
   void Initialize(double omega);
 
-  // Enable guarded reduced real-frequency evaluation after adaptive offline training.
+  // Configure exact offline snapshot collection before any adaptive HDM or synthesis
+  // reference solve, then enable guarded reduced evaluation after offline training.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
   void EnableReducedModel(double adaptive_tol);
   ModeEigenSolver::ReducedModelStats GetReducedModelStats() const;
   std::size_t GetReducedBasisSize() const;
@@ -249,6 +251,11 @@ public:
 
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
+
+  // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
+  // is a checked upper bound on possible exact mode snapshots and storage remains lazy.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
 
   // Switch all trained port models to guarded reduced evaluation. Called only after the
   // adaptive 3D offline phase so HDM snapshots always use exact port modes.

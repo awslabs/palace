@@ -310,6 +310,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
              omega_sample.back() * unit_GHz);
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   space_op.GetWavePortOp().SetSuppressOutput(true);
+  space_op.GetWavePortOp().ConfigureReducedModelTraining(
+      max_size_per_excitation, port_excitations.Size(),
+      iodata.solver.driven.adaptive_circuit_synthesis);
 
   // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
