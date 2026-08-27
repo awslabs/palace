@@ -789,8 +789,8 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
 {
   auto stats = mode_solver->GetReducedModelStats();
   unsigned long long counts[] = {
-      stats.exact_solves,    stats.reduced_solves,     stats.fallbacks,
-      stats.periodic_checks, stats.offline_basis_rank, stats.online_basis_cap,
+      stats.exact_solves,       stats.reduced_solves,   stats.fallbacks,
+      stats.offline_basis_rank, stats.online_basis_cap,
   };
   Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
                  port_mesh->GetComm());
@@ -798,9 +798,8 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
   stats.exact_solves = counts[0];
   stats.reduced_solves = counts[1];
   stats.fallbacks = counts[2];
-  stats.periodic_checks = counts[3];
-  stats.offline_basis_rank = counts[4];
-  stats.online_basis_cap = counts[5];
+  stats.offline_basis_rank = counts[3];
+  stats.online_basis_cap = counts[4];
   return stats;
 }
 
@@ -1335,10 +1334,10 @@ void WavePortOperator::PrintReducedModelStats() const
   {
     const auto stats = data.GetReducedModelStats();
     Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, reduced/exact = {:d}/{:d}, "
-               "fallbacks = {:d}, periodic checks = {:d}, worst residual = {:.3e}\n",
+               "fallbacks = {:d}, worst residual = {:.3e}\n",
                idx, data.GetReducedBasisSize(), stats.online_basis_cap,
                stats.reduced_solves, stats.exact_solves, stats.fallbacks,
-               stats.periodic_checks, stats.worst_residual);
+               stats.worst_residual);
   }
 }
 

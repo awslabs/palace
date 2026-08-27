@@ -28,7 +28,6 @@ public:
     std::size_t exact_solves = 0;
     std::size_t reduced_solves = 0;
     std::size_t fallbacks = 0;
-    std::size_t periodic_checks = 0;
     std::size_t offline_basis_rank = 0;
     std::size_t online_basis_cap = 0;
     double worst_residual = 0.0;
@@ -50,7 +49,6 @@ public:
     return enabled && affine_model_ready && solver_comm != MPI_COMM_NULL &&
            basis.size() >= static_cast<std::size_t>(num_modes);
   }
-  bool ExactCheckDue() const { return solves_since_exact >= EXACT_CHECK_INTERVAL; }
   bool TrySolve(double omega, double sigma);
 
   void ObserveExactEigenvectors(int num_converged, const EigenvalueSolver &eigen,
@@ -58,7 +56,6 @@ public:
   void RecordExactSolve();
   void RecordReducedSolve();
   void RecordFallback() { stats.fallbacks++; }
-  void RecordPeriodicCheck() { stats.periodic_checks++; }
 
   const Stats &GetStats() const { return stats; }
   std::size_t GetBasisSize() const { return basis.size(); }
@@ -92,8 +89,6 @@ private:
   bool gram_direct_self_checked = false;
   bool gram_residual_trusted = true;
   std::size_t basis_cap = 0;
-  std::size_t solves_since_exact = 0;
-  static constexpr std::size_t EXACT_CHECK_INTERVAL = 20;
   double tolerance = 0.0;
   Stats stats;
 

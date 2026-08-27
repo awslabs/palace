@@ -40,7 +40,6 @@ struct ModeResult
   ModeEigenSolver::ReducedModelStats reduced_stats;
   std::size_t reduced_basis_size = 0;
   double reduced_tol = 0.0;
-  int periodic_exact_converged = -1;
   int complex_exact_converged = -1;
 };
 
@@ -142,8 +141,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   out.num_converged = result.num_converged;
   for (int i = 0; i < result.num_converged; i++)
   {
-    // Capture the first in-band evaluation, which is the reduced result under test. Any
-    // subsequent calls below exist only to exercise the periodic exact-refresh guard.
+    // Capture the first in-band evaluation, which is the reduced result under test.
     out.kn.push_back(mode_solver.GetPropagationConstant(i));
     if (exercise_reduced_model)
     {
@@ -156,11 +154,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   {
     for (int i = 1; i < reduced_evaluations; i++)
     {
-      const auto refresh = solve_at(omega).first;
-      if (i == reduced_evaluations - 1)
-      {
-        out.periodic_exact_converged = refresh.num_converged;
-      }
+      solve_at(omega);
     }
     // Complex-frequency queries must bypass the real-axis reduced model. Issue one complex
     // query solely to verify stats after retaining the reduced real-frequency result above.
@@ -220,15 +214,14 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
       1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21);
   REQUIRE(reduced.num_converged >= num_modes);
   REQUIRE(reduced.reduced_basis_size >= num_modes);
-  CHECK(reduced.reduced_stats.reduced_solves == 20);
+  CHECK(reduced.reduced_stats.reduced_solves == 21);
+  CHECK(reduced.reduced_stats.exact_solves == 2);
   CHECK(reduced.reduced_stats.worst_residual <= reduced.reduced_tol);
   REQUIRE(reduced.reduced_backward_errors.size() == num_modes);
   for (double error : reduced.reduced_backward_errors)
   {
     CHECK(error <= reduced.reduced_tol);
   }
-  CHECK(reduced.reduced_stats.periodic_checks == 1);
-  CHECK(reduced.periodic_exact_converged >= num_modes);
   CHECK(reduced.complex_exact_converged >= num_modes);
   CHECK(reduced.reduced_stats.offline_basis_rank >= num_modes);
   CHECK(reduced.reduced_stats.online_basis_cap >=
