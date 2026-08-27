@@ -94,6 +94,9 @@ jobs:
       - name: Check test tags
         run: ./scripts/check-test-tags test/unit
 
+      - name: Test CMake architecture helpers
+        run: cmake -P cmake/tests/MultiArchitecture.cmake
+
   check-license:
     runs-on: ubuntu-latest
     steps:

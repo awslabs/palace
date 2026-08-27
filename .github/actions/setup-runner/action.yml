@@ -8,6 +8,10 @@ inputs:
     description: 'Spack git ref to use (e.g. develop, releases/v1.2)'
     required: false
     default: 'releases/v1.2'
+  spack-packages-commit:
+    description: 'spack-packages commit used by the builtin Spack repository'
+    required: false
+    default: 'c3b260e171988c0ef05220174e8ada7efdbd6499'
   llvm-version:
     description: 'Version of LLVM to use (only major version supported, e.g. "19")'
     required: false
@@ -159,6 +163,16 @@ runs:
         echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
         echo "SPACK_COLOR=always" >> "$GITHUB_ENV"
 
+    - name: Pin Spack packages
+      if: inputs.spack-packages-commit != ''
+      shell: bash
+      env:
+        SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
+      run: |
+        spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin
+        test "$(git -C "$(spack location --repo builtin)" rev-parse HEAD)" = \
+          "$SPACK_PACKAGES_COMMIT"
+
     - name: Patch Spack package.py files for known problems
       shell: bash
       run: |
@@ -176,6 +190,7 @@ runs:
           fi
         done
 
-        # Workaround for https://github.com/spack/spack/issues/51505
-        ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
-
+        # Workaround for https://github.com/spack/spack/issues/51505.
+        # -f so a runner that did not fully clean spack_repo/local/packages from
+        # a prior job does not abort here on an existing link.
+        ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
