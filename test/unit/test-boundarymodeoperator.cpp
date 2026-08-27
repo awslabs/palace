@@ -39,6 +39,8 @@ struct ModeResult
   ModeEigenSolver::ReducedModelStats reduced_stats;
   std::size_t reduced_basis_size = 0;
   double reduced_tol = 0.0;
+  int periodic_exact_converged = -1;
+  int complex_exact_converged = -1;
 };
 
 ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
@@ -147,11 +149,16 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   {
     for (int i = 1; i < reduced_evaluations; i++)
     {
-      solve_at(omega);
+      const auto refresh = solve_at(omega).first;
+      if (i == reduced_evaluations - 1)
+      {
+        out.periodic_exact_converged = refresh.num_converged;
+      }
     }
     // Complex-frequency queries must bypass the real-axis reduced model. Issue one complex
     // query solely to verify stats after retaining the reduced real-frequency result above.
-    solve_at(std::complex<double>(omega, 1.0e-3 * omega));
+    out.complex_exact_converged =
+        solve_at(std::complex<double>(omega, 1.0e-3 * omega)).first.num_converged;
   }
   out.reduced_stats = mode_solver.GetReducedModelStats();
   out.reduced_basis_size = mode_solver.GetReducedBasisSize();
@@ -211,6 +218,8 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   CHECK(reduced.reduced_stats.last_residual <= reduced.reduced_tol);
   CHECK(reduced.reduced_stats.worst_accepted_residual <= reduced.reduced_tol);
   CHECK(reduced.reduced_stats.periodic_exact_checks == 1);
+  CHECK(reduced.periodic_exact_converged >= num_modes);
+  CHECK(reduced.complex_exact_converged >= num_modes);
   CHECK(reduced.reduced_stats.full_operator_assemblies == 4);
   CHECK(reduced.reduced_stats.affine_model_builds == 1);
   CHECK(reduced.reduced_stats.worst_affine_discrepancy <= 1.0e-9);
@@ -252,7 +261,9 @@ TEST_CASE("ModeEigenSolver rational impedance affine component",
     iodata.boundaries.pec.attributes = {1, 3, 4};
     auto &rz = iodata.boundaries.rational_impedance.emplace_back();
     rz.attributes = {2};
-    rz.num = {50.0};
+    // Series RL impedance Z(s) = R + sL gives the genuinely rational Robin coefficient
+    // g(s) = s/(R+sL), rather than merely duplicating the linear resistive component.
+    rz.num = {1.0e-12, 50.0};
     rz.den = {1.0};
   };
   auto exact = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_rational);
