@@ -1834,6 +1834,7 @@ def spatial_spec(coupon, args, parameters):
             "FarSize": args.spatial_lc_far,
             "ProcessCoreWidth": getattr(args, "spatial_process_core_width", 0.0),
             "ProcessFineWidth": getattr(args, "spatial_process_fine_width", 0.0),
+            "ProcessGradingPower": getattr(args, "spatial_process_grading_power", 1.7),
             "MaxNodes": getattr(args, "spatial_max_nodes", 500_000),
             "MaxElements": getattr(args, "spatial_max_elements", 2_000_000),
             "Order": max(2, args.mesh_order),
@@ -1908,6 +1909,8 @@ def generate_spatial_meshes(
                 getattr(args, "spatial_process_core_width", 0.0),
                 "--process-fine-width",
                 getattr(args, "spatial_process_fine_width", 0.0),
+                "--process-grading-power",
+                getattr(args, "spatial_process_grading_power", 1.7),
                 "--max-nodes",
                 getattr(args, "spatial_max_nodes", 500_000),
                 "--max-elements",
@@ -2435,10 +2438,13 @@ def parse_args():
         "--spatial-process-fine-width",
         type=float,
         default=0.0,
-        help=(
-            "Physical width retained at lc-fine; 0 selects "
-            "max(0.5*metal thickness, overetch, 2*lc-fine)"
-        ),
+        help="Optional flat inner band retained at lc-fine; 0 grades immediately",
+    )
+    parser.add_argument(
+        "--spatial-process-grading-power",
+        type=float,
+        default=1.7,
+        help="Power-law exponent for edge-normal grading from fine to far size",
     )
     parser.add_argument("--spatial-max-nodes", type=int, default=500_000)
     parser.add_argument("--spatial-max-elements", type=int, default=2_000_000)
@@ -2505,6 +2511,8 @@ def parse_args():
         parser.error("--spatial-process-core-width must be nonnegative")
     if args.spatial_process_fine_width < 0.0:
         parser.error("--spatial-process-fine-width must be nonnegative")
+    if args.spatial_process_grading_power <= 0.0:
+        parser.error("--spatial-process-grading-power must be positive")
     if args.spatial_max_nodes <= 0 or args.spatial_max_elements <= 0:
         parser.error("spatial mesh budgets must be positive")
     args.cluster_h_factors = sorted(

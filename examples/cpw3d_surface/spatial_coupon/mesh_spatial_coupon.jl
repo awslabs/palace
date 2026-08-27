@@ -942,6 +942,7 @@ function generate_spatial_coupon(;
     lc_far::Float64          = 0.3,
     process_core_width::Float64 = 0.0,
     process_fine_width::Float64 = 0.0,
+    process_grading_power::Float64 = 1.7,
     max_nodes::Int           = 500_000,
     max_elements::Int        = 2_000_000,
     mesh_order::Int          = 1,
@@ -959,13 +960,10 @@ function generate_spatial_coupon(;
     process_core_width = process_core_width > 0.0 ?
                          process_core_width :
                          max(2metal_thickness, 4overetch, 8lc_fine)
-    process_fine_width = process_fine_width > 0.0 ?
-                         process_fine_width :
-                         max(0.5metal_thickness, overetch, 2lc_fine)
-    process_fine_width >= 2lc_fine ||
-        error("process fine width must be at least twice the fine mesh size")
+    process_fine_width >= 0.0 || error("process fine width must be nonnegative")
     process_core_width > process_fine_width ||
         error("process core width must exceed the fully fine region width")
+    process_grading_power > 0.0 || error("process grading power must be positive")
     max_nodes > 0 || error("maximum node budget must be positive")
     max_elements > 0 || error("maximum element budget must be positive")
 
@@ -1308,16 +1306,22 @@ function generate_spatial_coupon(;
         "Spatial mesh features: candidates=$(length(candidate_curves)), " *
         "physical=$(length(feature_curves)), " *
         "discarded_coplanar_seams=$(length(discarded_seams)), " *
-        "fine_width=$process_fine_width, core_width=$process_core_width"
+        "fine_width=$process_fine_width, core_width=$process_core_width, " *
+        "grading_power=$process_grading_power"
     )
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
-    gmsh.model.mesh.field.add("Threshold", 2)
-    gmsh.model.mesh.field.setNumber(2, "InField", 1)
-    gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_fine)
-    gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
-    gmsh.model.mesh.field.setNumber(2, "DistMin", process_fine_width)
-    gmsh.model.mesh.field.setNumber(2, "DistMax", process_core_width)
+    # Grade immediately away from the process edge instead of maintaining an
+    # isotropically nanometer-resolved 3D tube. An optional process_fine_width retains a
+    # flat inner band, but the default is zero. The same physical grading profile is used
+    # for every lc_fine in an h-refinement study; only the wall intercept changes.
+    transition_width = process_core_width - process_fine_width
+    distance_expression = "max(F1-$(process_fine_width),0)"
+    size_expression =
+        "min($(lc_far),$(lc_fine)+($(lc_far)-$(lc_fine))*" *
+        "($(distance_expression)/$(transition_width))^$(process_grading_power))"
+    gmsh.model.mesh.field.add("MathEval", 2)
+    gmsh.model.mesh.field.setString(2, "F", size_expression)
     gmsh.model.mesh.field.setAsBackgroundMesh(2)
     for (name, value) in [
         ("Mesh.MeshSizeMin", lc_fine),
@@ -1370,6 +1374,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"FarSize\": $lc_far,")
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
+        println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
         println(stream, "  \"MeshOrder\": $mesh_order")
         println(stream, "}")
     end
@@ -1405,6 +1410,7 @@ function parse_options(args)
         "--lc-far" => ("lc_far", Float64),
         "--process-core-width" => ("process_core_width", Float64),
         "--process-fine-width" => ("process_fine_width", Float64),
+        "--process-grading-power" => ("process_grading_power", Float64),
         "--max-nodes" => ("max_nodes", Int),
         "--max-elements" => ("max_elements", Int),
         "--mesh-order" => ("mesh_order", Int)
@@ -1440,6 +1446,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         lc_far          = get(options, "lc_far", 0.3),
         process_core_width = get(options, "process_core_width", 0.0),
         process_fine_width = get(options, "process_fine_width", 0.0),
+        process_grading_power = get(options, "process_grading_power", 1.7),
         max_nodes       = get(options, "max_nodes", 500_000),
         max_elements    = get(options, "max_elements", 2_000_000),
         mesh_order      = get(options, "mesh_order", 1)
