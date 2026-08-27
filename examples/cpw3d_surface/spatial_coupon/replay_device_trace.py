@@ -156,6 +156,18 @@ def main():
     trace_path = output / "device-trace.csv"
     write_trace(coupon / "zero-trace.csv", trace_path, values)
 
+    conductor_states = coefficients[contour_size:]
+    full_scale = None
+    full_trace_path = None
+    if len(conductor_states) == 1 and abs(conductor_states[0]) > 1.0e-14:
+        full_scale = float(conductor_states[0])
+        full_trace_path = output / "device-trace-full-normalized.csv"
+        write_trace(
+            coupon / "zero-trace.csv",
+            full_trace_path,
+            {key: value / full_scale for key, value in values.items()},
+        )
+
     # The direct replay imposes the exported contour trace with every conductor
     # grounded, so the matrix prediction must use zero conductor-state coefficients.
     # Conductor-state and cross contributions are validated separately by the
@@ -166,25 +178,6 @@ def main():
     report = {"Version": 1, "Coupon": str(coupon), "Source": args.source,
               "Patch": args.patch, "Results": []}
     for kind in ("thin", "fabricated"):
-        config = json.loads((coupon / f"heldout_spatial_{kind}.json").read_text())
-        config["Problem"]["Output"] = str(output / kind)
-        config["Problem"]["Verbose"] = 0
-        potential = config["Boundaries"]["PrescribedPotential"][0]
-        potential["DataFile"] = str(trace_path)
-        # Ground every conductor so the direct excitation is the pure contour trace.
-        potential.pop("TerminalAttributes", None)
-        config_path = output / f"{kind}.json"
-        config_path.write_text(json.dumps(config, indent=2) + "\n")
-        command = [
-            str(args.palace),
-            *( ["--serial"] if args.ranks == 1 else ["-np", str(args.ranks)]),
-            str(config_path),
-        ]
-        print("+ " + shlex.join(command), flush=True)
-        subprocess.run(command, cwd=output, check=True)
-
-        direct_domain = read_row(output / kind / "domain-E.csv")["E_elec (J)"]
-        surface = read_row(output / kind / "surface-Q.csv")
         matrix = read_domain_matrix(
             coupon / "postpro" / f"spatial_{kind}" / "domain-response-matrix.csv",
             len(coefficients),
@@ -193,20 +186,48 @@ def main():
             coupon / "postpro" / f"spatial_{kind}" / "surface-response-matrix.csv",
             len(coefficients),
         )
-        entry = {
-            "Kind": kind,
-            "DirectDomainEnergy": direct_domain,
-            "PredictedDomainEnergy": float(imposed @ matrix @ imposed),
-            "Interfaces": {},
-        }
-        for interface, response in sorted(surfaces.items()):
-            entry["Interfaces"][str(interface)] = {
-                "DirectEnergy": surface.get(f"p_surf[{interface}]", 0.0) * direct_domain,
-                "PredictedEnergy": float(imposed @ response @ imposed),
-            }
-        report["Results"].append(entry)
+        excitations = [("contour-only", trace_path, imposed, False, 1.0)]
+        if full_trace_path is not None:
+            excitations.append(
+                ("full", full_trace_path, coefficients, True, full_scale * full_scale)
+            )
+        for excitation, imposed_trace, prediction, terminal, energy_scale in excitations:
+            config = json.loads((coupon / f"heldout_spatial_{kind}.json").read_text())
+            root = output / f"{kind}-{excitation}"
+            config["Problem"]["Output"] = str(root)
+            config["Problem"]["Verbose"] = 0
+            potential = config["Boundaries"]["PrescribedPotential"][0]
+            potential["DataFile"] = str(imposed_trace)
+            if not terminal:
+                potential.pop("TerminalAttributes", None)
+            config_path = output / f"{kind}-{excitation}.json"
+            config_path.write_text(json.dumps(config, indent=2) + "\n")
+            command = [
+                str(args.palace),
+                *( ["--serial"] if args.ranks == 1 else ["-np", str(args.ranks)]),
+                str(config_path),
+            ]
+            print("+ " + shlex.join(command), flush=True)
+            subprocess.run(command, cwd=output, check=True)
 
-    conductor_states = coefficients[contour_size:]
+            direct_domain = energy_scale * read_row(root / "domain-E.csv")["E_elec (J)"]
+            surface = read_row(root / "surface-Q.csv")
+            entry = {
+                "Kind": kind,
+                "Excitation": excitation,
+                "DirectDomainEnergy": direct_domain,
+                "PredictedDomainEnergy": float(prediction @ matrix @ prediction),
+                "Interfaces": {},
+            }
+            for interface, response in sorted(surfaces.items()):
+                entry["Interfaces"][str(interface)] = {
+                    "DirectEnergy": energy_scale
+                    * surface.get(f"p_surf[{interface}]", 0.0)
+                    * (direct_domain / energy_scale),
+                    "PredictedEnergy": float(prediction @ response @ prediction),
+                }
+            report["Results"].append(entry)
+
     report["ConductorStates"] = conductor_states.tolist()
     report_path = output / "device-trace-replay.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
