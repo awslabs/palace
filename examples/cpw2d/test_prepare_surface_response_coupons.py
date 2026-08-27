@@ -1166,6 +1166,14 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 edges,
                 available_attributes={1, 3000, 3001, 5001, 6001},
             )
+        # Explicit mesher metadata distinguishes a valid disappeared slot from a legacy
+        # conductor-wide mesh whose physical names happen to look identical.
+        SPATIAL.validate_metal_slot_partitioning(
+            edges,
+            True,
+            {1, 3000, 3001, 5001, 6001},
+            slot_partitioned=True,
+        )
 
     def test_spatial_config_omits_physically_absent_interface(self):
         edges = [

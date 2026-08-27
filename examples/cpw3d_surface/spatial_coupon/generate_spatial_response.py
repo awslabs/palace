@@ -873,9 +873,16 @@ def interface_attributes(
     )
 
 
-def validate_metal_slot_partitioning(edges, fabricated, available):
+def mesh_metadata(path):
+    metadata_path = Path(str(path) + ".metadata.json")
+    return load_json(metadata_path) if metadata_path.is_file() else {}
+
+
+def validate_metal_slot_partitioning(
+    edges, fabricated, available, slot_partitioned=False
+):
     slots = sorted({int(edge["InterfaceSlot"]) for edge in edges})
-    if available is None or len(slots) < 2:
+    if available is None or len(slots) < 2 or slot_partitioned:
         return
     bases = (5000, 6000) if fabricated else (4000,)
     expected_nonzero_slot = {
@@ -934,8 +941,11 @@ def make_config(
     edges,
     response_matrix=True,
     available_attributes=None,
+    slot_partitioned=False,
 ):
-    validate_metal_slot_partitioning(edges, fabricated, available_attributes)
+    validate_metal_slot_partitioning(
+        edges, fabricated, available_attributes, slot_partitioned
+    )
     potentials = [
         {"Index": index, "Attributes": [1], "DataFile": str(trace)}
         for index, trace in enumerate(traces, start=1)
@@ -1738,6 +1748,11 @@ def main():
     for kind, mesh in meshes.items():
         fabricated = kind == "fabricated"
         available_attributes = mesh_boundary_attributes(mesh)
+        metadata = mesh_metadata(mesh)
+        slot_partitioned = (
+            metadata.get("MetalSurfacePartition")
+            == "InterfaceSlotAndConductor"
+        )
         name = f"spatial_{kind}"
         config = make_config(
             output,
@@ -1754,6 +1769,7 @@ def main():
             interfaces,
             edges,
             available_attributes=available_attributes,
+            slot_partitioned=slot_partitioned,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
         heldout_name = f"heldout_{name}"
@@ -1773,6 +1789,7 @@ def main():
             edges,
             False,
             available_attributes,
+            slot_partitioned,
         )
         heldout_terminals = [
             attribute
@@ -1804,6 +1821,7 @@ def main():
             interfaces,
             edges,
             available_attributes=available_attributes,
+            slot_partitioned=slot_partitioned,
         )
         (output / f"{probe_name}.json").write_text(
             json.dumps(probe, indent=2) + "\n"

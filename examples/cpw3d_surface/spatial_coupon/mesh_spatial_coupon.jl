@@ -1353,6 +1353,20 @@ function generate_spatial_coupon(;
         println("High-order mesh minimum scaled Jacobian: $minimum_jacobian")
     end
     gmsh.write(filename)
+    metadata_path = filename * ".metadata.json"
+    open(metadata_path, "w") do stream
+        println(stream, "{")
+        println(stream, "  \"Version\": 1,")
+        println(stream, "  \"MetalSurfacePartition\": \"InterfaceSlotAndConductor\",")
+        println(stream, "  \"NodeCount\": $node_count,")
+        println(stream, "  \"VolumeElementCount\": $element_count,")
+        println(stream, "  \"FineSize\": $lc_fine,")
+        println(stream, "  \"FarSize\": $lc_far,")
+        println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
+        println(stream, "  \"MeshOrder\": $mesh_order")
+        println(stream, "}")
+    end
+    println("Spatial mesh metadata: $metadata_path")
     println(
         "Spatial coupon: fabricated=$fabricated, edges=$(length(edges)), " *
         "layers=$(length(layers)), file=$filename"
