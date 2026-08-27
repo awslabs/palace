@@ -57,12 +57,14 @@ _variants_ of *Palace*. For instance, if you want to install *Palace* with CUDA,
 MUMPS, SLEPc and the NVIDIA cuDSS GPU sparse direct solver, call
 
 ```bash
-spack install palace +mumps +slepc +cuda +cudss cuda_arch=90
+spack install palace +mumps +slepc +cuda +cudss cuda_arch=80,90
 ```
 
 where `cuda_arch` is determined by the [generation of your
-GPU](https://developer.nvidia.com/cuda-gpus). More information about the
-available configuration options and dependencies can be found using `spack info palace`. See the [official
+GPU](https://developer.nvidia.com/cuda-gpus). Multiple comma-separated values
+produce a fat binary that supports several GPU generations. More information
+about the available configuration options and dependencies can be found using
+`spack info palace`. See the [official
 tutorial](https://spack-tutorial.readthedocs.io/en/latest/tutorial_basics.html)
 for an introduction.
 

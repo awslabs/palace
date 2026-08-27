@@ -70,6 +70,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     quantities referenced to the internal unit impedance, not physical incident waves.
     [PR 841](https://github.com/awslabs/palace/pull/841).
 
+#### Performance Improvements
+
+  - Omit material terms with mathematically exact-zero coefficients from fine-level partial
+    assembly while retaining the configured coarse sparse structure for symbolic reuse.
+    [PR 876](https://github.com/awslabs/palace/pull/876).
+
 #### Bug Fixes
 
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
@@ -115,6 +121,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Corrected the configuration validation script name in the docs
+    (`validate-config`). [PR 891](https://github.com/awslabs/palace/pull/891).
   - Clarified how to interpret the elapsed time report: indented rows are exclusive
     sub-categories, parent rows are remainders, and Min/Max/Avg are over MPI ranks.
     [PR 885](https://github.com/awslabs/palace/pull/885).
