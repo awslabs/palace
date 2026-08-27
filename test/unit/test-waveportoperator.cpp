@@ -260,9 +260,12 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   CHECK(rel_err < 1.0e-8);
 }
 
-// The complex-ω modal correction (eigenmode / synthesis path) is derived to reduce exactly
-// to the real-ω correction at ω=ω0. Verify both operators produce the same action there.
-TEST_CASE("WavePortOperator-ModalCorrectionComplexReducesToReal",
+// The complex-ω (eigenmode) correction reconstructs n×H with full complex kₙ; the real-ω
+// (driven) correction uses Re{kₙ} and lets the sparse mass carry the Im{kₙ} attenuation. So
+// at ω=ω0 they differ by the mode attenuation a≈|Im{kₙ0}|/|Re{kₙ0}|. Check the relative
+// action difference is ~a: present (guards the eigenmode path from reverting to Re{kₙ}) and
+// bounded (paths track, vanishing as a→0).
+TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
           "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
@@ -278,14 +281,25 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexReducesToReal",
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
   // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing
-  // the frozen reference; use the same (empty) essential-dof list for both so any
-  // difference is purely the ω-dependence formula.
+  // the frozen reference; same (empty) essential-dof list so any difference is purely the
+  // kₙ convention.
   mfem::Array<int> dbc;
   auto W_real = wp_op.GetModalCorrectionOperator(omega, nd_fespace, dbc);
   auto W_cplx =
       wp_op.GetModalCorrectionOperator(std::complex<double>(omega, 0.0), nd_fespace, dbc);
   REQUIRE(W_real);
   REQUIRE(W_cplx);
+
+  // Largest per-port attenuation ratio a = |Im{kₙ0}|/|Re{kₙ0}| (kn0 frozen by Initialize).
+  double atten = 0.0;
+  for (const auto &[idx, data] : wp_op)
+  {
+    if (data.active && std::abs(data.kn0.real()) > 0.0)
+    {
+      atten = std::max(atten, std::abs(data.kn0.imag()) / std::abs(data.kn0.real()));
+    }
+  }
+  REQUIRE(atten > 0.0);  // cpw mode is lossy; the two paths must differ.
 
   // Apply both to a fixed nonzero vector and compare (each is Σ_k g_k (s_kᵀx) s_k).
   ComplexVector x(n), yr(n), yc(n), diff(n);
@@ -303,9 +317,12 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexReducesToReal",
   diff = yc;
   linalg::AXPY(std::complex<double>(-1.0, 0.0), yr, diff);
   double rel_err = linalg::Norml2(comm, diff) / std::max(linalg::Norml2(comm, yr), 1e-300);
-  CAPTURE(omega, rel_err);
-  // Floor set by the complex path's independent EVP re-solve.
-  CHECK(rel_err < 1.0e-7);
+  CAPTURE(omega, atten, rel_err);
+  // The attenuation term largely cancels between W_full and W_scalar, so the net difference
+  // is ~0.04a, well above the EVP re-solve floor. Bracket loosely: nonzero guards the
+  // full-kₙ term, the upper bound guards against gross divergence.
+  CHECK(rel_err > 0.005 * atten);
+  CHECK(rel_err < 0.5 * atten);
 }
 
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the

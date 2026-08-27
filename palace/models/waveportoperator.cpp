@@ -391,14 +391,13 @@ public:
     }();
 
     // Compute U = -1/i (ik_n Eₜ + ∇ₜ Eₙ) = -kₙEₜ + i∇ₜEₙ (t-gradient in boundary element).
-    // The ∇ₜEₙ term is omitted when IncludeGradient=false (scalar-admittance-only n×H). Use
-    // Re{kₙ} in the -kₙEₜ term to stay consistent with the i·Re{kₙ}·M boundary mass this
-    // correction cancels against; Im{kₙ} (line attenuation) is carried by the sparse mass,
-    // not the modal shape. ω may be complex (eigenmode solve), so carry both parts of U:
-    // with Eₜ = Etr + i·Eti, -Re{kₙ}Eₜ = -kr·Etr - i·kr·Eti, and i∇ₜEₙ = i∇ₜ(Enr + i·Eni)
-    // = -∇ₜEni + i·∇ₜEnr. For real ω the split reduces bit-for-bit to Re/Im with a real
-    // 1/ω.
-    const double kr = kn.real();
+    // The ∇ₜEₙ term is omitted when IncludeGradient=false (scalar-admittance-only n×H). kₙ
+    // is the full (complex) propagation constant on the eigenmode path (holomorphic in ω,
+    // matches the i·kₙ·M mass); the driven path passes Re{kₙ} to stay consistent with its
+    // i·Re{kₙ}·M mass (Im{kₙ} line attenuation carried by the sparse mass, not the modal
+    // shape). ω may be complex, so carry both parts of U: with Eₜ = Etr + i·Eti, -kₙEₜ =
+    // -(kr·Etr - ki·Eti) - i·(kr·Eti + ki·Etr), and i∇ₜEₙ = -∇ₜEni + i·∇ₜEnr.
+    const double kr = kn.real(), ki = kn.imag();
     double Etr_data[3], Eti_data[3];
     mfem::Vector Etr(Etr_data, vdim), Eti(Eti_data, vdim);
     Et.Real().GetVectorValue(*T_submesh, ip, Etr);
@@ -407,8 +406,8 @@ public:
     mfem::Vector Ure(Ure_data, vdim), Uim(Uim_data, vdim);
     for (int d = 0; d < vdim; d++)
     {
-      Ure[d] = -kr * Etr[d];
-      Uim[d] = -kr * Eti[d];
+      Ure[d] = -(kr * Etr[d] - ki * Eti[d]);
+      Uim[d] = -(kr * Eti[d] + ki * Etr[d]);
     }
     if constexpr (IncludeGradient)
     {
@@ -858,9 +857,11 @@ void WavePortData::Initialize(double omega)
   {
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
+        omega0);
     BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
+        omega0);
     {
       port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
       port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
@@ -920,9 +921,11 @@ void WavePortData::Initialize(double omega)
     // from the final (normalized, sign-fixed) mode field so it is consistent with
     // modal_reaction.
     BdrSubmeshHVectorCoefficient<ValueType::REAL, false> port_nxH0r_scalar(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
+        omega0);
     BdrSubmeshHVectorCoefficient<ValueType::IMAG, false> port_nxH0i_scalar(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
+        omega0);
     mfem::LinearForm sr_scalar(&port_nd_fespace->Get()), si_scalar(&port_nd_fespace->Get());
     sr_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_scalar));
     si_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_scalar));
@@ -1010,11 +1013,12 @@ WavePortData::ComputeComplexReactions(std::complex<double> omega)
     {
       GridFunction Et0(*port_nd_fespace, true), En0(*port_h1_fespace, true);
       DistributeModeField(e0, nd, h1, Et0, En0);
-      R_full_ref = AssembleReaction<true>(Et0, En0, mat_op, submesh, submesh_parent_elems,
-                                          kn0, omega0, port_nd_fespace->Get(), port_comm);
+      R_full_ref =
+          AssembleReaction<true>(Et0, En0, mat_op, submesh, submesh_parent_elems,
+                                 kn0.real(), omega0, port_nd_fespace->Get(), port_comm);
       R_scalar_ref =
-          AssembleReaction<false>(Et0, En0, mat_op, submesh, submesh_parent_elems, kn0,
-                                  omega0, port_nd_fespace->Get(), port_comm);
+          AssembleReaction<false>(Et0, En0, mat_op, submesh, submesh_parent_elems,
+                                  kn0.real(), omega0, port_nd_fespace->Get(), port_comm);
       ref_reaction_omega0 = omega0;
     }
 
@@ -1066,13 +1070,13 @@ WavePortData::GetModeExcitationCoefficientReal(bool include_gradient) const
   {
     return std::make_unique<
         RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, true>>>(
-        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
-        omega0);
+        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
+        kn0.real(), omega0);
   }
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, false>>>(
-      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
-      omega0);
+      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
+      kn0.real(), omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -1083,13 +1087,13 @@ WavePortData::GetModeExcitationCoefficientImag(bool include_gradient) const
   {
     return std::make_unique<
         RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, true>>>(
-        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
-        omega0);
+        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
+        kn0.real(), omega0);
   }
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, false>>>(
-      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
-      omega0);
+      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
+      kn0.real(), omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
