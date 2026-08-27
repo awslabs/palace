@@ -789,49 +789,18 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
 {
   auto stats = mode_solver->GetReducedModelStats();
   unsigned long long counts[] = {
-      stats.exact_solves,
-      stats.complex_exact_solves,
-      stats.reduced_solves,
-      stats.reduced_fallbacks,
-      stats.periodic_exact_checks,
-      stats.full_operator_assemblies,
-      stats.affine_model_builds,
-      stats.affine_projection_extensions,
-      stats.affine_reduced_solves,
-      stats.gram_residual_evaluations,
-      stats.direct_residual_verifications,
-      stats.invalid_gram_fallbacks,
-      stats.offline_basis_capacity,
-      stats.offline_basis_rank,
-      stats.online_basis_cap,
-      stats.basis_cap_skips,
+      stats.exact_solves,    stats.reduced_solves,     stats.fallbacks,
+      stats.periodic_checks, stats.offline_basis_rank, stats.online_basis_cap,
   };
-  double values[] = {stats.last_residual, stats.worst_accepted_residual,
-                     stats.worst_affine_discrepancy, stats.worst_gram_direct_discrepancy};
   Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
                  port_mesh->GetComm());
-  Mpi::Broadcast(static_cast<int>(std::size(values)), values, port_root,
-                 port_mesh->GetComm());
+  Mpi::Broadcast(1, &stats.worst_residual, port_root, port_mesh->GetComm());
   stats.exact_solves = counts[0];
-  stats.complex_exact_solves = counts[1];
-  stats.reduced_solves = counts[2];
-  stats.reduced_fallbacks = counts[3];
-  stats.periodic_exact_checks = counts[4];
-  stats.full_operator_assemblies = counts[5];
-  stats.affine_model_builds = counts[6];
-  stats.affine_projection_extensions = counts[7];
-  stats.affine_reduced_solves = counts[8];
-  stats.gram_residual_evaluations = counts[9];
-  stats.direct_residual_verifications = counts[10];
-  stats.invalid_gram_fallbacks = counts[11];
-  stats.offline_basis_capacity = counts[12];
-  stats.offline_basis_rank = counts[13];
-  stats.online_basis_cap = counts[14];
-  stats.basis_cap_skips = counts[15];
-  stats.last_residual = values[0];
-  stats.worst_accepted_residual = values[1];
-  stats.worst_affine_discrepancy = values[2];
-  stats.worst_gram_direct_discrepancy = values[3];
+  stats.reduced_solves = counts[1];
+  stats.fallbacks = counts[2];
+  stats.periodic_checks = counts[3];
+  stats.offline_basis_rank = counts[4];
+  stats.online_basis_cap = counts[5];
   return stats;
 }
 
@@ -1349,9 +1318,7 @@ void WavePortOperator::EnableReducedModel(double adaptive_tol)
   {
     data.EnableReducedModel(adaptive_tol);
     const auto stats = data.GetReducedModelStats();
-    Mpi::Print(" Port {:d}: basis = {:d}, offline capacity/rank = {:d}/{:d}, online cap = "
-               "{:d}, backward tolerance = {:.3e}\n",
-               idx, data.GetReducedBasisSize(), stats.offline_basis_capacity,
+    Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, backward tolerance = {:.3e}\n", idx,
                stats.offline_basis_rank, stats.online_basis_cap,
                data.GetReducedTolerance());
   }
@@ -1367,19 +1334,11 @@ void WavePortOperator::PrintReducedModelStats() const
   for (const auto &[idx, data] : ports)
   {
     const auto stats = data.GetReducedModelStats();
-    Mpi::Print(
-        " Port {:d}: basis/cap = {:d}/{:d}, exact = {:d}, affine reduced = {:d}, "
-        "fallbacks = {:d}, periodic checks = {:d}, full assemblies = {:d}, "
-        "affine builds/extensions = {:d}/{:d}, Gram/direct/invalid = {:d}/{:d}/{:d}, "
-        "last/worst residual = {:.3e}/{:.3e}, affine discrepancy = {:.3e}, "
-        "Gram/direct discrepancy = {:.3e}, cap skips = {:d}\n",
-        idx, data.GetReducedBasisSize(), stats.online_basis_cap, stats.exact_solves,
-        stats.affine_reduced_solves, stats.reduced_fallbacks, stats.periodic_exact_checks,
-        stats.full_operator_assemblies, stats.affine_model_builds,
-        stats.affine_projection_extensions, stats.gram_residual_evaluations,
-        stats.direct_residual_verifications, stats.invalid_gram_fallbacks,
-        stats.last_residual, stats.worst_accepted_residual, stats.worst_affine_discrepancy,
-        stats.worst_gram_direct_discrepancy, stats.basis_cap_skips);
+    Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, reduced/exact = {:d}/{:d}, "
+               "fallbacks = {:d}, periodic checks = {:d}, worst residual = {:.3e}\n",
+               idx, data.GetReducedBasisSize(), stats.online_basis_cap,
+               stats.reduced_solves, stats.exact_solves, stats.fallbacks,
+               stats.periodic_checks, stats.worst_residual);
   }
 }
 

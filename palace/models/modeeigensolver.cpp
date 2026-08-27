@@ -506,7 +506,6 @@ void ModeEigenSolver::Init(MPI_Comm solver_comm)
 
 void ModeEigenSolver::AssembleFrequencyDependent(std::complex<double> omega, double sigma)
 {
-  reduced_stats.full_operator_assemblies++;
   last_assembled_omega = omega;
   last_assembled_sigma = sigma;
 
@@ -583,7 +582,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     {
       reduced_solution = true;
       reduced_stats.reduced_solves++;
-      reduced_stats.affine_reduced_solves++;
       reduced_solves_since_exact++;
       return {static_cast<int>(reduced_eigenvalues.size()), sigma};
     }
@@ -596,11 +594,11 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     // Periodically refresh the truth subspace even when every reduced residual passes.
     // A residual can certify a represented Ritz pair but cannot prove that a new mode has
     // not entered the requested rank from outside the current reduced basis.
-    reduced_stats.periodic_exact_checks++;
+    reduced_stats.periodic_checks++;
   }
   else if (local_can_reduce && reduced_rejected)
   {
-    reduced_stats.reduced_fallbacks++;
+    reduced_stats.fallbacks++;
   }
 
   // Truth/fallback and all complex-frequency queries retain the original exact assembly.
@@ -663,10 +661,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     reduced_stats.exact_solves++;
     reduced_solves_since_exact = 0;
   }
-  else
-  {
-    reduced_stats.complex_exact_solves++;
-  }
 
   // Build a permutation sorted by proximity to the shift target so that mode ordering is
   // consistent across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently).
@@ -689,8 +683,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     if (affine_model_ready)
     {
       const double discrepancy = ValidateAffineModel(omega.real(), sigma);
-      reduced_stats.worst_affine_discrepancy =
-          std::max(reduced_stats.worst_affine_discrepancy, discrepancy);
       if (!(discrepancy <= 1.0e-9))
       {
         affine_model_ready = false;
@@ -708,7 +700,6 @@ void ModeEigenSolver::SetReducedModelTraining(bool enable, std::size_t max_basis
 {
   reduced_training = enable;
   reduced_basis_cap = std::max(max_basis_size, static_cast<std::size_t>(num_modes));
-  reduced_stats.offline_basis_capacity = reduced_basis_cap;
 }
 
 void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
@@ -1014,7 +1005,6 @@ void ModeEigenSolver::BuildAffineModel()
     add_boundary_component(AffineCoefficientType::RATIONAL_IMPEDANCE, b, unit);
   }
 
-  reduced_stats.affine_model_builds++;
   UpdateAffineProjection(0);
   affine_model_ready = solver_comm == MPI_COMM_NULL || !affine_components.empty();
 
@@ -1024,8 +1014,6 @@ void ModeEigenSolver::BuildAffineModel()
   {
     const double discrepancy =
         ValidateAffineModel(last_assembled_omega.real(), last_assembled_sigma);
-    reduced_stats.worst_affine_discrepancy =
-        std::max(reduced_stats.worst_affine_discrepancy, discrepancy);
     if (!(discrepancy <= 1.0e-9))
     {
       affine_model_ready = false;
@@ -1108,7 +1096,6 @@ void ModeEigenSolver::UpdateAffineProjection(std::size_t old_basis_size)
   BuildAffineActionGram();
   if (old_basis_size > 0 && n > old_basis_size)
   {
-    reduced_stats.affine_projection_extensions++;
   }
 }
 
@@ -1191,7 +1178,6 @@ bool ModeEigenSolver::AddReducedBasisVector(const ComplexVector &x)
   }
   if (reduced_basis.size() >= reduced_basis_cap)
   {
-    reduced_stats.basis_cap_skips++;
     if (!basis_cap_warned)
     {
       Mpi::Warning(solver_comm,
@@ -1319,7 +1305,6 @@ std::optional<double> ModeEigenSolver::EvaluateAffineGramResidual(
     const Eigen::VectorXcd &y, std::complex<double> lambda,
     const std::vector<std::complex<double>> &coefficients)
 {
-  reduced_stats.gram_residual_evaluations++;
   const long n = static_cast<long>(reduced_basis.size());
   const long n_families = 1 + static_cast<long>(affine_components.size());
   const long dim = n * n_families;
@@ -1355,14 +1340,12 @@ std::optional<double> ModeEigenSolver::EvaluateAffineGramResidual(
   const auto norm_r = norm_from_gram(cr);
   if (!norm_b || !norm_a || !norm_r)
   {
-    reduced_stats.invalid_gram_fallbacks++;
     return std::nullopt;
   }
   const double denom = *norm_b + std::abs(lambda) * *norm_a;
   const double eta = *norm_r / std::max(denom, std::numeric_limits<double>::min());
   if (!std::isfinite(eta))
   {
-    reduced_stats.invalid_gram_fallbacks++;
     return std::nullopt;
   }
   return eta;
@@ -1471,7 +1454,6 @@ bool ModeEigenSolver::TryReducedSolveFromGram(
                                unchecked_acceptance_candidate || near_acceptance_threshold;
     if (verify_direct)
     {
-      reduced_stats.direct_residual_verifications++;
       const double direct_eta = EvaluateAffineDirectResidual(y, lambda, coefficients);
       if (gram_eta && std::isfinite(direct_eta))
       {
@@ -1480,12 +1462,9 @@ bool ModeEigenSolver::TryReducedSolveFromGram(
         // change the accept/fallback decision.
         const double discrepancy =
             std::abs(*gram_eta - direct_eta) / std::max(direct_eta, reduced_tol);
-        reduced_stats.worst_gram_direct_discrepancy =
-            std::max(reduced_stats.worst_gram_direct_discrepancy, discrepancy);
         if (discrepancy > 5.0e-2 && gram_residual_trusted)
         {
           gram_residual_trusted = false;
-          reduced_stats.invalid_gram_fallbacks++;
           Mpi::Warning(solver_comm,
                        "Wave-port residual Gram verification disagrees with direct "
                        "evaluation (scaled discrepancy {:.3e}); using direct residuals "
@@ -1515,9 +1494,6 @@ bool ModeEigenSolver::TryReducedSolveFromGram(
             [](const Candidate &a, const Candidate &b) { return a.distance < b.distance; });
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
-    reduced_stats.last_residual = std::isfinite(best_rejected_residual)
-                                      ? best_rejected_residual
-                                      : std::numeric_limits<double>::infinity();
     return false;
   }
   if (candidates.size() > static_cast<std::size_t>(num_modes))
@@ -1550,9 +1526,8 @@ bool ModeEigenSolver::TryReducedSolveFromGram(
       return false;
     }
     x *= 1.0 / xnorm;
-    reduced_stats.last_residual = candidates[i].residual;
-    reduced_stats.worst_accepted_residual =
-        std::max(reduced_stats.worst_accepted_residual, candidates[i].residual);
+    reduced_stats.worst_residual =
+        std::max(reduced_stats.worst_residual, candidates[i].residual);
     reduced_eigenvalues.push_back(candidates[i].lambda);
     reduced_eigenvectors.push_back(std::move(x));
     reduced_errors.push_back(candidates[i].residual);
@@ -1669,9 +1644,6 @@ bool ModeEigenSolver::TryReducedSolveFromActions(double sigma, const Eigen::Matr
             [](const Candidate &a, const Candidate &b) { return a.distance < b.distance; });
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
-    reduced_stats.last_residual = std::isfinite(best_rejected_residual)
-                                      ? best_rejected_residual
-                                      : std::numeric_limits<double>::infinity();
     return false;
   }
   // A nearly tied mode just outside the requested set makes rank-based identification
@@ -1690,9 +1662,8 @@ bool ModeEigenSolver::TryReducedSolveFromActions(double sigma, const Eigen::Matr
   reduced_errors.clear();
   for (int i = 0; i < num_modes; i++)
   {
-    reduced_stats.last_residual = candidates[i].residual;
-    reduced_stats.worst_accepted_residual =
-        std::max(reduced_stats.worst_accepted_residual, candidates[i].residual);
+    reduced_stats.worst_residual =
+        std::max(reduced_stats.worst_residual, candidates[i].residual);
     reduced_eigenvalues.push_back(candidates[i].lambda);
     reduced_eigenvectors.push_back(std::move(candidates[i].vector));
     reduced_errors.push_back(candidates[i].residual);
