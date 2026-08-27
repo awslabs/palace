@@ -51,6 +51,17 @@ namespace
 constexpr auto ORTHOG_TOL = 1.0e-12;
 constexpr std::size_t WAVEPORT_AAA_ORDER_MAX = 12;
 constexpr double WAVEPORT_SYNTHESIS_RANK_TOL_MAX = 1.0e-6;
+// Wave-port modal-correction synthesis subspace: band samples used to build the per-port
+// subspace Q, and a rank cap (r(r+1)/2 scalar fits follow; cap guards a bad tol choice).
+constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_SAMPLES = 12;
+constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX = 8;
+// Only AAA-augment a modal entry when both its subspace directions carry at least this
+// fraction of the leading singular value; weaker directions stay polynomial-only so aux
+// states are not spent fitting near-rank-floor noise (and injecting spurious pencil roots).
+constexpr double WAVEPORT_SYNTHESIS_AUGMENT_DIR_TOL = 1.0e-2;
+// Drop synthesized eigenvalues whose eigenvector energy in the basis rows falls below this
+// fraction; aux states inject roots at their pole frequencies that live in the aux rows.
+constexpr double SYNTHESIS_EIG_BASIS_FRAC_MIN = 1.0e-2;
 // Synthesized-eigenvalue filter: the augmented realization's aux states (zero-capacitance
 // rows, cond(C) = ∞) produce spurious near-critically-damped roots at Q ≲ 0.5 that carry
 // no physical content.
@@ -1943,86 +1954,166 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     }
   }
 
-  // Wave-port modal correction W = Σ_ports (W_full − W_scalar), folded into synthesis.
-  // Freeze the reference at band center; each active port's W(ω) is a fixed rank-≤2
-  // complex-symmetric reduced pencil c_uu·U·Uᵀ + c_uw·(U·Wᵀ+W·Uᵀ) + c_ww·W·Wᵀ. Each scalar
-  // coefficient c_k(ω) is rational in kₙ(ω) (poles near cutoff), so fit it with the same
-  // complex poly + AAA machinery as the other dispersive BCs (FitScalarDispersion). The aux
-  // augmentation carries real symmetric matrices, so split the complex-symmetric S_k =
-  // Re(S_k) + i·Im(S_k) and fold c_k·Re(S_k) + (i·c_k)·Im(S_k). Zero for TEM (E_n≈0) modes.
-  // Added to the loaded pencil AND the matching removable per-port load.
+  // Wave-port modal correction W = Σ_ports (W_full − W_scalar), folded into synthesis. Per
+  // active port, sample the recomputed reduced n×H vectors ŝ_full(ω), ŝ_scalar(ω) across
+  // the band, build an orthonormal modal subspace Q (truncated SVD), and write
+  // Wᵣ(ω)=Q·M(ω)·Qᵀ with M(ω)=g_full·a_full a_fullᵀ + g_scalar·a_scalar a_scalarᵀ,
+  // aₓ=Qᴴŝₓ(ω), an r×r complex-symmetric matrix. Since Q(Qᴴŝ)(Qᴴŝ)ᵀQᵀ=ŝŝᵀ for ŝ∈range(Q),
+  // this reproduces the eigenmode-path Wᵣ(ω) as Q resolves the mode-shape rotation (a
+  // center-frozen rank-2 span cannot). Each unique entry M_pq(ω) is fit with
+  // FitScalarDispersion, added to the loaded pencil and the matching removable per-port
+  // load.
   if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
   {
     const double omega_c = 0.5 * (sweep_omega_min + sweep_omega_max);
-    auto synth_terms = space_op.GetModalCorrectionSynthesisTerms(omega_c);
-    for (auto &term : synth_terms)
+    const int nr = static_cast<int>(Kr.rows());
+    auto build_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max,
+                                               WAVEPORT_SYNTHESIS_SUBSPACE_SAMPLES);
+    auto sample_reduced =
+        [this, nr](int port_idx, double w, Eigen::VectorXcd &sf,
+                   Eigen::VectorXcd &ss) -> WavePortOperator::ModalCorrectionSample
     {
-      // Project the frozen mode-shape vectors onto the reduced basis and form the three
-      // fixed complex-symmetric reduced matrices.
-      Eigen::VectorXcd U = Eigen::VectorXcd::Zero(Kr.rows()),
-                       Wv = Eigen::VectorXcd::Zero(Kr.rows());
-      ProjectVecInternal(space_op.GetComm(), V, *term.u, U, 0);
-      ProjectVecInternal(space_op.GetComm(), V, *term.w, Wv, 0);
-      const std::array<Eigen::MatrixXcd, 3> S = {
-          U * U.transpose(), U * Wv.transpose() + Wv * U.transpose(), Wv * Wv.transpose()};
-
-      const auto load_label = fmt::format("waveport_{:d}_re", term.port_idx);
-      auto pl = std::find_if(pending_port_loads.begin(), pending_port_loads.end(),
-                             [&](const auto &p) { return p.label == load_label; });
-
-      // One EvalModalCorrectionSynthesisCoefficients call (via SolveKnComplex, leaving the
-      // frozen reference intact) yields all three coefficients; FitScalarDispersion samples
-      // the six real/imag parts on the same real-ω nodes, so cache by ω.
-      std::map<double, std::array<std::complex<double>, 3>> coeff_cache;
-      auto eval_coeff = [this, &coeff_cache, port_idx = term.port_idx](double w)
+      auto smp =
+          space_op.SampleModalCorrectionVectors(port_idx, std::complex<double>(w, 0.0));
+      sf = Eigen::VectorXcd::Zero(nr);
+      ss = Eigen::VectorXcd::Zero(nr);
+      if (smp.active)
       {
-        auto it = coeff_cache.find(w);
-        if (it == coeff_cache.end())
+        ProjectVecInternal(space_op.GetComm(), V, *smp.s_full, sf, 0);
+        ProjectVecInternal(space_op.GetComm(), V, *smp.s_scalar, ss, 0);
+      }
+      return smp;
+    };
+    for (int port_idx : space_op.GetModalCorrectionSynthesisPorts(omega_c))
+    {
+      // Stack reduced, unit-normalized samples as columns; truncated-SVD left vectors span
+      // Q.
+      Eigen::MatrixXcd cols(nr, 2 * static_cast<int>(build_omegas.size()));
+      int ncol = 0;
+      for (double w : build_omegas)
+      {
+        Eigen::VectorXcd sf, ss;
+        auto smp = sample_reduced(port_idx, w, sf, ss);
+        if (!smp.active)
         {
-          it = coeff_cache
-                   .emplace(w, space_op.EvalModalCorrectionSynthesisCoefficients(
-                                   port_idx, std::complex<double>(w, 0.0)))
-                   .first;
+          continue;
+        }
+        if (double n = sf.norm(); n > 0.0)
+        {
+          cols.col(ncol++) = sf / n;
+        }
+        if (double n = ss.norm(); n > 0.0)
+        {
+          cols.col(ncol++) = ss / n;
+        }
+      }
+      if (ncol == 0)
+      {
+        continue;
+      }
+      cols.conservativeResize(nr, ncol);
+      Eigen::BDCSVD<Eigen::MatrixXcd, Eigen::ComputeThinU> svd;
+      svd.compute(cols);
+      const auto &sv = svd.singularValues();
+      int r = 0;
+      while (r < sv.size() && sv(r) > waveport_synthesis_rank_tol * sv(0))
+      {
+        r++;
+      }
+      if (r == 0)
+      {
+        continue;
+      }
+      if (r > WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX)
+      {
+        Mpi::Warning(" Wave port {:d} modal subspace rank {:d} capped at {:d}; synthesis "
+                     "accuracy may be reduced\n",
+                     port_idx, r, WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX);
+        r = WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX;
+      }
+      const Eigen::MatrixXcd Q = svd.matrixU().leftCols(r);
+      Mpi::Print(" Wave port {:d} modal-correction synthesis subspace rank {:d}\n",
+                 port_idx, r);
+      auto strong_dir = [&](int j)
+      { return sv(j) > WAVEPORT_SYNTHESIS_AUGMENT_DIR_TOL * sv(0); };
+
+      // M(ω), shared across all r(r+1)/2 entry fits, so cache by ω.
+      std::map<double, Eigen::MatrixXcd> M_cache;
+      auto eval_M = [&](double w) -> const Eigen::MatrixXcd &
+      {
+        auto it = M_cache.find(w);
+        if (it == M_cache.end())
+        {
+          Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(r, r);
+          Eigen::VectorXcd sf, ss;
+          auto smp = sample_reduced(port_idx, w, sf, ss);
+          if (smp.active)
+          {
+            const Eigen::VectorXcd af = Q.adjoint() * sf, as = Q.adjoint() * ss;
+            M = smp.g_full * (af * af.transpose()) + smp.g_scalar * (as * as.transpose());
+          }
+          it = M_cache.emplace(w, std::move(M)).first;
         }
         return it->second;
       };
-      for (int k = 0; k < 3; k++)
+
+      const auto load_label = fmt::format("waveport_{:d}_re", port_idx);
+      auto pl = std::find_if(pending_port_loads.begin(), pending_port_loads.end(),
+                             [&](const auto &p) { return p.label == load_label; });
+      for (int q = 0; q < r; q++)
       {
-        const std::array<std::pair<Eigen::MatrixXcd, std::complex<double>>, 2> parts = {
-            std::make_pair(Eigen::MatrixXcd(S[k].real().cast<std::complex<double>>()),
-                           std::complex<double>(1.0, 0.0)),
-            std::make_pair(Eigen::MatrixXcd(S[k].imag().cast<std::complex<double>>()),
-                           std::complex<double>(0.0, 1.0))};
-        const char *suffix[2] = {"re", "im"};
-        for (int p = 0; p < 2; p++)
+        for (int p = 0; p <= q; p++)
         {
-          const auto &M_real = parts[p].first;
-          const std::complex<double> scale = parts[p].second;
-          if (M_real.norm() == 0.0)
+          Eigen::MatrixXcd S = Q.col(p) * Q.col(q).transpose();
+          if (p != q)
           {
-            continue;
+            S += Q.col(q) * Q.col(p).transpose();
           }
-          const int kk = k;
-          auto f = [&eval_coeff, kk, scale](std::complex<double> omega)
-          { return scale * eval_coeff(omega.real())[kk]; };
-          const auto label =
-              fmt::format("waveport_{:d}_modal_c{:d}_{}", term.port_idx, k, suffix[p]);
-          auto fit = FitScalarDispersion(label, M_real, f, /*allow_augment=*/true);
-          ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
-                                               M_real, Kr_total_corr, Cr_total_corr,
-                                               Mr_total_corr);
-          if (fit.aux)
+          const bool allow_augment = strong_dir(p) && strong_dir(q);
+          // S_pq is complex-symmetric; realize M_pq(ω)·S_pq = M_pq·Re(S) + i·M_pq·Im(S).
+          // FitScalarDispersion(·, i·M_real, g) realizes i·g(ω)·M_real (aux directions are
+          // read from the imaginary slot), so pass each real-symmetric part in the
+          // imaginary slot and fold the compensating ∓i into g = scale·M_pq: re →
+          // M_pq·Re(S), im → i·M_pq·Im(S).
+          const std::complex<double> imag_unit(0.0, 1.0);
+          const std::array<std::pair<Eigen::MatrixXcd, std::complex<double>>, 2> parts = {
+              std::make_pair(
+                  Eigen::MatrixXcd(imag_unit * S.real().cast<std::complex<double>>()),
+                  std::complex<double>(0.0, -1.0)),
+              std::make_pair(
+                  Eigen::MatrixXcd(imag_unit * S.imag().cast<std::complex<double>>()),
+                  std::complex<double>(1.0, 0.0))};
+          const char *suffix[2] = {"re", "im"};
+          for (int part = 0; part < 2; part++)
           {
-            aux_blocks_total.push_back(*fit.aux);
-          }
-          if (pl != pending_port_loads.end())
-          {
+            const auto &M_slot = parts[part].first;
+            const std::complex<double> scale = parts[part].second;
+            if (M_slot.norm() == 0.0)
+            {
+              continue;
+            }
+            const int pp = p, qq = q;
+            auto f = [&eval_M, pp, qq, scale](std::complex<double> omega)
+            { return scale * eval_M(omega.real())(pp, qq); };
+            const auto label = fmt::format("waveport_{:d}_modal_m{:d}_{:d}_{}", port_idx, p,
+                                           q, suffix[part]);
+            auto fit = FitScalarDispersion(label, M_slot, f, allow_augment);
             ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
-                                                 M_real, pl->Kr_corr, pl->Cr_corr,
-                                                 pl->Mr_corr);
+                                                 M_slot, Kr_total_corr, Cr_total_corr,
+                                                 Mr_total_corr);
             if (fit.aux)
             {
-              pl->aux_blocks.push_back(*fit.aux);
+              aux_blocks_total.push_back(*fit.aux);
+            }
+            if (pl != pending_port_loads.end())
+            {
+              ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
+                                                   M_slot, pl->Kr_corr, pl->Cr_corr,
+                                                   pl->Mr_corr);
+              if (fit.aux)
+              {
+                pl->aux_blocks.push_back(*fit.aux);
+              }
             }
           }
         }
@@ -2421,7 +2512,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   const double fmax_GHz =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
-                                         fmin_GHz, fmax_GHz);
+                                         fmin_GHz, fmax_GHz, GetReducedDimension());
   ComputeEigenvalueEstimateErrors(units, eigs);
 
   if (!Mpi::Root(space_op.GetComm()))
@@ -2573,7 +2664,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
 std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstimates(
     const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv, const Eigen::MatrixXcd &C,
-    double fmin_GHz, double fmax_GHz)
+    double fmin_GHz, double fmax_GHz, int n_basis)
 {
   // Solve the quadratic eigenvalue problem (L⁻¹ + iωR⁻¹ − ω²C)v = 0 via companion
   // linearization. SI matrices span ~28 orders of magnitude (L⁻¹ ~ 1e14, C ~ 1e-14), so
@@ -2682,6 +2773,17 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     if (vnorm > 0.0)
     {
       est.eigvec /= vnorm;
+      // Drop spurious aux-pole roots: the augmented realization's aux states inject roots
+      // at their pole frequencies whose eigenvector lives almost entirely in the trailing
+      // aux rows, whereas a physical resonance has substantial energy in the basis rows.
+      if (n_basis > 0 && n_basis < n)
+      {
+        const double basis_frac = est.eigvec.head(n_basis).norm();  // eigvec is unit-norm
+        if (basis_frac < SYNTHESIS_EIG_BASIS_FRAC_MIN)
+        {
+          continue;
+        }
+      }
       Eigen::Index i_max;
       est.eigvec.cwiseAbs().maxCoeff(&i_max);
       const std::complex<double> pivot = est.eigvec(i_max);

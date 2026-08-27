@@ -203,11 +203,11 @@ public:
   std::vector<WavePortOperator::ModalCorrectionTerm> GetModalCorrectionTerms(double omega);
 
   // Circuit-synthesis form of the wave-port modal correction W (see
-  // WavePortOperator::GetModalCorrectionSynthesisTerms), forwarded on the finest ND space.
-  std::vector<WavePortOperator::ModalCorrectionSynthesisTerm>
-  GetModalCorrectionSynthesisTerms(double omega_ref);
-  std::array<std::complex<double>, 3>
-  EvalModalCorrectionSynthesisCoefficients(int port_idx, std::complex<double> omega);
+  // WavePortOperator::GetModalCorrectionSynthesisPorts / SampleModalCorrectionVectors),
+  // forwarded on the finest ND space.
+  std::vector<int> GetModalCorrectionSynthesisPorts(double omega_ref);
+  WavePortOperator::ModalCorrectionSample
+  SampleModalCorrectionVectors(int port_idx, std::complex<double> omega);
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 

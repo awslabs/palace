@@ -407,24 +407,37 @@ public:
   GetModalCorrectionOperator(std::complex<double> omega, FiniteElementSpace &nd_fespace,
                              const mfem::Array<int> &nd_dbc_tdof_list);
 
-  // Circuit-synthesis form of W. With the reference frozen at ω_ref and s₁(ω)=u+kₙ(ω)·w,
-  // each active port's W(ω) expands into three fixed reduced matrices with scalar
-  // dispersion:
-  //   W(ω) = c_uu·u·uᵀ + c_uw·(u·wᵀ+w·uᵀ) + c_ww·w·wᵀ.
-  // GetModalCorrectionSynthesisTerms freezes the reference and returns the frozen vectors
-  // u = ω0·(s_full − s_scalar), w = (ω0/kₙ0)·s_scalar;
-  // EvalModalCorrectionSynthesisCoefficients gives {c_uu, c_uw, c_ww} at ω (via
-  // SolveKnComplex, so it does not disturb the reference).
-  struct ModalCorrectionSynthesisTerm
+  // Circuit-synthesis form of W. Rather than freeze the mode shape at ω_ref (a fixed rank-2
+  // span cannot track the mode-shape rotation across the band), synthesis samples the
+  // recomputed n×H vectors at several ω, builds an orthonormal modal subspace Q, and fits
+  // the small complex-symmetric matrix M(ω) with Wᵣ(ω)=Q·M(ω)·Qᵀ. GetModalCorrectionSynthesis
+  // Ports enumerates the active ports (skipping TE/TEM modes where Eₙ≈0), and
+  // SampleModalCorrectionVectors returns, at a complex ω, the two recomputed rank-1 vectors
+  // and scalars of one port — the identical W(ω) = g_full·s_full s_fullᵀ + g_scalar·s_scalar
+  // s_scalarᵀ as the complex-ω GetModalCorrectionTerms (so synthesis and eigenmode agree).
+  struct ModalCorrectionSample
   {
-    int port_idx;
-    std::unique_ptr<ComplexVector> u, w;
+    bool active = false;
+    std::unique_ptr<ComplexVector> s_full, s_scalar;
+    std::complex<double> g_full = 0.0, g_scalar = 0.0;
   };
-  std::vector<ModalCorrectionSynthesisTerm>
-  GetModalCorrectionSynthesisTerms(double omega_ref, FiniteElementSpace &nd_fespace,
+  std::vector<int>
+  GetModalCorrectionSynthesisPorts(double omega_ref, FiniteElementSpace &nd_fespace,
                                    const mfem::Array<int> &nd_dbc_tdof_list);
-  std::array<std::complex<double>, 3>
-  EvalModalCorrectionSynthesisCoefficients(int port_idx, std::complex<double> omega);
+  ModalCorrectionSample
+  SampleModalCorrectionVectors(int port_idx, std::complex<double> omega,
+                               FiniteElementSpace &nd_fespace,
+                               const mfem::Array<int> &nd_dbc_tdof_list);
+
+private:
+  // Recompute one port's mode at complex ω and assemble its two modal-correction rank-1
+  // vectors + scalars. Shared by the complex-ω GetModalCorrectionTerms (eigenmode path) and
+  // SampleModalCorrectionVectors (synthesis path) so both use an identical W(ω). Returns an
+  // inactive sample if the port has a vanishing reaction.
+  ModalCorrectionSample
+  SamplePortModalCorrection(WavePortData &data, std::complex<double> omega,
+                            FiniteElementSpace &nd_fespace,
+                            const mfem::Array<int> &nd_dbc_tdof_list);
 };
 
 }  // namespace palace

@@ -862,18 +862,17 @@ SpaceOperator::GetModalCorrectionTerms(double omega)
                                               nd_dbc_tdof_lists.back());
 }
 
-std::vector<WavePortOperator::ModalCorrectionSynthesisTerm>
-SpaceOperator::GetModalCorrectionSynthesisTerms(double omega_ref)
+std::vector<int> SpaceOperator::GetModalCorrectionSynthesisPorts(double omega_ref)
 {
-  return wave_port_op.GetModalCorrectionSynthesisTerms(omega_ref, GetNDSpace(),
+  return wave_port_op.GetModalCorrectionSynthesisPorts(omega_ref, GetNDSpace(),
                                                        nd_dbc_tdof_lists.back());
 }
 
-std::array<std::complex<double>, 3>
-SpaceOperator::EvalModalCorrectionSynthesisCoefficients(int port_idx,
-                                                        std::complex<double> omega)
+WavePortOperator::ModalCorrectionSample
+SpaceOperator::SampleModalCorrectionVectors(int port_idx, std::complex<double> omega)
 {
-  return wave_port_op.EvalModalCorrectionSynthesisCoefficients(port_idx, omega);
+  return wave_port_op.SampleModalCorrectionVectors(port_idx, omega, GetNDSpace(),
+                                                   nd_dbc_tdof_lists.back());
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
