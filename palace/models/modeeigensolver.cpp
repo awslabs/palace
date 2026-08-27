@@ -549,13 +549,37 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   reduced_solution = false;
 
   const bool real_frequency = (omega.imag() == 0.0);
-  const bool can_reduce = real_frequency && reduced_enabled && affine_model_ready &&
-                          reduced_basis.size() >= static_cast<std::size_t>(num_modes);
-  if (can_reduce && reduced_solves_since_exact < REDUCED_EXACT_CHECK_INTERVAL)
+  const bool local_solver_rank = (solver_comm != MPI_COMM_NULL);
+  const bool local_can_reduce = real_frequency && reduced_enabled && affine_model_ready &&
+                                local_solver_rank &&
+                                reduced_basis.size() >= static_cast<std::size_t>(num_modes);
+
+  // The affine path deliberately skips the FE-space collective assembly. Port-solver ranks
+  // decide whether the reduced solve is accepted, then communicate that decision over the
+  // FE-space communicator so non-port ranks skip (or enter) the exact assembly in lockstep.
+  int reduce_not_ready =
+      (local_solver_rank && reduced_enabled && !local_can_reduce) ? 1 : 0;
+  int force_exact =
+      (local_can_reduce && reduced_solves_since_exact >= REDUCED_EXACT_CHECK_INTERVAL) ? 1
+                                                                                       : 0;
+  Mpi::GlobalMax(1, &reduce_not_ready, nd_fespace.GetComm());
+  Mpi::GlobalMax(1, &force_exact, nd_fespace.GetComm());
+
+  bool local_reduced_accepted = false;
+  if (local_can_reduce && !reduce_not_ready && !force_exact)
   {
     // The accepted online path evaluates only preprojected exact affine components. It does
     // not assemble the full finite-element operator.
-    if (TryAffineReducedSolve(omega.real(), sigma))
+    local_reduced_accepted = TryAffineReducedSolve(omega.real(), sigma);
+  }
+  int reduced_rejected =
+      (local_solver_rank && reduced_enabled && !force_exact && !local_reduced_accepted) ? 1
+                                                                                        : 0;
+  Mpi::GlobalMax(1, &reduced_rejected, nd_fespace.GetComm());
+
+  if (reduced_enabled && !reduce_not_ready && !force_exact && !reduced_rejected)
+  {
+    if (local_solver_rank)
     {
       reduced_solution = true;
       reduced_stats.reduced_solves++;
@@ -563,17 +587,24 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
       reduced_solves_since_exact++;
       return {static_cast<int>(reduced_eigenvalues.size()), sigma};
     }
-    reduced_stats.reduced_fallbacks++;
+    // This rank has no port unknowns, but must return without entering the full assembly
+    // because the port ranks accepted the affine solve.
+    return {0, sigma};
   }
-  else if (can_reduce)
+  if (local_can_reduce && force_exact)
   {
     // Periodically refresh the truth subspace even when every reduced residual passes.
     // A residual can certify a represented Ritz pair but cannot prove that a new mode has
     // not entered the requested rank from outside the current reduced basis.
     reduced_stats.periodic_exact_checks++;
   }
+  else if (local_can_reduce && reduced_rejected)
+  {
+    reduced_stats.reduced_fallbacks++;
+  }
 
   // Truth/fallback and all complex-frequency queries retain the original exact assembly.
+  // All FE-space ranks reach this call together.
   AssembleFrequencyDependent(omega, sigma);
 
   // Ranks configured without a solver (wave port non-port ranks) return after assembly.
@@ -682,7 +713,12 @@ void ModeEigenSolver::SetReducedModelTraining(bool enable, std::size_t max_basis
 void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
 {
   reduced_training = true;
-  reduced_enabled = !reduced_basis.empty();
+  int has_basis = reduced_basis.empty() ? 0 : 1;
+  // Wave-port submeshes retain the parent FE communicator even on ranks with no local port
+  // unknowns. Make the enable decision collective so every rank participates in affine
+  // component assembly; only port-solver ranks own basis/projection data.
+  Mpi::GlobalMax(1, &has_basis, nd_fespace.GetComm());
+  reduced_enabled = (has_basis != 0);
   // Do not ask the reduced model to be more accurate than the truth eigensolves used to
   // construct it. For loose adaptive sweeps, cap the port backward error at 1e-4.
   reduced_tol = std::max(10.0 * eig_tol, std::min(1.0e-4, 0.01 * adaptive_tol));
@@ -702,7 +738,7 @@ void ModeEigenSolver::BuildAffineModel()
   // The explicit component construction is currently for the bare wave-port path. The
   // BoundaryMode path owns a separate hierarchy/operator assembly and never enables the
   // adaptive wave-port reduced model.
-  if (bmo || reduced_basis.empty())
+  if (bmo)
   {
     return;
   }
