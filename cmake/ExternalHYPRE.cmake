@@ -80,9 +80,7 @@ if(PALACE_WITH_CUDA)
     # https://github.com/hypre-space/hypre/issues/1404
     -DCUDAToolkit_ROOT=${CUDAToolkit_LIBRARY_ROOT}
   )
-  if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(APPEND HYPRE_OPTIONS -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES})
-  endif()
+  palace_append_cuda_architectures(HYPRE_OPTIONS)
 endif()
 if(PALACE_WITH_HIP)
   list(APPEND HYPRE_OPTIONS

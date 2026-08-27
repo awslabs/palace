@@ -190,6 +190,7 @@ runs:
           fi
         done
 
-        # Workaround for https://github.com/spack/spack/issues/51505
-        ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
-
+        # Workaround for https://github.com/spack/spack/issues/51505.
+        # -f so a runner that did not fully clean spack_repo/local/packages from
+        # a prior job does not abort here on an existing link.
+        ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/

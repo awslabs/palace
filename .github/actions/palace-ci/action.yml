@@ -412,4 +412,3 @@ runs:
       shell: bash
       run: |
         cat /tmp/timing.log
-
