@@ -102,6 +102,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
+          variant: +enzyme
           additional-test-cases: transmon_coarse
 
   build-test-x64-intel:

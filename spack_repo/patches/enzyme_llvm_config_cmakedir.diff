@@ -1,0 +1,47 @@
+diff --git a/repos/spack_repo/builtin/packages/enzyme/package.py b/repos/spack_repo/builtin/packages/enzyme/package.py
+index 733bd00e8e..bfa5eaabaa 100644
+--- a/repos/spack_repo/builtin/packages/enzyme/package.py
++++ b/repos/spack_repo/builtin/packages/enzyme/package.py
+@@ -58,22 +58,35 @@ class Enzyme(CMakePackage):
+     depends_on("cmake@3.13:", type="build")
+
+     def cmake_args(self):
+-        args = ["-DLLVM_DIR=" + self.llvm_prefix + "/lib/cmake/llvm"]
+-        return args
++        llvm_dir = self.llvm_config("--cmakedir", output=str).strip()
++        return [self.define("LLVM_DIR", llvm_dir)]
+
+     @property
+-    def llvm_prefix(self):
++    def llvm_spec(self):
+         spec = self.spec
+         if spec.satisfies("%libllvm=llvm"):
+-            return spec["llvm"].prefix
++            return spec["llvm"]
+         if spec.satisfies("%libllvm=llvm-amdgpu"):
+-            return spec["llvm-amdgpu"].prefix
++            return spec["llvm-amdgpu"]
+         raise InstallError("Unknown 'libllvm' provider!")
+
++    @property
++    def llvm_prefix(self):
++        return self.llvm_spec.prefix
++
++    @property
++    def llvm_config(self):
++        versioned_executable = f"llvm-config-{self.llvm_spec.version.up_to(1)}"
++        return which(
++            versioned_executable,
++            "llvm-config",
++            path=str(self.llvm_prefix.bin),
++            required=True,
++        )
++
+     @property
+     def llvm_version(self):
+-        llvm_config = Executable(self.llvm_prefix + "/bin/llvm-config")
+-        return Version(llvm_config("--version", output=str))
++        return Version(self.llvm_config("--version", output=str))
+
+     @property
+     def libs(self):
