@@ -121,6 +121,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Corrected the configuration validation script name in the docs
+    (`validate-config`). [PR 891](https://github.com/awslabs/palace/pull/891).
   - Clarified how to interpret the elapsed time report: indented rows are exclusive
     sub-categories, parent rows are remainders, and Min/Max/Avg are over MPI ranks.
     [PR 885](https://github.com/awslabs/palace/pull/885).
