@@ -35,6 +35,7 @@ namespace
 struct ModeResult
 {
   std::vector<std::complex<double>> kn;
+  std::vector<double> reduced_backward_errors;
   int num_converged;
   ModeEigenSolver::ReducedModelStats reduced_stats;
   std::size_t reduced_basis_size = 0;
@@ -128,7 +129,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   if (exercise_reduced_model)
   {
-    mode_solver.SetReducedModelTraining(true, reduced_training_capacity);
+    mode_solver.ConfigureReducedModelTraining(reduced_training_capacity);
     // Homogeneous PEC waveguide modes have smooth (in fact frequency-independent in shape)
     // transverse fields, making this a deterministic reduced-model acceptance test.
     solve_at(0.9 * omega);
@@ -144,6 +145,11 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     // Capture the first in-band evaluation, which is the reduced result under test. Any
     // subsequent calls below exist only to exercise the periodic exact-refresh guard.
     out.kn.push_back(mode_solver.GetPropagationConstant(i));
+    if (exercise_reduced_model)
+    {
+      out.reduced_backward_errors.push_back(
+          mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD));
+    }
   }
 
   if (exercise_reduced_model)
@@ -216,6 +222,11 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   REQUIRE(reduced.reduced_basis_size >= num_modes);
   CHECK(reduced.reduced_stats.reduced_solves == 20);
   CHECK(reduced.reduced_stats.worst_residual <= reduced.reduced_tol);
+  REQUIRE(reduced.reduced_backward_errors.size() == num_modes);
+  for (double error : reduced.reduced_backward_errors)
+  {
+    CHECK(error <= reduced.reduced_tol);
+  }
   CHECK(reduced.reduced_stats.periodic_checks == 1);
   CHECK(reduced.periodic_exact_converged >= num_modes);
   CHECK(reduced.complex_exact_converged >= num_modes);

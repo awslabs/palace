@@ -776,8 +776,8 @@ void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
                       std::max(snapshots, std::size_t{1}),
               "Wave-port PROM basis capacity overflow!");
   const std::size_t capacity = static_cast<std::size_t>(mode_idx) * snapshots;
-  mode_solver->SetReducedModelTraining(
-      true, std::max(capacity, static_cast<std::size_t>(mode_idx)));
+  mode_solver->ConfigureReducedModelTraining(
+      std::max(capacity, static_cast<std::size_t>(mode_idx)));
 }
 
 void WavePortData::EnableReducedModel(double adaptive_tol)

@@ -6,7 +6,7 @@
 #include "fem/multigrid.hpp"
 #include "linalg/operator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
-#include "models/modeeigensolver.hpp"
+#include "models/modeoperatorassembly.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
@@ -52,20 +52,6 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   Mpi::Print(" ND space: {:d} DOFs, H1 space: {:d} DOFs, total: {:d}\n",
              GetNDSpace().GlobalTrueVSize(), GetH1Space().GlobalTrueVSize(),
              GetNDSpace().GlobalTrueVSize() + GetH1Space().GlobalTrueVSize());
-}
-
-BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::AssembleAtt(std::complex<double> omega, double sigma) const
-{
-  return mode_assembly::AssembleAtt(GetNDSpace(), mat_op, nullptr, *surf_z_op, *farfield_op,
-                                    *surf_sigma_op, *surf_rz_op, omega, sigma);
-}
-
-BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::AssembleAnn(std::complex<double> omega) const
-{
-  return mode_assembly::AssembleAnn(GetH1Space(), mat_op, nullptr, *surf_z_op, *farfield_op,
-                                    *surf_sigma_op, *surf_rz_op, omega);
 }
 
 void BoundaryModeOperator::ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn,
