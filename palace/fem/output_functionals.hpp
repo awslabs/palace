@@ -15,6 +15,8 @@
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
 
+union CeedIntScalar;
+
 namespace palace
 {
 
@@ -135,6 +137,7 @@ private:
   std::vector<int> local_out_attrs;
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
+  std::vector<CeedIntScalar> BuildBaseContext(int dim, bool is_2d) const;
   void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
 
   // Apply all group operators with the field inputs pointed at the given source

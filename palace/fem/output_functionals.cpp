@@ -496,6 +496,114 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
               "Surface functional staging allocation was not released!");
 }
 
+std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_2d) const
+{
+  // The reduction-only base currently has no 2D-specific contexts.
+  (void)is_2d;
+  std::vector<CeedIntScalar> base_ctx;
+  if (kind == KernelKind::INTERFACE_EPR)
+  {
+    // CeedIntScalar is a union, so the runtime integrand selector (epr_type) needs its
+    // own slot: [0].first = epr_type (0 = DEFAULT, 1 = MA, 2 = MS, 3 = SA), then
+    // [1].second = scale0, [2].second = scale1, then (MS only) the material context. The
+    // shared kernel passes ctx + 1 to the per-type helpers so their relative layout
+    // (scale0, scale1, material) is unchanged.
+    base_ctx.resize(3);
+    base_ctx[1].second = 0.0;
+    base_ctx[2].second = 0.0;
+    switch (epr_type)
+    {
+      case InterfaceDielectric::DEFAULT:
+        base_ctx[0].first = 0;
+        base_ctx[1].second = 0.5 * epr_t * epr_epsilon;
+        break;
+      case InterfaceDielectric::MA:
+        base_ctx[0].first = 1;
+        base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
+        break;
+      case InterfaceDielectric::MS:
+        {
+          base_ctx[0].first = 2;
+          base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
+          MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
+                                                   mat_op->GetPermittivityReal());
+          auto mat_ctx = ceed::PopulateCoefficientContext(dim, &epsilon_func);
+          base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+        }
+        break;
+      case InterfaceDielectric::SA:
+        base_ctx[0].first = 3;
+        base_ctx[1].second = 0.5 * epr_t * epr_epsilon;
+        base_ctx[2].second = 0.5 * epr_t / epr_epsilon;
+        break;
+    }
+  }
+  else if (kind == KernelKind::SURFACE_FLUX)
+  {
+    base_ctx.resize(5);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].first = flux_two_sided;
+    for (int d = 0; d < 3; d++)
+    {
+      base_ctx[2 + d].second = (flux_x0.Size() > d) ? flux_x0(d) : 0.0;
+    }
+    if (flux_type == SurfaceFlux::ELECTRIC)
+    {
+      MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
+                                               mat_op->GetPermittivityReal());
+      auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
+      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    }
+    else if (flux_type == SurfaceFlux::POWER)
+    {
+      MaterialPropertyCoefficient invmu_func(mat_op->GetAttributeToMaterial(),
+                                             mat_op->GetInvPermeability());
+      auto mat_ctx = ceed::PopulateCoefficientContext(3, &invmu_func);
+      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    }
+  }
+  else if (kind == KernelKind::MODE_OVERLAP)
+  {
+    // Group-specific entries are filled after selecting the boundary attribute:
+    // [0].first = type, [1].second = scale, [2..4].second = direction/origin.
+    base_ctx.resize(5);
+  }
+  else if (kind == KernelKind::FARFIELD)
+  {
+    const int N = static_cast<int>(farfield_dirs.size());
+    const auto b_map_type = rt_fespace->FEColl()->GetMapType(dim);
+    MFEM_VERIFY(b_map_type == mfem::FiniteElement::H_CURL ||
+                    b_map_type == mfem::FiniteElement::H_DIV,
+                "Far-field postprocessing requires an H(curl) or H(div) magnetic field "
+                "space!");
+    base_ctx.resize(5 + 3 * N);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].second = farfield_omega.real();
+    base_ctx[2].second = farfield_omega.imag();
+    base_ctx[3].first = N;
+    base_ctx[4].first = (b_map_type == mfem::FiniteElement::H_DIV) ? 1 : 0;
+    for (int d = 0; d < N; d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
+      }
+    }
+    MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
+                                        mat_op->GetLightSpeed());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &c0_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
+  else
+  {
+    base_ctx.resize(2);
+    base_ctx[0].second = 0.0;
+    base_ctx[1].second = 1.0;
+  }
+
+  return base_ctx;
+}
+
 void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                       const mfem::Array<int> &bdr_attr_marker)
 {
@@ -884,107 +992,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   }
 
   // Build the (group independent part of the) QFunction context for the integrand.
-  std::vector<CeedIntScalar> base_ctx;
-  if (kind == KernelKind::INTERFACE_EPR)
-  {
-    // CeedIntScalar is a union, so the runtime integrand selector (epr_type) needs its
-    // own slot: [0].first = epr_type (0 = DEFAULT, 1 = MA, 2 = MS, 3 = SA), then
-    // [1].second = scale0, [2].second = scale1, then (MS only) the material context. The
-    // shared kernel passes ctx + 1 to the per-type helpers so their relative layout
-    // (scale0, scale1, material) is unchanged.
-    base_ctx.resize(3);
-    base_ctx[1].second = 0.0;
-    base_ctx[2].second = 0.0;
-    switch (epr_type)
-    {
-      case InterfaceDielectric::DEFAULT:
-        base_ctx[0].first = 0;
-        base_ctx[1].second = 0.5 * epr_t * epr_epsilon;
-        break;
-      case InterfaceDielectric::MA:
-        base_ctx[0].first = 1;
-        base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
-        break;
-      case InterfaceDielectric::MS:
-        {
-          base_ctx[0].first = 2;
-          base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
-          MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
-                                                   mat_op->GetPermittivityReal());
-          auto mat_ctx = ceed::PopulateCoefficientContext(dim, &epsilon_func);
-          base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
-        }
-        break;
-      case InterfaceDielectric::SA:
-        base_ctx[0].first = 3;
-        base_ctx[1].second = 0.5 * epr_t * epr_epsilon;
-        base_ctx[2].second = 0.5 * epr_t / epr_epsilon;
-        break;
-    }
-  }
-  else if (kind == KernelKind::SURFACE_FLUX)
-  {
-    base_ctx.resize(5);
-    base_ctx[0].second = 1.0;  // Normal sign, set per group
-    base_ctx[1].first = flux_two_sided;
-    for (int d = 0; d < 3; d++)
-    {
-      base_ctx[2 + d].second = (flux_x0.Size() > d) ? flux_x0(d) : 0.0;
-    }
-    if (flux_type == SurfaceFlux::ELECTRIC)
-    {
-      MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
-                                               mat_op->GetPermittivityReal());
-      auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
-      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
-    }
-    else if (flux_type == SurfaceFlux::POWER)
-    {
-      MaterialPropertyCoefficient invmu_func(mat_op->GetAttributeToMaterial(),
-                                             mat_op->GetInvPermeability());
-      auto mat_ctx = ceed::PopulateCoefficientContext(3, &invmu_func);
-      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
-    }
-  }
-  else if (kind == KernelKind::MODE_OVERLAP)
-  {
-    // Group-specific entries are filled after selecting the boundary attribute:
-    // [0].first = type, [1].second = scale, [2..4].second = direction/origin.
-    base_ctx.resize(5);
-  }
-  else if (kind == KernelKind::FARFIELD)
-  {
-    const int N = static_cast<int>(farfield_dirs.size());
-    const auto b_map_type = rt_fespace->FEColl()->GetMapType(dim);
-    MFEM_VERIFY(b_map_type == mfem::FiniteElement::H_CURL ||
-                    b_map_type == mfem::FiniteElement::H_DIV,
-                "Far-field postprocessing requires an H(curl) or H(div) magnetic field "
-                "space!");
-    base_ctx.resize(5 + 3 * N);
-    base_ctx[0].second = 1.0;  // Normal sign, set per group
-    base_ctx[1].second = farfield_omega.real();
-    base_ctx[2].second = farfield_omega.imag();
-    base_ctx[3].first = N;
-    base_ctx[4].first = (b_map_type == mfem::FiniteElement::H_DIV) ? 1 : 0;
-    for (int d = 0; d < N; d++)
-    {
-      for (int c = 0; c < 3; c++)
-      {
-        base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
-      }
-    }
-    MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
-                                        mat_op->GetLightSpeed());
-    auto mat_ctx = ceed::PopulateCoefficientContext(3, &c0_func);
-    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
-  }
-  else
-  {
-    base_ctx.resize(2);
-    base_ctx[0].second = 0.0;
-    base_ctx[1].second = 1.0;
-  }
-
+  std::vector<CeedIntScalar> base_ctx = BuildBaseContext(dim, is_2d);
   // Build the face neighbor field exchange for any ghost (face neighbor) sides of
   // two-sided interior boundaries on parallel interfaces. Collective: all processes
   // participate (those without ghost faces pose no requests), so the decision is reduced
