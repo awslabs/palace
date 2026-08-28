@@ -424,7 +424,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   {
     max_vsize = std::max(max_vsize, fespace ? fespace->GetVSize() : 0);
   }
-  field_staging.SetSize(max_vsize);
+  Vector field_staging(max_vsize);
   field_staging.UseDevice(true);
   field_staging = 0.0;
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
@@ -518,6 +518,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, value_dim, out_restr,
                                      &op);
     export_groups.push_back({ceed, op, std::move(field_sources)});
+    export_groups.back().mesh_nodes = pmesh.GetNodes();
+    export_groups.back().mesh_node_fields = {"grad_x"};
+    fem::CacheGroupOperatorFieldVectors(export_groups.back());
 
     // Cleanup (the assembled operator holds its own references).
     PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
@@ -528,6 +531,13 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
     PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
   }
+
+  // The field vectors borrow construction storage until they are re-pointed at the first
+  // Exchange(). Detach them before releasing the full solution-sized staging vector.
+  fem::DetachGroupOperatorFieldVectors(export_groups);
+  field_staging.Destroy();
+  MFEM_ASSERT(field_staging.Capacity() == 0,
+              "Face-neighbor field staging storage was not released!");
 }
 
 FaceNbrFieldExchange::~FaceNbrFieldExchange()

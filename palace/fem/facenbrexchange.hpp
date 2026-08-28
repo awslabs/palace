@@ -85,10 +85,8 @@ private:
   // writing into the exported vector.
   std::vector<fem::CeedGroupOperator> export_groups;
 
-  // Staging vector used to initialize the field input CeedVectors at construction (the
-  // field CeedVectors are re-pointed at the caller's data on each Exchange() call), and
-  // the exported / imported value vectors.
-  mutable Vector field_staging, exported, imported;
+  // Exported and imported field-value vectors.
+  mutable Vector exported, imported;
 
 public:
   // Construct the exchange for the given requests against ghost elements of the mesh.
