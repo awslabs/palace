@@ -17,6 +17,14 @@ class IntegrationRule;
 namespace palace::ceed
 {
 
+namespace internal
+{
+
+// Release process-wide cached basis references before destroying their Ceed contexts.
+void FinalizeBasisCache();
+
+}  // namespace internal
+
 void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir, int num_comp,
                Ceed ceed, CeedBasis *basis);
 
