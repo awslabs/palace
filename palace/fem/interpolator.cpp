@@ -88,7 +88,7 @@ class CeedProbeEvaluator
 {
 private:
   std::vector<fem::CeedGroupOperator> groups;
-  mutable Vector field_staging, local_out;
+  mutable Vector local_out;
   MPI_Comm comm;
   bool valid = true;
 
@@ -108,7 +108,7 @@ public:
     const mfem::FiniteElementSpace &mesh_fespace = *mesh.GetNodes()->FESpace();
     const int npts = op.GetCode().Size();
     const int rank = Mpi::Rank(comm);
-    field_staging.SetSize(fespace.GetVSize());
+    Vector field_staging(fespace.GetVSize());
     field_staging.UseDevice(true);
     field_staging = 0.0;
     local_out.SetSize(npts * 3);
@@ -195,6 +195,9 @@ public:
         ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, 3, out_restr,
                                          &point_op);
         groups.push_back({ceed, point_op, std::move(field_sources)});
+        groups.back().mesh_nodes = mesh.GetNodes();
+        groups.back().mesh_node_fields = {"grad_x"};
+        fem::CacheGroupOperatorFieldVectors(groups.back());
 
         PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
         PalaceCeedCall(ceed, CeedVectorDestroy(&field_vec));
@@ -205,6 +208,13 @@ public:
         PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
       }
     }
+
+    // The field vectors borrow construction storage until they are re-pointed at the first
+    // Eval(). Detach them before releasing the full solution-sized staging vector.
+    fem::DetachGroupOperatorFieldVectors(groups);
+    field_staging.Destroy();
+    MFEM_ASSERT(field_staging.Capacity() == 0,
+                "Probe evaluator field staging storage was not released!");
   }
 
   ~CeedProbeEvaluator() { fem::DestroyGroupOperators(groups); }
