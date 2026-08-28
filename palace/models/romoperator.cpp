@@ -904,8 +904,13 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 }
 
 void RomOperator::AddComplexFrequencySnapshots(
-    int excitation_idx, const std::vector<std::complex<double>> &omegas)
+    int excitation_idx, const std::vector<std::complex<double>> &omegas,
+    bool add_random_rhs)
 {
+  MFEM_VERIFY(space_op.GetFloquetPortOp().Empty() &&
+                  !space_op.GetMaterialOp().HasFloquetFrequencyScaling(),
+              "Complex-frequency PROM enrichment does not yet support Floquet-port DtN "
+              "operators or frequency-scaled Bloch wave vectors!");
   ComplexVector u(K->Width()), rhs1(K->Width()), random_rhs(K->Width());
   u.UseDevice(true);
   rhs1.UseDevice(true);
@@ -936,15 +941,17 @@ void RomOperator::AddComplexFrequencySnapshots(
     Mpi::Print(" Solving complex PROM enrichment snapshot {:d} at ω={:.6e}{:+.6e}i\n",
                k + 1, omega.real(), omega.imag());
     ksp->Mult(r, u);
-    UpdatePROM(u, fmt::format("complex_e{:d}_s{:d}", excitation_idx, k + 1));
+    UpdatePROM(u, fmt::format("complex_e{:d}_s{:d}", excitation_idx, k + 1), true);
 
     // A deterministic full-space probe captures weakly port-observable eigendirections that
-    // cannot appear in a single-input transfer Krylov space. Near a pole, A(ω)⁻¹ amplifies
-    // its right eigenvector component without requiring prior knowledge of that
-    // eigenvector.
-    space_op.GetRandomInitialVector(random_rhs);
-    ksp->Mult(random_rhs, u);
-    UpdatePROM(u, fmt::format("complex_random_s{:d}", k + 1));
+    // cannot appear in a single-input transfer Krylov space. Add it only once per shift
+    // across all port excitations; otherwise multiport cases inject duplicate vectors.
+    if (add_random_rhs)
+    {
+      space_op.GetRandomInitialVector(random_rhs);
+      ksp->Mult(random_rhs, u);
+      UpdatePROM(u, fmt::format("complex_random_s{:d}", k + 1), true);
+    }
   }
   // Force the next HDM/PROM solve to reproject frequency-linear RHS data onto the enlarged
   // basis, even if it uses the same excitation as the last offline sample.
@@ -970,9 +977,11 @@ RomOperator::GetAdaptiveComplexFrequencies(const Units &units, double omega_min,
       { return std::abs(a.freq_re_GHz - fcenter) < std::abs(b.freq_re_GHz - fcenter); });
   std::vector<std::complex<double>> f_samples;
   const double err_tol = std::max(10.0 * waveport_synthesis_tol, 1.0e-8);
+  bool has_inaccurate_pole = false;
   int used = 0;
   for (const auto &e : eigs)
   {
+    has_inaccurate_pole = has_inaccurate_pole || e.error_bkwd > err_tol;
     if (e.error_bkwd <= err_tol || e.freq_im_GHz <= 0.0 || used >= 2)
     {
       continue;
@@ -985,6 +994,12 @@ RomOperator::GetAdaptiveComplexFrequencies(const Units &units, double omega_min,
       f_samples.emplace_back(e.freq_re_GHz, scale * e.freq_im_GHz);
     }
     used++;
+  }
+  if (f_samples.empty() && !eigs.empty() && !has_inaccurate_pole)
+  {
+    Mpi::Print(" All provisional circuit poles satisfy the HDM backward-error tolerance; "
+               "complex enrichment is not needed\n");
+    return {};
   }
   if (f_samples.empty())
   {
@@ -1016,7 +1031,8 @@ RomOperator::GetAdaptiveComplexFrequencies(const Units &units, double omega_min,
   return omega_samples;
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+bool RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                             bool skip_dependent)
 {
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
   // vectors, if it has a nonzero real and imaginary parts).
@@ -1030,9 +1046,9 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
+  const std::size_t dim_V_max = V.size() + std::size_t{has_real} + std::size_t{has_imag};
 
-  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_max, dim_V_max));
 
   // Small lambda to add vector to basis. Lambda returns a bool, which is false when the new
   // vector is below the linear dependence tolerance. The MFEM_VERIFY happens after the
@@ -1070,6 +1086,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
 
     if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
     {
+      V.pop_back();
       return false;
     }
 
@@ -1078,22 +1095,35 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return true;
   };
 
-  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
+  auto add_component = [&](const Vector &vector, std::string_view component_label)
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    if (add_real_vector_to_basis(vector, component_label))
+    {
+      return;
+    }
+    if (!skip_dependent)
+    {
+      MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+                 "convergence issue or a code error (the same vector was added multiple "
+                 "times accidentally).");
+    }
+    Mpi::Print(" Skipping linearly dependent complex-enrichment vector {}\n",
+               component_label);
+  };
+  if (has_real)
+  {
+    add_component(u.Real(), fmt::format("{}_re", node_label));
   }
-  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
+  if (has_imag)
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    add_component(u.Imag(), fmt::format("{}_im", node_label));
   }
 
+  const std::size_t dim_V_new = V.size();
+  orth_R.conservativeResize(dim_V_new, dim_V_new);
   if (dim_V_new == dim_V_old)
   {
-    return;
+    return false;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
@@ -1208,6 +1238,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+  return true;
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)

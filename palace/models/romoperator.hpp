@@ -516,7 +516,8 @@ public:
   // The source mode is evaluated at Re(ω); the full operator and iω RHS scaling use the
   // complex shift. Intended for rational-Krylov basis enrichment of weakly sampled poles.
   void AddComplexFrequencySnapshots(int excitation_idx,
-                                    const std::vector<std::complex<double>> &omegas);
+                                    const std::vector<std::complex<double>> &omegas,
+                                    bool add_random_rhs);
 
   // Build a provisional real-axis synthesized circuit and return complex shifts for one
   // enrichment round. Inaccurate provisional poles seed nearby shifts; if no in-band pole
@@ -529,7 +530,8 @@ public:
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+  bool UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                  bool skip_dependent = false);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.

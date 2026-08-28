@@ -343,9 +343,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
             2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(fi);
         complex_omegas.emplace_back(wr, wi);
       }
+      bool add_random_rhs = true;
       for (const auto &[excitation_idx, excitation_spec] : port_excitations)
       {
-        prom_op.AddComplexFrequencySnapshots(excitation_idx, complex_omegas);
+        prom_op.AddComplexFrequencySnapshots(excitation_idx, complex_omegas,
+                                             add_random_rhs);
+        add_random_rhs = false;
       }
     }
   }
@@ -457,9 +460,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   {
     auto complex_omegas = prom_op.GetAdaptiveComplexFrequencies(
         iodata.units, omega_sample.front(), omega_sample.back());
+    bool add_random_rhs = true;
     for (const auto &[excitation_idx, excitation_spec] : port_excitations)
     {
-      prom_op.AddComplexFrequencySnapshots(excitation_idx, complex_omegas);
+      prom_op.AddComplexFrequencySnapshots(excitation_idx, complex_omegas, add_random_rhs);
+      add_random_rhs = false;
     }
     Mpi::Print(" Complex enrichment complete, PROM dimension = {:d}\n",
                prom_op.GetReducedDimension());
