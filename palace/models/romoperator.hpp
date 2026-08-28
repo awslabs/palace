@@ -518,6 +518,13 @@ public:
   void AddComplexFrequencySnapshots(int excitation_idx,
                                     const std::vector<std::complex<double>> &omegas);
 
+  // Build a provisional real-axis synthesized circuit and return complex shifts for one
+  // enrichment round. Inaccurate provisional poles seed nearby shifts; if no in-band pole
+  // is found, use a small generic Q-grid at band center.
+  std::vector<std::complex<double>> GetAdaptiveComplexFrequencies(const Units &units,
+                                                                  double omega_min,
+                                                                  double omega_max) const;
+
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as

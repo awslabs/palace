@@ -946,6 +946,74 @@ void RomOperator::AddComplexFrequencySnapshots(
     ksp->Mult(random_rhs, u);
     UpdatePROM(u, fmt::format("complex_random_s{:d}", k + 1));
   }
+  // Force the next HDM/PROM solve to reproject frequency-linear RHS data onto the enlarged
+  // basis, even if it uses the same excitation as the last offline sample.
+  excitation_idx_cache = 0;
+  has_RHS2 = true;
+}
+
+std::vector<std::complex<double>>
+RomOperator::GetAdaptiveComplexFrequencies(const Units &units, double omega_min,
+                                           double omega_max) const
+{
+  auto matrices = CalculateNormalizedPROMMatrices(units);
+  const double unit_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+  const double fmin = omega_min * unit_GHz, fmax = omega_max * unit_GHz;
+  auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
+                                         fmin, fmax, GetReducedDimension());
+  ComputeEigenvalueEstimateErrors(units, eigs);
+
+  const double fcenter = 0.5 * (fmin + fmax);
+  std::sort(
+      eigs.begin(), eigs.end(), [&](const auto &a, const auto &b)
+      { return std::abs(a.freq_re_GHz - fcenter) < std::abs(b.freq_re_GHz - fcenter); });
+  std::vector<std::complex<double>> f_samples;
+  const double err_tol = std::max(10.0 * waveport_synthesis_tol, 1.0e-8);
+  int used = 0;
+  for (const auto &e : eigs)
+  {
+    if (e.error_bkwd <= err_tol || e.freq_im_GHz <= 0.0 || used >= 2)
+    {
+      continue;
+    }
+    Mpi::Print(" Provisional synthesis pole f={:.6e}{:+.6e}i GHz has HDM backward error "
+               "{:.3e}; adding complex enrichment shifts\n",
+               e.freq_re_GHz, e.freq_im_GHz, e.error_bkwd);
+    for (double scale : {1.0 / 3.0, 2.0 / 3.0, 1.0})
+    {
+      f_samples.emplace_back(e.freq_re_GHz, scale * e.freq_im_GHz);
+    }
+    used++;
+  }
+  if (f_samples.empty())
+  {
+    Mpi::Print(" No usable provisional circuit pole; using generic band-center Q-grid for "
+               "complex enrichment\n");
+    for (double q : {3.0, 5.0, 10.0, 20.0})
+    {
+      f_samples.emplace_back(fcenter, fcenter / (2.0 * q));
+    }
+  }
+
+  const double freq_to_omega =
+      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+  std::vector<std::complex<double>> omega_samples;
+  for (const auto f : f_samples)
+  {
+    const std::complex<double> omega = freq_to_omega * f;
+    bool duplicate = false;
+    for (const auto old : omega_samples)
+    {
+      duplicate =
+          duplicate || (std::abs(omega - old) <= 1.0e-8 * std::max(1.0, std::abs(omega)));
+    }
+    if (!duplicate)
+    {
+      omega_samples.push_back(omega);
+    }
+  }
+  return omega_samples;
 }
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)

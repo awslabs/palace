@@ -452,6 +452,19 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
   }
 
+  if (iodata.solver.driven.adaptive_circuit_synthesis &&
+      std::getenv("PALACE_SYNTHESIS_ADAPT_COMPLEX"))
+  {
+    auto complex_omegas = prom_op.GetAdaptiveComplexFrequencies(
+        iodata.units, omega_sample.front(), omega_sample.back());
+    for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+    {
+      prom_op.AddComplexFrequencySnapshots(excitation_idx, complex_omegas);
+    }
+    Mpi::Print(" Complex enrichment complete, PROM dimension = {:d}\n",
+               prom_op.GetReducedDimension());
+  }
+
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
