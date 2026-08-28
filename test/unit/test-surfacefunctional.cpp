@@ -1,22 +1,29 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include "fem/boundary_derived_field_bundle.hpp"
+#include "fem/boundary_physical_trace.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/face_sampling_plan.hpp"
 #include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
+#include "fem/point_field_evaluator.hpp"
 #include "fixtures.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/domainpostoperator.hpp"
@@ -162,13 +169,14 @@ std::unique_ptr<Mesh> MakeInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type ele
   return std::make_unique<Mesh>(std::move(pmesh));
 }
 
-// Two-dimensional counterpart of MakeNCInterfaceMesh. Refining only x < 0.5 leaves the
-// material interface with triangle or quadrilateral subfaces attached to a coarse
-// neighbor, including depth-2 reference maps when requested.
+// Two-dimensional counterpart of MakeNCInterfaceMesh. Refining only the lower material
+// region leaves interface subfaces attached to a coarse upper-material neighbor,
+// including depth-2 reference maps when requested.
 std::unique_ptr<Mesh> MakeNCInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type elem_type,
-                                            int refinement_depth)
+                                            int refinement_depth, int coarse_size = 2)
 {
-  mfem::Mesh smesh = mfem::Mesh::MakeCartesian2D(2, 2, elem_type, false, 1.0, 1.0);
+  mfem::Mesh smesh =
+      mfem::Mesh::MakeCartesian2D(coarse_size, coarse_size, elem_type, false, 1.0, 1.0);
   for (int e = 0; e < smesh.GetNE(); e++)
   {
     mfem::Vector center(2);
@@ -200,7 +208,7 @@ std::unique_ptr<Mesh> MakeNCInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type e
     {
       mfem::Vector center(2);
       smesh.GetElementCenter(e, center);
-      if (center(0) < 0.5)
+      if (center(1) < 0.5)
       {
         refs.Append(e);
       }
@@ -307,6 +315,384 @@ std::unique_ptr<Mesh> MakeNCInterfaceMesh(MPI_Comm comm, mfem::Element::Type ele
   REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
+}
+
+// Refine only one material side so the retained interior boundary is represented by
+// multiple fine leaves attached to one coarse volume owner. This specifically exercises
+// the 3D coarse-face union rather than merely putting NC volume faces near a surface.
+std::unique_ptr<Mesh> MakeNCCoarseInterfaceMesh3D(MPI_Comm comm,
+                                                  mfem::Element::Type elem_type,
+                                                  int refinement_depth, int coarse_size = 2)
+{
+  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(coarse_size, coarse_size, 2, elem_type);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center(3);
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+  }
+  for (int f = 0; f < smesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    smesh.GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0 && smesh.GetAttribute(e1) != smesh.GetAttribute(e2))
+    {
+      auto *face_elem = smesh.GetFace(f)->Duplicate(&smesh);
+      face_elem->SetAttribute(7);
+      smesh.AddBdrElement(face_elem);
+    }
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  smesh.EnsureNCMesh(true);
+
+  REQUIRE(refinement_depth >= 1);
+  for (int level = 0; level < refinement_depth; level++)
+  {
+    mfem::Array<int> refs;
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      mfem::Vector center(3);
+      smesh.GetElementCenter(e, center);
+      if (center(2) < 0.5)
+      {
+        refs.Append(e);
+      }
+    }
+    smesh.GeneralRefinement(refs, 1);
+  }
+
+  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+  return std::make_unique<Mesh>(std::move(pmesh));
+}
+
+enum class MixedCoarseInterface
+{
+  PRISM_QUAD,
+  PRISM_TRIANGLE,
+  PYRAMID_QUAD,
+  PYRAMID_TRIANGLE
+};
+
+mfem::Geometry::Type CoarseGeometry(MixedCoarseInterface interface)
+{
+  return interface == MixedCoarseInterface::PRISM_QUAD ||
+                 interface == MixedCoarseInterface::PRISM_TRIANGLE
+             ? mfem::Geometry::PRISM
+             : mfem::Geometry::PYRAMID;
+}
+
+mfem::Geometry::Type CoarseFaceGeometry(MixedCoarseInterface interface)
+{
+  return interface == MixedCoarseInterface::PRISM_QUAD ||
+                 interface == MixedCoarseInterface::PYRAMID_QUAD
+             ? mfem::Geometry::SQUARE
+             : mfem::Geometry::TRIANGLE;
+}
+
+// Add retained interior boundaries to replicated connected mixed-element zoos, then
+// refine one neighbor so a wedge or pyramid owns coarse NC leaves on both supported
+// triangular and quadrilateral facet families.
+std::unique_ptr<Mesh> MakeNCMixedCoarseOwnerMesh(MPI_Comm comm,
+                                                 MixedCoarseInterface interface,
+                                                 int refinement_depth)
+{
+  mfem::Mesh source(std::string(PALACE_TEST_DATA_DIR) + "/mesh/tinyzoo-3d.mesh", 1, 1);
+  REQUIRE(source.GetNE() == 4);
+  // Replicate disconnected zoo components so MPI partitions with more than two ranks do
+  // not leave a rank with an under-populated mixed NC component during Mesh setup.
+  const int copies = std::max(1, Mpi::Size(comm));
+  const int vertices_per_copy = source.GetNV() + 1;
+  const int elements_per_copy = source.GetNE() + 1;
+  mfem::Mesh smesh(3, copies * vertices_per_copy, copies * elements_per_copy, 0, 3);
+  mfem::Array<int> vertices;
+  for (int copy = 0; copy < copies; copy++)
+  {
+    const int vertex_offset = copy * vertices_per_copy;
+    for (int v = 0; v < source.GetNV(); v++)
+    {
+      const double *x = source.GetVertex(v);
+      smesh.AddVertex(x[0] + 3.0 * copy, x[1], x[2]);
+    }
+    // Attach one extra tetrahedron below the wedge's z=0 triangular face {4,5,1}.
+    // This makes that wedge facet an interior interface whose tetrahedral neighbor can
+    // be refined while the wedge remains coarse.
+    const int extra_vertex = vertex_offset + source.GetNV();
+    smesh.AddVertex(1.25 + 3.0 * copy, 0.5, -1.0);
+    for (int e = 0; e < source.GetNE(); e++)
+    {
+      source.GetElementVertices(e, vertices);
+      for (int j = 0; j < vertices.Size(); j++)
+      {
+        vertices[j] += vertex_offset;
+      }
+      const int attr = e + 1;
+      switch (source.GetElementBaseGeometry(e))
+      {
+        case mfem::Geometry::TETRAHEDRON:
+          smesh.AddTet(vertices.GetData(), attr);
+          break;
+        case mfem::Geometry::CUBE:
+          smesh.AddHex(vertices.GetData(), attr);
+          break;
+        case mfem::Geometry::PRISM:
+          smesh.AddWedge(vertices.GetData(), attr);
+          break;
+        case mfem::Geometry::PYRAMID:
+          smesh.AddPyramid(vertices.GetData(), attr);
+          break;
+        default:
+          MFEM_ABORT("Unexpected geometry in mixed NC zoo fixture!");
+      }
+    }
+    const int prism_triangle_neighbor[4] = {vertex_offset + 4, vertex_offset + 5,
+                                            vertex_offset + 1, extra_vertex};
+    smesh.AddTet(prism_triangle_neighbor, 5);
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  // Retain every mixed interior face as a point-output boundary before NC refinement.
+  for (int f = 0; f < smesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    smesh.GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0)
+    {
+      auto *face_elem = smesh.GetFace(f)->Duplicate(&smesh);
+      face_elem->SetAttribute(7);
+      smesh.AddBdrElement(face_elem);
+    }
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  smesh.EnsureNCMesh(true);
+
+  // Attributes are hex=1, wedge=2, pyramid=3, original tet=4, added tet=5.
+  const int refined_attribute = interface == MixedCoarseInterface::PRISM_QUAD       ? 1
+                                : interface == MixedCoarseInterface::PRISM_TRIANGLE ? 5
+                                : interface == MixedCoarseInterface::PYRAMID_QUAD   ? 2
+                                                                                    : 4;
+  REQUIRE(refinement_depth >= 1);
+  for (int level = 0; level < refinement_depth; level++)
+  {
+    mfem::Array<int> refs;
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      if (smesh.GetAttribute(e) == refined_attribute)
+      {
+        refs.Append(e);
+      }
+    }
+    REQUIRE(refs.Size() > 0);
+    smesh.GeneralRefinement(refs, 1);
+  }
+
+  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  std::vector<int> partitioning;
+  if (Mpi::Size(comm) > 1)
+  {
+    // Force every targeted mixed coarse/fine interface across ranks 0 and 1. Distribute
+    // unrelated elements over the remaining ranks so MPI-8 has no empty partition.
+    const int coarse_attribute = CoarseGeometry(interface) == mfem::Geometry::PRISM ? 2 : 3;
+    partitioning.resize(smesh.GetNE());
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      const int attr = smesh.GetAttribute(e);
+      if (attr == coarse_attribute)
+      {
+        partitioning[e] = 0;
+      }
+      else if (attr == refined_attribute)
+      {
+        partitioning[e] = 1;
+      }
+      else if (Mpi::Size(comm) == 2)
+      {
+        partitioning[e] = e % 2;
+      }
+      else
+      {
+        partitioning[e] = 2 + e % (Mpi::Size(comm) - 2);
+      }
+    }
+  }
+  auto pmesh = std::make_unique<mfem::ParMesh>(
+      comm, smesh, partitioning.empty() ? nullptr : partitioning.data());
+  return std::make_unique<Mesh>(std::move(pmesh));
+}
+
+void CheckBoundaryTraceNCUnion(
+    std::unique_ptr<Mesh> mesh,
+    mfem::Geometry::Type expected_coarse_geometry = mfem::Geometry::INVALID,
+    mfem::Geometry::Type expected_coarse_face_geometry = mfem::Geometry::INVALID,
+    bool expect_ghost_union = false)
+{
+  MPI_Comm comm = mesh->GetComm();
+  auto &pmesh = mesh->Get();
+  REQUIRE(pmesh.Nonconforming());
+  const int dim = pmesh.Dimension();
+  mfem::ND_FECollection nd_fec(2, dim);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  GridFunction E(nd_fespace);
+  mfem::VectorFunctionCoefficient field(dim,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = std::sin(x(1)) + 0.25 * x(0);
+                                          v(1) = std::cos(x(0)) + x(0) * x(1);
+                                          if (v.Size() == 3)
+                                          {
+                                            v(2) = std::sin(x(0) + x(1)) + 0.5 * x(2);
+                                          }
+                                        });
+  E.Real().ProjectCoefficient(field);
+  E.Real().ExchangeFaceNbrData();
+
+  mfem::Array<int> marker(pmesh.bdr_attributes.Max());
+  marker = 1;
+  constexpr int lod = 2;
+  auto sampling_plan = std::make_shared<FaceSamplingPlan>(*mesh, marker, lod);
+  long long expected_leaf_points = 0, expected_union_points = 0;
+  long long expected_routes = 0, expected_requests_before = 0, expected_requests_after = 0;
+  long long expected_local_groups = 0, expected_ghost_groups = 0;
+  std::set<std::tuple<bool, int, int>> expected_routing_patterns;
+  for (const auto &group : sampling_plan->UnionGroups())
+  {
+    expected_union_points += static_cast<long long>(group.points.size());
+    expected_local_groups += !group.ghost;
+    expected_ghost_groups += group.ghost;
+    for (const auto &route : group.routes)
+    {
+      expected_leaf_points += static_cast<long long>(route.canonical_to_union.size());
+      expected_routes += static_cast<long long>(route.canonical_to_union.size());
+      expected_routing_patterns.emplace(group.ghost, group.side,
+                                        static_cast<int>(route.canonical_to_union.size()));
+      if (group.ghost)
+      {
+        expected_requests_before++;
+      }
+    }
+    expected_requests_after += group.ghost;
+  }
+  bool has_union = !sampling_plan->UnionGroups().empty();
+  Mpi::GlobalOr(1, &has_union, comm);
+  REQUIRE(has_union);
+  if (expected_coarse_geometry != mfem::Geometry::INVALID)
+  {
+    bool has_expected_coarse_union = std::any_of(
+        sampling_plan->UnionGroups().begin(), sampling_plan->UnionGroups().end(),
+        [&](const auto &group)
+        {
+          if (group.geometry != expected_coarse_geometry)
+          {
+            return false;
+          }
+          return expected_coarse_face_geometry == mfem::Geometry::INVALID ||
+                 std::all_of(group.routes.begin(), group.routes.end(),
+                             [&](const auto &route)
+                             {
+                               return sampling_plan->Entries()[route.entry].bdr_geom ==
+                                      expected_coarse_face_geometry;
+                             });
+        });
+    Mpi::GlobalOr(1, &has_expected_coarse_union, comm);
+    REQUIRE(has_expected_coarse_union);
+    if (expect_ghost_union)
+    {
+      bool has_expected_ghost_union = std::any_of(
+          sampling_plan->UnionGroups().begin(), sampling_plan->UnionGroups().end(),
+          [&](const auto &group)
+          {
+            if (!group.ghost || group.geometry != expected_coarse_geometry)
+            {
+              return false;
+            }
+            return expected_coarse_face_geometry == mfem::Geometry::INVALID ||
+                   std::all_of(group.routes.begin(), group.routes.end(),
+                               [&](const auto &route)
+                               {
+                                 return sampling_plan->Entries()[route.entry].bdr_geom ==
+                                        expected_coarse_face_geometry;
+                               });
+          });
+      Mpi::GlobalOr(1, &has_expected_ghost_union, comm);
+      REQUIRE(has_expected_ghost_union);
+    }
+  }
+  REQUIRE((expected_leaf_points > expected_union_points || Mpi::Size(comm) > 1));
+
+  const long long leaf_before = BoundaryPhysicalTraceCache::LeafPointCount();
+  const long long union_before = BoundaryPhysicalTraceCache::UnionPointCount();
+  const long long duplicate_before = BoundaryPhysicalTraceCache::DuplicatePointCount();
+  const long long local_before = BoundaryPhysicalTraceCache::LocalUnionGroupCount();
+  const long long local_operators_before =
+      BoundaryPhysicalTraceCache::LocalUnionOperatorCount();
+  const long long ghost_before = BoundaryPhysicalTraceCache::GhostUnionGroupCount();
+  const long long requests_before = BoundaryPhysicalTraceCache::RequestCountBefore();
+  const long long requests_after = BoundaryPhysicalTraceCache::RequestCountAfter();
+  const long long routes_before = BoundaryPhysicalTraceCache::UnionRouteCount();
+  const long long routing_operators_before =
+      BoundaryPhysicalTraceCache::RoutingOperatorCount();
+  auto trace_cache =
+      std::make_shared<BoundaryPhysicalTraceCache>(*mesh, marker, sampling_plan);
+  PointFieldEvaluator legacy(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker, nd_fespace,
+                             lod, sampling_plan);
+  PointFieldEvaluator traced(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker, nd_fespace,
+                             lod, sampling_plan, trace_cache);
+  REQUIRE(legacy.IsValid());
+  REQUIRE(traced.IsValid());
+  Vector expected(legacy.BufferSize()), actual(traced.BufferSize());
+  expected.UseDevice(true);
+  actual.UseDevice(true);
+  legacy.EvalBuffer(E.Real(), expected);
+  traced.EvalBuffer(E.Real(), actual);
+  REQUIRE(expected.Size() == actual.Size());
+  const double *expected_values = expected.HostRead();
+  const double *actual_values = actual.HostRead();
+  for (int i = 0; i < expected.Size(); i++)
+  {
+    CAPTURE(i, expected_values[i], actual_values[i]);
+    CHECK(actual_values[i] ==
+          Catch::Approx(expected_values[i]).epsilon(1.0e-10).margin(1.0e-13));
+  }
+
+  CHECK(BoundaryPhysicalTraceCache::LeafPointCount() == leaf_before + expected_leaf_points);
+  CHECK(BoundaryPhysicalTraceCache::UnionPointCount() ==
+        union_before + expected_union_points);
+  CHECK(BoundaryPhysicalTraceCache::DuplicatePointCount() ==
+        duplicate_before + expected_leaf_points - expected_union_points);
+  CHECK(BoundaryPhysicalTraceCache::LocalUnionGroupCount() ==
+        local_before + expected_local_groups);
+  const long long local_operators =
+      BoundaryPhysicalTraceCache::LocalUnionOperatorCount() - local_operators_before;
+  CHECK(local_operators <= expected_local_groups);
+  CHECK((expected_local_groups == 0 || local_operators > 0));
+  CHECK(BoundaryPhysicalTraceCache::GhostUnionGroupCount() ==
+        ghost_before + expected_ghost_groups);
+  CHECK(BoundaryPhysicalTraceCache::RequestCountBefore() ==
+        requests_before + expected_requests_before);
+  CHECK(BoundaryPhysicalTraceCache::RequestCountAfter() ==
+        requests_after + expected_requests_after);
+  CHECK(BoundaryPhysicalTraceCache::UnionRouteCount() == routes_before + expected_routes);
+  CHECK(BoundaryPhysicalTraceCache::RoutingOperatorCount() ==
+        routing_operators_before +
+            static_cast<long long>(expected_routing_patterns.size()));
+  if (expect_ghost_union)
+  {
+    long long ghost_deltas[3] = {
+        BoundaryPhysicalTraceCache::GhostUnionGroupCount() - ghost_before,
+        BoundaryPhysicalTraceCache::RequestCountBefore() - requests_before,
+        BoundaryPhysicalTraceCache::RequestCountAfter() - requests_after};
+    Mpi::GlobalSum(3, ghost_deltas, comm);
+    CHECK(ghost_deltas[0] > 0);
+    CHECK(ghost_deltas[1] > ghost_deltas[2]);
+    CHECK(ghost_deltas[2] > 0);
+  }
+  trace_cache->PrintProfile();
 }
 
 }  // namespace
@@ -1796,6 +2182,271 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
   }
 }
 
+TEST_CASE("PointFieldEvaluator Domain Fields", "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, nonconformal, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, complex), B(rt_fespace, complex);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  if (complex)
+  {
+    mfem::VectorFunctionCoefficient fei(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = x(1) * x(2) - 0.5;
+                                          v(1) = std::sin(x(0)) - x(2);
+                                          v(2) = std::cos(x(1)) + x(0) * x(0);
+                                        });
+    mfem::VectorFunctionCoefficient fbi(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = std::cos(x(2)) - 0.2;
+                                          v(1) = x(0) * x(2) + 0.1;
+                                          v(2) = std::sin(x(1)) - x(0);
+                                        });
+    E.Imag().ProjectCoefficient(fei);
+    B.Imag().ProjectCoefficient(fbi);
+  }
+
+  // Interpolatory L2 output spaces (legacy ProjectCoefficient on these spaces evaluates
+  // the coefficient at the nodal points, which is exactly the libCEED evaluator
+  // semantics, at any order).
+  mfem::L2_FECollection viz_fec(order, 3);
+  mfem::ParFiniteElementSpace viz_scalar(&pmesh, &viz_fec), viz_vector(&pmesh, &viz_fec, 3);
+
+  const double scaling = 2.5;
+  auto CheckField = [](const mfem::ParGridFunction &val, const mfem::ParGridFunction &ref)
+  {
+    // HostRead to sync from device (the evaluator fills on device).
+    const double *v = val.HostRead();
+    const double *r = ref.HostRead();
+    double max_diff = 0.0, max_ref = 0.0;
+    for (int i = 0; i < ref.Size(); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(v[i] - r[i]));
+      max_ref = std::max(max_ref, std::abs(r[i]));
+    }
+    CAPTURE(max_diff, max_ref);
+    CHECK(max_diff <= 1.0e-11 * std::max(max_ref, 1.0));
+  };
+
+  SECTION("Electric energy density")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_E, *mesh, mat_op,
+                             E.ParFESpace(), nullptr, viz_scalar, scaling);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
+    eval.Eval(&E, nullptr, val);
+    EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
+    ref.ProjectCoefficient(legacy);
+    CheckField(val, ref);
+  }
+
+  SECTION("Magnetic energy density")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_M, *mesh, mat_op, nullptr,
+                             B.ParFESpace(), viz_scalar, scaling);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
+    eval.Eval(nullptr, &B, val);
+    EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
+    ref.ProjectCoefficient(legacy);
+    CheckField(val, ref);
+  }
+
+  SECTION("Poynting vector")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::POYNTING, *mesh, mat_op,
+                             E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_vector), ref(&viz_vector);
+    eval.Eval(&E, &B, val);
+    PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
+    ref.ProjectCoefficient(legacy);
+    CheckField(val, ref);
+  }
+}
+
+TEST_CASE("PointFieldEvaluator Domain Fields 2D",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  auto order = GENERATE(1, 2);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto smesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(3, 2, elem_type, false, 1.2, 0.7));
+  smesh->EnsureNodes();
+  REQUIRE(Mpi::Size(comm) <= smesh->GetNE());
+  auto pmesh_ptr = std::make_unique<mfem::ParMesh>(comm, *smesh);
+  Mesh mesh(std::move(pmesh_ptr));
+  auto &pmesh = mesh.Get();
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s[0] = 2.0;
+  material.epsilon_r.s[1] = 3.0;
+  material.epsilon_r.s[2] = 4.0;
+  material.mu_r.s[0] = 1.0;
+  material.mu_r.s[1] = 1.5;
+  material.mu_r.s[2] = 2.0;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, mesh);
+
+  mfem::ND_FECollection nd_fec(order, 2);
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), l2_fespace(mesh, &l2_fec);
+
+  GridFunction E(nd_fespace, complex), B(l2_fespace, complex);
+  mfem::VectorFunctionCoefficient fer(2,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + 0.2 * x(0);
+                                        v(1) = std::cos(x(0)) + x(1) * x(1);
+                                      });
+  mfem::FunctionCoefficient fbr([](const mfem::Vector &x)
+                                { return 0.3 + x(0) - 0.7 * x(1); });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  if (complex)
+  {
+    mfem::VectorFunctionCoefficient fei(2,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = x(0) * x(1) - 0.1;
+                                          v(1) = std::sin(x(0) + x(1));
+                                        });
+    mfem::FunctionCoefficient fbi([](const mfem::Vector &x)
+                                  { return std::cos(x(0)) + 0.4 * x(1); });
+    E.Imag().ProjectCoefficient(fei);
+    B.Imag().ProjectCoefficient(fbi);
+  }
+
+  mfem::L2_FECollection viz_fec(order, 2);
+  mfem::ParFiniteElementSpace viz_scalar(&pmesh, &viz_fec), viz_vector(&pmesh, &viz_fec, 2);
+
+  const double scaling = 1.7;
+  auto CheckField = [](const mfem::ParGridFunction &val, const mfem::ParGridFunction &ref)
+  {
+    const double *v = val.HostRead();
+    const double *r = ref.HostRead();
+    double max_diff = 0.0, max_ref = 0.0;
+    for (int i = 0; i < ref.Size(); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(v[i] - r[i]));
+      max_ref = std::max(max_ref, std::abs(r[i]));
+    }
+    CAPTURE(max_diff, max_ref);
+    CHECK(max_diff <= 1.0e-11 * std::max(max_ref, 1.0));
+  };
+
+  SECTION("Electric energy density")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_E, mesh, mat_op,
+                             E.ParFESpace(), nullptr, viz_scalar, scaling);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
+    eval.Eval(&E, nullptr, val);
+    EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
+    ref.ProjectCoefficient(legacy);
+    CheckField(val, ref);
+  }
+
+  SECTION("Magnetic flux density")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::FIELD_B, mesh, mat_op, nullptr,
+                             B.ParFESpace(), viz_scalar, 1.0);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
+    eval.Eval(nullptr, &B, val);
+    mfem::GridFunctionCoefficient legacy_real(&B.Real());
+    ref.ProjectCoefficient(legacy_real);
+    if (complex)
+    {
+      mfem::ParGridFunction ref_imag(&viz_scalar);
+      mfem::GridFunctionCoefficient legacy_imag(&B.Imag());
+      ref_imag.ProjectCoefficient(legacy_imag);
+      ref += ref_imag;
+    }
+    CheckField(val, ref);
+  }
+
+  SECTION("Magnetic energy density")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_M, mesh, mat_op, nullptr,
+                             B.ParFESpace(), viz_scalar, scaling);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
+    eval.Eval(nullptr, &B, val);
+    EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
+    ref.ProjectCoefficient(legacy);
+    CheckField(val, ref);
+  }
+
+  SECTION("Poynting vector")
+  {
+    PointFieldEvaluator eval(PointFieldEvaluator::Kind::POYNTING, mesh, mat_op,
+                             E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
+    REQUIRE(eval.IsValid());
+    mfem::ParGridFunction val(&viz_vector), ref(&viz_vector);
+    eval.Eval(&E, &B, val);
+    PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
+    ref.ProjectCoefficient(legacy);
+    CheckField(val, ref);
+  }
+}
+
 TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
@@ -1942,6 +2593,698 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   SurfaceFunctional interior_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
                                       r_naughts);
   REQUIRE_FALSE(interior_farfield.IsValid());
+}
+
+#if defined(MFEM_USE_GSLIB)
+TEST_CASE("InterpolationOperator Ceed Probes", "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  CAPTURE(elem_type, order);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  GridFunction E(nd_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+
+  // Probe points are in element interiors and both material regions. Use enough points
+  // to select the libCEED path, and compare against direct GSLIB interpolation.
+  Units units(1.0, 1.0);
+  auto CheckProbes = [&](const std::array<std::array<double, 3>, 8> &pts)
+  {
+    std::map<int, config::ProbeData> probes;
+    for (std::size_t i = 0; i < pts.size(); i++)
+    {
+      config::ProbeData data;
+      data.center = pts[i];
+      probes.emplace(static_cast<int>(i + 1), data);
+    }
+    InterpolationOperator interp(probes, units, nd_fespace);
+
+    const int npts = static_cast<int>(pts.size());
+    mfem::Vector xyz(npts * 3), vals_r(npts * 3), vals_i(npts * 3);
+    for (int i = 0; i < npts; i++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        xyz(d * npts + i) = pts[i][d];
+      }
+    }
+    fem::InterpolateFunction(xyz, E.Real(), vals_r, mfem::Ordering::byNODES);
+    fem::InterpolateFunction(xyz, E.Imag(), vals_i, mfem::Ordering::byNODES);
+
+    auto vals = interp.ProbeField(E);
+    REQUIRE(static_cast<int>(vals.size()) == npts * 3);
+    for (int i = 0; i < npts; i++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        // ProbeField returns byVDIM; the reference uses the requested byNODES ordering.
+        const auto val = vals[3 * i + d];
+        const double ref_r = vals_r(d * npts + i), ref_i = vals_i(d * npts + i);
+        CAPTURE(i, d, ref_r, ref_i);
+        CHECK(val.real() == Catch::Approx(ref_r).epsilon(1.0e-9).margin(1.0e-12));
+        CHECK(val.imag() == Catch::Approx(ref_i).epsilon(1.0e-9).margin(1.0e-12));
+      }
+    }
+  };
+
+  const std::array<std::array<double, 3>, 8> pts_1 = {{{0.21, 0.37, 0.23},
+                                                       {0.74, 0.52, 0.81},
+                                                       {0.53, 0.48, 0.52},
+                                                       {0.13, 0.68, 0.34},
+                                                       {0.32, 0.82, 0.67},
+                                                       {0.87, 0.16, 0.42},
+                                                       {0.61, 0.29, 0.73},
+                                                       {0.43, 0.57, 0.89}}};
+  const std::array<std::array<double, 3>, 8> pts_2 = {{{0.17, 0.31, 0.27},
+                                                       {0.78, 0.56, 0.84},
+                                                       {0.58, 0.44, 0.54},
+                                                       {0.11, 0.72, 0.38},
+                                                       {0.36, 0.86, 0.63},
+                                                       {0.83, 0.19, 0.46},
+                                                       {0.66, 0.24, 0.77},
+                                                       {0.47, 0.61, 0.92}}};
+  CheckProbes(pts_1);
+  // CheckProbes destroys its InterpolationOperator. Reconstruct one with different
+  // coordinates while nd_fespace and its MFEM DofToQuad caches remain alive.
+  CheckProbes(pts_2);
+}
+#endif
+
+TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  const int refinement_depth = nonconformal ? GENERATE(1, 2) : 1;
+  CAPTURE(elem_type, order, nonconformal, refinement_depth);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type, refinement_depth)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, false), B(rt_fespace, false);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  E.Real().ExchangeFaceNbrData();
+  B.Real().ExchangeFaceNbrData();
+
+  const int lod = order;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+  const long long plan_builds_before = FaceSamplingPlan::BuildCount();
+  const long long plan_reuses_before = FaceSamplingPlan::ReuseCount();
+  auto sampling_plan = std::make_shared<FaceSamplingPlan>(*mesh, marker, lod);
+  REQUIRE(FaceSamplingPlan::BuildCount() == plan_builds_before + 1);
+
+  auto TestKind = [&](PointFieldEvaluator::Kind kind,
+                      const mfem::ParFiniteElementSpace &fes,
+                      const mfem::ParGridFunction &U)
+  {
+    PointFieldEvaluator viz(kind, *mesh, marker, fes, lod, sampling_plan);
+    REQUIRE(viz.SamplingPlan() == sampling_plan.get());
+
+    // The validity decision must be identical on all ranks; interior surfaces split
+    // across processes fall back (consistently).
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    REQUIRE(valid);
+
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    // Constructor warm-up releases its source storage. Two evaluations exercise both
+    // the first direct reattachment and the later take-and-repoint path, including MPI
+    // face-neighbor exporters on partition interfaces.
+    viz.EvalBuffer(U, buffer);
+    viz.EvalBuffer(U, buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+    const int component_stride = viz.BufferSize() / 3;
+
+    BdrFieldVectorCoefficient legacy(U);
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        legacy.Eval(V, *T, ip);
+        for (int c = 0; c < 3; c++)
+        {
+          const double val = buf[bases[i] + j + c * component_stride];
+          CAPTURE(i, j, c, V(c), val);
+          CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+        }
+      }
+    }
+  };
+
+  TestKind(PointFieldEvaluator::Kind::FIELD_E, nd_fespace, E.Real());
+  TestKind(PointFieldEvaluator::Kind::FIELD_B, rt_fespace, B.Real());
+
+  // Material-dependent boundary visualization kinds (surface charge, surface current,
+  // boundary energy densities) against the corresponding legacy coefficients.
+  const double scaling = 1.7;
+  auto TestKindCoeff = [&](PointFieldEvaluator::Kind kind,
+                           const mfem::ParFiniteElementSpace &fes,
+                           mfem::Coefficient *legacy_s, mfem::VectorCoefficient *legacy_v)
+  {
+    PointFieldEvaluator viz(kind, *mesh, marker, fes, mat_op, lod, scaling, sampling_plan);
+    REQUIRE(viz.SamplingPlan() == sampling_plan.get());
+    const int nc = viz.BufferNumComp();
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    REQUIRE(valid);
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    const auto &u = kind == PointFieldEvaluator::Kind::CURRENT_J ||
+                            kind == PointFieldEvaluator::Kind::ENERGY_M
+                        ? B.Real()
+                        : E.Real();
+    viz.EvalBuffer(u, buffer);
+    viz.EvalBuffer(u, buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+    const int component_stride = viz.BufferSize() / nc;
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        if (nc == 1)
+        {
+          const double ref = legacy_s->Eval(*T, ip);
+          const double val = buf[bases[i] + j];
+          CAPTURE(i, j, ref, val);
+          CHECK(val == Catch::Approx(ref).epsilon(1.0e-10).margin(1.0e-13));
+        }
+        else
+        {
+          legacy_v->Eval(V, *T, ip);
+          for (int c = 0; c < 3; c++)
+          {
+            const double val = buf[bases[i] + j + c * component_stride];
+            CAPTURE(i, j, c, V(c), val);
+            CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+          }
+        }
+      }
+    }
+  };
+  {
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> q_legacy(
+        &E.Real(), nullptr, mat_op, true, mfem::Vector(), scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::FLUX_Q, nd_fespace, &q_legacy, nullptr);
+  }
+  {
+    BdrSurfaceCurrentVectorCoefficient j_legacy(B.Real(), mat_op, scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::CURRENT_J, rt_fespace, nullptr, &j_legacy);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> ue_legacy(E, mat_op, scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::ENERGY_E, nd_fespace, &ue_legacy, nullptr);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> um_legacy(B, mat_op, scaling);
+    TestKindCoeff(PointFieldEvaluator::Kind::ENERGY_M, rt_fespace, &um_legacy, nullptr);
+  }
+  {
+    PointFieldEvaluator poynting(PointFieldEvaluator::Kind::POYNTING, *mesh, marker,
+                                 nd_fespace, rt_fespace, mat_op, lod, scaling,
+                                 sampling_plan);
+    REQUIRE(poynting.SamplingPlan() == sampling_plan.get());
+    REQUIRE(poynting.IsValid());
+    Vector buffer(poynting.BufferSize());
+    buffer.UseDevice(true);
+    poynting.EvalBuffer(&E, &B, buffer);
+  }
+
+  // Trace-backed evaluators consume canonical, side-separated physical ND/RT traces
+  // through EVAL_NONE. Compare every independent derived boundary output to the legacy
+  // evaluator. The interface mesh exercises two local sides in serial and face-neighbor
+  // (ghost) routes in parallel; this test is enabled for the device backends too.
+  auto trace_cache =
+      std::make_shared<BoundaryPhysicalTraceCache>(*mesh, marker, sampling_plan);
+  auto CheckTrace =
+      [&](PointFieldEvaluator &legacy, PointFieldEvaluator &traced, const Vector &u)
+  {
+    Vector expected(legacy.BufferSize()), actual(traced.BufferSize());
+    expected.UseDevice(true);
+    actual.UseDevice(true);
+    legacy.EvalBuffer(u, expected);
+    traced.EvalBuffer(u, actual);
+    REQUIRE(expected.Size() == actual.Size());
+    const double *expected_values = expected.HostRead();
+    const double *actual_values = actual.HostRead();
+    for (int i = 0; i < expected.Size(); i++)
+    {
+      CAPTURE(i, expected_values[i], actual_values[i]);
+      CHECK(actual_values[i] ==
+            Catch::Approx(expected_values[i]).epsilon(1.0e-10).margin(1.0e-13));
+    }
+  };
+  PointFieldEvaluator e_legacy(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                               nd_fespace, lod, sampling_plan);
+  PointFieldEvaluator e_traced(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                               nd_fespace, lod, sampling_plan, trace_cache);
+  PointFieldEvaluator b_legacy(PointFieldEvaluator::Kind::FIELD_B, *mesh, marker,
+                               rt_fespace, lod, sampling_plan);
+  PointFieldEvaluator b_traced(PointFieldEvaluator::Kind::FIELD_B, *mesh, marker,
+                               rt_fespace, lod, sampling_plan, trace_cache);
+  PointFieldEvaluator q_legacy_eval(PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker,
+                                    nd_fespace, mat_op, lod, scaling, sampling_plan);
+  PointFieldEvaluator q_traced_eval(PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker,
+                                    nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                    trace_cache);
+  PointFieldEvaluator j_legacy_eval(PointFieldEvaluator::Kind::CURRENT_J, *mesh, marker,
+                                    rt_fespace, mat_op, lod, scaling, sampling_plan);
+  PointFieldEvaluator j_traced_eval(PointFieldEvaluator::Kind::CURRENT_J, *mesh, marker,
+                                    rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                    trace_cache);
+  PointFieldEvaluator ue_legacy_eval(PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker,
+                                     nd_fespace, mat_op, lod, scaling, sampling_plan);
+  PointFieldEvaluator ue_traced_eval(PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker,
+                                     nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                     trace_cache);
+  PointFieldEvaluator um_legacy_eval(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                     rt_fespace, mat_op, lod, scaling, sampling_plan);
+  PointFieldEvaluator um_traced_eval(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                     rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                     trace_cache);
+  PointFieldEvaluator s_legacy_eval(PointFieldEvaluator::Kind::POYNTING, *mesh, marker,
+                                    nd_fespace, rt_fespace, mat_op, lod, scaling,
+                                    sampling_plan);
+  PointFieldEvaluator s_traced_eval(PointFieldEvaluator::Kind::POYNTING, *mesh, marker,
+                                    nd_fespace, rt_fespace, mat_op, lod, scaling,
+                                    sampling_plan, trace_cache);
+  REQUIRE(e_traced.TraceCache() == trace_cache.get());
+  REQUIRE(b_traced.TraceCache() == trace_cache.get());
+
+  // The fused bundle consumes the two physical trace families once, then exposes only
+  // the requested packed slice to each PointFieldEvaluator. Compare every slice against
+  // the current independent trace-backed evaluators on exterior/interior and MPI ghost
+  // routes exercised by this fixture.
+  const long long bundle_count_before = BoundaryDerivedFieldBundle::BundleCount();
+  const long long bundle_applies_before = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+  auto derived_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
+      *mesh, marker, mat_op, nd_fespace, rt_fespace, sampling_plan, trace_cache, E, B,
+      scaling, scaling);
+  REQUIRE(derived_bundle->IsValid());
+  REQUIRE(BoundaryDerivedFieldBundle::BundleCount() == bundle_count_before + 1);
+  PointFieldEvaluator e_bundle(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                               nd_fespace, lod, sampling_plan, trace_cache, derived_bundle);
+  PointFieldEvaluator b_bundle(PointFieldEvaluator::Kind::FIELD_B, *mesh, marker,
+                               rt_fespace, lod, sampling_plan, trace_cache, derived_bundle);
+  PointFieldEvaluator q_bundle(PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker, nd_fespace,
+                               mat_op, lod, scaling, sampling_plan, trace_cache,
+                               derived_bundle);
+  PointFieldEvaluator j_bundle(PointFieldEvaluator::Kind::CURRENT_J, *mesh, marker,
+                               rt_fespace, mat_op, lod, scaling, sampling_plan, trace_cache,
+                               derived_bundle);
+  PointFieldEvaluator ue_bundle(PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker,
+                                nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                trace_cache, derived_bundle);
+  PointFieldEvaluator um_bundle(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                trace_cache, derived_bundle);
+  PointFieldEvaluator s_bundle(PointFieldEvaluator::Kind::POYNTING, *mesh, marker,
+                               nd_fespace, rt_fespace, mat_op, lod, scaling, sampling_plan,
+                               trace_cache, derived_bundle);
+  REQUIRE(e_bundle.SamplingPlan() == sampling_plan.get());
+  REQUIRE(e_bundle.TraceCache() == trace_cache.get());
+  CheckTrace(e_traced, e_bundle, E.Real());
+  CheckTrace(b_traced, b_bundle, B.Real());
+  CheckTrace(q_traced_eval, q_bundle, E.Real());
+  CheckTrace(j_traced_eval, j_bundle, B.Real());
+  CheckTrace(ue_traced_eval, ue_bundle, E.Real());
+  CheckTrace(um_traced_eval, um_bundle, B.Real());
+  {
+    Vector expected(s_traced_eval.BufferSize()), actual(s_bundle.BufferSize());
+    expected.UseDevice(true);
+    actual.UseDevice(true);
+    s_traced_eval.EvalBuffer(&E, &B, expected);
+    s_bundle.EvalBuffer(&E, &B, actual);
+    const double *expected_values = expected.HostRead();
+    const double *actual_values = actual.HostRead();
+    REQUIRE(expected.Size() == actual.Size());
+    for (int i = 0; i < expected.Size(); i++)
+    {
+      CAPTURE(i, expected_values[i], actual_values[i]);
+      CHECK(actual_values[i] ==
+            Catch::Approx(expected_values[i]).epsilon(1.0e-10).margin(1.0e-13));
+    }
+  }
+  REQUIRE(BoundaryDerivedFieldBundle::QFunctionApplyCount() > bundle_applies_before);
+  REQUIRE(BoundaryDerivedFieldBundle::AvoidedIndependentApplyCount() > 0);
+  REQUIRE(BoundaryDerivedFieldBundle::PackedByteCount() > 0);
+  const long long bundle_applies_cached = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+  Vector cached(e_bundle.BufferSize());
+  cached.UseDevice(true);
+  e_bundle.EvalBuffer(E.Real(), cached);
+  REQUIRE(BoundaryDerivedFieldBundle::QFunctionApplyCount() == bundle_applies_cached);
+
+  // The complex bundle consumes the separately materialized real/imaginary physical
+  // traces in one derived QFunction apply per route. Its public linear slices must stay
+  // phase-resolved, while U_e/U_m/S retain the old same-phase accumulation exactly.
+  GridFunction E_complex(nd_fespace, true), B_complex(rt_fespace, true);
+  E_complex.Real().ProjectCoefficient(fer);
+  B_complex.Real().ProjectCoefficient(fbr);
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(0) - 0.4 * x(1) * x(2);
+                                        v(1) = std::sin(x(0) + x(2));
+                                        v(2) = 0.25 + x(1) * x(1);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(1)) - x(2);
+                                        v(1) = x(0) * x(2) + 0.2;
+                                        v(2) = std::sin(x(0) - x(1));
+                                      });
+  E_complex.Imag().ProjectCoefficient(fei);
+  B_complex.Imag().ProjectCoefficient(fbi);
+  E_complex.Real().ExchangeFaceNbrData();
+  E_complex.Imag().ExchangeFaceNbrData();
+  B_complex.Real().ExchangeFaceNbrData();
+  B_complex.Imag().ExchangeFaceNbrData();
+
+  auto complex_trace_cache =
+      std::make_shared<BoundaryPhysicalTraceCache>(*mesh, marker, sampling_plan);
+  const long long complex_qfunction_before =
+      BoundaryDerivedFieldBundle::QFunctionApplyCount();
+  const long long complex_phases_before = BoundaryDerivedFieldBundle::PhaseCount();
+  const long long complex_phase_avoided_before =
+      BoundaryDerivedFieldBundle::AvoidedPhaseOperatorApplyCount();
+  auto complex_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
+      *mesh, marker, mat_op, nd_fespace, rt_fespace, sampling_plan, complex_trace_cache,
+      E_complex, B_complex, scaling, scaling);
+  REQUIRE(complex_bundle->IsValid());
+  REQUIRE(complex_bundle->BatchesComplexPhases(E_complex.Real(), B_complex.Real()));
+  REQUIRE(complex_bundle->BatchesComplexPhases(E_complex.Imag(), B_complex.Imag()));
+  REQUIRE_THROWS(
+      complex_bundle->RegisteredSlice(PointFieldKind::ENERGY_E, /*imaginary_phase*/ true));
+
+  PointFieldEvaluator e_complex_traced(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                                       nd_fespace, lod, sampling_plan, complex_trace_cache);
+  PointFieldEvaluator b_complex_traced(PointFieldEvaluator::Kind::FIELD_B, *mesh, marker,
+                                       rt_fespace, lod, sampling_plan, complex_trace_cache);
+  PointFieldEvaluator q_complex_traced(PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker,
+                                       nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                       complex_trace_cache);
+  PointFieldEvaluator j_complex_traced(PointFieldEvaluator::Kind::CURRENT_J, *mesh, marker,
+                                       rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                       complex_trace_cache);
+  PointFieldEvaluator ue_complex_traced(PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker,
+                                        nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                        complex_trace_cache);
+  PointFieldEvaluator um_complex_traced(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                        rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                        complex_trace_cache);
+  PointFieldEvaluator s_complex_traced(PointFieldEvaluator::Kind::POYNTING, *mesh, marker,
+                                       nd_fespace, rt_fespace, mat_op, lod, scaling,
+                                       sampling_plan, complex_trace_cache);
+  PointFieldEvaluator e_complex_bundle(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                                       nd_fespace, lod, sampling_plan, complex_trace_cache,
+                                       complex_bundle);
+  PointFieldEvaluator b_complex_bundle(PointFieldEvaluator::Kind::FIELD_B, *mesh, marker,
+                                       rt_fespace, lod, sampling_plan, complex_trace_cache,
+                                       complex_bundle);
+  PointFieldEvaluator q_complex_bundle(PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker,
+                                       nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                       complex_trace_cache, complex_bundle);
+  PointFieldEvaluator j_complex_bundle(PointFieldEvaluator::Kind::CURRENT_J, *mesh, marker,
+                                       rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                       complex_trace_cache, complex_bundle);
+  PointFieldEvaluator ue_complex_bundle(PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker,
+                                        nd_fespace, mat_op, lod, scaling, sampling_plan,
+                                        complex_trace_cache, complex_bundle);
+  PointFieldEvaluator um_complex_bundle(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                        rt_fespace, mat_op, lod, scaling, sampling_plan,
+                                        complex_trace_cache, complex_bundle);
+  PointFieldEvaluator s_complex_bundle(PointFieldEvaluator::Kind::POYNTING, *mesh, marker,
+                                       nd_fespace, rt_fespace, mat_op, lod, scaling,
+                                       sampling_plan, complex_trace_cache, complex_bundle);
+
+  // Each vector source selects the matching linear packed phase slice, not an
+  // accumulated real-plus-imaginary field.
+  CheckTrace(e_complex_traced, e_complex_bundle, E_complex.Real());
+  const long long complex_qfunction_after_real =
+      BoundaryDerivedFieldBundle::QFunctionApplyCount();
+  CheckTrace(e_complex_traced, e_complex_bundle, E_complex.Imag());
+  CheckTrace(b_complex_traced, b_complex_bundle, B_complex.Real());
+  CheckTrace(b_complex_traced, b_complex_bundle, B_complex.Imag());
+  CheckTrace(q_complex_traced, q_complex_bundle, E_complex.Real());
+  CheckTrace(q_complex_traced, q_complex_bundle, E_complex.Imag());
+  CheckTrace(j_complex_traced, j_complex_bundle, B_complex.Real());
+  CheckTrace(j_complex_traced, j_complex_bundle, B_complex.Imag());
+  REQUIRE(BoundaryDerivedFieldBundle::QFunctionApplyCount() ==
+          complex_qfunction_after_real);
+
+  auto CheckComplexCombined = [&](PointFieldEvaluator &traced, PointFieldEvaluator &bundled,
+                                  const GridFunction *single_source)
+  {
+    Vector expected(traced.BufferSize()), actual(bundled.BufferSize());
+    expected.UseDevice(true);
+    actual.UseDevice(true);
+    if (single_source)
+    {
+      traced.EvalBuffer(*single_source, expected);
+      bundled.EvalBuffer(*single_source, actual);
+    }
+    else
+    {
+      traced.EvalBuffer(&E_complex, &B_complex, expected);
+      bundled.EvalBuffer(&E_complex, &B_complex, actual);
+    }
+    REQUIRE(expected.Size() == actual.Size());
+    const double *expected_values = expected.HostRead();
+    const double *actual_values = actual.HostRead();
+    for (int i = 0; i < expected.Size(); i++)
+    {
+      CAPTURE(i, expected_values[i], actual_values[i]);
+      CHECK(actual_values[i] ==
+            Catch::Approx(expected_values[i]).epsilon(1.0e-10).margin(1.0e-13));
+    }
+  };
+  CheckComplexCombined(ue_complex_traced, ue_complex_bundle, &E_complex);
+  CheckComplexCombined(um_complex_traced, um_complex_bundle, &B_complex);
+  CheckComplexCombined(s_complex_traced, s_complex_bundle, nullptr);
+
+  const long long complex_qfunction_applies =
+      BoundaryDerivedFieldBundle::QFunctionApplyCount() - complex_qfunction_before;
+  const long long real_route_applies = bundle_applies_cached - bundle_applies_before;
+  REQUIRE(complex_qfunction_applies > 0);
+  // One complex launch per route replaces the two independent real/imaginary launches
+  // used by commit 3's one-phase packing.
+  REQUIRE(complex_qfunction_applies == real_route_applies);
+  REQUIRE(BoundaryDerivedFieldBundle::PhaseCount() - complex_phases_before ==
+          2 * complex_qfunction_applies);
+  REQUIRE(BoundaryDerivedFieldBundle::AvoidedPhaseOperatorApplyCount() -
+              complex_phase_avoided_before ==
+          complex_qfunction_applies);
+
+  CheckTrace(e_legacy, e_traced, E.Real());
+  CheckTrace(b_legacy, b_traced, B.Real());
+  CheckTrace(q_legacy_eval, q_traced_eval, E.Real());
+  CheckTrace(j_legacy_eval, j_traced_eval, B.Real());
+  CheckTrace(ue_legacy_eval, ue_traced_eval, E.Real());
+  CheckTrace(um_legacy_eval, um_traced_eval, B.Real());
+  {
+    Vector expected(s_legacy_eval.BufferSize()), actual(s_traced_eval.BufferSize());
+    expected.UseDevice(true);
+    actual.UseDevice(true);
+    s_legacy_eval.EvalBuffer(&E, &B, expected);
+    s_traced_eval.EvalBuffer(&E, &B, actual);
+    const double *expected_values = expected.HostRead();
+    const double *actual_values = actual.HostRead();
+    for (int i = 0; i < expected.Size(); i++)
+    {
+      CAPTURE(i, expected_values[i], actual_values[i]);
+      CHECK(actual_values[i] ==
+            Catch::Approx(expected_values[i]).epsilon(1.0e-10).margin(1.0e-13));
+    }
+  }
+  REQUIRE(BoundaryPhysicalTraceCache::OperatorApplyCount() >= 4);
+  REQUIRE(BoundaryPhysicalTraceCache::CacheHitCount() >= 1);
+  // The cache key includes an explicit save generation, not only the Vector address.
+  // This models a solver reusing the same storage for its next ParaView save.
+  const long long applies_before_invalidate =
+      BoundaryPhysicalTraceCache::OperatorApplyCount();
+  trace_cache->Invalidate();
+  Vector regenerated(e_traced.BufferSize());
+  regenerated.UseDevice(true);
+  e_traced.EvalBuffer(E.Real(), regenerated);
+  REQUIRE(BoundaryPhysicalTraceCache::OperatorApplyCount() > applies_before_invalidate);
+
+  // A direct boundary evaluator retains the existing API and constructs a private plan.
+  // Its field output must remain equivalent to an evaluator using the shared plan.
+  PointFieldEvaluator private_eval(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                                   nd_fespace, lod);
+  PointFieldEvaluator shared_eval(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
+                                  nd_fespace, lod, sampling_plan);
+  REQUIRE(private_eval.SamplingPlan());
+  REQUIRE(private_eval.SamplingPlan() != sampling_plan.get());
+  REQUIRE(shared_eval.SamplingPlan() == sampling_plan.get());
+  REQUIRE(FaceSamplingPlan::BuildCount() == plan_builds_before + 2);
+  REQUIRE(FaceSamplingPlan::ReuseCount() >= plan_reuses_before + 7);
+  REQUIRE(private_eval.IsValid());
+  REQUIRE(shared_eval.IsValid());
+  Vector private_buffer(private_eval.BufferSize()), shared_buffer(shared_eval.BufferSize());
+  private_buffer.UseDevice(true);
+  shared_buffer.UseDevice(true);
+  private_eval.EvalBuffer(E.Real(), private_buffer);
+  shared_eval.EvalBuffer(E.Real(), shared_buffer);
+  REQUIRE(private_buffer.Size() == shared_buffer.Size());
+  const double *private_values = private_buffer.HostRead();
+  const double *shared_values = shared_buffer.HostRead();
+  for (int i = 0; i < private_buffer.Size(); i++)
+  {
+    CHECK(private_values[i] == Catch::Approx(shared_values[i]).margin(1.0e-13));
+  }
+
+  // A plan cannot outlive in-place mesh topology/geometry revisions. NodesUpdated is a
+  // cheap deterministic invalidation check; AMR/rebalance also changes GetSequence().
+  REQUIRE(sampling_plan->Matches(*mesh, marker, lod));
+  pmesh.NodesUpdated();
+  REQUIRE_FALSE(sampling_plan->Matches(*mesh, marker, lod));
+  // MFEM's fatal-error path is locally catchable in serial but terminates a non-root
+  // rank before Catch2 can report it. The stale-plan predicate above is collective
+  // evidence in MPI; retain the throwing trace-cache contract check in serial.
+  if (Mpi::Size(comm) == 1)
+  {
+    REQUIRE_THROWS(trace_cache->Get(nd_fespace, E.Real()));
+  }
+}
+
+TEST_CASE("Boundary trace NC coarse-face unions 2D",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const int refinement_depth = GENERATE(1, 2);
+  CAPTURE(elem_type, refinement_depth);
+  fem::DefaultIntegrationOrder::p_trial = 2;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  const int coarse_size = Mpi::Size(comm) >= 8 ? 4 : 2;
+  CheckBoundaryTraceNCUnion(
+      MakeNCInterfaceMesh2D(comm, elem_type, refinement_depth, coarse_size));
+}
+
+TEST_CASE("Boundary trace NC coarse-face unions 3D",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int refinement_depth = GENERATE(1, 2);
+  CAPTURE(elem_type, refinement_depth);
+  fem::DefaultIntegrationOrder::p_trial = 2;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  const int coarse_size = Mpi::Size(comm) >= 8 ? 3 : 2;
+  CheckBoundaryTraceNCUnion(
+      MakeNCCoarseInterfaceMesh3D(comm, elem_type, refinement_depth, coarse_size));
+}
+
+TEST_CASE("Boundary trace NC mixed wedge/pyramid coarse-owner unions",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const auto interface =
+      GENERATE(MixedCoarseInterface::PRISM_QUAD, MixedCoarseInterface::PRISM_TRIANGLE,
+               MixedCoarseInterface::PYRAMID_QUAD, MixedCoarseInterface::PYRAMID_TRIANGLE);
+  const int refinement_depth = GENERATE(1, 2);
+  CAPTURE(static_cast<int>(interface), refinement_depth);
+  fem::DefaultIntegrationOrder::p_trial = 2;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  CheckBoundaryTraceNCUnion(MakeNCMixedCoarseOwnerMesh(comm, interface, refinement_depth),
+                            CoarseGeometry(interface), CoarseFaceGeometry(interface),
+                            Mpi::Size(comm) > 1);
 }
 
 TEST_CASE("FaceNbrFieldExchange 2D", "[surfacefunctional][Serial][Parallel][GPU]")
