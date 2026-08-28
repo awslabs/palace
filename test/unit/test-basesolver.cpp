@@ -4,6 +4,7 @@
 #include <fstream>
 #include <memory>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "test-helpers.hpp"
@@ -29,6 +30,47 @@ std::string ReadFile(const fs::path &path)
 {
   std::ifstream f(path);
   return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+}
+
+// Minimal concrete BaseSolver so BaseSolver::SaveMetadata can be exercised directly; the
+// Solve override is never invoked by these tests.
+class TestSolver : public BaseSolver
+{
+public:
+  using BaseSolver::BaseSolver;
+  std::pair<ErrorIndicator, long long int>
+  Solve(const std::vector<std::unique_ptr<Mesh>> &) const override
+  {
+    return {};
+  }
+};
+
+// Verify the emitted true entity counts reproduce the EXACT conforming DOF count of the
+// H1 and ND spaces (used by Palace's solvers) across orders, via the standard per-entity
+// decomposition on tetrahedra. This is what lets the counts size a re-run at any order --
+// a stronger check than true < leaf (it also catches an edge/face swap).
+void CheckDofDecomposition(mfem::Mesh &mesh, const mesh::MeshEntityCounts &counts)
+{
+  const long long V = counts.true_vertices, E = counts.true_edges, F = counts.true_faces,
+                  T = counts.elements;
+  const int dim = mesh.Dimension();
+  // H1 order p on tets: V + E(p-1) + F(p-1)(p-2)/2 + T(p-1)(p-2)(p-3)/6. Order 4 exercises
+  // the tetrahedron-interior term.
+  for (int p = 1; p <= 4; p++)
+  {
+    const long long expected = V + E * (p - 1) + F * ((p - 1) * (p - 2) / 2) +
+                               T * ((p - 1) * (p - 2) * (p - 3) / 6);
+    mfem::H1_FECollection fec(p, dim);
+    CHECK(mfem::FiniteElementSpace(&mesh, &fec).GetTrueVSize() == expected);
+  }
+  // ND (Nedelec, first kind) order p on tets: E*p + F*p(p-1) + T*p(p-1)(p-2)/2. Order 3
+  // exercises the tetrahedron-interior term.
+  for (int p = 1; p <= 3; p++)
+  {
+    const long long expected = E * p + F * (p * (p - 1)) + T * (p * (p - 1) * (p - 2) / 2);
+    mfem::ND_FECollection fec(p, dim);
+    CHECK(mfem::FiniteElementSpace(&mesh, &fec).GetTrueVSize() == expected);
+  }
 }
 
 }  // namespace
@@ -316,13 +358,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.true_faces < leaf_faces);
     // Elements are never constrained, so the element count is not discounted.
     CHECK(counts.elements == leaf_elements);
-    // The true entity counts must compose into a higher-order true size: an order-2 H1
-    // space on tetrahedra has one dof per (true) vertex and edge, so on this nonconforming
-    // mesh its true size equals true_vertices + true_edges -- validating the counts against
-    // their downstream (DOF-sizing) use, not just the leaf-count inequalities.
-    mfem::H1_FECollection h1_p2(2, 3);
-    mfem::FiniteElementSpace fes_p2(&serial_mesh, &h1_p2);
-    CHECK(fes_p2.GetTrueVSize() == counts.true_vertices + counts.true_edges);
+    // The true entity counts must reproduce the exact conforming DOF count of the H1/ND
+    // spaces Palace solves with, across orders, on this nonconforming mesh -- the property
+    // that lets them size a re-run at any order (stronger than the leaf-count
+    // inequalities).
+    CheckDofDecomposition(serial_mesh, counts);
   }
 }
 
@@ -349,6 +389,48 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // than merely to the struct's default.
   CHECK_FALSE(counts.valid);
   CHECK_FALSE(fs::exists(temp_dir / "model.mesh"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SaveAdaptMesh writes the Mesh block to palace.json",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  auto serial_mesh = SingleTetMesh();
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+
+  // The BaseSolver constructor writes the initial palace.json (root only); SaveMetadata
+  // then reads it, adds the "Mesh" block, and writes it back -- exactly the production
+  // path.
+  TestSolver solver(iodata, Mpi::Root(comm));
+  if (counts.valid)
+  {
+    solver.SaveMetadata(counts);
+  }
+
+  if (Mpi::Root(comm))
+  {
+    const auto meta = nlohmann::json::parse(ReadFile(temp_dir / "palace.json"));
+    REQUIRE(meta.contains("Mesh"));
+    const auto &m = meta.at("Mesh");
+    CHECK(m.at("Dimension").get<int>() == 3);
+    CHECK(m.at("TrueVertices").get<long long>() == 4);
+    CHECK(m.at("TrueEdges").get<long long>() == 6);
+    CHECK(m.at("TrueFaces").get<long long>() == 4);
+    CHECK(m.at("Elements").get<long long>() == 1);
+    CHECK(m.at("DomainAttributes").get<std::vector<int>>() == std::vector<int>{1});
+    CHECK(m.at("BoundaryAttributes").get<std::vector<int>>() ==
+          std::vector<int>{1, 2, 3, 4});
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
