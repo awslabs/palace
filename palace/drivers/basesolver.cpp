@@ -380,13 +380,13 @@ void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["Mesh"]["Dimension"] = counts.dim;
-    meta["Mesh"]["TrueVertices"] = counts.true_vertices;
-    meta["Mesh"]["TrueEdges"] = counts.true_edges;
-    meta["Mesh"]["TrueFaces"] = counts.true_faces;
-    meta["Mesh"]["Elements"] = counts.elements;
-    meta["Mesh"]["DomainAttributes"] = counts.domain_attributes;
-    meta["Mesh"]["BoundaryAttributes"] = counts.boundary_attributes;
+    meta["SavedAdaptedMesh"]["Dimension"] = counts.dim;
+    meta["SavedAdaptedMesh"]["TrueVertices"] = counts.true_vertices;
+    meta["SavedAdaptedMesh"]["TrueEdges"] = counts.true_edges;
+    meta["SavedAdaptedMesh"]["TrueFaces"] = counts.true_faces;
+    meta["SavedAdaptedMesh"]["Elements"] = counts.elements;
+    meta["SavedAdaptedMesh"]["DomainAttributes"] = counts.domain_attributes;
+    meta["SavedAdaptedMesh"]["BoundaryAttributes"] = counts.boundary_attributes;
     WriteMetadata(post_dir, meta);
   }
 }

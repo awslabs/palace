@@ -170,7 +170,8 @@ solve.
 
 When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
 is enabled and adaptation was performed, *Palace* saves the final adapted mesh to disk and
-also records a `Mesh` block in `palace.json` summarizing its topology, so external tooling can
+also records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology, so external
+tooling can
 size a re-run from the saved mesh without re-reading it. The block contains:
 
   - `Dimension` : Spatial dimension of the mesh.

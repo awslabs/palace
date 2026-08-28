@@ -392,7 +392,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "SaveAdaptMesh writes the Mesh block to palace.json",
+                 "SaveAdaptMesh writes a SavedAdaptedMesh block to palace.json",
                  "[basesolver][Serial]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
@@ -409,7 +409,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
 
   // The BaseSolver constructor writes the initial palace.json (root only); SaveMetadata
-  // then reads it, adds the "Mesh" block, and writes it back -- exactly the production
+  // then reads it, adds the "SavedAdaptedMesh" block, and writes it back -- exactly the
   // path.
   TestSolver solver(iodata, Mpi::Root(comm));
   if (counts.valid)
@@ -420,8 +420,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   if (Mpi::Root(comm))
   {
     const auto meta = nlohmann::json::parse(ReadFile(temp_dir / "palace.json"));
-    REQUIRE(meta.contains("Mesh"));
-    const auto &m = meta.at("Mesh");
+    REQUIRE(meta.contains("SavedAdaptedMesh"));
+    const auto &m = meta.at("SavedAdaptedMesh");
     CHECK(m.at("Dimension").get<int>() == 3);
     CHECK(m.at("TrueVertices").get<long long>() == 4);
     CHECK(m.at("TrueEdges").get<long long>() == 6);
