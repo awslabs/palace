@@ -5,6 +5,7 @@
 #define PALACE_LIBCEED_SURF_21_QF_H
 
 #include "../22/utils_22_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "../coeff/coeff_2_qf.h"
 #include "utils_21_qf.h"
 
@@ -47,6 +48,96 @@ SurfHcurlField2Avg21(CeedInt i, CeedInt Q, const CeedScalar *J_v1, const CeedSca
   SurfHcurlField21(i, Q, J_v2, u_2, E_2);
   E[0] = 0.5 * (E[0] + E_2[0]);
   E[1] = 0.5 * (E[1] + E_2[1]);
+}
+
+// Runtime-selected 2D field value for boundary visualization. H(curl) fields are full
+// in-plane physical vectors. The H(div) branch is not used for Palace's scalar 2D B
+// boundary output, but keeps the shared enum path well-defined.
+CEED_QFUNCTION_HELPER void SurfField21(CeedInt piola, CeedInt i, CeedInt Q,
+                                       const CeedScalar *J_v, const CeedScalar *u,
+                                       CeedScalar V[2])
+{
+  if (piola)
+  {
+    V[0] = IntegralMap22(i, Q, J_v, u);
+    V[1] = 0.0;
+  }
+  else
+  {
+    SurfHcurlField21(i, Q, J_v, u, V);
+  }
+}
+
+// Pointwise boundary vector field values (no quadrature weighting; for visualization
+// output at the boundary element lattice points), following BdrFieldVectorCoefficient:
+// the full field from the attached volume element, averaged over both sides for interior
+// boundaries. Inputs match the 3D field kernels. Output: 2 components per point.
+CEED_QFUNCTION(f_eval_bdr_field_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                      const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_v = in[0], *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar V[2];
+    SurfField21(ctx[0].first, i, Q, J_v, u, V);
+    v[i + Q * 0] = ctx[1].second * V[0];
+    v[i + Q * 1] = ctx[1].second * V[1];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_field_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                      const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_v1 = in[0], *J_v2 = in[1], *u_1 = in[2], *u_2 = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar V[2], V_2[2];
+    SurfField21(ctx[0].first, i, Q, J_v1, u_1, V);
+    SurfField21(ctx[0].first, i, Q, J_v2, u_2, V_2);
+    v[i + Q * 0] = ctx[1].second * 0.5 * (V[0] + V_2[0]);
+    v[i + Q * 1] = ctx[1].second * 0.5 * (V[1] + V_2[1]);
+  }
+  return 0;
+}
+
+// Pointwise scalar H1 boundary field values. Inputs: grad_x_1, u_1; or grad_x_1,
+// grad_x_2, u_1, u_2. The geometry inputs keep the operator shape shared with other
+// boundary field kernels; the scalar VALUE basis already evaluates the physical value.
+CEED_QFUNCTION(f_eval_bdr_field_h1_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = ctx[1].second * u[i];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_field_h1_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *u_1 = in[2], *u_2 = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = ctx[1].second * 0.5 * (u_1[i] + u_2[i]);
+  }
+  return 0;
 }
 
 // Line measure: v = qw * |J_f|. Inputs: qw, grad_x_f.
@@ -166,6 +257,207 @@ CEED_QFUNCTION(f_integ_surf_epr_2_21)(void *__restrict__ ctx_, CeedInt Q,
     const CeedScalar wdetJ = qw[i] * SurfMeasure21(J_f_loc, n);
     SurfHcurlField2Avg21(i, Q, J_v1, J_v2, u_1, u_2, E);
     v[i] = wdetJ * SurfEpr21(ctx, (CeedInt)attr[i], n, E);
+  }
+  return 0;
+}
+
+// Pointwise boundary surface charge, surface current, energy density, and Poynting
+// values at visualization lattice points for 2D line boundaries. These mirror the 3D
+// boundary visualization kernels in surf_32_qf.h using Palace's 2D field convention:
+// E is an in-plane H(curl) vector and B is the scalar out-of-plane magnetic flux B_z.
+// Vector outputs have two in-plane components to preserve MFEM's 2D ParaView field
+// shape. Context layouts match the 3D kernels, except material tables for magnetic
+// quantities use the scalar 1x1 out-of-plane inverse permeability.
+CEED_QFUNCTION(f_eval_bdr_flux_q_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr = in[1], *J_v = in[2], *u = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[2], n[2], E[2], eps[4], D[2];
+    MatUnpack21(J_f + i, Q, J_f_loc);
+    SurfMeasure21(J_f_loc, n);
+    SurfHcurlField21(i, Q, J_v, u, E);
+    CoeffUnpack2(ctx + 2, (CeedInt)attr[i], eps);
+    MultBx22(eps, E, D);
+    v[i] = ctx[0].second * ctx[1].second * (D[0] * n[0] + D[1] * n[1]);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_flux_q_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3],
+                   *J_v2 = in[4], *u_1 = in[5], *u_2 = in[6];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[2], n[2], E[2], eps[4], D[2], D_2[2];
+    MatUnpack21(J_f + i, Q, J_f_loc);
+    SurfMeasure21(J_f_loc, n);
+    SurfHcurlField21(i, Q, J_v1, u_1, E);
+    CoeffUnpack2(ctx + 2, (CeedInt)attr_1[i], eps);
+    MultBx22(eps, E, D);
+    SurfHcurlField21(i, Q, J_v2, u_2, E);
+    CoeffUnpack2(ctx + 2, (CeedInt)attr_2[i], eps);
+    MultBx22(eps, E, D_2);
+    // Two-sided: contributions from opposite sides add with opposite normals.
+    v[i] =
+        ctx[0].second * ctx[1].second * ((D[0] - D_2[0]) * n[0] + (D[1] - D_2[1]) * n[1]);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_current_j_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr = in[1], *J_v = in[2], *u = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[2], n[2];
+    MatUnpack21(J_f + i, Q, J_f_loc);
+    SurfMeasure21(J_f_loc, n);
+    const CeedScalar Bz = IntegralMap22(i, Q, J_v, u);
+    const CeedScalar Hz = CoeffUnpack1(ctx + 2, (CeedInt)attr[i]) * Bz;
+    const CeedScalar s = ctx[0].second * ctx[1].second;
+    v[i + Q * 0] = s * Hz * n[1];
+    v[i + Q * 1] = -s * Hz * n[0];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_current_j_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3],
+                   *J_v2 = in[4], *u_1 = in[5], *u_2 = in[6];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[2], n[2];
+    MatUnpack21(J_f + i, Q, J_f_loc);
+    SurfMeasure21(J_f_loc, n);
+    const CeedScalar Bz_1 = IntegralMap22(i, Q, J_v1, u_1);
+    const CeedScalar Bz_2 = IntegralMap22(i, Q, J_v2, u_2);
+    const CeedScalar Hz_1 = CoeffUnpack1(ctx + 2, (CeedInt)attr_1[i]) * Bz_1;
+    const CeedScalar Hz_2 = CoeffUnpack1(ctx + 2, (CeedInt)attr_2[i]) * Bz_2;
+    const CeedScalar Hz = Hz_1 - Hz_2;
+    const CeedScalar s = ctx[0].second * ctx[1].second;
+    v[i + Q * 0] = s * Hz * n[1];
+    v[i + Q * 1] = -s * Hz * n[0];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION_HELPER void SurfPoynting21(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
+                                          CeedInt attr, const CeedScalar *J_v,
+                                          const CeedScalar *u_e, const CeedScalar *u_b,
+                                          CeedScalar S[2])
+{
+  CeedScalar E[2];
+  SurfHcurlField21(i, Q, J_v, u_e, E);
+  const CeedScalar Bz = IntegralMap22(i, Q, J_v, u_b);
+  const CeedScalar Hz = CoeffUnpack1(ctx + 1, attr) * Bz;
+  S[0] = E[1] * Hz;
+  S[1] = -E[0] * Hz;
+}
+
+CEED_QFUNCTION(f_eval_bdr_poynting_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *attr = in[0], *J_v = in[1], *u_e = in[2], *u_b = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar S[2];
+    SurfPoynting21(ctx, i, Q, (CeedInt)attr[i], J_v, u_e, u_b, S);
+    const CeedScalar s = ctx[0].second;
+    v[i + Q * 0] = s * S[0];
+    v[i + Q * 1] = s * S[1];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_poynting_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *attr_1 = in[0], *J_v1 = in[1], *attr_2 = in[2], *J_v2 = in[3],
+                   *u_e_1 = in[4], *u_b_1 = in[5], *u_e_2 = in[6], *u_b_2 = in[7];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar S[2], S_2[2];
+    SurfPoynting21(ctx, i, Q, (CeedInt)attr_1[i], J_v1, u_e_1, u_b_1, S);
+    SurfPoynting21(ctx, i, Q, (CeedInt)attr_2[i], J_v2, u_e_2, u_b_2, S_2);
+    const CeedScalar s = 0.5 * ctx[0].second;
+    v[i + Q * 0] = s * (S[0] + S_2[0]);
+    v[i + Q * 1] = s * (S[1] + S_2[1]);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION_HELPER CeedScalar SurfEnergy21(const CeedIntScalar *ctx, CeedInt i,
+                                              CeedInt Q, CeedInt attr,
+                                              const CeedScalar *J_v, const CeedScalar *u)
+{
+  if (ctx[0].first)
+  {
+    const CeedScalar Bz = IntegralMap22(i, Q, J_v, u);
+    return CoeffUnpack1(ctx + 2, attr) * Bz * Bz;
+  }
+  CeedScalar E[2], eps[4], D[2];
+  SurfHcurlField21(i, Q, J_v, u, E);
+  CoeffUnpack2(ctx + 2, attr, eps);
+  MultBx22(eps, E, D);
+  return D[0] * E[0] + D[1] * E[1];
+}
+
+CEED_QFUNCTION(f_eval_bdr_energy_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *attr = in[0], *J_v = in[1], *u = in[2];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = 0.5 * ctx[1].second * SurfEnergy21(ctx, i, Q, (CeedInt)attr[i], J_v, u);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_energy_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *attr_1 = in[0], *J_v1 = in[1], *attr_2 = in[2], *J_v2 = in[3],
+                   *u_1 = in[4], *u_2 = in[5];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar U_1 = SurfEnergy21(ctx, i, Q, (CeedInt)attr_1[i], J_v1, u_1);
+    const CeedScalar U_2 = SurfEnergy21(ctx, i, Q, (CeedInt)attr_2[i], J_v2, u_2);
+    v[i] = 0.25 * ctx[1].second * (U_1 + U_2);
   }
   return 0;
 }
