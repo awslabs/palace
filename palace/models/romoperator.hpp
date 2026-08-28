@@ -512,6 +512,12 @@ public:
   // orthogonalisation tolerance).
   void AddWavePortModesForSynthesis(double omega_ref);
 
+  // Add port-driven HDM snapshots evaluated at manually specified complex frequencies.
+  // The source mode is evaluated at Re(ω); the full operator and iω RHS scaling use the
+  // complex shift. Intended for rational-Krylov basis enrichment of weakly sampled poles.
+  void AddComplexFrequencySnapshots(int excitation_idx,
+                                    const std::vector<std::complex<double>> &omegas);
+
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as

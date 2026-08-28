@@ -6,6 +6,7 @@
 #include <complex>
 #include <cstddef>
 #include <iostream>
+#include <sstream>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -321,6 +322,31 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // The choice rescales the basis vector but does not change correctness.
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
+    }
+    // Experimental/manual rational-Krylov enrichment. Format is a comma-separated list of
+    // physical GHz pairs "Re:Im", for example "3.46:0.25,3.46:0.45".
+    if (const char *samples = std::getenv("PALACE_SYNTHESIS_COMPLEX_SAMPLES_GHZ"))
+    {
+      std::vector<std::complex<double>> complex_omegas;
+      std::stringstream entries(samples);
+      std::string entry;
+      while (std::getline(entries, entry, ','))
+      {
+        const auto sep = entry.find(':');
+        MFEM_VERIFY(sep != std::string::npos,
+                    "Complex synthesis sample must use ReGHz:ImGHz format!");
+        const double fr = std::stod(entry.substr(0, sep));
+        const double fi = std::stod(entry.substr(sep + 1));
+        const double wr =
+            2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(fr);
+        const double wi =
+            2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(fi);
+        complex_omegas.emplace_back(wr, wi);
+      }
+      for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+      {
+        prom_op.AddComplexFrequencySnapshots(excitation_idx, complex_omegas);
+      }
     }
   }
 

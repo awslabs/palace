@@ -903,6 +903,51 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
+void RomOperator::AddComplexFrequencySnapshots(
+    int excitation_idx, const std::vector<std::complex<double>> &omegas)
+{
+  ComplexVector u(K->Width()), rhs1(K->Width()), random_rhs(K->Width());
+  u.UseDevice(true);
+  rhs1.UseDevice(true);
+  random_rhs.UseDevice(true);
+  const bool has_rhs1 = space_op.GetExcitationVector1(excitation_idx, rhs1);
+  for (std::size_t k = 0; k < omegas.size(); k++)
+  {
+    const auto omega = omegas[k];
+    MFEM_VERIFY(omega.real() > 0.0,
+                "Complex-frequency PROM enrichment requires Re(omega) > 0!");
+
+    // Assemble a physical port source from the real-frequency mode shape, then evaluate its
+    // analytic iω factor at the complex shift. This is a basis-generation solve only; the
+    // online driven response remains on the real axis.
+    r = 0.0;
+    space_op.GetExcitationVector2(excitation_idx, omega.real(), r);
+    if (has_rhs1)
+    {
+      r.Add(std::complex<double>(0.0, 1.0) * omega, rhs1);
+    }
+
+    auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                      -omega * omega, K.get(), C.get(), M.get(), A2.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                               -omega * omega, omega);
+    ksp->SetOperators(*A, *P);
+    Mpi::Print(" Solving complex PROM enrichment snapshot {:d} at ω={:.6e}{:+.6e}i\n",
+               k + 1, omega.real(), omega.imag());
+    ksp->Mult(r, u);
+    UpdatePROM(u, fmt::format("complex_e{:d}_s{:d}", excitation_idx, k + 1));
+
+    // A deterministic full-space probe captures weakly port-observable eigendirections that
+    // cannot appear in a single-input transfer Krylov space. Near a pole, A(ω)⁻¹ amplifies
+    // its right eigenvector component without requiring prior knowledge of that
+    // eigenvector.
+    space_op.GetRandomInitialVector(random_rhs);
+    ksp->Mult(random_rhs, u);
+    UpdatePROM(u, fmt::format("complex_random_s{:d}", k + 1));
+  }
+}
+
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
@@ -2878,9 +2923,8 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     {
       continue;
     }
-    const double abs_omega_re = std::abs(omega_phys.real());
     const double abs_omega_im = std::abs(omega_phys.imag());
-    const double Q = (abs_omega_im > 1.0e-20) ? abs_omega_re / (2.0 * abs_omega_im)
+    const double Q = (abs_omega_im > 1.0e-20) ? std::abs(omega_phys) / (2.0 * abs_omega_im)
                                               : std::numeric_limits<double>::infinity();
     if (Q <= SYNTHESIS_EIG_Q_MIN)
     {
