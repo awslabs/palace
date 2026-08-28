@@ -185,6 +185,12 @@ public:
 
   void Initialize(double omega);
 
+  // Tighten the cross-section EVP tolerances for wave-port circuit synthesis, so kₙ(ω) and
+  // M(ω) are not sampled below the port-mode accuracy floor (which would make the synthesis
+  // fit—and the eigenvalues derived from it—depend on the MPI partition). Invalidates the
+  // cached real-ω solve so the next Initialize re-solves at the new tolerance.
+  void SetSynthesisEigTol(double eig_tol, double ksp_tol);
+
   // Compute the sign of the modal E-field projected on the (high → low) direction
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
   // first, ground terminal second). Returns +1, -1, or 0 if attributes were not
@@ -307,6 +313,16 @@ public:
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
 
+  // Tighten every port's cross-section EVP tolerances for wave-port circuit synthesis. See
+  // WavePortData::SetSynthesisEigTol. A no-op when there are no wave ports.
+  void SetSynthesisEigTol(double eig_tol, double ksp_tol)
+  {
+    for (auto &[idx, data] : ports)
+    {
+      data.SetSynthesisEigTol(eig_tol, ksp_tol);
+    }
+  }
+
   // Freeze the per-port modal reference state (mode field, k_n0, reactions) at a real
   // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
   // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
@@ -410,11 +426,12 @@ public:
   // Circuit-synthesis form of W. Rather than freeze the mode shape at ω_ref (a fixed rank-2
   // span cannot track the mode-shape rotation across the band), synthesis samples the
   // recomputed n×H vectors at several ω, builds an orthonormal modal subspace Q, and fits
-  // the small complex-symmetric matrix M(ω) with Wᵣ(ω)=Q·M(ω)·Qᵀ. GetModalCorrectionSynthesis
-  // Ports enumerates the active ports (skipping TE/TEM modes where Eₙ≈0), and
-  // SampleModalCorrectionVectors returns, at a complex ω, the two recomputed rank-1 vectors
-  // and scalars of one port — the identical W(ω) = g_full·s_full s_fullᵀ + g_scalar·s_scalar
-  // s_scalarᵀ as the complex-ω GetModalCorrectionTerms (so synthesis and eigenmode agree).
+  // the small complex-symmetric matrix M(ω) with Wᵣ(ω)=Q·M(ω)·Qᵀ.
+  // GetModalCorrectionSynthesis Ports enumerates the active ports (skipping TE/TEM modes
+  // where Eₙ≈0), and SampleModalCorrectionVectors returns, at a complex ω, the two
+  // recomputed rank-1 vectors and scalars of one port — the identical W(ω) = g_full·s_full
+  // s_fullᵀ + g_scalar·s_scalar s_scalarᵀ as the complex-ω GetModalCorrectionTerms (so
+  // synthesis and eigenmode agree).
   struct ModalCorrectionSample
   {
     bool active = false;
@@ -434,10 +451,10 @@ private:
   // vectors + scalars. Shared by the complex-ω GetModalCorrectionTerms (eigenmode path) and
   // SampleModalCorrectionVectors (synthesis path) so both use an identical W(ω). Returns an
   // inactive sample if the port has a vanishing reaction.
-  ModalCorrectionSample
-  SamplePortModalCorrection(WavePortData &data, std::complex<double> omega,
-                            FiniteElementSpace &nd_fespace,
-                            const mfem::Array<int> &nd_dbc_tdof_list);
+  ModalCorrectionSample SamplePortModalCorrection(WavePortData &data,
+                                                  std::complex<double> omega,
+                                                  FiniteElementSpace &nd_fespace,
+                                                  const mfem::Array<int> &nd_dbc_tdof_list);
 };
 
 }  // namespace palace

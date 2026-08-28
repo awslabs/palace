@@ -787,6 +787,14 @@ WavePortData::~WavePortData()
   }
 }
 
+void WavePortData::SetSynthesisEigTol(double eig_tol, double ksp_tol)
+{
+  mode_solver->SetSynthesisTol(eig_tol, ksp_tol);
+  // Invalidate the cached real-ω solve (omega0 == 0 initially, and physical ω > 0) so the
+  // next Initialize re-solves the cross-section EVP at the tightened tolerance.
+  omega0 = -1.0;
+}
+
 void WavePortData::Initialize(double omega)
 {
   if (omega == omega0)
@@ -1861,12 +1869,12 @@ WavePortOperator::SamplePortModalCorrection(WavePortData &data, std::complex<dou
                                             FiniteElementSpace &nd_fespace,
                                             const mfem::Array<int> &nd_dbc_tdof_list)
 {
-  // Recompute the mode at ω (ComputeComplexReactions stashes the ω-field), then assemble the
-  // full n×H and scalar-admittance n×H shape vectors from that recomputed field. The two
-  // rank-1 terms of W_full − W_scalar are (−iω/R_full) s_full s_fullᵀ and +(iω/R_scalar)
-  // s_scalar s_scalarᵀ. Pairing each s with the raw reaction of the same field makes W =
-  // (−iω/R) s sᵀ invariant to the mode's arbitrary EVP scale/phase, so W tracks the true
-  // mode shape at ω instead of freezing it at ω0.
+  // Recompute the mode at ω (ComputeComplexReactions stashes the ω-field), then assemble
+  // the full n×H and scalar-admittance n×H shape vectors from that recomputed field. The
+  // two rank-1 terms of W_full − W_scalar are (−iω/R_full) s_full s_fullᵀ and
+  // +(iω/R_scalar) s_scalar s_scalarᵀ. Pairing each s with the raw reaction of the same
+  // field makes W = (−iω/R) s sᵀ invariant to the mode's arbitrary EVP scale/phase, so W
+  // tracks the true mode shape at ω instead of freezing it at ω0.
   ModalCorrectionSample smp;
   if (!(std::abs(data.modal_reaction) > 0.0) ||
       !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(data.kn0) > 0.0))
@@ -1928,9 +1936,9 @@ WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
 }
 
 std::vector<int>
-WavePortOperator::GetModalCorrectionSynthesisPorts(
-    double omega_ref, FiniteElementSpace &nd_fespace,
-    const mfem::Array<int> &nd_dbc_tdof_list)
+WavePortOperator::GetModalCorrectionSynthesisPorts(double omega_ref,
+                                                   FiniteElementSpace &nd_fespace,
+                                                   const mfem::Array<int> &nd_dbc_tdof_list)
 {
   // Enumerate the ports whose modal correction is active at the band. Initialize once at
   // ω_ref and, per port, skip TE/TEM modes where s_full ≈ s_scalar (Eₙ ≈ 0) so synthesis

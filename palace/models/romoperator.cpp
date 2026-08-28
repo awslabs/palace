@@ -51,6 +51,12 @@ namespace
 constexpr auto ORTHOG_TOL = 1.0e-12;
 constexpr std::size_t WAVEPORT_AAA_ORDER_MAX = 12;
 constexpr double WAVEPORT_SYNTHESIS_RANK_TOL_MAX = 1.0e-6;
+// Cross-section EVP tolerances for sampling kₙ(ω)/M(ω) during synthesis, decoupled from the
+// user's EigenTol/KSPTol so the fit is not resolved below the port-mode accuracy floor
+// (fitting eigensolver noise makes the synthesized pencil MPI-partition dependent). The fit
+// and rank tolerances below are floored at WAVEPORT_SYNTHESIS_EIG_TOL to match.
+constexpr double WAVEPORT_SYNTHESIS_EIG_TOL = 1.0e-11;
+constexpr double WAVEPORT_SYNTHESIS_KSP_TOL = 1.0e-12;
 // Wave-port modal-correction synthesis subspace: band samples used to build the per-port
 // subspace Q, and a rank cap (r(r+1)/2 scalar fits follow; cap guards a bad tol choice).
 constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_SAMPLES = 12;
@@ -59,6 +65,18 @@ constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX = 8;
 // fraction of the leading singular value; weaker directions stay polynomial-only so aux
 // states are not spent fitting near-rank-floor noise (and injecting spurious pencil roots).
 constexpr double WAVEPORT_SYNTHESIS_AUGMENT_DIR_TOL = 1.0e-2;
+// Rank floor for the projected boundary-mass SVD in AddAuxBlockDirections. Physical
+// coupling directions carry ≳1e-2 of the leading singular value; below them sits a
+// partition-dependent noise tail (≲1e-3). A raw 1e-6 cutoff lands in that tail, so the kept
+// rank — hence the synthesized pencil dimension — flips across partitions. This floor sits
+// in the decade-wide gap between signal and noise, keeping the rank partition-independent.
+constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 3.0e-3;
+// Significance floor for a modal-correction coupling part relative to its pair norm ‖S_pq‖.
+// The modal subspace is real up to an arbitrary per-partition global phase, so Im(Q_p Q_qᵀ)
+// is machine-epsilon phase noise (~1e-10·‖S_pq‖). Fitting it spends aux states on noise
+// whose SVD rank flips across partitions, so skip any part below this floor as numerically
+// zero.
+constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_TOL = 1.0e-6;
 // Drop synthesized eigenvalues whose eigenvector energy in the basis rows falls below this
 // fraction; aux states inject roots at their pole frequencies that live in the aux rows.
 constexpr double SYNTHESIS_EIG_BASIS_FRAC_MIN = 1.0e-2;
@@ -644,12 +662,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     sweep_omega_min = *std::min_element(sample_f.begin(), sample_f.end());
     sweep_omega_max = *std::max_element(sample_f.begin(), sample_f.end());
   }
-  waveport_synthesis_tol = iodata.solver.driven.adaptive_tol;
+  // Floor the fit/rank tolerances at the synthesis EVP accuracy floor: resolving finer than
+  // the port modes are solved just chases eigensolver noise (see
+  // WAVEPORT_SYNTHESIS_EIG_TOL).
+  waveport_synthesis_tol =
+      std::max(iodata.solver.driven.adaptive_tol, WAVEPORT_SYNTHESIS_EIG_TOL);
   waveport_synthesis_order_max = WAVEPORT_AAA_ORDER_MAX;
-  waveport_synthesis_rank_tol =
-      (waveport_synthesis_tol > 0.0)
-          ? std::min(waveport_synthesis_tol, WAVEPORT_SYNTHESIS_RANK_TOL_MAX)
-          : WAVEPORT_SYNTHESIS_RANK_TOL_MAX;
+  waveport_synthesis_rank_tol = std::clamp(
+      waveport_synthesis_tol, WAVEPORT_SYNTHESIS_EIG_TOL, WAVEPORT_SYNTHESIS_RANK_TOL_MAX);
 
   // Initialize working vector storage.
   r.SetSize(K->Height());
@@ -1562,10 +1582,15 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
     return false;
   }
   const double sigma_max = svd.singularValues()(0);
+  // Floor the cutoff at the partition-robust aux-rank tolerance: a tighter caller value
+  // (the fit tolerance can be as low as 1e-11) would land in the rank-floor noise band and
+  // make the kept direction count MPI-partition-dependent. See
+  // WAVEPORT_SYNTHESIS_AUX_RANK_TOL.
+  const double eff_tol = std::max(rank_tol, WAVEPORT_SYNTHESIS_AUX_RANK_TOL);
   for (long j = 0; j < svd.singularValues().size(); j++)
   {
     const double s = svd.singularValues()(j);
-    if (sigma_max > 0.0 && s / sigma_max > rank_tol)
+    if (sigma_max > 0.0 && s / sigma_max > eff_tol)
     {
       blk.sigmas.push_back(s);
       blk.u_dirs.push_back(svd.matrixU().col(j));
@@ -1923,6 +1948,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   std::vector<PendingPortLoad> pending_port_loads;
   if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
   {
+    // Sample kₙ(ω)/M(ω) below at a tight, EigenTol-independent EVP tolerance so the fit is
+    // not resolved below the port-mode accuracy floor (see WAVEPORT_SYNTHESIS_EIG_TOL).
+    space_op.GetWavePortOp().SetSynthesisEigTol(WAVEPORT_SYNTHESIS_EIG_TOL,
+                                                WAVEPORT_SYNTHESIS_KSP_TOL);
     for (auto &[port_idx, Mp_r] : Mwp_p_r)
     {
       auto fit = FitWavePortDispersion(port_idx, Mp_r);
@@ -2084,11 +2113,16 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
                   Eigen::MatrixXcd(imag_unit * S.imag().cast<std::complex<double>>()),
                   std::complex<double>(1.0, 0.0))};
           const char *suffix[2] = {"re", "im"};
+          // Reference scale for this coupling pair: parts negligible against it are phase
+          // noise (see WAVEPORT_SYNTHESIS_MODAL_PART_TOL). ‖S‖² = ‖Re(S)‖² + ‖Im(S)‖², so
+          // the part norms compare directly against ‖S‖.
+          const double s_norm = S.norm();
           for (int part = 0; part < 2; part++)
           {
             const auto &M_slot = parts[part].first;
             const std::complex<double> scale = parts[part].second;
-            if (M_slot.norm() == 0.0)
+            if (s_norm == 0.0 ||
+                M_slot.norm() <= WAVEPORT_SYNTHESIS_MODAL_PART_TOL * s_norm)
             {
               continue;
             }

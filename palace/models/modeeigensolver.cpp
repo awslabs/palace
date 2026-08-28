@@ -598,6 +598,19 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   return {num_conv, sigma};
 }
 
+void ModeEigenSolver::SetSynthesisTol(double eig_tol_new, double ksp_tol_new)
+{
+  eig_tol = eig_tol_new;
+  if (eigen)
+  {
+    eigen->SetTol(eig_tol);
+  }
+  if (ksp)
+  {
+    ksp->SetRelTol(ksp_tol_new);
+  }
+}
+
 std::complex<double> ModeEigenSolver::GetEigenvalue(int i) const
 {
   return eigen->GetEigenvalue(mode_perm[i]);
