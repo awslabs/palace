@@ -187,6 +187,6 @@ also records a `SavedAdaptedMesh` block in `palace.json` summarizing its topolog
 
 The face and cell counts are reported per geometry because the number of degrees of freedom
 contributed by each entity depends on its geometry at a given finite-element order. Splitting
-the counts this way lets external tooling reconstruct the exact global degree-of-freedom size
-for mixed or non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
+the counts this way makes the exact global degree-of-freedom size recoverable for mixed or
+non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
 hexahedral, prism, and pyramid cells) each contribute a different per-order count.
