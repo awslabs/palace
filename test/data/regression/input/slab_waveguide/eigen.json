@@ -1,9 +1,9 @@
 {
   "Problem":
   {
-    "Type": "Driven",
+    "Type": "Eigenmode",
     "Verbose": 2,
-    "Output": "postpro/driven_wave_synth"
+    "Output": "postpro/eigen"
   },
   "Model":
   {
@@ -41,7 +41,6 @@
         "Index": 1,
         "Attributes": [4],
         "Mode": 3,
-        "Excitation": true,
         "KSPTol": 1e-8,
         "EigenTol": 1e-6
       }
@@ -55,20 +54,23 @@
   {
     "Order": 2,
     "Device": "CPU",
-    "Driven":
+    "Eigenmode":
     {
-      "MinFreq": 7.50,  // GHz
-      "MaxFreq": 8.20,
-      "FreqStep": 0.01,
-      "AdaptiveTol": 1.0e-6,
-      "AdaptiveCircuitSynthesis": true
+      "N": 2,
+      "Tol": 1.0e-8,
+      "LinearTol": 1.0e-4,
+      "Target": 7.5,
+      "TargetUpper": 8.2,
+      "RefineNonlinear": true,
+      "NonlinearType": "Hybrid",
+      "Save": 0
     },
     "Linear":
     {
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-9,
-      "MaxIts": 100
+      "MaxIts": 150
     }
   }
 }

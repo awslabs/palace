@@ -205,6 +205,19 @@ public:
     AddOperator(*op_ptr, a);
   }
 
+  // A generic sum may not expose separate real/imaginary matrix parts. Return conservative
+  // values for complex sums so callers use operator actions instead of Real()/Imag().
+  bool IsReal() const
+  {
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      return false;
+    }
+    return true;
+  }
+
+  bool IsImag() const { return false; }
+
   void Mult(const VecType &x, VecType &y) const override
   {
     if (ops.size() == 1)
@@ -254,6 +267,33 @@ public:
     {
       op->MultTranspose(x, z);
       y.Add(a * c, z);
+    }
+  }
+
+  // For real operators Hermitian transpose is ordinary transpose. For complex sums account
+  // for conjugation of each scalar coefficient.
+  void MultHermitianTranspose(const VecType &x, VecType &y) const
+  {
+    y = 0.0;
+    AddMultHermitianTranspose(x, y);
+  }
+
+  void AddMultHermitianTranspose(const VecType &x, VecType &y,
+                                 const ScalarType a = ScalarType{1.0}) const
+  {
+    z.SetSize(y.Size());
+    for (const auto &[op, c] : ops)
+    {
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        op->MultHermitianTranspose(x, z);
+        y.Add(a * std::conj(c), z);
+      }
+      else
+      {
+        op->MultTranspose(x, z);
+        y.Add(a * c, z);
+      }
     }
   }
 };

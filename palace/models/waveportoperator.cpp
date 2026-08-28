@@ -103,6 +103,43 @@ public:
       y.Imag().Add(c.real(), t.s->Imag());
     }
   }
+
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    Mult(x, y);
+  }
+
+  void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                        const std::complex<double> a) const override
+  {
+    AddMult(x, y, a);
+  }
+
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    AddMultHermitianTranspose(x, y, 1.0);
+  }
+
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a) const override
+  {
+    for (const auto &t : terms)
+    {
+      // Aᴴ = conj(g) conj(s) sᴴ for A = g s sᵀ.
+      double dot_r = linalg::Dot(comm, t.s->Real(), x.Real()) +
+                     linalg::Dot(comm, t.s->Imag(), x.Imag());
+      double dot_i = linalg::Dot(comm, t.s->Real(), x.Imag()) -
+                     linalg::Dot(comm, t.s->Imag(), x.Real());
+      const std::complex<double> c =
+          a * std::conj(t.g) * std::complex<double>(dot_r, dot_i);
+      // y += c·conj(s).
+      y.Real().Add(c.real(), t.s->Real());
+      y.Real().Add(c.imag(), t.s->Imag());
+      y.Imag().Add(c.imag(), t.s->Real());
+      y.Imag().Add(-c.real(), t.s->Imag());
+    }
+  }
 };
 
 }  // namespace
@@ -793,6 +830,7 @@ void WavePortData::SetSynthesisEigTol(double eig_tol, double ksp_tol)
   // Invalidate the cached real-ω solve (omega0 == 0 initially, and physical ω > 0) so the
   // next Initialize re-solves the cross-section EVP at the tightened tolerance.
   omega0 = -1.0;
+  mode_cache.valid = false;
 }
 
 void WavePortData::Initialize(double omega)
@@ -1845,14 +1883,6 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
     {
       continue;
     }
-    if (!(std::abs(data.modal_reaction) > 0.0) ||
-        !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(data.kn0) > 0.0))
-    {
-      Mpi::Warning(
-          nd_fespace.GetComm(),
-          "Wave port {:d} has zero modal reaction; skipping its modal correction!\n", idx);
-      continue;
-    }
     auto smp = SamplePortModalCorrection(data, omega, nd_fespace, nd_dbc_tdof_list);
     if (!smp.active)
     {
@@ -1876,11 +1906,6 @@ WavePortOperator::SamplePortModalCorrection(WavePortData &data, std::complex<dou
   // field makes W = (−iω/R) s sᵀ invariant to the mode's arbitrary EVP scale/phase, so W
   // tracks the true mode shape at ω instead of freezing it at ω0.
   ModalCorrectionSample smp;
-  if (!(std::abs(data.modal_reaction) > 0.0) ||
-      !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(data.kn0) > 0.0))
-  {
-    return smp;
-  }
   const auto react = data.ComputeComplexReactions(omega);
   if (!(std::abs(react.R_full_raw) > 0.0) || !(std::abs(react.R_scalar_raw) > 0.0))
   {

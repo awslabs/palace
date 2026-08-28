@@ -2187,14 +2187,14 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   // J(λ) = C + 2 λ M + A2'(λ).
   // The A2 finite difference is a matrix-free sum (each A2 may itself be a matrix-free
   // SumComplexOperator carrying the wave-port correction).
-  ctxF->opA2 = (*ctxF->funcA2)(lambda);
+  ctxF->opA2_jac = (*ctxF->funcA2)(lambda);
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   ctxF->opA2p = (*ctxF->funcA2)(lambda * (1.0 + eps));
   std::complex<double> denom = eps * lambda;
   auto opAJ = std::make_unique<palace::SumComplexOperator>(ctxF->opA2p->Height(),
                                                            ctxF->opA2p->Width());
   opAJ->AddOperator(*ctxF->opA2p, 1.0 / denom);
-  opAJ->AddOperator(*ctxF->opA2, -1.0 / denom);
+  opAJ->AddOperator(*ctxF->opA2_jac, -1.0 / denom);
   ctxF->opAJ = std::move(opAJ);
   ctxF->opJ =
       palace::BuildOperatorWithA2({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda},

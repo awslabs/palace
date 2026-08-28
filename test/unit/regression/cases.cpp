@@ -496,13 +496,28 @@ TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
                                   "driven_wave_tm_synth", opts);
 }
 
+// Direct nonlinear eigenmode reference for the slab-loaded hybrid/LSM wave-port case. This
+// is the physical complex pole that circuit synthesis must reproduce, using the same
+// order-2 discretization and mesh as the focused synthesis validation.
+TEST_CASE("slab_waveguide_eigen", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.min_rows = 2;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("slab_waveguide", "eigen.json", "eigen", opts);
+}
+
 // Circuit synthesis of a dielectric-slab-loaded guide driven through its hybrid/LSM port
 // mode. The transverse inhomogeneity rotates the mode shape with frequency, so the modal
 // correction W is rank>=2 and band-varying. The band (7.5-8.2 GHz) brackets a moderate-Q
 // resonance (eigenmode pole 7.730 GHz, Q ~ 20) extractable from the real-frequency fit, so
 // TestRomEigenvalueMatchesEigenmode asserts the synthesized root matches it in both Re{f}
-// and Q. The pole sits in a near-degenerate high-Q cluster: serial resolves a single root on
-// it, but partitioned runs split the cluster into two roots straddling 7.730 (which pair
+// and Q. The pole sits in a near-degenerate high-Q cluster: serial resolves a single root
+// on it, but partitioned runs split the cluster into two roots straddling 7.730 (which pair
 // appears is basis/partition-dependent), so the Re{f} tolerance is set to admit the nearest
 // straddling root rather than pin the exact pole. Pencil matrices/eigenvectors are
 // basis/partition-dependent, so presence-checked only.

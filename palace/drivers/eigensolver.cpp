@@ -79,19 +79,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
-#if defined(PALACE_WITH_SLEPC)
-  // The wave-port modal correction W is strongly ω-dependent and can create or shift modes
-  // (e.g. radiating modes with a longitudinal field) that the no-W polynomial seed cannot
-  // locate, stalling the HYBRID quasi-Newton refinement. Solve these directly with SLP,
-  // which targets the nearest eigenvalue of the full operator. SLP requires SLEPc.
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
-      iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC &&
-      space_op.GetWavePortOp().Size() > 0)
-  {
-    Mpi::Print(" Using SLP nonlinear eigensolver for the wave-port modal correction\n");
-    nonlinear_type = NonlinearEigenSolver::SLP;
-  }
-#endif
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -147,6 +134,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     A2_1 = interp->GetInterpolationOperator(1);
     A2_2 = interp->GetInterpolationOperator(2);
     interp_op = std::move(interp);  // retain: A2_0/A2_1/A2_2 reference its operator DAG
+
+    // The full nonlinear refinement below includes W. Keep this polynomial seed sparse and
+    // local in frequency; the target window is the primary basin-control mechanism. A
+    // frozen-W seed requires a Woodbury-aware shift-invert preconditioner before it is safe
+    // to enable (the plain sparse preconditioner can stagnate on the low-rank update).
     Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {K.get(), A2_0.get()});
     Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});
     Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});
@@ -378,8 +370,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
-                                    K.get(), C.get(), M.get(), A2.get());
+  std::unique_ptr<ComplexOperator> A;
+  std::unique_ptr<ComplexOperator> A2_shift;
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  {
+    // Invert the same W-aware polynomial used by the seed eigensolver.
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
+                                 Cp.get(), Mp.get());
+  }
+  else
+  {
+    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
+    A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
+                                                             : std::move(A2);
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
+                                 C.get(), M.get(), A2_shift.get());
+  }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
       1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),

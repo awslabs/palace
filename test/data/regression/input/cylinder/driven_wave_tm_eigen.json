@@ -63,7 +63,8 @@
     {
       "N": 1,
       "Tol": 1.0e-8,
-      "Target": 3.55,  // GHz; targets the physical TM01 pole basin
+      "Target": 3.40,  // GHz; lower edge of the physical TM01 pole basin
+      "TargetUpper": 3.80,  // Keep the HYBRID interpolation local to this branch
       "Save": 0
     },
     "Linear":
