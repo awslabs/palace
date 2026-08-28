@@ -1020,6 +1020,21 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
   *parent_E0t = 0.0;
   port_nd_transfer_reverse->Transfer(port_E0t->Real(), parent_E0t->Real());
   port_nd_transfer_reverse->Transfer(port_E0t->Imag(), parent_E0t->Imag());
+  // On a nonconforming (AMR-refined) parent mesh the reverse transfer populates only the
+  // conforming face DOFs of parent_E0t; hanging-node (slave) DOFs on refined faces crossing
+  // the voltage path are left unset, so GSLIB interpolates an under-represented field on the
+  // refined child elements and the path integral V collapses. Apply the conforming
+  // prolongation (true-dof round trip P·R) to fill slave DOFs consistently before the line
+  // integral. On a conforming mesh this is a no-op.
+  {
+    mfem::ParGridFunction &pr = parent_E0t->Real();
+    mfem::ParGridFunction &pi = parent_E0t->Imag();
+    mfem::Vector tr, ti;
+    pr.GetTrueDofs(tr);
+    pr.SetFromTrueDofs(tr);
+    pi.GetTrueDofs(ti);
+    pi.SetFromTrueDofs(ti);
+  }
   std::complex<double> V(0.0, 0.0);
 #if defined(MFEM_USE_GSLIB)
   // Reuse the cached point locator (Setup once at construction) — the GSLIB spatial hash
