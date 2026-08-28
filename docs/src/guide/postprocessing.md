@@ -170,11 +170,9 @@ solve.
 
 When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
 is enabled and adaptation was performed, *Palace* saves the final adapted mesh to disk and
-also records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology, so external
-tooling can
-size a re-run from the saved mesh without re-reading it. The block contains:
+also records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. The block contains:
 
-  - `Dimension` : Spatial dimension of the mesh.
+  - `Dimension` : Spatial dimension of the mesh (e.g., 2D, 3D).
   - `TrueVertices`, `TrueEdges`, `TrueFaces` : True (order-independent, conforming) counts of
     the mesh vertices, edges, and codimension-one faces. In 2D the codimension-one faces are
     edges, so `TrueFaces` equals `TrueEdges` there.
