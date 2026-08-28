@@ -805,16 +805,78 @@ void WavePortData::Initialize(double omega)
   // Solve the generalized eigenvalue problem for the desired wave port mode using the
   // ModeEigenSolver. Frequency-independent matrices were assembled in the constructor.
   const double sigma = -omega * omega * mu_eps_max;
-  std::complex<double> lambda;
+  const bool has_solver = (port_comm != MPI_COMM_NULL);
+  int num_conv = 0;
   {
-    const bool has_solver = (port_comm != MPI_COMM_NULL);
     auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
                   "Wave port eigensolver did not converge!");
-      lambda = mode_solver->GetEigenvalue(mode_idx - 1);
+      num_conv = result.num_converged;
     }
+  }
+
+  // Select which converged eigenpair is the physical port mode. By default this is the
+  // mode nearest the shift target kₙ_target = ω·√(mu_eps_max), which sits at the highest-
+  // permittivity (substrate) region; under refinement a spurious substrate/box mode can
+  // overtake the intended transmission-line mode there and collapse Z_PV (the box mode
+  // has ~zero field on the voltage path). For a fundamental-mode request with a
+  // VoltagePath, instead pick the propagating mode with the largest excitation voltage
+  // |∫E·dl| — the one that actually couples to the port terminal. This is a no-op when
+  // that is already the nearest-to-target mode.
+  int sel = mode_idx - 1;
+  if (has_voltage_coords && mode_idx == 1)
+  {
+    Mpi::Broadcast(1, &num_conv, port_root, port_mesh->GetComm());
+    if (num_conv > 1)
+    {
+      const int nd_tv = port_nd_fespace->GetTrueVSize();
+      const int h1_tv = port_h1_fespace->GetTrueVSize();
+      double best_absV = -1.0;
+      for (int idx = 0; idx < num_conv; idx++)
+      {
+        std::complex<double> lam(0.0, 0.0);
+        if (has_solver)
+        {
+          lam = mode_solver->GetEigenvalue(idx);
+        }
+        Mpi::Broadcast(1, &lam, port_root, port_mesh->GetComm());
+        const std::complex<double> kn_idx = std::sqrt(-sigma - 1.0 / lam);
+        if (!ModeEigenSolver::IsPropagating(kn_idx))
+        {
+          continue;
+        }
+        // Populate only the transverse field port_E0t (the voltage integral uses Eₜ);
+        // the normal component and normalization are applied for the selected mode below.
+        if (has_solver)
+        {
+          mode_solver->GetEigenvector(idx, e0);
+          linalg::NormalizePhase(port_comm, e0);
+          ComplexVector et_view, en_view;
+          mode_assembly::ApplyVDBackTransform(e0, kn_idx, nd_tv, h1_tv, et_view, en_view);
+        }
+        e0.Real().Read();
+        e0.Imag().Read();
+        Vector e0tr(e0.Real(), 0, nd_tv), e0ti(e0.Imag(), 0, nd_tv);
+        e0tr.UseDevice(true);
+        e0ti.UseDevice(true);
+        port_E0t->Real().SetFromTrueDofs(e0tr);
+        port_E0t->Imag().SetFromTrueDofs(e0ti);
+        const double absV = std::abs(GetExcitationVoltage());
+        if (absV > best_absV)
+        {
+          best_absV = absV;
+          sel = idx;
+        }
+      }
+    }
+  }
+
+  std::complex<double> lambda(0.0, 0.0);
+  if (has_solver)
+  {
+    lambda = mode_solver->GetEigenvalue(sel);
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
@@ -829,7 +891,7 @@ void WavePortData::Initialize(double omega)
   {
     if (port_comm != MPI_COMM_NULL)
     {
-      mode_solver->GetEigenvector(mode_idx - 1, e0);
+      mode_solver->GetEigenvector(sel, e0);
       linalg::NormalizePhase(port_comm, e0);
       ComplexVector et_view, en_view;
       mode_assembly::ApplyVDBackTransform(e0, kn0, port_nd_fespace->GetTrueVSize(),
