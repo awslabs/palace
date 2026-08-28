@@ -48,6 +48,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
   };
+  // As funcA2, plus the matrix-free wave-port modal correction W. Used by the SLP and
+  // Quasi-Newton solves (the polynomial seed keeps funcA2, since W cannot enter
+  // BuildParSumOperator).
+  auto funcA2_full =
+      [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  {
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
+    return space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+  };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
                            std::complex<double> a3) -> std::unique_ptr<ComplexOperator>
@@ -55,6 +64,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
+
+  // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
+  // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
+  // solves).
+  if (space_op.GetWavePortOp().Size() > 0)
+  {
+    space_op.GetWavePortOp().InitializeModalReference(target);
+  }
 
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
@@ -210,7 +227,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    eigen->SetExtraSystemMatrix(funcA2);
+    eigen->SetExtraSystemMatrix(funcA2_full);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -418,7 +435,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
-    qn->SetExtraSystemMatrix(funcA2);
+    qn->SetExtraSystemMatrix(funcA2_full);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,

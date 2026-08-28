@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -178,6 +179,131 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
+// S-parameter check for a driven wave-port run on a lossless structure. Two guards:
+//   (1) Reference-free power conservation: for each excitation j, Sum_i |S_ij|^2 == 1
+//       within rtol. Insensitive to MPI partitioning; catches the wave-port n x H fix
+//       (GetModalCorrectionOperator) regressing (without it Sum|S|^2 > 1 for E_n != 0
+//       modes, e.g. cylinder TM01 |S11| ~ 1.07).
+//   (2) Reference diff of the S-parameter PHASE columns "arg(S[i][j]) (deg.)" within
+//       rtol/atol. For a lossless structure power conservation already pins the
+//       magnitudes, so the phase is the discriminating quantity (it encodes the port
+//       reactance/impedance): a wrong-phase result that still conserves power is caught
+//       here. The magnitude column is skipped — |S|=1 is ~0 dB, where a relative diff is
+//       meaningless.
+palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
+{
+  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  {
+    const std::size_t n_rows = actual.n_rows();
+    for (std::size_t r = 0; r < n_rows; ++r)
+    {
+      std::map<std::string, double> power_by_excitation;
+      for (auto &c : actual)
+      {
+        const std::string &hdr = c.header_text;
+        if (hdr.rfind("|S[", 0) != 0 || hdr.find("(dB)") == std::string::npos)
+        {
+          continue;
+        }
+        // Extract the excitation index j (second [..]) from "|S[i][j]| (dB)".
+        const auto b1 = hdr.find(']');
+        const auto b2 = hdr.find('[', b1);
+        const auto b2e = hdr.find(']', b2);
+        if (b1 == std::string::npos || b2 == std::string::npos || b2e == std::string::npos)
+        {
+          continue;
+        }
+        const std::string j = hdr.substr(b2 + 1, b2e - b2 - 1);
+        const double s_lin = std::pow(10.0, c.data[r] / 20.0);  // dB -> linear |S|
+        power_by_excitation[j] += s_lin * s_lin;
+      }
+      for (const auto &[j, sum_sq] : power_by_excitation)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << sum_sq);
+        CHECK_THAT(sum_sq, Catch::Matchers::WithinAbs(1.0, rtol));
+      }
+    }
+    // (2) Reference diff of the phase columns only.
+    const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
+    const std::size_t n_cmp = std::min(actual.n_rows(), reference.n_rows());
+    for (std::size_t c = 0; c < n_cols; ++c)
+    {
+      const palace::Column &ac = actual[c];
+      const palace::Column &rc = reference[c];
+      if (rc.header_text.rfind("arg(S", 0) != 0)
+      {
+        continue;
+      }
+      for (std::size_t r = 0; r < n_cmp; ++r)
+      {
+        INFO("row " << r + 1 << " column '" << rc.header_text << "'");
+        CHECK_THAT(ac.data[r], Catch::Matchers::WithinRel(rc.data[r], rtol) ||
+                                   Catch::Matchers::WithinAbs(rc.data[r], atol));
+      }
+    }
+  };
+}
+
+// Assert the synthesized model reproduces the eigenmode resonant frequency. Among the
+// physical resonances (Q > 1, which excludes the aux-realization's critically-damped
+// spurious roots), the one nearest f_re_eigen must match it in Re{f} within rtol. Robust to
+// the basis/partition-dependent root count and ordering.
+//
+// q_eigen > 0 additionally asserts that same root's Q within q_rtol. Only pass it when the
+// pole is extractable from a real-frequency fit (a moderate-to-high-Q resonance sampled by
+// a band that brackets it); for a broad off-axis pole (e.g. the cylinder TM01, Q ~ 4) the
+// synthesized Im{f}/Q is under-determined and band-dependent, so leave q_eigen < 0 to skip.
+palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol,
+                                                            double q_eigen = -1.0,
+                                                            double q_rtol = 0.0)
+{
+  return [f_re_eigen, rtol, q_eigen, q_rtol](palace::Table &actual, palace::Table &)
+  {
+    int col_re = -1, col_q = -1;
+    for (std::size_t c = 0; c < actual.n_cols(); ++c)
+    {
+      const std::string &hdr = actual[c].header_text;
+      if (hdr.find("Re{f}") != std::string::npos)
+      {
+        col_re = static_cast<int>(c);
+      }
+      else if (hdr.find("Q") != std::string::npos)
+      {
+        col_q = static_cast<int>(c);
+      }
+    }
+    REQUIRE(col_re >= 0);
+    REQUIRE(col_q >= 0);
+    const auto &re = actual[col_re].data;
+    const auto &q = actual[col_q].data;
+    double best = -1.0, best_re = 0.0, best_q = 0.0;
+    for (std::size_t r = 0; r < re.size(); ++r)
+    {
+      if (q[r] <= 1.0)  // skip critically-damped spurious roots
+      {
+        continue;
+      }
+      const double d = std::abs(re[r] - f_re_eigen);
+      if (best < 0.0 || d < best)
+      {
+        best = d;
+        best_re = re[r];
+        best_q = q[r];
+      }
+    }
+    REQUIRE(best >= 0.0);  // at least one physical resonance present
+    INFO("nearest physical (Q>1) synth root Re{f} = " << best_re << " GHz (Q = " << best_q
+                                                      << ") vs eigenmode " << f_re_eigen
+                                                      << " GHz (Q = " << q_eigen << ")");
+    CHECK_THAT(best_re, Catch::Matchers::WithinRel(f_re_eigen, rtol));
+    if (q_eigen > 0.0)
+    {
+      CHECK_THAT(best_q, Catch::Matchers::WithinRel(q_eigen, q_rtol));
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -290,6 +416,141 @@ TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   palace::test::RunRegressionCase("cylinder", "driven_wave.json", "driven_wave", opts);
+}
+
+// Drives the TM01 port mode (Mode 3) of a lossless PEC-shorted circular waveguide.
+// TM01 carries a longitudinal field (E_n != 0 on the port face), so a correct wave
+// port must still reflect all incident power: |S11| = 1. TestWavePortLossless asserts
+// Sum_i |S_i1|^2 = 1 directly. The dominant TE11 mode (Mode 1, E_n = 0) is a separate
+// case (cylinder_driven_wave).
+TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm.json", "driven_wave_tm",
+                                  opts);
+}
+
+// TM01 (E_n != 0) driven through a uniaxial-anisotropic mu (mu_t != mu_z); mu_x = mu_y
+// keeps TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1.
+// Rotated mu is covered by the WavePortData reconstruction unit test.
+TEST_CASE("cylinder_driven_wave_tm_aniso", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_aniso.json",
+                                  "driven_wave_tm_aniso", opts);
+}
+
+// TM01 (E_n != 0) swept just above cutoff (~2.9 GHz): small k_n stresses the
+// modal-correction conditioning while the port propagates, so Sum_i |S_i1|^2 = 1 must hold
+// across the sweep.
+TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_cutoff.json",
+                                  "driven_wave_tm_cutoff", opts);
+}
+
+// Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
+// 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
+// TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
+// error-indicators.csv / domain-E.csv are kept for the file-set check but not diffed.
+// Omits [GPU] like cpw_wave_adaptive (awslabs/palace#375).
+TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_adaptive.json",
+                                  "driven_wave_tm_adaptive", opts);
+}
+
+// Eigenmode counterpart of slab_waveguide_driven_wave_synth: the dielectric-slab-loaded
+// guide resonating through its hybrid/LSM (Mode 3, longitudinal-E) wave port. The
+// transverse inhomogeneity rotates the mode shape with frequency, so the modal correction W
+// is rank>=2 and band-varying, and it enters the nonlinear eigensolver on the LHS. The
+// converged mode (Re{f} ~ 7.730 GHz, Q ~ 20) is reproducible across partitions to ~1e-8,
+// and W shifts the damping/Q by a few percent, so the directly-diffed eig.csv (Re{f},
+// Im{f}, Q) is a genuine W-sensitivity guard: a broken or dropped W moves Q well past the
+// rtol.
+TEST_CASE("slab_waveguide_wave_eigen", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("slab_waveguide", "wave_eigen.json", "wave_eigen", opts);
+}
+
+// Circuit-synthesis counterpart of cylinder_driven_wave_tm: the TM01 (longitudinal-E) port
+// exercises the modal correction W in the synthesis export. The synthesized S-parameters
+// (port-S: |S11| = 0 dB unitary + phase) are the W-dependent regression signal. The
+// homogeneous cross-section gives a rank-1 correction and a broad off-axis pole (Q ~ 4)
+// that a real-frequency fit cannot place, so no synthesized eigenvalue is asserted here
+// (the extractable-pole check lives on slab_waveguide_driven_wave_synth). The pencil
+// matrices are basis/partition/arithmetic-dependent, so presence-checked only.
+TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
+  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
+                         "rom-orthogonalization-matrix-R"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_synth.json",
+                                  "driven_wave_tm_synth", opts);
+}
+
+// Circuit synthesis of a dielectric-slab-loaded guide driven through its hybrid/LSM port
+// mode. The transverse inhomogeneity rotates the mode shape with frequency, so the modal
+// correction W is rank>=2 and band-varying. The band (7.5-8.2 GHz) brackets a moderate-Q
+// resonance (eigenmode pole 7.730 GHz, Q ~ 20) extractable from the real-frequency fit, so
+// TestRomEigenvalueMatchesEigenmode asserts the synthesized root matches it in both Re{f}
+// and Q. The pole sits in a near-degenerate high-Q cluster: serial resolves a single root
+// on it, but partitioned runs split the cluster into two roots straddling 7.730 (which pair
+// appears is basis/partition-dependent), so the Re{f} tolerance is set to admit the nearest
+// straddling root rather than pin the exact pole. Pencil matrices/eigenvectors are
+// basis/partition-dependent, so presence-checked only.
+TEST_CASE("slab_waveguide_driven_wave_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
+  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
+                         "rom-orthogonalization-matrix-R", "rom-eigenvectors",
+                         // Sharp resonance: swept S is partition/arithmetic-sensitive near
+                         // the pole, so the W-dependent signal is the synthesized
+                         // eigenvalue (custom check) rather than a pointwise S diff.
+                         "port-S"};
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      TestRomEigenvalueMatchesEigenmode(7.730, 1.0e-2, /*q_eigen=*/20.4, /*q_rtol=*/0.30);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("slab_waveguide", "driven_wave_synth.json",
+                                  "driven_wave_synth", opts);
 }
 
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes

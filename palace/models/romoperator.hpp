@@ -552,9 +552,12 @@ public:
     double error_abs = -1.0;   // ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂
     double error_bkwd = -1.0;  // error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂)
   };
+  // n_basis is the number of physical (non-aux) basis rows; roots whose eigenvector energy
+  // lies mostly in the trailing aux rows are dropped as spurious aux-pole artifacts.
   static std::vector<EigenvalueEstimate>
   ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv,
-                             const Eigen::MatrixXcd &C, double fmin_GHz, double fmax_GHz);
+                             const Eigen::MatrixXcd &C, double fmin_GHz, double fmax_GHz,
+                             int n_basis);
 
   // Fill error_abs / error_bkwd for each estimate by prolongating the eigenvector's
   // basis block to the HDM space.
