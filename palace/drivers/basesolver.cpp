@@ -231,6 +231,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     return ret;
   };
 
+  // True topological entity counts of the final adapted mesh, filled by RebalanceMesh on
+  // the root rank whenever an adapted mesh is written (Model.Refinement.SaveAdaptMesh).
+  mesh::MeshEntityCounts mesh_counts;
+
   // Main AMR loop.
   int it = 0;
   while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
@@ -292,7 +296,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Optionally rebalance and write the adapted mesh to file.
     {
-      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
+      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
       if (ratio_pre > refinement.maximum_imbalance)
       {
         int min_elem, max_elem;
@@ -321,6 +325,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // iteration 1) matches the "iterationXX" archive subdirectory and signals completion
     // via palace.json without parsing the log.
     SaveAdaptationIteration(it + 1);
+  }
+
+  // Record the final adapted mesh's true topological entity counts (only populated on the
+  // root rank when SaveAdaptMesh wrote a mesh; otherwise left invalid and skipped).
+  if (mesh_counts.valid)
+  {
+    SaveMetadata(mesh_counts);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"
@@ -357,6 +368,25 @@ void BaseSolver::SaveAdaptationIteration(int iteration) const
   {
     json meta = LoadMetadata(post_dir);
     meta["Problem"]["Iteration"] = iteration;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
+{
+  // Unlike the other SaveMetadata overloads (called on every rank, some running MPI
+  // collectives before writing), this one is invoked on the root rank only, since
+  // MeshEntityCounts::valid is set only on root. It must contain no MPI-collective calls.
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    meta["Mesh"]["Dimension"] = counts.dim;
+    meta["Mesh"]["TrueVertices"] = counts.true_vertices;
+    meta["Mesh"]["TrueEdges"] = counts.true_edges;
+    meta["Mesh"]["TrueFaces"] = counts.true_faces;
+    meta["Mesh"]["Elements"] = counts.elements;
+    meta["Mesh"]["DomainAttributes"] = counts.domain_attributes;
+    meta["Mesh"]["BoundaryAttributes"] = counts.boundary_attributes;
     WriteMetadata(post_dir, meta);
   }
 }

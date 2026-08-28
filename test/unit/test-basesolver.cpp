@@ -224,6 +224,134 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh reports the true topological entity counts",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  auto serial_mesh = SingleTetMesh();
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+
+  // The counts are computed on the root rank, where the gathered serial mesh is complete.
+  const long long global_ne = parallel_mesh->GetGlobalNE();
+  if (Mpi::Root(comm))
+  {
+    REQUIRE(counts.valid);
+    CHECK(counts.dim == 3);
+    // A single tetrahedron has 4 vertices, 6 edges, 4 faces, and 1 element. These are the
+    // order-independent conforming entity counts (H1(1)/ND(1)/RT(0)/L2(0) true sizes).
+    CHECK(counts.true_vertices == 4);
+    CHECK(counts.true_edges == 6);
+    CHECK(counts.true_faces == 4);
+    CHECK(counts.elements == 1);
+    // The element count must agree with the mesh's own global element count.
+    CHECK(counts.elements == global_ne);
+    // SingleTetMesh tags its one domain 1 and its four boundary faces 1..4.
+    CHECK(counts.domain_attributes == std::vector<int>{1});
+    CHECK(counts.boundary_attributes == std::vector<int>{1, 2, 3, 4});
+    // The counts compose into higher-order true sizes: an order-2 (P2) H1 space on a
+    // tetrahedron has one dof per vertex and one per edge (no face/interior dofs at p=2),
+    // so its true size must equal true_vertices + true_edges.
+    mfem::H1_FECollection h1_p2(2, 3);
+    mfem::FiniteElementSpace fes_p2(&serial_mesh, &h1_p2);
+    CHECK(fes_p2.GetTrueVSize() == counts.true_vertices + counts.true_edges);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh discounts hanging entities on a nonconforming mesh",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  // Build a multi-element tetrahedral mesh and refine a subset nonconformally so that
+  // hanging nodes appear at the refined/unrefined interfaces.
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON);
+  serial_mesh.EnsureNCMesh(true);
+  mfem::Array<int> refs;
+  for (int i = 0; i < serial_mesh.GetNE(); i += 3)
+  {
+    refs.Append(i);
+  }
+  serial_mesh.GeneralRefinement(refs, 1);  // 1 => nonconforming
+  REQUIRE(serial_mesh.Nonconforming());
+
+  // Raw leaf entity counts of the (global) serial mesh, before distribution.
+  const long long leaf_vertices = serial_mesh.GetNV();
+  const long long leaf_edges = serial_mesh.GetNEdges();
+  const long long leaf_faces = serial_mesh.GetNFaces();
+  const long long leaf_elements = serial_mesh.GetNE();
+
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+
+  if (Mpi::Root(comm))
+  {
+    REQUIRE(counts.valid);
+    CHECK(counts.dim == 3);
+    // The true (conforming) counts discount the constrained hanging vertices, edges, and
+    // faces, so they are strictly smaller than the raw leaf counts. This is the whole
+    // reason leaf counts cannot be used directly for sizing a nonconforming mesh.
+    CHECK(counts.true_vertices > 0);
+    CHECK(counts.true_edges > 0);
+    CHECK(counts.true_faces > 0);
+    CHECK(counts.true_vertices < leaf_vertices);
+    CHECK(counts.true_edges < leaf_edges);
+    CHECK(counts.true_faces < leaf_faces);
+    // Elements are never constrained, so the element count is not discounted.
+    CHECK(counts.elements == leaf_elements);
+    // The true entity counts must compose into a higher-order true size: an order-2 H1
+    // space on tetrahedra has one dof per (true) vertex and edge, so on this nonconforming
+    // mesh its true size equals true_vertices + true_edges -- validating the counts against
+    // their downstream (DOF-sizing) use, not just the leaf-count inequalities.
+    mfem::H1_FECollection h1_p2(2, 3);
+    mfem::FiniteElementSpace fes_p2(&serial_mesh, &h1_p2);
+    CHECK(fes_p2.GetTrueVSize() == counts.true_vertices + counts.true_edges);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh leaves entity counts unset without SaveAdaptMesh",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = false;
+
+  auto serial_mesh = SingleTetMesh();
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+
+  // With SaveAdaptMesh disabled no mesh is written, so no counts are produced. Also assert
+  // the save side-effect did not happen, tying valid == false to its actual cause rather
+  // than merely to the struct's default.
+  CHECK_FALSE(counts.valid);
+  CHECK_FALSE(fs::exists(temp_dir / "model.mesh"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SaveIteration handles dirty output directory from previous run",
                  "[basesolver][Serial]")
 {

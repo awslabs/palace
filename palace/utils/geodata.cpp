@@ -1960,7 +1960,41 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
   return DistributeMesh(comm, smesh, partitioning.get());
 }
 
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
+namespace
+{
+
+// Fill the (order-independent) topological entity counts from a serial mesh using
+// lowest-order finite-element spaces: H1(1) -> true vertices, ND(1) -> true edges,
+// RT(0) -> true faces, L2(0) -> elements. On a serial mesh the true DOF size equals the
+// global entity count, so no reduction is needed. Mirrors the serial FE space pattern in
+// postoperator.cpp. Attributes are already sorted and unique on mfem::Mesh.
+void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
+{
+  const int dim = smesh.Dimension();
+  mfem::H1_FECollection h1_fec(1, dim);
+  mfem::ND_FECollection nd_fec(1, dim);
+  mfem::RT_FECollection rt_fec(0, dim);
+  mfem::L2_FECollection l2_fec(0, dim);
+  mfem::FiniteElementSpace h1_fespace(&smesh, &h1_fec);
+  mfem::FiniteElementSpace nd_fespace(&smesh, &nd_fec);
+  mfem::FiniteElementSpace rt_fespace(&smesh, &rt_fec);
+  mfem::FiniteElementSpace l2_fespace(&smesh, &l2_fec);
+  counts.dim = dim;
+  counts.true_vertices = h1_fespace.GetTrueVSize();
+  counts.true_edges = nd_fespace.GetTrueVSize();
+  counts.true_faces = rt_fespace.GetTrueVSize();
+  counts.elements = l2_fespace.GetTrueVSize();
+  counts.domain_attributes =
+      std::vector<int>(smesh.attributes.begin(), smesh.attributes.end());
+  counts.boundary_attributes =
+      std::vector<int>(smesh.bdr_attributes.begin(), smesh.bdr_attributes.end());
+  counts.valid = true;
+}
+
+}  // namespace
+
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     MeshEntityCounts *out_counts)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
@@ -1972,6 +2006,13 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 
     auto PrintSerial = [&](mfem::Mesh &smesh)
     {
+      // The gathered serial mesh holds all elements on the root rank, so its lowest-order
+      // FE spaces give the exact global topological counts. Compute before writing (the
+      // counts are scale-invariant, so dimensionalization inside the write is irrelevant).
+      if (out_counts != nullptr && Mpi::Root(comm))
+      {
+        FillMeshEntityCounts(smesh, *out_counts);
+      }
       WriteRootOutputFile(
           sfile, comm,
           [&](std::ostream &stream)

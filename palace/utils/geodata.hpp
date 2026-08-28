@@ -345,9 +345,25 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
                                                     std::unique_ptr<mfem::Mesh> &smesh);
 
+// Order-independent (conforming) topological entity counts for a mesh, obtained from
+// lowest-order finite-element spaces on the gathered serial mesh. On a serial mesh the
+// true DOF sizes of these spaces equal the global entity counts, so these are the exact
+// counts needed to size a solver re-run without parsing the mesh. Populated only on the
+// root rank when an adapted mesh is written (see RebalanceMesh).
+struct MeshEntityCounts
+{
+  int dim = 0;
+  long long true_vertices = 0, true_edges = 0, true_faces = 0, elements = 0;
+  std::vector<int> domain_attributes, boundary_attributes;
+  bool valid = false;  // set true only when populated (root, save happened)
+};
+
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
-// the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
+// the intermediate stages to disk. Returns the imbalance ratio before rebalancing. When
+// `out_counts` is non-null and the adapted mesh is written, the mesh's true topological
+// entity counts are filled into it on the root rank.
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     MeshEntityCounts *out_counts = nullptr);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);

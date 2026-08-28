@@ -167,3 +167,16 @@ is enabled, the postprocessing results from the solve on the previous mesh will 
 within a subdirectory denoted `iterationX`, where `X` is the (1-based) iteration number.
 The results in the top level directory will always be those from the most recent successful
 solve.
+
+When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
+is enabled and adaptation was performed, *Palace* saves the final adapted mesh to disk and
+also records a `Mesh` block in `palace.json` summarizing its topology, so external tooling can
+size a re-run from the saved mesh without re-reading it. The block contains:
+
+  - `Dimension` : Spatial dimension of the mesh.
+  - `TrueVertices`, `TrueEdges`, `TrueFaces` : True (order-independent, conforming) counts of
+    the mesh vertices, edges, and codimension-one faces. In 2D the codimension-one faces are
+    edges, so `TrueFaces` equals `TrueEdges` there.
+  - `Elements` : Total number of elements (matching `Problem`'s `MeshElements`).
+  - `DomainAttributes`, `BoundaryAttributes` : Sorted lists of the unique domain (material)
+    and boundary attributes present in the mesh.
