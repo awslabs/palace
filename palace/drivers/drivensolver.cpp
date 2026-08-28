@@ -162,13 +162,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  excitation_counter, port_excitations.Size());
     }
-    // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
-    post_op.InitializeParaviewDataCollection(excitation_idx);
-
-    // Frequency loop.
-    for (std::size_t omega_i =
-             ((excitation_counter == excitation_restart_counter) ? freq_restart_idx : 0);
-         omega_i < omega_sample.size(); omega_i++)
+    // Frequency loop. Delay the potentially large visualization operators until the
+    // first solution is ready, so they do not increase the solve/preconditioner peak.
+    const std::size_t omega_start =
+        (excitation_counter == excitation_restart_counter) ? freq_restart_idx : 0;
+    for (std::size_t omega_i = omega_start; omega_i < omega_sample.size(); omega_i++)
     {
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
@@ -216,6 +214,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
             space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
       }
 
+      if (omega_i == omega_start)
+      {
+        // Switch ParaView subfolders once per excitation, after the first solve.
+        post_op.InitializeParaviewDataCollection(excitation_idx);
+      }
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
@@ -445,10 +448,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  ++excitation_counter, port_excitations.Size());
     }
-    // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
-    post_op.InitializeParaviewDataCollection(excitation_idx);
-
-    // Frequency loop.
+    // Frequency loop. Delay visualization setup until the first online solution is ready.
     for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
     {
       auto omega = omega_sample[omega_i];
@@ -477,6 +477,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         floquet_corr->AddMult(
             E, B,
             space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+      }
+      if (omega_i == 0)
+      {
+        // Switch ParaView subfolders once per excitation, after the first solve.
+        post_op.InitializeParaviewDataCollection(excitation_idx);
       }
       post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
     }
