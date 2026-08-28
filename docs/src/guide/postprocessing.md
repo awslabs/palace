@@ -134,6 +134,58 @@ but the variable names and corresponding units for various possible postprocesse
   - Magnetic energy density : `U_m` (J/m³)
   - Poynting vector: `S` (W/m²)
 
+### Visualization field spaces and interface values
+
+Domain fields available in both the ParaView and grid function formats are represented in
+different ways. ParaView stores values sampled at visualization points, whereas an MFEM grid
+function stores the finite element space and its degrees of freedom. Primary solution fields
+retain their native finite element spaces in grid function output. Derived fields are
+evaluated directly into discontinuous, interpolatory L2 spaces of the solution order:
+
+| Fields                                           | Grid function space | Continuity represented by the space                                                                        |
+|:------------------------------------------------ |:------------------- |:---------------------------------------------------------------------------------------------------------- |
+| `V`, `En`, and other scalar H1 solution fields   | H1                  | The scalar value is continuous across conforming element interfaces.                                       |
+| `E`, `E_real`, `E_imag`, `A`, `A_real`, `A_imag` | ND (H(curl))        | The tangential trace is continuous; the normal component may differ between the two sides of an interface. |
+| `B`, `B_real`, `B_imag` in 3D                    | RT (H(div))         | The normal trace is continuous; the tangential component may differ between the two sides of an interface. |
+| `B`, `B_real`, `B_imag` in 2D                    | Scalar L2           | Element-local scalar values are retained.                                                                  |
+| `U_e`, `U_m`, `S`, `Sn`                          | Scalar or vector L2 | All element-local values are retained, including both traces at an interface.                              |
+
+The L2 representation of the derived fields is important even when a primary solution field
+belongs to a conforming space. H1, H(curl), and H(div) impose different notions of
+continuity; neither H(curl) nor H(div) makes the complete vector field single-valued at an
+interface. In addition, the constitutive parameters can be discontinuous between materials.
+For example,
+
+```math
+U_e = \frac{1}{2} \bm{E}^{*} \bm{\epsilon} \bm{E}, \qquad
+U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
+\bm{S} = \operatorname{Re}\!\left\{\bm{E} \times
+\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}.
+```
+
+A jump in ``\bm{\epsilon}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
+density or the Poynting vector, even where the conforming trace of a primary field is
+continuous. Similarly, at a material interface:
+
+  - H(curl) continuity constrains only the tangential electric field; its normal component
+    can jump.
+  - H(div) continuity constrains only the normal magnetic flux density; its tangential
+    component can jump.
+  - ``\bm{D} = \bm{\epsilon}\bm{E}`` and
+    ``\bm{H} = \bm{\mu}^{-1}\bm{B}`` inherit jumps from both the fields and the material
+    tensors.
+  - Surface charge ``Q_s = \bm{D} \cdot \bm{n}`` and surface current
+    ``\bm{J}_s = \bm{n} \times \bm{H}`` are side-dependent traces when the corresponding
+    interface charge or current is nonzero.
+
+Forcing these quantities into a continuous H1 space would select, average, or smooth values
+across interfaces and would discard the distinction between the two element-side traces.
+The L2 domain fields instead preserve the element-local result. The separate boundary
+visualization has one tuple per geometric interface point: primary fields are the average of
+the two traces, energy density and Poynting output average the corresponding per-side
+quantities, and surface charge/current use their oriented jump definitions. Exterior
+boundaries use the single adjacent element trace.
+
 Also, at the final step of the simulation the following element-wise quantities are written
 for visualization:
 
