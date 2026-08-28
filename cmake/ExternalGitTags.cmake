@@ -89,9 +89,9 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "main" CACHE STRING
   "Git branch for external LIBXSMM build"
 )
-# libxsmm does not tag versions very often (last was Dec 2021)
+# libCEED requires LIBXSMM 2.0 or newer.
 set(EXTERN_LIBXSMM_GIT_TAG
-  "ea0b20499a41377bab148257240adbbfe1b4a333" CACHE STRING
+  "5ce29626ddad947f0d5c433ce78c58ff64dfbbdb" CACHE STRING
   "Git tag for external LIBXSMM build"
 )
 

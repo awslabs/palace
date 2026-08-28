@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <map>
+#include <memory>
 #include <vector>
 #include <mfem.hpp>
 #include "utils/configfile.hpp"
@@ -24,6 +25,7 @@ class FindPointsGSLIB;
 namespace palace
 {
 
+class CeedProbeEvaluator;
 class GridFunction;
 class IoData;
 class Units;
@@ -37,6 +39,13 @@ class InterpolationOperator
 private:
 #if defined(MFEM_USE_GSLIB)
   mfem::FindPointsGSLIB op;
+
+  // libCEED evaluators at the located probe points, avoiding per-sample GSLIB
+  // interpolation, constructed lazily per source finite element space. The source spaces
+  // outlive this operator and both are rebuilt together after mesh/space reconstruction,
+  // so pointer identity is stable for the lifetime of this cache.
+  mutable std::map<const mfem::FiniteElementSpace *, std::unique_ptr<CeedProbeEvaluator>>
+      ceed_probes;
 #endif
   std::vector<int> op_idx;
 
@@ -48,6 +57,7 @@ public:
   InterpolationOperator(const std::map<int, config::ProbeData> &probe, const Units &units,
                         FiniteElementSpace &nd_space);
   InterpolationOperator(const IoData &iodata, FiniteElementSpace &nd_space);
+  ~InterpolationOperator();
 
   auto GetVDim() const { return v_dim_fes; }
   const auto &GetProbes() const { return op_idx; }
