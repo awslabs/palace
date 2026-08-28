@@ -141,6 +141,28 @@ void WriteMetadata(const fs::path &post_dir, const json &meta)
   fs::rename(tmp_path, path);
 }
 
+// Map an MFEM geometry type to its lowercase JSON key used in the SavedAdaptedMesh block.
+const char *GeometryKey(mfem::Geometry::Type geom)
+{
+  switch (geom)
+  {
+    case mfem::Geometry::TRIANGLE:
+      return "triangle";
+    case mfem::Geometry::SQUARE:
+      return "quadrilateral";
+    case mfem::Geometry::TETRAHEDRON:
+      return "tetrahedron";
+    case mfem::Geometry::CUBE:
+      return "hexahedron";
+    case mfem::Geometry::PRISM:
+      return "prism";
+    case mfem::Geometry::PYRAMID:
+      return "pyramid";
+    default:
+      return "unknown";
+  }
+}
+
 // Returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
@@ -380,13 +402,29 @@ void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["SavedAdaptedMesh"]["Dimension"] = counts.dim;
-    meta["SavedAdaptedMesh"]["TrueVertices"] = counts.true_vertices;
-    meta["SavedAdaptedMesh"]["TrueEdges"] = counts.true_edges;
-    meta["SavedAdaptedMesh"]["TrueFaces"] = counts.true_faces;
-    meta["SavedAdaptedMesh"]["Elements"] = counts.elements;
-    meta["SavedAdaptedMesh"]["DomainAttributes"] = counts.domain_attributes;
-    meta["SavedAdaptedMesh"]["BoundaryAttributes"] = counts.boundary_attributes;
+    json &saved = meta["SavedAdaptedMesh"];
+    saved["Dimension"] = counts.dim;
+    saved["TrueVertices"] = counts.true_vertices;
+    saved["TrueEdges"] = counts.true_edges;
+    // Per-geometry counts emit only the geometries that are present; a missing key means
+    // zero by contract. TrueFaces is omitted entirely in 2D (the map is empty there).
+    if (!counts.true_faces.empty())
+    {
+      json faces = json::object();
+      for (const auto &[geom, count] : counts.true_faces)
+      {
+        faces[GeometryKey(geom)] = count;
+      }
+      saved["TrueFaces"] = faces;
+    }
+    json cells = json::object();
+    for (const auto &[geom, count] : counts.cells)
+    {
+      cells[GeometryKey(geom)] = count;
+    }
+    saved["Cells"] = cells;
+    saved["DomainAttributes"] = counts.domain_attributes;
+    saved["BoundaryAttributes"] = counts.boundary_attributes;
     WriteMetadata(post_dir, meta);
   }
 }

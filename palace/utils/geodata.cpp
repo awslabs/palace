@@ -1963,27 +1963,115 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
 namespace
 {
 
-// Fill the (order-independent) topological entity counts from a serial mesh using
-// lowest-order finite-element spaces: H1(1) -> true vertices, ND(1) -> true edges,
-// RT(0) -> true faces, L2(0) -> elements. On a serial mesh the true DOF size equals the
-// global entity count, so no reduction is needed. Mirrors the serial FE space pattern in
-// postoperator.cpp. Attributes are already sorted and unique on mfem::Mesh.
+// Fill the per-geometry topological entity counts from a serial mesh. On a serial mesh the
+// true DOF size of a lowest-order FE space equals the global entity count, so no reduction
+// is needed. The counting method depends on whether the mesh is nonconforming:
+//
+//   Nonconforming: NC-list bucketing is wrong in 3D (it over-counts edges via codim-2
+//     face-interior constraints and under-counts faces), so the true counts come from FE
+//     space true sizes. Vertices from H1(1), edges from ND(1). The tri/quad TRUE-face
+//     split is recovered by solving the 2x2 system built from the RT(0) and RT(1) true
+//     sizes after subtracting the exact raw-cell RT contributions (no NC list needed):
+//       F_tri + F_quad     = RT0_true - K0       (t0 == s0 == 1)
+//       t1*F_tri + s1*F_quad = RT1_true - K1
+//     where K0/K1 are the sums over raw cells of RT(p).DofForGeometry(cell_geom).
+//
+//   Conforming: true == leaf, so raw per-geometry counts are used directly (no FE spaces):
+//     vertices GetNV(), edges GetNEdges(), faces bucketed via GetFaceGeometry() (3D only),
+//     cells via GetElementBaseGeometry().
+//
+// FE spaces are each scoped in their own block so at most one is alive at a time (built,
+// read, and destroyed before the next), keeping peak memory low. Attributes are already
+// sorted and unique on mfem::Mesh.
 void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 {
   const int dim = smesh.Dimension();
-  mfem::H1_FECollection h1_fec(1, dim);
-  mfem::ND_FECollection nd_fec(1, dim);
-  mfem::RT_FECollection rt_fec(0, dim);
-  mfem::L2_FECollection l2_fec(0, dim);
-  mfem::FiniteElementSpace h1_fespace(&smesh, &h1_fec);
-  mfem::FiniteElementSpace nd_fespace(&smesh, &nd_fec);
-  mfem::FiniteElementSpace rt_fespace(&smesh, &rt_fec);
-  mfem::FiniteElementSpace l2_fespace(&smesh, &l2_fec);
   counts.dim = dim;
-  counts.true_vertices = h1_fespace.GetTrueVSize();
-  counts.true_edges = nd_fespace.GetTrueVSize();
-  counts.true_faces = rt_fespace.GetTrueVSize();
-  counts.elements = l2_fespace.GetTrueVSize();
+
+  // Raw per-geometry cell counts (interior DOFs are never constrained, so raw == true).
+  for (int i = 0; i < smesh.GetNE(); i++)
+  {
+    counts.cells[smesh.GetElementBaseGeometry(i)]++;
+  }
+
+  if (smesh.Nonconforming())
+  {
+    {
+      mfem::H1_FECollection h1_fec(1, dim);
+      mfem::FiniteElementSpace h1_fespace(&smesh, &h1_fec);
+      counts.true_vertices = h1_fespace.GetTrueVSize();
+    }
+    {
+      mfem::ND_FECollection nd_fec(1, dim);
+      mfem::FiniteElementSpace nd_fespace(&smesh, &nd_fec);
+      counts.true_edges = nd_fespace.GetTrueVSize();
+    }
+    if (dim == 3)
+    {
+      // Solve the tri/quad TRUE-face split from the RT(0) and RT(1) true sizes.
+      long long rt0_true = 0, t0 = 0, s0 = 0, k0 = 0;
+      {
+        mfem::RT_FECollection rt0_fec(0, dim);
+        mfem::FiniteElementSpace rt0_fespace(&smesh, &rt0_fec);
+        rt0_true = rt0_fespace.GetTrueVSize();
+        t0 = rt0_fec.DofForGeometry(mfem::Geometry::TRIANGLE);
+        s0 = rt0_fec.DofForGeometry(mfem::Geometry::SQUARE);
+        for (const auto &[geom, count] : counts.cells)
+        {
+          k0 += count * rt0_fec.DofForGeometry(geom);
+        }
+      }
+      long long rt1_true = 0, t1 = 0, s1 = 0, k1 = 0;
+      {
+        mfem::RT_FECollection rt1_fec(1, dim);
+        mfem::FiniteElementSpace rt1_fespace(&smesh, &rt1_fec);
+        rt1_true = rt1_fespace.GetTrueVSize();
+        t1 = rt1_fec.DofForGeometry(mfem::Geometry::TRIANGLE);
+        s1 = rt1_fec.DofForGeometry(mfem::Geometry::SQUARE);
+        for (const auto &[geom, count] : counts.cells)
+        {
+          k1 += count * rt1_fec.DofForGeometry(geom);
+        }
+      }
+      const long long b0 = rt0_true - k0;  // == F_tri + F_quad (t0 == s0 == 1)
+      const long long b1 = rt1_true - k1;
+      long long f_tri = 0, f_quad = 0;
+      if (t0 == 1 && s0 == 1 && (s1 - t1) != 0)
+      {
+        f_quad = (b1 - t1 * b0) / (s1 - t1);
+        f_tri = b0 - f_quad;
+      }
+      else
+      {
+        // Fallback (should not happen for RT on standard geometries).
+        f_tri = b0;
+        f_quad = 0;
+      }
+      if (f_tri != 0)
+      {
+        counts.true_faces[mfem::Geometry::TRIANGLE] = f_tri;
+      }
+      if (f_quad != 0)
+      {
+        counts.true_faces[mfem::Geometry::SQUARE] = f_quad;
+      }
+    }
+  }
+  else
+  {
+    // Conforming: true == leaf, so use raw per-geometry counts (no FE spaces needed).
+    counts.true_vertices = smesh.GetNV();
+    counts.true_edges = (dim >= 2) ? smesh.GetNEdges() : 0;
+    if (dim == 3)
+    {
+      // In 2D GetNFaces() == 0, so this loop is guarded to 3D.
+      for (int f = 0; f < smesh.GetNFaces(); f++)
+      {
+        counts.true_faces[smesh.GetFaceGeometry(f)]++;
+      }
+    }
+  }
+
   counts.domain_attributes =
       std::vector<int>(smesh.attributes.begin(), smesh.attributes.end());
   counts.boundary_attributes =

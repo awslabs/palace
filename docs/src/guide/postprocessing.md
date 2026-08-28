@@ -173,9 +173,20 @@ is enabled and adaptation was performed, *Palace* saves the final adapted mesh t
 also records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. The block contains:
 
   - `Dimension` : Spatial dimension of the mesh (e.g., 2D, 3D).
-  - `TrueVertices`, `TrueEdges`, `TrueFaces` : True (order-independent, conforming) counts of
-    the mesh vertices, edges, and codimension-one faces. In 2D the codimension-one faces are
-    edges, so `TrueFaces` equals `TrueEdges` there.
-  - `Elements` : Total number of elements (matching `Problem`'s `MeshElements`).
+  - `TrueVertices`, `TrueEdges` : True (order-independent, conforming) counts of the mesh
+    vertices and edges.
+  - `TrueFaces` : True (conforming) counts of the codimension-one faces, broken down by face
+    geometry (`triangle`, `quadrilateral`); only the geometries with a nonzero count are
+    listed. Reported in 3D only. In 2D the codimension-one faces are edges and are already
+    given by `TrueEdges`, so this field is omitted.
+  - `Cells` : Counts of the mesh elements, broken down by element geometry (`tetrahedron`,
+    `hexahedron`, `prism`, `pyramid` in 3D; `triangle`, `quadrilateral` in 2D); only the
+    geometries with a nonzero count are listed. The sum matches `Problem`'s `MeshElements`.
   - `DomainAttributes`, `BoundaryAttributes` : Sorted lists of the unique domain (material)
     and boundary attributes present in the mesh.
+
+The face and cell counts are reported per geometry because the number of degrees of freedom
+contributed by each entity depends on its geometry at a given finite-element order. Splitting
+the counts this way lets external tooling reconstruct the exact global degree-of-freedom size
+for mixed or non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
+hexahedral, prism, and pyramid cells) each contribute a different per-order count.

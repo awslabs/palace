@@ -45,32 +45,25 @@ public:
   }
 };
 
-// Verify the emitted true entity counts reproduce the EXACT conforming DOF count of the
-// H1 and ND spaces (used by Palace's solvers) across orders, via the standard per-entity
-// decomposition on tetrahedra. This is what lets the counts size a re-run at any order --
-// a stronger check than true < leaf (it also catches an edge/face swap).
-void CheckDofDecomposition(mfem::Mesh &mesh, const mesh::MeshEntityCounts &counts)
+// Reconstruct the exact conforming DOF count (GetTrueVSize) of an FE space from the
+// per-geometry true entity counts: each true entity contributes fec.DofForGeometry(geom)
+// dofs of its geometry. This is the reconstruction oracle used by the nonconforming test
+// below -- an earlier NC-list bucketing method silently mis-counted (over-counted edges,
+// mis-split faces) in 3D, and reproducing GetTrueVSize this way catches that whole class
+// of bug. Mirrors the DofForGeometry usage validated exact in the mfem_dofcheck_nc harness.
+long long Reconstruct(const mesh::MeshEntityCounts &c, mfem::FiniteElementCollection &fec)
 {
-  const long long V = counts.true_vertices, E = counts.true_edges, F = counts.true_faces,
-                  T = counts.elements;
-  const int dim = mesh.Dimension();
-  // H1 order p on tets: V + E(p-1) + F(p-1)(p-2)/2 + T(p-1)(p-2)(p-3)/6. Order 4 exercises
-  // the tetrahedron-interior term.
-  for (int p = 1; p <= 4; p++)
+  long long n = c.true_vertices * fec.DofForGeometry(mfem::Geometry::POINT) +
+                c.true_edges * fec.DofForGeometry(mfem::Geometry::SEGMENT);
+  for (const auto &[g, cnt] : c.true_faces)
   {
-    const long long expected = V + E * (p - 1) + F * ((p - 1) * (p - 2) / 2) +
-                               T * ((p - 1) * (p - 2) * (p - 3) / 6);
-    mfem::H1_FECollection fec(p, dim);
-    CHECK(mfem::FiniteElementSpace(&mesh, &fec).GetTrueVSize() == expected);
+    n += cnt * fec.DofForGeometry(g);
   }
-  // ND (Nedelec, first kind) order p on tets: E*p + F*p(p-1) + T*p(p-1)(p-2)/2. Order 3
-  // exercises the tetrahedron-interior term.
-  for (int p = 1; p <= 3; p++)
+  for (const auto &[g, cnt] : c.cells)
   {
-    const long long expected = E * p + F * (p * (p - 1)) + T * (p * (p - 1) * (p - 2) / 2);
-    mfem::ND_FECollection fec(p, dim);
-    CHECK(mfem::FiniteElementSpace(&mesh, &fec).GetTrueVSize() == expected);
+    n += cnt * fec.DofForGeometry(g);
   }
+  return n;
 }
 
 }  // namespace
@@ -289,14 +282,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   {
     REQUIRE(counts.valid);
     CHECK(counts.dim == 3);
-    // A single tetrahedron has 4 vertices, 6 edges, 4 faces, and 1 element. These are the
-    // order-independent conforming entity counts (H1(1)/ND(1)/RT(0)/L2(0) true sizes).
+    // A single tetrahedron has 4 vertices, 6 edges, 4 triangular faces, and is one
+    // TETRAHEDRON cell. These are the order-independent conforming entity counts
+    // (H1(1)/ND(1)/RT(0)/L2(0) true sizes), reported per geometry.
     CHECK(counts.true_vertices == 4);
     CHECK(counts.true_edges == 6);
-    CHECK(counts.true_faces == 4);
-    CHECK(counts.elements == 1);
-    // The element count must agree with the mesh's own global element count.
-    CHECK(counts.elements == global_ne);
+    CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) == 4);
+    // A tet has no quadrilateral faces, so the SQUARE key must be absent (not
+    // present-zero).
+    CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);
+    CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == 1);
+    CHECK(counts.cells.size() == 1);
+    // The (single) cell count must agree with the mesh's own global element count.
+    CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == global_ne);
     // SingleTetMesh tags its one domain 1 and its four boundary faces 1..4.
     CHECK(counts.domain_attributes == std::vector<int>{1});
     CHECK(counts.boundary_attributes == std::vector<int>{1, 2, 3, 4});
@@ -349,20 +347,37 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.dim == 3);
     // The true (conforming) counts discount the constrained hanging vertices, edges, and
     // faces, so they are strictly smaller than the raw leaf counts. This is the whole
-    // reason leaf counts cannot be used directly for sizing a nonconforming mesh.
+    // reason leaf counts cannot be used directly for sizing a nonconforming mesh. This
+    // all-tet mesh has only triangular faces, so the SQUARE key must be absent.
     CHECK(counts.true_vertices > 0);
     CHECK(counts.true_edges > 0);
-    CHECK(counts.true_faces > 0);
+    CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) > 0);
+    CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);
     CHECK(counts.true_vertices < leaf_vertices);
     CHECK(counts.true_edges < leaf_edges);
-    CHECK(counts.true_faces < leaf_faces);
-    // Elements are never constrained, so the element count is not discounted.
-    CHECK(counts.elements == leaf_elements);
-    // The true entity counts must reproduce the exact conforming DOF count of the H1/ND
-    // spaces Palace solves with, across orders, on this nonconforming mesh -- the property
-    // that lets them size a re-run at any order (stronger than the leaf-count
-    // inequalities).
-    CheckDofDecomposition(serial_mesh, counts);
+    // Cheap sanity check that the face discount happened.
+    CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) < leaf_faces);
+    // Cells are never constrained, so the raw per-geometry cell count is not discounted.
+    CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == leaf_elements);
+    // Reconstruction-vs-GetTrueVSize oracle: the per-geometry true counts must reproduce
+    // the EXACT conforming DOF count of the H1 and ND spaces Palace solves with, across
+    // orders, on this nonconforming mesh. This is the regression guard -- an earlier
+    // NC-list counting method silently mis-counted (over-counted edges, mis-split faces)
+    // in 3D, and this reproduction catches that whole class of bug. counts came from the
+    // gathered serial copy, whose topology is identical to serial_mesh, so the true sizes
+    // computed on serial_mesh must match Reconstruct(counts, ...) exactly.
+    for (int p = 1; p <= 3; p++)
+    {
+      mfem::H1_FECollection fec(p, 3);
+      CHECK(Reconstruct(counts, fec) ==
+            mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+    }
+    for (int p = 1; p <= 3; p++)
+    {
+      mfem::ND_FECollection fec(p, 3);
+      CHECK(Reconstruct(counts, fec) ==
+            mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+    }
   }
 }
 
@@ -425,8 +440,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(m.at("Dimension").get<int>() == 3);
     CHECK(m.at("TrueVertices").get<long long>() == 4);
     CHECK(m.at("TrueEdges").get<long long>() == 6);
-    CHECK(m.at("TrueFaces").get<long long>() == 4);
-    CHECK(m.at("Elements").get<long long>() == 1);
+    // Per-geometry blocks: a single tet has four triangular faces and is one tetrahedron.
+    CHECK(m.at("TrueFaces").at("triangle").get<long long>() == 4);
+    // A tet has no quadrilateral faces, so that key must be absent (not present-zero).
+    CHECK_FALSE(m.at("TrueFaces").contains("quadrilateral"));
+    CHECK(m.at("Cells").at("tetrahedron").get<long long>() == 1);
     CHECK(m.at("DomainAttributes").get<std::vector<int>>() == std::vector<int>{1});
     CHECK(m.at("BoundaryAttributes").get<std::vector<int>>() ==
           std::vector<int>{1, 2, 3, 4});

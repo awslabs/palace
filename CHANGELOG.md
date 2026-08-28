@@ -62,8 +62,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 902](https://github.com/awslabs/palace/pull/902)
   - Emit a `SavedAdaptedMesh` block to `postpro/palace.json` when
     `config["Model"]["Refinement"]["SaveAdaptMesh"]` is enabled, recording the true
-    (conforming) topological entity counts (vertices, edges, and faces), the element count,
-    and the sorted domain and boundary attributes of the final adapted mesh.
+    (conforming) topological entity counts of the final adapted mesh broken down by element
+    and face geometry (vertices, edges, faces per face geometry, and cells per element
+    geometry), together with the sorted domain and boundary attributes.
     [PR 911](https://github.com/awslabs/palace/pull/911).
 
 #### Interface Changes

@@ -5,6 +5,7 @@
 #define PALACE_UTILS_GEODATA_HPP
 
 #include <cmath>
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -345,15 +346,22 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
                                                     std::unique_ptr<mfem::Mesh> &smesh);
 
-// Order-independent (conforming) topological entity counts for a mesh, obtained from
-// lowest-order finite-element spaces on the gathered serial mesh. On a serial mesh the
-// true DOF sizes of these spaces equal the global entity counts, so these are the exact
-// counts needed to size a solver re-run without parsing the mesh. Populated only on the
-// root rank when an adapted mesh is written (see RebalanceMesh).
+// Order-independent (conforming) topological entity counts for a mesh, broken down
+// per geometry, obtained from the gathered serial mesh. These are the true (constrained)
+// global entity counts needed to size a solver re-run without parsing the mesh. On a
+// nonconforming mesh the true counts come from lowest-order finite-element space true
+// sizes (NC-list bucketing is wrong in 3D); on a conforming mesh true == leaf, so raw
+// per-geometry counts are used. Populated only on the root rank when an adapted mesh is
+// written (see RebalanceMesh).
 struct MeshEntityCounts
 {
   int dim = 0;
-  long long true_vertices = 0, true_edges = 0, true_faces = 0, elements = 0;
+  long long true_vertices = 0;
+  long long true_edges = 0;
+  // TRUE codim-1 faces by geometry (3D only; empty in 2D). Keys are TRIANGLE, SQUARE.
+  std::map<mfem::Geometry::Type, long long> true_faces;
+  // Raw cells by geometry (2D: TRIANGLE, SQUARE; 3D: TETRAHEDRON, CUBE, PRISM, PYRAMID).
+  std::map<mfem::Geometry::Type, long long> cells;
   std::vector<int> domain_attributes, boundary_attributes;
   bool valid = false;  // set true only when populated (root, save happened)
 };
