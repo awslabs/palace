@@ -17,6 +17,21 @@ namespace palace::ceed
 namespace
 {
 
+using BasisKey = std::vector<std::uint64_t>;
+using BasisCache = std::map<BasisKey, CeedBasis>;
+
+BasisCache &GetBasisCache()
+{
+  static auto *cache = new BasisCache();
+  return *cache;
+}
+
+std::mutex &GetBasisCacheMutex()
+{
+  static auto *cache_mutex = new std::mutex();
+  return *cache_mutex;
+}
+
 void InitTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                      CeedInt num_comp, Ceed ceed, CeedBasis *basis)
 {
@@ -104,7 +119,6 @@ void InitNonTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRu
   // ordinary libCEED basis so GPU backend setup and tabulation storage are paid once per
   // exact FE/rule pair. The key contains the full MFEM tabulation, not FE object
   // addresses, so finite-element collection destruction/address reuse cannot alias it.
-  using BasisKey = std::vector<std::uint64_t>;
   BasisKey key;
   key.reserve(16 + maps.Bt.Size() + maps.Gt.Size() + qX.Height() * qX.Width() + qW.Size());
   auto AppendInt = [&](std::uint64_t value) { key.push_back(value); };
@@ -149,18 +163,18 @@ void InitNonTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRu
     AppendDouble(qW(i));
   }
 
-  // The cache intentionally has process lifetime, matching registered IntegrationRules
-  // retained for MFEM's pointer-keyed DofToQuad cache. Stored handles keep one reference;
-  // callers receive normal reference-counted copies owned by their operators.
-  static auto *cache = new std::map<BasisKey, CeedBasis>();
-  static auto *cache_mutex = new std::mutex();
-  std::lock_guard<std::mutex> lock(*cache_mutex);
-  auto it = cache->find(key);
-  if (it == cache->end())
+  // The cache lives until explicit libCEED finalization, matching registered
+  // IntegrationRules retained for MFEM's pointer-keyed DofToQuad cache. Stored handles
+  // keep one reference; callers receive normal reference-counted copies owned by their
+  // operators.
+  auto &cache = GetBasisCache();
+  std::lock_guard<std::mutex> lock(GetBasisCacheMutex());
+  auto it = cache.find(key);
+  if (it == cache.end())
   {
     CeedBasis cached_basis;
     Create(&cached_basis);
-    it = cache->emplace(std::move(key), cached_basis).first;
+    it = cache.emplace(std::move(key), cached_basis).first;
   }
   *basis = nullptr;
   PalaceCeedCall(ceed, CeedBasisReferenceCopy(it->second, basis));
@@ -247,6 +261,24 @@ void InitMfemInterpolatorBasis(const mfem::FiniteElement &trial_fe,
 }
 
 }  // namespace
+
+namespace internal
+{
+
+void FinalizeBasisCache()
+{
+  auto &cache = GetBasisCache();
+  std::lock_guard<std::mutex> lock(GetBasisCacheMutex());
+  for (auto &[key, basis] : cache)
+  {
+    (void)key;
+    Ceed ceed = CeedBasisReturnCeed(basis);
+    PalaceCeedCall(ceed, CeedBasisDestroy(&basis));
+  }
+  cache.clear();
+}
+
+}  // namespace internal
 
 void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                CeedInt num_comp, Ceed ceed, CeedBasis *basis)
