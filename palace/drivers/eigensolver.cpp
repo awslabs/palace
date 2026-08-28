@@ -79,19 +79,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
-#if defined(PALACE_WITH_SLEPC)
-  // The wave-port modal correction W is strongly ω-dependent and can create or shift modes
-  // (e.g. radiating modes with a longitudinal field) that the no-W polynomial seed cannot
-  // locate, stalling the HYBRID quasi-Newton refinement. Solve these directly with SLP,
-  // which targets the nearest eigenvalue of the full operator. SLP requires SLEPc.
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
-      iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC &&
-      space_op.GetWavePortOp().Size() > 0)
-  {
-    Mpi::Print(" Using SLP nonlinear eigensolver for the wave-port modal correction\n");
-    nonlinear_type = NonlinearEigenSolver::SLP;
-  }
-#endif
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;

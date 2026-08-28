@@ -163,8 +163,8 @@ public:
 
   // Tighten the eigenvalue-convergence and inner linear-solve tolerances, used to solve the
   // cross-section EVP more accurately when sampling kₙ(ω)/M(ω) for wave-port circuit
-  // synthesis (decoupling the fit from the user's port EigenTol/KSPTol). Takes effect on the
-  // next Solve; a no-op on ranks without a solver configured.
+  // synthesis (decoupling the fit from the user's port EigenTol/KSPTol). Takes effect on
+  // the next Solve; a no-op on ranks without a solver configured.
   void SetSynthesisTol(double eig_tol_new, double ksp_tol_new);
 
 private:
