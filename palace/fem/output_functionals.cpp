@@ -261,9 +261,8 @@ struct FaceGroup
   mfem::Geometry::Type vol_geom_a = mfem::Geometry::INVALID;
   mfem::Geometry::Type vol_geom_b = mfem::Geometry::INVALID;
   // Separable two-sided operations use two one-sided fixed-rule operators which
-  // ApplyAdd into the same output slots. side_scale carries averages and normal_scale
-  // is the effective oriented sign, including the boundary-element flip when relevant.
-  double side_scale = 1.0;
+  // ApplyAdd into the same output slots. normal_scale is the effective oriented sign,
+  // including the boundary-element flip when relevant.
   double normal_scale = 1.0;
   const mfem::IntegrationRule *mapped_ir_a = nullptr;  // Registry, application lifetime
   const mfem::IntegrationRule *mapped_ir_b = nullptr;
@@ -604,14 +603,12 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
   return base_ctx;
 }
 
-void SurfaceFunctional::ConfigureGroupQFunction(bool is_2d, bool has_b, double side_scale,
-                                                double normal_scale, int bdr_attr,
+void SurfaceFunctional::ConfigureGroupQFunction(bool is_2d, bool has_b, double normal_scale,
+                                                int bdr_attr,
                                                 const std::vector<CeedIntScalar> &base_ctx,
                                                 std::vector<CeedIntScalar> &ctx,
                                                 ceed::CeedQFunctionInfo &info) const
 {
-  // Reserved for non-reducing cases layered on this backend.
-  (void)side_scale;
   ctx = base_ctx;
   switch (kind)
   {
@@ -890,8 +887,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                           const std::vector<long long> &point_key_a, int elem_b,
                           bool ghost_b, mfem::Geometry::Type geom_b,
                           const std::vector<mfem::IntegrationPoint> &pts_b,
-                          const std::vector<long long> &point_key_b, double side_scale,
-                          double normal_scale)
+                          const std::vector<long long> &point_key_b, double normal_scale)
       {
         // INTERFACE_EPR is the only non-separable paired operation. Keep its two sides
         // in their common legacy q order. Every one-sided group (including the split
@@ -916,7 +912,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             elem_b >= 0 ? Canonicalize(pts_b) : CanonicalMappedRule{};
 
         FaceConfigKey key;
-        key.reserve(13 + 4 * (routed_a.pts.size() + routed_b.pts.size()));
+        key.reserve(12 + 4 * (routed_a.pts.size() + routed_b.pts.size()));
         key.push_back(static_cast<long long>(bdr_geom));
         key.push_back(static_cast<long long>(geom_a));
         key.push_back(static_cast<long long>(geom_b));
@@ -929,7 +925,6 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             kind == KernelKind::SURFACE_FLUX || kind == KernelKind::FARFIELD;
         const double effective_normal_scale =
             uses_normal ? (plan.flip ? -normal_scale : normal_scale) : 1.0;
-        key.push_back(EncodeDiscreteHalfScale(side_scale));
         key.push_back(EncodeDiscreteHalfScale(effective_normal_scale));
         if (kind == KernelKind::MODE_OVERLAP)
         {
@@ -968,7 +963,6 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           group.bdr_geom = bdr_geom;
           group.vol_geom_a = geom_a;
           group.vol_geom_b = geom_b;
-          group.side_scale = side_scale;
           group.normal_scale = effective_normal_scale;
           group.ghost_a = ghost_a;
           group.ghost_b = ghost_b;
@@ -1043,17 +1037,16 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         const double scale_a = flux_two_sided ? 1.0 : 0.5;
         const double scale_b = flux_two_sided ? -1.0 : 0.5;
         AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
-                 false, mfem::Geometry::INVALID, {}, {}, 1.0, scale_a);
+                 false, mfem::Geometry::INVALID, {}, {}, scale_a);
         AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
-                 false, mfem::Geometry::INVALID, {}, {}, 1.0, scale_b);
+                 false, mfem::Geometry::INVALID, {}, {}, scale_b);
       }
       else
       {
         // Keep non-separable two-sided interface EPR paired. All other unsplit groups
         // are ordinary one-sided fixed mapped-rule operators.
         AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a,
-                 plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, 1.0,
-                 1.0);
+                 plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, 1.0);
       }
     }
   }
@@ -1600,8 +1593,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     std::vector<CeedIntScalar> ctx;
     ceed::CeedQFunctionInfo info;
-    ConfigureGroupQFunction(is_2d, has_b, group.side_scale, group.normal_scale, bdr_attr,
-                            base_ctx, ctx, info);
+    ConfigureGroupQFunction(is_2d, has_b, group.normal_scale, bdr_attr, base_ctx, ctx,
+                            info);
 
     // Assemble the operator.
     CeedOperator op;
@@ -1825,10 +1818,10 @@ std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
 
-  // Following LumpedPortData::GetPower: P = ∫ E ⋅ (n x H) dS with H = μ⁻¹ B and n the
-  // normal oriented into element 1 (contributions from both sides of an interior
-  // boundary add). With S(e, b) = ∫ (e x μ⁻¹ b) ⋅ n dS (the two-sided POWER flux
-  // functional), E ⋅ (n x H) = -(E x H) ⋅ n gives
+  // Following LumpedPortData::GetPower: P = ∫ (E x H*) ⋅ n dS =
+  // -∫ E ⋅ (n x H*) dS, with H = μ⁻¹ B and n the normal oriented into element 1
+  // (contributions from both sides of an interior boundary add). With
+  // S(e, b) = ∫ (e x μ⁻¹ b) ⋅ n dS (the two-sided POWER flux functional),
   //   Re{P} = S(E_re, B_re) + S(E_im, B_im)
   //   Im{P} = S(E_im, B_re) - S(E_re, B_im) .
   const bool has_imag = E.HasImag();

@@ -160,25 +160,6 @@ const mfem::IntegrationRule *GetRegisteredIr(const PointConfigKey &key,
   return it->second.get();
 }
 
-int FieldValueDim(const mfem::ParFiniteElementSpace &fespace, int space_dim)
-{
-  const auto map_type = fespace.FEColl()->GetMapType(fespace.GetParMesh()->Dimension());
-  if (map_type == mfem::FiniteElement::H_CURL || map_type == mfem::FiniteElement::H_DIV)
-  {
-    return space_dim;
-  }
-  if (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL)
-  {
-    MFEM_VERIFY(fespace.GetVDim() == 1,
-                "FaceNbrFieldExchange scalar source spaces must have one component!");
-    return 1;
-  }
-  MFEM_ABORT("FaceNbrFieldExchange requires H(curl), H(div), or scalar VALUE/INTEGRAL "
-             "source spaces (map type = "
-             << map_type << ")!");
-  return 0;
-}
-
 }  // namespace
 
 FaceNbrFieldExchange::FaceNbrFieldExchange(

@@ -145,8 +145,7 @@ private:
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   std::vector<CeedIntScalar> BuildBaseContext(int dim, bool is_2d) const;
-  void ConfigureGroupQFunction(bool is_2d, bool has_b, double side_scale,
-                               double normal_scale, int bdr_attr,
+  void ConfigureGroupQFunction(bool is_2d, bool has_b, double normal_scale, int bdr_attr,
                                const std::vector<CeedIntScalar> &base_ctx,
                                std::vector<CeedIntScalar> &ctx,
                                ceed::CeedQFunctionInfo &info) const;
@@ -223,9 +222,9 @@ public:
   // power (POWER). Collective on the mesh communicator.
   std::complex<double> EvalFlux(const GridFunction *E, const GridFunction *B) const;
 
-  // Evaluate the complex power P = ∫ E ⋅ (n x H) dS following the conventions of
-  // LumpedPortData::GetPower (two-sided POWER flux functionals only). Collective on the
-  // mesh communicator.
+  // Evaluate the complex power P = ∫ (E x H*) ⋅ n dS = -∫ E ⋅ (n x H*) dS following
+  // the conventions of LumpedPortData::GetPower (two-sided POWER flux functionals only).
+  // Collective on the mesh communicator.
   std::complex<double> EvalComplexPower(const GridFunction &E, const GridFunction &B) const;
 
   // Same complex-power convention as EvalComplexPower, but return one result per
