@@ -89,6 +89,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed `linalg::MatrixSqrt`/`MatrixPow` returning incorrect results for fully
+    anisotropic material tensors (all three off-diagonal entries nonzero, e.g. a crystal
+    with generically-rotated `MaterialAxes`). The closed-form 3x3 eigen-decomposition used
+    an incorrect invariant and eigenvector expressions that break for degenerate spectra
+    (such as rotated uniaxial tensors); this branch now uses MFEM's robust symmetric
+    eigensolver. Affected `√(μ⁻¹ε)`, `(με)^(-1/2)`, `ε·√(I + tanδ·tanδᵀ)` in the material
+    operator and the flux error-estimator weights.
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
     filesystem updates more robust. [PR 892](https://github.com/awslabs/palace/pull/892).
   - Fixed ParaView output for multiple driven excitations deleting fields from earlier
