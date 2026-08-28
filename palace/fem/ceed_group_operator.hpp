@@ -35,7 +35,7 @@ struct CeedGroupOperator
   std::vector<std::string> mesh_node_fields;
   mutable std::vector<CeedVector> mesh_node_vecs;
   // Cached passive field vectors for field_sources, populated on first apply to avoid
-  // repeated string lookups in libCEED during repeated postprocessing applications.
+  // repeated string lookups in libCEED during ParaView point-field output.
   mutable std::vector<std::pair<CeedVector, int>> field_vec_sources;
   // True after construction storage has been detached from the cached vectors. The next
   // apply sets arrays directly instead of first taking a nonexistent borrowed array.
@@ -59,12 +59,18 @@ void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &group
 
 // Re-point the passive field inputs of each group operator at the given source vectors
 // and accumulate into the output vector with CeedOperatorApplyAdd. A field source index
-// of 4 (out of the srcs range) selects the optional imported vector instead, used to
-// feed face-neighbor (ghost) field values exchanged for two-sided interior boundaries on
-// parallel interfaces.
+// of 4 (out of the srcs range) selects the optional imported vector used for a
+// face-neighbor (ghost) field.
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
                             const std::array<const Vector *, 4> &srcs, const Vector &out,
                             const Vector *imported = nullptr);
+
+// Eight physical real/imaginary traces for the batched complex boundary-derived
+// QFunction. The distinct name avoids ambiguous brace initialization at existing
+// one-to-four-source call sites.
+void ApplyAddComplexGroupOperators(const std::vector<CeedGroupOperator> &groups,
+                                   const std::array<const Vector *, 8> &srcs,
+                                   const Vector &out);
 
 // Destroy the libCEED references owned by a group-operator vector and clear it. The Ceed
 // context itself is borrowed and is not destroyed here.

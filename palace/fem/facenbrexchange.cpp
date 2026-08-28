@@ -45,6 +45,22 @@ using PointConfigKey = std::vector<long long>;
 // non-overtaking guarantee).
 constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;
 
+void VerifyPointSet(const std::vector<mfem::IntegrationPoint> &reference,
+                    const std::vector<mfem::IntegrationPoint> &pts)
+{
+  MFEM_VERIFY(reference.size() == pts.size(),
+              "Face-neighbor point key reused with a different point count!");
+  for (std::size_t q = 0; q < reference.size(); q++)
+  {
+    const auto &a = reference[q];
+    const auto &b = pts[q];
+    const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),
+                                 std::abs(a.z - b.z), std::abs(a.weight - b.weight)});
+    MFEM_VERIFY(err <= 1.0e-12,
+                "Face-neighbor point key reused for different reference points!");
+  }
+}
+
 void VerifyRegisteredIr(const mfem::IntegrationRule &ir,
                         const std::vector<mfem::IntegrationPoint> &pts)
 {
@@ -160,6 +176,25 @@ const mfem::IntegrationRule *GetRegisteredIr(const PointConfigKey &key,
   return it->second.get();
 }
 
+int FieldValueDim(const mfem::ParFiniteElementSpace &fespace, int space_dim)
+{
+  const auto map_type = fespace.FEColl()->GetMapType(fespace.GetParMesh()->Dimension());
+  if (map_type == mfem::FiniteElement::H_CURL || map_type == mfem::FiniteElement::H_DIV)
+  {
+    return space_dim;
+  }
+  if (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL)
+  {
+    MFEM_VERIFY(fespace.GetVDim() == 1,
+                "FaceNbrFieldExchange scalar source spaces must have one component!");
+    return 1;
+  }
+  MFEM_ABORT("FaceNbrFieldExchange requires H(curl), H(div), or scalar VALUE/INTEGRAL "
+             "source spaces (map type = "
+             << map_type << ")!");
+  return 0;
+}
+
 }  // namespace
 
 FaceNbrFieldExchange::FaceNbrFieldExchange(
@@ -170,9 +205,18 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
 {
   const mfem::ParMesh &pmesh = mesh.Get();
   const int num_nbr = pmesh.GetNFaceNeighbors();
-  const int value_dim = pmesh.SpaceDimension();
-  MFEM_VERIFY(value_dim == 2 || value_dim == 3,
-              "FaceNbrFieldExchange requires 2D or 3D physical-space fields!");
+  const int mesh_dim = pmesh.Dimension();
+  const int space_dim = pmesh.SpaceDimension();
+  MFEM_VERIFY((mesh_dim == 2 || mesh_dim == 3) && (space_dim == 2 || space_dim == 3),
+              "FaceNbrFieldExchange requires a 2D or 3D mesh and physical space!");
+  source_num_comp.fill(0);
+  for (int s = 0; s < MaxSources; s++)
+  {
+    if (fespaces[s])
+    {
+      source_num_comp[s] = FieldValueDim(*fespaces[s], space_dim);
+    }
+  }
   MFEM_VERIFY(requests.empty() || num_nbr > 0,
               "FaceNbrFieldExchange requires face neighbor data "
               "(ParMesh::ExchangeFaceNbrData)!");
@@ -248,7 +292,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for requested source slot!");
           import_offsets[r][s] = import_size;
-          import_size += value_dim * nq;
+          import_size += source_num_comp[s] * nq;
         }
       }
     }
@@ -374,9 +418,13 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           {
             group.pts = pts;
           }
+          else
+          {
+            VerifyPointSet(group.pts, pts);
+          }
           group.elems.push_back(elem);
           group.bases.push_back(export_size);
-          export_size += value_dim * nq;
+          export_size += source_num_comp[s] * nq;
         }
       }
     }
@@ -397,9 +445,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     return;
   }
 
-  // Assemble a libCEED point evaluator for each export group, writing the
-  // physical-space field values (space-dimension components per point, point-major)
-  // into the exported vector at the assigned offsets.
+  // Assemble a libCEED point evaluator for each export group, writing point-major
+  // values into the exported vector at the assigned offsets. H(curl)/H(div) sources are
+  // physical-space vectors; VALUE sources are scalar fields.
   int max_vsize = 0;
   for (const auto *fespace : fespaces)
   {
@@ -414,6 +462,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     const int s = static_cast<int>(key[0]);
     const auto geom = static_cast<mfem::Geometry::Type>(key[1]);
     const int nq = static_cast<int>(key[2]);
+    const int value_dim = source_num_comp[s];
     const std::size_t num_elem = group.elems.size();
     const auto &fespace = *fespaces[s];
     MFEM_VERIFY(group.pts.size() == static_cast<std::size_t>(nq),
@@ -461,17 +510,34 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                                                    CEED_MEM_HOST, CEED_COPY_VALUES,
                                                    offsets.data(), &out_restr));
 
-    // The reply contains physical-space field values: the Piola transformation
-    // (H(curl) or H(div) depending on the source space) is applied here so the
-    // requester needs no neighbor element geometry.
+    // The reply contains physical-space field values for Piola-mapped spaces, and scalar
+    // values for H1/L2 spaces. The requester needs no neighbor element geometry.
     const auto map_type = fespace.FEColl()->GetMapType(pmesh.Dimension());
-    MFEM_VERIFY(map_type == mfem::FiniteElement::H_CURL ||
-                    map_type == mfem::FiniteElement::H_DIV,
-                "FaceNbrFieldExchange requires H(curl) or H(div) source spaces!");
     ceed::CeedQFunctionInfo info;
-    if (map_type == mfem::FiniteElement::H_CURL)
+    if (map_type == mfem::FiniteElement::VALUE)
     {
-      if (value_dim == 2)
+      MFEM_VERIFY(value_dim == 1, "Scalar face neighbor fields must have one component!");
+      if (space_dim == 2)
+      {
+        info.apply_qf = f_eval_probe_l2_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_l2_22_loc);
+      }
+      else
+      {
+        info.apply_qf = f_eval_probe_l2_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_l2_33_loc);
+      }
+    }
+    else if (map_type == mfem::FiniteElement::INTEGRAL)
+    {
+      MFEM_VERIFY(space_dim == 2 && value_dim == 1,
+                  "Only scalar 2D INTEGRAL face neighbor fields are supported!");
+      info.apply_qf = f_eval_probe_integral_22;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_integral_22_loc);
+    }
+    else if (map_type == mfem::FiniteElement::H_CURL)
+    {
+      if (space_dim == 2)
       {
         info.apply_qf = f_eval_probe_hcurl_22;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_22_loc);
@@ -482,9 +548,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
       }
     }
-    else
+    else if (map_type == mfem::FiniteElement::H_DIV)
     {
-      if (value_dim == 2)
+      if (space_dim == 2)
       {
         info.apply_qf = f_eval_probe_hdiv_22;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_22_loc);
@@ -494,6 +560,10 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         info.apply_qf = f_eval_probe_hdiv_33;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
       }
+    }
+    else
+    {
+      MFEM_ABORT("Unsupported face neighbor field map type!");
     }
     CeedOperator op;
     ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, value_dim, out_restr,
@@ -513,17 +583,23 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
   }
 
-  // The field vectors borrow construction storage until they are re-pointed at the first
-  // Exchange(). Detach them before releasing the full solution-sized staging vector.
-  fem::DetachGroupOperatorFieldVectors(export_groups);
+  // Export operators cache their passive field-vector handles and re-point them on each
+  // exchange. Detach the borrowed arrays before releasing the construction buffer, which
+  // would otherwise add another full device FE vector to every boundary evaluator.
+  DetachFieldVectors();
   field_staging.Destroy();
   MFEM_ASSERT(field_staging.Capacity() == 0,
-              "Face-neighbor field staging storage was not released!");
+              "Face-neighbor staging allocation was not released!");
 }
 
 FaceNbrFieldExchange::~FaceNbrFieldExchange()
 {
   fem::DestroyGroupOperators(export_groups);
+}
+
+void FaceNbrFieldExchange::DetachFieldVectors() const
+{
+  fem::DetachGroupOperatorFieldVectors(export_groups);
 }
 
 void FaceNbrFieldExchange::Exchange(
