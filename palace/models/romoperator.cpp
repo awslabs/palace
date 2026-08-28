@@ -1005,7 +1005,7 @@ RomOperator::GetAdaptiveComplexFrequencies(const Units &units, double omega_min,
   {
     Mpi::Print(" No usable provisional circuit pole; using generic band-center Q-grid for "
                "complex enrichment\n");
-    for (double q : {3.0, 5.0, 10.0, 20.0})
+    for (double q : {3.0, 5.0, 10.0})
     {
       f_samples.emplace_back(fcenter, fcenter / (2.0 * q));
     }
