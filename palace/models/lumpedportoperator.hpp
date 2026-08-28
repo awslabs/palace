@@ -54,8 +54,7 @@ protected:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
 
-  // libCEED surface functionals for port power, voltage, and S-parameter computation,
-  // replacing host boundary LinearForm paths when supported.
+  // Per-port libCEED evaluators for port power and voltage.
   mutable std::unique_ptr<SurfaceFunctional> power_func, v_func;
 
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
@@ -122,6 +121,8 @@ public:
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
 
+  // Per-port evaluation used by LumpedPortOperator when a batched functional is not
+  // available for the requested port set.
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;

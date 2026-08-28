@@ -269,7 +269,8 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
   // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
   // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
-  // so we multiply by -1.
+  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
+  // changing H.
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
