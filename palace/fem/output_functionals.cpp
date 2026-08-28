@@ -604,6 +604,88 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
   return base_ctx;
 }
 
+void SurfaceFunctional::ConfigureGroupQFunction(bool is_2d, bool has_b, double side_scale,
+                                                double normal_scale, int bdr_attr,
+                                                const std::vector<CeedIntScalar> &base_ctx,
+                                                std::vector<CeedIntScalar> &ctx,
+                                                ceed::CeedQFunctionInfo &info) const
+{
+  // Reserved for non-reducing cases layered on this backend.
+  (void)side_scale;
+  ctx = base_ctx;
+  switch (kind)
+  {
+    case KernelKind::AREA:
+      info.apply_qf = is_2d ? f_integ_surf_area_21 : f_integ_surf_area_32;
+      info.apply_qf_path = is_2d ? PalaceQFunctionRelativePath(f_integ_surf_area_21_loc)
+                                 : PalaceQFunctionRelativePath(f_integ_surf_area_32_loc);
+      break;
+    case KernelKind::HCURL_NORM2:
+      info.apply_qf = is_2d ? f_integ_surf_hcurl_norm2_21 : f_integ_surf_hcurl_norm2_32;
+      info.apply_qf_path =
+          is_2d ? PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_21_loc)
+                : PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_32_loc);
+      break;
+    case KernelKind::INTERFACE_EPR:
+      // All four interface types share one kernel; epr_type is set in base_ctx[0].first.
+      info.apply_qf = is_2d ? (has_b ? f_integ_surf_epr_2_21 : f_integ_surf_epr_1_21)
+                            : (has_b ? f_integ_surf_epr_2_32 : f_integ_surf_epr_1_32);
+      info.apply_qf_path =
+          is_2d ? PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_21_loc
+                                                    : f_integ_surf_epr_1_21_loc)
+                : PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_32_loc
+                                                    : f_integ_surf_epr_1_32_loc);
+      break;
+    case KernelKind::FARFIELD:
+      ctx[0].second = normal_scale;
+      info.apply_qf = f_integ_surf_farfield_32;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
+      break;
+    case KernelKind::MODE_OVERLAP:
+      {
+        auto mode_it = mode_coeff_by_attr.find(bdr_attr);
+        MFEM_VERIFY(mode_it != mode_coeff_by_attr.end(),
+                    "Missing mode coefficient for marked boundary attribute!");
+        const auto &mode = mode_it->second;
+        ctx[0].first = (mode.type == SurfaceModeCoefficient::Type::COAXIAL) ? 1 : 0;
+        ctx[1].second = mode.scale;
+        const auto &data = (mode.type == SurfaceModeCoefficient::Type::COAXIAL)
+                               ? mode.origin
+                               : mode.direction;
+        for (int d = 0; d < 3; d++)
+        {
+          ctx[2 + d].second = data[d];
+        }
+        info.apply_qf = f_integ_surf_mode_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_mode_32_loc);
+      }
+      break;
+    case KernelKind::SURFACE_FLUX:
+      // A split flux side uses the one-sided kernel and contributes through the
+      // effective context normal scale, retaining difference/average semantics.
+      ctx[0].second = normal_scale;
+      switch (flux_type)
+      {
+        case SurfaceFlux::ELECTRIC:
+          info.apply_qf = has_b ? f_integ_surf_flux_e_2_32 : f_integ_surf_flux_e_1_32;
+          info.apply_qf_path = PalaceQFunctionRelativePath(
+              has_b ? f_integ_surf_flux_e_2_32_loc : f_integ_surf_flux_e_1_32_loc);
+          break;
+        case SurfaceFlux::MAGNETIC:
+          info.apply_qf = has_b ? f_integ_surf_flux_m_2_32 : f_integ_surf_flux_m_1_32;
+          info.apply_qf_path = PalaceQFunctionRelativePath(
+              has_b ? f_integ_surf_flux_m_2_32_loc : f_integ_surf_flux_m_1_32_loc);
+          break;
+        case SurfaceFlux::POWER:
+          info.apply_qf = has_b ? f_integ_surf_flux_p_2_32 : f_integ_surf_flux_p_1_32;
+          info.apply_qf_path = PalaceQFunctionRelativePath(
+              has_b ? f_integ_surf_flux_p_2_32_loc : f_integ_surf_flux_p_1_32_loc);
+          break;
+      }
+      break;
+  }
+}
+
 void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                       const mfem::Array<int> &bdr_attr_marker)
 {
@@ -1509,82 +1591,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     scratch.restrs.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
-    std::vector<CeedIntScalar> ctx = base_ctx;
-    ceed::CeedQFunctionInfo info;
-    switch (kind)
+    int bdr_attr = 0;
+    if (kind == KernelKind::MODE_OVERLAP)
     {
-      case KernelKind::AREA:
-        info.apply_qf = is_2d ? f_integ_surf_area_21 : f_integ_surf_area_32;
-        info.apply_qf_path = is_2d ? PalaceQFunctionRelativePath(f_integ_surf_area_21_loc)
-                                   : PalaceQFunctionRelativePath(f_integ_surf_area_32_loc);
-        break;
-      case KernelKind::HCURL_NORM2:
-        info.apply_qf = is_2d ? f_integ_surf_hcurl_norm2_21 : f_integ_surf_hcurl_norm2_32;
-        info.apply_qf_path =
-            is_2d ? PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_21_loc)
-                  : PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_32_loc);
-        break;
-      case KernelKind::INTERFACE_EPR:
-        // All four interface types share one kernel; epr_type is set in base_ctx[0].first.
-        info.apply_qf = is_2d ? (has_b ? f_integ_surf_epr_2_21 : f_integ_surf_epr_1_21)
-                              : (has_b ? f_integ_surf_epr_2_32 : f_integ_surf_epr_1_32);
-        info.apply_qf_path =
-            is_2d ? PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_21_loc
-                                                      : f_integ_surf_epr_1_21_loc)
-                  : PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_32_loc
-                                                      : f_integ_surf_epr_1_32_loc);
-        break;
-      case KernelKind::FARFIELD:
-        ctx[0].second = group.normal_scale;
-        info.apply_qf = f_integ_surf_farfield_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
-        break;
-      case KernelKind::MODE_OVERLAP:
-        {
-          MFEM_VERIFY(!group.bdr_indices.empty(),
-                      "Empty boundary group for mode-overlap functional!");
-          const int attr = pmesh.GetBdrAttribute(group.bdr_indices.front());
-          auto mode_it = mode_coeff_by_attr.find(attr);
-          MFEM_VERIFY(mode_it != mode_coeff_by_attr.end(),
-                      "Missing mode coefficient for marked boundary attribute!");
-          const auto &mode = mode_it->second;
-          ctx[0].first = (mode.type == SurfaceModeCoefficient::Type::COAXIAL) ? 1 : 0;
-          ctx[1].second = mode.scale;
-          const auto &data = (mode.type == SurfaceModeCoefficient::Type::COAXIAL)
-                                 ? mode.origin
-                                 : mode.direction;
-          for (int d = 0; d < 3; d++)
-          {
-            ctx[2 + d].second = data[d];
-          }
-          info.apply_qf = f_integ_surf_mode_32;
-          info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_mode_32_loc);
-        }
-        break;
-      case KernelKind::SURFACE_FLUX:
-        // A split flux side uses the one-sided kernel and contributes through the
-        // effective context normal scale, retaining difference/average semantics.
-        ctx[0].second = group.normal_scale;
-        switch (flux_type)
-        {
-          case SurfaceFlux::ELECTRIC:
-            info.apply_qf = has_b ? f_integ_surf_flux_e_2_32 : f_integ_surf_flux_e_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_flux_e_2_32_loc : f_integ_surf_flux_e_1_32_loc);
-            break;
-          case SurfaceFlux::MAGNETIC:
-            info.apply_qf = has_b ? f_integ_surf_flux_m_2_32 : f_integ_surf_flux_m_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_flux_m_2_32_loc : f_integ_surf_flux_m_1_32_loc);
-            break;
-          case SurfaceFlux::POWER:
-            info.apply_qf = has_b ? f_integ_surf_flux_p_2_32 : f_integ_surf_flux_p_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_flux_p_2_32_loc : f_integ_surf_flux_p_1_32_loc);
-            break;
-        }
-        break;
+      MFEM_VERIFY(!group.bdr_indices.empty(),
+                  "Empty boundary group for mode-overlap functional!");
+      bdr_attr = pmesh.GetBdrAttribute(group.bdr_indices.front());
     }
+    std::vector<CeedIntScalar> ctx;
+    ceed::CeedQFunctionInfo info;
+    ConfigureGroupQFunction(is_2d, has_b, group.side_scale, group.normal_scale, bdr_attr,
+                            base_ctx, ctx, info);
 
     // Assemble the operator.
     CeedOperator op;

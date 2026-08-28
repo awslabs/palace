@@ -17,6 +17,13 @@
 
 union CeedIntScalar;
 
+namespace palace::ceed
+{
+
+struct CeedQFunctionInfo;
+
+}  // namespace palace::ceed
+
 namespace palace
 {
 
@@ -138,6 +145,11 @@ private:
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   std::vector<CeedIntScalar> BuildBaseContext(int dim, bool is_2d) const;
+  void ConfigureGroupQFunction(bool is_2d, bool has_b, double side_scale,
+                               double normal_scale, int bdr_attr,
+                               const std::vector<CeedIntScalar> &base_ctx,
+                               std::vector<CeedIntScalar> &ctx,
+                               ceed::CeedQFunctionInfo &info) const;
   void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
 
   // Apply all group operators with the field inputs pointed at the given source
