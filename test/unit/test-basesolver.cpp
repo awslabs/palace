@@ -359,6 +359,20 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) < leaf_faces);
     // Cells are never constrained, so the raw per-geometry cell count is not discounted.
     CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == leaf_elements);
+    // No entity count may ever be negative. Guards the class of bug where the
+    // nonconforming true-size solve underflows into a negative face count (a real AMR
+    // run produced TrueFaces.quadrilateral = -3447 on a pure-tet mesh before the
+    // cell-geometry guard in FillMeshEntityCounts).
+    for (const auto &[g, c] : counts.true_faces)
+    {
+      CHECK(c >= 0);
+    }
+    for (const auto &[g, c] : counts.cells)
+    {
+      CHECK(c >= 0);
+    }
+    CHECK(counts.true_vertices >= 0);
+    CHECK(counts.true_edges >= 0);
     // Reconstruction-vs-GetTrueVSize oracle: the per-geometry true counts must reproduce
     // the EXACT conforming DOF count of the H1 and ND spaces Palace solves with, across
     // orders, on this nonconforming mesh. This is the regression guard -- an earlier

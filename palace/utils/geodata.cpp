@@ -2035,17 +2035,41 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
       }
       const long long b0 = rt0_true - k0;  // == F_tri + F_quad (t0 == s0 == 1)
       const long long b1 = rt1_true - k1;
+      // The tri/quad split is fixed FIRST by which cell geometries are present: a face
+      // geometry can only occur if some cell bears it. Tetrahedra bear only triangular
+      // faces, hexahedra only quadrilateral, prisms and pyramids both. Keying off the
+      // (exact, raw==true) cell counts sidesteps the RT true-size solve in the common
+      // pure-tet / pure-hex cases, where that solve is UNRELIABLE on nonconforming
+      // meshes: GetTrueVSize does not distribute cleanly per face there, so b1 != t1*b0
+      // even for a pure-tet mesh and the solve emits a spurious negative count.
+      const bool tri_faced = counts.cells.count(mfem::Geometry::TETRAHEDRON) ||
+                             counts.cells.count(mfem::Geometry::PRISM) ||
+                             counts.cells.count(mfem::Geometry::PYRAMID);
+      const bool quad_faced = counts.cells.count(mfem::Geometry::CUBE) ||
+                              counts.cells.count(mfem::Geometry::PRISM) ||
+                              counts.cells.count(mfem::Geometry::PYRAMID);
       long long f_tri = 0, f_quad = 0;
-      if (t0 == 1 && s0 == 1 && (s1 - t1) != 0)
+      if (!quad_faced)
       {
+        f_tri = b0;  // only triangular faces are possible (or no faces at all)
+      }
+      else if (!tri_faced)
+      {
+        f_quad = b0;  // only quadrilateral faces are possible
+      }
+      else if (t0 == 1 && s0 == 1 && (s1 - t1) != 0)
+      {
+        // Genuinely mixed tri+quad faces (prism/pyramid, or tet+hex). Recover the split
+        // from the RT(0)/RT(1) true sizes, clamped to [0, b0] so an imperfect
+        // nonconforming decomposition can never produce a negative or overlarge count.
         f_quad = (b1 - t1 * b0) / (s1 - t1);
+        f_quad = std::max<long long>(0, std::min<long long>(f_quad, b0));
         f_tri = b0 - f_quad;
       }
       else
       {
         // Fallback (should not happen for RT on standard geometries).
         f_tri = b0;
-        f_quad = 0;
       }
       if (f_tri != 0)
       {
