@@ -118,6 +118,11 @@ directories located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The output
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/reference.md#config-problem).
 
+*Palace* writes ParaView data using raw-appended binary VTK XML. Use
+[ParaView 5.12.1](https://www.kitware.com/paraview-5-12-1-release-notes/) or newer to
+read these files. Older versions may work with a compatible VTK/Expat combination,
+but are not supported because some distribution builds fail to parse raw-appended data.
+
 ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
 format can be useful to embed visualizations in webpages with its
 [Javascript version](https://github.com/GLVis/glvis-js/).
