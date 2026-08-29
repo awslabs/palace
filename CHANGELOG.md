@@ -96,6 +96,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (such as rotated uniaxial tensors); this branch now uses MFEM's robust symmetric
     eigensolver. Affected `√(μ⁻¹ε)`, `(με)^(-1/2)`, `ε·√(I + tanδ·tanδᵀ)` in the material
     operator and the flux error-estimator weights.
+    [PR 912](https://github.com/awslabs/palace/pull/912).
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
     filesystem updates more robust. [PR 892](https://github.com/awslabs/palace/pull/892).
   - Fixed ParaView output for multiple driven excitations deleting fields from earlier
