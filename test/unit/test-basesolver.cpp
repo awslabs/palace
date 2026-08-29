@@ -66,6 +66,73 @@ long long Reconstruct(const mesh::MeshEntityCounts &c, mfem::FiniteElementCollec
   return n;
 }
 
+// Assert the per-geometry true counts reproduce the EXACT conforming true DOF size of the
+// H1, ND, and RT spaces Palace sizes with, across orders, on `serial_mesh`. RT (p=0..2) is
+// the ONLY space with FACE dofs, so its match directly validates the tri/quad TRUE-face
+// split -- the quantity a prior RT-solve corrupted. `counts` come from a gathered serial
+// copy whose topology is identical to `serial_mesh`, so the true sizes must match exactly.
+// Runs on the caller's rank; call inside a root guard (counts are valid only on root).
+void CheckReconstructionOracle(const mesh::MeshEntityCounts &counts, mfem::Mesh &serial_mesh)
+{
+  const int dim = serial_mesh.Dimension();
+  for (int p = 1; p <= 3; p++)
+  {
+    mfem::H1_FECollection fec(p, dim);
+    CHECK(Reconstruct(counts, fec) ==
+          mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+  }
+  for (int p = 1; p <= 3; p++)
+  {
+    mfem::ND_FECollection fec(p, dim);
+    CHECK(Reconstruct(counts, fec) ==
+          mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+  }
+  if (dim == 3)
+  {
+    for (int p = 0; p <= 2; p++)
+    {
+      mfem::RT_FECollection fec(p, dim);
+      CHECK(Reconstruct(counts, fec) ==
+            mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+    }
+  }
+}
+
+// Distribute `serial_mesh`, run RebalanceMesh with SaveAdaptMesh enabled (which fills the
+// counts on the root rank), and return the counts. Writes model.mesh into `out`.
+mesh::MeshEntityCounts ComputeCounts(MPI_Comm comm, const fs::path &out,
+                                     mfem::Mesh &serial_mesh)
+{
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = out.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+  return counts;
+}
+
+// Build a nonconforming prism (WEDGE) mesh: extrude a 2D triangular mesh into wedges, mark
+// it nonconforming, and refine a subset so hanging nodes appear. A prism carries BOTH
+// triangular (top/bottom) and quadrilateral (side) faces, so it exercises the mixed
+// tri/quad TRUE-face split with a genuinely nonzero answer for both geometries.
+mfem::Mesh BuildNCPrismMesh()
+{
+  auto base2d = mfem::Mesh::MakeCartesian2D(3, 3, mfem::Element::TRIANGLE);
+  std::unique_ptr<mfem::Mesh> extruded(mfem::Extrude2D(&base2d, 3, 1.0));
+  mfem::Mesh serial_mesh(*extruded);
+  serial_mesh.EnsureNCMesh(true);
+  mfem::Array<int> refs;
+  for (int i = 0; i < serial_mesh.GetNE(); i += 3)
+  {
+    refs.Append(i);
+  }
+  serial_mesh.GeneralRefinement(refs, 1);  // 1 => nonconforming
+  return serial_mesh;
+}
+
 }  // namespace
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -359,10 +426,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) < leaf_faces);
     // Cells are never constrained, so the raw per-geometry cell count is not discounted.
     CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == leaf_elements);
-    // No entity count may ever be negative. Guards the class of bug where the
-    // nonconforming true-size solve underflows into a negative face count (a real AMR
-    // run produced TrueFaces.quadrilateral = -3447 on a pure-tet mesh before the
-    // cell-geometry guard in FillMeshEntityCounts).
+    // No entity count may ever be negative. Guards the class of bug where the prior
+    // nonconforming RT true-size solve underflowed into a negative face count (a real AMR
+    // run produced TrueFaces.quadrilateral = -3447 on a pure-tet mesh). The direct NC
+    // face-list count that replaced the solve cannot go negative by construction.
     for (const auto &[g, c] : counts.true_faces)
     {
       CHECK(c >= 0);
@@ -373,25 +440,208 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     }
     CHECK(counts.true_vertices >= 0);
     CHECK(counts.true_edges >= 0);
-    // Reconstruction-vs-GetTrueVSize oracle: the per-geometry true counts must reproduce
-    // the EXACT conforming DOF count of the H1 and ND spaces Palace solves with, across
-    // orders, on this nonconforming mesh. This is the regression guard -- an earlier
-    // NC-list counting method silently mis-counted (over-counted edges, mis-split faces)
-    // in 3D, and this reproduction catches that whole class of bug. counts came from the
-    // gathered serial copy, whose topology is identical to serial_mesh, so the true sizes
-    // computed on serial_mesh must match Reconstruct(counts, ...) exactly.
-    for (int p = 1; p <= 3; p++)
+    // Reconstruction-vs-GetTrueVSize oracle across H1, ND, and RT (RT validates the tri/quad
+    // TRUE-face split that the old solve corrupted). See CheckReconstructionOracle.
+    CheckReconstructionOracle(counts, serial_mesh);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh reports exact true counts on a nonconforming prism mesh",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  // A refined nonconforming prism (wedge) mesh carries BOTH triangular and quadrilateral
+  // faces, so it exercises the mixed tri/quad TRUE-face split with a nonzero answer for
+  // both geometries -- the case the removed RT(0)/RT(1) solve got wrong.
+  auto serial_mesh = BuildNCPrismMesh();
+  REQUIRE(serial_mesh.Nonconforming());
+
+  const auto counts = ComputeCounts(comm, temp_dir, serial_mesh);
+
+  if (Mpi::Root(comm))
+  {
+    REQUIRE(counts.valid);
+    CHECK(counts.dim == 3);
+    // Prisms bear both triangular and quadrilateral faces; both must be present and > 0.
+    CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) > 0);
+    CHECK(counts.true_faces.at(mfem::Geometry::SQUARE) > 0);
+    // Cells are all prisms.
+    CHECK(counts.cells.count(mfem::Geometry::PRISM) == 1);
+    for (const auto &[g, c] : counts.true_faces)
     {
-      mfem::H1_FECollection fec(p, 3);
-      CHECK(Reconstruct(counts, fec) ==
-            mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+      CHECK(c >= 0);
     }
-    for (int p = 1; p <= 3; p++)
+    // The full H1/ND/RT sweep. RT directly validates the tri/quad split on a mixed mesh.
+    CheckReconstructionOracle(counts, serial_mesh);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh reports exact true counts on a nonconforming hex mesh",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  // Pure-hexahedral nonconforming mesh: only quadrilateral faces, so this is the !tri_faced
+  // path (SQUARE present, TRIANGLE absent).
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::HEXAHEDRON);
+  serial_mesh.EnsureNCMesh();
+  mfem::Array<int> refs;
+  for (int i = 0; i < serial_mesh.GetNE(); i += 3)
+  {
+    refs.Append(i);
+  }
+  serial_mesh.GeneralRefinement(refs, 1);  // 1 => nonconforming
+  REQUIRE(serial_mesh.Nonconforming());
+
+  const auto counts = ComputeCounts(comm, temp_dir, serial_mesh);
+
+  if (Mpi::Root(comm))
+  {
+    REQUIRE(counts.valid);
+    CHECK(counts.dim == 3);
+    // A hex mesh has only quadrilateral faces: SQUARE present-positive, TRIANGLE absent.
+    CHECK(counts.true_faces.at(mfem::Geometry::SQUARE) > 0);
+    CHECK(counts.true_faces.count(mfem::Geometry::TRIANGLE) == 0);
+    CHECK(counts.cells.count(mfem::Geometry::CUBE) == 1);
+    CheckReconstructionOracle(counts, serial_mesh);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh counts match between a conforming mesh and its unrefined "
+                 "nonconforming twin",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  // For each element geometry: compute counts on the conforming mesh (raw-count path), then
+  // flag the same mesh nonconforming WITHOUT refining (topologically identical, routed
+  // through the NC FE-space + NC-face-list path) and compute again. The two must agree
+  // exactly -- the robust guard that the NC counting reduces to the conforming answer when
+  // there are no hanging entities. Each geometry uses its own subdirectory so the written
+  // model.mesh files do not collide.
+  auto check_twin = [&](const std::string &name, const mfem::Mesh &base)
+  {
+    const auto conf_dir = temp_dir / (name + "-conf");
+    const auto nc_dir = temp_dir / (name + "-nc");
+    fs::create_directories(conf_dir);
+    fs::create_directories(nc_dir);
+
+    mfem::Mesh conf_mesh(base);
+    const auto conf = ComputeCounts(comm, conf_dir, conf_mesh);
+
+    mfem::Mesh nc_mesh(base);
+    nc_mesh.EnsureNCMesh(true);
+    REQUIRE(nc_mesh.Nonconforming());
+    const auto nc = ComputeCounts(comm, nc_dir, nc_mesh);
+
+    if (Mpi::Root(comm))
     {
-      mfem::ND_FECollection fec(p, 3);
-      CHECK(Reconstruct(counts, fec) ==
-            mfem::FiniteElementSpace(&serial_mesh, &fec).GetTrueVSize());
+      INFO("geometry: " << name);
+      REQUIRE(conf.valid);
+      REQUIRE(nc.valid);
+      CHECK(conf.dim == nc.dim);
+      CHECK(conf.true_vertices == nc.true_vertices);
+      CHECK(conf.true_edges == nc.true_edges);
+      CHECK(conf.true_faces == nc.true_faces);
+      CHECK(conf.cells == nc.cells);
     }
+  };
+
+  check_twin("tet", mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON));
+  check_twin("hex", mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON));
+  {
+    auto base2d = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::TRIANGLE);
+    std::unique_ptr<mfem::Mesh> prism(mfem::Extrude2D(&base2d, 2, 1.0));
+    check_twin("prism", *prism);
+  }
+  check_twin("tri2d", mfem::Mesh::MakeCartesian2D(3, 3, mfem::Element::TRIANGLE));
+  check_twin("quad2d", mfem::Mesh::MakeCartesian2D(3, 3, mfem::Element::QUADRILATERAL));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh entity counts reflect only the final mesh across iterations",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  // Regression for the accumulation bug: one MeshEntityCounts reused across AMR iterations
+  // must be reset each call, so the accumulating members (cells, true_faces) reflect ONLY
+  // the last mesh, never the sum over iterations.
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+
+  mesh::MeshEntityCounts counts;
+
+  // Iteration 1.
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+  const long long ne1 = parallel_mesh->GetGlobalNE();
+
+  // Iteration 2: refine (still conforming) so the mesh genuinely changes, reusing `counts`.
+  parallel_mesh->UniformRefinement();
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+  const long long ne2 = parallel_mesh->GetGlobalNE();
+
+  // Build the expected final serial mesh (same single uniform refinement) for the oracle.
+  serial_mesh.UniformRefinement();
+
+  if (Mpi::Root(comm))
+  {
+    REQUIRE(counts.valid);
+    REQUIRE(ne2 > ne1);
+    // Cells must equal ONLY the final element count, not ne1 + ne2. Without the per-call
+    // reset this would be inflated to the running sum.
+    CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == ne2);
+    long long total_cells = 0;
+    for (const auto &[g, c] : counts.cells)
+    {
+      total_cells += c;
+    }
+    CHECK(total_cells == ne2);
+    // The reconstruction oracle on the final mesh also fails if true_faces (or any true
+    // count) had accumulated across the two iterations.
+    CheckReconstructionOracle(counts, serial_mesh);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SaveMetadata writes no SavedAdaptedMesh block when counts are invalid",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = false;
+
+  auto serial_mesh = SingleTetMesh();
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+
+  // With SaveAdaptMesh disabled (a zero-AMR-iteration run also lands here), counts are
+  // invalid and the driver skips the block; palace.json must contain no SavedAdaptedMesh.
+  TestSolver solver(iodata, Mpi::Root(comm));
+  if (counts.valid)
+  {
+    solver.SaveMetadata(counts);
+  }
+  if (Mpi::Root(comm))
+  {
+    CHECK_FALSE(counts.valid);
+    const auto meta = nlohmann::json::parse(ReadFile(temp_dir / "palace.json"));
+    CHECK_FALSE(meta.contains("SavedAdaptedMesh"));
   }
 }
 
@@ -462,6 +712,54 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(m.at("DomainAttributes").get<std::vector<int>>() == std::vector<int>{1});
     CHECK(m.at("BoundaryAttributes").get<std::vector<int>>() ==
           std::vector<int>{1, 2, 3, 4});
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh reports the true topological entity counts in parallel",
+                 "[basesolver][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  // Build a nonconforming tet mesh identically on every rank, distribute it across the
+  // ranks, then RebalanceMesh gathers it back to the root rank to fill the counts. The
+  // reported counts must equal the single-rank answer (validated by the reconstruction
+  // oracle on the identical serial mesh) regardless of how the mesh was partitioned, and
+  // non-root ranks must be left unpopulated (valid == false, since FillMeshEntityCounts
+  // runs on root only and must contain no MPI-collective call).
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON);
+  serial_mesh.EnsureNCMesh(true);
+  mfem::Array<int> refs;
+  for (int i = 0; i < serial_mesh.GetNE(); i += 3)
+  {
+    refs.Append(i);
+  }
+  serial_mesh.GeneralRefinement(refs, 1);  // 1 => nonconforming
+  REQUIRE(serial_mesh.Nonconforming());
+
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::MeshEntityCounts counts;
+  mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+
+  if (Mpi::Root(comm))
+  {
+    REQUIRE(counts.valid);
+    CHECK(counts.dim == 3);
+    CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) > 0);
+    CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);
+    // Partition-invariant: the gathered root counts reproduce the serial true DOF sizes.
+    CheckReconstructionOracle(counts, serial_mesh);
+  }
+  else
+  {
+    // FillMeshEntityCounts runs on the root rank only; other ranks stay unpopulated.
+    CHECK_FALSE(counts.valid);
   }
 }
 

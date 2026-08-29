@@ -349,10 +349,10 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
 // Order-independent (conforming) topological entity counts for a mesh, broken down
 // per geometry, obtained from the gathered serial mesh. These are the true (constrained)
 // global entity counts needed to size a solver re-run without parsing the mesh. On a
-// nonconforming mesh the true counts come from lowest-order finite-element space true
-// sizes (NC-list bucketing is wrong in 3D); on a conforming mesh true == leaf, so raw
-// per-geometry counts are used. Populated only on the root rank when an adapted mesh is
-// written (see RebalanceMesh).
+// nonconforming mesh true vertices/edges come from lowest-order finite-element space true
+// sizes (H1(1)/ND(1)) and true faces from a direct NC face-list count (dropping hanging
+// slave faces); on a conforming mesh true == leaf, so raw per-geometry counts are used.
+// Populated only on the root rank when an adapted mesh is written (see RebalanceMesh).
 struct MeshEntityCounts
 {
   int dim = 0;

@@ -1965,16 +1965,27 @@ namespace
 
 // Fill the per-geometry topological entity counts from a serial mesh. On a serial mesh the
 // true DOF size of a lowest-order FE space equals the global entity count, so no reduction
-// is needed. The counting method depends on whether the mesh is nonconforming:
+// is needed. The counts are reset on entry, so the routine is safe to call repeatedly with
+// the same struct (each AMR iteration reuses one MeshEntityCounts). The counting method
+// depends on whether the mesh is nonconforming:
 //
-//   Nonconforming: NC-list bucketing is wrong in 3D (it over-counts edges via codim-2
-//     face-interior constraints and under-counts faces), so the true counts come from FE
-//     space true sizes. Vertices from H1(1), edges from ND(1). The tri/quad TRUE-face
-//     split is recovered by solving the 2x2 system built from the RT(0) and RT(1) true
-//     sizes after subtracting the exact raw-cell RT contributions (no NC list needed):
-//       F_tri + F_quad     = RT0_true - K0       (t0 == s0 == 1)
-//       t1*F_tri + s1*F_quad = RT1_true - K1
-//     where K0/K1 are the sums over raw cells of RT(p).DofForGeometry(cell_geom).
+//   Nonconforming:
+//     - vertices: H1(1) true size. Hanging vertices are constrained through the master
+//       edges/faces they lie on and are NOT flagged in the NC vertex list (which lists
+//       every leaf vertex as "conforming"), so the FE-space true size is the reliable
+//       count -- an NC-vertex-list count would return the raw leaf vertex count.
+//     - edges: ND(1) true size. Edges interior to a master face are constrained by that
+//       face (not by an edge master), so they are NOT slave edges in the NC edge list; the
+//       FE-space true size accounts for them, a raw NC-edge-list count would over-count.
+//     - faces (3D): DIRECT per-geometry count from the NC face list. Every leaf face is a
+//       TRUE face unless it is a hanging SLAVE constrained by a master, so classifying each
+//       leaf face with NCList::GetMeshIdType and dropping only SLAVE faces gives exactly
+//       GetNFaces() - (#constrained faces) == the RT(0) true size, and bucketing by
+//       GetFaceGeometry recovers the exact tri/quad split. CONFORMING and MASTER faces are
+//       true; boundary faces are UNRECOGNIZED (absent from the list) but still true. This
+//       replaces a prior RT(0)/RT(1) 2x2 GetTrueVSize solve that was invalid on
+//       nonconforming meshes (GetTrueVSize does not distribute per face there) and emitted
+//       negative face counts on mixed meshes.
 //
 //   Conforming: true == leaf, so raw per-geometry counts are used directly (no FE spaces):
 //     vertices GetNV(), edges GetNEdges(), faces bucketed via GetFaceGeometry() (3D only),
@@ -1983,8 +1994,26 @@ namespace
 // FE spaces are each scoped in their own block so at most one is alive at a time (built,
 // read, and destroyed before the next), keeping peak memory low. Attributes are already
 // sorted and unique on mfem::Mesh.
+//
+// MPI INVARIANT (root-only, non-collective): when called from RebalanceMesh on a
+// nonconforming mesh, `smesh` is a ParMesh whose ncmesh is a ParNCMesh holding every
+// element on the root rank, and this routine runs on the root rank ONLY. The H1(1) and
+// ND(1) GetTrueVSize() calls and the ncmesh->GetFaceList() call all reach
+// ParNCMesh::Build{Vertex,Edge,Face}List. Those overrides perform NO MPI communication
+// (verified against MFEM commit 66dbe60cb1, mesh/pncmesh.cpp: they compute only local
+// ownership and shared-entity metadata, and CalcFaceOrientations is documented "done
+// locally, without communication"), which is the ONLY reason this root-only routine cannot
+// deadlock. The prior RT/H1/ND FE spaces already relied on this same invariant via
+// GetFaceList(), so switching faces to a direct GetFaceList() adds no new collective risk.
+// If a future MFEM makes any Build*List collective, the [Parallel] RebalanceMesh count test
+// will hang -- fix by moving this whole routine to a collective call site, not by silencing.
 void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 {
+  // Reset first: the accumulating members (cells, and true_faces below) must never sum
+  // across AMR iterations that reuse the same struct. Scalars are re-set below and `valid`
+  // is re-set at the end.
+  counts = MeshEntityCounts{};
+
   const int dim = smesh.Dimension();
   counts.dim = dim;
 
@@ -1996,6 +2025,9 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 
   if (smesh.Nonconforming())
   {
+    // Root-only, non-collective: see the "MPI INVARIANT" note in the block comment above.
+    // Every GetTrueVSize()/GetFaceList() call below reaches a ParNCMesh::Build*List that
+    // does no MPI communication (pinned to MFEM commit 66dbe60cb1).
     {
       mfem::H1_FECollection h1_fec(1, dim);
       mfem::FiniteElementSpace h1_fespace(&smesh, &h1_fec);
@@ -2008,76 +2040,21 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
     }
     if (dim == 3)
     {
-      // Solve the tri/quad TRUE-face split from the RT(0) and RT(1) true sizes.
-      long long rt0_true = 0, t0 = 0, s0 = 0, k0 = 0;
+      // DIRECT per-geometry TRUE-face count from the NC face list (see the block comment
+      // above for why this is exact and why it replaced the RT(0)/RT(1) solve). Every leaf
+      // face is a TRUE face unless it is a hanging SLAVE constrained by a master; CONFORMING
+      // and MASTER faces are true, and boundary faces are UNRECOGNIZED (absent from the
+      // list) but still true. Counting non-SLAVE faces therefore yields exactly
+      // GetNFaces() - (#constrained faces) == the RT(0) true size, and bucketing each by
+      // GetFaceGeometry (the same source the conforming path uses) recovers the tri/quad
+      // split with no linear solve and no clamp.
+      const mfem::NCMesh::NCList &face_list = smesh.ncmesh->GetFaceList();
+      for (int f = 0; f < smesh.GetNFaces(); f++)
       {
-        mfem::RT_FECollection rt0_fec(0, dim);
-        mfem::FiniteElementSpace rt0_fespace(&smesh, &rt0_fec);
-        rt0_true = rt0_fespace.GetTrueVSize();
-        t0 = rt0_fec.DofForGeometry(mfem::Geometry::TRIANGLE);
-        s0 = rt0_fec.DofForGeometry(mfem::Geometry::SQUARE);
-        for (const auto &[geom, count] : counts.cells)
+        if (face_list.GetMeshIdType(f) != mfem::NCMesh::NCList::MeshIdType::SLAVE)
         {
-          k0 += count * rt0_fec.DofForGeometry(geom);
+          counts.true_faces[smesh.GetFaceGeometry(f)]++;
         }
-      }
-      long long rt1_true = 0, t1 = 0, s1 = 0, k1 = 0;
-      {
-        mfem::RT_FECollection rt1_fec(1, dim);
-        mfem::FiniteElementSpace rt1_fespace(&smesh, &rt1_fec);
-        rt1_true = rt1_fespace.GetTrueVSize();
-        t1 = rt1_fec.DofForGeometry(mfem::Geometry::TRIANGLE);
-        s1 = rt1_fec.DofForGeometry(mfem::Geometry::SQUARE);
-        for (const auto &[geom, count] : counts.cells)
-        {
-          k1 += count * rt1_fec.DofForGeometry(geom);
-        }
-      }
-      const long long b0 = rt0_true - k0;  // == F_tri + F_quad (t0 == s0 == 1)
-      const long long b1 = rt1_true - k1;
-      // The tri/quad split is fixed FIRST by which cell geometries are present: a face
-      // geometry can only occur if some cell bears it. Tetrahedra bear only triangular
-      // faces, hexahedra only quadrilateral, prisms and pyramids both. Keying off the
-      // (exact, raw==true) cell counts sidesteps the RT true-size solve in the common
-      // pure-tet / pure-hex cases, where that solve is UNRELIABLE on nonconforming
-      // meshes: GetTrueVSize does not distribute cleanly per face there, so b1 != t1*b0
-      // even for a pure-tet mesh and the solve emits a spurious negative count.
-      const bool tri_faced = counts.cells.count(mfem::Geometry::TETRAHEDRON) ||
-                             counts.cells.count(mfem::Geometry::PRISM) ||
-                             counts.cells.count(mfem::Geometry::PYRAMID);
-      const bool quad_faced = counts.cells.count(mfem::Geometry::CUBE) ||
-                              counts.cells.count(mfem::Geometry::PRISM) ||
-                              counts.cells.count(mfem::Geometry::PYRAMID);
-      long long f_tri = 0, f_quad = 0;
-      if (!quad_faced)
-      {
-        f_tri = b0;  // only triangular faces are possible (or no faces at all)
-      }
-      else if (!tri_faced)
-      {
-        f_quad = b0;  // only quadrilateral faces are possible
-      }
-      else if (t0 == 1 && s0 == 1 && (s1 - t1) != 0)
-      {
-        // Genuinely mixed tri+quad faces (prism/pyramid, or tet+hex). Recover the split
-        // from the RT(0)/RT(1) true sizes, clamped to [0, b0] so an imperfect
-        // nonconforming decomposition can never produce a negative or overlarge count.
-        f_quad = (b1 - t1 * b0) / (s1 - t1);
-        f_quad = std::max<long long>(0, std::min<long long>(f_quad, b0));
-        f_tri = b0 - f_quad;
-      }
-      else
-      {
-        // Fallback (should not happen for RT on standard geometries).
-        f_tri = b0;
-      }
-      if (f_tri != 0)
-      {
-        counts.true_faces[mfem::Geometry::TRIANGLE] = f_tri;
-      }
-      if (f_quad != 0)
-      {
-        counts.true_faces[mfem::Geometry::SQUARE] = f_quad;
       }
     }
   }
