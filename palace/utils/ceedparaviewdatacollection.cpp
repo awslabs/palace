@@ -252,7 +252,7 @@ void CeedParaViewDataCollection::RegisterBoundaryPointFieldBatch(
 {
   MFEM_VERIFY(!fields.empty(), "Boundary point field batch must not be empty!");
   MFEM_VERIFY(provider, "Boundary point field batch provider must be callable!");
-  MFEM_VERIFY(expected_packed_size > 0,
+  MFEM_VERIFY(expected_packed_size >= 0,
               "Boundary point field batch packed buffer size is invalid!");
   MFEM_VERIFY(static_cast<int>(bases.size()) ==
                   NumPointFieldEntities(MeshEntityType::Boundary),
@@ -267,7 +267,7 @@ void CeedParaViewDataCollection::RegisterBoundaryPointFieldBatch(
     MFEM_VERIFY(!field.name.empty(), "Boundary point field batch name must not be empty!");
     MFEM_VERIFY(field.num_comp > 0,
                 "Boundary point field batch field must have at least one component!");
-    MFEM_VERIFY(field.size > 0 && field.size % field.num_comp == 0,
+    MFEM_VERIFY(field.size >= 0 && field.size % field.num_comp == 0,
                 "Boundary point field batch slice has an invalid component size!");
     MFEM_VERIFY(field.offset >= 0 && field.offset <= expected_packed_size - field.size,
                 "Boundary point field batch slice is outside its packed buffer!");
