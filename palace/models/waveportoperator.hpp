@@ -8,6 +8,7 @@
 #include <complex>
 #include <map>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -82,6 +83,15 @@ private:
   mfem::Array<int> port_dbc_tdof_list;
   double mu_eps_max;
 
+  // Optional candidate-mode diagnostics. These diagnostics never change mode_idx or the
+  // eigenpair selected for the physical wave port.
+  int port_idx;
+  int diagnostic_modes;
+  std::string diagnostic_output;
+  double diagnostic_fc, diagnostic_kc;
+  bool suppress_output = false;
+  bool diagnostic_mesh_printed = false;
+
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.
   std::unique_ptr<MaterialOperator> port_mat_op;
@@ -90,8 +100,9 @@ private:
   std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
 
-  // Boundary mode eigenvalue problem solver.
-  std::unique_ptr<ModeEigenSolver> mode_solver;
+  // Boundary mode eigenvalue problem solvers. The diagnostic solver is separate so
+  // requesting extra candidates cannot perturb the production eigensolve.
+  std::unique_ptr<ModeEigenSolver> mode_solver, diagnostic_solver;
   ComplexVector v0, e0;
 
   // Communicator for processes which have elements for this port.
@@ -131,18 +142,28 @@ private:
   // boundary element centroids adjacent to each attribute.
   std::array<int, 2> polarity_attributes = {0, 0};
 
+  void LoadMode(ModeEigenSolver &solver, int mode, std::complex<double> kn);
+  std::complex<double> NormalizeMode(double omega, std::complex<double> kn, bool guard,
+                                     bool *valid = nullptr);
+  void PrintDiagnosticMeshInfo() const;
+  void SaveDiagnosticFields(int mode, double omega);
+
 public:
   // 3D submesh constructor: extracts submesh from parent mesh.
-  WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
-               const config::DomainData &domains, ProblemType problem_type,
-               const config::LinearSolverData &linear, const Units &units,
-               const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
+  WavePortData(int idx, const config::WavePortData &data,
+               const config::BoundaryData &boundaries, const config::DomainData &domains,
+               ProblemType problem_type, const config::LinearSolverData &linear,
+               const Units &units, const MaterialOperator &mat_op,
+               mfem::ParFiniteElementSpace &nd_fespace,
+               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr,
+               const std::string &output);
 
   ~WavePortData();
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
   [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords; }
+  [[nodiscard]] bool HasDiagnostics() const { return diagnostic_modes > 0; }
+  void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
 
   const auto &GetAttrList() const { return attr_list; }
 
@@ -205,6 +226,9 @@ private:
 
   // Flag which forces no printing during WavePortData::Print().
   bool suppress_output;
+  bool diagnostic_output_initialized = false;
+  MPI_Comm comm;
+  std::string output;
   double fc, kc;
 
   void SetUpBoundaryProperties(const config::BoundaryData &boundaries,
@@ -225,7 +249,7 @@ public:
                    const config::DomainData &domains, const config::SolverData &solver,
                    ProblemType problem_type, const Units &units,
                    const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-                   mfem::ParFiniteElementSpace &h1_fespace);
+                   mfem::ParFiniteElementSpace &h1_fespace, const std::string &output = "");
   WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
                    mfem::ParFiniteElementSpace &nd_fespace,
                    mfem::ParFiniteElementSpace &h1_fespace);
@@ -239,7 +263,7 @@ public:
   auto Size() const { return ports.size(); }
 
   // Enable or suppress all outputs (log printing and fields to disk).
-  void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
+  void SetSuppressOutput(bool suppress);
 
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;

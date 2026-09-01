@@ -1690,6 +1690,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.eig_tol == w1.eig_tol);
     CHECK(w2.max_size == w1.max_size);
     CHECK(w2.verbose == w1.verbose);
+    CHECK(w2.diagnostic_modes == w1.diagnostic_modes);
     CHECK(w2.n_samples == w1.n_samples);
 
     // Coverage gate. VoltagePath is an opt-in coordinate path for line integral

@@ -559,6 +559,10 @@ public:
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
 
+  // Number of eigenmodes to compute for diagnostic output. A value of zero disables
+  // candidate diagnostics and preserves the standard mode solve.
+  int diagnostic_modes = 0;
+
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
