@@ -2559,6 +2559,12 @@
           "default": "CGS2",
           "x-palace-advanced": true
         },
+        "AdaptiveSParameterOnly": {
+          "type": "boolean",
+          "description": "During the adaptive online sweep, compute and write only port S-parameters and final error-indicator statistics. This skips magnetic-field reconstruction, field energies, fluxes, probes, far-field output, and other CSV tables. Incompatible with field-save frequencies.",
+          "default": false,
+          "x-palace-advanced": true
+        },
         "AdaptiveCircuitSynthesis": {
           "type": "boolean",
           "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, `RationalImpedance`, or second-order farfield BCs).",

@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -170,7 +171,8 @@ protected:
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
   // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
   //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
-  // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
+  // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
+  //   are cached before frequency-major online evaluation.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
 
@@ -250,7 +252,8 @@ protected:
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
-  Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
+  Eigen::VectorXcd RHS1r;       // Active excitation's projected frequency-linear source.
+  std::map<int, Eigen::VectorXcd> RHS1r_online;  // Final-basis cache for online switching.
 
   // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
   // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
@@ -268,6 +271,8 @@ protected:
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
   // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.
   Eigen::MatrixXcd Ar;
+  Eigen::FullPivHouseholderQR<Eigen::MatrixXcd> Ar_solver;
+  double Ar_omega = std::numeric_limits<double>::quiet_NaN();
   Eigen::VectorXcd RHSr;
 
   // PROM reduced-order basis (real-valued).
@@ -492,6 +497,11 @@ public:
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
+
+  // Project and cache every frequency-linear excitation vector once after the adaptive
+  // basis is complete. Frequency-major online traversal can then switch excitations without
+  // repeating HDM-scale projections.
+  void PrepareOnlineExcitations();
 
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
