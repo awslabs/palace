@@ -1132,7 +1132,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
                 : 0.0;
         vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
                                std::complex<double>{0.0, 0.0});
-        vi.S = data.GetSParameter(*E);
+        vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
 
         // Add contribution due to all inductive lumped boundaries in the model:
         //                      E_ind = ∑_j 1/2 L_j I_mj².
