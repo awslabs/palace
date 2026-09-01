@@ -347,6 +347,10 @@ public:
   // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
   void InitializeModalReference(double omega) { Initialize(omega); }
 
+  // Prepare all frequency-dependent modal state once before evaluating multiple
+  // excitations at the same frequency.
+  void PrepareFrequency(double omega) { Initialize(omega); }
+
   // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
   // is a checked upper bound on possible exact mode snapshots and storage remains lazy.
   void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
