@@ -1101,11 +1101,12 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
                 solver_t == ProblemType::TRANSIENT)
   {
     const auto port_powers = fem_op->GetLumpedPortOp().GetPowers(*E, *B);
+    const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi[idx];
       vi.P = port_powers.at(idx);
-      vi.V = data.GetVoltage(*E);
+      vi.V = port_voltages.at(idx);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C

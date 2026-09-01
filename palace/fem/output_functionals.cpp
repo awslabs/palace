@@ -1653,6 +1653,29 @@ double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) c
   return (local_out.Size() > 0) ? linalg::LocalSum(local_out) : 0.0;
 }
 
+void SurfaceFunctional::BinLocalOutByAttribute(const mfem::Array<int> &attr_to_bin,
+                                               int num_bins, std::vector<double> &bins,
+                                               double scale) const
+{
+  if (local_out.Size() == 0)
+  {
+    return;
+  }
+  MFEM_VERIFY(local_out_attrs.size() == static_cast<std::size_t>(local_out.Size()),
+              "SurfaceFunctional attribute bins require one output slot per element!");
+  const double *vals = local_out.HostRead();
+  for (int i = 0; i < local_out.Size(); i++)
+  {
+    const int attr = local_out_attrs[i];
+    const int bin = (attr > 0 && attr <= attr_to_bin.Size()) ? attr_to_bin[attr - 1] : -1;
+    if (bin >= 0)
+    {
+      MFEM_VERIFY(bin < num_bins, "SurfaceFunctional attribute bin out of range!");
+      bins[bin] += scale * vals[i];
+    }
+  }
+}
+
 double SurfaceFunctional::Eval(const Vector *u) const
 {
   MFEM_VERIFY(kind == KernelKind::AREA || u,
@@ -1702,6 +1725,48 @@ std::complex<double> SurfaceFunctional::EvalModeOverlap(const GridFunction &E) c
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
+}
+
+std::vector<std::complex<double>> SurfaceFunctional::EvalModeOverlapByAttribute(
+    const GridFunction &E, const mfem::Array<int> &attr_to_bin, int num_bins) const
+{
+  MFEM_VERIFY(kind == KernelKind::MODE_OVERLAP,
+              "SurfaceFunctional::EvalModeOverlapByAttribute is only valid for "
+              "mode-overlap functionals!");
+  MFEM_VERIFY(num_bins >= 0, "Invalid number of output bins!");
+  auto AccumulateBins = [&](const Vector &u, std::vector<double> &bins)
+  {
+    if (local_out.Size() > 0)
+    {
+      local_out = 0.0;
+    }
+    // Keep the apply collective even on ranks with no local marked elements, matching
+    // the per-port EvalModeOverlap path and the binned power evaluator.
+    ApplyAdd({&u, nullptr});
+    BinLocalOutByAttribute(attr_to_bin, num_bins, bins, 1.0);
+  };
+
+  std::vector<double> real(num_bins, 0.0), imag(num_bins, 0.0);
+  AccumulateBins(E.Real(), real);
+  if (E.HasImag())
+  {
+    AccumulateBins(E.Imag(), imag);
+  }
+
+  std::vector<double> packed(2 * num_bins, 0.0);
+  for (int i = 0; i < num_bins; i++)
+  {
+    packed[2 * i + 0] = real[i];
+    packed[2 * i + 1] = imag[i];
+  }
+  Mpi::GlobalSum(static_cast<int>(packed.size()), packed.data(), comm);
+
+  std::vector<std::complex<double>> result(num_bins);
+  for (int i = 0; i < num_bins; i++)
+  {
+    result[i] = {packed[2 * i + 0], packed[2 * i + 1]};
+  }
+  return result;
 }
 
 std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
@@ -1848,8 +1913,6 @@ SurfaceFunctional::EvalComplexPowerByAttribute(const GridFunction &E, const Grid
               "Mismatch between real- and complex-valued E and B fields in batched "
               "port power calculation!");
   MFEM_VERIFY(num_bins >= 0, "Invalid number of output bins!");
-  MFEM_VERIFY(local_out_attrs.size() == static_cast<std::size_t>(local_out.Size()),
-              "SurfaceFunctional attribute bins require one output slot per element!");
 
   auto AccumulateBins = [&](const std::array<const Vector *, 4> &srcs,
                             std::vector<double> &bins, double scale)
@@ -1862,21 +1925,7 @@ SurfaceFunctional::EvalComplexPowerByAttribute(const GridFunction &E, const Grid
     // face-neighbor exchange may need this rank to export field data for another rank's
     // processor-boundary side.
     ApplyAdd(srcs);
-    if (local_out.Size() == 0)
-    {
-      return;
-    }
-    const double *vals = local_out.HostRead();
-    for (int i = 0; i < local_out.Size(); i++)
-    {
-      const int attr = local_out_attrs[i];
-      const int bin = (attr > 0 && attr <= attr_to_bin.Size()) ? attr_to_bin[attr - 1] : -1;
-      if (bin >= 0)
-      {
-        MFEM_VERIFY(bin < num_bins, "SurfaceFunctional attribute bin out of range!");
-        bins[bin] += scale * vals[i];
-      }
-    }
+    BinLocalOutByAttribute(attr_to_bin, num_bins, bins, scale);
   };
 
   std::vector<double> real(num_bins, 0.0), imag(num_bins, 0.0);
