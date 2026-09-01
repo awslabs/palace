@@ -119,7 +119,8 @@ inline PetscErrorCode ConfigurePetscDevice()
                                    mfem::Device::GetGPUAwareMPI() ? "1" : "0"));
     PetscCall(PetscOptionsSetValue(NULL, "-device_select_cuda",
                                    std::to_string(mfem::Device::GetId()).c_str()));
-    PetscCall(PetscOptionsSetValue(NULL, "-bv_type", "svec"));
+    // PetscCall(PetscOptionsSetValue(NULL, "-bv_type", "svec"));
+    // PetscCall(PetscOptionsSetValue(NULL, "-vec_type", "cuda"));
   }
   if (mfem::Device::Allows(mfem::Backend::HIP_MASK))
   {
@@ -127,7 +128,8 @@ inline PetscErrorCode ConfigurePetscDevice()
                                    mfem::Device::GetGPUAwareMPI() ? "1" : "0"));
     PetscCall(PetscOptionsSetValue(NULL, "-device_select_hip",
                                    std::to_string(mfem::Device::GetId()).c_str()));
-    PetscCall(PetscOptionsSetValue(NULL, "-bv_type", "svec"));
+    // PetscCall(PetscOptionsSetValue(NULL, "-bv_type", "svec"));
+    // PetscCall(PetscOptionsSetValue(NULL, "-vec_type", "hip"));
   }
   return PETSC_SUCCESS;
 }
