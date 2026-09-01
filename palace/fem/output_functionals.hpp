@@ -158,6 +158,10 @@ private:
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
   double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
 
+  // Add the current local output element slots into per-attribute bins.
+  void BinLocalOutByAttribute(const mfem::Array<int> &attr_to_bin, int num_bins,
+                              std::vector<double> &bins, double scale) const;
+
 public:
   // Construct a functional over the boundary elements with marked attributes (marker
   // over global mfem boundary attributes). For field-less functionals (AREA), fespace
@@ -245,6 +249,13 @@ public:
   // Evaluate the linear mode-overlap functional, returning the complex integral when the
   // supplied field has real and imaginary parts.
   std::complex<double> EvalModeOverlap(const GridFunction &E) const;
+
+  // Same mode-overlap convention as EvalModeOverlap, but return one result per
+  // boundary-attribute bin. attr_to_bin is indexed by boundary attribute - 1 and uses -1
+  // for attributes not assigned to an output bin. Collective on the mesh communicator.
+  std::vector<std::complex<double>>
+  EvalModeOverlapByAttribute(const GridFunction &E, const mfem::Array<int> &attr_to_bin,
+                             int num_bins) const;
 };
 
 }  // namespace palace
