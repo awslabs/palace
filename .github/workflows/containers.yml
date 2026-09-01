@@ -75,15 +75,7 @@ jobs:
   # build-containers-release below, so this job is gated off for them.
   build-containers:
     needs: filter
-    if: >-
-      ${{
-        !startsWith(github.ref, 'refs/tags/v') &&
-        (
-          needs.filter.outputs.test == 'true' ||
-          github.event_name == 'workflow_dispatch' ||
-          github.ref == 'refs/heads/main'
-        )
-      }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +102,9 @@ jobs:
       # (Release tags are handled by build-containers-release, which has no
       # filter.)
       - uses: actions/checkout@v6
+        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
       - uses: ./.github/actions/build-container
+        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         with:
           target: ${{ matrix.target }}
 
