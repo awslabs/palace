@@ -1,0 +1,74 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Refresh buildcache index'
+description: >-
+  Rebuild the index of a GHCR OCI Spack buildcache mirror. The producing job's
+  Spack environment is not on this runner, so synthesize a minimal one carrying
+  just the mirror definition and run `buildcache update-index`.
+
+inputs:
+  spack-version:
+    description: 'Spack git ref to check out (e.g. releases/v1.2, develop)'
+    required: true
+  mirror-url:
+    description: 'OCI URL of the buildcache mirror (oci://ghcr.io/...)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Spack
+      uses: actions/checkout@v6
+      with:
+        repository: spack/spack
+        path: spack
+        ref: ${{ inputs.spack-version }}
+
+    - name: Refresh GHCR buildcache index
+      shell: bash
+      env:
+        MIRROR_URL: ${{ inputs.mirror-url }}
+      run: |
+        START_TIME=${SECONDS}
+        INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
+        mkdir -p "${INDEX_ENV}"
+        cat > "${INDEX_ENV}/spack.yaml" << EOF
+        spack:
+          specs: []
+          mirrors:
+            local-buildcache:
+              binary: true
+              url: ${MIRROR_URL}
+              signed: false
+              access_pair:
+                id_variable: GITHUB_USER
+                secret_variable: GITHUB_TOKEN
+        EOF
+        # GHCR intermittently returns 403 on manifest GETs during
+        # update-index, so retry a few times with backoff before giving up.
+        refresh_index() {
+          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
+            buildcache update-index local-buildcache
+        }
+        attempts=4
+        delay=15
+        for attempt in $(seq 1 "${attempts}"); do
+          if refresh_index; then
+            echo "Buildcache index refresh succeeded on attempt" \
+              "${attempt}: $((SECONDS - START_TIME))s"
+            exit 0
+          fi
+          if [ "${attempt}" -lt "${attempts}" ]; then
+            echo "Index refresh failed (attempt ${attempt}/${attempts});" \
+              "retrying in ${delay}s."
+            sleep "${delay}"
+            delay=$((delay * 2))
+          fi
+        done
+        # Best-effort: a failed refresh is not fatal. The index self-heals on
+        # the next successful run, and binaries stay reachable meanwhile via
+        # Spack's direct OCI-tag fallback, so do not block CI on it.
+        echo "WARNING: buildcache index refresh failed after ${attempts}" \
+          "attempts; leaving the previous index in place (self-heals next run)." >&2
+        exit 0

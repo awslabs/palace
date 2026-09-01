@@ -6,7 +6,8 @@
 #
 
 # CMake 3.21 was released in Jul. 2021 (required for HIP support)
-cmake_minimum_required(VERSION 3.21)
+# Cmake 3.24 was released in Aug. 2022 (required for portable WHOLE_ARCHIVE linking of tests)
+cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -233,18 +234,19 @@ endif()
 
 # Find libCEED
 include(PkgConfigHelpers)
-set(LIBCEED_TEST_DEPS)
-if(PALACE_WITH_OPENMP)
-  list(APPEND LIBCEED_TEST_DEPS OpenMP::OpenMP_CXX)
-endif()
+set(GPU_TEST_DEPS)
 if(PALACE_WITH_CUDA)
   if(BUILD_SHARED_LIBS)
-    list(APPEND LIBCEED_TEST_DEPS CUDA::cudart CUDA::cublas)
+    list(APPEND GPU_TEST_DEPS CUDA::cudart CUDA::cublas CUDA::cuda_driver)
   else()
-    list(APPEND LIBCEED_TEST_DEPS CUDA::cudart_static CUDA::cublas_static)
+    list(APPEND GPU_TEST_DEPS CUDA::cudart_static CUDA::cublas_static CUDA::cuda_driver)
   endif()
 elseif(PALACE_WITH_HIP)
-  list(APPEND LIBCEED_TEST_DEPS hip::host)
+  list(APPEND GPU_TEST_DEPS hip::host)
+endif()
+set(LIBCEED_TEST_DEPS ${GPU_TEST_DEPS})
+if(PALACE_WITH_OPENMP)
+  list(APPEND LIBCEED_TEST_DEPS OpenMP::OpenMP_CXX)
 endif()
 find_libceed_pkgconfig("${LIBCEED_TEST_DEPS}" LIBCEED_TARGET)
 if("${LIBCEED_TARGET}" STREQUAL "")
@@ -253,7 +255,7 @@ endif()
 
 # Find PETSc and SLEPc
 if(PALACE_WITH_SLEPC)
-  set(PETSC_TEST_DEPS MPI::MPI_CXX)
+  set(PETSC_TEST_DEPS MPI::MPI_CXX ${GPU_TEST_DEPS})
   if(PALACE_WITH_OPENMP)
     list(APPEND PETSC_TEST_DEPS OpenMP::OpenMP_CXX)
   endif()
@@ -428,6 +430,12 @@ target_link_libraries(${LIB_TARGET_NAME}
          nlohmann_json_schema_validator::validator fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
+if(PALACE_WITH_CUDA)
+  # libCEED uses the CUDA driver API. FindCUDAToolkit resolves this target to
+  # the toolkit stub at build time without adding the stub directory to RPATH;
+  # the NVIDIA driver provides libcuda.so.1 at runtime.
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cuda_driver)
+endif()
 
 # Add MFEM include directory for Spack builds
 if(NOT "${MFEM_DIR}" STREQUAL "")

@@ -1,9 +1,13 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # GHCR Buildcache Cleanup
 #
 # Palace CI writes Spack binary packages to version-isolated OCI buildcaches:
 #
 #   ghcr.io/awslabs/palace-1.2      Spack releases/v1.2 jobs
 #   ghcr.io/awslabs/palace-develop  Spack develop lookahead jobs
+#   ghcr.io/awslabs/palace-container-build-cache  Podman build layers
 #
 # Spack DAG hashes do not encode the Spack version/buildcache representation, so
 # each Spack producer line gets its own GHCR package. Over time, each package
@@ -69,6 +73,7 @@ jobs:
         package:
           - palace-1.2
           - palace-develop
+          - palace-container-build-cache
     steps:
       - name: Print buildcache version count before cleanup
         continue-on-error: true
@@ -81,9 +86,8 @@ jobs:
           count=$(gh api "/orgs/${REPO_OWNER}/packages/container/${PACKAGE}" --jq '.version_count')
           echo "${PACKAGE} versions before cleanup: ${count}"
 
-      # Each Spack spec is a tagged version in the container package. We keep
-      # the most recent 500 versions (roughly 5-10 full build sets) and delete
-      # older ones. The action deletes at most 100 per run.
+      # Keep the most recent 500 package or layer versions and delete older
+      # ones. The action deletes at most 100 per run.
       - name: Delete old buildcache versions
         id: cleanup
         continue-on-error: true
