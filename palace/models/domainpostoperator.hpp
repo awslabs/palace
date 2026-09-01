@@ -17,6 +17,7 @@ class GridFunction;
 class FiniteElementSpace;
 class IoData;
 class MaterialOperator;
+class SuperconductorSheetOperator;
 
 namespace config
 {
@@ -46,7 +47,8 @@ public:
                      const FiniteElementSpace &nd_fespace,
                      const FiniteElementSpace &rt_fespace);
   DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
-                     const FiniteElementSpace &fespace);
+                     const FiniteElementSpace &fespace,
+                     const SuperconductorSheetOperator *sc_sheet_op = nullptr);
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
                      const FiniteElementSpace &rt_fespace);

@@ -78,7 +78,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           else if constexpr (solver_t == ProblemType::MAGNETOSTATIC)
           {
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace());
+                                      fem_op_.GetNDSpace(), &fem_op_.GetSuperconductorOp());
           }
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
