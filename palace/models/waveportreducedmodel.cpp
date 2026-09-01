@@ -109,6 +109,9 @@ void WavePortReducedModel::UpdateProjection(std::size_t old_basis_size)
   }
   const std::size_t n = basis.size();
   MFEM_VERIFY(old_basis_size <= n, "Invalid old affine basis size!");
+  MFEM_VERIFY(n == 0 || n <= static_cast<std::size_t>(std::numeric_limits<int>::max()) / n,
+              "Affine projection matrix exceeds MPI count range!");
+  const int projection_count = static_cast<int>(n * n);
 
   auto update = [&](const ComplexOperator &op, std::vector<ComplexVector> &actions,
                     Eigen::MatrixXcd &projection)
@@ -125,8 +128,13 @@ void WavePortReducedModel::UpdateProjection(std::size_t old_basis_size)
     {
       for (std::size_t i = 0; i < n; i++)
       {
-        projection(i, j) = linalg::Dot(solver_comm, actions[j], basis[i]);
+        // LocalDot(x, y) = yᴴx, preserving basis[i]ᴴ actions[j].
+        projection(i, j) = linalg::LocalDot(actions[j], basis[i]);
       }
+    }
+    if (projection_count > 0)
+    {
+      Mpi::GlobalSum(projection_count, projection.data(), solver_comm);
     }
   };
   update(opB, B_actions, B_projection);
