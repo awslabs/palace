@@ -54,9 +54,6 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  iodata.solver.driven.prom_indices.size());
     adaptive = false;
   }
-  MFEM_VERIFY(!iodata.solver.driven.adaptive_s_parameter_only || adaptive,
-              "\"AdaptiveSParameterOnly\" requires enough output frequencies for an "
-              "adaptive online sweep!");
   SaveMetadata(space_op.GetNDSpaces());
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
              port_excitations.FmtLog());
@@ -239,21 +236,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 {
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
-  if (iodata.solver.driven.adaptive_s_parameter_only)
-  {
-    MFEM_VERIFY(port_excitations.IsMultipleSimple(),
-                "\"AdaptiveSParameterOnly\" requires simple single-port excitations!");
-    for (const auto &[excitation_idx, excitation_spec] : port_excitations)
-    {
-      const auto [is_simple, port_type, port_idx] = excitation_spec.IsSimple();
-      MFEM_VERIFY(is_simple && (port_type == PortType::LumpedPort ||
-                                port_type == PortType::WavePort ||
-                                port_type == PortType::FloquetPort),
-                  "\"AdaptiveSParameterOnly\" supports only lumped, wave, or Floquet "
-                  "port excitations!");
-    }
-  }
-
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
@@ -481,12 +463,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     prom_op.SolvePROM(excitation_idx, omega, E);
     Mpi::Print("\n");
 
-    if (iodata.solver.driven.adaptive_s_parameter_only &&
-        !post_op.HasFieldOutput(static_cast<int>(omega_i)))
-    {
-      post_op.MeasureAndPrintSParameters(excitation_idx, int(omega_i), E, omega);
-      return;
-    }
     if (post_op.HasReducedPostprocessing() &&
         !post_op.HasFieldOutput(static_cast<int>(omega_i)))
     {

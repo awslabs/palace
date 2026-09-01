@@ -21,9 +21,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Accelerated adaptive online sweeps by buffering CSV output, reusing reduced operators
     and frequency-dependent wave-port state across excitations, and automatically evaluating
-    default domain energies in reduced coordinates when possible. Added
-    `Solver.Driven.AdaptiveSParameterOnly` to explicitly request S-parameter-only output.
-    SchemaVer 1-7-0.
+    default domain energies and port quantities in reduced coordinates when possible.
   - Improved configuration schema validation errors to list valid enum values through nested
     schema alternatives and suggest the canonical capitalization for case-only mismatches
     [PR 890](https://github.com/awslabs/palace/pull/890).

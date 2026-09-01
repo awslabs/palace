@@ -461,26 +461,6 @@ public:
     PrintPortS();
   }
 
-  // Adaptive reduced-order fast path: write only S-parameter tables.
-  template <ProblemType U = solver_t>
-  auto PrintSParameterCSVData(const PostOperator<solver_t> &post_op,
-                              const Measurement &nondim_measurement_cache,
-                              double idx_value_dimensionful, int step, int ex_idx)
-      -> std::enable_if_t<U == ProblemType::DRIVEN, void>
-  {
-    if (!Mpi::Root(post_op.fem_op->GetComm()))
-    {
-      return;
-    }
-    row_idx_v = idx_value_dimensionful;
-    row_i = step;
-    m_ex_idx = ex_idx;
-    measurement_cache =
-        Measurement::Dimensionalize(post_op.units, nondim_measurement_cache);
-    PrintPortS();
-    PrintFloquetPortS();
-  }
-
   // Special case of global indicator — init and print all at once.
   void PrintErrorIndicator(bool is_root,
                            const ErrorIndicator::SummaryStatistics &indicator_stats);

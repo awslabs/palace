@@ -840,10 +840,6 @@ public:
   // orthogonalization option. Default to CGS2 for higher quality.
   Orthogonalization adaptive_solver_gs_orthog_type = Orthogonalization::CGS2;
 
-  // During adaptive online evaluation, compute and write only port S-parameters. This skips
-  // magnetic-field reconstruction, energy/flux/probe measurements, and non-S CSV output.
-  bool adaptive_s_parameter_only = false;
-
   // Return circuit matrices from port with port excitation vectors.
   bool adaptive_circuit_synthesis = false;
 

@@ -427,14 +427,6 @@ public:
                           const ComplexVector &b, std::complex<double> omega)
       -> std::enable_if_t<U == ProblemType::DRIVEN, double>;
 
-  // Adaptive online fast path for S-parameter-only output. The electric field is still
-  // prolonged from the PROM, but magnetic-field construction and all non-S measurements
-  // are skipped.
-  template <ProblemType U = solver_t>
-  auto MeasureAndPrintSParameters(int ex_idx, int step, const ComplexVector &e,
-                                  std::complex<double> omega)
-      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
-
   // Configure and evaluate the exact reduced-coordinate default output path (domain
   // energies plus port S-parameters). Unsupported configured measurements leave the path
   // disabled and use full postprocessing.

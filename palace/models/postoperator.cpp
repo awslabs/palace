@@ -1771,35 +1771,6 @@ auto PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
 
 template <ProblemType solver_t>
 template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintSParameters(int ex_idx, int step,
-                                                        const ComplexVector &e,
-                                                        std::complex<double> omega)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
-{
-  BlockTimer bt0(Timer::POSTPRO);
-  SetEGridFunction(e);
-
-  measurement_cache = {};
-  measurement_cache.freq = omega;
-  measurement_cache.ex_idx = ex_idx;
-  for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
-  {
-    measurement_cache.lumped_port_vi[idx].S = data.GetSParameter(*E);
-  }
-  for (const auto &[idx, data] : fem_op->GetWavePortOp())
-  {
-    measurement_cache.wave_port_vi[idx].S = data.GetSParameter(*E);
-  }
-  MeasureFloquetPorts();
-  MeasureSParameter();
-
-  const std::complex<double> freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
-  post_op_csv.PrintSParameterCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
-}
-
-template <ProblemType solver_t>
-template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega,
@@ -2231,10 +2202,6 @@ template class PostOperator<ProblemType::BOUNDARYMODE>;
 template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType::DRIVEN>(
     int ex_idx, int step, const ComplexVector &e, const ComplexVector &b,
     std::complex<double> omega) -> double;
-
-template auto
-PostOperator<ProblemType::DRIVEN>::MeasureAndPrintSParameters<ProblemType::DRIVEN>(
-    int ex_idx, int step, const ComplexVector &e, std::complex<double> omega) -> void;
 
 template auto
 PostOperator<ProblemType::DRIVEN>::ConfigureReducedPostprocessing<ProblemType::DRIVEN>(
