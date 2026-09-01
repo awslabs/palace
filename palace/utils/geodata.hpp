@@ -346,13 +346,9 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
                                                     std::unique_ptr<mfem::Mesh> &smesh);
 
-// Order-independent (conforming) topological entity counts for a mesh, broken down
-// per geometry, obtained from the gathered serial mesh. These are the true (constrained)
-// global entity counts needed to size a solver re-run without parsing the mesh. On a
-// nonconforming mesh true vertices/edges come from lowest-order finite-element space true
-// sizes (H1(1)/ND(1)) and true faces from a direct NC face-list count (dropping hanging
-// slave faces); on a conforming mesh true == leaf, so raw per-geometry counts are used.
-// Populated only on the root rank when an adapted mesh is written (see RebalanceMesh).
+// Order-independent (conforming) topological entity counts for a mesh, broken down per
+// geometry. Populated only on the root rank when an adapted mesh is written (see
+// RebalanceMesh and CompleteMeshEntityCounts).
 struct MeshEntityCounts
 {
   int dim = 0;
@@ -368,10 +364,16 @@ struct MeshEntityCounts
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing. When
-// `out_counts` is non-null and the adapted mesh is written, the mesh's true topological
-// entity counts are filled into it on the root rank.
+// `out_counts` is non-null and the adapted mesh is written, geometry-resolved counts are
+// filled on the root rank. Nonconforming vertex and edge counts must then be completed
+// collectively with CompleteMeshEntityCounts.
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts = nullptr);
+
+// Complete true vertex and edge counts for a nonconforming mesh using distributed
+// lowest-order H1 and ND spaces. This is collective over the mesh communicator and must be
+// called on every rank after RebalanceMesh has populated out_counts for the final mesh.
+void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);

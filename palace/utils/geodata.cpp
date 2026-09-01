@@ -1963,43 +1963,15 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
 namespace
 {
 
-// Fill the per-geometry topological entity counts from a gathered serial mesh. On a serial
-// mesh the true DOF size of a lowest-order FE space equals the global entity count, so no
-// MPI reduction is needed. `counts` is reset on entry, so this is safe to call repeatedly
-// with the same struct (each AMR iteration reuses one MeshEntityCounts).
+// Fill geometry-resolved topological entity counts from a gathered serial mesh. `counts` is
+// reset on entry, so this is safe to call repeatedly with the same struct.
 //
 // Cells are a raw per-geometry count (interior DOFs are never constrained, so raw == true).
-// The remaining entities depend on whether the mesh is nonconforming:
-//
-//   Conforming: true == leaf, so raw per-geometry counts are exact (no FE spaces): vertices
-//   GetNV(), edges GetNEdges(), faces bucketed by GetFaceGeometry() (3D only).
-//
-//   Nonconforming:
-//     - vertices: H1(1) true size. The NC vertex list flags every leaf vertex as conforming
-//       (no masters/slaves), so a list count would return the raw leaf count and over-count
-//       hanging vertices; the FE-space true size is the reliable count.
-//     - edges: ND(1) true size. Edges interior to a master face are face-constrained
-//       (they have no edge-master), so they are NOT slave edges in the NC edge list; a list
-//       count would over-count them, while the FE-space true size accounts for them.
-//     - faces (3D): a direct per-geometry count of non-SLAVE leaf faces from the NC face
-//       list. Every leaf face is TRUE unless it is a hanging SLAVE (CONFORMING and MASTER
-//       faces are true; boundary faces are UNRECOGNIZED (not in the list) but still true),
-//       so dropping only SLAVE faces yields exactly the RT(0) true size, and
-//       bucketing by GetFaceGeometry recovers the tri/quad split with no linear solve. This
-//       replaces a prior RT(0)/RT(1) 2x2 GetTrueVSize solve that was invalid on
-//       nonconforming meshes and emitted negative face counts on mixed meshes.
-//
-// The two FE spaces are each scoped so at most one is alive at a time, keeping peak memory
-// low. Attributes are already sorted and unique on mfem::Mesh.
-//
-// MPI INVARIANT (root-only, non-collective): when called from RebalanceMesh on a
-// nonconforming mesh, `smesh` is a ParMesh whose ParNCMesh holds every element on the root
-// rank, and this runs on the root rank ONLY. The H1(1)/ND(1) GetTrueVSize() and the
-// GetFaceList() calls all reach ParNCMesh::Build{Vertex,Edge,Face}List, which do NO MPI
-// communication (verified against MFEM commit 66dbe60cb1) -- the ONLY reason this root-only
-// routine cannot deadlock. If a future MFEM makes any Build*List collective, the [Parallel]
-// RebalanceMesh count test will hang; fix by moving this routine to a collective call site,
-// not by silencing.
+// On a conforming mesh, raw vertex, edge, and face counts are also true counts. On a
+// nonconforming mesh, CompleteMeshEntityCounts supplies true vertices and edges
+// collectively from distributed H1(1) and ND(1) spaces. True faces are counted here by
+// dropping hanging SLAVE faces from the NC face list; this list construction is
+// non-collective in MFEM.
 void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 {
   // Reset first so the accumulating members (cells, true_faces) never sum across AMR
@@ -2014,21 +1986,8 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
     counts.cells[smesh.GetElementBaseGeometry(i)]++;
   }
 
-  if (smesh.Nonconforming())
-  {
-    // Root-only, non-collective: see the MPI INVARIANT note in the block comment above.
-    {
-      mfem::H1_FECollection h1_fec(1, dim);
-      mfem::FiniteElementSpace h1_fespace(&smesh, &h1_fec);
-      counts.true_vertices = h1_fespace.GetTrueVSize();
-    }
-    {
-      mfem::ND_FECollection nd_fec(1, dim);
-      mfem::FiniteElementSpace nd_fespace(&smesh, &nd_fec);
-      counts.true_edges = nd_fespace.GetTrueVSize();
-    }
-  }
-  else
+  const bool nonconforming = smesh.Nonconforming();
+  if (!nonconforming)
   {
     counts.true_vertices = smesh.GetNV();
     counts.true_edges = (dim >= 2) ? smesh.GetNEdges() : 0;
@@ -2040,7 +1999,7 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
     // true. Nonconforming: count non-SLAVE leaf faces from the NC face list (== RT(0) true
     // size; see the block comment above). Bucketed by GetFaceGeometry either way.
     const mfem::NCMesh::NCList *face_list =
-        smesh.Nonconforming() ? &smesh.ncmesh->GetFaceList() : nullptr;
+        nonconforming ? &smesh.ncmesh->GetFaceList() : nullptr;
     for (int f = 0; f < smesh.GetNFaces(); f++)
     {
       if (face_list == nullptr ||
@@ -2055,10 +2014,41 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
       std::vector<int>(smesh.attributes.begin(), smesh.attributes.end());
   counts.boundary_attributes =
       std::vector<int>(smesh.bdr_attributes.begin(), smesh.bdr_attributes.end());
-  counts.valid = true;
+  counts.valid = !nonconforming;
 }
 
 }  // namespace
+
+void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
+{
+  if (!mesh.Nonconforming())
+  {
+    return;
+  }
+
+  const int dim = mesh.Dimension();
+  HYPRE_BigInt true_vertices;
+  {
+    mfem::H1_FECollection h1_fec(1, dim);
+    mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec);
+    true_vertices = h1_fespace.GlobalTrueVSize();
+  }
+  HYPRE_BigInt true_edges;
+  {
+    mfem::ND_FECollection nd_fec(1, dim);
+    mfem::ParFiniteElementSpace nd_fespace(&mesh, &nd_fec);
+    true_edges = nd_fespace.GlobalTrueVSize();
+  }
+
+  if (Mpi::Root(mesh.GetComm()))
+  {
+    MFEM_VERIFY(counts.dim == dim && !counts.cells.empty(),
+                "Missing gathered mesh entity counts!");
+    counts.true_vertices = static_cast<long long>(true_vertices);
+    counts.true_edges = static_cast<long long>(true_edges);
+    counts.valid = true;
+  }
+}
 
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts)

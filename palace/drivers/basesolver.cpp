@@ -253,8 +253,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     return ret;
   };
 
-  // True topological entity counts of the final adapted mesh, filled by RebalanceMesh on
-  // the root rank whenever an adapted mesh is written (Model.Refinement.SaveAdaptMesh).
+  // True topological entity counts of the final adapted mesh.
   mesh::MeshEntityCounts mesh_counts;
 
   // Main AMR loop.
@@ -349,8 +348,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     SaveAdaptationIteration(it + 1);
   }
 
-  // Record the final adapted mesh's true topological entity counts (only populated on the
-  // root rank when SaveAdaptMesh wrote a mesh; otherwise left invalid and skipped).
+  // Complete nonconforming vertex and edge counts collectively on the final distributed
+  // mesh. RebalanceMesh already populated the remaining counts while writing the mesh.
+  if (it > 0 && refinement.save_adapt_mesh)
+  {
+    mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
+  }
   if (mesh_counts.valid)
   {
     SaveMetadata(mesh_counts);

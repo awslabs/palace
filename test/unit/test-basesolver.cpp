@@ -72,7 +72,8 @@ long long Reconstruct(const mesh::MeshEntityCounts &c, mfem::FiniteElementCollec
 // split -- the quantity a prior RT-solve corrupted. `counts` come from a gathered serial
 // copy whose topology is identical to `serial_mesh`, so the true sizes must match exactly.
 // Runs on the caller's rank; call inside a root guard (counts are valid only on root).
-void CheckReconstructionOracle(const mesh::MeshEntityCounts &counts, mfem::Mesh &serial_mesh)
+void CheckReconstructionOracle(const mesh::MeshEntityCounts &counts,
+                               mfem::Mesh &serial_mesh)
 {
   const int dim = serial_mesh.Dimension();
   for (int p = 1; p <= 3; p++)
@@ -98,8 +99,8 @@ void CheckReconstructionOracle(const mesh::MeshEntityCounts &counts, mfem::Mesh 
   }
 }
 
-// Distribute `serial_mesh`, run RebalanceMesh with SaveAdaptMesh enabled (which fills the
-// counts on the root rank), and return the counts. Writes model.mesh into `out`.
+// Distribute `serial_mesh`, gather geometry-resolved counts while writing model.mesh, then
+// collectively complete nonconforming true vertex and edge counts.
 mesh::MeshEntityCounts ComputeCounts(MPI_Comm comm, const fs::path &out,
                                      mfem::Mesh &serial_mesh)
 {
@@ -111,6 +112,7 @@ mesh::MeshEntityCounts ComputeCounts(MPI_Comm comm, const fs::path &out,
   auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
   mesh::MeshEntityCounts counts;
   mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+  mesh::CompleteMeshEntityCounts(*parallel_mesh, counts);
   return counts;
 }
 
@@ -410,6 +412,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
   if (Mpi::Root(comm))
   {
+    CHECK_FALSE(counts.valid);
+    CHECK(counts.true_vertices == 0);
+    CHECK(counts.true_edges == 0);
+  }
+  mesh::CompleteMeshEntityCounts(*parallel_mesh, counts);
+
+  if (Mpi::Root(comm))
+  {
     REQUIRE(counts.valid);
     CHECK(counts.dim == 3);
     // The true (conforming) counts discount the constrained hanging vertices, edges, and
@@ -440,8 +450,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     }
     CHECK(counts.true_vertices >= 0);
     CHECK(counts.true_edges >= 0);
-    // Reconstruction-vs-GetTrueVSize oracle across H1, ND, and RT (RT validates the tri/quad
-    // TRUE-face split that the old solve corrupted). See CheckReconstructionOracle.
+    // Reconstruction-vs-GetTrueVSize oracle across H1, ND, and RT (RT validates the
+    // tri/quad TRUE-face split that the old solve corrupted). See
+    // CheckReconstructionOracle.
     CheckReconstructionOracle(counts, serial_mesh);
   }
 }
@@ -562,9 +573,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   check_twin("quad2d", mfem::Mesh::MakeCartesian2D(3, 3, mfem::Element::QUADRILATERAL));
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "RebalanceMesh entity counts reflect only the final mesh across iterations",
-                 "[basesolver][Serial]")
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "RebalanceMesh entity counts reflect only the final mesh across iterations",
+    "[basesolver][Serial]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
 
@@ -728,11 +740,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   iodata.model.refinement.save_adapt_mesh = true;
 
   // Build a nonconforming tet mesh identically on every rank, distribute it across the
-  // ranks, then RebalanceMesh gathers it back to the root rank to fill the counts. The
-  // reported counts must equal the single-rank answer (validated by the reconstruction
-  // oracle on the identical serial mesh) regardless of how the mesh was partitioned, and
-  // non-root ranks must be left unpopulated (valid == false, since FillMeshEntityCounts
-  // runs on root only and must contain no MPI-collective call).
+  // ranks, then RebalanceMesh gathers geometry-resolved counts on root and the collective
+  // completion step obtains true vertex and edge totals from distributed spaces. The
+  // reported counts must equal the single-rank answer regardless of partitioning, while
+  // non-root count records remain invalid.
   auto serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON);
   serial_mesh.EnsureNCMesh(true);
   mfem::Array<int> refs;
@@ -746,6 +757,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
   mesh::MeshEntityCounts counts;
   mesh::RebalanceMesh(iodata, parallel_mesh, &counts);
+  mesh::CompleteMeshEntityCounts(*parallel_mesh, counts);
 
   if (Mpi::Root(comm))
   {
@@ -758,7 +770,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   else
   {
-    // FillMeshEntityCounts runs on the root rank only; other ranks stay unpopulated.
+    // Only root owns the gathered geometry-resolved count record.
     CHECK_FALSE(counts.valid);
   }
 }
