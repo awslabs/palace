@@ -19,9 +19,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Added `Solver.Driven.AdaptiveSParameterOnly` to skip full-field postprocessing during
-    adaptive online sweeps when only port S-parameters are required. Adaptive CSV output is
-    buffered until finalization to avoid quadratic full-table rewrites. SchemaVer 1-7-0.
+  - Accelerated adaptive online sweeps by buffering CSV output, reusing reduced operators
+    and frequency-dependent wave-port state across excitations, and automatically evaluating
+    default domain energies in reduced coordinates when possible. Added
+    `Solver.Driven.AdaptiveSParameterOnly` to explicitly request S-parameter-only output.
+    SchemaVer 1-7-0.
   - Improved configuration schema validation errors to list valid enum values through nested
     schema alternatives and suggest the canonical capitalization for case-only mismatches
     [PR 890](https://github.com/awslabs/palace/pull/890).

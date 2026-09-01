@@ -440,6 +440,27 @@ public:
     PrintAllCSVData(post_op, nondim_measurement_cache, idx_value_dimensionful, step);
   }
 
+  // Adaptive reduced-order path preserving the default domain-energy and S tables.
+  template <ProblemType U = solver_t>
+  auto PrintReducedCSVData(const PostOperator<solver_t> &post_op,
+                           const Measurement &nondim_measurement_cache,
+                           double idx_value_dimensionful, int step, int ex_idx)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+  {
+    if (!Mpi::Root(post_op.fem_op->GetComm()))
+    {
+      return;
+    }
+    row_idx_v = idx_value_dimensionful;
+    row_i = step;
+    m_ex_idx = ex_idx;
+    measurement_cache =
+        Measurement::Dimensionalize(post_op.units, nondim_measurement_cache);
+    PrintDomainE();
+    PrintPortVI(post_op.fem_op->GetLumpedPortOp(), post_op.units);
+    PrintPortS();
+  }
+
   // Adaptive reduced-order fast path: write only S-parameter tables.
   template <ProblemType U = solver_t>
   auto PrintSParameterCSVData(const PostOperator<solver_t> &post_op,

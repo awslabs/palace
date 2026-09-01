@@ -486,8 +486,10 @@ public:
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
-  // Return PROM dimension.
+  // Return PROM dimension and the current online reduced solution.
   auto GetReducedDimension() const { return V.size(); }
+  const auto &GetBasis() const { return V; }
+  const Eigen::VectorXcd &GetReducedSolution() const { return RHSr; }
 
   // Return set of sampled parameter points for basis construction.
   const auto &GetSamplePoints(int excitation_idx) const

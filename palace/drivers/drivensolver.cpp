@@ -460,6 +460,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
   prom_op.PrepareOnlineExcitations();
+  post_op.ConfigureReducedPostprocessing(prom_op);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
@@ -484,6 +485,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         !post_op.HasFieldOutput(static_cast<int>(omega_i)))
     {
       post_op.MeasureAndPrintSParameters(excitation_idx, int(omega_i), E, omega);
+      return;
+    }
+    if (post_op.HasReducedPostprocessing() &&
+        !post_op.HasFieldOutput(static_cast<int>(omega_i)))
+    {
+      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
+                                     prom_op.GetReducedSolution());
       return;
     }
 

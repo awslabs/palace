@@ -11,6 +11,7 @@
 #include <optional>
 #include <type_traits>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
@@ -28,6 +29,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
+class RomOperator;
 class ErrorIndicator;
 class IoData;
 class LaplaceOperator;
@@ -248,6 +250,12 @@ protected:
 
   mutable Measurement measurement_cache;
 
+  // Exact reduced-coordinate domain-energy forms for adaptive online postprocessing.
+  bool reduced_postprocessing_ready = false;
+  bool reduced_postprocessing_checked = false;
+  Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
+  std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
   {
@@ -426,6 +434,18 @@ public:
   auto MeasureAndPrintSParameters(int ex_idx, int step, const ComplexVector &e,
                                   std::complex<double> omega)
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
+  // Configure and evaluate the exact reduced-coordinate default output path (domain
+  // energies plus port S-parameters). Unsupported configured measurements leave the path
+  // disabled and use full postprocessing.
+  template <ProblemType U = solver_t>
+  auto ConfigureReducedPostprocessing(const RomOperator &rom_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector &e,
+                              std::complex<double> omega, const Eigen::VectorXcd &y)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
