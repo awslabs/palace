@@ -3,7 +3,13 @@
 
 #include "magnetostaticsolver.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
+#include <map>
+#include <numeric>
+#include <set>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -20,6 +26,80 @@
 
 namespace palace
 {
+
+namespace
+{
+
+// Invert a matrix in place, returning false and leaving it untouched if it cannot be
+// inverted. The entries are checked first because mfem's LU factorization aborts rather
+// than reporting failure on a singular matrix.
+bool InvertOrMarkSingular(mfem::DenseMatrix &mat)
+{
+  const int n = mat.Height();
+  if (n == 0)
+  {
+    return true;
+  }
+  // The entries are scanned explicitly rather than via DenseMatrix::MaxMaxNorm, whose
+  // running maximum never updates on a NaN comparison and so hides NaNs behind a finite
+  // norm.
+  double norm = 0.0;
+  for (int i = 0; i < n * n; i++)
+  {
+    const double entry = std::abs(mat.GetData()[i]);
+    if (!std::isfinite(entry))
+    {
+      return false;
+    }
+    norm = std::max(norm, entry);
+  }
+  if (norm == 0.0)
+  {
+    return false;
+  }
+  // Reject a matrix whose LU pivots underflow relative to its scale, which is what an
+  // uninvertible block looks like here (for example a flux loop that links no flux).
+  mfem::DenseMatrix lu(mat);
+  mfem::Array<int> ipiv(n);
+  mfem::LUFactors factors(lu.GetData(), ipiv.GetData());
+  if (!factors.Factor(n, std::numeric_limits<double>::epsilon() * norm))
+  {
+    return false;
+  }
+  mat.Invert();
+  return true;
+}
+
+// Fill the reluctance Minv = M^-1 and the mutual (current-difference) matrix Mm from a
+// fully populated inductance matrix M. If M is not usable every entry is left as NaN.
+void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
+                      mfem::DenseMatrix &Mm, bool valid)
+{
+  if (!valid)
+  {
+    return;
+  }
+  const int n = M.Height();
+  mfem::DenseMatrix M_inv(M);
+  if (InvertOrMarkSingular(M_inv))
+  {
+    Minv = M_inv;
+  }
+  for (int i = 0; i < n; i++)
+  {
+    Mm(i, i) = M(i, i);
+    for (int j = 0; j < n; j++)
+    {
+      if (i != j)
+      {
+        Mm(i, j) = -M(i, j);
+        Mm(i, i) += M(i, j);
+      }
+    }
+  }
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -69,9 +149,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
-  MFEM_VERIFY(n_current_steps == 0 || n_flux_steps == 0,
-              "Combining SurfaceCurrent and FluxLoop excitations in the same "
-              "magnetostatic simulation is not yet supported!");
   MFEM_VERIFY(
       n_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
           !iodata.model.refinement.nonconformal,
@@ -79,12 +156,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
-  // Per-step stiffness matrix for shorted inactive ports; declared here so it outlives the
-  // solver's operator binding for the duration of the step's solve.
-  std::unique_ptr<Operator> K_step;
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
   std::vector<double> Phi_inc(n_step);
+
+  // Magnetic flux linked through each current port's element apertures during each flux
+  // excitation, used to recover the current-flux mutual inductance in a mixed simulation.
+  // This coupling is invisible to the cross-energy formula: a current step drives zero loop
+  // flux while a flux step drives zero port current, so the two states are
+  // energy-orthogonal and the mutual has to be measured directly.
+  mfem::DenseMatrix linked_flux(n_current_steps, n_flux_steps);
+  linked_flux = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
   // In 2D, the curl is scalar: use the L2 curl space and H1 spaces for the estimator.
@@ -115,46 +197,74 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Pre-allocate boundary values vector for flux loop optimization
   Vector boundary_values;
 
+  // Shorted-attribute set of each current-source step and its sorted, deduplicated key
+  // (empty = base operator). Steps sharing a key share a cached screened operator.
+  std::vector<mfem::Array<int>> short_attrs_per_step(n_current_steps);
+  std::vector<std::vector<int>> step_keys(n_step);
+  {
+    int step = 0;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+    {
+      auto &short_attrs = short_attrs_per_step[step];
+      for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
+      {
+        if (other_idx != idx && port_is_short(other_idx))
+        {
+          for (const auto &elem : other_data.elements)
+          {
+            short_attrs.Append(elem.source->GetAttrList());
+          }
+        }
+      }
+      std::set<int> unique_attr(short_attrs.begin(), short_attrs.end());
+      step_keys[step++].assign(unique_attr.begin(), unique_attr.end());
+    }
+  }
+
+  // Order steps by each key's first appearance so steps sharing an operator are adjacent
+  // and the bound operator (and its preconditioner) is reused across the group;
+  // already-grouped orderings are untouched. Results go to the canonical slot A[step], so
+  // postprocessing is unchanged.
+  std::map<std::vector<int>, int> key_first_seen;
   for (int step = 0; step < n_step; step++)
+  {
+    key_first_seen.emplace(step_keys[step], step);
+  }
+  std::vector<int> solve_order(n_step);
+  std::iota(solve_order.begin(), solve_order.end(), 0);
+  std::stable_sort(
+      solve_order.begin(), solve_order.end(), [&](int a, int b)
+      { return key_first_seen.at(step_keys[a]) < key_first_seen.at(step_keys[b]); });
+
+  // Pass 1: solve each excitation in operator-grouped order.
+  int solve_it = 0;
+  for (int step : solve_order)
   {
     A[step].SetSize(RHS.Size());
     A[step].UseDevice(true);
     A[step] = 0.0;
+    solve_it++;
 
     if (step < n_current_steps)
     {
       // Current source excitation
       const auto &[idx, data] = *std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step);
       Mpi::Print("\nIt {:d}/{:d}: Current Index = {:d} (elapsed time = {:.2e} s)\n",
-                 step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
+                 solve_it, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
       curlcurl_op.GetCurrentExcitationVector(idx, RHS);
       I_inc[step] = data.GetExcitationCurrent();
       Phi_inc[step] = 0.0;  // Zero flux for current sources
 
-      // Collect the boundary attributes of every inactive port that should be shorted
-      // (PEC) for this excitation step. Ports resolving to Open are left as natural BCs.
-      mfem::Array<int> short_attrs;
-      for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
-      {
-        if (other_idx != idx && port_is_short(other_idx))
-        {
-          for (const auto &elem : other_data.elems)
-          {
-            short_attrs.Append(elem->GetAttrList());
-          }
-        }
-      }
-
+      const auto &short_attrs = short_attrs_per_step[step];
       if (short_attrs.Size() > 0)
       {
-        // Reassemble the stiffness matrix with the shorted inactive ports added as
-        // essential (PEC) boundaries for this excitation step, and zero the excitation on
-        // those DOFs so the DIAG_ONE elimination does not inject spurious values on edges
-        // shared with the active port. The reused solver records its stats for metadata.
-        K_step = curlcurl_op.GetStiffnessMatrix(short_attrs);
+        // Fetch the cached stiffness matrix with the shorted inactive ports added as
+        // essential (PEC) boundaries, and zero the excitation on those DOFs so DIAG_ONE
+        // elimination injects no spurious values on edges shared with the active port.
+        const Operator &K_step = curlcurl_op.GetScreenedStiffnessMatrix(short_attrs);
         curlcurl_op.ZeroEssentialTrueDofs(short_attrs, RHS);
-        set_operator(*K_step);
+        set_operator(K_step);
         ksp.Mult(RHS, A[step]);
       }
       else
@@ -171,7 +281,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const auto &[idx, data] =
           *std::next(curlcurl_op.GetSurfaceFluxOp().begin(), flux_idx);
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
-                 step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
+                 solve_it, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
       curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
       I_inc[step] = 0.0;                         // Zero current for flux loops
@@ -181,7 +291,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       set_operator(*K);
       ksp.Mult(RHS, A[step]);
     }
+  }
 
+  // Pass 2: postprocess in canonical step order so output is independent of solve order.
+  for (int step = 0; step < n_step; step++)
+  {
     Curl.Mult(A[step], B);
 
     // Flux verification for flux loops.
@@ -200,6 +314,26 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
                              curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
                              flux_direction, curlcurl_op.GetComm());
+
+      // Measure the flux this excitation links through each current port's aperture. With
+      // the current ports open (I_c = 0) the response is Φ_c = M_cf*M_ff^-1*Φ_f, which is
+      // what makes the current-flux mutual inductance recoverable.
+      int col = 0;
+      for (const auto &current : curlcurl_op.GetSurfaceCurrentOp())
+      {
+        const auto &j_data = current.second;
+        for (const auto &elem : j_data.elements)
+        {
+          MFEM_VERIFY(elem.aperture,
+                      "Missing SurfaceCurrent aperture after configuration validation!");
+          linked_flux(col, flux_idx) +=
+              elem.current_fraction *
+              ComputeFluxThroughSurface(B_gf, elem.aperture->attributes,
+                                        curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
+                                        elem.aperture->direction, curlcurl_op.GetComm());
+        }
+        col++;
+      }
     }
 
     // Energy calculation and error estimation.
@@ -216,7 +350,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
-                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc);
+                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux);
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
@@ -225,7 +359,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
-    const std::vector<double> &Phi_inc) const
+    const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -238,7 +372,31 @@ void MagnetostaticSolver::PostprocessTerminals(
   // If flux excitation is employed, inductance matrix is computed by first computing
   // the reluctance:
   //                          R_ij = (A_j^T*K*A_i)/(Φ_i*Φ_j)
-  // and then M = R^-1. Mixed current/flux excitation is rejected before solving.
+  // and then M = R^-1.
+  //
+  // With both current and flux excitations present the normalized cross-energies form a
+  // hybrid (mixed impedance/admittance) matrix H rather than an inductance matrix: each
+  // column is normalized by its own excitation, so a current column carries units of H and
+  // a flux column of 1/H. Writing c for the current ports and f for the flux ports, a
+  // current step holds the flux loops at zero flux (their PEC surfaces are part of the base
+  // essential set) while a flux step leaves the current ports open (I_c = 0), so
+  //                  H_cc = M_cc - M_cf*M_ff^-1*M_fc      (screened, a Schur complement)
+  //                  H_ff = M_ff^-1                        (flux-loop reluctance)
+  // The off-diagonal cross-energy H_cf, however, vanishes identically: pairing a current
+  // state with a flux state gives E = Σ_c I_c*Φ_c + Σ_f I_f*Φ_f, in which the first sum is
+  // zero because the flux state carries no port current and the second is zero because the
+  // current state links no loop flux. The two states are energy-orthogonal, so the mutual
+  // inductance cannot be obtained from cross-energies and has to be measured directly. A
+  // flux excitation responds with Φ_c = M_cf*M_ff^-1*Φ_f, so integrating B ⋅ n over each
+  // current port's aperture during each flux step gives G = M_cf*M_ff^-1 and hence
+  //                  M_ff = H_ff^-1
+  //                  M_cf = G*M_ff
+  //                  M_cc = H_cc + G*M_ff*G^T
+  // recovering the bare inductance matrix in henries; only H_ff has to be inverted, exactly
+  // as in the pure flux case. If H_ff is singular the flux rows and columns, and the
+  // un-screening correction to M_cc, are not defined and the affected entries are reported
+  // as NaN. Mixed configurations require a complete oriented aperture for every current
+  // element, so terminal-M.csv never mixes bare and screened inductance entries.
   //
   // Reciprocity note for Short inactive ports: the reciprocal cross-energy formula only
   // holds when every excitation is solved with the same operator (same essential-DOF set).
@@ -320,6 +478,91 @@ void MagnetostaticSolver::PostprocessTerminals(
     // Get inductance from reluctance: M = R^{-1}
     M = Minv;
     M.Invert();
+  }
+  else if (n_current > 0 && n_flux > 0)
+  {
+    // Mixed current/flux case: normalize each column by its own excitation to build the
+    // hybrid matrix H, then convert the blocks to a single inductance matrix in henries.
+    // Current columns come first, followed by flux columns. Only the diagonal blocks of H
+    // are meaningful: the current-flux cross-energies vanish identically (the two
+    // excitation types are energy-orthogonal), so the coupling comes from the measured
+    // linked flux.
+    auto excitation = [&](int i) { return (i < n_current) ? I_inc[i] : Phi_inc[i]; };
+    mfem::DenseMatrix H(n);
+    H = nan;
+    for (int i = 0; i < n; i++)
+    {
+      H(i, i) = cross_energy(i, i) / (excitation(i) * excitation(i));
+      for (int j = i + 1; j < n; j++)
+      {
+        // Skip the current-flux block, whose cross-energy is identically zero.
+        if ((i < n_current) != (j < n_current))
+        {
+          continue;
+        }
+        H(i, j) = H(j, i) = cross_energy(i, j) / (excitation(i) * excitation(j));
+      }
+    }
+
+    // G = M_cf*M_ff^-1 from the flux linked through each current port's aperture, which is
+    // the only place the current-flux coupling is observable.
+    mfem::DenseMatrix G(n_current, n_flux);
+    for (int i = 0; i < n_current; i++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        G(i, b) = linked_flux(i, b) / Phi_inc[n_current + b];
+      }
+    }
+    // Invert the flux-flux reluctance block H_ff to get the flux-loop inductance block.
+    mfem::DenseMatrix Mff(n_flux);
+    for (int a = 0; a < n_flux; a++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        Mff(a, b) = H(n_current + a, n_current + b);
+      }
+    }
+    const bool flux_invertible = InvertOrMarkSingular(Mff);
+
+    // M_ff = H_ff^-1.
+    for (int a = 0; a < n_flux; a++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        M(n_current + a, n_current + b) = flux_invertible ? Mff(a, b) : nan;
+      }
+    }
+    // M_cf = G*M_ff, and its transpose M_fc.
+    for (int i = 0; i < n_current; i++)
+    {
+      for (int b = 0; b < n_flux; b++)
+      {
+        double sum = 0.0;
+        for (int a = 0; a < n_flux; a++)
+        {
+          sum += G(i, a) * Mff(a, b);
+        }
+        M(i, n_current + b) = M(n_current + b, i) = flux_invertible ? sum : nan;
+      }
+    }
+    // M_cc = H_cc + G*M_ff*G^T un-screens the current-port block, which the zero-flux loops
+    // would otherwise report as a Schur complement.
+    for (int i = 0; i < n_current; i++)
+    {
+      for (int j = i; j < n_current; j++)
+      {
+        // correction = (G*M_ff*G^T)_ij, reusing the already-computed M_cf = G*M_ff row.
+        double correction = 0.0;
+        for (int b = 0; b < n_flux; b++)
+        {
+          correction += M(i, n_current + b) * G(j, b);
+        }
+        M(i, j) = M(j, i) = flux_invertible ? H(i, j) + correction : nan;
+      }
+    }
+
+    ComputeMinvAndMm(M, Minv, Mm, flux_invertible);
   }
   else
   {

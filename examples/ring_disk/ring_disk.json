@@ -1,0 +1,73 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/ring_disk.msh",
+    "L0": 1.0e-6,  // μm
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3]  // Farfield + ring metal
+    },
+    "SurfaceCurrent":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],  // Ring terminal
+        "Direction": [0.0, 1.0, 0.0],
+        // Oriented surfaces tiling the ring's interior, through which the flux linked by
+        // the ring is measured to recover the current-flux mutual inductance. The disk and
+        // hole contributions cancel, leaving the coupling through the annular gap.
+        "Aperture":
+        {
+          "Attributes": [5, 6, 7],  // Disk + hole + gap
+          "Direction": "+Z"
+        }
+      }
+    ],
+    "FluxLoop":
+    [
+      {
+        "Index": 2,
+        "FluxLoopPEC": [5],     // Disk metal
+        "HoleAttributes": [6],  // Hole through the disk
+        "FluxAmounts": [1.0],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Magnetostatic":
+    {
+      "Save": 2
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

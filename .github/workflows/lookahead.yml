@@ -92,6 +92,8 @@ jobs:
           toolchain: gcc
           run-regression-tests: 'true'
           spack-version: 'develop'
+          # Keep this job on the moving spack-packages tip as well.
+          spack-packages-commit: ''
 
   # Refresh the palace-develop buildcache index after its sole cache-producing
   # job. Runs even if a later test in that job failed, so the index includes
@@ -128,34 +130,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     steps:
-      - name: Install Spack develop
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/refresh-buildcache-index
         with:
-          repository: spack/spack
-          path: spack
-          ref: develop
-
-      # The build job's Spack environment is not on this runner, so synthesize
-      # a minimal one carrying just the mirror definition (same approach as
-      # refresh-buildcache-index in spack.yml).
-      - name: Refresh Spack develop buildcache index
-        shell: bash
-        run: |
-          START_TIME=${SECONDS}
-          INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
-          mkdir -p "${INDEX_ENV}"
-          cat > "${INDEX_ENV}/spack.yaml" << 'EOF'
-          spack:
-            specs: []
-            mirrors:
-              local-buildcache:
-                binary: true
-                url: oci://ghcr.io/awslabs/palace-develop
-                signed: false
-                access_pair:
-                  id_variable: GITHUB_USER
-                  secret_variable: GITHUB_TOKEN
-          EOF
-          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
-            buildcache update-index local-buildcache
-          echo "Spack develop buildcache index refresh: $((SECONDS - START_TIME))s"
+          spack-version: develop
+          mirror-url: oci://ghcr.io/awslabs/palace-develop

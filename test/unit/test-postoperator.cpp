@@ -139,7 +139,7 @@ auto RandomMeasurement(int ndomain = 5)
   {
     cache.interface_eps_i.emplace_back(
         Measurement::InterfaceData{i, 1 + randd(100), (1 + randd(9999)) / 10000,
-                                   (1 + randd(9999) / 10000), 1e9 / (1 + randd(9999))});
+                                   (1 + randd(9999)) / 10000, 1e9 / (1 + randd(9999))});
   }
 
   return cache;
