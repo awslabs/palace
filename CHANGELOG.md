@@ -19,10 +19,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Accelerated adaptive online sweeps by buffering CSV output, reusing reduced operators
-    and frequency-dependent wave-port state across excitations, evaluating default domain
-    energies in reduced coordinates, and evaluating port quantities without unnecessary
-    magnetic-field reconstruction when possible (the electric field is still reconstructed).
   - Improved configuration schema validation errors to list valid enum values through nested
     schema alternatives and suggest the canonical capitalization for case-only mismatches
     [PR 890](https://github.com/awslabs/palace/pull/890).
@@ -94,9 +90,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Omit material terms with mathematically exact-zero coefficients from fine-level partial
     assembly while retaining the configured coarse sparse structure for symbolic reuse.
     [PR 876](https://github.com/awslabs/palace/pull/876).
-  - Accelerated wave port solves in the adaptive driven sweep online phase with a per-port
-    PROM trained on the offline modes. Avoids 2D wave-port EVP solves for accepted online
-    samples. [PR 909](https://github.com/awslabs/palace/pull/909).
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offlines modes. Also buffering CSV output, reusing reduced operators
+    and wave-port state across excitations, evaluating default domain energies in reduced
+    coordinates, and evaluating port quantities without unnecessary magnetic-field
+    reconstruction when possible. [PR 909](https://github.com/awslabs/palace/pull/909).
 
 #### Bug Fixes
 
