@@ -765,6 +765,86 @@ TEST_CASE_METHOD(test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(test::SharedTempDir,
+                 "CeedParaView boundary packed provider accepts empty MPI pieces",
+                 "[postoperator][boundary-viz][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  REQUIRE(Mpi::Size(comm) == 2);
+
+  // Two disconnected tetrahedra are assigned one per rank, while the only boundary
+  // element belongs to rank zero. This models a selected boundary surface which has no
+  // local piece on one participating rank.
+  mfem::Mesh serial_mesh(3, 8, 2, 1, 3);
+  serial_mesh.AddVertex(0.0, 0.0, 0.0);
+  serial_mesh.AddVertex(1.0, 0.0, 0.0);
+  serial_mesh.AddVertex(0.0, 1.0, 0.0);
+  serial_mesh.AddVertex(0.0, 0.0, 1.0);
+  serial_mesh.AddVertex(3.0, 0.0, 0.0);
+  serial_mesh.AddVertex(4.0, 0.0, 0.0);
+  serial_mesh.AddVertex(3.0, 1.0, 0.0);
+  serial_mesh.AddVertex(3.0, 0.0, 1.0);
+  serial_mesh.AddTet(0, 1, 2, 3, 1);
+  serial_mesh.AddTet(4, 5, 6, 7, 1);
+  serial_mesh.AddBdrTriangle(1, 2, 3, 1);
+  serial_mesh.FinalizeTopology();
+  serial_mesh.Finalize(true, false);
+  int partitioning[2] = {0, 1};
+  mfem::ParMesh pmesh(comm, serial_mesh, partitioning);
+
+  CeedParaViewDataCollection collection(temp_dir / "empty_boundary_piece", &pmesh);
+  collection.SetBoundaryOutput(true);
+  collection.SetCycle(1);
+  collection.SetDataFormat(mfem::VTKFormat::BINARY32);
+  collection.SetCompressionLevel(0);
+  collection.SetHighOrderOutput(true);
+  collection.SetLevelsOfDetail(1);
+
+  std::vector<int> bases;
+  int num_points = 0;
+  for (int i = 0; i < pmesh.GetNBE(); i++)
+  {
+    bases.push_back(num_points);
+    num_points +=
+        mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementBaseGeometry(i), 1, 1)
+            ->RefPts.GetNPoints();
+  }
+  int min_points = num_points, max_points = num_points;
+  Mpi::GlobalMin(1, &min_points, comm);
+  Mpi::GlobalMax(1, &max_points, comm);
+  CHECK(min_points == 0);
+  CHECK(max_points > 0);
+
+  Vector packed(15 * num_points);
+  packed = 0.0;
+  const std::vector<CeedParaViewDataCollection::BoundaryPointFieldDescriptor> fields = {
+      {"E", 0 * num_points, 3 * num_points, 3},  {"B", 3 * num_points, 3 * num_points, 3},
+      {"Q_s", 6 * num_points, num_points, 1},    {"J_s", 7 * num_points, 3 * num_points, 3},
+      {"U_e", 10 * num_points, num_points, 1},   {"U_m", 11 * num_points, num_points, 1},
+      {"S", 12 * num_points, 3 * num_points, 3},
+  };
+  int callback_count = 0;
+  collection.RegisterBoundaryPointFieldBatch(
+      fields, bases,
+      [&]() -> const Vector &
+      {
+        callback_count++;
+        return packed;
+      },
+      packed.Size());
+  collection.Save();
+
+  CHECK(callback_count == 1);
+  const auto path = temp_dir / "empty_boundary_piece" / "Cycle000001" /
+                    fmt::format("proc{:06d}.vtu", Mpi::Rank(comm));
+  const auto vtu = ReadFile(path);
+  for (const auto &field : fields)
+  {
+    CHECK(ReadFloatDataArray(vtu, field.name).size() ==
+          static_cast<std::size_t>(field.size));
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
                  "PostOperator boundary ParaView fields match legacy coefficients",
                  "[postoperator][boundary-viz][Serial][GPU]")
 {
