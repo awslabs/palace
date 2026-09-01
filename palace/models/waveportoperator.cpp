@@ -654,6 +654,7 @@ void WavePortData::Initialize(double omega)
   const double sigma = -omega * omega * mu_eps_max;
   std::complex<double> lambda;
   {
+    BlockTimer bt(Timer::WAVE_PORT_SOLVE);
     const bool has_solver = (port_comm != MPI_COMM_NULL);
     auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
     if (has_solver)
@@ -662,8 +663,8 @@ void WavePortData::Initialize(double omega)
                   "Wave port eigensolver did not converge!");
       lambda = mode_solver->GetEigenvalue(mode_idx - 1);
     }
+    Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
   }
-  Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // 1 / (-k_n² - σ).
@@ -674,6 +675,7 @@ void WavePortData::Initialize(double omega)
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
   // phase-normalize, then apply the shared VD back-transform.
   {
+    BlockTimer bt(Timer::WAVE_PORT_FIELD);
     if (port_comm != MPI_COMM_NULL)
     {
       mode_solver->GetEigenvector(mode_idx - 1, e0);
@@ -710,6 +712,7 @@ void WavePortData::Initialize(double omega)
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
   // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
   {
+    BlockTimer bt(Timer::WAVE_PORT_POSTPRO);
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);

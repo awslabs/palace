@@ -252,6 +252,10 @@ public:
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
 
+  // Prepare all frequency-dependent modal state once before evaluating multiple
+  // excitations at the same frequency.
+  void PrepareFrequency(double omega) { Initialize(omega); }
+
   // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
   // is a checked upper bound on possible exact mode snapshots and storage remains lazy.
   void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,

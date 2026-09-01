@@ -713,6 +713,22 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     CHECK(driven_solver.prom_indices == prom_indices);
   }
 
+  SECTION("Adaptive S-parameter-only output")
+  {
+    json driven = {{"Samples", {{{"MinFreq", 0.1}, {"MaxFreq", 1.0}, {"NSample", 5}}}},
+                   {"AdaptiveTol", 1.0e-3},
+                   {"AdaptiveSParameterOnly", true}};
+    config::DrivenSolverData driven_solver(driven);
+    CHECK(driven_solver.adaptive_s_parameter_only);
+
+    driven["AdaptiveTol"] = 0.0;
+    CHECK_THROWS(config::DrivenSolverData(driven));
+
+    driven["AdaptiveTol"] = 1.0e-3;
+    driven["Save"] = {0.1};
+    CHECK_THROWS(config::DrivenSolverData(driven));
+  }
+
   SECTION("Invalid configs throw")
   {
     // Empty

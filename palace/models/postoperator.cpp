@@ -1564,6 +1564,35 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
 
 template <ProblemType solver_t>
 template <ProblemType U>
+auto PostOperator<solver_t>::MeasureAndPrintSParameters(int ex_idx, int step,
+                                                        const ComplexVector &e,
+                                                        std::complex<double> omega)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  SetEGridFunction(e);
+
+  measurement_cache = {};
+  measurement_cache.freq = omega;
+  measurement_cache.ex_idx = ex_idx;
+  for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
+  {
+    measurement_cache.lumped_port_vi[idx].S = data.GetSParameter(*E);
+  }
+  for (const auto &[idx, data] : fem_op->GetWavePortOp())
+  {
+    measurement_cache.wave_port_vi[idx].S = data.GetSParameter(*E);
+  }
+  MeasureFloquetPorts();
+  MeasureSParameter();
+
+  const std::complex<double> freq =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+  post_op_csv.PrintSParameterCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega,
@@ -1719,6 +1748,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
+  post_op_csv.FinalizeCSVData();
   // Pass nullptr for the indicator if it is empty (no AMR), so the write functions
   // skip the indicator grid function but still save the mesh and rank partition.
   const ErrorIndicator *ind_ptr = (indicator.Local().Size() > 0) ? &indicator : nullptr;
@@ -1994,6 +2024,10 @@ template class PostOperator<ProblemType::BOUNDARYMODE>;
 template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType::DRIVEN>(
     int ex_idx, int step, const ComplexVector &e, const ComplexVector &b,
     std::complex<double> omega) -> double;
+
+template auto
+PostOperator<ProblemType::DRIVEN>::MeasureAndPrintSParameters<ProblemType::DRIVEN>(
+    int ex_idx, int step, const ComplexVector &e, std::complex<double> omega) -> void;
 
 template auto
 PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>(

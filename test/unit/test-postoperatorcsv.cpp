@@ -23,6 +23,7 @@ class PostOperatorCSVManualTest : public PostOperatorCSV<ProblemType::DRIVEN>
 {
 public:
   using PostOperatorCSV<ProblemType::DRIVEN>::PostOperatorCSV;
+  bool DefersTableWrites() const { return defer_table_writes; }
   friend class PostOperatorCSVFixture;
 };
 
@@ -483,6 +484,17 @@ TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv][Serial]")
     reload_fixture.restart1_bad_col_alignment();
   }
 }
+TEST_CASE("PostOperatorCSV_AdaptiveOutputBuffering", "[postoperatorcsv][Serial]")
+{
+  PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+  fixture.iodata.solver.driven.adaptive_tol = 1.0e-3;
+  PostOperatorCSVManualTest post_op_csv{fixture.iodata, fixture.space_op};
+  if (Mpi::Root(Mpi::World()))
+  {
+    CHECK(post_op_csv.DefersTableWrites());
+  }
+}
+
 TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart2.json"};

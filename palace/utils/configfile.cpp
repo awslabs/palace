@@ -1154,6 +1154,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_memory = driven.value("AdaptiveConvergenceMemory", adaptive_memory);
   adaptive_solver_gs_orthog_type =
       driven.value("AdaptiveGSOrthogonalization", adaptive_solver_gs_orthog_type);
+  adaptive_s_parameter_only =
+      driven.value("AdaptiveSParameterOnly", adaptive_s_parameter_only);
   adaptive_circuit_synthesis =
       driven.value("AdaptiveCircuitSynthesis", adaptive_circuit_synthesis);
   adaptive_circuit_synthesis_domain_orthog =
@@ -1162,6 +1164,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
+  MFEM_VERIFY(!adaptive_s_parameter_only || adaptive_tol > 0.0,
+              "\"AdaptiveSParameterOnly\" requires an adaptive frequency sweep!");
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
@@ -1302,6 +1306,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
+  MFEM_VERIFY(!adaptive_s_parameter_only || save_indices.empty(),
+              "\"AdaptiveSParameterOnly\" is incompatible with field-save frequencies!");
 }
 
 EigenSolverData::EigenSolverData(const json &eigenmode)

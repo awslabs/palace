@@ -419,6 +419,14 @@ public:
                           const ComplexVector &b, std::complex<double> omega)
       -> std::enable_if_t<U == ProblemType::DRIVEN, double>;
 
+  // Adaptive online fast path for S-parameter-only output. The electric field is still
+  // prolonged from the PROM, but magnetic-field construction and all non-S measurements
+  // are skipped.
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintSParameters(int ex_idx, int step, const ComplexVector &e,
+                                  std::complex<double> omega)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                           std::complex<double> omega, double error_abs, double error_bkwd,
@@ -501,6 +509,11 @@ public:
                        [](const auto &p) { return p.second.has_current; });
   }
   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
+
+  // Whether this solve requests any full-field output. Adaptive online sweeps can use this
+  // to choose an ordering that keeps frequency-dependent port state hot across excitations.
+  bool HasFieldOutput() const { return ShouldWriteFields(); }
+  bool HasFieldOutput(int step) const { return ShouldWriteFields(step); }
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

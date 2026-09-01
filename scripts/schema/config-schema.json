@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-6-0",
+  "$id": "urn:palace:schema:1-7-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2552,6 +2552,12 @@
           "$ref": "#/$defs/Orthogonalization",
           "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
           "default": "CGS2",
+          "x-palace-advanced": true
+        },
+        "AdaptiveSParameterOnly": {
+          "type": "boolean",
+          "description": "During the adaptive online sweep, compute and write only port S-parameters and final error-indicator statistics. This skips magnetic-field reconstruction, field energies, fluxes, probes, far-field output, and other CSV tables. Incompatible with field-save frequencies.",
+          "default": false,
           "x-palace-advanced": true
         },
         "AdaptiveCircuitSynthesis": {
