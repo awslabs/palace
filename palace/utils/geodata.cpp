@@ -1530,21 +1530,68 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   // Each rank: collect (gv0, gv1, attr, is_surface) for every edge of its local parent
   // boundary elements, using sorted global vertex pairs as edge keys.
   std::vector<int> local_edge_attrs;
+  std::vector<double> local_edge_geometry, local_face_geometry;
   {
     mfem::Array<int> edges, orientations, ev;
+    mfem::Vector point(parent.SpaceDimension());
     for (int be = 0; be < parent.GetNBE(); be++)
     {
-      int attr = parent.GetBdrAttribute(be);
-      bool is_surface = (surface_attr_set.count(attr) > 0);
+      const int attr = parent.GetBdrAttribute(be);
+      const bool is_surface = (surface_attr_set.count(attr) > 0);
       parent.GetBdrElementEdges(be, edges, orientations);
+
+      // Get physical corner coordinates through the nodal transformation. Mesh::GetVertex
+      // can be stale after NC updates and nodal GridFunction reordering.
+      mfem::IsoparametricTransformation transformation;
+      parent.GetBdrElementTransformation(be, &transformation);
+      const auto *vertex_rule =
+          mfem::Geometries.GetVertices(transformation.GetGeometryType());
+      const int nv = vertex_rule->GetNPoints();
+      MFEM_VERIFY((nv == 3 || nv == 4) && edges.Size() == nv,
+                  "Expected triangular or quadrilateral parent boundary element!");
+      double corner_coordinates[4][3] = {};
+      for (int j = 0; j < nv; j++)
+      {
+        transformation.Transform(vertex_rule->IntPoint(j), point);
+        for (int d = 0; d < point.Size(); d++)
+        {
+          corner_coordinates[j][d] = point[d];
+        }
+      }
+
       for (int j = 0; j < edges.Size(); j++)
       {
         parent.GetEdgeVertices(edges[j], ev);
-        int gv0 = static_cast<int>(pvert_gi[ev[0]]);
-        int gv1 = static_cast<int>(pvert_gi[ev[1]]);
+        const int gv0 = static_cast<int>(pvert_gi[ev[0]]);
+        const int gv1 = static_cast<int>(pvert_gi[ev[1]]);
         local_edge_attrs.insert(
             local_edge_attrs.end(),
             {std::min(gv0, gv1), std::max(gv0, gv1), attr, is_surface ? 1 : 0});
+        const int *local_edge =
+            nv == 3 ? mfem::Mesh::tri_t::Edges[j] : mfem::Mesh::quad_t::Edges[j];
+        const double *x0 = corner_coordinates[local_edge[0]];
+        const double *x1 = corner_coordinates[local_edge[1]];
+        local_edge_geometry.insert(local_edge_geometry.end(),
+                                   {static_cast<double>(attr), is_surface ? 1.0 : 0.0,
+                                    x0[0], x0[1], x0[2], x1[0], x1[1], x1[2]});
+      }
+
+      // Store non-surface parent boundary faces for a geometric fallback when NC child
+      // perimeter edges do not align with any parent edge segment.
+      if (!is_surface)
+      {
+        constexpr int face_record_size = 14;
+        const auto offset = local_face_geometry.size();
+        local_face_geometry.resize(offset + face_record_size, 0.0);
+        local_face_geometry[offset] = static_cast<double>(attr);
+        local_face_geometry[offset + 1] = static_cast<double>(nv);
+        for (int j = 0; j < nv; j++)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            local_face_geometry[offset + 2 + 3 * j + d] = corner_coordinates[j][d];
+          }
+        }
       }
     }
   }
@@ -1565,6 +1612,35 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   std::vector<int> all_edge_attrs(total);
   Mpi::Allgatherv(local_count, local_edge_attrs.data(), all_edge_attrs.data(),
                   recv_counts.data(), displs.data(), comm);
+
+  constexpr int edge_attr_record_size = 4;
+  constexpr int edge_geom_record_size = 8;
+  std::vector<int> geom_counts(Mpi::Size(comm)), geom_displs(Mpi::Size(comm));
+  int geom_total = 0;
+  for (int i = 0; i < Mpi::Size(comm); i++)
+  {
+    geom_counts[i] = (recv_counts[i] / edge_attr_record_size) * edge_geom_record_size;
+    geom_displs[i] = geom_total;
+    geom_total += geom_counts[i];
+  }
+  std::vector<double> all_edge_geometry(geom_total);
+  Mpi::Allgatherv(static_cast<int>(local_edge_geometry.size()), local_edge_geometry.data(),
+                  all_edge_geometry.data(), geom_counts.data(), geom_displs.data(), comm);
+
+  constexpr int face_geom_record_size = 14;
+  const int local_face_count = static_cast<int>(local_face_geometry.size());
+  std::vector<int> face_counts(Mpi::Size(comm));
+  Mpi::Allgather(1, &local_face_count, face_counts.data(), comm);
+  std::vector<int> face_displs(Mpi::Size(comm));
+  int face_total = 0;
+  for (int i = 0; i < Mpi::Size(comm); i++)
+  {
+    face_displs[i] = face_total;
+    face_total += face_counts[i];
+  }
+  std::vector<double> all_face_geometry(face_total);
+  Mpi::Allgatherv(local_face_count, local_face_geometry.data(), all_face_geometry.data(),
+                  face_counts.data(), face_displs.data(), comm);
 
   // Build resolved global vertex pair → attribute map. For edges shared by multiple parent
   // boundary faces, prefer the face that is NOT part of the mode analysis surface.
@@ -1587,10 +1663,13 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     }
   }
 
-  // For each submesh boundary element, trace to parent edge, convert to global vertex pair,
-  // and apply the resolved attribute.
+  // For each submesh boundary element, trace to the parent edge and apply the resolved
+  // attribute. Exact global vertex pairs handle conforming edges. For an NC child edge on
+  // the physical perimeter, fall back to containment within a coarser non-surface parent
+  // edge.
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
   mfem::Array<int> ev;
+  std::vector<int> unresolved_sbe;
   for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
   {
     int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
@@ -1602,9 +1681,172 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     int gv1 = static_cast<int>(pvert_gi[ev[1]]);
     auto key = std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
     auto it = gvpair_to_attr.find(key);
-    if (it != gvpair_to_attr.end())
+    if (it != gvpair_to_attr.end() && surface_attr_set.count(it->second) == 0)
     {
       submesh.SetBdrAttribute(sbe, it->second);
+    }
+    else
+    {
+      unresolved_sbe.push_back(sbe);
+    }
+  }
+
+  if (!unresolved_sbe.empty())
+  {
+    double coordinate_scale = 1.0;
+    for (int i = 0; i < geom_total / edge_geom_record_size; i++)
+    {
+      const double *record = all_edge_geometry.data() + edge_geom_record_size * i;
+      for (int j = 2; j < edge_geom_record_size; j++)
+      {
+        coordinate_scale = std::max(coordinate_scale, std::abs(record[j]));
+      }
+    }
+    for (int i = 0; i < face_total / face_geom_record_size; i++)
+    {
+      const double *record = all_face_geometry.data() + face_geom_record_size * i;
+      const int nv = static_cast<int>(record[1]);
+      for (int j = 0; j < 3 * nv; j++)
+      {
+        coordinate_scale = std::max(coordinate_scale, std::abs(record[2 + j]));
+      }
+    }
+    const double distance_tol = 1.0e-10 * coordinate_scale;
+
+    auto PointOnSegment = [distance_tol](const double *p, const double *a, const double *b)
+    {
+      double direction[3], offset[3];
+      double length2 = 0.0, projection = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        direction[d] = b[d] - a[d];
+        offset[d] = p[d] - a[d];
+        length2 += direction[d] * direction[d];
+        projection += offset[d] * direction[d];
+      }
+      if (length2 == 0.0)
+      {
+        return false;
+      }
+      const double t = projection / length2;
+      if (t < -1.0e-10 || t > 1.0 + 1.0e-10)
+      {
+        return false;
+      }
+      double distance2 = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = p[d] - (a[d] + t * direction[d]);
+        distance2 += delta * delta;
+      }
+      return distance2 <= distance_tol * distance_tol;
+    };
+
+    auto PointInTriangle =
+        [distance_tol](const double *p, const double *a, const double *b, const double *c)
+    {
+      double v0[3], v1[3], v2[3], normal[3];
+      for (int d = 0; d < 3; d++)
+      {
+        v0[d] = b[d] - a[d];
+        v1[d] = c[d] - a[d];
+        v2[d] = p[d] - a[d];
+      }
+      normal[0] = v0[1] * v1[2] - v0[2] * v1[1];
+      normal[1] = v0[2] * v1[0] - v0[0] * v1[2];
+      normal[2] = v0[0] * v1[1] - v0[1] * v1[0];
+      const double normal2 =
+          normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+      if (normal2 == 0.0)
+      {
+        return false;
+      }
+      const double distance =
+          std::abs(v2[0] * normal[0] + v2[1] * normal[1] + v2[2] * normal[2]) /
+          std::sqrt(normal2);
+      if (distance > distance_tol)
+      {
+        return false;
+      }
+      const double d00 = v0[0] * v0[0] + v0[1] * v0[1] + v0[2] * v0[2];
+      const double d01 = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
+      const double d11 = v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2];
+      const double d20 = v2[0] * v0[0] + v2[1] * v0[1] + v2[2] * v0[2];
+      const double d21 = v2[0] * v1[0] + v2[1] * v1[1] + v2[2] * v1[2];
+      const double denominator = d00 * d11 - d01 * d01;
+      if (denominator == 0.0)
+      {
+        return false;
+      }
+      const double v = (d11 * d20 - d01 * d21) / denominator;
+      const double w = (d00 * d21 - d01 * d20) / denominator;
+      const double u = 1.0 - v - w;
+      constexpr double barycentric_tol = 1.0e-8;
+      return u >= -barycentric_tol && v >= -barycentric_tol && w >= -barycentric_tol;
+    };
+
+    auto PointInFace = [&](const double *point, const double *record)
+    {
+      const int nv = static_cast<int>(record[1]);
+      const double *x0 = record + 2;
+      const double *x1 = record + 5;
+      const double *x2 = record + 8;
+      return PointInTriangle(point, x0, x1, x2) ||
+             (nv == 4 && PointInTriangle(point, x0, x2, record + 11));
+    };
+
+    int remapped = 0;
+    mfem::IntegrationPoint center;
+    center.Set1w(0.5, 1.0);
+    mfem::Vector physical_midpoint(submesh.SpaceDimension());
+    for (int sbe : unresolved_sbe)
+    {
+      submesh.GetBdrElementTransformation(sbe)->Transform(center, physical_midpoint);
+      double midpoint[3] = {};
+      for (int d = 0; d < physical_midpoint.Size(); d++)
+      {
+        midpoint[d] = physical_midpoint[d];
+      }
+      std::set<int> matched_attrs;
+      for (int i = 0; i < geom_total / edge_geom_record_size; i++)
+      {
+        const double *record = all_edge_geometry.data() + edge_geom_record_size * i;
+        const int attr = static_cast<int>(record[0]);
+        const bool is_surface = record[1] != 0.0;
+        if (!is_surface && PointOnSegment(midpoint, record + 2, record + 5))
+        {
+          matched_attrs.insert(attr);
+        }
+      }
+      if (matched_attrs.empty())
+      {
+        for (int i = 0; i < face_total / face_geom_record_size; i++)
+        {
+          const double *record = all_face_geometry.data() + face_geom_record_size * i;
+          if (PointInFace(midpoint, record))
+          {
+            matched_attrs.insert(static_cast<int>(record[0]));
+          }
+        }
+      }
+      MFEM_VERIFY(matched_attrs.size() <= 1,
+                  fmt::format("Ambiguous parent boundary attributes for NC child edge: {}",
+                              fmt::join(matched_attrs, ", ")));
+      if (!matched_attrs.empty())
+      {
+        submesh.SetBdrAttribute(sbe, *matched_attrs.begin());
+        remapped++;
+      }
+    }
+    int unresolved_count = static_cast<int>(unresolved_sbe.size());
+    int global_remapped = remapped;
+    Mpi::GlobalSum(1, &unresolved_count, comm);
+    Mpi::GlobalSum(1, &global_remapped, comm);
+    if (global_remapped < unresolved_count)
+    {
+      Mpi::Warning(
+          fmt::format("Could not remap {:d}/{:d} NC child edges on the submesh perimeter!",
+                      unresolved_count - global_remapped, unresolved_count));
     }
   }
 
@@ -2393,7 +2635,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // For each element / boundary element, find the (at most one, by independence) split edge
   // it contains, returning the matching midpoint id and the local endpoint vertices, or -1.
-  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int(*edge_vert)[2],
+  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int (*edge_vert)[2],
                                           int nedge, int &lv0, int &lv1)
   {
     for (int le = 0; le < nedge; le++)

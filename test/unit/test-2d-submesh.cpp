@@ -208,6 +208,237 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
   }
 }
 
+TEST_CASE("NC boundary ParSubMesh remaps child perimeter attributes", "[geodata][Serial]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0));
+
+  // Assign a central patch of the x = 0 sidewall to a distinct wave-port-like attribute.
+  // The patch is surrounded in the same plane by the original sidewall attribute 5.
+  constexpr int surface_attr = 7;
+  mfem::Array<int> boundary_vertices;
+  int patch_elements = 0;
+  for (int be = 0; be < serial_mesh->GetNBE(); be++)
+  {
+    if (serial_mesh->GetBdrAttribute(be) != 5)
+    {
+      continue;
+    }
+    serial_mesh->GetBdrElementVertices(be, boundary_vertices);
+    double y = 0.0, z = 0.0;
+    for (int vertex : boundary_vertices)
+    {
+      const double *x = serial_mesh->GetVertex(vertex);
+      y += x[1];
+      z += x[2];
+    }
+    y /= boundary_vertices.Size();
+    z /= boundary_vertices.Size();
+    if (y > 0.25 && y < 0.75 && z > 0.25 && z < 0.75)
+    {
+      serial_mesh->SetBdrAttribute(be, surface_attr);
+      patch_elements++;
+    }
+  }
+  REQUIRE(patch_elements > 1);
+  serial_mesh->SetAttributes();
+  serial_mesh->EnsureNCMesh(true);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+
+  // Refine only one corner of the selected patch.
+  mfem::Array<int> marked, element_vertices;
+  for (int be = 0; be < par_mesh->GetNBE(); be++)
+  {
+    if (par_mesh->GetBdrAttribute(be) != surface_attr)
+    {
+      continue;
+    }
+    int elem, info;
+    par_mesh->GetBdrElementAdjacentElement(be, elem, info);
+    par_mesh->GetElementVertices(elem, element_vertices);
+    double y = 0.0, z = 0.0;
+    for (int vertex : element_vertices)
+    {
+      const double *x = par_mesh->GetVertex(vertex);
+      y += x[1];
+      z += x[2];
+    }
+    y /= element_vertices.Size();
+    z /= element_vertices.Size();
+    if (y < 0.5 && z < 0.5)
+    {
+      marked.Append(elem);
+    }
+  }
+  marked.Sort();
+  marked.Unique();
+  REQUIRE(marked.Size() > 0);
+  par_mesh->GeneralRefinement(marked, -1, 1);
+
+  // Refine a disjoint corner in a second pass to exercise a deeper mixed refinement tree.
+  marked.SetSize(0);
+  for (int be = 0; be < par_mesh->GetNBE(); be++)
+  {
+    if (par_mesh->GetBdrAttribute(be) != surface_attr)
+    {
+      continue;
+    }
+    int elem, info;
+    par_mesh->GetBdrElementAdjacentElement(be, elem, info);
+    par_mesh->GetElementVertices(elem, element_vertices);
+    double y = 0.0, z = 0.0;
+    for (int vertex : element_vertices)
+    {
+      const double *x = par_mesh->GetVertex(vertex);
+      y += x[1];
+      z += x[2];
+    }
+    y /= element_vertices.Size();
+    z /= element_vertices.Size();
+    if (y > 0.5 && z > 0.5)
+    {
+      marked.Append(elem);
+    }
+  }
+  marked.Sort();
+  marked.Unique();
+  REQUIRE(marked.Size() > 0);
+  par_mesh->GeneralRefinement(marked, -1, 1);
+  REQUIRE(par_mesh->Nonconforming());
+
+  mfem::Array<int> surface_attrs;
+  surface_attrs.Append(surface_attr);
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(*par_mesh, surface_attrs);
+  REQUIRE(submesh.Nonconforming());
+  REQUIRE(submesh.GetNE() > 0);
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+
+  // Every submesh boundary edge must lie on a physical parent boundary other than the
+  // selected surface. Internal NC master/slave interfaces must not be emitted as boundary
+  // edges carrying either the selected attribute or MFEM's generated fallback attribute.
+  const int generated_attr = par_mesh->bdr_attributes.Max() + 1;
+  mfem::IntegrationPoint center;
+  center.Set1w(0.5, 1.0);
+  mfem::Vector midpoint(3);
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    submesh.GetBdrElementTransformation(sbe)->Transform(center, midpoint);
+    const double y = midpoint[1];
+    const double z = midpoint[2];
+    // All boundary edges are on the physical perimeter of the central patch. An internal
+    // hanging interface would have both y and z strictly inside (0.25, 0.75).
+    CHECK((std::abs(y - 0.25) < 1e-12 || std::abs(y - 0.75) < 1e-12 ||
+           std::abs(z - 0.25) < 1e-12 || std::abs(z - 0.75) < 1e-12));
+
+    const int attr = submesh.GetBdrAttribute(sbe);
+    CHECK(attr == 5);
+    CHECK(attr != generated_attr);
+  }
+}
+
+TEST_CASE("NC boundary ParSubMesh preserves internal face topology", "[geodata][Serial]")
+{
+  auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/mesh/nc-boundary-submesh.mesh";
+  mfem::Mesh serial_mesh(mesh_path.c_str(), 1, 1, true);
+  REQUIRE(serial_mesh.Nonconforming());
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
+
+  mfem::Array<int> surface_attrs;
+  surface_attrs.Append(14);
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(*par_mesh, surface_attrs);
+  REQUIRE(submesh.Nonconforming());
+  REQUIRE(submesh.GetNE() > 0);
+  mfem::H1_FECollection h1_fec(1, submesh.Dimension());
+  mfem::ParFiniteElementSpace h1_fes(&submesh, &h1_fec);
+  INFO("submesh NV = " << submesh.GetNV() << ", H1 VSize = " << h1_fes.GetVSize()
+                       << ", true VSize = " << h1_fes.GetTrueVSize());
+
+  // A boundary segment whose midpoint is contained in another surface triangle is an
+  // internal hanging interface incorrectly classified as a boundary face.
+  auto PointInTriangle =
+      [](const double *p, const double *a, const double *b, const double *c)
+  {
+    const double area = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
+    if (std::abs(area) < 1e-14)
+    {
+      return false;
+    }
+    const double u = ((b[1] - p[1]) * (c[2] - p[2]) - (b[2] - p[2]) * (c[1] - p[1])) / area;
+    const double v = ((c[1] - p[1]) * (a[2] - p[2]) - (c[2] - p[2]) * (a[1] - p[1])) / area;
+    const double w = 1.0 - u - v;
+    return u >= -1e-10 && v >= -1e-10 && w >= -1e-10;
+  };
+
+  int artificial_edges = 0;
+  mfem::IntegrationPoint edge_center, triangle_corners[3];
+  edge_center.Set1w(0.5, 1.0);
+  triangle_corners[0].Set2(0.0, 0.0);
+  triangle_corners[1].Set2(1.0, 0.0);
+  triangle_corners[2].Set2(0.0, 1.0);
+  mfem::Vector midpoint(3), corner0(3), corner1(3), corner2(3);
+  for (int be = 0; be < submesh.GetNBE(); be++)
+  {
+    submesh.GetBdrElementTransformation(be)->Transform(edge_center, midpoint);
+    int adjacent, info;
+    submesh.GetBdrElementAdjacentElement(be, adjacent, info);
+    for (int elem = 0; elem < submesh.GetNE(); elem++)
+    {
+      if (elem == adjacent)
+      {
+        continue;
+      }
+      auto *transformation = submesh.GetElementTransformation(elem);
+      transformation->Transform(triangle_corners[0], corner0);
+      transformation->Transform(triangle_corners[1], corner1);
+      transformation->Transform(triangle_corners[2], corner2);
+      if (PointInTriangle(midpoint.GetData(), corner0.GetData(), corner1.GetData(),
+                          corner2.GetData()))
+      {
+        artificial_edges++;
+        break;
+      }
+    }
+  }
+  INFO("submesh NE = " << submesh.GetNE() << ", NBE = " << submesh.GetNBE());
+  CHECK(artificial_edges == 0);
+
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+  mfem::H1_FECollection parent_fec(1, 3), submesh_fec(1, 2);
+  mfem::ParFiniteElementSpace parent_fes(par_mesh.get(), &parent_fec);
+  mfem::ParFiniteElementSpace submesh_fes(&submesh, &submesh_fec);
+  mfem::ParGridFunction parent_marker_field(&parent_fes),
+      submesh_marker_field(&submesh_fes);
+  auto transfer =
+      mfem::ParSubMesh::CreateTransferMap(parent_marker_field, submesh_marker_field);
+  mfem::Array<int> attr4, parent_essential, direct_essential;
+  attr4.Append(4);
+  mfem::Array<int> parent_marker, submesh_marker;
+  mesh::AttrToMarker(par_mesh->bdr_attributes.Max(), attr4, parent_marker);
+  mesh::AttrToMarker(submesh.bdr_attributes.Max(), attr4, submesh_marker);
+  parent_fes.GetEssentialTrueDofs(parent_marker, parent_essential);
+  submesh_fes.GetEssentialTrueDofs(submesh_marker, direct_essential);
+  mfem::Vector parent_true(parent_fes.GetTrueVSize());
+  parent_true = 0.0;
+  for (int tdof : parent_essential)
+  {
+    parent_true[tdof] = 1.0;
+  }
+  parent_marker_field.SetFromTrueDofs(parent_true);
+  transfer.Transfer(parent_marker_field, submesh_marker_field);
+  mfem::Vector transferred_true(submesh_fes.GetTrueVSize());
+  submesh_marker_field.ParallelProject(transferred_true);
+  int transferred_essential = 0;
+  for (int i = 0; i < transferred_true.Size(); i++)
+  {
+    transferred_essential += transferred_true[i] != 0.0;
+  }
+  // Parent-marker transfer over-constrains two interior H1 DoFs on this NC surface.
+  // Essential DoFs must instead be extracted directly from the remapped submesh boundary.
+  CHECK(direct_essential.Size() == 6);
+  CHECK(transferred_essential == 8);
+}
+
 TEST_CASE("Tangent frame from SubMesh extraction", "[geodata][Serial]")
 {
   // Build a simple 3D mesh, extract each face with mfem::SubMesh::CreateFromBoundary,

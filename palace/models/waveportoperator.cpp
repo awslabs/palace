@@ -52,62 +52,23 @@ using namespace std::complex_literals;
 namespace
 {
 
-void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n,
-                          mfem::ParGridFunction &port_E0t, mfem::ParGridFunction &port_E0n,
-                          mfem::ParTransferMap &port_nd_transfer,
-                          mfem::ParTransferMap &port_h1_transfer,
+void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
+                          mfem::ParFiniteElementSpace &port_h1_fespace,
                           const mfem::Array<int> &dbc_attr,
                           mfem::Array<int> &port_nd_dbc_tdof_list,
                           mfem::Array<int> &port_h1_dbc_tdof_list)
 {
-  auto &nd_fespace = *E0t.ParFESpace();
-  auto &h1_fespace = *E0n.ParFESpace();
-  auto &port_nd_fespace = *port_E0t.ParFESpace();
-  auto &port_h1_fespace = *port_E0n.ParFESpace();
-  const auto &mesh = *nd_fespace.GetParMesh();
+  const auto &port_mesh = *port_nd_fespace.GetParMesh();
 
-  mfem::Array<int> dbc_marker, nd_dbc_tdof_list, h1_dbc_tdof_list;
-  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, dbc_attr,
-                     dbc_marker);
-  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
-
-  Vector tE0t(nd_fespace.GetTrueVSize()), tE0n(h1_fespace.GetTrueVSize());
-  tE0t.UseDevice(true);
-  tE0n.UseDevice(true);
-  tE0t = 0.0;
-  tE0n = 0.0;
-  linalg::SetSubVector(tE0t, nd_dbc_tdof_list, 1.0);
-  linalg::SetSubVector(tE0n, h1_dbc_tdof_list, 1.0);
-  E0t.SetFromTrueDofs(tE0t);
-  E0n.SetFromTrueDofs(tE0n);
-  port_nd_transfer.Transfer(E0t, port_E0t);
-  port_h1_transfer.Transfer(E0n, port_E0n);
-
-  Vector port_tE0t(port_nd_fespace.GetTrueVSize()),
-      port_tE0n(port_h1_fespace.GetTrueVSize());
-  port_tE0t.UseDevice(true);
-  port_tE0n.UseDevice(true);
-  port_E0t.ParallelProject(port_tE0t);
-  port_E0n.ParallelProject(port_tE0n);
-  {
-    const auto *h_port_tE0t = port_tE0t.HostRead();
-    const auto *h_port_tE0n = port_tE0n.HostRead();
-    for (int i = 0; i < port_tE0t.Size(); i++)
-    {
-      if (h_port_tE0t[i] != 0.0)
-      {
-        port_nd_dbc_tdof_list.Append(i);
-      }
-    }
-    for (int i = 0; i < port_tE0n.Size(); i++)
-    {
-      if (h_port_tE0n[i] != 0.0)
-      {
-        port_h1_dbc_tdof_list.Append(i);
-      }
-    }
-  }
+  // Compute essential DoFs directly on the remapped port mesh. Transferring a parent
+  // boundary marker through an NC ParSubMesh can incorrectly constrain interior surface
+  // DoFs because parent and extracted-surface master/slave relations differ.
+  const int max_bdr_attr =
+      std::max(mesh::GetMaxBdrAttribute(port_mesh), dbc_attr.Size() ? dbc_attr.Max() : 0);
+  mfem::Array<int> dbc_marker;
+  mesh::AttrToMarker(max_bdr_attr, dbc_attr, dbc_marker);
+  port_nd_fespace.GetEssentialTrueDofs(dbc_marker, port_nd_dbc_tdof_list);
+  port_h1_fespace.GetEssentialTrueDofs(dbc_marker, port_h1_dbc_tdof_list);
 }
 
 void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
@@ -509,9 +470,8 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
   // Extract Dirichlet BC true dofs for the port FE spaces.
   {
     mfem::Array<int> port_nd_dbc_tdof_list, port_h1_dbc_tdof_list;
-    GetEssentialTrueDofs(E0t.Real(), E0n.Real(), port_E0t->Real(), port_E0n->Real(),
-                         *port_nd_transfer, *port_h1_transfer, dbc_attr,
-                         port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
+    GetEssentialTrueDofs(*port_E0t->Real().ParFESpace(), *port_E0n->Real().ParFESpace(),
+                         dbc_attr, port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
     int nd_tdof_offset = port_nd_fespace->GetTrueVSize();
     port_dbc_tdof_list.Reserve(port_nd_dbc_tdof_list.Size() + port_h1_dbc_tdof_list.Size());
     for (auto tdof : port_nd_dbc_tdof_list)
