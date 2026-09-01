@@ -1102,6 +1102,7 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
+  BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
@@ -1370,7 +1371,6 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // Compute PROM solution at the given frequency and expand into high-dimensional space.
   // The PROM is solved on every process so the matrix-vector product for vector expansion
   // does not require communication.
-  BlockTimer bt(Timer::SOLVE_PROM);
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
