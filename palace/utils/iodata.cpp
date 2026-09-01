@@ -453,6 +453,15 @@ void IoData::CheckConfiguration()
     }
   }
 
+  // Superconductor sheet boundaries (kinetic inductance) are only meaningful for the
+  // magnetostatic total-inductance extraction.
+  if (!boundaries.superconductor.empty() && problem.type != ProblemType::MAGNETOSTATIC)
+  {
+    Mpi::Warning(
+        "Only the Magnetostatic problem type supports Superconductor sheet boundary "
+        "conditions!\n");
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -715,6 +724,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
     config::Nondimensionalize(units, data);
   }
   for (auto &data : boundaries.rational_impedance)
+  {
+    config::Nondimensionalize(units, data);
+  }
+  for (auto &data : boundaries.superconductor)
   {
     config::Nondimensionalize(units, data);
   }

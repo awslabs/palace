@@ -300,6 +300,14 @@
             "$ref": "#/$defs/FluxLoop"
           }
         },
+        "Superconductor": {
+          "type": "array",
+          "description": "Array of thin-film superconductor sheet boundaries for magnetostatic simulations. Each sheet contributes a London kinetic-inductance term to the extracted total inductance, modeled by the kinetic sheet inductance L_ksq = mu0 * lambda^2 / d, specified either via the penetration depth and film thickness or directly. Only available for magnetostatic simulations.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Superconductor"
+          }
+        },
         "Ground": {
           "$ref": "#/$defs/Ground",
           "title": "Ground Boundary",
@@ -922,6 +930,34 @@
         "Cs": {
           "type": "number",
           "description": "Surface capacitance for this impedance boundary, F/sq.",
+          "default": 0.0
+        }
+      }
+    },
+    "Superconductor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "PenetrationDepth": {
+          "type": "number",
+          "description": "London penetration depth λ of the superconducting film, specified in mesh length units. Used with Thickness to compute the kinetic sheet inductance L_ksq = mu0 * lambda^2 / d. Mutually exclusive with KineticInductance.",
+          "default": 0.0
+        },
+        "Thickness": {
+          "type": "number",
+          "description": "Superconducting film thickness d, specified in mesh length units. Used with PenetrationDepth to compute the kinetic sheet inductance L_ksq = mu0 * lambda^2 / d. Mutually exclusive with KineticInductance.",
+          "default": 0.0
+        },
+        "KineticInductance": {
+          "type": "number",
+          "description": "Kinetic sheet inductance L_ksq, H/sq, specified directly as an alternative to (PenetrationDepth, Thickness). Mutually exclusive with those two.",
           "default": 0.0
         }
       }

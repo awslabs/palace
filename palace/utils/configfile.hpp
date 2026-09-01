@@ -432,6 +432,26 @@ public:
   RationalImpedanceData(const json &boundary);
 };
 
+struct SuperconductorData
+{
+public:
+  // London penetration depth λ and film thickness d, in mesh length units. These define the
+  // kinetic sheet inductance of a thin-film superconductor modeled as a 2D sheet:
+  //     L_ksq = mu0 * lambda^2 / d   [H/square].
+  double lambda_L = 0.0;
+  double thickness = 0.0;
+
+  // Kinetic sheet inductance L_ksq [H/sq], specified directly as an alternative to (λ, d).
+  // Exactly one of {(λ, d), Ls} must be provided.
+  double Ls = 0.0;
+
+  // List of boundary attributes for this superconductor sheet.
+  std::vector<int> attributes = {};
+
+  SuperconductorData() = default;
+  SuperconductorData(const json &boundary);
+};
+
 struct LumpedPortData
 {
 public:
@@ -796,6 +816,7 @@ public:
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   std::vector<RationalImpedanceData> rational_impedance = {};
+  std::vector<SuperconductorData> superconductor = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
@@ -1209,6 +1230,7 @@ void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
+void Nondimensionalize(const Units &units, SuperconductorData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);

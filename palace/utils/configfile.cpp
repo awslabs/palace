@@ -455,6 +455,36 @@ RationalImpedanceData::RationalImpedanceData(const json &boundary)
               "Rational impedance \"Numerator\" must have a nonzero coefficient!");
 }
 
+SuperconductorData::SuperconductorData(const json &boundary)
+{
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  lambda_L = boundary.value("PenetrationDepth", lambda_L);
+  thickness = boundary.value("Thickness", thickness);
+  Ls = boundary.value("KineticInductance", Ls);
+
+  // Require exactly one of {(PenetrationDepth, Thickness), KineticInductance}. The (λ, d)
+  // form defines the kinetic sheet inductance as L_ksq = mu0 * lambda^2 / d; the direct
+  // form supplies L_ksq itself.
+  const bool has_lambda_d = (lambda_L != 0.0 || thickness != 0.0);
+  const bool has_Ls = (Ls != 0.0);
+  MFEM_VERIFY(has_lambda_d != has_Ls,
+              "Superconductor boundary requires exactly one of {(\"PenetrationDepth\", "
+              "\"Thickness\"), \"KineticInductance\"}!");
+  if (has_lambda_d)
+  {
+    MFEM_VERIFY(
+        lambda_L > 0.0 && thickness > 0.0,
+        "Superconductor boundary \"PenetrationDepth\" and \"Thickness\" must both be "
+        "positive!");
+  }
+  else
+  {
+    MFEM_VERIFY(Ls > 0.0,
+                "Superconductor boundary \"KineticInductance\" must be positive!");
+  }
+}
+
 LumpedPortData::LumpedPortData(const json &port)
 {
   int index = port.at("Index");  // Required
@@ -983,6 +1013,7 @@ BoundaryData::BoundaryData(const json &boundaries)
   impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
   rational_impedance =
       ParseOptionalVector<RationalImpedanceData>(boundaries, "RationalImpedance");
+  superconductor = ParseOptionalVector<SuperconductorData>(boundaries, "Superconductor");
   lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
@@ -1682,6 +1713,16 @@ void Nondimensionalize(const Units &units, ImpedanceData &data)
   data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+}
+
+void Nondimensionalize(const Units &units, SuperconductorData &data)
+{
+  // PenetrationDepth (λ) and Thickness (d) are entered in mesh length units (L0), like all
+  // geometric lengths, so they use the mesh-relative scale (consistent with MaterialData's
+  // LondonDepth and ConductivityData's Thickness). KineticInductance (Ls) is in Henries.
+  data.lambda_L /= units.GetMeshLengthRelativeScale();
+  data.thickness /= units.GetMeshLengthRelativeScale();
+  data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
 }
 
 void Nondimensionalize(const Units &units, LumpedPortData &data)
