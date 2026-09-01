@@ -35,10 +35,14 @@ namespace
 struct ModeResult
 {
   std::vector<std::complex<double>> kn;
+  std::vector<std::complex<double>> final_kn;
   std::vector<double> reduced_backward_errors;
+  std::vector<double> final_reduced_backward_errors;
   int num_converged;
   ModeEigenSolver::ReducedModelStats reduced_stats;
+  ModeEigenSolver::ReducedModelStats first_target_stats;
   std::size_t reduced_basis_size = 0;
+  std::size_t first_target_basis_size = 0;
   double reduced_tol = 0.0;
   int complex_exact_converged = -1;
 };
@@ -48,7 +52,9 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  const std::function<void(IoData &)> &configure_bcs,
                                  bool exercise_reduced_model = false,
                                  int reduced_evaluations = 1,
-                                 std::size_t reduced_training_capacity = 16)
+                                 std::size_t reduced_training_capacity = 16,
+                                 std::vector<double> reduced_training_factors = {0.9, 1.1},
+                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -68,8 +74,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   iodata.solver.order = order;
   iodata.solver.boundary_mode.freq = freq_ghz;
   iodata.solver.boundary_mode.n = num_modes;
-  iodata.solver.boundary_mode.tol = 1.0e-8;
-  iodata.solver.linear.tol = 1.0e-8;
+  iodata.solver.boundary_mode.tol = eig_tol;
+  iodata.solver.linear.tol = eig_tol;
   iodata.solver.linear.max_it = 200;
 
   auto serial_mesh = std::make_unique<mfem::Mesh>(
@@ -115,7 +121,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   const int num_vec = std::max(2 * num_modes, num_modes + 15);
   ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
                               surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, num_modes,
-                              num_vec, 1.0e-8, EigenvalueSolver::WhichType::LARGEST_REAL,
+                              num_vec, eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL,
                               iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
                               nd_fespace.GetComm());
 
@@ -129,11 +135,11 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   if (exercise_reduced_model)
   {
     mode_solver.ConfigureReducedModelTraining(reduced_training_capacity);
-    // Homogeneous PEC waveguide modes have smooth (in fact frequency-independent in shape)
-    // transverse fields, making this a deterministic reduced-model acceptance test.
-    solve_at(0.9 * omega);
-    solve_at(1.1 * omega);
-    mode_solver.EnableReducedModel(1.0e-3);
+    for (double factor : reduced_training_factors)
+    {
+      solve_at(factor * omega);
+    }
+    mode_solver.EnableReducedModel(adaptive_tol);
   }
 
   auto result = solve_at(omega).first;
@@ -152,9 +158,17 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   if (exercise_reduced_model)
   {
+    out.first_target_stats = mode_solver.GetReducedModelStats();
+    out.first_target_basis_size = mode_solver.GetReducedBasisSize();
     for (int i = 1; i < reduced_evaluations; i++)
     {
       solve_at(omega);
+    }
+    for (int i = 0; i < result.num_converged; i++)
+    {
+      out.final_kn.push_back(mode_solver.GetPropagationConstant(i));
+      out.final_reduced_backward_errors.push_back(
+          mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD));
     }
     // Complex-frequency queries must bypass the real-axis reduced model. Issue one complex
     // query solely to verify stats after retaining the reduced real-frequency result above.
@@ -289,6 +303,39 @@ TEST_CASE("ModeEigenSolver rational impedance affine component",
   CHECK(reduced.reduced_stats.worst_residual <= reduced.reduced_tol);
   CHECK_THAT(reduced.kn[0].real(), WithinRel(exact.kn[0].real(), 1.0e-6));
   CHECK_THAT(reduced.kn[0].imag(), WithinAbs(exact.kn[0].imag(), 1.0e-8));
+}
+
+TEST_CASE("ModeEigenSolver reduced rejection fallback enrichment",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  auto configure_rational = [](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3};
+    auto &rz = iodata.boundaries.rational_impedance.emplace_back();
+    rz.attributes = {2, 4};
+    rz.num = {1.0e-12, 1.0};
+    rz.den = {1.0};
+  };
+  auto result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_rational,
+                                      true, 2, 16, {0.1}, 1.0e-4, 1.0e-10);
+
+  REQUIRE(result.num_converged >= 1);
+  CHECK(result.first_target_stats.offline_basis_rank == 1);
+  CHECK(result.first_target_stats.exact_solves == 2);
+  CHECK(result.first_target_stats.fallbacks == 1);
+  CHECK(result.first_target_stats.reduced_solves == 0);
+  CHECK(result.first_target_basis_size > result.first_target_stats.offline_basis_rank);
+
+  CHECK(result.reduced_stats.exact_solves == 2);
+  CHECK(result.reduced_stats.fallbacks == 1);
+  CHECK(result.reduced_stats.reduced_solves == 1);
+  CHECK(result.reduced_basis_size == result.first_target_basis_size);
+  CHECK(result.reduced_stats.worst_residual <= result.reduced_tol);
+  REQUIRE(result.final_reduced_backward_errors.size() == 1);
+  CHECK(result.final_reduced_backward_errors[0] <= result.reduced_tol);
+  REQUIRE(result.final_kn.size() == 1);
+  CHECK_THAT(result.final_kn[0].real(), WithinRel(result.kn[0].real(), 1.0e-6));
+  CHECK_THAT(result.final_kn[0].imag(), WithinAbs(result.kn[0].imag(), 1.0e-8));
 }
 
 TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Serial]")
