@@ -155,7 +155,6 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                           {"AdaptiveConvergenceMemory", driven.adaptive_memory},
                           {"AdaptiveGSOrthogonalization",
                            ToString(driven.adaptive_solver_gs_orthog_type)},
-                          {"AdaptiveSParameterOnly", driven.adaptive_s_parameter_only},
                           {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
                           {"AdaptiveCircuitSynthesisDomainOrthogonalization",
                            ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
