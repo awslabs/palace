@@ -1138,30 +1138,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   // Assemble a libCEED operator for each group. For now, all operators are constructed
   // on a single Ceed context (no OpenMP parallel assembly or application; correctness
   // first, this can be extended with the thread partitioning of fem/mesh.cpp later).
-  const bool profile = (std::getenv("PALACE_SURFACE_PROFILE") != nullptr);
-  // groups, elements, two-sided groups, ghost groups.
-  long long profile_counts[4] = {0, 0, 0, 0};
-  long long profile_max_group_elems = 0;
   for (auto &face_group : face_groups)
   {
     auto &group = face_group.second;
     const std::size_t num_elem = group.bdr_indices.size();
     const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
-    if (profile)
-    {
-      profile_counts[0]++;
-      profile_counts[1] += static_cast<long long>(num_elem);
-      profile_max_group_elems =
-          std::max(profile_max_group_elems, static_cast<long long>(num_elem));
-      if (has_b)
-      {
-        profile_counts[2]++;
-      }
-      if (group.ghost_a || group.ghost_b)
-      {
-        profile_counts[3]++;
-      }
-    }
     const mfem::IntegrationRule &face_ir = mfem::IntRules.Get(
         group.bdr_geom, fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
@@ -1609,16 +1590,6 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       groups.back().mesh_node_fields = std::move(mesh_node_fields);
     }
     fem::CacheGroupOperatorFieldVectors(groups.back());
-  }
-  if (profile)
-  {
-    Mpi::GlobalSum(4, profile_counts, comm);
-    Mpi::GlobalMax(1, &profile_max_group_elems, comm);
-    Mpi::Print(comm,
-               "SurfaceFunctional profile kind={} groups={} elems={} two_sided_groups={} "
-               "ghost_groups={} max_group_elems={}\n",
-               KindName(kind), profile_counts[0], profile_counts[1], profile_counts[2],
-               profile_counts[3], profile_max_group_elems);
   }
 }
 
