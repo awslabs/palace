@@ -14,6 +14,7 @@
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfacefluxoperator.hpp"
@@ -23,6 +24,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class Units;
 template <ProblemType T>
 class PostOperator;
 
@@ -85,6 +87,9 @@ private:
   // Operator for flux loop excitation.
   SurfaceFluxOperator surf_flux_op;
 
+  // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
+  SuperconductorSheetOperator sc_sheet_op;
+
   // Cached original matrix for flux loop boundary-interior coupling
   mutable std::unique_ptr<ParOperator> K_orig_;
 
@@ -97,7 +102,7 @@ private:
 public:
   CurlCurlOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
                    const std::vector<config::MaterialData> &materials,
-                   ProblemType problem_type,
+                   ProblemType problem_type, const Units &units,
                    const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
@@ -107,6 +112,8 @@ public:
   // Access to underlying BC operator objects for postprocessing.
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
+  auto &GetSuperconductorOp() { return sc_sheet_op; }
+  const auto &GetSuperconductorOp() const { return sc_sheet_op; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }

@@ -22,7 +22,7 @@ namespace palace
 CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
                                    const config::SolverData &solver,
                                    const std::vector<config::MaterialData> &materials,
-                                   ProblemType problem_type,
+                                   ProblemType problem_type, const Units &units,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop, *mesh.back())),
@@ -40,7 +40,9 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
         solver.linear.mg_max_levels, mesh, h1_fecs)),
     rt_fespace(*mesh.back(), rt_fec.get()),
     mat_op(materials, boundaries.periodic, problem_type, *mesh.back()),
-    surf_j_op(boundaries.current, *mesh.back())
+    surf_j_op(boundaries.current, *mesh.back()),
+    sc_sheet_op(boundaries.superconductor, boundaries.cracked_attributes, units, mat_op,
+                *mesh.back())
 {
   // In 2D, curl maps H(curl) → L2 (scalar), so add an L2 space for B = curl A.
   if (mesh.back()->Dimension() == 2)
@@ -65,7 +67,7 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
   : CurlCurlOperator(iodata.boundaries, iodata.solver, iodata.domains.materials,
-                     iodata.problem.type, mesh)
+                     iodata.problem.type, iodata.units, mesh)
 {
   surf_flux_op = SurfaceFluxOperator(iodata);
 }
@@ -202,6 +204,14 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
                                          mat_op.GetCurlCurlInvPermeability());
   BilinearForm k(GetNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  // Add the thin-film superconductor kinetic sheet term (1/L_ksq) A_t · v_t as a tangential
+  // surface mass on the ND space.
+  MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+  sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
+  if (!fbr.empty())
+  {
+    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+  }
   // k.AssembleQuadratureData();
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
@@ -259,6 +269,14 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
                                          mat_op.GetCurlCurlInvPermeability());
   BilinearForm k(GetNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  // Include the thin-film superconductor kinetic sheet term so shorted-port assemblies
+  // carry the same kinetic inductance as the base stiffness matrix.
+  MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+  sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
+  if (!fbr.empty())
+  {
+    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+  }
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
 
   // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
