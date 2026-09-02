@@ -17,6 +17,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
+    by including complex terms in the real-valued preconditioner or using an exact complex-valued
+    preconditioner when `"ComplexCoarseSolve"` is true.
+
 #### Bug Fixes
 
   - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
