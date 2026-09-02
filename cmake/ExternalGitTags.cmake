@@ -280,6 +280,20 @@ set(EXTERN_EIGEN_URL
   "URL for external Eigen build"
 )
 
+# Enzyme
+set(EXTERN_ENZYME_URL
+  "https://github.com/EnzymeAD/Enzyme.git" CACHE STRING
+  "URL for external Enzyme build"
+)
+set(EXTERN_ENZYME_GIT_BRANCH
+  "main" CACHE STRING
+  "Git branch for external Enzyme build"
+)
+set(EXTERN_ENZYME_GIT_TAG
+  "v0.0.239" CACHE STRING
+  "Git tag for external Enzyme build"
+)
+
 # SUNDIALS
 set(EXTERN_SUNDIALS_URL
   "https://github.com/LLNL/sundials.git" CACHE STRING

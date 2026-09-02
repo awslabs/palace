@@ -77,6 +77,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Measure code coverage when running (leads to severe loss of performance)",
         when="@0.16:",
     )
+    variant(
+        "enzyme",
+        default=False,
+        description="Build Enzyme-backed automatic-differentiation unit tests",
+        when="@0.18:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch(
@@ -105,6 +111,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib~shared", when="~shared@0.14:")
     depends_on("eigen", type="build")
     depends_on("lcov@1.15:", when="+coverage@0.16:", type="run")
+    depends_on("enzyme@0.0.206:", when="+enzyme@0.18:")
 
     conflicts(
         "~superlu-dist~strumpack~mumps",
@@ -120,6 +127,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "+asan",
         when="platform=darwin %gcc",
         msg="GCC does not support AddressSanitizer on macOS (Apple Silicon). Use Clang instead.",
+    )
+    requires(
+        "%c=llvm@15:21",
+        when="+enzyme",
+        msg="Enzyme requires upstream Clang 15-21 built against the same LLVM as the plugin.",
+    )
+    requires(
+        "%cxx=llvm@15:21",
+        when="+enzyme",
+        msg="Enzyme requires upstream Clang 15-21 built against the same LLVM as the plugin.",
     )
 
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
@@ -403,6 +420,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
+            self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
@@ -420,6 +438,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
+            if self.spec.satisfies("+enzyme"):
+                args.append(
+                    self.define(
+                        "ENZYME_DIR",
+                        self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme"),
+                    )
+                )
             if self.spec.satisfies("+mumps"):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+cudss"):

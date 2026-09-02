@@ -48,9 +48,14 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
+set(PALACE_WITH_ENZYME OFF CACHE BOOL "Build Enzyme support for Palace unit tests")
 set(PALACE_TESTS_NUMPROC 2 CACHE STRING "MPI ranks per [Parallel] unit-test case")
 set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING "MPI ranks per [Regression]/[Long] case")
 set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING "OpenMP threads per test process")
+set(LLVM_DIR "" CACHE PATH "Path to the LLVM CMake package used to build Enzyme")
+set(ENZYME_DIR "" CACHE PATH
+  "Path to an existing Enzyme installation (build Enzyme when empty)"
+)
 
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
@@ -228,6 +233,8 @@ endif()
 include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
+elseif(PALACE_WITH_ENZYME AND "${ENZYME_DIR}" STREQUAL "")
+  include(ExternalEnzyme)
 endif()
 
 # Add the main Palace project

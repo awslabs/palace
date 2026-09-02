@@ -138,8 +138,12 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        sudo apt-get install -y clang-${LLVM_VERSION} llvm-${LLVM_VERSION} lld-${LLVM_VERSION} lldb-${LLVM_VERSION} libomp5-${LLVM_VERSION} libomp-${LLVM_VERSION}-dev flang-${LLVM_VERSION}
-        end_timer "Setup LLVM"  
+        sudo apt-get install -y \
+          clang-${LLVM_VERSION} llvm-${LLVM_VERSION} libclang-${LLVM_VERSION}-dev \
+          lld-${LLVM_VERSION} lldb-${LLVM_VERSION} \
+          libomp5-${LLVM_VERSION} libomp-${LLVM_VERSION}-dev flang-${LLVM_VERSION} \
+          libzstd-dev
+        end_timer "Setup LLVM"
 
     - name: Setup GNU
       shell: bash

@@ -4,7 +4,7 @@
 CLANG_FORMAT ?= clang-format
 JULIA ?= julia
 
-.PHONY: format format-cpp format-jl docs tests
+.PHONY: format format-cpp format-jl docs docs-mms-data docs-mms-plots docs-mms-refresh tests
 
 # Style/format
 format: format-cpp format-jl
@@ -20,6 +20,17 @@ docs:
 	$(RM) -r docs/build
 	$(JULIA) --project=docs -e 'using Pkg; Pkg.instantiate()'
 	$(JULIA) --project=docs --color=yes docs/make.jl
+
+docs-mms-data:
+	$(JULIA) --project=examples docs/generate_electrostatic_mms_data.jl \
+	  --test-exe "$(BUILD_DIR)/palace-build/test/unit/palace-unit-tests" \
+	  --out "$(abspath docs/src/assets/verification/electrostatic_mms.csv)"
+
+docs-mms-plots:
+	$(JULIA) --project=examples docs/generate_electrostatic_mms_plots.jl
+
+docs-mms-refresh: docs-mms-data
+	$(MAKE) docs-mms-plots
 
 docs-generate-config:
 	$(JULIA) --project=docs --color=yes docs/generate_config_docs.jl
