@@ -544,37 +544,38 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     const auto *Ai = dynamic_cast<const mfem::HypreParMatrix *>(opA->Imag());
     MFEM_VERIFY(!opA->Real() || Ar, "Expected assembled real boundary mode matrix!");
     MFEM_VERIFY(!opA->Imag() || Ai, "Expected assembled imaginary boundary mode matrix!");
-    if (Ar && Ai)
+    MFEM_VERIFY(Ar || Ai, "Empty boundary mode preconditioner matrix!");
+    if (linear.complex_coarse_solve && (!bmo || (Ar && Ai)))
     {
-      std::unique_ptr<Operator> P;
-      if (linear.complex_coarse_solve)
-      {
-        // A = [Ar, Ai]
-        //     [Ai, -Ar]
-        // MfemWrapperSolver solves A [xr; -xi] = [br; bi].
-        mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-        mfem::Array2D<double> block_coeffs(2, 2);
-        blocks(0, 0) = Ar;
-        blocks(0, 1) = Ai;
-        blocks(1, 0) = Ai;
-        blocks(1, 1) = Ar;
-        block_coeffs(0, 0) = 1.0;
-        block_coeffs(0, 1) = 1.0;
-        block_coeffs(1, 0) = 1.0;
-        block_coeffs(1, 1) = -1.0;
-        P.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
-      }
-      else
-      {
-        P.reset(mfem::Add(1.0, *Ar, 1.0, *Ai));
-      }
+      // Wave-port solves must preserve the doubled dimension even when one matrix part is
+      // absent: real and complex frequencies can otherwise alternate between N and 2N,
+      // which sparse direct solvers cannot reuse. Preserve the existing BoundaryMode
+      // behavior, where a purely real operator is factored at size N.
+      // A = [Ar, Ai]
+      //     [Ai, -Ar]
+      // MfemWrapperSolver solves A [xr; -xi] = [br; bi].
+      mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+      mfem::Array2D<double> block_coeffs(2, 2);
+      blocks(0, 0) = Ar;
+      blocks(0, 1) = Ai;
+      blocks(1, 0) = Ai;
+      blocks(1, 1) = Ar;
+      block_coeffs(0, 0) = 1.0;
+      block_coeffs(0, 1) = 1.0;
+      block_coeffs(1, 0) = 1.0;
+      block_coeffs(1, 1) = -1.0;
+      std::unique_ptr<Operator> P(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+      direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
+    }
+    else if (!linear.complex_coarse_solve && Ar && Ai)
+    {
+      std::unique_ptr<Operator> P(mfem::Add(1.0, *Ar, 1.0, *Ai));
       direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
     }
     else
     {
       const Operator *P =
           Ar ? static_cast<const Operator *>(Ar) : static_cast<const Operator *>(Ai);
-      MFEM_VERIFY(P, "Empty boundary mode preconditioner matrix!");
       direct_pc_op = std::make_unique<ComplexWrapperOperator>(P, nullptr);
     }
   }
@@ -837,6 +838,10 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 #endif
   }
 
+  // A wave-port exact solve can transition between real and complex frequencies, changing
+  // the doubled-real sparsity pattern. Disable symbolic reuse only for that case; preserve
+  // the existing behavior for BoundaryMode and real-matrix preconditioners.
+  const bool reorder_reuse = bmo || !linear.complex_coarse_solve || linear.pc_mat_real;
   auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
       [&]() -> std::unique_ptr<mfem::Solver>
       {
@@ -844,7 +849,8 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         {
 #if defined(MFEM_USE_SUPERLU)
           return std::make_unique<SuperLUSolver>(comm, linear.sym_factorization,
-                                                 linear.superlu_3d, true, verbose - 1);
+                                                 linear.superlu_3d, reorder_reuse,
+                                                 verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::STRUMPACK ||
@@ -854,28 +860,29 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
           return std::make_unique<StrumpackSolver>(
               comm, linear.sym_factorization, linear.strumpack_compression_type,
               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-              linear.strumpack_lossy_precision, true, verbose - 1);
+              linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::MUMPS)
         {
 #if defined(MFEM_USE_MUMPS)
-          return std::make_unique<MumpsSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
-                                               linear.sym_factorization,
-                                               linear.strumpack_lr_tol, true, verbose - 1);
+          return std::make_unique<MumpsSolver>(
+              comm, MatrixSymmetry::UNSYMMETRIC, linear.sym_factorization,
+              linear.strumpack_lr_tol, reorder_reuse, verbose - 1);
 #endif
         }
         else if (pc_type == LinearSolver::CUDSS)
         {
 #if defined(MFEM_USE_CUDSS)
           return std::make_unique<CuDSSSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
-                                               linear.sym_factorization, true, verbose - 1);
+                                               linear.sym_factorization, reorder_reuse,
+                                               verbose - 1);
 #endif
         }
         MFEM_ABORT("Unsupported linear solver type for boundary mode solver!");
         return {};
       }(),
-      false, linear.complex_coarse_solve, false, linear.reorder_reuse);
+      false, false, false, reorder_reuse);
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
 
