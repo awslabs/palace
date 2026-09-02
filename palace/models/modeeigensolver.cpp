@@ -532,6 +532,53 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // Frequency-dependent matrices assemble on the FE space communicator.
   AssembleFrequencyDependent(omega, sigma);
 
+  // The sparse matrix sum and doubled-real block construction below are MPI-collective on
+  // the FE space communicator. Wave-port sparse-direct solvers run on a subcommunicator,
+  // so assemble the complex-aware preconditioner on all ranks before non-port ranks
+  // return. The resulting real operator is already in the form expected by the wrapped
+  // sparse solver, avoiding another collective assembly in MfemWrapperSolver.
+  direct_pc_op.reset();
+  if (!block_pc_ptr && !linear.pc_mat_real)
+  {
+    const auto *Ar = dynamic_cast<const mfem::HypreParMatrix *>(opA->Real());
+    const auto *Ai = dynamic_cast<const mfem::HypreParMatrix *>(opA->Imag());
+    MFEM_VERIFY(!opA->Real() || Ar, "Expected assembled real boundary mode matrix!");
+    MFEM_VERIFY(!opA->Imag() || Ai, "Expected assembled imaginary boundary mode matrix!");
+    if (Ar && Ai)
+    {
+      std::unique_ptr<Operator> P;
+      if (linear.complex_coarse_solve)
+      {
+        // A = [Ar, Ai]
+        //     [Ai, -Ar]
+        // MfemWrapperSolver solves A [xr; -xi] = [br; bi].
+        mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+        mfem::Array2D<double> block_coeffs(2, 2);
+        blocks(0, 0) = Ar;
+        blocks(0, 1) = Ai;
+        blocks(1, 0) = Ai;
+        blocks(1, 1) = Ar;
+        block_coeffs(0, 0) = 1.0;
+        block_coeffs(0, 1) = 1.0;
+        block_coeffs(1, 0) = 1.0;
+        block_coeffs(1, 1) = -1.0;
+        P.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+      }
+      else
+      {
+        P.reset(mfem::Add(1.0, *Ar, 1.0, *Ai));
+      }
+      direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
+    }
+    else
+    {
+      const Operator *P =
+          Ar ? static_cast<const Operator *>(Ar) : static_cast<const Operator *>(Ai);
+      MFEM_VERIFY(P, "Empty boundary mode preconditioner matrix!");
+      direct_pc_op = std::make_unique<ComplexWrapperOperator>(P, nullptr);
+    }
+  }
+
   // Ranks configured without a solver (wave port non-port ranks) return after assembly.
   if (!ksp || !eigen)
   {
@@ -572,9 +619,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   else
   {
-    // Match the full-system sparse-direct preconditioner: use Ar + Ai by default, or the
-    // exact doubled-real representation of Ar + i Ai when ComplexCoarseSolve is enabled.
-    ksp->SetOperators(*opA, *opA);
+    MFEM_VERIFY(direct_pc_op, "Missing complex-aware boundary mode preconditioner!");
+    ksp->SetOperators(*opA, *direct_pc_op);
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
