@@ -65,19 +65,18 @@ json LoadCpwWaveConfig()
   return setup;
 }
 
-// Dielectric-slab-loaded rectangular guide (see the slab_waveguide regression fixture). Its
+// Dielectric-slab-loaded rectangular guide (see the iris_filter regression fixture). Its
 // hybrid/LSM port mode has a frequency-rotating transverse shape, so the modal correction
 // is genuinely multi-vector -- the case exercised by ModalCorrectionRotationSubspace below.
-json LoadSlabWaveConfig()
+json LoadIrisWaveConfig()
 {
-  auto slab_dir =
-      fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "slab_waveguide";
-  std::ifstream f(slab_dir / "driven_wave_synth.json");
+  auto iris_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "iris_filter";
+  std::ifstream f(iris_dir / "driven_wave_synth.json");
   REQUIRE(f.good());
   json setup = json::parse(f, /*cb=*/nullptr, /*allow_exceptions=*/true,
                            /*ignore_comments=*/true);
   auto mesh_rel = setup["Model"]["Mesh"].get<std::string>();
-  setup["Model"]["Mesh"] = (slab_dir / mesh_rel).string();
+  setup["Model"]["Mesh"] = (iris_dir / mesh_rel).string();
   setup["Problem"]["Output"] = "";
   return setup;
 }
@@ -389,14 +388,14 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
 // whose transverse shape is fixed (only k_n(ω) scales), so the sampled s(ω) span a rank-1
 // subspace and a center-frozen shape is exact. A transversely inhomogeneous guide (slab)
 // supports hybrid modes whose shape rotates with ω, so the samples span rank>=2 and a
-// center-frozen single vector is inadequate. Verify both on the slab: (a) the s_full
-// samples are genuinely rank>=2, (b) projecting onto the band-center shape leaves a large
-// residual.
+// center-frozen single vector is inadequate. Verify both on the slab-loaded iris guide:
+// (a) the s_full samples are genuinely rank>=2, (b) projecting onto the band-center shape
+// leaves a large residual.
 TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
           "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
-  IoData iodata(LoadSlabWaveConfig(), /*print=*/false);
+  IoData iodata(LoadIrisWaveConfig(), /*print=*/false);
   auto mesh_io = LoadScaleParMesh(iodata, comm);
   SpaceOperator space_op(iodata, mesh_io);
 

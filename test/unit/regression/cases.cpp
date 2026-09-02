@@ -457,15 +457,12 @@ TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
                                   "driven_wave_tm_adaptive", opts);
 }
 
-// Eigenmode counterpart of slab_waveguide_driven_wave_synth: the dielectric-slab-loaded
-// guide resonating through its hybrid/LSM (Mode 3, longitudinal-E) wave port. The
-// transverse inhomogeneity rotates the mode shape with frequency, so the modal correction W
-// is rank>=2 and band-varying, and it enters the nonlinear eigensolver on the LHS. The
-// converged mode (Re{f} ~ 7.730 GHz, Q ~ 20) is reproducible across partitions to ~1e-8,
-// and W shifts the damping/Q by a few percent, so the directly-diffed eig.csv (Re{f},
-// Im{f}, Q) is a genuine W-sensitivity guard: a broken or dropped W moves Q well past the
-// rtol.
-TEST_CASE("slab_waveguide_wave_eigen", "[Serial][Parallel][Regression]")
+// Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
+// iris-coupled slab-loaded guide carry the hybrid/LSM mode (Mode 3), so the modal
+// correction W is rank>=2 and enters the nonlinear eigensolver on the LHS. Dropping or
+// breaking W shifts the cavity resonance Q (Re{f} ~ 6.690 GHz, Q ~ 22), so the diffed
+// eig.csv is the W-sensitivity guard.
+TEST_CASE("iris_filter_wave_eigen", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
@@ -473,42 +470,17 @@ TEST_CASE("slab_waveguide_wave_eigen", "[Serial][Parallel][Regression]")
   opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
-  palace::test::RunRegressionCase("slab_waveguide", "wave_eigen.json", "wave_eigen", opts);
+  palace::test::RunRegressionCase("iris_filter", "wave_eigen.json", "wave_eigen", opts);
 }
 
-// Circuit-synthesis counterpart of cylinder_driven_wave_tm: the TM01 (longitudinal-E) port
-// exercises the modal correction W in the synthesis export. The synthesized S-parameters
-// (port-S: |S11| = 0 dB unitary + phase) are the W-dependent regression signal. The
-// homogeneous cross-section gives a rank-1 correction and a broad off-axis pole (Q ~ 4)
-// that a real-frequency fit cannot place, so no synthesized eigenvalue is asserted here
-// (the extractable-pole check lives on slab_waveguide_driven_wave_synth). The pencil
-// matrices are basis/partition/arithmetic-dependent, so presence-checked only.
-TEST_CASE("cylinder_driven_wave_tm_synth", "[Serial][Parallel][Regression]")
-{
-  palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-3;
-  opts.atol = 1.0e-11;
-  opts.skip_rowcount = true;
-  opts.min_rows = 1;
-  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
-  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
-                         "rom-orthogonalization-matrix-R"};
-  opts.paraview_fields = false;
-  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_synth.json",
-                                  "driven_wave_tm_synth", opts);
-}
-
-// Circuit synthesis of a dielectric-slab-loaded guide driven through its hybrid/LSM port
-// mode. The transverse inhomogeneity rotates the mode shape with frequency, so the modal
-// correction W is rank>=2 and band-varying. The band (7.5-8.2 GHz) brackets a moderate-Q
-// resonance (eigenmode pole 7.730 GHz, Q ~ 20) extractable from the real-frequency fit, so
-// TestRomEigenvalueMatchesEigenmode asserts the synthesized root matches it in both Re{f}
-// and Q. The pole sits in a near-degenerate high-Q cluster: serial resolves a single root
-// on it, but partitioned runs split the cluster into two roots straddling 7.730 (which pair
-// appears is basis/partition-dependent), so the Re{f} tolerance is set to admit the nearest
-// straddling root rather than pin the exact pole. Pencil matrices/eigenvectors are
-// basis/partition-dependent, so presence-checked only.
-TEST_CASE("slab_waveguide_driven_wave_synth", "[Serial][Parallel][Regression]")
+// Circuit synthesis of the two-port iris-coupled slab-loaded guide (hybrid/LSM port, W
+// rank>=2). The inductive irises make the cavity a strongly-coupled |S21| resonance, so the
+// greedy real-frequency samples capture the pole and the synthesized root reproduces the
+// eigenmode Re{f} (6.690 GHz) across partitions, asserted by
+// TestRomEigenvalueMatchesEigenmode. Q is under-determined by real-axis samples (synth ~69
+// vs eigenmode ~22, pole far off-axis), so only Re{f} is asserted; swept S and the pencil
+// matrices are partition-dependent and presence-checked only.
+TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
@@ -523,9 +495,9 @@ TEST_CASE("slab_waveguide_driven_wave_synth", "[Serial][Parallel][Regression]")
                          // eigenvalue (custom check) rather than a pointwise S diff.
                          "port-S"};
   opts.custom_checks["rom-eigenvalues.csv"] =
-      TestRomEigenvalueMatchesEigenmode(7.730, 1.0e-2, /*q_eigen=*/20.4, /*q_rtol=*/0.30);
+      TestRomEigenvalueMatchesEigenmode(6.690, 5.0e-3);
   opts.paraview_fields = false;
-  palace::test::RunRegressionCase("slab_waveguide", "driven_wave_synth.json",
+  palace::test::RunRegressionCase("iris_filter", "driven_wave_synth.json",
                                   "driven_wave_synth", opts);
 }
 

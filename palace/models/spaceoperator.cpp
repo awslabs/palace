@@ -839,8 +839,8 @@ SpaceOperator::GetExtraSystemOperator(std::complex<double> omega,
                                       Operator::DiagonalPolicy diag_policy)
 {
   // Complex-ω counterpart: sparse local wave-port mass i·k_n(ω)·M plus the matrix-free
-  // modal correction W frozen at the last Initialize, summed via an owning
-  // SumComplexOperator.
+  // modal correction W recomputed at ω (the complex-ω GetModalCorrectionOperator re-solves
+  // the port mode per ω), summed via an owning SumComplexOperator.
   auto A2 = GetExtraSystemMatrix(omega, diag_policy);
   auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
                                                    nd_dbc_tdof_lists.back());

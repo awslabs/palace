@@ -1,0 +1,81 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_synth"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/iris_filter.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // dielectric slab (x in [0, 1] cm)
+        "Permeability": 1.0,
+        "Permittivity": 10.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],  // air fill (x in [1, 2] cm)
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        // Two-port iris filter driven through the hybrid/LSM mode (Mode 3, W rank>=2). The
+        // inductive irises make the cavity resonance a strongly-coupled |S21| peak, so the
+        // greedy real-frequency samples capture the pole and the synthesized pencil
+        // reproduces its Re{f} across partitions.
+        "Index": 1,
+        "Attributes": [3],
+        "Mode": 3,
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      },
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Mode": 3,
+        "Excitation": false,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [5]  // outer walls + iris post surfaces
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 6.30,  // GHz
+      "MaxFreq": 7.10,
+      "FreqStep": 0.01,
+      "AdaptiveTol": 1.0e-6,
+      "AdaptiveCircuitSynthesis": true
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}
