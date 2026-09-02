@@ -555,9 +555,6 @@ WavePortData::WavePortData(const json &port)
   eig_tol = port.value("EigenTol", eig_tol);
   max_size = port.value("MaxSize", max_size);
   verbose = port.value("Verbose", verbose);
-  diagnostic_modes = port.value("DiagnosticModes", diagnostic_modes);
-  MFEM_VERIFY(diagnostic_modes >= 0 && diagnostic_modes <= 32,
-              "WavePort DiagnosticModes must be between 0 and 32!");
   if (auto it = port.find("VoltagePath"); it != port.end())
   {
     for (const auto &pt : *it)

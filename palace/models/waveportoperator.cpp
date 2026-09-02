@@ -4,7 +4,6 @@
 #include "waveportoperator.hpp"
 #include <algorithm>
 #include <limits>
-#include <sstream>
 #include "fem/bilinearform.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
@@ -37,11 +36,8 @@
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/constants.hpp"
-#include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -60,9 +56,9 @@ void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
 {
   const auto &port_mesh = *port_nd_fespace.GetParMesh();
 
-  // Compute essential DoFs directly on the remapped port mesh. Transferring a parent
-  // boundary marker through an NC ParSubMesh can incorrectly constrain interior surface
-  // DoFs because parent and extracted-surface master/slave relations differ.
+  // Parent and extracted-surface master/slave relations differ on NC meshes, so
+  // transferring a parent boundary marker can constrain interior port DoFs. Extract the
+  // essential DoFs directly from the remapped port boundary instead.
   const int max_bdr_attr =
       std::max(mesh::GetMaxBdrAttribute(port_mesh), dbc_attr.Size() ? dbc_attr.Max() : 0);
   mfem::Array<int> dbc_marker;
@@ -85,10 +81,8 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   linalg::SetSubVector(v, dbc_tdof_list, 0.0);
 }
 
-std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
-                               GridFunction &E0n, mfem::LinearForm &sr,
-                               mfem::LinearForm &si, bool guard = false,
-                               bool *valid = nullptr)
+void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
+               mfem::LinearForm &sr, mfem::LinearForm &si)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the outward mesh normal). The n x H
@@ -102,16 +96,6 @@ std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
       {sr * S0t.Real(), si * S0t.Real()},
       {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
   Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
-  const double tol = 100.0 * std::numeric_limits<double>::epsilon();
-  const bool normalization_valid = std::abs(dot[0]) > tol && std::abs(dot[1]) > tol;
-  if (valid)
-  {
-    *valid = normalization_valid;
-  }
-  if (guard && !normalization_valid)
-  {
-    return dot[1];
-  }
   auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
   ComplexVector::AXPBY(scale, E0t.Real(), E0t.Imag(), 0.0, E0t.Real(), E0t.Imag());
   ComplexVector::AXPBY(scale, E0n.Real(), E0n.Imag(), 0.0, E0n.Real(), E0n.Imag());
@@ -123,7 +107,6 @@ std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
   // E0t.Imag().ExchangeFaceNbrData();  // coefficients evaluation
   // E0n.Real().ExchangeFaceNbrData();
   // E0n.Imag().ExchangeFaceNbrData();
-  return dot[1];
 }
 
 // Helper for BdrSubmeshEVectorCoefficient and BdrSubmeshHVectorCoefficient.
@@ -336,20 +319,16 @@ public:
 
 }  // namespace
 
-WavePortData::WavePortData(int idx, const config::WavePortData &data,
+WavePortData::WavePortData(const config::WavePortData &data,
                            const config::BoundaryData &boundaries,
                            const config::DomainData &domains, ProblemType problem_type,
                            const config::LinearSolverData &linear, const Units &units,
                            const MaterialOperator &mat_op,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
-                           const mfem::Array<int> &dbc_attr, const std::string &output)
+                           const mfem::Array<int> &dbc_attr)
   : mat_op(mat_op), excitation(data.excitation), active(data.active),
-    include_in_synthesis(data.include_in_synthesis), port_idx(idx),
-    diagnostic_modes(data.diagnostic_modes),
-    diagnostic_output(output.empty() ? "." : output),
-    diagnostic_fc(units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
-    diagnostic_kc(1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
+    include_in_synthesis(data.include_in_synthesis)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
@@ -417,15 +396,13 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
   port_nd_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_nd_fec.get());
   port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
 
-  GridFunction E0t(nd_fespace), E0n(h1_fespace);
+  GridFunction E0t(nd_fespace);
   port_E0t = std::make_unique<GridFunction>(*port_nd_fespace, true);
   port_E0n = std::make_unique<GridFunction>(*port_h1_fespace, true);
   port_E = std::make_unique<GridFunction>(*port_nd_fespace, true);
 
   port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
       mfem::ParSubMesh::CreateTransferMap(E0t.Real(), port_E0t->Real()));
-  port_h1_transfer = std::make_unique<mfem::ParTransferMap>(
-      mfem::ParSubMesh::CreateTransferMap(E0n.Real(), port_E0n->Real()));
 
   // Remap submesh attributes so that domain elements get the adjacent volume element
   // attribute (matching material definitions) and boundary edges get the adjacent boundary
@@ -508,23 +485,6 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
   Mpi::GlobalMin(1, &port_root, comm);
   MFEM_VERIFY(port_root < Mpi::Size(comm), "No root process found for port!");
 
-  // Bound diagnostic candidates by both the public limit and the port eigenproblem size.
-  if (diagnostic_modes > 0)
-  {
-    const HYPRE_BigInt global_size =
-        port_nd_fespace->GlobalTrueVSize() + port_h1_fespace->GlobalTrueVSize();
-    const int size_limit =
-        (global_size > 2) ? static_cast<int>(std::min<HYPRE_BigInt>(32, global_size - 2))
-                          : 0;
-    if (diagnostic_modes > size_limit)
-    {
-      Mpi::Warning(fmt::format("Reducing WavePort DiagnosticModes from {:d} to {:d} for "
-                               "port {:d} based on EVP size!",
-                               diagnostic_modes, size_limit, port_idx));
-      diagnostic_modes = size_limit;
-    }
-  }
-
   // Configure the boundary mode solver. Matrix assembly is MPI-collective on the FE space
   // communicator (all processes), so the config + construction must happen on all
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
@@ -534,17 +494,6 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
         data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, linear,
         data.eigen_solver, data.verbose, port_comm);
-    if (diagnostic_modes > 0)
-    {
-      const int diagnostic_max_size =
-          std::max(data.max_size, std::max(2 * diagnostic_modes, diagnostic_modes + 15));
-      diagnostic_solver = std::make_unique<ModeEigenSolver>(
-          *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op,
-          *port_surf_sigma_op, *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace,
-          port_dbc_tdof_list, diagnostic_modes, diagnostic_max_size, data.eig_tol,
-          EigenvalueSolver::WhichType::LARGEST_REAL, linear, data.eigen_solver,
-          data.verbose, port_comm);
-    }
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -613,10 +562,9 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
     }
     voltage_n_samples = data.n_samples;
 
-    // Build a deterministic tangent frame from the first path segment and port normal.
-    // The path direction defines e1; e2 completes an orientation-preserving frame whose
-    // normal is the original port normal. Using the first path point as origin makes the
-    // frame identical on every MPI rank, including ranks with no local port elements.
+    // Build a rank-independent, orientation-preserving tangent frame from the first path
+    // segment and the port normal, then project both the path and a deep copy of the port
+    // mesh into that frame.
     MFEM_VERIFY(voltage_path[0].Size() == 3 && voltage_path[1].Size() == 3,
                 "Wave port VoltagePath points must be three-dimensional!");
     mfem::Vector origin(voltage_path[0]), e1(voltage_path[1]), e2(3);
@@ -635,10 +583,6 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
       voltage_path_2d.push_back(mesh::Project3Dto2D(p, origin, e1, e2));
     }
 
-    // Deep-copy the port mesh, flatten its coordinates into the tangent frame, and create
-    // an otherwise identical ND space. A rigid orientation-preserving projection leaves
-    // ND line-integral DoFs unchanged, so the modal field can be copied exactly by local
-    // DoF rather than transferred through the nonconforming 3D parent mesh.
     auto flat_pmesh = std::make_unique<mfem::ParMesh>(port_mesh->Get(), true);
     mesh::ProjectMeshTo2D(*flat_pmesh, origin, e1, e2);
     voltage_port_mesh = std::make_unique<Mesh>(std::move(flat_pmesh));
@@ -653,8 +597,6 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
                 "Flattened wave port ND space does not match the embedded port space!");
 
 #if defined(MFEM_USE_GSLIB)
-    // Cache both geometric point locators. The parent locator serves GetVoltage for the
-    // driven 3D field; the flattened-port locator serves GetExcitationVoltage directly.
     auto &parent_mesh = *nd_fespace.GetParMesh();
     voltage_gslib_op = std::make_unique<mfem::FindPointsGSLIB>(parent_mesh.GetComm());
     fem::SetupInterpolator(*voltage_gslib_op, parent_mesh);
@@ -671,143 +613,12 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
 
 WavePortData::~WavePortData()
 {
-  // Free the solvers before the communicator on which they are based.
-  diagnostic_solver.reset();
+  // Free the solver before the communicator on which it is based.
   mode_solver.reset();
   if (port_comm != MPI_COMM_NULL)
   {
     MPI_Comm_free(&port_comm);
   }
-}
-
-void WavePortData::LoadMode(ModeEigenSolver &solver, int mode, std::complex<double> kn)
-{
-  const int nd_size = port_nd_fespace->GetTrueVSize();
-  const int h1_size = port_h1_fespace->GetTrueVSize();
-  if (port_comm != MPI_COMM_NULL)
-  {
-    solver.GetEigenvector(mode, e0);
-    linalg::NormalizePhase(port_comm, e0);
-    ComplexVector et_view, en_view;
-    mode_assembly::ApplyVDBackTransform(e0, kn, nd_size, h1_size, et_view, en_view);
-  }
-  else
-  {
-    MFEM_ASSERT(e0.Size() == 0,
-                "Unexpected non-empty port FE space in wave port boundary mode solve!");
-  }
-
-  e0.Real().Read();
-  e0.Imag().Read();
-  Vector e0tr(e0.Real(), 0, nd_size), e0nr(e0.Real(), nd_size, h1_size);
-  Vector e0ti(e0.Imag(), 0, nd_size), e0ni(e0.Imag(), nd_size, h1_size);
-  e0tr.UseDevice(true);
-  e0nr.UseDevice(true);
-  e0ti.UseDevice(true);
-  e0ni.UseDevice(true);
-  port_E0t->Real().SetFromTrueDofs(e0tr);
-  port_E0t->Imag().SetFromTrueDofs(e0ti);
-  port_E0n->Real().SetFromTrueDofs(e0nr);
-  port_E0n->Imag().SetFromTrueDofs(e0ni);
-}
-
-std::complex<double> WavePortData::NormalizeMode(double omega, std::complex<double> kn,
-                                                 bool guard, bool *valid)
-{
-  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
-      *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn, omega);
-  BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
-      *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn, omega);
-  port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-  port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
-  port_sr->UseFastAssembly(false);
-  port_sr->UseDevice(false);
-  port_sr->Assemble();
-  port_sr->UseDevice(true);
-  port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-  port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
-  port_si->UseFastAssembly(false);
-  port_si->UseDevice(false);
-  port_si->Assemble();
-  port_si->UseDevice(true);
-  return Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si, guard, valid);
-}
-
-void WavePortData::PrintDiagnosticMeshInfo() const
-{
-  const auto &mesh = port_mesh->Get();
-  MPI_Comm comm = mesh.GetComm();
-  auto CountAttributes = [&](bool boundary)
-  {
-    const int n = boundary ? mesh.GetNBE() : mesh.GetNE();
-    int attr_max = 0;
-    for (int i = 0; i < n; i++)
-    {
-      const int attr = boundary ? mesh.GetBdrAttribute(i) : mesh.GetAttribute(i);
-      attr_max = std::max(attr_max, attr);
-    }
-    Mpi::GlobalMax(1, &attr_max, comm);
-    std::vector<HYPRE_BigInt> counts(attr_max + 1, 0);
-    for (int i = 0; i < n; i++)
-    {
-      const int attr = boundary ? mesh.GetBdrAttribute(i) : mesh.GetAttribute(i);
-      if (attr >= 0 && attr <= attr_max)
-      {
-        counts[attr]++;
-      }
-    }
-    Mpi::GlobalSum(static_cast<int>(counts.size()), counts.data(), comm);
-    return counts;
-  };
-
-  const auto domain_counts = CountAttributes(false);
-  const auto boundary_counts = CountAttributes(true);
-  HYPRE_BigInt dbc_size = port_dbc_tdof_list.Size();
-  Mpi::GlobalSum(1, &dbc_size, comm);
-  Mpi::Print(" Wave port {:d} diagnostic mesh: domain attributes", port_idx);
-  for (std::size_t attr = 1; attr < domain_counts.size(); attr++)
-  {
-    if (domain_counts[attr])
-    {
-      Mpi::Print(" {:d}({:d})", static_cast<int>(attr), domain_counts[attr]);
-    }
-  }
-  Mpi::Print("; boundary attributes");
-  for (std::size_t attr = 1; attr < boundary_counts.size(); attr++)
-  {
-    if (boundary_counts[attr])
-    {
-      Mpi::Print(" {:d}({:d})", static_cast<int>(attr), boundary_counts[attr]);
-    }
-  }
-  Mpi::Print("; essential true DOFs {:d}\n", dbc_size);
-}
-
-void WavePortData::SaveDiagnosticFields(int mode, double omega)
-{
-  auto frequency = fmt::format("{:.9e}", omega * diagnostic_fc / (2.0 * M_PI));
-  std::replace(frequency.begin(), frequency.end(), '+', 'p');
-  std::replace(frequency.begin(), frequency.end(), '-', 'm');
-  auto collection_path = fs::path(diagnostic_output) / "waveport-diagnostics" /
-                         fmt::format("port-{:d}", port_idx) /
-                         fmt::format("f-{}-GHz-mode-{:02d}", frequency, mode + 1);
-  mfem::ParaViewDataCollection collection(collection_path.string(), &port_mesh->Get());
-  collection.SetCycle(0);
-  collection.SetTime(omega * diagnostic_fc / (2.0 * M_PI));
-  collection.SetDataFormat(mfem::VTKFormat::BINARY32);
-#if defined(MFEM_USE_ZLIB)
-  collection.SetCompressionLevel(-1);
-#else
-  collection.SetCompressionLevel(0);
-#endif
-  collection.SetHighOrderOutput(true);
-  collection.SetLevelsOfDetail(port_nd_fespace->GetMaxElementOrder());
-  collection.RegisterField("Et_real", &port_E0t->Real());
-  collection.RegisterField("Et_imag", &port_E0t->Imag());
-  collection.RegisterField("En_real", &port_E0n->Real());
-  collection.RegisterField("En_imag", &port_E0n->Imag());
-  collection.Save();
 }
 
 void WavePortData::Initialize(double omega)
@@ -817,12 +628,12 @@ void WavePortData::Initialize(double omega)
     return;
   }
 
-  // First run the unmodified production eigensolve. Candidate diagnostics use a separate
-  // eigensolver below and never change this solver's requested mode count or selected root.
+  // Solve the generalized eigenvalue problem for the desired wave port mode using the
+  // ModeEigenSolver. Frequency-independent matrices were assembled in the constructor.
   const double sigma = -omega * omega * mu_eps_max;
-  const bool has_solver = (port_comm != MPI_COMM_NULL);
-  std::complex<double> lambda(0.0, 0.0);
+  std::complex<double> lambda;
   {
+    const bool has_solver = (port_comm != MPI_COMM_NULL);
     auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
     if (has_solver)
     {
@@ -833,112 +644,99 @@ void WavePortData::Initialize(double omega)
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
-  if (diagnostic_solver && !suppress_output)
-  {
-    if (!diagnostic_mesh_printed)
-    {
-      PrintDiagnosticMeshInfo();
-      diagnostic_mesh_printed = true;
-    }
-
-    int num_conv = 0;
-    auto result = diagnostic_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
-    if (has_solver)
-    {
-      num_conv = result.num_converged;
-    }
-    Mpi::Broadcast(1, &num_conv, port_root, port_mesh->GetComm());
-    const int num_candidates = std::min(num_conv, diagnostic_modes);
-    std::ostringstream csv;
-    csv << "port,f_GHz,candidate,propagating,has_voltage_path,kn_real_m^-1,"
-           "kn_imag_m^-1,neff_real,neff_imag,error_backward,raw_V_real,raw_V_imag,"
-           "power_real,power_imag,normalization_valid,normalized_V_real,"
-           "normalized_V_imag,Z_PV_ohm\n";
-
-    for (int mode = 0; mode < num_candidates; mode++)
-    {
-      std::complex<double> candidate_lambda(0.0, 0.0);
-      double error = 0.0;
-      if (has_solver)
-      {
-        candidate_lambda = diagnostic_solver->GetEigenvalue(mode);
-        error = diagnostic_solver->GetError(mode, EigenvalueSolver::ErrorType::BACKWARD);
-      }
-      Mpi::Broadcast(1, &candidate_lambda, port_root, port_mesh->GetComm());
-      Mpi::Broadcast(1, &error, port_root, port_mesh->GetComm());
-      const std::complex<double> kn = std::sqrt(-sigma - 1.0 / candidate_lambda);
-      const bool propagating = ModeEigenSolver::IsPropagating(kn);
-      LoadMode(*diagnostic_solver, mode, kn);
-      const double nan = std::numeric_limits<double>::quiet_NaN();
-      const std::complex<double> no_voltage(nan, nan);
-      const auto raw_voltage = has_voltage_coords ? GetExcitationVoltage() : no_voltage;
-      bool normalization_valid = false;
-      const auto power = NormalizeMode(omega, kn, true, &normalization_valid);
-      const auto voltage =
-          (normalization_valid && has_voltage_coords) ? GetExcitationVoltage() : no_voltage;
-      const double Z_pv = (normalization_valid && has_voltage_coords)
-                              ? std::norm(voltage) * electromagnetics::Z0_
-                              : nan;
-      SaveDiagnosticFields(mode, omega);
-
-      const double frequency = omega * diagnostic_fc / (2.0 * M_PI);
-      Mpi::Print(" Port {:d}, diagnostic mode {:d}: kₙ = {:.6e}{:+.6e}i m⁻¹, "
-                 "n_eff = {:.6e}{:+.6e}i, propagating = {}, raw |V| = {:.6e}, "
-                 "P = {:.6e}{:+.6e}i, normalized |V| = {:.6e}, Z_PV = {:.6e} Ω, "
-                 "error = {:.3e}\n",
-                 port_idx, mode + 1, kn.real() * diagnostic_kc, kn.imag() * diagnostic_kc,
-                 (kn / omega).real(), (kn / omega).imag(), propagating,
-                 std::abs(raw_voltage), power.real(), power.imag(), std::abs(voltage), Z_pv,
-                 error);
-      csv << fmt::format(
-          "{},{:.12e},{},{},{},{:.12e},{:.12e},{:.12e},{:.12e},"
-          "{:.12e},{:.12e},{:.12e},{:.12e},{:.12e},{},{:.12e},{:.12e},"
-          "{:.12e}\n",
-          port_idx, frequency, mode + 1, propagating ? 1 : 0, has_voltage_coords ? 1 : 0,
-          kn.real() * diagnostic_kc, kn.imag() * diagnostic_kc, (kn / omega).real(),
-          (kn / omega).imag(), error, raw_voltage.real(), raw_voltage.imag(), power.real(),
-          power.imag(), normalization_valid ? 1 : 0, voltage.real(), voltage.imag(), Z_pv);
-    }
-
-    auto frequency = fmt::format("{:.9e}", omega * diagnostic_fc / (2.0 * M_PI));
-    std::replace(frequency.begin(), frequency.end(), '+', 'p');
-    std::replace(frequency.begin(), frequency.end(), '-', 'm');
-    auto csv_path = fs::path(diagnostic_output) / "waveport-diagnostics" /
-                    fmt::format("port-{:d}-f-{}-GHz.csv", port_idx, frequency);
-    WriteRootOutputFile(csv_path, port_mesh->GetComm(),
-                        [&](std::ostream &stream) { stream << csv.str(); });
-  }
-
-  // Restore the production-selected field after diagnostics.
+  // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
+  // 1 / (-k_n² - σ).
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
   omega0 = omega;
-  LoadMode(*mode_solver, mode_idx - 1, kn0);
-  NormalizeMode(omega0, kn0, false);
 
-  // If the user provided a VoltagePath, use it to fix the mode polarity such that
-  // V_exc = ∫ E_mode · dl is real-positive along the path. This ties the wave port
-  // mode polarity to a physically meaningful direction (the path direction, like a
-  // lumped port's Direction), enabling consistent S-parameter signs in mixed lumped
-  // + wave port simulations. PolarityAttributes provides a lightweight (no-GSLIB)
-  // alternative when only polarity is needed.
-  int sign = 0;
-  if (has_voltage_coords)
+  // Separate the computed field out into eₜ and eₙ and transform back to the physical
+  // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
+  // phase-normalize, then apply the shared VD back-transform.
   {
-    auto V_exc = GetExcitationVoltage();
-    sign = (V_exc.real() < 0.0) ? -1 : (V_exc.real() > 0.0 ? +1 : 0);
+    if (port_comm != MPI_COMM_NULL)
+    {
+      mode_solver->GetEigenvector(mode_idx - 1, e0);
+      linalg::NormalizePhase(port_comm, e0);
+      ComplexVector et_view, en_view;
+      mode_assembly::ApplyVDBackTransform(e0, kn0, port_nd_fespace->GetTrueVSize(),
+                                          port_h1_fespace->GetTrueVSize(), et_view,
+                                          en_view);
+    }
+    else
+    {
+      MFEM_ASSERT(e0.Size() == 0,
+                  "Unexpected non-empty port FE space in wave port boundary mode solve!");
+    }
+    e0.Real().Read();  // Ensure memory is allocated on device before aliasing
+    e0.Imag().Read();
+    Vector e0tr(e0.Real(), 0, port_nd_fespace->GetTrueVSize());
+    Vector e0nr(e0.Real(), port_nd_fespace->GetTrueVSize(),
+                port_h1_fespace->GetTrueVSize());
+    Vector e0ti(e0.Imag(), 0, port_nd_fespace->GetTrueVSize());
+    Vector e0ni(e0.Imag(), port_nd_fespace->GetTrueVSize(),
+                port_h1_fespace->GetTrueVSize());
+    e0tr.UseDevice(true);
+    e0nr.UseDevice(true);
+    e0ti.UseDevice(true);
+    e0ni.UseDevice(true);
+    port_E0t->Real().SetFromTrueDofs(e0tr);  // Parallel distribute
+    port_E0t->Imag().SetFromTrueDofs(e0ti);
+    port_E0n->Real().SetFromTrueDofs(e0nr);
+    port_E0n->Imag().SetFromTrueDofs(e0ni);
   }
-  else if (polarity_attributes[0] != 0 && polarity_attributes[1] != 0)
+
+  // Configure the linear forms for computing S-parameters (projection of the field onto the
+  // port mode). Normalize the mode for a chosen polarization direction and unit power,
+  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
   {
-    sign = GetModePolaritySign(polarity_attributes[0], polarity_attributes[1]);
-  }
-  if (sign < 0)
-  {
-    ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0t->Real(),
-                         port_E0t->Imag(), 0.0, port_E0t->Real(), port_E0t->Imag());
-    ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0n->Real(),
-                         port_E0n->Imag(), 0.0, port_E0n->Real(), port_E0n->Imag());
-    ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0, *port_sr,
-                         *port_si);
+    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+    BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+    {
+      port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+      port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
+      port_sr->UseFastAssembly(false);
+      port_sr->UseDevice(false);
+      port_sr->Assemble();
+      port_sr->UseDevice(true);
+    }
+    {
+      port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+      port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
+      port_si->UseFastAssembly(false);
+      port_si->UseDevice(false);
+      port_si->Assemble();
+      port_si->UseDevice(true);
+    }
+    Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+
+    // If the user provided a VoltagePath, use it to fix the mode polarity such that
+    // V_exc = ∫ E_mode · dl is real-positive along the path. This ties the wave port
+    // mode polarity to a physically meaningful direction (the path direction, like a
+    // lumped port's Direction), enabling consistent S-parameter signs in mixed lumped
+    // + wave port simulations. PolarityAttributes provides a lightweight (no-GSLIB)
+    // alternative when only polarity is needed.
+    int sign = 0;
+    if (has_voltage_coords)
+    {
+      auto V_exc = GetExcitationVoltage();
+      sign = (V_exc.real() < 0.0) ? -1 : (V_exc.real() > 0.0 ? +1 : 0);
+    }
+    else if (polarity_attributes[0] != 0 && polarity_attributes[1] != 0)
+    {
+      sign = GetModePolaritySign(polarity_attributes[0], polarity_attributes[1]);
+    }
+    if (sign < 0)
+    {
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0t->Real(),
+                           port_E0t->Imag(), 0.0, port_E0t->Real(), port_E0t->Imag());
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0n->Real(),
+                           port_E0n->Imag(), 0.0, port_E0n->Real(), port_E0n->Imag());
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
+                           *port_sr, *port_si);
+    }
   }
 }
 
@@ -1200,8 +998,8 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
   }
 
   // The flattened companion has identical topology, orientation, and ND ordering. Copying
-  // all local DoFs preserves hanging-node slave values written by SetFromTrueDofs and
-  // avoids the information loss of a SubMesh-to-parent transfer.
+  // all local DoFs preserves NC slave values and avoids the lossy submesh-to-parent
+  // transfer.
   MFEM_VERIFY(voltage_port_E0t->Real().Size() == port_E0t->Real().Size(),
               "Flattened wave port field size mismatch!");
   voltage_port_E0t->Real() = port_E0t->Real();
@@ -1241,13 +1039,14 @@ std::complex<double> WavePortData::GetCharacteristicImpedance() const
   return V * std::conj(V);
 }
 
-WavePortOperator::WavePortOperator(
-    const config::BoundaryData &boundaries, const config::DomainData &domains,
-    const config::SolverData &solver, ProblemType problem_type, const Units &units,
-    const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-    mfem::ParFiniteElementSpace &h1_fespace, const std::string &output)
-  : suppress_output(false), comm(nd_fespace.GetComm()), output(output),
-    fc(units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
+WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
+                                   const config::DomainData &domains,
+                                   const config::SolverData &solver,
+                                   ProblemType problem_type, const Units &units,
+                                   const MaterialOperator &mat_op,
+                                   mfem::ParFiniteElementSpace &nd_fespace,
+                                   mfem::ParFiniteElementSpace &h1_fespace)
+  : suppress_output(false), fc(units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
     kc(1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
 {
   MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
@@ -1261,7 +1060,7 @@ WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator 
                                    mfem::ParFiniteElementSpace &nd_fespace,
                                    mfem::ParFiniteElementSpace &h1_fespace)
   : WavePortOperator(iodata.boundaries, iodata.domains, iodata.solver, iodata.problem.type,
-                     iodata.units, mat_op, nd_fespace, h1_fespace, iodata.problem.output)
+                     iodata.units, mat_op, nd_fespace, h1_fespace)
 {
 }
 
@@ -1354,8 +1153,8 @@ void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &bound
     }
     port_dbc_bcs.Sort();
     port_dbc_bcs.Unique();
-    ports.try_emplace(idx, idx, data, boundaries, domains, problem_type, solver.linear,
-                      units, mat_op, nd_fespace, h1_fespace, port_dbc_bcs, output);
+    ports.try_emplace(idx, data, boundaries, domains, problem_type, solver.linear, units,
+                      mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
   }
   MFEM_VERIFY(
       ports.empty() || problem_type == ProblemType::DRIVEN ||
@@ -1420,15 +1219,6 @@ const WavePortData &WavePortOperator::GetPort(int idx) const
   return it->second;
 }
 
-void WavePortOperator::SetSuppressOutput(bool suppress)
-{
-  suppress_output = suppress;
-  for (auto &[idx, data] : ports)
-  {
-    data.SetSuppressOutput(suppress);
-  }
-}
-
 mfem::Array<int> WavePortOperator::GetAttrList() const
 {
   mfem::Array<int> attr_list;
@@ -1456,15 +1246,6 @@ void WavePortOperator::Initialize(double omega)
     return;
   }
   BlockTimer bt(Timer::WAVE_PORT);
-  if (!suppress_output && !diagnostic_output_initialized &&
-      std::any_of(ports.begin(), ports.end(),
-                  [](const auto &item) { return item.second.HasDiagnostics(); }))
-  {
-    auto diagnostic_dir = fs::path(output.empty() ? "." : output) / "waveport-diagnostics";
-    RemovePreviousOutput(diagnostic_dir, comm);
-    EnsureDirectory(diagnostic_dir, comm);
-    diagnostic_output_initialized = true;
-  }
   if (!suppress_output)
   {
     Mpi::Print(

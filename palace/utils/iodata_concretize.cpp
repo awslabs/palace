@@ -342,7 +342,6 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"EigenTol", wp.eig_tol},
                             {"MaxSize", wp.max_size},
                             {"Verbose", wp.verbose},
-                            {"DiagnosticModes", wp.diagnostic_modes},
                             {"NSamples", wp.n_samples}});
     }
   }

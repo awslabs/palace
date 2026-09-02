@@ -31,8 +31,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              const config::DomainData &domains,
                              const config::BoundaryData &boundaries,
                              ProblemType problem_type, const Units &units,
-                             const std::vector<std::unique_ptr<Mesh>> &mesh,
-                             const std::string &output)
+                             const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
@@ -62,7 +61,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                units, mat_op, *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
     wave_port_op(boundaries, domains, solver, problem_type, units, mat_op, GetNDSpace(),
-                 GetH1Space(), output),
+                 GetH1Space()),
     floquet_port_op(boundaries.floquetport, boundaries.periodic, problem_type, units,
                     mat_op, GetNDSpace().Get()),
     surf_j_op(boundaries.current, *mesh.back()),
@@ -97,7 +96,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
-                  iodata.units, mesh, iodata.problem.output)
+                  iodata.units, mesh)
 {
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
