@@ -59,6 +59,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added a `"Problem"`/`"Iteration"` field to the `palace.json` metadata file, recording the
     1-based index of the most recently completed adaptive mesh refinement (AMR) iteration
     (`1` for the initial solve, matching the `iterationXX` archive subdirectory).
+    [PR 902](https://github.com/awslabs/palace/pull/902)
 
 #### Interface Changes
 
