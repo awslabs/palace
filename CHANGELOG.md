@@ -61,8 +61,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`1` for the initial solve, matching the `iterationXX` archive subdirectory).
     [PR 902](https://github.com/awslabs/palace/pull/902)
   - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
-    by including complex terms in the real-valued preconditioner or using an exact complex-valued
-    preconditioner when `"ComplexCoarseSolve"` is true.
+    by including complex terms in the real-valued preconditioner, or using an exact
+    complex-valued preconditioner when `"ComplexCoarseSolve"` is true.
+    [PR 921](https://github.com/awslabs/palace/pull/921).
 
 #### Interface Changes
 
