@@ -215,14 +215,46 @@ TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]
                                   "multiring_inactive_ports", opts);
 }
 
-TEST_CASE("circular_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
+// Square SQUID washer flux loop. The λ→0 loop inductance is checked against the
+// analytic Ketchen-Jaycox washer formula L ≈ 1.25 μ₀ d (d = hole side); here d = 2 μm
+// gives L ≈ 3.14 pH, and the extracted value ≈ 3.01 pH is a Ritz lower bound.
+TEST_CASE("square_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
-  palace::test::RunRegressionCase("circular_hole", "circular_hole.json", "", opts);
+  palace::test::RunRegressionCase("square_hole", "square_hole.json", "", opts);
+}
+
+// London flux film (single hole, λ = 0.4 μm, d = 0.1 μm): the interior penetrates, so the
+// extracted self-inductance is the total L = L_geom + L_kin. Locks the finite-λ two-solve
+// path.
+TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole.json", "", opts);
+}
+
+// Two London holes on a shared film, each an independent flux loop. Locks the London-London
+// off-diagonal cross-energy correction: a bare AᵀM_mag A mutual corrupts the inverted
+// selves.
+TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "", opts);
 }
 
 // Mixed current-flux excitation. The aperture integral recovering M[1][2] is
