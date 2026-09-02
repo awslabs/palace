@@ -2115,6 +2115,7 @@ void ProjectMeshTo2D(mfem::Mesh &mesh, const mfem::Vector &origin, const mfem::V
   {
     const int sdim = mesh.SpaceDimension();
     const int npts = nodes3d->Size() / sdim;
+    const double *nodes3d_data = nodes3d->HostRead();
     projected.resize(npts);
     for (int i = 0; i < npts; i++)
     {
@@ -2124,7 +2125,7 @@ void ProjectMeshTo2D(mfem::Mesh &mesh, const mfem::Vector &origin, const mfem::V
         const int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
                             ? d * npts + i
                             : i * sdim + d;
-        coords[d] = (*nodes3d)(idx);
+        coords[d] = nodes3d_data[idx];
       }
       const double dx = coords[0] - origin(0);
       const double dy = coords[1] - origin(1);
@@ -2153,10 +2154,11 @@ void ProjectMeshTo2D(mfem::Mesh &mesh, const mfem::Vector &origin, const mfem::V
   MFEM_VERIFY(nodes2d->Size() == 2 * npts,
               "ProjectMeshTo2D: mismatch between projected points ("
                   << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+  double *nodes2d_data = nodes2d->HostWrite();
   for (int i = 0; i < npts; i++)
   {
-    (*nodes2d)(0 * npts + i) = projected[i][0];
-    (*nodes2d)(1 * npts + i) = projected[i][1];
+    nodes2d_data[0 * npts + i] = projected[i][0];
+    nodes2d_data[1 * npts + i] = projected[i][1];
   }
   MFEM_VERIFY(mesh.SpaceDimension() == 2,
               "ProjectMeshTo2D: SpaceDimension should be 2 after projection!");
