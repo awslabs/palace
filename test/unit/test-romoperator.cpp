@@ -49,6 +49,7 @@ auto toEigenMatrix(const T &op, int n)
 class RomOperatorTest : public RomOperator
 {
 public:
+  using RomOperator::AddAuxBlockDirections;
   using RomOperator::ApplyComplexPolynomialFitCorrections;
   using RomOperator::ApplyPolynomialFitCorrections;
   using RomOperator::AugmentedPencil;
@@ -1016,8 +1017,34 @@ TEST_CASE("RomOperator-PolynomialFitCorrections", "[romoperator][Serial]")
   }
 }
 
+// Modal residue matrices are real symmetric but generally indefinite. Verify the auxiliary
+// direction factorization preserves signed eigenvalues rather than replacing M by |M|.
+TEST_CASE("RomOperator-AugmentedPencil-IndefiniteDirections", "[romoperator][Serial]")
+{
+  Eigen::MatrixXd M(2, 2);
+  M << 0.0, 1.0, 1.0, 0.0;  // eigenvalues +1 and -1
+  const Eigen::MatrixXcd Mp_r =
+      std::complex<double>(0.0, 1.0) * M.cast<std::complex<double>>();
+  RomOperatorTest::WavePortAuxBlock blk;
+  REQUIRE(RomOperatorTest::AddAuxBlockDirections(blk, Mp_r, 1.0e-12));
+  REQUIRE(blk.weights.size() == 2);
+  REQUIRE(blk.u_dirs.size() == 2);
+
+  Eigen::MatrixXd reconstructed = Eigen::MatrixXd::Zero(2, 2);
+  bool has_positive = false, has_negative = false;
+  for (std::size_t j = 0; j < blk.weights.size(); j++)
+  {
+    reconstructed.noalias() += blk.weights[j] * blk.u_dirs[j] * blk.u_dirs[j].transpose();
+    has_positive = has_positive || (blk.weights[j] > 0.0);
+    has_negative = has_negative || (blk.weights[j] < 0.0);
+  }
+  CHECK(has_positive);
+  CHECK(has_negative);
+  CHECK((reconstructed - M).cwiseAbs().maxCoeff() < 1.0e-13);
+}
+
 // Schur-complement test for the augmented rational realization. This exercises the real
-// BuildAugmentedPencil helper with multiple poles and multiple SVD directions, then
+// BuildAugmentedPencil helper with multiple poles and signed symmetric directions, then
 // eliminates the aux rows and checks that the effective v-block exactly equals the
 // unaugmented rational pencil contribution i Σ r_k/(ω-p_k) M_proj.
 TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]")
@@ -1036,7 +1063,7 @@ TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]"
   u1 << -std::sin(theta), std::cos(theta);
   RomOperatorTest::WavePortAuxBlock blk;
   blk.port_idx = 3;
-  blk.sigmas = {2.0, 0.4};
+  blk.weights = {2.0, -0.4};
   blk.u_dirs = {u0, u1};
   blk.poles = {std::complex<double>(1.1, 0.2), std::complex<double>(-0.7, 0.4)};
   blk.residues = {std::complex<double>(0.3, -0.15), std::complex<double>(-0.2, 0.05)};
@@ -1050,8 +1077,8 @@ TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]"
   CHECK(aux_labels.back() == "waveport_3_p1d1");
 
   Eigen::MatrixXcd M_proj =
-      blk.sigmas[0] * (u0 * u0.transpose()).cast<std::complex<double>>() +
-      blk.sigmas[1] * (u1 * u1.transpose()).cast<std::complex<double>>();
+      blk.weights[0] * (u0 * u0.transpose()).cast<std::complex<double>>() +
+      blk.weights[1] * (u1 * u1.transpose()).cast<std::complex<double>>();
 
   for (std::complex<double> omega :
        {std::complex<double>(0.5, 0.1), std::complex<double>(1.6, -0.2),
@@ -1097,7 +1124,7 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
 
   RomOperatorTest::WavePortAuxBlock blk;
   blk.port_idx = 1;
-  blk.sigmas = {1.0};
+  blk.weights = {1.0};
   Eigen::VectorXd u_dir(1);
   u_dir(0) = 1.0;
   blk.u_dirs = {u_dir};

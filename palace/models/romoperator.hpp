@@ -326,8 +326,11 @@ protected:
     // to e.g. "farfield" or "surfsigma_<g>" for the other frequency-dependent BCs so their
     // aux rows are distinguishable in the emitted matrices.
     std::string label;
-    std::vector<double> sigmas;           // singular values kept above tolerance
-    std::vector<Eigen::VectorXd> u_dirs;  // matching left singular vectors
+    // Signed weights and matching real directions in the symmetric factorization
+    // M_proj = Σ_j weights[j] u_j u_jᵀ. The weights are eigenvalues, not unsigned
+    // singular values: modal-correction residue matrices are generally indefinite.
+    std::vector<double> weights;
+    std::vector<Eigen::VectorXd> u_dirs;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
   };
@@ -446,9 +449,9 @@ protected:
   // Build an aux block for one (matrix, pole-residue list) contribution, used by the ABC
   // (analytic single pole at ω=0, residue 0.5), surf-σ, and rational impedance (fitted
   // poles). `label` (required, nonempty) prefixes the aux-state row names in the
-  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; the SVD
-  // of its imaginary part gives the coupling directions exactly as in the wave-port
-  // augmented path.
+  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; a signed
+  // symmetric eigendecomposition of its imaginary part gives the coupling directions
+  // exactly, including indefinite modal-correction residue matrices.
   static std::optional<WavePortAuxBlock>
   MakeAuxBlock(std::string label, const Eigen::MatrixXcd &Mp_r,
                const std::vector<std::complex<double>> &poles,
