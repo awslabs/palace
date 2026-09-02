@@ -43,6 +43,14 @@
     {
       "Attributes": [2, 3, 4, 5, 6, 7]
     },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],       // shared London film carrying both holes
+        "PenetrationDepth": 0.4, // λ (μm); L_ksq = μ₀ λ² / d
+        "Thickness": 0.1         // d (μm)
+      }
+    ],
     "FluxLoop":
     [
       {
