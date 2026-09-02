@@ -2086,80 +2086,80 @@ mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
     centroid /= nv;
   }
 
-  // Read the 3D node coordinates, project to 2D, then rebuild the mesh with 2D nodes.
-  // We read all coordinates first, then use SetCurvature to rebuild with SpaceDim=2.
+  ProjectMeshTo2D(submesh, centroid, e1, e2);
+  return normal;
+}
+
+void ProjectMeshTo2D(mfem::Mesh &mesh, const mfem::Vector &origin, const mfem::Vector &e1,
+                     const mfem::Vector &e2)
+{
+  MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 3,
+              "ProjectMeshTo2D requires a 2D mesh with 3D ambient coordinates!");
+  MFEM_VERIFY(origin.Size() == 3 && e1.Size() == 3 && e2.Size() == 3,
+              "ProjectMeshTo2D requires a three-dimensional tangent frame!");
+
+  int mesh_order = 1;
+  if (mesh.GetNodes() && mesh.GetNE() > 0)
   {
-    // Determine the mesh curvature order from the existing nodes.
-    int mesh_order = 1;
-    if (submesh.GetNodes() && submesh.GetNE() > 0)
-    {
-      mesh_order = submesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    }
+    mesh_order = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+  }
+  if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
+  {
+    Mpi::GlobalMax(1, &mesh_order, pmesh->GetComm());
+  }
 
-    // Read all 3D node coordinates. For high-order meshes, nodes includes interior DOFs;
-    // for linear meshes with nodes, it's just vertices.
-    mfem::GridFunction *nodes3d = submesh.GetNodes();
-    const int sdim = submesh.SpaceDimension();
-    std::vector<std::array<double, 2>> projected;
-
-    if (nodes3d)
-    {
-      const int npts = nodes3d->Size() / sdim;
-      projected.resize(npts);
-      for (int i = 0; i < npts; i++)
-      {
-        double coords[3] = {0.0, 0.0, 0.0};
-        for (int d = 0; d < sdim; d++)
-        {
-          // Handle both byNODES and byVDIM ordering.
-          int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
-                        ? d * npts + i
-                        : i * sdim + d;
-          coords[d] = (*nodes3d)(idx);
-        }
-        double dx = coords[0] - centroid(0);
-        double dy = coords[1] - centroid(1);
-        double dz = coords[2] - centroid(2);
-        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
-        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
-      }
-    }
-    else
-    {
-      projected.resize(nv);
-      for (int i = 0; i < nv; i++)
-      {
-        const double *v = submesh.GetVertex(i);
-        double dx = v[0] - centroid(0);
-        double dy = v[1] - centroid(1);
-        double dz = v[2] - centroid(2);
-        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
-        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
-      }
-    }
-
-    // Rebuild the mesh with 2D coordinates. SetCurvature creates a new Nodes
-    // GridFunction with the specified vdim (SpaceDim). Extraction runs on a rank that
-    // holds the serial mesh, so submesh.GetNE() > 0 is required.
-    MFEM_VERIFY(submesh.GetNE() > 0,
-                "ProjectSubmeshTo2D called on an empty mesh — extraction must run on a "
-                "rank that holds the serial mesh!");
-    submesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
-    mfem::GridFunction *nodes2d = submesh.GetNodes();
-    const int npts = static_cast<int>(projected.size());
-    MFEM_VERIFY(nodes2d->Size() == 2 * npts,
-                "ProjectSubmeshTo2D: mismatch between projected points ("
-                    << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+  mfem::GridFunction *nodes3d = mesh.GetNodes();
+  const int nv = mesh.GetNV();
+  std::vector<std::array<double, 2>> projected;
+  if (nodes3d)
+  {
+    const int sdim = mesh.SpaceDimension();
+    const int npts = nodes3d->Size() / sdim;
+    projected.resize(npts);
     for (int i = 0; i < npts; i++)
     {
-      (*nodes2d)(0 * npts + i) = projected[i][0];
-      (*nodes2d)(1 * npts + i) = projected[i][1];
+      double coords[3] = {0.0, 0.0, 0.0};
+      for (int d = 0; d < sdim; d++)
+      {
+        const int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
+                            ? d * npts + i
+                            : i * sdim + d;
+        coords[d] = (*nodes3d)(idx);
+      }
+      const double dx = coords[0] - origin(0);
+      const double dy = coords[1] - origin(1);
+      const double dz = coords[2] - origin(2);
+      projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+      projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
+    }
+  }
+  else
+  {
+    projected.resize(nv);
+    for (int i = 0; i < nv; i++)
+    {
+      const double *v = mesh.GetVertex(i);
+      const double dx = v[0] - origin(0);
+      const double dy = v[1] - origin(1);
+      const double dz = v[2] - origin(2);
+      projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+      projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
     }
   }
 
-  MFEM_VERIFY(submesh.SpaceDimension() == 2,
-              "ProjectSubmeshTo2D: SpaceDimension should be 2 after projection!");
-  return normal;
+  mesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
+  mfem::GridFunction *nodes2d = mesh.GetNodes();
+  const int npts = static_cast<int>(projected.size());
+  MFEM_VERIFY(nodes2d->Size() == 2 * npts,
+              "ProjectMeshTo2D: mismatch between projected points ("
+                  << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+  for (int i = 0; i < npts; i++)
+  {
+    (*nodes2d)(0 * npts + i) = projected[i][0];
+    (*nodes2d)(1 * npts + i) = projected[i][1];
+  }
+  MFEM_VERIFY(mesh.SpaceDimension() == 2,
+              "ProjectMeshTo2D: SpaceDimension should be 2 after projection!");
 }
 
 // Explicit instantiations for the submesh helpers. Serial (mfem::SubMesh) is used by
