@@ -581,7 +581,36 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.ams_singular_op < 0)
   {
-    solver.linear.ams_singular_op = (problem.type == ProblemType::MAGNETOSTATIC);
+    // A London flux film (a FluxLoopPEC boundary that is also a Superconductor sheet) leaves
+    // the film interior free, so the shifted-penalty operator K̃ = A_curlcurl + (1/L_ksq)
+    // M_sheet keeps a residual 1-D gradient null space and is NOT the pure singular curl-curl
+    // operator: singular-AMS (which skips gradient G-space corrections) then stalls/diverges
+    // in parallel. For that case default AMSSingularOperator=false so AMS does the G-space
+    // corrections, which are well-posed against the preconditioner gauge shift (LondonPCShift).
+    bool has_london_film = false;
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      std::set<int> sc_attrs;
+      for (const auto &sc : boundaries.superconductor)
+      {
+        for (auto attr : sc.attributes)
+        {
+          sc_attrs.insert(attr);
+        }
+      }
+      for (const auto &[idx, fl] : boundaries.fluxloop)
+      {
+        for (auto attr : fl.fluxloop_pec)
+        {
+          if (sc_attrs.count(attr))
+          {
+            has_london_film = true;
+          }
+        }
+      }
+    }
+    solver.linear.ams_singular_op =
+        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {

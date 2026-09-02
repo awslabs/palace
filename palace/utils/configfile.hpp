@@ -1133,6 +1133,15 @@ public:
   // problems.
   int ams_singular_op = -1;
 
+  // Preconditioner-only gauge shift for the London (superconductor sheet) magnetostatic
+  // operator. When a London flux film is present the shifted-penalty operator K̃ = A_curlcurl
+  // + (1/L_ksq) M_sheet has a residual 1-D gradient null space (film-constant potential),
+  // which stalls/diverges AMS in parallel. This adds london_pc_shift · (1/µ) ∫|A|² as a
+  // volume mass to the PRECONDITIONER matrix ONLY (the actual operator, solution and
+  // extracted inductance are unchanged), lifting all gradient modes so AMS is SPD-solvable.
+  // Applied only when a London sheet term is present; ignored otherwise.
+  double london_pc_shift = 1.0e-2;
+
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
   // Typically use this when the operator is positive definite.
   int amg_agg_coarsen = -1;

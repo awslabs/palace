@@ -3052,6 +3052,12 @@
           "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations and disables it otherwise.",
           "x-palace-advanced": true
         },
+        "LondonPCShift": {
+          "type": "number",
+          "description": "Preconditioner-only gauge shift for magnetostatic problems with a London (superconductor) sheet term. Adds this multiple of the reluctance-weighted volume mass to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet term is present.",
+          "default": 0.01,
+          "x-palace-advanced": true
+        },
         "AMGAggressiveCoarsening": {
           "type": "boolean",
           "description": "Enable aggressive coarsening in BoomerAMG. If omitted, Palace enables this for electrostatic, magnetostatic, and transient simulations, and disables it otherwise.",

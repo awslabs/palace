@@ -1475,6 +1475,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   superlu_3d = linear.value("SuperLU3DCommunicator", superlu_3d);
   ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
   ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
+  london_pc_shift = linear.value("LondonPCShift", london_pc_shift);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
 
