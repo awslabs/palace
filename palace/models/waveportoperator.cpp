@@ -613,23 +613,54 @@ WavePortData::WavePortData(int idx, const config::WavePortData &data,
     }
     voltage_n_samples = data.n_samples;
 
-    // Set up reverse transfer map (port submesh → parent mesh) and a parent-mesh
-    // GridFunction to receive the transferred mode field. This enables computing line
-    // integrals of the port mode E-field via GSLIB on the 3D parent mesh, since GSLIB
-    // requires SpaceDim == Dim and cannot work directly on the 2D-embedded port submesh.
-    parent_E0t = std::make_unique<GridFunction>(nd_fespace, true);
-    port_nd_transfer_reverse = std::make_unique<mfem::ParTransferMap>(
-        mfem::ParSubMesh::CreateTransferMap(port_E0t->Real(), parent_E0t->Real()));
+    // Build a deterministic tangent frame from the first path segment and port normal.
+    // The path direction defines e1; e2 completes an orientation-preserving frame whose
+    // normal is the original port normal. Using the first path point as origin makes the
+    // frame identical on every MPI rank, including ranks with no local port elements.
+    MFEM_VERIFY(voltage_path[0].Size() == 3 && voltage_path[1].Size() == 3,
+                "Wave port VoltagePath points must be three-dimensional!");
+    mfem::Vector origin(voltage_path[0]), e1(voltage_path[1]), e2(3);
+    e1 -= origin;
+    e1.Add(-(e1 * port_normal), port_normal);
+    MFEM_VERIFY(e1.Norml2() > 0.0,
+                "Wave port VoltagePath must contain a nonzero tangential segment!");
+    e1 /= e1.Norml2();
+    e2(0) = port_normal(1) * e1(2) - port_normal(2) * e1(1);
+    e2(1) = port_normal(2) * e1(0) - port_normal(0) * e1(2);
+    e2(2) = port_normal(0) * e1(1) - port_normal(1) * e1(0);
+    e2 /= e2.Norml2();
+    for (const auto &p : voltage_path)
+    {
+      MFEM_VERIFY(p.Size() == 3, "Wave port VoltagePath points must be three-dimensional!");
+      voltage_path_2d.push_back(mesh::Project3Dto2D(p, origin, e1, e2));
+    }
+
+    // Deep-copy the port mesh, flatten its coordinates into the tangent frame, and create
+    // an otherwise identical ND space. A rigid orientation-preserving projection leaves
+    // ND line-integral DoFs unchanged, so the modal field can be copied exactly by local
+    // DoF rather than transferred through the nonconforming 3D parent mesh.
+    auto flat_pmesh = std::make_unique<mfem::ParMesh>(port_mesh->Get(), true);
+    mesh::ProjectMeshTo2D(*flat_pmesh, origin, e1, e2);
+    voltage_port_mesh = std::make_unique<Mesh>(std::move(flat_pmesh));
+    voltage_port_nd_fec = std::make_unique<mfem::ND_FECollection>(
+        port_nd_fespace->GetMaxElementOrder(), voltage_port_mesh->Dimension());
+    voltage_port_nd_fespace =
+        std::make_unique<FiniteElementSpace>(*voltage_port_mesh, voltage_port_nd_fec.get());
+    voltage_port_E0t = std::make_unique<GridFunction>(*voltage_port_nd_fespace, true);
+    MFEM_VERIFY(voltage_port_nd_fespace->GetVSize() == port_nd_fespace->GetVSize() &&
+                    voltage_port_nd_fespace->GetTrueVSize() ==
+                        port_nd_fespace->GetTrueVSize(),
+                "Flattened wave port ND space does not match the embedded port space!");
 
 #if defined(MFEM_USE_GSLIB)
-    // Build the GSLIB point locator on the (fixed) parent mesh once here.
-    // GetExcitationVoltage reuses it for every line integral instead of rebuilding the
-    // spatial hash per call — the dominant cost when the mode is evaluated at many
-    // frequencies (e.g. synthesis fit).
-    auto &parent_mesh = *parent_E0t->Real().FESpace()->GetMesh();
-    voltage_gslib_op =
-        std::make_unique<mfem::FindPointsGSLIB>(parent_E0t->Real().ParFESpace()->GetComm());
+    // Cache both geometric point locators. The parent locator serves GetVoltage for the
+    // driven 3D field; the flattened-port locator serves GetExcitationVoltage directly.
+    auto &parent_mesh = *nd_fespace.GetParMesh();
+    voltage_gslib_op = std::make_unique<mfem::FindPointsGSLIB>(parent_mesh.GetComm());
     fem::SetupInterpolator(*voltage_gslib_op, parent_mesh);
+    port_voltage_gslib_op =
+        std::make_unique<mfem::FindPointsGSLIB>(voltage_port_mesh->Get().GetComm());
+    fem::SetupInterpolator(*port_voltage_gslib_op, voltage_port_mesh->Get());
 #endif
   }
 
@@ -1167,34 +1198,26 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
   {
     return 0.0;
   }
-  // Transfer the port mode tangential E-field from the 2D port submesh back to the 3D
-  // parent mesh, then compute the line integral along the voltage path using GSLIB
-  // interpolation. Zero the parent field first since SubMeshToParent only writes the
-  // mapped DOFs (boundary face DOFs corresponding to the port submesh).
-  *parent_E0t = 0.0;
-  port_nd_transfer_reverse->Transfer(port_E0t->Real(), parent_E0t->Real());
-  port_nd_transfer_reverse->Transfer(port_E0t->Imag(), parent_E0t->Imag());
-  // Populate hanging-node slave DOFs on a nonconforming parent mesh before GSLIB
-  // interpolation. This true-DOF round trip is a no-op for conforming meshes.
-  {
-    mfem::Vector tr, ti;
-    parent_E0t->Real().GetTrueDofs(tr);
-    parent_E0t->Real().SetFromTrueDofs(tr);
-    parent_E0t->Imag().GetTrueDofs(ti);
-    parent_E0t->Imag().SetFromTrueDofs(ti);
-  }
+
+  // The flattened companion has identical topology, orientation, and ND ordering. Copying
+  // all local DoFs preserves hanging-node slave values written by SetFromTrueDofs and
+  // avoids the information loss of a SubMesh-to-parent transfer.
+  MFEM_VERIFY(voltage_port_E0t->Real().Size() == port_E0t->Real().Size(),
+              "Flattened wave port field size mismatch!");
+  voltage_port_E0t->Real() = port_E0t->Real();
+  voltage_port_E0t->Imag() = port_E0t->Imag();
+
   std::complex<double> V(0.0, 0.0);
 #if defined(MFEM_USE_GSLIB)
-  // Reuse the cached point locator (Setup once at construction) — the GSLIB spatial hash
-  // depends only on the parent mesh, not the transferred field values. (Line integrals
-  // require GSLIB regardless; the cached locator just avoids rebuilding the hash per call.)
-  for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+  for (std::size_t k = 0; k + 1 < voltage_path_2d.size(); k++)
   {
-    V.real(V.real() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
-                                               voltage_path[k + 1], parent_E0t->Real(),
+    V.real(V.real() + fem::ComputeLineIntegral(*port_voltage_gslib_op, voltage_path_2d[k],
+                                               voltage_path_2d[k + 1],
+                                               voltage_port_E0t->Real(),
                                                voltage_n_samples));
-    V.imag(V.imag() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
-                                               voltage_path[k + 1], parent_E0t->Imag(),
+    V.imag(V.imag() + fem::ComputeLineIntegral(*port_voltage_gslib_op, voltage_path_2d[k],
+                                               voltage_path_2d[k + 1],
+                                               voltage_port_E0t->Imag(),
                                                voltage_n_samples));
   }
 #else
