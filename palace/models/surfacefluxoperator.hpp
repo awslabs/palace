@@ -64,7 +64,8 @@ public:
   void SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
                                const FiniteElementSpace &nd_fespace,
                                PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                               palace::Vector &result) const;
+                               palace::Vector &result,
+                               bool harmonic_generator = false) const;
 };
 
 }  // namespace palace

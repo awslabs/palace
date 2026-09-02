@@ -23,17 +23,21 @@ class CurlCurlOperator;
 template <ProblemType T>
 class PostOperator;
 
-// Solve 2D surface curl problem for flux loop initial condition
+// Solve 2D surface curl problem for flux loop initial condition. When harmonic_generator is
+// true, instead of the uniform-perimeter Dirichlet clamp, produce the curl-free cut
+// cohomology generator (±Φ across a cut through the hole centroid) used as the London
+// shifted-penalty drive a_h.
 Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
                                const Mesh &mesh, const FiniteElementSpace &nd_fespace,
                                int flux_loop_idx,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
+                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+                               bool harmonic_generator = false);
 
 void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
                              const Mesh &mesh, const FiniteElementSpace &nd_fespace,
                              int flux_loop_idx,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                             Vector &result);
+                             Vector &result, bool harmonic_generator = false);
 
 // Integrate the magnetic flux density B ⋅ n over the given boundary attributes, with the
 // surface normal oriented according to flux_direction. Returns the global (summed) flux.

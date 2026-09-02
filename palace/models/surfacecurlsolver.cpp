@@ -5,6 +5,8 @@
 #include "surfacefluxoperator.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <unordered_set>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -24,14 +26,146 @@
 namespace palace
 {
 
+namespace
+{
+
+// Build the London drive a_h as a 3D curl-free cohomology generator carrying the hole
+// fluxoid ∮_∂hole a_h·dl = Φ: a_h = ∇θ with θ jumping by Φ across a cut half-plane S
+// bounded by the vertical flux line L = {x=cx, y=cy, all z} through the hole centroid. It
+// is assembled as a lowest-order (Whitney) edge cochain (edge DOF = ±Φ across S, 0
+// otherwise) then projected exactly into the order-p ND space (ND_1 ⊂ ND_p). curl a_h is
+// supported only on faces pierced by L, which threads the hole opening off the film Σ, so
+// a_h|Σ is curl-free with circulation Φ. Its gradient part is absorbable by A → A + ∇χ, so
+// the extracted inductance depends only on the cohomology class (Φ) and is gauge-invariant.
+//
+// PALACE_CUT_DIR selects the cut orientation (default "y": S = {x=cx, y≥cy}; "x": the
+// gauge-equivalent S = {y=cy, x≥cx}) for the gauge-invariance gate. Overall sign is
+// irrelevant: the downstream London normalization rescales a_h so cᵀa_h = Φ.
+Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
+                                   const mfem::ParFiniteElementSpace &ndp_fespace,
+                                   const Mesh &mesh)
+{
+  auto &pmesh = const_cast<mfem::ParMesh &>(mesh.Get());
+  MPI_Comm comm = pmesh.GetComm();
+  const int sdim = pmesh.SpaceDimension();
+  MFEM_VERIFY(sdim == 3, "London cut cohomology generator requires a 3D mesh!");
+
+  // Total imposed fluxoid Φ.
+  double phi = 0.0;
+  for (double f : flux_data.flux_amounts)
+  {
+    phi += f;
+  }
+
+  // Hole centroid (cx, cy): average of hole-boundary vertex coordinates. The vertical flux
+  // line L = {x=cx, y=cy, all z} passes through the hole opening (empty region), never the
+  // film.
+  std::unordered_set<int> hole_attrs(flux_data.hole_attributes.begin(),
+                                     flux_data.hole_attributes.end());
+  double csum[3] = {0.0, 0.0, 0.0};
+  double cnt = 0.0;
+  mfem::Array<int> bverts;
+  for (int be = 0; be < pmesh.GetNBE(); be++)
+  {
+    if (!hole_attrs.count(pmesh.GetBdrAttribute(be)))
+    {
+      continue;
+    }
+    pmesh.GetBdrElementVertices(be, bverts);
+    for (int v : bverts)
+    {
+      const double *x = pmesh.GetVertex(v);
+      csum[0] += x[0];
+      csum[1] += x[1];
+      csum[2] += x[2];
+      cnt += 1.0;
+    }
+  }
+  Mpi::GlobalSum(3, csum, comm);
+  Mpi::GlobalSum(1, &cnt, comm);
+  MFEM_VERIFY(cnt > 0.0, "No hole boundary elements found for London cut generator!");
+  const double cx = csum[0] / cnt, cy = csum[1] / cnt;
+
+  // Cut half-plane orientation (see function comment). Default S = {x=cx, y≥cy};
+  // PALACE_CUT_DIR=x selects the gauge-equivalent S = {y=cy, x≥cx} sharing the same flux
+  // line L.
+  const char *cut_env = std::getenv("PALACE_CUT_DIR");
+  const bool cut_x = (cut_env && (cut_env[0] == 'x' || cut_env[0] == 'X'));
+
+  // Lowest-order (Whitney) cut cochain on an ND_1 space over the full 3D mesh. Each rank
+  // sets its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared
+  // edge) in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF
+  // value is correct and GetTrueDofs needs no cross-rank sign reconciliation.
+  mfem::ND_FECollection nd1_fec(1, sdim);
+  mfem::ParFiniteElementSpace nd1_fespace(&pmesh, &nd1_fec);
+  mfem::ParGridFunction ah1(&nd1_fespace);
+  ah1.UseDevice(false);
+  ah1 = 0.0;
+  mfem::Array<int> ev, edofs;
+  for (int e = 0; e < pmesh.GetNEdges(); e++)
+  {
+    pmesh.GetEdgeVertices(e, ev);
+    const double *x0 = pmesh.GetVertex(ev[0]);
+    const double *x1 = pmesh.GetVertex(ev[1]);
+    // d = signed distance to the cut PLANE; s = the in-plane half-plane selector
+    // coordinate.
+    double d0, d1, s0, s1;
+    if (!cut_x)
+    {
+      d0 = x0[0] - cx;  // plane x=cx
+      d1 = x1[0] - cx;
+      s0 = x0[1];  // half-plane y≥cy
+      s1 = x1[1];
+    }
+    else
+    {
+      d0 = x0[1] - cy;  // plane y=cy
+      d1 = x1[1] - cy;
+      s0 = x0[0];  // half-plane x≥cx
+      s1 = x1[0];
+    }
+    if (d0 * d1 >= 0.0)
+    {
+      continue;  // edge does not cross the cut plane
+    }
+    const double t = d0 / (d0 - d1);
+    const double scoord = s0 + t * (s1 - s0);
+    if ((!cut_x && scoord < cy) || (cut_x && scoord < cx))
+    {
+      continue;  // crossing point lies off the half-plane
+    }
+    // Edge ev0→ev1 crosses the cut: θ jumps +Φ toward the +normal (d1>0) side of the plane.
+    nd1_fespace.GetEdgeDofs(e, edofs);
+    ah1(edofs[0]) = (d1 > 0.0) ? phi : -phi;
+  }
+
+  // Project the ND_1 cut field exactly into the order-p ND space. The per-element field is
+  // a degree-1 polynomial, integrated exactly by the ND_p DOF functionals, so ND_1 ⊂ ND_p
+  // is reproduced and tangential continuity (hence curl-free-on-Σ, circulation Φ) is
+  // preserved.
+  mfem::VectorGridFunctionCoefficient ah1_coeff(&ah1);
+  mfem::ParGridFunction ahp(const_cast<mfem::ParFiniteElementSpace *>(&ndp_fespace));
+  ahp.UseDevice(false);
+  ahp = 0.0;
+  ahp.ProjectCoefficient(ah1_coeff);
+
+  Vector result(ndp_fespace.GetTrueVSize());
+  result.UseDevice(true);
+  ahp.GetTrueDofs(result);
+  return result;
+}
+
+}  // namespace
+
 Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
                                const Mesh &mesh, const FiniteElementSpace &nd_fespace,
                                int flux_loop_idx,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op)
+                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+                               bool harmonic_generator)
 {
   Vector result;
   SolveSurfaceCurlProblem(flux_data, iodata, mesh, nd_fespace, flux_loop_idx, post_op,
-                          result);
+                          result, harmonic_generator);
   return result;
 }
 
@@ -39,13 +173,25 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
                              const Mesh &mesh, const FiniteElementSpace &nd_fespace,
                              int flux_loop_idx,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                             Vector &result)
+                             Vector &result, bool harmonic_generator)
 {
   const mfem::ParFiniteElementSpace *fespace = &nd_fespace.Get();
   int order = iodata.solver.order;
 
-  MPI_Comm comm = mesh.GetComm();
   const auto &pmesh = mesh.Get();
+
+  // London drive: build a_h directly on the 3D ND space as a curl-free cohomology generator
+  // via a topological cut cochain (gauge-invariant; see BuildCutCohomologyGenerator). No
+  // submesh needed.
+  if (harmonic_generator)
+  {
+    result = BuildCutCohomologyGenerator(flux_data, *fespace, mesh);
+    // Populate the post_op A buffer for consistency with the pure-PEC path (used only as
+    // scratch).
+    auto &A_3d = post_op.GetAGridFunction().Real();
+    A_3d.SetFromTrueDofs(result);
+    return;
+  }
 
   // Extract metal surface and hole attributes from flux_data
   mfem::Array<int> metal_surface_attrs;

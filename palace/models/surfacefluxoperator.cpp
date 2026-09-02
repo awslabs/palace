@@ -69,11 +69,12 @@ palace::Vector SurfaceFluxOperator::SolveSurfaceCurlProblem(
 
 void SurfaceFluxOperator::SolveSurfaceCurlProblem(
     int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-    PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result) const
+    PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result,
+    bool harmonic_generator) const
 {
   const auto &data = GetSource(idx);
   palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx, post_op,
-                                  result);
+                                  result, harmonic_generator);
 }
 
 }  // namespace palace
