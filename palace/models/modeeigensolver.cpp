@@ -565,11 +565,16 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 
     ksp->SetOperators(*opA, *opA);  // opA passed twice; pc uses block_pc_ptr
   }
-  else
+  else if (linear.pc_mat_real)
   {
-    // Sparse direct path: precondition with real part of the full block system.
     ComplexWrapperOperator opP(opA->Real(), nullptr);
     ksp->SetOperators(*opA, opP);
+  }
+  else
+  {
+    // Match the full-system sparse-direct preconditioner: use Ar + Ai by default, or the
+    // exact doubled-real representation of Ar + i Ai when ComplexCoarseSolve is enabled.
+    ksp->SetOperators(*opA, *opA);
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
@@ -823,9 +828,8 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         }
         MFEM_ABORT("Unsupported linear solver type for boundary mode solver!");
         return {};
-      }());
-  pc->SetSaveAssembled(false);
-  pc->SetDropSmallEntries(false);
+      }(),
+      false, linear.complex_coarse_solve, false, linear.reorder_reuse);
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
 
