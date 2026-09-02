@@ -62,12 +62,11 @@ constexpr double WAVEPORT_SYNTHESIS_KSP_TOL = 1.0e-12;
 // subspace Q, and a rank cap (r(r+1)/2 scalar fits follow; cap guards a bad tol choice).
 constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_SAMPLES = 12;
 constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX = 8;
-// Rank floor for the signed symmetric factorization in AddAuxBlockDirections. Physical
-// coupling directions carry ≳1e-2 of the leading absolute eigenvalue; below them sits a
-// partition-dependent noise tail (≲1e-3). A raw 1e-6 cutoff lands in that tail, so the kept
-// rank — hence the synthesized pencil dimension — flips across partitions. This floor sits
-// in the decade-wide gap between signal and noise, keeping the rank partition-independent.
-constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 3.0e-3;
+// Rank floor for signed auxiliary residue factorizations. The previous 3e-3 cutoff dropped
+// physical directions in modal-correction and boundary-mass residues, changing the realized
+// Schur complement by percent-level amounts. A 1e-6 floor retains those directions while
+// avoiding rank decisions in the numerical tail when AdaptiveTol is much tighter.
+constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
 // Significance floor for a modal-correction coupling part relative to its pair norm ‖S_pq‖.
 // The modal subspace is real up to an arbitrary per-partition global phase, so Im(Q_p Q_qᵀ)
 // is machine-epsilon phase noise (~1e-10·‖S_pq‖). Fitting it spends aux states on noise
@@ -1596,10 +1595,8 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
     return false;
   }
   const double weight_max = eig.eigenvalues().cwiseAbs().maxCoeff();
-  // Floor the cutoff at the partition-robust aux-rank tolerance: a tighter caller value
-  // (the fit tolerance can be as low as 1e-11) would land in the rank-floor noise band and
-  // make the kept direction count MPI-partition-dependent. See
-  // WAVEPORT_SYNTHESIS_AUX_RANK_TOL.
+  // Do not let an extremely tight fit tolerance resolve the partition-dependent numerical
+  // tail, but retain physical modal-correction directions below the old 3e-3 floor.
   const double eff_tol = std::max(rank_tol, WAVEPORT_SYNTHESIS_AUX_RANK_TOL);
   // SelfAdjointEigenSolver orders eigenvalues increasingly. Iterate from largest absolute
   // weight only for deterministic labels; the factorization itself is order independent.

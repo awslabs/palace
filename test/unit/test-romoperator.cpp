@@ -1043,6 +1043,29 @@ TEST_CASE("RomOperator-AugmentedPencil-IndefiniteDirections", "[romoperator][Ser
   CHECK((reconstructed - M).cwiseAbs().maxCoeff() < 1.0e-13);
 }
 
+// Modal-correction residue matrices can contain physical signed directions well below the
+// fixed wave-port boundary-mass noise floor. The caller-provided tolerance must control
+// their factorization; applying the old 3e-3 mass floor here drops the second direction and
+// changes the augmented pencil's Schur complement by O(1e-4).
+TEST_CASE("RomOperator-AugmentedPencil-ModalResidueRank", "[romoperator][Serial]")
+{
+  Eigen::MatrixXd M = Eigen::MatrixXd::Zero(2, 2);
+  M(0, 0) = 1.0;
+  M(1, 1) = -1.0e-4;
+  const Eigen::MatrixXcd Mp_r =
+      std::complex<double>(0.0, 1.0) * M.cast<std::complex<double>>();
+  RomOperatorTest::WavePortAuxBlock blk;
+  REQUIRE(RomOperatorTest::AddAuxBlockDirections(blk, Mp_r, 1.0e-6));
+  REQUIRE(blk.weights.size() == 2);
+
+  Eigen::MatrixXd reconstructed = Eigen::MatrixXd::Zero(2, 2);
+  for (std::size_t j = 0; j < blk.weights.size(); j++)
+  {
+    reconstructed.noalias() += blk.weights[j] * blk.u_dirs[j] * blk.u_dirs[j].transpose();
+  }
+  CHECK((reconstructed - M).cwiseAbs().maxCoeff() < 1.0e-13);
+}
+
 // Schur-complement test for the augmented rational realization. This exercises the real
 // BuildAugmentedPencil helper with multiple poles and signed symmetric directions, then
 // eliminates the aux rows and checks that the effective v-block exactly equals the
