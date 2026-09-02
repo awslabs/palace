@@ -6,7 +6,6 @@
 
 #include <complex>
 #include <memory>
-#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -145,8 +144,7 @@ private:
 public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
                 const config::BoundaryData &boundaries, ProblemType problem_type,
-                const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh,
-                const std::string &output = "");
+                const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
