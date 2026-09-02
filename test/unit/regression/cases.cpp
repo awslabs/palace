@@ -487,13 +487,14 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   opts.skip_rowcount = true;
   opts.min_rows = 1;
-  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
   opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
                          "rom-orthogonalization-matrix-R", "rom-eigenvectors",
-                         // Sharp resonance: swept S is partition/arithmetic-sensitive near
-                         // the pole, so the W-dependent signal is the synthesized
-                         // eigenvalue (custom check) rather than a pointwise S diff.
-                         "port-S"};
+                         // Sharp resonance: swept S and the per-element error-estimator
+                         // extrema are partition/arithmetic-sensitive near the pole, so the
+                         // W-dependent signal is the synthesized eigenvalue (custom check)
+                         // rather than a pointwise S diff.
+                         "port-S", "error-indicators.csv"};
   opts.custom_checks["rom-eigenvalues.csv"] =
       TestRomEigenvalueMatchesEigenmode(6.690, 5.0e-3);
   opts.paraview_fields = false;

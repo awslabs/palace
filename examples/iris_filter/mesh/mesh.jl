@@ -22,7 +22,7 @@ function gen_iris_filter(;
     z1=1.5,          # first post center (z)
     z2=3.5,          # second post center (z) -> cavity length Lc = z2 - z1
     ap=0.3,          # iris aperture: guide stays open only for x in [0, ap] (a slit in the
-                     # high-field slab region); the post blocks x in [ap, a] over full height
+    # high-field slab region); the post blocks x in [ap, a] over full height
     post_t=0.2,      # post thickness along z
     h=0.22,          # target mesh size
     order=2,
@@ -70,7 +70,13 @@ function gen_iris_filter(;
     eps = 1e-6 * max(a, b, L)
     faces_in(x0, y0, z0, x1, y1, z1_) = last.(
         gmsh.model.getEntitiesInBoundingBox(
-            x0 - eps, y0 - eps, z0 - eps, x1 + eps, y1 + eps, z1_ + eps, 2
+            x0 - eps,
+            y0 - eps,
+            z0 - eps,
+            x1 + eps,
+            y1 + eps,
+            z1_ + eps,
+            2
         )
     )
     port_lo = faces_in(0.0, 0.0, 0.0, a, b, 0.0)
@@ -97,8 +103,10 @@ function gen_iris_filter(;
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(filename)
     println("a=$a b=$b L=$L d=$d eps_r=$eps_r  Lc=$(z2 - z1) ap=$ap post_t=$post_t")
-    println("diel=$diel_vols air=$air_vols  #port_lo=$(length(port_lo)) " *
-            "#port_hi=$(length(port_hi)) #walls=$(length(walls))")
+    println(
+        "diel=$diel_vols air=$air_vols  #port_lo=$(length(port_lo)) " *
+        "#port_hi=$(length(port_hi)) #walls=$(length(walls))"
+    )
     println("groups: dielectric air port_lo port_hi walls")
     return gmsh.finalize()
 end
