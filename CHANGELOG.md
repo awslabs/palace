@@ -60,11 +60,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     1-based index of the most recently completed adaptive mesh refinement (AMR) iteration
     (`1` for the initial solve, matching the `iterationXX` archive subdirectory).
     [PR 902](https://github.com/awslabs/palace/pull/902)
-  - Emit a `SavedAdaptedMesh` block to `postpro/palace.json` when
-    `config["Model"]["Refinement"]["SaveAdaptMesh"]` is enabled, recording the true
-    (conforming) topological entity counts of the final adapted mesh broken down by element
-    and face geometry (vertices, edges, faces per face geometry, and cells per element
-    geometry), together with the sorted domain and boundary attributes.
+  - Emit a `SavedAdaptedMesh` block to `palace.json` when
+    `config["Model"]["Refinement"]["SaveAdaptMesh"]` is enabled and adaptation was performed,
+    recording the true (conforming) topological entity counts of the adapted mesh broken down
+    by element and face geometry (vertices, edges, faces per face geometry, and cells per
+    element geometry), together with the sorted domain and boundary attributes. The block is
+    written for every adapted mesh: the top-level `palace.json` describes the final mesh, and
+    (with `SaveAdaptIterations` also enabled) each `iterationX/palace.json` describes that
+    iteration's mesh, so each saved mesh is paired with a matching block.
     [PR 911](https://github.com/awslabs/palace/pull/911).
 
 #### Interface Changes

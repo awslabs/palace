@@ -332,6 +332,16 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
+    // Record the adapted mesh's true topology into palace.json.
+    if (refinement.save_adapt_mesh)
+    {
+      mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
+      if (mesh_counts.valid)
+      {
+        SaveMetadata(mesh_counts);
+      }
+    }
+
     // Print statistics (element counts, size h, and shape regularity kappa) for the
     // newly-refined mesh so the evolution of mesh quality under AMR is visible.
     mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
@@ -348,16 +358,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     SaveAdaptationIteration(it + 1);
   }
 
-  // Complete nonconforming vertex and edge counts collectively on the final distributed
-  // mesh. RebalanceMesh already populated the remaining counts while writing the mesh.
-  if (it > 0 && refinement.save_adapt_mesh)
-  {
-    mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
-  }
-  if (mesh_counts.valid)
-  {
-    SaveMetadata(mesh_counts);
-  }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"
              " Max. iterations = {:d}, tol. = {:.3e}{}\n",

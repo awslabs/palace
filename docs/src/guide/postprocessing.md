@@ -169,10 +169,14 @@ The results in the top level directory will always be those from the most recent
 solve.
 
 When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
-is enabled and adaptation was performed, *Palace* saves the final adapted mesh to disk and
-also records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. The block contains:
+is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk and also
+records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. The block always
+describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
+mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
+that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
+contains:
 
-  - `Dimension` : Spatial dimension of the mesh (e.g., 2D, 3D).
+  - `Dimension` : Spatial dimension of the mesh, as an integer (`2` or `3`).
   - `TrueVertices`, `TrueEdges` : True (order-independent, conforming) counts of the mesh
     vertices and edges.
   - `TrueFaces` : True (conforming) counts of the codimension-one faces, broken down by face
