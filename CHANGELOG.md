@@ -56,6 +56,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Enable circuit synthesis with frequency-dependent boundary conditions, including
     wave ports with a new optional `IncludeInSynthesis` wave-port flag. SchemaVer 1-4-0
     [PR 811](https://github.com/awslabs/palace/pull/811).
+  - Added a `"Problem"`/`"Iteration"` field to the `palace.json` metadata file, recording the
+    1-based index of the most recently completed adaptive mesh refinement (AMR) iteration
+    (`1` for the initial solve, matching the `iterationXX` archive subdirectory).
+    [PR 902](https://github.com/awslabs/palace/pull/902)
 
 #### Interface Changes
 

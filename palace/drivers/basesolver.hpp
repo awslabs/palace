@@ -60,6 +60,10 @@ public:
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
+  // Writes the given (1-based) AMR iteration index to post_dir's palace.json as
+  // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
+  // initial solve is iteration 1).
+  void SaveAdaptationIteration(int iteration) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;
