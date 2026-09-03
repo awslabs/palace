@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <fstream>
+#include <memory>
 #include <catch2/catch_test_macros.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 
 using namespace palace;
 
@@ -184,6 +188,42 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SaveAdaptMesh preserves an archived mesh between iterations",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.output = temp_dir.string();
+  iodata.model.mesh = "model.msh";
+  iodata.model.refinement.save_adapt_mesh = true;
+
+  auto serial_mesh = SingleTetMesh();
+  auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  mesh::RebalanceMesh(iodata, parallel_mesh);
+
+  // Save the first adapted mesh contents for comparison.
+  auto mesh_file = temp_dir / "model.mesh";
+  auto first_mesh = ReadFile(mesh_file);
+  REQUIRE_FALSE(first_mesh.empty());
+
+  // Archive the first mesh, leaving a top-level symlink to it.
+  SaveIteration(comm, temp_dir, 1, 1);
+  REQUIRE(fs::is_symlink(mesh_file));
+  REQUIRE(ReadFile(temp_dir / "iteration1" / "model.mesh") == first_mesh);
+
+  // Simulate the next AMR iteration with a changed mesh.
+  parallel_mesh->GetVertex(0)[0] = -1.0;
+  mesh::RebalanceMesh(iodata, parallel_mesh);
+
+  // The new mesh replaces the symlink without changing the archived mesh.
+  CHECK_FALSE(fs::is_symlink(mesh_file));
+  CHECK(ReadFile(mesh_file) != first_mesh);
+  CHECK(ReadFile(temp_dir / "iteration1" / "model.mesh") == first_mesh);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SaveIteration handles dirty output directory from previous run",
                  "[basesolver][Serial]")
 {
@@ -194,6 +234,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   fs::create_directories(temp_dir / "iteration1" / "paraview" / "driven");
   CreateFile(temp_dir / "iteration1" / "paraview" / "driven" / "old.vtu", "old");
   CreateFile(temp_dir / "iteration1" / "domain-E.csv", "old_data");
+  fs::create_directories(temp_dir / "iteration1" / ".palace-archive-claim");
 
   // New run produces fresh output.
   CreateFile(temp_dir / "domain-E.csv", "new_data");
@@ -214,6 +255,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   {
     CHECK(fs::is_symlink(temp_dir / "domain-E.csv"));
     CHECK(ReadFile(temp_dir / "domain-E.csv") == "new_data");
+  }
+
+  SECTION("Stale archive claims are removed")
+  {
+    CHECK_FALSE(fs::exists(temp_dir / "iteration1" / ".palace-archive-claim"));
   }
 }
 

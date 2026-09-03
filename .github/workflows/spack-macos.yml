@@ -1,0 +1,192 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Spack (macOS)
+
+# Builds Palace on macOS through Spack and runs its unit tests. This is the
+# Spack analogue of build-and-test-macos.yml (which uses the Homebrew + raw
+# CMake path) and doubles as a build test for the Spack recipe on macOS.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  packages: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SPACK_PACKAGES_COMMIT: c3b260e171988c0ef05220174e8ada7efdbd6499
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
+    runs-on: macos-15
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/unit/**'
+              - 'test/data/**'
+              - 'spack_repo/**'
+              - 'docs/src/developer/spack/**'
+              - '.github/workflows/spack-macos.yml'
+
+  build-test-macos-spack:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: macos-15-xlarge
+    env:
+      # Catch2 discovery launches the MPI unit-test binary with 8 ranks, more
+      # than the runner's slots. OpenMPI 5 delegates mapping to PRRTE.
+      PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'recursive'
+
+      - name: Setup Spack
+        uses: spack/setup-spack@v3
+        with:
+          spack_ref: releases/v1.2
+          packages_ref: ${{ env.SPACK_PACKAGES_COMMIT }}
+          buildcache: true
+          color: true
+
+      - name: Install and configure macOS build tools
+        run: |
+          # GitHub's runner image includes this unused, untrusted tap.
+          if brew tap | grep -qx aws/tap; then
+            brew untap aws/tap
+          fi
+
+          cp docs/src/developer/spack/spack.yaml spack.yaml
+          docs/src/developer/spack/setup-macos.sh
+
+      - name: Patch Spack package.py files for known problems
+        run: |
+          PALACE_DIR=$PWD
+          cd "$(spack location --repo builtin)"
+          for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+            if [ -f "$patch" ]; then
+              if ! git apply --check "$patch" 2>/dev/null; then
+                echo "Cannot apply $patch (PR may have already been merged)"
+                echo "Please remove $patch from the Palace repo if the PR was merged"
+              else
+                echo "Applying patch: $patch"
+                git apply "$patch"
+              fi
+            fi
+          done
+          # Workaround for https://github.com/spack/spack/issues/51505
+          ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
+
+      - name: Prepare spack.yaml
+        run: |
+          # Isolate GHCR buildcaches by Spack version (see palace-ci). Darwin
+          # binaries carry platform=darwin + the microarch in their DAG hash, so
+          # they never collide with the Linux OCI tags in the same cache.
+          PALACE_BUILD_CACHE_NAME="palace-1.2"
+          echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
+          echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
+
+          # CI-specific settings stay out of the developer environment.
+          spack -e . repo add --scope="env:$(pwd)" "$(pwd)/spack_repo/local"
+          spack -e . mirror add --type binary --unsigned \
+            --oci-username-variable GITHUB_USER \
+            --oci-password-variable GITHUB_TOKEN \
+            local-buildcache \
+            "oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
+
+      - name: Display spack.yaml
+        run: |
+          echo "=== Generated spack.yaml ==="
+          cat spack.yaml
+          echo "=== End spack.yaml ==="
+
+      - name: Bootstrap
+        run: spack -e . bootstrap now
+
+      - name: Concretize
+        env:
+          PALACE_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          PALACE_REF="${PALACE_REF//\//-}"
+          spack -e . develop --path="$(pwd)" local.palace@git."${PALACE_REF}"=develop
+          spack -e . concretize -f --test root
+
+      - name: Build Dependencies
+        run: |
+          NPROC=$(sysctl -n hw.ncpu)
+          # Bank built deps even if a later install fails. The CLI push skips
+          # non-redistributable specs; skip --update-index since installs probe
+          # OCI tags directly.
+          bank_progress() {
+            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+          }
+          # No --fail-fast: build (and bank) everything possible; retry to ride
+          # out transient source-fetch failures.
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            if spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j "$NPROC"; then
+              bank_progress
+              break
+            fi
+            bank_progress
+            if [ "$attempt" -eq "$attempts" ]; then
+              echo "Dependency installation failed after ${attempts} attempts."
+              exit 1
+            fi
+            echo "Dependency installation attempt ${attempt} failed; retrying."
+          done
+
+      - name: Build Palace
+        run: |
+          NPROC=$(sysctl -n hw.ncpu)
+          # palace@develop is pinned to a branch, so every branch shares a spec
+          # hash with different source. Build Palace --no-cache and push only
+          # deps (below).
+          spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j "$NPROC"
+
+      - name: Run Unit Tests
+        run: |
+          eval "$(spack -e . load --sh palace)"
+
+          # Apple Silicon has no SMT, so physical == logical cores.
+          NUM_PROC_TEST=$(sysctl -n hw.physicalcpu)
+          export OMP_NUM_THREADS=1
+
+          cd "$(spack -e . location -b palace)"
+
+          # Disable OpenMPI 5.x default CPU binding so ranks don't oversubscribe
+          # during parallel test execution (PRRTE + legacy OMPI MCA vars).
+          export PRTE_MCA_hwloc_default_binding_policy=none
+          export OMPI_MCA_hwloc_base_binding_policy=none
+
+          # [Regression] and [Long] cases run elsewhere; skip them here.
+          ctest -j "$NUM_PROC_TEST" --output-on-failure -LE "^(regression|long)$"
+
+      - name: Push to GHCR cache
+        if: always()
+        run: |
+          # Push deps only; Palace itself is branch-specific (see Build Palace).
+          # Do not force-overwrite existing spec tags: OCI installs probe tags
+          # directly and replacing a tag can invalidate consumers.
+          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true

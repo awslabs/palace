@@ -1038,9 +1038,8 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
 
-  // Assemble ND operators at all levels using the hierarchy-aware assembly pattern
-  // (matching SpaceOperator::AssembleOperators). Creates a BilinearForm on the finest
-  // space and uses Assemble(fespaces) to produce operators at all levels.
+  // Assemble ND operators at all levels from one BilinearForm. Unlike SpaceOperator's
+  // configured-coarse/active-fine split, these domain coefficients are always nonzero.
   constexpr bool assemble_q_data = false;
   {
     BilinearForm att(bmo->GetNDSpaceHierarchy().GetFinestFESpace());
@@ -1051,8 +1050,8 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
     }
     auto att_ops = att.Assemble(bmo->GetNDSpaceHierarchy(), skip_zeros);
 
-    // Auxiliary H1 operators for Hiptmair smoothing (matching SpaceOperator::
-    // AssembleAuxOperators — uses DiffusionIntegrator with the mass coefficient).
+    // Assemble the auxiliary H1 operators for Hiptmair smoothing from the same always-
+    // nonzero mass coefficient.
     BilinearForm att_aux(bmo->GetH1AuxSpaceHierarchy().GetFinestFESpace());
     att_aux.AddDomainIntegrator<DiffusionIntegrator>(eps_shifted_pc);
     if (!fbr.empty())

@@ -1,7 +1,14 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 name: Build Palace Containers
 description: Build a Palace container image from the stored Spack environment
 
 inputs:
+  spack-packages-commit:
+    description: 'spack-packages commit used by the builtin Spack repository'
+    required: false
+    default: 'c3b260e171988c0ef05220174e8ada7efdbd6499'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -20,8 +27,29 @@ runs:
         # Pin to the Spack 1.2 release series for reproducible CI (instead of
         # the moving `develop` branch).
         spack-version: 'releases/v1.2'
+        spack-packages-commit: ${{ inputs.spack-packages-commit }}
         llvm-version: 'dont-install'
         setup-intel: 'false'
+
+    - name: Select and validate build profile
+      shell: bash
+      run: |
+        # The runner matrix selects the profile; validate that GPU runners have
+        # a working NVIDIA GPU rather than silently falling back to CPU-only.
+        # The CUDA architectures themselves are fixed in spack.yaml
+        # (cuda_constraints). PALACE_CUDA is exported via $GITHUB_ENV so every
+        # later step (and the podman build-arg) sees it.
+        if [[ "${{ startsWith(matrix.runner, 'gpu') }}" == "true" ]]; then
+          if ! nvidia-smi >/dev/null 2>&1; then
+            echo "::error::GPU runner selected, but nvidia-smi failed."
+            exit 1
+          fi
+          echo "PALACE_CUDA=1" >> "$GITHUB_ENV"
+          echo "NVIDIA GPU detected: building the CUDA profile."
+        else
+          echo "PALACE_CUDA=" >> "$GITHUB_ENV"
+          echo "Building the CPU-only profile."
+        fi
 
     - name: Install Podman
       shell: bash
@@ -30,7 +58,6 @@ runs:
         start_timer
 
         sudo add-apt-repository -y ppa:apptainer/ppa
-        sudo apt update
 
         sudo apt install -y podman apptainer
 
@@ -39,25 +66,37 @@ runs:
 
         end_timer "Setup podman and apptainer"
 
-    - name: Compute image name
+    - name: Compute image metadata
       id: name
       shell: bash
       env:
         # Requested Spack microarchitecture; empty means build native.
         TARGET: ${{ inputs.target }}
+        PUBLISH_ARTIFACTS: >-
+          ${{
+            github.event_name != 'pull_request' ||
+            (github.event.pull_request.head.repo.full_name == github.repository &&
+            contains(github.event.pull_request.labels.*.name, 'push-containers'))
+          }}
         # The commit being built. Only makes the image name unique/readable —
         # not load-bearing (the publish workflow takes the authoritative sha
         # from the workflow_run payload, not this name).
         SOURCE_SHA: ${{ github.sha }}
       run: |
-        # Build for the requested target if given, else the runner's native
-        # microarchitecture. A target must be <= the host's native ISA (the
-        # workflow matrix guarantees this) so build-time binaries can run here.
-        # The arch label names the image, from which the publish workflow later
-        # recovers it to tag/key this build's artifacts.
-        ARCH_LABEL="${TARGET:-$(spack arch -t)}"
+        # CUDA images retain the CPU ISA compatibility dimension. The publish
+        # workflow recovers this label to tag and key the build artifacts.
+        # PALACE_CUDA is set by the Select and validate build profile step above.
+        if [ -n "$PALACE_CUDA" ]; then
+          CPU_LABEL="${TARGET:-$(spack arch -t)}"
+          ARCH_LABEL="${CPU_LABEL}_cuda"
+        else
+          ARCH_LABEL="${TARGET:-$(spack arch -t)}"
+        fi
         IMAGE_NAME="palace-${ARCH_LABEL}-${SOURCE_SHA:0:7}"
-        echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+        {
+          echo "image_name=${IMAGE_NAME}"
+          echo "publish_artifacts=${PUBLISH_ARTIFACTS}"
+        } >> "$GITHUB_OUTPUT"
         echo "Image name: ${IMAGE_NAME}"
 
     - name: Pin build target
@@ -75,7 +114,7 @@ runs:
         TARGET: ${{ inputs.target }}
       run: |
         if [ -n "$TARGET" ]; then
-          cd .github/actions/build-container/spack_env
+          cd .github/actions/build-container/spack_env || exit 1
           spack -e . config add "packages:all:target:[${TARGET}]"
           echo "Set preferred concretization target to ${TARGET}:"
           spack -e . config get packages
@@ -86,27 +125,80 @@ runs:
     - name: Generate Dockerfile
       shell: bash
       run: |
-        cd .github/actions/build-container/spack_env && spack -e . containerize > $GITHUB_WORKSPACE/Dockerfile
+        cd .github/actions/build-container/spack_env || exit 1
+        spack -e . containerize > "$GITHUB_WORKSPACE/Dockerfile"
 
     - name: Check Dockerfile
       shell: bash
       run: |
-        podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < $GITHUB_WORKSPACE/Dockerfile
+        podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < "$GITHUB_WORKSPACE/Dockerfile"
+
+    - name: Authenticate to build cache
+      shell: bash
+      run: |
+        printf '%s' "$GITHUB_TOKEN" | sudo podman login ghcr.io \
+          --username "$GITHUB_USER" \
+          --password-stdin
 
     - name: Build OCI image
       shell: bash
+      env:
+        # Podman 4 cache repositories cannot contain a tag or digest.
+        CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
+        CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+        SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
         source /tmp/timing_functions.sh
         start_timer
 
-        sudo podman build --format docker \
-          --build-arg GITHUB_USER=$GITHUB_USER \
-          --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
-          -t ${{ steps.name.outputs.image_name }} .
+        # TODO: Ubuntu 26 provides Podman 5.4+; use environment-backed secrets
+        # once the runners upgrade.
+        GITHUB_USER_FILE="$RUNNER_TEMP/palace-github-user"
+        GITHUB_TOKEN_FILE="$RUNNER_TEMP/palace-github-token"
+        BUILD_LOG="$RUNNER_TEMP/palace-podman-build.log"
+        umask 077
+        printf '%s' "$GITHUB_USER" > "$GITHUB_USER_FILE"
+        printf '%s' "$GITHUB_TOKEN" > "$GITHUB_TOKEN_FILE"
+        trap 'rm -f "$GITHUB_USER_FILE" "$GITHUB_TOKEN_FILE" "$BUILD_LOG"' EXIT
+
+        build_image() {
+          sudo podman build --format docker --layers "$@" \
+            --secret "id=github_user,src=$GITHUB_USER_FILE" \
+            --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
+            --build-arg "PALACE_CUDA=$PALACE_CUDA" \
+            --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
+            -t "$IMAGE_NAME" .
+        }
+
+        if [ "$CACHE_WRITE_ENABLED" = "true" ]; then
+          set +e
+          build_image \
+            --cache-from "$CACHE_REPOSITORY" \
+            --cache-to "$CACHE_REPOSITORY" 2>&1 | tee "$BUILD_LOG"
+          build_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$build_status" -ne 0 ]; then
+            # Podman exports each cache layer while building. A transient registry
+            # error should not discard an otherwise reproducible container build.
+            if grep -q '^Error: failed pushing cache to ' "$BUILD_LOG"; then
+              echo "::warning::Podman cache export failed; retrying without cache writes"
+              build_image --cache-from "$CACHE_REPOSITORY"
+            else
+              exit "$build_status"
+            fi
+          fi
+        else
+          # Fork PR tokens can pull package caches but cannot write GHCR packages.
+          echo "Cache export disabled because this job cannot write GHCR packages."
+          build_image --cache-from "$CACHE_REPOSITORY"
+        fi
 
         end_timer "Build OCI container"
 
     - name: Save OCI image as tar
+      if: steps.name.outputs.publish_artifacts == 'true'
       shell: bash
       run: |
         source /tmp/timing_functions.sh
@@ -116,6 +208,7 @@ runs:
         end_timer "Save OCI image"
 
     - name: Convert to SIF
+      if: steps.name.outputs.publish_artifacts == 'true'
       shell: bash
       run: |
         source /tmp/timing_functions.sh
@@ -125,20 +218,29 @@ runs:
         end_timer "Convert to SIF"
 
     - name: Upload OCI image
+      if: steps.name.outputs.publish_artifacts == 'true'
       uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.name.outputs.image_name }}-oci
         path: ${{ steps.name.outputs.image_name }}.tar
         retention-days: 1
+        # podman save emits an uncompressed Docker archive. Keep the action's
+        # default compression level, made explicit here, to reduce upload size.
+        compression-level: 6
 
     - name: Upload SIF image
+      if: steps.name.outputs.publish_artifacts == 'true'
       uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.name.outputs.image_name }}-sif
         path: ${{ steps.name.outputs.image_name }}.sif
         retention-days: 1
+        # SIF stores its filesystem as compressed SquashFS. Recompressing it in
+        # the artifact ZIP costs CPU without meaningfully reducing transfer size.
+        compression-level: 0
 
     - name: Upload config schema
+      if: steps.name.outputs.publish_artifacts == 'true'
       # Bundle the exact config-schema.json this image was built from, so the
       # trusted publish job can push it to the schema bucket alongside the SIF —
       # matching the schema to the image's provenance (build-container has no AWS

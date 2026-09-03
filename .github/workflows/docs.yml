@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 name: Documentation
 
 on:
@@ -26,6 +29,7 @@ concurrency:
 env:
   # Must match the sole buildcache writer configured in palace-ci/action.yml.
   SPACK_VERSION: releases/v1.2
+  SPACK_PACKAGES_COMMIT: c3b260e171988c0ef05220174e8ada7efdbd6499
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -79,9 +83,9 @@ jobs:
         with:
           # Pin to the Spack 1.2 release series (matching the self-hosted
           # runners) instead of the moving `develop` branch. spack@1.2 pairs
-          # with the spack-packages releases/v2026.06 repo (see repos.yaml).
+          # with the same pinned spack-packages revision as self-hosted CI.
           spack_ref: ${{ env.SPACK_VERSION }}
-          packages_ref: releases/v2026.06
+          packages_ref: ${{ env.SPACK_PACKAGES_COMMIT }}
           buildcache: true
           color: true
 

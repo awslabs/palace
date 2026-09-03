@@ -232,10 +232,20 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-std::unique_ptr<Operator>
-CurlCurlOperator::GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
+const Operator &
+CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
 {
-  // Reassemble the stiffness matrix with the base plus extra essential attributes. Size the
+  // Key the cache on the sorted, deduplicated shorted-attribute set so that different call
+  // orderings of the same ports map to one entry. Steps sharing a key are solved
+  // back-to-back, so the newest entry is the only reuse candidate.
+  std::set<int> unique_attr(extra_dbc_attr.begin(), extra_dbc_attr.end());
+  std::vector<int> key(unique_attr.begin(), unique_attr.end());
+  if (!screened_stiffness_cache.empty() && screened_stiffness_cache.back().key == key)
+  {
+    return *screened_stiffness_cache.back().K;
+  }
+
+  // Assemble the stiffness matrix with the base plus extra essential attributes. Size the
   // marker from the global max attribute (BdrAttrToMarker) so a rank whose partition lacks
   // the shorted-port boundary does not build an undersized, corrupt marker.
   mfem::Array<int> merged_attr(dbc_attr);
@@ -250,19 +260,28 @@ CurlCurlOperator::GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
   BilinearForm k(GetNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
+
+  // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
+  // shallow reference to the tdof list and that list must stay put. Drop the older entry
+  // once two are cached; the one left behind is untouched, so its operator stays valid.
+  if (screened_stiffness_cache.size() == 2)
+  {
+    screened_stiffness_cache.pop_front();
+  }
+  auto &entry = screened_stiffness_cache.emplace_back();
+  entry.key = std::move(key);
+  entry.dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
-  // SetEssentialTrueDofs stores a shallow reference, so hold the per-level lists in a
-  // member that outlives the returned operator rather than in loop-local arrays.
-  extra_dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
   for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
   {
     const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
-    nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, extra_dbc_tdof_lists[l]);
+    nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, entry.dbc_tdof_lists[l]);
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
-    K_l->SetEssentialTrueDofs(extra_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    K_l->SetEssentialTrueDofs(entry.dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
-  return K;
+  entry.K = std::move(K);
+  return *entry.K;
 }
 
 void CurlCurlOperator::ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_attr,

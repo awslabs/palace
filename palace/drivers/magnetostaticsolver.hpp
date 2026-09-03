@@ -30,7 +30,8 @@ private:
                             const SurfaceCurrentOperator &surf_j_op,
                             const SurfaceFluxOperator &surf_flux_op,
                             const std::vector<Vector> &A, const std::vector<double> &I_inc,
-                            const std::vector<double> &Phi_inc) const;
+                            const std::vector<double> &Phi_inc,
+                            const mfem::DenseMatrix &linked_flux) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

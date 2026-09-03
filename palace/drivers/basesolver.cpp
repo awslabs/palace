@@ -35,36 +35,58 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
   auto rel_step = step_output.filename();
+  auto operation =
+      fmt::format("archiving adaptive iteration output in \"{}\"", step_output.string());
   ApplyOnEachNodeFilesystem(
-      comm,
-      fmt::format("Archiving adaptive iteration output in \"{}\"", step_output.string()),
+      comm, fmt::format("Creating adaptive iteration output \"{}\"", step_output.string()),
+      [&]() { fs::create_directories(step_output); });
+  ApplyOnceOnEachNodeFilesystem(
+      comm, step_output / ".palace-archive-claim", operation,
       [&]()
       {
-        // On a shared filesystem, the global root moves the output before the other node
-        // roots inspect it, so they see symlinks and have nothing left to move. On a
-        // node-local filesystem, each node root archives that node's rank files.
-        fs::create_directories(step_output);
-        for (const auto &f : fs::directory_iterator(output_dir))
+        // Snapshot the directory before changing it. Mutating a directory while iterating
+        // it has filesystem-dependent behavior, especially when directory entries are
+        // cached by a network filesystem.
+        std::vector<fs::path> entries;
+        for (const auto &entry : fs::directory_iterator(output_dir))
         {
-          const auto &fname = f.path().filename().string();
+          entries.push_back(entry.path());
+        }
+
+        for (const auto &path : entries)
+        {
+          const auto &fname = path.filename().string();
           if (fname.rfind("iteration") == 0)
           {
             continue;
           }
-          auto dest = step_output / f.path().filename();
-          if (f.is_symlink())
+
+          // A path can disappear after the snapshot, and existing archive symlinks have
+          // already been moved. Neither case leaves anything to archive.
+          std::error_code ec;
+          auto status = fs::symlink_status(path, ec);
+          if (ec == std::errc::no_such_file_or_directory)
           {
-            // Skip symlinks left from a previous iteration's save. They still point
-            // to valid data and will be overwritten by the next solve.
             continue;
           }
-          else if (fname == "palace.json")
+          if (ec)
+          {
+            throw fs::filesystem_error("Could not inspect adaptive iteration output", path,
+                                       ec);
+          }
+          if (!fs::exists(status) || fs::is_symlink(status))
+          {
+            continue;
+          }
+
+          auto dest = step_output / path.filename();
+          if (fname == "palace.json")
           {
             // Metadata is written only by the global root. Copy it only there to avoid
             // concurrent copies when the output directory is shared.
             if (Mpi::Root(comm))
             {
-              fs::copy(f, dest, fs::copy_options::overwrite_existing);
+              fs::copy(path, dest, fs::copy_options::overwrite_existing);
             }
           }
           else if (fname.size() >= 14 &&
@@ -81,8 +103,8 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
             // so that the output directory always has accessible results. Remove
             // any existing destination first (e.g. from a previous run).
             fs::remove_all(dest);
-            fs::rename(f, dest);
-            fs::create_symlink(rel_step / f.path().filename(), f.path());
+            fs::rename(path, dest);
+            fs::create_symlink(rel_step / path.filename(), path);
           }
         }
       });
@@ -104,13 +126,19 @@ json LoadMetadata(const fs::path &post_dir)
 
 void WriteMetadata(const fs::path &post_dir, const json &meta)
 {
+  // Write to a temporary file and atomically rename it into place so a concurrent reader
+  // (e.g. an external monitor polling palace.json mid-run) never observes a partial file.
   std::string path = post_dir / "palace.json";
-  std::ofstream fo(path);
-  if (!fo.is_open())
+  std::string tmp_path = post_dir / "palace.json.tmp";
   {
-    MFEM_ABORT("Unable to open metadata file \"" << path << "\"!");
+    std::ofstream fo(tmp_path);
+    if (!fo.is_open())
+    {
+      MFEM_ABORT("Unable to open metadata file \"" << tmp_path << "\"!");
+    }
+    fo << meta.dump(2) << '\n';
   }
-  fo << meta.dump(2) << '\n';
+  fs::rename(tmp_path, path);
 }
 
 // Returns an array of indices corresponding to marked elements.
@@ -187,6 +215,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
   double err = indicators.Norml2(comm);
+
+  // Record the initial solve as iteration 1 (matching the "iteration01" archive
+  // subdirectory written for adaptive runs).
+  SaveAdaptationIteration(1);
 
   // Collection of all tests that might exhaust resources.
   auto ExhaustedResources = [&refinement](auto it, auto ntdof)
@@ -283,6 +315,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
     err = indicators.Norml2(comm);
+
+    // Record that this AMR iteration has completed; the Solve above has already written all
+    // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
+    // iteration 1) matches the "iterationXX" archive subdirectory and signals completion
+    // via palace.json without parsing the log.
+    SaveAdaptationIteration(it + 1);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"
@@ -309,6 +347,16 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
     meta["Problem"]["MeshElements"] = ne;
     meta["Problem"]["DegreesOfFreedom"] = ndofs.back();
     meta["Problem"]["MultigridDegreesOfFreedom"] = ndofs;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveAdaptationIteration(int iteration) const
+{
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    meta["Problem"]["Iteration"] = iteration;
     WriteMetadata(post_dir, meta);
   }
 }
