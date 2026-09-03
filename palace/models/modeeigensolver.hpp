@@ -211,8 +211,10 @@ private:
 
   std::unique_ptr<ComplexOperator> opB;
 
-  // Frequency-dependent block A operator (rebuilt each Solve).
-  std::unique_ptr<ComplexOperator> opA;
+  // Frequency-dependent block A operator and sparse-direct preconditioner operator
+  // (rebuilt each Solve). The latter is assembled collectively on the FE space
+  // communicator before non-port ranks return from Solve.
+  std::unique_ptr<ComplexOperator> opA, direct_pc_op;
 
   // Eigenvalue and linear solvers (null on processes without solver_comm).
   std::unique_ptr<EigenvalueSolver> eigen;

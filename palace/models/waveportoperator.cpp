@@ -366,8 +366,14 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
   : mat_op(mat_op), excitation(data.excitation), active(data.active),
-    include_in_synthesis(data.include_in_synthesis)
+    include_in_synthesis(data.include_in_synthesis), port_linear(linear)
 {
+  port_linear.max_it = data.ksp_max_its;
+  port_linear.tol = data.ksp_tol;
+  if (data.complex_coarse_solve)
+  {
+    port_linear.complex_coarse_solve = *data.complex_coarse_solve;
+  }
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
   kn0 = 0.0;
@@ -533,7 +539,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, linear,
+        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, port_linear,
         data.eigen_solver, data.verbose, port_comm);
   }
 
