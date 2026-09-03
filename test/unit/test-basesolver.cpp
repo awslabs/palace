@@ -45,12 +45,9 @@ public:
   }
 };
 
-// Reconstruct the exact conforming DOF count (GetTrueVSize) of an FE space from the
-// per-geometry true entity counts: each true entity contributes fec.DofForGeometry(geom)
-// dofs of its geometry. This is the reconstruction oracle used by the nonconforming test
-// below -- an earlier NC-list bucketing method silently mis-counted (over-counted edges,
-// mis-split faces) in 3D, and reproducing GetTrueVSize this way catches that whole class
-// of bug. Mirrors the DofForGeometry usage validated exact in the mfem_dofcheck_nc harness.
+// Reconstruct the exact conforming DOF count (`GetTrueVSize`) from the per-geometry
+// true entity counts. Agreement with `GetTrueVSize` verifies that constrained entities
+// are excluded and face geometries are classified correctly on nonconforming meshes.
 long long Reconstruct(const mesh::MeshEntityCounts &c, mfem::FiniteElementCollection &fec)
 {
   long long n = c.true_vertices * fec.DofForGeometry(mfem::Geometry::POINT) +
