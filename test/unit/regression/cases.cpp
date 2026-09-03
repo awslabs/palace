@@ -260,10 +260,13 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
 // Mixed current-flux excitation. The aperture integral recovering M[1][2] is
 // reduced over surfaces the partitioner may split, so this case catches a
 // double-counted contribution.
+//
+// rtol is 3e-4: the tiny mutual (~8e-12 H) is a difference of large self-scale
+// terms, so ~1e-6 partition FP jitter amplifies to ~1.2e-4 via cancellation.
 TEST_CASE("ring_disk_mixed_current_flux", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-4;
+  opts.rtol = 3.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.linear_solver_policy = force_default_solver;

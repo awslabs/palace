@@ -327,9 +327,23 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // current is free to crowd.
         MFEM_ASSERT(A_p_london.Size() == RHS.Size(),
                     "London scratch vector size mismatch!");
+        // Zero the scratch vectors before each solve. Magnetostatics defaults to a nonzero
+        // initial guess (iodata.cpp), and these vectors are reused across flux steps; a stale
+        // guess carrying a gradient/near-null-space component intermittently stalls CG on the
+        // gauge-singular operator K = K_cc + M_sheet (the fluxoid RHS c = Curlᵀf is marginally
+        // conditioned), producing a garbage A_h whose bad energy is injected via α·A_h. A
+        // clean zero start makes both solves robust and partition-/roundoff-independent.
+        A_p_london = 0.0;
         ksp.Mult(RHS, A_p_london);
+        MFEM_VERIFY(ksp.GetConverged(),
+                    "London particular-solution solve A_p = K⁻¹b did not converge for flux "
+                    "loop " << idx << "; extracted inductance would be unreliable!");
         curlcurl_op.GetFluxConstraintVector(idx, RHS_c_london);
+        A_h_london = 0.0;
         ksp.Mult(RHS_c_london, A_h_london);
+        MFEM_VERIFY(ksp.GetConverged(),
+                    "London fluxoid-mode solve A_h = K⁻¹c did not converge for flux loop "
+                        << idx << "; extracted inductance would be unreliable!");
         double phi_p = curlcurl_op.MeasureLondonHoleFlux(idx, A_p_london);
         double phi_h = curlcurl_op.MeasureLondonHoleFlux(idx, A_h_london);
         MFEM_VERIFY(

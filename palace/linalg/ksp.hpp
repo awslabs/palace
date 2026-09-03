@@ -67,6 +67,9 @@ public:
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
 
+  // Whether the most recent Mult converged to the requested tolerance.
+  bool GetConverged() const { return ksp->GetConverged(); }
+
   // Forward tolerance access to the underlying iterative solver.
   double GetRelTol() const { return ksp->GetRelTol(); }
   double GetAbsTol() const { return ksp->GetAbsTol(); }
