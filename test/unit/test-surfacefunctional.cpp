@@ -691,7 +691,6 @@ void CheckBoundaryTraceNCUnion(
     CHECK(ghost_deltas[1] > ghost_deltas[2]);
     CHECK(ghost_deltas[2] > 0);
   }
-  trace_cache->PrintProfile();
 }
 
 }  // namespace

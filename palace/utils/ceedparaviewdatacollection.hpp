@@ -137,6 +137,7 @@ public:
                                int num_comp = 1);
   void DeregisterBoundaryPointField(const std::string &field_name);
   void DeregisterDomainPointField(const std::string &field_name);
+  void DeregisterDomainPointFields();
   void DeregisterDomainCellField(const std::string &field_name);
 
   // Cumulative direct-VTU writer counters. They distinguish ordinary evaluator calls
@@ -146,7 +147,6 @@ public:
   static long long BatchViewFieldCount();
   static long long AvoidedSliceCopyCount();
   static long long AvoidedSliceCopyBytes();
-  void PrintPointFieldProfile() const;
 
   void Save() override;
 

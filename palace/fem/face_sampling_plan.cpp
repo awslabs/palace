@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <numeric>
@@ -238,11 +237,6 @@ MakeCanonicalTracePointKey(mfem::Geometry::Type vol_geom, mfem::Geometry::Type f
   return key;
 }
 
-bool ProfileEnabled()
-{
-  return std::getenv("PALACE_FACE_SAMPLING_PLAN_PROFILE") != nullptr;
-}
-
 }  // namespace
 
 std::atomic<long long> FaceSamplingPlan::builds{0};
@@ -471,13 +465,7 @@ FaceSamplingPlan::FaceSamplingPlan(const Mesh &mesh_,
                 "Invalid boundary entry after NC coarse-face union planning!");
   }
 
-  const long long count = ++builds;
-  if (ProfileEnabled())
-  {
-    Mpi::Print(mesh->GetComm(),
-               "FaceSamplingPlan profile builds={} reuses={} entries={} points={} lod={}\n",
-               count, ReuseCount(), entries.size(), num_points, lod);
-  }
+  ++builds;
 }
 
 bool FaceSamplingPlan::Matches(const Mesh &other, const mfem::Array<int> &bdr_attr_marker,

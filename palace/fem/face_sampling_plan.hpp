@@ -85,8 +85,8 @@ public:
   const std::vector<UnionGroup> &UnionGroups() const { return union_groups; }
   bool HasGhostUnion() const { return has_ghost_union; }
 
-  // Counters are process-local and intentionally inexpensive. They are useful in focused
-  // tests and, with PALACE_FACE_SAMPLING_PLAN_PROFILE set, in setup profiling output.
+  // Counters are process-local and intentionally inexpensive. They are used by focused
+  // tests to verify that sampling plans are reused.
   static long long BuildCount();
   static long long ReuseCount();
   static void NoteReuse();

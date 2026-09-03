@@ -4,7 +4,6 @@
 #include "utils/ceedparaviewdatacollection.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <regex>
@@ -302,6 +301,12 @@ void CeedParaViewDataCollection::RegisterDomainCellField(const std::string &fiel
 void CeedParaViewDataCollection::DeregisterDomainPointField(const std::string &field_name)
 {
   DeregisterPointField(MeshEntityType::Domain, field_name);
+}
+
+void CeedParaViewDataCollection::DeregisterDomainPointFields()
+{
+  cached_point_headers_vtu.clear();
+  domain_point_fields.clear();
 }
 
 void CeedParaViewDataCollection::DeregisterDomainCellField(const std::string &field_name)
@@ -760,19 +765,6 @@ long long CeedParaViewDataCollection::AvoidedSliceCopyBytes()
   return avoided_slice_copy_bytes.load();
 }
 
-void CeedParaViewDataCollection::PrintPointFieldProfile() const
-{
-  if (!std::getenv("PALACE_CEED_PARAVIEW_PROFILE"))
-  {
-    return;
-  }
-  Mpi::Print("CeedParaViewDataCollection profile individual_evaluator_calls={} "
-             "provider_calls={} batch_view_fields={} avoided_slice_copies={} "
-             "avoided_slice_copy_bytes={}\n",
-             IndividualEvaluatorCallCount(), ProviderCallCount(), BatchViewFieldCount(),
-             AvoidedSliceCopyCount(), AvoidedSliceCopyBytes());
-}
-
 void CeedParaViewDataCollection::Save()
 {
   const std::string col_path = GenerateCollectionPath();
@@ -854,7 +846,6 @@ void CeedParaViewDataCollection::Save()
     os.precision(precision);
     SaveDataVTU(os, levels_of_detail);
   }
-  PrintPointFieldProfile();
 
   for (const auto &qfield : q_field_map)
   {

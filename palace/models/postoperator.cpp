@@ -1183,14 +1183,6 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview_bdr->SetTime(paraview_time);
   paraview->Save();
   paraview_bdr->Save();
-  if (bdr_derived_bundle)
-  {
-    bdr_derived_bundle->PrintProfile();
-  }
-  if (bdr_trace_cache)
-  {
-    bdr_trace_cache->PrintProfile();
-  }
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
@@ -1258,12 +1250,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
     paraview->RegisterDomainCellField("Indicator", indicator->Local());
   }
-  for (const char *name :
-       {"E", "E_real", "E_imag", "B", "B_real", "B_imag", "En", "En_real", "En_imag",
-        "Bt_real", "Bt_imag", "V", "A", "U_e", "U_m", "S", "Sn"})
-  {
-    paraview->DeregisterDomainPointField(name);
-  }
+  paraview->DeregisterDomainPointFields();
   paraview->Save();
   paraview->DeregisterDomainCellField("Rank");
   if (indicator)
