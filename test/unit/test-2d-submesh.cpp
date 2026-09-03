@@ -257,7 +257,7 @@ TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs", "[geodata][S
   CHECK(transferred_essential == 8);
 }
 
-TEST_CASE("Flattened NC port mesh preserves ND DoFs", "[geodata][Serial]")
+TEST_CASE("Flattened NC port mesh preserves ND DoFs", "[geodata][Serial][Parallel]")
 {
   auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/mesh/nc-boundary-submesh.mesh";
   mfem::Mesh serial_mesh(mesh_path.c_str(), 1, 1, true);
@@ -316,16 +316,27 @@ TEST_CASE("Flattened NC port mesh preserves ND DoFs", "[geodata][Serial]")
   flattened_field.ProjectCoefficient(flattened_coefficient);
   mfem::ParGridFunction difference(embedded_field);
   difference -= flattened_field;
-  CHECK(difference.Norml2() < 1.0e-12);
+  double difference_norm = difference.Norml2();
+  Mpi::GlobalMax(1, &difference_norm, flattened.GetComm());
+  CHECK(difference_norm < 1.0e-12);
 
 #if defined(MFEM_USE_GSLIB)
   mfem::IntegrationPoint ip0, ip1;
   ip0.Set2(0.2, 0.2);
   ip1.Set2(0.6, 0.2);
   mfem::Vector p0(2), p1(2);
-  auto *transformation = flattened.GetElementTransformation(0);
-  transformation->Transform(ip0, p0);
-  transformation->Transform(ip1, p1);
+  int point_owner = flattened.GetNE() > 0 ? Mpi::Rank(flattened.GetComm())
+                                          : Mpi::Size(flattened.GetComm());
+  Mpi::GlobalMin(1, &point_owner, flattened.GetComm());
+  REQUIRE(point_owner < Mpi::Size(flattened.GetComm()));
+  if (Mpi::Rank(flattened.GetComm()) == point_owner)
+  {
+    auto *transformation = flattened.GetElementTransformation(0);
+    transformation->Transform(ip0, p0);
+    transformation->Transform(ip1, p1);
+  }
+  Mpi::Broadcast(2, p0.HostReadWrite(), point_owner, flattened.GetComm());
+  Mpi::Broadcast(2, p1.HostReadWrite(), point_owner, flattened.GetComm());
   mfem::FindPointsGSLIB point_locator(flattened.GetComm());
   fem::SetupInterpolator(point_locator, flattened);
   const double integral =

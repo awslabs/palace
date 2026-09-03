@@ -1564,8 +1564,11 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
                   attr_counts.data(), attr_displs.data(), comm);
 
   // For edges shared by multiple parent boundary faces, prefer a face outside the selected
-  // mode surface. This preserves the existing remapping convention for conforming edges.
+  // mode surface. If multiple distinct non-surface attributes share the edge, choose the
+  // smallest deterministically and warn below if that edge is actually used by the
+  // submesh perimeter.
   std::map<std::pair<int, int>, int> gvpair_to_attr;
+  std::set<std::pair<int, int>> ambiguous_gvpairs;
   for (int i = 0; i < attr_total / edge_attr_record_size; i++)
   {
     const int *record = all_edge_attrs.data() + edge_attr_record_size * i;
@@ -1577,13 +1580,22 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     }
     else if (record[3] == 0)
     {
-      it->second = record[2];
+      if (surface_attr_set.count(it->second) > 0)
+      {
+        it->second = record[2];
+      }
+      else if (it->second != record[2])
+      {
+        ambiguous_gvpairs.insert(key);
+        it->second = std::min(it->second, record[2]);
+      }
     }
   }
 
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
   mfem::Array<int> vertices;
   std::vector<int> unresolved_sbe;
+  int ambiguous_topological = 0;
   for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
   {
     const int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
@@ -1594,14 +1606,28 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     const int gv1 = static_cast<int>(pvert_gi[vertices[1]]);
     const auto key = std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
     auto it = gvpair_to_attr.find(key);
+    // A surface-only topological match is not final for an NC child edge: the child can be
+    // a strict subset of a coarse surface edge while lying on a nonmatching adjacent
+    // parent face. Route those cases through the geometric search below.
     if (it != gvpair_to_attr.end() && surface_attr_set.count(it->second) == 0)
     {
       submesh.SetBdrAttribute(sbe, it->second);
+      ambiguous_topological += ambiguous_gvpairs.count(key) > 0;
     }
     else
     {
       unresolved_sbe.push_back(sbe);
     }
+  }
+
+  int global_ambiguous_topological = ambiguous_topological;
+  Mpi::GlobalSum(1, &global_ambiguous_topological, comm);
+  if (global_ambiguous_topological > 0)
+  {
+    Mpi::Warning(fmt::format(
+        "Resolved {:d} ambiguous submesh perimeter edges using the smallest parent "
+        "boundary attribute!",
+        global_ambiguous_topological));
   }
 
   int unresolved_count = static_cast<int>(unresolved_sbe.size());
@@ -1862,7 +1888,7 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   Mpi::GlobalMin(num_queries, face_match_min.data(), comm);
   Mpi::GlobalMax(num_queries, face_match_max.data(), comm);
 
-  int remapped = 0;
+  int remapped = 0, ambiguous_geometric = 0;
   const int first_local_query = query_displs[Mpi::Rank(comm)] / 3;
   for (int i = 0; i < unresolved_count; i++)
   {
@@ -1873,12 +1899,9 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
       min_attr = face_match_min[q];
       max_attr = face_match_max[q];
     }
-    MFEM_VERIFY(
-        min_attr == no_min_match || min_attr == max_attr,
-        fmt::format("Ambiguous parent boundary attributes for NC child edge: {}, {}",
-                    min_attr, max_attr));
     if (min_attr != no_min_match)
     {
+      ambiguous_geometric += min_attr != max_attr;
       submesh.SetBdrAttribute(unresolved_sbe[i], min_attr);
       remapped++;
     }
@@ -1886,6 +1909,19 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
 
   int global_remapped = remapped;
   Mpi::GlobalSum(1, &global_remapped, comm);
+  int global_ambiguous_geometric = ambiguous_geometric;
+  Mpi::GlobalSum(1, &global_ambiguous_geometric, comm);
+  if (global_ambiguous_geometric > 0)
+  {
+    Mpi::Warning(fmt::format(
+        "Resolved {:d} geometrically ambiguous NC child edges using the smallest parent "
+        "boundary attribute!",
+        global_ambiguous_geometric));
+  }
+  // Leave unmatched edges at their generated submesh attribute. This can be legitimate for
+  // artificial NC submesh boundaries that have no adjacent non-surface parent face; such
+  // edges must remain unconstrained. Keep the warning because the same outcome can also
+  // indicate missing physical boundary geometry.
   if (global_remapped < global_unresolved_count)
   {
     Mpi::Warning(
