@@ -22,8 +22,11 @@ namespace palace::test
 
 // Callback signature for per-file custom checks. Tables are passed by
 // non-const reference because palace::Table's indexing operators are
-// non-const; the data itself is never mutated through them.
-using CustomCheck = std::function<void(Table &actual, Table &reference)>;
+// non-const; the data itself is never mutated through them. The third argument
+// is the absolute path of the live output CSV, so checks that need sibling
+// files (e.g. the synthesized pencil matrices) can load them from its parent.
+using CustomCheck =
+    std::function<void(Table &actual, Table &reference, const std::filesystem::path &)>;
 
 // How a regression case consumes the global CLI solver override.
 enum class SolverOverridePolicy

@@ -10,10 +10,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <string>
+#include <vector>
 
+#include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -35,7 +39,7 @@ namespace
 // r*Im{E_z} for both driven and eigenmode output (the leading columns differ).
 palace::test::CustomCheck TestFarfield(double rtol)
 {
-  return [rtol](palace::Table &a, palace::Table &r)
+  return [rtol](palace::Table &a, palace::Table &r, const std::filesystem::path &)
   {
     CHECK(a.n_cols() >= 6);
     CHECK(a.n_cols() == r.n_cols());
@@ -73,7 +77,8 @@ palace::test::CustomCheck TestFarfield(double rtol)
 // crossings but |X| tracks the converged response.
 palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
   {
     auto find_by_header = [](palace::Table &t, const std::string &h) -> palace::Column *
     {
@@ -152,7 +157,8 @@ constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceD
 // -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
 palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -192,7 +198,8 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 //       meaningless.
 palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
   {
     const std::size_t n_rows = actual.n_rows();
     for (std::size_t r = 0; r < n_rows; ++r)
@@ -260,7 +267,8 @@ palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, d
                                                             double q_eigen = -1.0,
                                                             double q_rtol = 0.0)
 {
-  return [f_re_eigen, rtol, q_eigen, q_rtol](palace::Table &actual, palace::Table &)
+  return [f_re_eigen, rtol, q_eigen, q_rtol](palace::Table &actual, palace::Table &,
+                                             const std::filesystem::path &)
   {
     int col_re = -1, col_q = -1;
     for (std::size_t c = 0; c < actual.n_cols(); ++c)
@@ -302,6 +310,213 @@ palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, d
     if (q_eigen > 0.0)
     {
       CHECK_THAT(best_q, Catch::Matchers::WithinRel(q_eigen, q_rtol));
+    }
+  };
+}
+
+// End-to-end de-embed/reconnect round-trip for a synthesized wave-port network. The swept
+// port-S.csv is field-derived (modal overlap of the ROM-reconstructed field); the
+// rom-{Linv,Rinv,C} pencil is the independently synthesized circuit. This check closes the
+// loop: it reduces the total pencil Y(iω) = L⁻¹/(iω) + R⁻¹ + iω·C to the physical port
+// terminals by a Schur complement onto the internal (basis + aux) states, de-embeds each
+// port's own reference load y_ref (baked into the port's diagonal load block), renormalizes
+// to the real modal reference y_ref via a Kurokawa power-wave transform, and checks the
+// resulting |S| against Palace's field-derived port-S. Agreement validates that the
+// exported circuit reproduces the solver's own S-parameters. The W modal correction lives
+// in the port loads, so a regressed W shifts |S| by dB-scale amounts. Frequencies and
+// per-port y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
+palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
+{
+  return [atol_lin](palace::Table &, palace::Table &reference,
+                    const std::filesystem::path &actual_path)
+  {
+    namespace fs = std::filesystem;
+    const fs::path dir = actual_path.parent_path();
+
+    // Read a synthesized matrix CSV. Table layout (see RomOperator::print_table): column c
+    // has header = node label, data[r] = M(r, c). A zero real/imag part is not written, so
+    // a missing file yields an empty matrix (treated as zero by the caller).
+    auto read_real = [](const fs::path &p, std::vector<std::string> *lab) -> Eigen::MatrixXd
+    {
+      if (!fs::is_regular_file(p))
+      {
+        return Eigen::MatrixXd(0, 0);
+      }
+      palace::TableWithCSVFile w(p.string(), /*load_existing_file=*/true);
+      palace::Table &t = w.table;
+      const long n = static_cast<long>(t.n_cols());
+      const long m = static_cast<long>(t.n_rows());
+      Eigen::MatrixXd M(m, n);
+      for (long c = 0; c < n; ++c)
+      {
+        if (lab)
+        {
+          lab->push_back(t[c].header_text);
+        }
+        for (long r = 0; r < m; ++r)
+        {
+          M(r, c) = t[c].data[r];
+        }
+      }
+      return M;
+    };
+
+    // L⁻¹ real part is always populated (α₀ + HDM K), so it defines the label set and size.
+    std::vector<std::string> labels;
+    const Eigen::MatrixXd linv_re = read_real(dir / "rom-Linv-re.csv", &labels);
+    REQUIRE(linv_re.rows() > 0);
+    const long n_total = linv_re.rows();
+    auto term = [&](const std::string &stem) -> Eigen::MatrixXcd
+    {
+      const Eigen::MatrixXd re = read_real(dir / (stem + "-re.csv"), nullptr);
+      const Eigen::MatrixXd im = read_real(dir / (stem + "-im.csv"), nullptr);
+      Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(n_total, n_total);
+      if (re.rows() == n_total && re.cols() == n_total)
+      {
+        M.real() = re;
+      }
+      if (im.rows() == n_total && im.cols() == n_total)
+      {
+        M.imag() = im;
+      }
+      return M;
+    };
+    const Eigen::MatrixXcd linv = term("rom-Linv");
+    const Eigen::MatrixXcd rinv = term("rom-Rinv");
+    const Eigen::MatrixXcd cap = term("rom-C");
+
+    // Port terminals and their real modal reference y_ref(ω), read from the sibling
+    // rom-port-reference.csv. Its "Re{Y_ref[<label>]} (S)" columns give the port order and
+    // the de-embed/renormalization reference; its "f (GHz)" column gives the sweep grid.
+    palace::TableWithCSVFile ref_w((dir / "rom-port-reference.csv").string(),
+                                   /*load_existing_file=*/true);
+    palace::Table &ref_t = ref_w.table;
+    std::vector<std::string> port_labels;
+    std::vector<int> re_yref_col;
+    int f_col = -1;
+    for (std::size_t c = 0; c < ref_t.n_cols(); ++c)
+    {
+      const std::string &h = ref_t[c].header_text;
+      if (h.rfind("f (GHz)", 0) == 0)
+      {
+        f_col = static_cast<int>(c);
+      }
+      else if (h.rfind("Re{Y_ref[", 0) == 0)
+      {
+        const auto lb = h.find('[');
+        const auto rb = h.find(']', lb);
+        port_labels.push_back(h.substr(lb + 1, rb - lb - 1));
+        re_yref_col.push_back(static_cast<int>(c));
+      }
+    }
+    REQUIRE(f_col >= 0);
+    const long n_ports = static_cast<long>(port_labels.size());
+    REQUIRE(n_ports >= 1);
+
+    // Map each port terminal to its pencil row, and everything else to the internal block.
+    std::vector<long> pidx;
+    for (const auto &pl : port_labels)
+    {
+      const auto it = std::find(labels.begin(), labels.end(), pl);
+      REQUIRE(it != labels.end());
+      pidx.push_back(static_cast<long>(it - labels.begin()));
+    }
+    std::vector<long> iidx;
+    for (long i = 0; i < n_total; ++i)
+    {
+      if (std::find(pidx.begin(), pidx.end(), i) == pidx.end())
+      {
+        iidx.push_back(i);
+      }
+    }
+    const long n_int = static_cast<long>(iidx.size());
+
+    // Sweep grid + per-port y_ref from the reference table.
+    const std::size_t n_freq = ref_t.n_rows();
+    const std::complex<double> j1(0.0, 1.0);
+    for (std::size_t rr = 0; rr < n_freq; ++rr)
+    {
+      const double f_ghz = ref_t[f_col].data[rr];
+      const std::complex<double> s = j1 * (2.0 * M_PI * f_ghz * 1.0e9);
+
+      // Full nodal admittance, then Schur-reduce onto the n_ports terminals.
+      const Eigen::MatrixXcd y = linv / s + rinv + s * cap;
+      Eigen::MatrixXcd ypp(n_ports, n_ports), ypi(n_ports, n_int), yip(n_int, n_ports),
+          yii(n_int, n_int);
+      for (long a = 0; a < n_ports; ++a)
+      {
+        for (long b = 0; b < n_ports; ++b)
+        {
+          ypp(a, b) = y(pidx[a], pidx[b]);
+        }
+        for (long b = 0; b < n_int; ++b)
+        {
+          ypi(a, b) = y(pidx[a], iidx[b]);
+          yip(b, a) = y(iidx[b], pidx[a]);
+        }
+      }
+      for (long a = 0; a < n_int; ++a)
+      {
+        for (long b = 0; b < n_int; ++b)
+        {
+          yii(a, b) = y(iidx[a], iidx[b]);
+        }
+      }
+      Eigen::MatrixXcd yports = ypp;
+      if (n_int > 0)
+      {
+        yports -= ypi * yii.fullPivLu().solve(yip);
+      }
+
+      // De-embed each port's own reference load (baked into the diagonal), then renormalize
+      // to y_ref via the Kurokawa power-wave transform S = √Y0 (I − Z0·Yd)(I + Z0·Yd)⁻¹ √Z0
+      // with Z0 = diag(1/y_ref) (real reference).
+      Eigen::VectorXd yref(n_ports);
+      for (long a = 0; a < n_ports; ++a)
+      {
+        yref(a) = ref_t[re_yref_col[a]].data[rr];
+        yports(a, a) -= yref(a);
+      }
+      Eigen::MatrixXcd z0 = Eigen::MatrixXcd::Zero(n_ports, n_ports);
+      Eigen::MatrixXcd rootY = Eigen::MatrixXcd::Zero(n_ports, n_ports);
+      Eigen::MatrixXcd rootZ = Eigen::MatrixXcd::Zero(n_ports, n_ports);
+      for (long a = 0; a < n_ports; ++a)
+      {
+        z0(a, a) = 1.0 / yref(a);
+        rootY(a, a) = std::sqrt(yref(a));
+        rootZ(a, a) = 1.0 / std::sqrt(yref(a));
+      }
+      const Eigen::MatrixXcd id = Eigen::MatrixXcd::Identity(n_ports, n_ports);
+      const Eigen::MatrixXcd smat =
+          rootY * (id - z0 * yports) * (id + z0 * yports).fullPivLu().inverse() * rootZ;
+
+      // Compare |S[i][j]| against the field-derived reference (dB → linear).
+      for (long i = 0; i < n_ports; ++i)
+      {
+        for (long jj = 0; jj < n_ports; ++jj)
+        {
+          const std::string hdr =
+              "|S[" + std::to_string(i + 1) + "][" + std::to_string(jj + 1) + "]| (dB)";
+          int sc = -1;
+          for (std::size_t c = 0; c < reference.n_cols(); ++c)
+          {
+            if (reference[c].header_text == hdr)
+            {
+              sc = static_cast<int>(c);
+              break;
+            }
+          }
+          if (sc < 0 || rr >= reference.n_rows())
+          {
+            continue;
+          }
+          const double meas_lin = std::pow(10.0, reference[sc].data[rr] / 20.0);
+          const double pen_lin = std::abs(smat(i, jj));
+          INFO("f = " << f_ghz << " GHz, |S[" << i + 1 << "][" << jj + 1 << "]| pencil "
+                      << pen_lin << " vs field " << meas_lin);
+          CHECK_THAT(pen_lin, Catch::Matchers::WithinAbs(meas_lin, atol_lin));
+        }
+      }
     }
   };
 }
@@ -514,7 +729,12 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   opts.skip_rowcount = true;
   opts.min_rows = 1;
-  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  // The physical (W-inclusive) Y_ref carries a tiny partition-dependent residue in its
+  // imaginary part (Im{Y}~1e-9, Im{Z}~1e-3 Ohm) that the old scalar-kn reference had as
+  // exactly zero; the real parts carry the W signal and are partition-stable, so diff those
+  // and drop the imaginary columns.
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum",
+                           "Mean",          "Im{Y_ref",     "Im{Z_ref"};
   opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
                          "rom-orthogonalization-matrix-R", "rom-eigenvectors",
                          // Sharp resonance: swept S and the per-element error-estimator
@@ -772,6 +992,13 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
                          "rom-eigenvectors"};
+  // End-to-end de-embed/reconnect: reduce the total synthesized pencil to the port
+  // terminals, de-embed the reference loads, and confirm the resulting S reproduces the
+  // solver's field-derived port-S (a stronger check than the pointwise field-S diff, and
+  // one that also catches the dB-scale shift a regressed W would produce). The physical S
+  // is partition-independent: |S| matches to ~6e-8 at np=1 and np=2, so a 1e-6 linear
+  // tolerance is robust.
+  opts.custom_checks["port-S.csv"] = TestWavePortSRoundTrip(1.0e-6);
   // No field output is requested in the config.
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);

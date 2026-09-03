@@ -1845,14 +1845,8 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
     {
       continue;
     }
-    if (!(std::abs(data.modal_reaction) > 0.0) ||
-        !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(data.kn0) > 0.0))
-    {
-      Mpi::Warning(
-          nd_fespace.GetComm(),
-          "Wave port {:d} has zero modal reaction; skipping its modal correction!\n", idx);
-      continue;
-    }
+    // Activity is decided inside SamplePortModalCorrection from the recomputed complex
+    // reactions, not the frozen real-ω reference state.
     auto smp = SamplePortModalCorrection(data, omega, nd_fespace, nd_dbc_tdof_list);
     if (!smp.active)
     {
@@ -1875,12 +1869,9 @@ WavePortOperator::SamplePortModalCorrection(WavePortData &data, std::complex<dou
   // +(iω/R_scalar) s_scalar s_scalarᵀ. Pairing each s with the raw reaction of the same
   // field makes W = (−iω/R) s sᵀ invariant to the mode's arbitrary EVP scale/phase, so W
   // tracks the true mode shape at ω instead of freezing it at ω0.
+  // Gate on the freshly recomputed complex reactions, not the frozen real-ω reference
+  // members (which can spuriously disable the correction at a cutoff/degenerate reference).
   ModalCorrectionSample smp;
-  if (!(std::abs(data.modal_reaction) > 0.0) ||
-      !(std::abs(data.modal_reaction_scalar) > 0.0) || !(std::abs(data.kn0) > 0.0))
-  {
-    return smp;
-  }
   const auto react = data.ComputeComplexReactions(omega);
   if (!(std::abs(react.R_full_raw) > 0.0) || !(std::abs(react.R_scalar_raw) > 0.0))
   {

@@ -2516,50 +2516,78 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
       units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
   const double unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
 
+  // Physical frequency scale s_phys = iω·ω0 with ω0 = unit_henry_inv/unit_ohm_inv, so
+  // Y(s_phys) = L⁻¹/s_phys + R⁻¹ + s_phys·C reproduces the old scalar reference and also
+  // carries the W modal correction and aux states baked into the per-port load pencil.
+  const double unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  const double omega0 = unit_henry_inv / unit_ohm_inv;
+
+  std::vector<std::string> total_labels = v_node_label;
+  for (const auto &lab : matrices.aux_labels)
+  {
+    total_labels.push_back(lab);
+  }
+
   auto wave_y_ref = [&](const RefPort &ref, double omega) -> std::complex<double>
   {
-    MFEM_VERIFY(ref.wave_fit != nullptr,
-                "Missing wave-port fit for port reference output!");
-    const auto Mp_it = Mwp_p_r.find(ref.port_idx);
-    MFEM_VERIFY(Mp_it != Mwp_p_r.end(), "Missing wave-port boundary mass projection!");
-
-    std::vector<long> rows;
-    const long re = LabelIndex(v_node_label, fmt::format("waveport_{:d}_re", ref.port_idx));
-    const long im = LabelIndex(v_node_label, fmt::format("waveport_{:d}_im", ref.port_idx));
-    MFEM_VERIFY(re >= 0, "Missing wave-port real row for port reference output!");
-    rows.push_back(re);
-    if (im >= 0)
+    if (!(omega > 0.0))
     {
-      rows.push_back(im);
+      return {0.0, 0.0};
+    }
+    const auto load_it =
+        std::find_if(matrices.port_loads.begin(), matrices.port_loads.end(),
+                     [&ref](const auto &pl) { return pl.label == ref.label; });
+    MFEM_VERIFY(load_it != matrices.port_loads.end(),
+                "Missing wave-port load pencil for port reference output!");
+    const long phys = LabelIndex(total_labels, ref.label);
+    MFEM_VERIFY(phys >= 0, "Missing wave-port physical row for port reference output!");
+
+    // Full-size port admittance from the load pencil (already in physical units).
+    const std::complex<double> s_phys = 1i * omega * omega0;
+    Eigen::MatrixXcd Y = (*load_it->L_inv) / s_phys + s_phys * (*load_it->C);
+    if (load_it->R_inv)
+    {
+      Y += *load_it->R_inv;
     }
 
-    const auto scalar =
-        std::complex<double>(EvaluateWavePortKnFit(*ref.wave_fit, omega), 0.0);
-    Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(rows.size(), rows.size());
-    for (std::size_t i = 0; i < rows.size(); i++)
+    // Order the physical port row first, then any internal (imag/aux) rows carrying load,
+    // and Schur-complement the internal rows onto the physical row for the terminal
+    // admittance.
+    std::vector<long> rows{phys};
+    for (long i = 0; i < Y.rows(); i++)
     {
-      for (std::size_t j = 0; j < rows.size(); j++)
+      if (i != phys &&
+          (Y.row(i).cwiseAbs().maxCoeff() > 0.0 || Y.col(i).cwiseAbs().maxCoeff() > 0.0))
       {
-        A(static_cast<long>(i), static_cast<long>(j)) = scalar * orth_R(rows[i], rows[i]) *
-                                                        Mp_it->second(rows[i], rows[j]) *
-                                                        orth_R(rows[j], rows[j]);
+        rows.push_back(i);
       }
     }
-
-    std::complex<double> A_eff = A(0, 0);
-    if (rows.size() > 1)
+    const long n = static_cast<long>(rows.size());
+    Eigen::MatrixXcd Ys(n, n);
+    for (long i = 0; i < n; i++)
     {
-      const long ni = static_cast<long>(rows.size() - 1);
-      const Eigen::MatrixXcd Aii = A.bottomRightCorner(ni, ni);
-      Eigen::FullPivLU<Eigen::MatrixXcd> lu(Aii);
-      if (lu.rank() == ni)
+      for (long j = 0; j < n; j++)
       {
-        A_eff -= (A.block(0, 1, 1, ni) * lu.solve(A.block(1, 0, ni, 1)))(0, 0);
+        Ys(i, j) = Y(rows[i], rows[j]);
       }
     }
-
-    return (omega > 0.0) ? (unit_ohm_inv * A_eff / (1i * omega))
-                         : std::complex<double>{0.0, 0.0};
+    std::complex<double> y_eff = Ys(0, 0);
+    if (n > 1)
+    {
+      // The internal block spans a huge dynamic range (L⁻¹ ~ 1e14, C ~ 1e-14), so the
+      // default rank threshold spuriously flags it as deficient; keep all pivots and guard
+      // only against a genuinely singular solve producing non-finite entries.
+      const long ni = n - 1;
+      Eigen::FullPivLU<Eigen::MatrixXcd> lu(Ys.bottomRightCorner(ni, ni));
+      lu.setThreshold(1.0e-300);
+      const std::complex<double> corr =
+          (Ys.block(0, 1, 1, ni) * lu.solve(Ys.block(1, 0, ni, 1)))(0, 0);
+      if (std::isfinite(corr.real()) && std::isfinite(corr.imag()))
+      {
+        y_eff -= corr;
+      }
+    }
+    return y_eff;
   };
 
   Mpi::Print(" Printing PROM port reference admittance to disk.\n");

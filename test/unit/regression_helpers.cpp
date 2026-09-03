@@ -544,7 +544,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
         if (ValidateCSVTables(a, r, effective_opts) &&
             !SkipNumericComparison(effective_opts))
         {
-          custom_it->second(a, r);
+          custom_it->second(a, r, actual);
         }
         continue;
       }
