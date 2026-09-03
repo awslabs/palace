@@ -250,10 +250,11 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
 // spurious roots), the one nearest f_re_eigen must match it in Re{f} within rtol. Robust to
 // the basis/partition-dependent root count and ordering.
 //
-// q_eigen > 0 additionally asserts that same root's Q within q_rtol. Only pass it when the
+// q_eigen > 0 additionally asserts that same root's Q within q_rtol. Pass it when the
 // pole is extractable from a real-frequency fit (a moderate-to-high-Q resonance sampled by
-// a band that brackets it); for a broad off-axis pole (e.g. the cylinder TM01, Q ~ 4) the
-// synthesized Im{f}/Q is under-determined and band-dependent, so leave q_eigen < 0 to skip.
+// a band that brackets it) and the common-pole AAA fit resolves it as a converged HDM
+// eigenpair (backward error ~1e-9), so its Q is toolchain/partition-robust. For a broad
+// off-axis pole that stays under-determined by real-axis samples, leave q_eigen < 0 to skip.
 palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol,
                                                             double q_eigen = -1.0,
                                                             double q_rtol = 0.0)
@@ -476,10 +477,11 @@ TEST_CASE("iris_filter_wave_eigen", "[Serial][Parallel][Regression]")
 // Circuit synthesis of the two-port iris-coupled slab-loaded guide (hybrid/LSM port, W
 // rank>=2). The inductive irises make the cavity a strongly-coupled |S21| resonance, so the
 // greedy real-frequency samples capture the pole and the synthesized root reproduces the
-// eigenmode Re{f} (6.690 GHz) across partitions, asserted by
-// TestRomEigenvalueMatchesEigenmode. Q is under-determined by real-axis samples (synth ~69
-// vs eigenmode ~22, pole far off-axis), so only Re{f} is asserted; swept S and the pencil
-// matrices are partition-dependent and presence-checked only.
+// eigenmode Re{f} (6.690 GHz) AND Q (~22.4) across partitions, asserted by
+// TestRomEigenvalueMatchesEigenmode. The common-pole AAA + signed-residue fit resolves the
+// pole as a converged HDM eigenpair (backward error ~1e-9), so Q is partition-stable
+// (np=1,2,4,8 all give Q=22.40); swept S and the pencil matrices are partition-dependent
+// and presence-checked only.
 TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -496,7 +498,7 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
                          // rather than a pointwise S diff.
                          "port-S", "error-indicators.csv"};
   opts.custom_checks["rom-eigenvalues.csv"] =
-      TestRomEigenvalueMatchesEigenmode(6.690, 5.0e-3);
+      TestRomEigenvalueMatchesEigenmode(6.690, 1.0e-3, 22.409, 3.0e-3);
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("iris_filter", "driven_wave_synth.json",
                                   "driven_wave_synth", opts);
