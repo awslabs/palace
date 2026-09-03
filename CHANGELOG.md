@@ -65,7 +65,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     complex-valued preconditioner when `"ComplexCoarseSolve"` is true. Numeric wave ports
     can override this choice per port with `"ComplexCoarseSolve"`, without changing the full
     3D system preconditioner, and now apply their configured `"MaxIts"` and `"KSPTol"` to
-    the port-mode linear solve. SchemaVer 1-6-1
+    the port-mode linear solve. SchemaVer 1-7-0
     [PR 921](https://github.com/awslabs/palace/pull/921).
 
 #### Interface Changes
