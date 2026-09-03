@@ -90,7 +90,9 @@ private:
   std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
 
-  // Boundary mode eigenvalue problem solver.
+  // Port-local linear solver configuration and boundary mode eigenvalue problem solver.
+  // The local copy allows per-port overrides without changing the full 3D linear solver.
+  config::LinearSolverData port_linear;
   std::unique_ptr<ModeEigenSolver> mode_solver;
   ComplexVector v0, e0;
 

@@ -170,12 +170,13 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
 {
   MPI_Comm comm = Mpi::World();
   auto setup = LoadCpwWaveConfig();
-  // Exercise the doubled-real complex preconditioner assembly on the restricted per-port
-  // MPI communicator; the companion factorization test above covers the default Ar + Ai.
-  setup["Solver"]["Linear"]["ComplexCoarseSolve"] = true;
+  // Exercise the per-port doubled-real preconditioner override on the restricted port MPI
+  // communicator while leaving the full 3D linear solver on its default real factorization.
+  setup["Solver"]["Linear"]["ComplexCoarseSolve"] = false;
   bool first_port = true;
   for (auto &port : setup["Boundaries"]["WavePort"])
   {
+    port["ComplexCoarseSolve"] = true;
     port["Active"] = false;
     port["IncludeInSynthesis"] = true;
     port["Excitation"] = first_port ? 1 : 0;

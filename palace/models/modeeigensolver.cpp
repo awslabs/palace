@@ -545,7 +545,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     MFEM_VERIFY(!opA->Real() || Ar, "Expected assembled real boundary mode matrix!");
     MFEM_VERIFY(!opA->Imag() || Ai, "Expected assembled imaginary boundary mode matrix!");
     MFEM_VERIFY(Ar || Ai, "Empty boundary mode preconditioner matrix!");
-    if (linear.complex_coarse_solve && (!bmo || (Ar && Ai)))
+    if (linear.complex_coarse_solve && (normal || (Ar && Ai)))
     {
       // Wave-port solves must preserve the doubled dimension even when one matrix part is
       // absent: real and complex frequencies can otherwise alternate between N and 2N,
@@ -841,7 +841,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
   // A wave-port exact solve can transition between real and complex frequencies, changing
   // the doubled-real sparsity pattern. Disable symbolic reuse only for that case; preserve
   // the existing behavior for BoundaryMode and real-matrix preconditioners.
-  const bool reorder_reuse = bmo || !linear.complex_coarse_solve || linear.pc_mat_real;
+  const bool reorder_reuse = !normal || !linear.complex_coarse_solve || linear.pc_mat_real;
   auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
       [&]() -> std::unique_ptr<mfem::Solver>
       {

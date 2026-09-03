@@ -1687,6 +1687,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.active == w1.active);
     CHECK(w2.ksp_max_its == w1.ksp_max_its);
     CHECK(w2.ksp_tol == w1.ksp_tol);
+    CHECK(w2.complex_coarse_solve == iodata1.solver.linear.complex_coarse_solve);
+    CHECK(config["Boundaries"]["WavePort"][0]["ComplexCoarseSolve"].get<bool>() ==
+          iodata1.solver.linear.complex_coarse_solve);
     CHECK(w2.eig_tol == w1.eig_tol);
     CHECK(w2.max_size == w1.max_size);
     CHECK(w2.verbose == w1.verbose);

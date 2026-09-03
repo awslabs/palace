@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-6-0",
+  "$id": "urn:palace:schema:1-6-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1362,6 +1362,11 @@
           "description": "Tolerance for the linear solver used in the wave port boundary mode analysis.",
           "exclusiveMinimum": 0.0,
           "default": 1e-08,
+          "x-palace-advanced": true
+        },
+        "ComplexCoarseSolve": {
+          "type": "boolean",
+          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve). This override affects only this wave port and does not change the full 3D system preconditioner.",
           "x-palace-advanced": true
         },
         "EigenTol": {

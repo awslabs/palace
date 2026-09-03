@@ -253,7 +253,8 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
   }
 }
 
-void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
+void ConcretizeBoundaries(const config::BoundaryData &boundaries,
+                          const config::LinearSolverData &linear, json &j_boundaries)
 {
   // Absorbing (farfield) boundary. Only touch it if the user declared it.
   if (j_boundaries.contains("Absorbing"))
@@ -339,6 +340,8 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"IncludeInSynthesis", wp.include_in_synthesis},
                             {"MaxIts", wp.ksp_max_its},
                             {"KSPTol", wp.ksp_tol},
+                            {"ComplexCoarseSolve",
+                             wp.complex_coarse_solve.value_or(linear.complex_coarse_solve)},
                             {"EigenTol", wp.eig_tol},
                             {"MaxSize", wp.max_size},
                             {"Verbose", wp.verbose},
@@ -541,7 +544,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
 
   if (config.contains("Boundaries"))
   {
-    ConcretizeBoundaries(iodata.boundaries, config["Boundaries"]);
+    ConcretizeBoundaries(iodata.boundaries, iodata.solver.linear, config["Boundaries"]);
   }
 
   return config;
