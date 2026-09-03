@@ -167,3 +167,30 @@ is enabled, the postprocessing results from the solve on the previous mesh will 
 within a subdirectory denoted `iterationX`, where `X` is the (1-based) iteration number.
 The results in the top level directory will always be those from the most recent successful
 solve.
+
+When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
+is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk and also
+records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. The block always
+describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
+mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
+that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
+contains:
+
+  - `Dimension` : Spatial dimension of the mesh, as an integer (`2` or `3`).
+  - `TrueVertices`, `TrueEdges` : True (order-independent, conforming) counts of the mesh
+    vertices and edges.
+  - `TrueFaces` : True (conforming) counts of the codimension-one faces, broken down by face
+    geometry (`triangle`, `quadrilateral`); only the geometries with a nonzero count are
+    listed. Reported in 3D only. In 2D the codimension-one faces are edges and are already
+    given by `TrueEdges`, so this field is omitted.
+  - `Cells` : Counts of the mesh elements, broken down by element geometry (`tetrahedron`,
+    `hexahedron`, `prism`, `pyramid` in 3D; `triangle`, `quadrilateral` in 2D); only the
+    geometries with a nonzero count are listed. The sum matches `Problem`'s `MeshElements`.
+  - `DomainAttributes`, `BoundaryAttributes` : Sorted lists of the unique domain (material)
+    and boundary attributes present in the mesh.
+
+The face and cell counts are reported per geometry because the number of degrees of freedom
+contributed by each entity depends on its geometry at a given finite-element order. Splitting
+the counts this way makes the exact global degree-of-freedom size recoverable for mixed or
+non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
+hexahedral, prism, and pyramid cells) each contribute a different per-order count.

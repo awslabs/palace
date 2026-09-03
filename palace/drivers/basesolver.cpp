@@ -141,6 +141,28 @@ void WriteMetadata(const fs::path &post_dir, const json &meta)
   fs::rename(tmp_path, path);
 }
 
+// Map an MFEM geometry type to its lowercase JSON key used in the SavedAdaptedMesh block.
+const char *GeometryKey(mfem::Geometry::Type geom)
+{
+  switch (geom)
+  {
+    case mfem::Geometry::TRIANGLE:
+      return "triangle";
+    case mfem::Geometry::SQUARE:
+      return "quadrilateral";
+    case mfem::Geometry::TETRAHEDRON:
+      return "tetrahedron";
+    case mfem::Geometry::CUBE:
+      return "hexahedron";
+    case mfem::Geometry::PRISM:
+      return "prism";
+    case mfem::Geometry::PYRAMID:
+      return "pyramid";
+    default:
+      return "unknown";
+  }
+}
+
 // Returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
@@ -231,6 +253,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     return ret;
   };
 
+  // True topological entity counts of the final adapted mesh.
+  mesh::MeshEntityCounts mesh_counts;
+
   // Main AMR loop.
   int it = 0;
   while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
@@ -292,7 +317,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Optionally rebalance and write the adapted mesh to file.
     {
-      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
+      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
       if (ratio_pre > refinement.maximum_imbalance)
       {
         int min_elem, max_elem;
@@ -305,6 +330,16 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
       }
       mesh.back()->Update();
+    }
+
+    // Record the adapted mesh's true topology into palace.json.
+    if (refinement.save_adapt_mesh)
+    {
+      mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
+      if (mesh_counts.valid)
+      {
+        SaveMetadata(mesh_counts);
+      }
     }
 
     // Print statistics (element counts, size h, and shape regularity kappa) for the
@@ -322,6 +357,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // via palace.json without parsing the log.
     SaveAdaptationIteration(it + 1);
   }
+
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"
              " Max. iterations = {:d}, tol. = {:.3e}{}\n",
@@ -357,6 +393,41 @@ void BaseSolver::SaveAdaptationIteration(int iteration) const
   {
     json meta = LoadMetadata(post_dir);
     meta["Problem"]["Iteration"] = iteration;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
+{
+  // Unlike the other SaveMetadata overloads (called on every rank, some running MPI
+  // collectives before writing), this one is invoked on the root rank only, since
+  // MeshEntityCounts::valid is set only on root. It must contain no MPI-collective calls.
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    json &saved = meta["SavedAdaptedMesh"];
+    saved["Dimension"] = counts.dim;
+    saved["TrueVertices"] = counts.true_vertices;
+    saved["TrueEdges"] = counts.true_edges;
+    // Per-geometry counts emit only the geometries that are present; a missing key means
+    // zero by contract. TrueFaces is omitted entirely in 2D (the map is empty there).
+    if (!counts.true_faces.empty())
+    {
+      json faces = json::object();
+      for (const auto &[geom, count] : counts.true_faces)
+      {
+        faces[GeometryKey(geom)] = count;
+      }
+      saved["TrueFaces"] = faces;
+    }
+    json cells = json::object();
+    for (const auto &[geom, count] : counts.cells)
+    {
+      cells[GeometryKey(geom)] = count;
+    }
+    saved["Cells"] = cells;
+    saved["DomainAttributes"] = counts.domain_attributes;
+    saved["BoundaryAttributes"] = counts.boundary_attributes;
     WriteMetadata(post_dir, meta);
   }
 }

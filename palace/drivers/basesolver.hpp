@@ -9,6 +9,7 @@
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
 
 namespace mfem
@@ -69,6 +70,7 @@ public:
   void SaveMetadata(const Timer &timer) const;
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
+  void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
 };
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder
