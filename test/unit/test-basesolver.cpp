@@ -492,8 +492,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 {
   MPI_Comm comm = MPI_COMM_WORLD;
 
-  // Pure-hexahedral nonconforming mesh: only quadrilateral faces, so this is the !tri_faced
-  // path (SQUARE present, TRIANGLE absent).
+  // A pure-hexahedral nonconforming mesh must report quadrilateral true faces only.
   auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::HEXAHEDRON);
   serial_mesh.EnsureNCMesh();
   mfem::Array<int> refs;
