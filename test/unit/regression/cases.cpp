@@ -254,7 +254,8 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
 // pole is extractable from a real-frequency fit (a moderate-to-high-Q resonance sampled by
 // a band that brackets it) and the common-pole AAA fit resolves it as a converged HDM
 // eigenpair (backward error ~1e-9), so its Q is toolchain/partition-robust. For a broad
-// off-axis pole that stays under-determined by real-axis samples, leave q_eigen < 0 to skip.
+// off-axis pole that stays under-determined by real-axis samples, leave q_eigen < 0 to
+// skip.
 palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol,
                                                             double q_eigen = -1.0,
                                                             double q_rtol = 0.0)
