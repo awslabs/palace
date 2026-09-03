@@ -439,32 +439,33 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
-  const int num_post = iodata.solver.eigenmode.n;
-  MFEM_VERIFY(num_conv >= num_post, "Eigenmode solve only found "
-                                        << num_conv << " modes when " << num_post
-                                        << " were requested!");
+  const int num_requested = iodata.solver.eigenmode.n;
+  const int num_report = num_conv;
+  MFEM_VERIFY(num_report >= num_requested, "Eigenmode solve only found "
+                                               << num_report << " modes when "
+                                               << num_requested << " were requested!");
   if (!KM)
   {
-    // Normalize the requested eigenvectors with respect to mass matrix (unit electric field
-    // energy) even if they are not computed to be orthogonal with respect to it.
+    // Normalize every converged eigenvector with respect to the mass matrix (unit electric
+    // field energy) even if they are not computed to be orthogonal with respect to it.
     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
-    eigen->RescaleEigenvectors(num_post);
+    eigen->RescaleEigenvectors(num_report);
   }
-  std::vector<std::complex<double>> eigenvalues(num_post);
-  std::vector<double> errors_bkwd(num_post), errors_abs(num_post);
+  std::vector<std::complex<double>> eigenvalues(num_report);
+  std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
   const bool stage_eigenvectors = post_op.WillWriteFields();
   // Field output can construct large libCEED visualization operators. Only in that case,
-  // stage the requested finalized eigenvectors in host memory so the eigensolver and
-  // matrices can release their device allocations before postprocessing.
+  // stage the converged eigenvectors in host memory so the eigensolver and matrices can
+  // release their device allocations before postprocessing.
   std::vector<std::vector<std::complex<double>>> eigenvectors;
   if (stage_eigenvectors)
   {
-    eigenvectors.assign(num_post, std::vector<std::complex<double>>(Curl.Width()));
+    eigenvectors.assign(num_report, std::vector<std::complex<double>>(Curl.Width()));
   }
   ComplexVector E(Curl.Width());
   E.UseDevice(true);
-  for (int i = 0; i < num_post; i++)
+  for (int i = 0; i < num_report; i++)
   {
     eigenvalues[i] = eigen->GetEigenvalue(i);
     errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
@@ -498,7 +499,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
-  for (int i = 0; i < num_post; i++)
+  for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
     std::complex<double> omega = eigenvalues[i];
@@ -538,8 +539,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_post);
-    AddEstimate(E, B, total_domain_energy, indicator);
+        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
+    if (i < num_requested)
+    {
+      AddEstimate(E, B, total_domain_energy, indicator);
+    }
   }
   post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};
