@@ -146,7 +146,9 @@ for implementation details.
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
-    the boundary).
+    the boundary). A wave port boundary must also be planar; both the 2D boundary mode
+    formulation and coordinate-based `"VoltagePath"` postprocessing use a single tangent
+    frame and surface normal for the complete port face.
 
     The overall sign of the wave port mode E-field is internally fixed by an arbitrary
     convention that does not necessarily match the polarity convention of lumped ports
