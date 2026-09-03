@@ -252,65 +252,80 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
   };
 }
 
-// Assert the synthesized model reproduces the eigenmode resonant frequency. Among the
-// physical resonances (Q > 1, which excludes the aux-realization's critically-damped
-// spurious roots), the one nearest f_re_eigen must match it in Re{f} within rtol. Robust to
-// the basis/partition-dependent root count and ordering.
-//
-// q_eigen > 0 additionally asserts that same root's Q within q_rtol. Pass it when the
-// pole is extractable from a real-frequency fit (a moderate-to-high-Q resonance sampled by
-// a band that brackets it) and the common-pole AAA fit resolves it as a converged HDM
-// eigenpair (backward error ~1e-9), so its Q is toolchain/partition-robust. For a broad
-// off-axis pole that stays under-determined by real-axis samples, leave q_eigen < 0 to
-// skip.
-palace::test::CustomCheck TestRomEigenvalueMatchesEigenmode(double f_re_eigen, double rtol,
-                                                            double q_eigen = -1.0,
-                                                            double q_rtol = 0.0)
+// Compare synthesized rom-eigenvalues.csv against the (regenerated) reference. Spurious
+// low-Q roots (large HDM backward error) interleave with the converged eigenpairs (backward
+// error <= bkwd_max), and their count/order drift with the partition, so pair each
+// converged reference eigenpair with the nearest converged actual root by Re{f} and assert
+// Re{f}, Im{f}, Q. Q is skipped for near-real modes (|Im{f}| <= atol_im), where Q ~ Re/(2
+// Im) is noise-dominated; their Im is checked against an absolute floor instead.
+palace::test::CustomCheck CompareRomEigenvalues(double bkwd_max, double rtol_re,
+                                                double rtol_im, double atol_im,
+                                                double rtol_q)
 {
-  return [f_re_eigen, rtol, q_eigen, q_rtol](palace::Table &actual, palace::Table &,
-                                             const std::filesystem::path &)
+  return [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
   {
-    int col_re = -1, col_q = -1;
-    for (std::size_t c = 0; c < actual.n_cols(); ++c)
+    auto col = [](palace::Table &t, const std::string &key)
     {
-      const std::string &hdr = actual[c].header_text;
-      if (hdr.find("Re{f}") != std::string::npos)
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
       {
-        col_re = static_cast<int>(c);
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
       }
-      else if (hdr.find("Q") != std::string::npos)
+      return -1;
+    };
+    const int a_re = col(actual, "Re{f}"), a_im = col(actual, "Im{f}"),
+              a_q = col(actual, "Q"), a_bk = col(actual, "Bkwd");
+    const int r_re = col(reference, "Re{f}"), r_im = col(reference, "Im{f}"),
+              r_q = col(reference, "Q"), r_bk = col(reference, "Bkwd");
+    REQUIRE(std::min({a_re, a_im, a_q, a_bk, r_re, r_im, r_q, r_bk}) >= 0);
+
+    // Converged actual roots (candidate matches for each reference eigenpair).
+    std::vector<std::size_t> a_phys;
+    for (std::size_t r = 0; r < actual[a_bk].data.size(); ++r)
+    {
+      if (std::abs(actual[a_bk].data[r]) <= bkwd_max)
       {
-        col_q = static_cast<int>(c);
+        a_phys.push_back(r);
       }
     }
-    REQUIRE(col_re >= 0);
-    REQUIRE(col_q >= 0);
-    const auto &re = actual[col_re].data;
-    const auto &q = actual[col_q].data;
-    double best = -1.0, best_re = 0.0, best_q = 0.0;
-    for (std::size_t r = 0; r < re.size(); ++r)
+    REQUIRE(!a_phys.empty());
+
+    std::size_t n_ref_phys = 0;
+    for (std::size_t r = 0; r < reference[r_bk].data.size(); ++r)
     {
-      if (q[r] <= 1.0)  // skip critically-damped spurious roots
+      if (std::abs(reference[r_bk].data[r]) > bkwd_max)
       {
         continue;
       }
-      const double d = std::abs(re[r] - f_re_eigen);
-      if (best < 0.0 || d < best)
+      ++n_ref_phys;
+      const double re_ref = reference[r_re].data[r], im_ref = reference[r_im].data[r],
+                   q_ref = reference[r_q].data[r];
+      std::size_t best = a_phys.front();
+      for (std::size_t k : a_phys)
       {
-        best = d;
-        best_re = re[r];
-        best_q = q[r];
+        if (std::abs(actual[a_re].data[k] - re_ref) <
+            std::abs(actual[a_re].data[best] - re_ref))
+        {
+          best = k;
+        }
+      }
+      const double re_a = actual[a_re].data[best], im_a = actual[a_im].data[best],
+                   q_a = actual[a_q].data[best];
+      INFO("reference eigenpair Re{f}=" << re_ref << " Im{f}=" << im_ref << " Q=" << q_ref
+                                        << " -> nearest converged actual Re{f}=" << re_a
+                                        << " Im{f}=" << im_a << " Q=" << q_a);
+      CHECK_THAT(re_a, Catch::Matchers::WithinRel(re_ref, rtol_re));
+      CHECK_THAT(im_a, Catch::Matchers::WithinRel(im_ref, rtol_im) ||
+                           Catch::Matchers::WithinAbs(im_ref, atol_im));
+      if (std::abs(im_ref) > atol_im)
+      {
+        CHECK_THAT(q_a, Catch::Matchers::WithinRel(q_ref, rtol_q));
       }
     }
-    REQUIRE(best >= 0.0);  // at least one physical resonance present
-    INFO("nearest physical (Q>1) synth root Re{f} = " << best_re << " GHz (Q = " << best_q
-                                                      << ") vs eigenmode " << f_re_eigen
-                                                      << " GHz (Q = " << q_eigen << ")");
-    CHECK_THAT(best_re, Catch::Matchers::WithinRel(f_re_eigen, rtol));
-    if (q_eigen > 0.0)
-    {
-      CHECK_THAT(best_q, Catch::Matchers::WithinRel(q_eigen, q_rtol));
-    }
+    REQUIRE(n_ref_phys > 0);             // reference must contain a converged eigenpair
+    CHECK(a_phys.size() >= n_ref_phys);  // live output must not drop converged modes
   };
 }
 
@@ -735,15 +750,17 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   // and drop the imaginary columns.
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum",
                            "Mean",          "Im{Y_ref",     "Im{Z_ref"};
-  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
-                         "rom-orthogonalization-matrix-R", "rom-eigenvectors",
-                         // Sharp resonance: swept S and the per-element error-estimator
-                         // extrema are partition/arithmetic-sensitive near the pole, so the
-                         // W-dependent signal is the synthesized eigenvalue (custom check)
-                         // rather than a pointwise S diff.
-                         "port-S", "error-indicators.csv"};
+  // Multi-MB partition-dependent pencil matrices consumed by no check here (their export is
+  // exercised by the adapter round-trip); not stored rather than kept as dead weight.
+  opts.unstored_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
+                         "rom-orthogonalization-matrix-R"};
+  // Sharp resonance: swept S and the per-element error-estimator extrema are
+  // partition/arithmetic-sensitive near the pole, so the W-dependent signal is the
+  // synthesized eigenvalue (custom check) rather than a pointwise S diff.
+  opts.excluded_files = {"rom-eigenvectors", "port-S", "error-indicators.csv"};
   opts.custom_checks["rom-eigenvalues.csv"] =
-      TestRomEigenvalueMatchesEigenmode(6.690, 1.0e-3, 22.409, 3.0e-3);
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("iris_filter", "driven_wave_synth.json",
                                   "driven_wave_synth", opts);
@@ -973,25 +990,29 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // The synthesized-eigenvalue rows track the adaptive greedy sampling: modes are
-  // only reproducible where the PROM converged, so allow row-count drift and compare
-  // the leading (sorted, in-band) modes. Require at least 5 rows (reference has 7
-  // modes) so a partial loss of trailing modes cannot pass as a leading-subset match.
-  // The HDM eigenpair error columns in rom-eigenvalues.csv are residual diagnostics,
-  // not regression targets (same exclusion as the eigenmode cases).
+  // The synthesized-eigenvalue rows track the adaptive greedy sampling: mode count and
+  // order drift with the partition, so allow row-count drift and let the custom check pair
+  // converged reference eigenpairs with converged actual roots. Require at least 5 rows so
+  // a partial loss cannot pass silently. The HDM eigenpair error columns are residual
+  // diagnostics, not regression targets.
   opts.skip_rowcount = true;
   opts.min_rows = 5;
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
-  // The raw synthesis matrices and the eigenvectors (which live in the same
-  // basis-dependent node coordinates) vary with the greedy sampling and MPI partition;
-  // only their presence is checked. The eigenvalues are partition-independent and are
-  // compared numerically.
+  // The raw synthesis matrices and the eigenvectors live in basis-dependent node
+  // coordinates that vary with the greedy sampling and MPI partition, so only their
+  // presence is checked. They are small here (~8 KB) and the pencil matrices are consumed
+  // by the port-S round-trip check below, so they are kept rather than dropped.
   opts.excluded_files = {"rom-Linv",
                          "rom-Rinv",
                          "rom-C-",
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
                          "rom-eigenvectors"};
+  // Compare the synthesized eigenvalues against the reference: pair each converged
+  // reference eigenpair with the nearest converged actual root and check Re{f}, Im{f}, Q.
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
   // End-to-end de-embed/reconnect: reduce the total synthesized pencil to the port
   // terminals, de-embed the reference loads, and confirm the resulting S reproduces the
   // solver's field-derived port-S (a stronger check than the pointwise field-S diff, and

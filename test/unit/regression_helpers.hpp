@@ -58,6 +58,10 @@ struct RegressionOptions
   // matrices (rom-Linv/Rinv/C), whose dimensions follow the adaptive sample count and
   // whose entries depend on the orthogonalized basis.
   std::vector<std::string> excluded_files;
+  // Path substrings for large solver outputs no check consumes (e.g. the multi-MB iris
+  // rom-Linv/Rinv/C pencil matrices): not stored in the reference tree, so they are dropped
+  // from the file-presence check, not just the comparison.
+  std::vector<std::string> unstored_files;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Compare at most this many leading rows. If unset for an Eigenmode case,
