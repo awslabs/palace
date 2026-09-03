@@ -3,7 +3,6 @@
 
 #include "fem/boundary_derived_field_bundle.hpp"
 
-#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -720,21 +719,6 @@ long long BoundaryDerivedFieldBundle::PackedByteCount()
 long long BoundaryDerivedFieldBundle::CacheHitCount()
 {
   return cache_hits.load();
-}
-
-void BoundaryDerivedFieldBundle::PrintProfile() const
-{
-  if (!std::getenv("PALACE_BOUNDARY_DERIVED_PROFILE"))
-  {
-    return;
-  }
-  Mpi::Print(mesh->GetComm(),
-             "BoundaryDerivedFieldBundle profile bundles={} fields={} qfunction_applies={} "
-             "phases={} avoided_phase_operator_applies={} avoided_independent_applies={} "
-             "packed_bytes={} cache_hits={} generation={}\n",
-             BundleCount(), FieldCount(), QFunctionApplyCount(), PhaseCount(),
-             AvoidedPhaseOperatorApplyCount(), AvoidedIndependentApplyCount(),
-             PackedByteCount(), CacheHitCount(), generation);
 }
 
 }  // namespace palace

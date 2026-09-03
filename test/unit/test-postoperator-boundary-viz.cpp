@@ -764,6 +764,48 @@ TEST_CASE_METHOD(test::SharedTempDir,
         copy_bytes_before + 30LL * num_points * static_cast<long long>(sizeof(double)));
 }
 
+TEST_CASE_METHOD(test::SharedTempDir, "CeedParaView deregisters all domain point fields",
+                 "[postoperator][boundary-viz][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  REQUIRE(Mpi::Size(comm) == 1);
+
+  auto serial_mesh = MakeSmallTetInterfaceSerialMesh();
+  mfem::ParMesh pmesh(comm, *serial_mesh);
+  CeedParaViewDataCollection collection(temp_dir / "deregister_domain_point_fields",
+                                        &pmesh);
+  collection.SetCycle(1);
+  collection.SetDataFormat(mfem::VTKFormat::BINARY32);
+  collection.SetCompressionLevel(0);
+  collection.SetHighOrderOutput(true);
+  collection.SetLevelsOfDetail(1);
+
+  std::vector<int> bases;
+  int num_points = 0;
+  for (int i = 0; i < pmesh.GetNE(); i++)
+  {
+    bases.push_back(num_points);
+    num_points += mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(i), 1, 1)
+                      ->RefPts.GetNPoints();
+  }
+  int callback_count = 0;
+  auto evaluator = [&](Vector &values)
+  {
+    callback_count++;
+    values = 0.0;
+  };
+  collection.RegisterDomainPointEvaluator("E", evaluator, bases, 3, 3 * num_points);
+  collection.RegisterDomainPointEvaluator("U_e", evaluator, bases, 1, num_points);
+  collection.DeregisterDomainPointFields();
+  collection.Save();
+
+  CHECK(callback_count == 0);
+  const auto vtu = ReadFile(temp_dir / "deregister_domain_point_fields" / "Cycle000001" /
+                            "proc000000.vtu");
+  CHECK(vtu.find("Name=\"E\"") == std::string::npos);
+  CHECK(vtu.find("Name=\"U_e\"") == std::string::npos);
+}
+
 TEST_CASE_METHOD(test::SharedTempDir,
                  "CeedParaView boundary packed provider accepts empty MPI pieces",
                  "[postoperator][boundary-viz][Parallel]")

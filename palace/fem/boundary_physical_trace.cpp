@@ -3,7 +3,6 @@
 
 #include "fem/boundary_physical_trace.hpp"
 
-#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -729,25 +728,6 @@ long long BoundaryPhysicalTraceCache::UnionRouteCount()
 long long BoundaryPhysicalTraceCache::RoutingOperatorCount()
 {
   return routing_operators.load();
-}
-
-void BoundaryPhysicalTraceCache::PrintProfile() const
-{
-  if (!std::getenv("PALACE_BOUNDARY_TRACE_PROFILE"))
-  {
-    return;
-  }
-  Mpi::Print(mesh->GetComm(),
-             "BoundaryPhysicalTrace profile trace_groups={} operator_applies={} "
-             "cache_hits={} evaluated_points={} evaluated_bytes={} generation={} "
-             "leaf_points={} union_points={} duplicates_elided={} local_union_groups={} "
-             "local_union_operators={} ghost_union_groups={} requests_before={} "
-             "requests_after={} routes={} routing_operators={}\n",
-             TraceGroupCount(), OperatorApplyCount(), CacheHitCount(),
-             EvaluatedPointCount(), EvaluatedByteCount(), generation, LeafPointCount(),
-             UnionPointCount(), DuplicatePointCount(), LocalUnionGroupCount(),
-             LocalUnionOperatorCount(), GhostUnionGroupCount(), RequestCountBefore(),
-             RequestCountAfter(), UnionRouteCount(), RoutingOperatorCount());
 }
 
 }  // namespace palace

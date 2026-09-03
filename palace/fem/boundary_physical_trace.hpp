@@ -83,7 +83,6 @@ public:
   static long long RequestCountAfter();
   static long long UnionRouteCount();
   static long long RoutingOperatorCount();
-  void PrintProfile() const;
 
 private:
   struct Entry

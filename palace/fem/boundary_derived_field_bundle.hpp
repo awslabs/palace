@@ -107,7 +107,6 @@ public:
   // the independent-source fallback while copying its combined quadratic slices once.
   bool BatchesComplexPhases(const Vector &E_source, const Vector &B_source) const;
   bool BatchesComplexPhases(const Vector &source) const;
-  void PrintProfile() const;
 
 private:
   struct CachedPhase

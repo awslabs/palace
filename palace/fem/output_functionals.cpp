@@ -1147,11 +1147,6 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         sampling_plan->Matches(mesh, bdr_attr_marker, viz_lod),
         "Boundary point-field evaluator received an incompatible face sampling plan!");
     FaceSamplingPlan::NoteReuse();
-    if (std::getenv("PALACE_FACE_SAMPLING_PLAN_PROFILE"))
-    {
-      Mpi::Print(comm, "FaceSamplingPlan profile builds={} reuses={}\n",
-                 FaceSamplingPlan::BuildCount(), FaceSamplingPlan::ReuseCount());
-    }
     buffer_bases = sampling_plan->BufferBases();
     buffer_size = sampling_plan->NumPoints() * buffer_num_comp;
     num_marked = static_cast<int>(sampling_plan->Entries().size());
