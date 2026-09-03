@@ -2875,9 +2875,11 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     {
       continue;
     }
-    const double abs_omega_re = std::abs(omega_phys.real());
+    // Match the eigenmode postprocessor's convention Q = |ω| / (2 |Im ω|) (full complex
+    // magnitude in the numerator, not |Re ω|) so synthesized and eigensolver Q agree.
+    const double abs_omega = std::abs(omega_phys);
     const double abs_omega_im = std::abs(omega_phys.imag());
-    const double Q = (abs_omega_im > 1.0e-20) ? abs_omega_re / (2.0 * abs_omega_im)
+    const double Q = (abs_omega_im > 1.0e-20) ? abs_omega / (2.0 * abs_omega_im)
                                               : std::numeric_limits<double>::infinity();
     if (Q <= SYNTHESIS_EIG_Q_MIN)
     {

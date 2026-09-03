@@ -79,6 +79,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+  if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
+  {
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
+    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
+    // null A2; fall back to the standard linear/quadratic eigensolver instead.
+    Mpi::Warning(
+        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
+        "absorbing boundaries), none found; using a linear eigensolver!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -365,8 +375,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
-                                    K.get(), C.get(), M.get(), A2.get());
+  std::unique_ptr<ComplexOperator> A;
+  std::unique_ptr<ComplexOperator> A2_shift;
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  {
+    // Invert the same W-aware polynomial used by the seed eigensolver.
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
+                                 Cp.get(), Mp.get());
+  }
+  else
+  {
+    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
+    A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
+                                                             : std::move(A2);
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
+                                 C.get(), M.get(), A2_shift.get());
+  }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
       1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
