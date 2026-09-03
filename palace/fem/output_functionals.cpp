@@ -360,26 +360,6 @@ SurfaceFunctional::KernelKind SurfaceFunctional::ToKernelKind(Kind kind)
   MFEM_ABORT("Unknown surface functional kind!");
 }
 
-const char *SurfaceFunctional::KindName(KernelKind kind)
-{
-  switch (kind)
-  {
-    case KernelKind::AREA:
-      return "AREA";
-    case KernelKind::HCURL_NORM2:
-      return "HCURL_NORM2";
-    case KernelKind::INTERFACE_EPR:
-      return "INTERFACE_EPR";
-    case KernelKind::SURFACE_FLUX:
-      return "SURFACE_FLUX";
-    case KernelKind::FARFIELD:
-      return "FARFIELD";
-    case KernelKind::MODE_OVERLAP:
-      return "MODE_OVERLAP";
-  }
-  return "UNKNOWN";
-}
-
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace *fespace)

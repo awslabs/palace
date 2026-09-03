@@ -90,7 +90,6 @@ private:
   };
 
   static KernelKind ToKernelKind(Kind kind);
-  static const char *KindName(KernelKind kind);
 
   // Computation kind and integrand parameters.
   KernelKind kind;

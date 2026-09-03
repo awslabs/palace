@@ -11,6 +11,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fixtures.hpp"
 #include "models/postoperator.hpp"
@@ -576,6 +577,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     REQUIRE(std::abs(vi.V) > 0.0);
     CHECK_THAT(std::abs(vi.S - vi.V / std::sqrt(port.GetExcitationRefResistance())),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(vi.V)));
+
+    GridFunction E_gf(space_op.GetNDSpace(), true);
+    E_gf.Real().SetFromTrueDofs(E.Real());
+    E_gf.Imag().SetFromTrueDofs(E.Imag());
+    const auto S_legacy = port.GetSParameter(E_gf);
+    CHECK_THAT(std::abs(vi.S - S_legacy),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
   }
 
   SECTION("Eigenmode")
