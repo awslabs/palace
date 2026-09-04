@@ -161,6 +161,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sub-categories, parent rows are remainders, and Min/Max/Avg are over MPI ranks.
     [PR 885](https://github.com/awslabs/palace/pull/885).
 
+#### Build system
+
+  - Print the PETSc and SLEPc configure-time test program output when the test fails, so
+    the underlying compile or run error appears in the CMake log instead of only in
+    `CMakeConfigureLog.yaml`, matching the existing libCEED behavior
+    [PR 914](https://github.com/awslabs/palace/pull/914).
+
 ## [0.17.0] - 2026-06-28
 
 #### New Features
