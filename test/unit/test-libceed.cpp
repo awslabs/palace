@@ -1449,9 +1449,9 @@ void CheckMfemFixedBasis(const mfem::FiniteElement &fe, const mfem::IntegrationR
 {
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   CeedBasis basis;
-  // The arbitrary target rule is tabulated once at setup. Apply then uses the ordinary
-  // fixed basis API, exactly as mapped face/subface operators do.
-  ceed::InitBasisFromRule(fe, points, 1, ceed, &basis);
+  // The arbitrary target rule is tabulated once at setup, exactly as mapped
+  // face/subface operators do.
+  ceed::InitCachedBasisFromRule(fe, points, 1, ceed, &basis);
 
   const int num_nodes = fe.GetDof();
   const int num_points = points.GetNPoints();

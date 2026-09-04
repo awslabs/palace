@@ -41,14 +41,6 @@ using namespace std::complex_literals;
 namespace
 {
 
-void RequireCeedPointFieldEvaluator(const DomainPointFieldEvaluator *eval,
-                                    const std::string &what)
-{
-  MFEM_VERIFY(eval && eval->IsValid(),
-              "libCEED postprocessing was expected for " + what +
-                  ", but its domain evaluator could not assemble!");
-}
-
 std::string OutputFolderName(const ProblemType solver_t)
 {
   switch (solver_t)
@@ -337,15 +329,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     eval = std::make_unique<DomainPointFieldEvaluator>(
         kind, fem_op->GetMaterialOp().GetMesh(), fem_op->GetMaterialOp(), e_fespace,
         b_fespace, target, scaling);
-    if (eval->IsValid())
-    {
-      gf = std::make_unique<mfem::ParGridFunction>(&target);
-      gf->UseDevice(true);
-    }
-    else
-    {
-      RequireCeedPointFieldEvaluator(eval.get(), "domain field visualization");
-    }
+    gf = std::make_unique<mfem::ParGridFunction>(&target);
+    gf->UseDevice(true);
   };
 
   if (E && Bt_inplane)
@@ -920,15 +905,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
-  // Create grid function for vector coefficients.
-  mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
-  mfem::ParGridFunction gridfunc_vector(&fespace);
-
-  // Create grid function for scalar coefficients.
-  mfem::H1_FECollection h1_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
-  mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec);
-  mfem::ParGridFunction gridfunc_scalar(&h1_fespace);
-
   const int local_rank = mesh.GetMyRank();
 
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
@@ -1011,51 +987,22 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
-  if (U_e)
+  if (U_e_eval)
   {
-    if (U_e_eval)
-    {
-      // Device-evaluated (libCEED) energy density into the interpolatory L2 output
-      // space, reusing the ParaView evaluator instead of a host coefficient projection.
-      U_e_eval->Eval(E.get(), nullptr, *U_e_gf);
-      write_grid_function(*U_e_gf, "U_e");
-    }
-    else
-    {
-      gridfunc_scalar = 0.0;
-      gridfunc_scalar.ProjectCoefficient(*U_e.get());
-      write_grid_function(gridfunc_scalar, "U_e");
-    }
+    U_e_eval->Eval(E.get(), nullptr, *U_e_gf);
+    write_grid_function(*U_e_gf, "U_e");
   }
 
-  if (U_m)
+  if (U_m_eval)
   {
-    if (U_m_eval)
-    {
-      U_m_eval->Eval(nullptr, B.get(), *U_m_gf);
-      write_grid_function(*U_m_gf, "U_m");
-    }
-    else
-    {
-      gridfunc_scalar = 0.0;
-      gridfunc_scalar.ProjectCoefficient(*U_m.get());
-      write_grid_function(gridfunc_scalar, "U_m");
-    }
+    U_m_eval->Eval(nullptr, B.get(), *U_m_gf);
+    write_grid_function(*U_m_gf, "U_m");
   }
 
-  if (S)
+  if (S_eval)
   {
-    if (S_eval)
-    {
-      S_eval->Eval(E.get(), B.get(), *S_gf);
-      write_grid_function(*S_gf, "S");
-    }
-    else
-    {
-      gridfunc_vector = 0.0;
-      gridfunc_vector.ProjectCoefficient(*S.get());
-      write_grid_function(gridfunc_vector, "S");
-    }
+    S_eval->Eval(E.get(), B.get(), *S_gf);
+    write_grid_function(*S_gf, "S");
   }
   if (Sn_eval)
   {

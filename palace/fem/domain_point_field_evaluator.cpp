@@ -76,6 +76,9 @@ DomainPointFieldEvaluator::DomainPointFieldEvaluator(
       kind == Kind::ENERGY_M || kind == Kind::POYNTING || kind == Kind::MODE_SN;
   MFEM_VERIFY((!needs_nd || nd_fespace) && (!needs_rt || rt_fespace),
               "Missing finite element space for domain field evaluator!");
+  MFEM_VERIFY((mesh.Dimension() == 2 && mesh.SpaceDimension() == 2) ||
+                  (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3),
+              "Domain point field evaluation requires a 2D or 3D volume mesh!");
   Assemble(mesh, mat_op, target_fespace, scaling);
 }
 
@@ -89,12 +92,6 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
                                          double scaling)
 {
   const int dim = mesh.Dimension();
-  const int sdim = mesh.SpaceDimension();
-  if (!((dim == 2 && sdim == 2) || (dim == 3 && sdim == 3)))
-  {
-    valid = false;
-    return;
-  }
   const bool scalar_magnetic_field = (dim == 2);
   const mfem::ParMesh &pmesh = mesh.Get();
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
@@ -269,7 +266,6 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
 void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
                                      Vector &out) const
 {
-  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainPointFieldEvaluator!");
   const bool needs_e =
       kind == Kind::ENERGY_E || kind == Kind::POYNTING || kind == Kind::MODE_SN;
   const bool needs_b =

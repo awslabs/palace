@@ -299,15 +299,6 @@ void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
   }
 }
 
-void InitBasisFromRule(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
-                       CeedInt num_comp, Ceed ceed, CeedBasis *basis)
-{
-  // Fixed mapped rules require FULL tabulation: their points need not form a tensor
-  // product. The caller keeps the rule alive because MFEM caches DofToQuad by its
-  // pointer inside the shared finite element.
-  InitNonTensorBasis(fe, ir, num_comp, ceed, basis, false);
-}
-
 void InitCachedBasisFromRule(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                              CeedInt num_comp, Ceed ceed, CeedBasis *basis)
 {

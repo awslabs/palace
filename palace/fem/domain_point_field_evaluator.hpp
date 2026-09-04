@@ -42,9 +42,6 @@ private:
   const mfem::ParFiniteElementSpace *nd_fespace;
   const mfem::ParFiniteElementSpace *rt_fespace;
 
-  // Whether the evaluator could be assembled.
-  bool valid = true;
-
   // Per-geometry assembled libCEED operators, evaluating at the target-space nodal
   // points and scattering directly into the output grid function. The element attribute
   // vectors are operator inputs and must outlive the operators.
@@ -69,9 +66,6 @@ public:
 
   DomainPointFieldEvaluator(const DomainPointFieldEvaluator &) = delete;
   DomainPointFieldEvaluator &operator=(const DomainPointFieldEvaluator &) = delete;
-
-  // Whether the evaluator was successfully assembled.
-  bool IsValid() const { return valid; }
 
   // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
   // the pointwise quantity. Real and imaginary field contributions add. Local

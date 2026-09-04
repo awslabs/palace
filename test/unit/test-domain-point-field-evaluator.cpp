@@ -121,7 +121,6 @@ TEST_CASE("Domain point field evaluator 3D", "[postoperator][Serial][Parallel][G
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_E, mesh,
                                         mat_op, E.ParFESpace(), nullptr, scalar_fespace,
                                         scaling);
-    REQUIRE(evaluator.IsValid());
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(&E, nullptr, value);
     EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
@@ -134,7 +133,6 @@ TEST_CASE("Domain point field evaluator 3D", "[postoperator][Serial][Parallel][G
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_M, mesh,
                                         mat_op, nullptr, B.ParFESpace(), scalar_fespace,
                                         scaling);
-    REQUIRE(evaluator.IsValid());
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(nullptr, &B, value);
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
@@ -147,7 +145,6 @@ TEST_CASE("Domain point field evaluator 3D", "[postoperator][Serial][Parallel][G
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::POYNTING, mesh,
                                         mat_op, E.ParFESpace(), B.ParFESpace(),
                                         vector_fespace, scaling);
-    REQUIRE(evaluator.IsValid());
     mfem::ParGridFunction value(&vector_fespace), reference(&vector_fespace);
     evaluator.Eval(&E, &B, value);
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
@@ -226,7 +223,6 @@ TEST_CASE("Domain point field evaluator 2D", "[postoperator][Serial][Parallel][G
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_E, mesh,
                                         mat_op, E.ParFESpace(), nullptr, scalar_fespace,
                                         scaling);
-    REQUIRE(evaluator.IsValid());
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(&E, nullptr, value);
     EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
@@ -239,7 +235,6 @@ TEST_CASE("Domain point field evaluator 2D", "[postoperator][Serial][Parallel][G
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_M, mesh,
                                         mat_op, nullptr, B.ParFESpace(), scalar_fespace,
                                         scaling);
-    REQUIRE(evaluator.IsValid());
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(nullptr, &B, value);
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
@@ -252,7 +247,6 @@ TEST_CASE("Domain point field evaluator 2D", "[postoperator][Serial][Parallel][G
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::POYNTING, mesh,
                                         mat_op, E.ParFESpace(), B.ParFESpace(),
                                         vector_fespace, scaling);
-    REQUIRE(evaluator.IsValid());
     mfem::ParGridFunction value(&vector_fespace), reference(&vector_fespace);
     evaluator.Eval(&E, &B, value);
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
