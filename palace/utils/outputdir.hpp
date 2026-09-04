@@ -181,7 +181,8 @@ inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
 // to keep all ranks on the same MPI control path.
 //
 // With compress = true the file is written through mfem::ofgzstream, which gzip-compresses
-// the bytes when MFEM is built with zlib (MFEM_USE_ZLIB) and writes them verbatim otherwise.
+// the bytes when MFEM is built with zlib (MFEM_USE_ZLIB) and writes them verbatim
+// otherwise.
 template <typename Func>
 inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func,
                                 bool compress = false)
