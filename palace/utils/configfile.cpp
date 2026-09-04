@@ -925,6 +925,10 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
   MFEM_VERIFY(regularization > 0.0,
               "\"Regularization\" for \"FluxLoop\" boundary must be positive!");
 
+  pec_lperp = fluxloop.value("PecPenetrationDepth", pec_lperp);
+  MFEM_VERIFY(pec_lperp > 0.0,
+              "\"PecPenetrationDepth\" for \"FluxLoop\" boundary must be positive!");
+
   auto direction_it = fluxloop.find("Direction");
   if (direction_it != fluxloop.end())
   {

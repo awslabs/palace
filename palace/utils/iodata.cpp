@@ -579,6 +579,37 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
+  // Auto-register a FluxLoopPEC film that is NOT declared a Superconductor sheet as the λ→0
+  // London limit: a superconductor sheet with a small effective L_ksq = λ⊥ (set λ = d = λ⊥ so
+  // λ²/d = λ⊥). This routes the film through the range-space two-solve (rigorous fluxoid + B·n=0,
+  // gauge-invariant, partition-independent) instead of the whole-film Dirichlet clamp. Runs
+  // before the ams_singular_op default below so the film is seen as a London film.
+  if (problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    std::set<int> sc_attrs;
+    for (const auto &sc : boundaries.superconductor)
+    {
+      for (auto attr : sc.attributes)
+      {
+        sc_attrs.insert(attr);
+      }
+    }
+    for (const auto &[idx, fl] : boundaries.fluxloop)
+    {
+      for (auto attr : fl.fluxloop_pec)
+      {
+        if (!sc_attrs.count(attr))
+        {
+          config::SuperconductorData sc;
+          sc.lambda_L = fl.pec_lperp;
+          sc.thickness = fl.pec_lperp;
+          sc.attributes = {attr};
+          boundaries.superconductor.push_back(sc);
+          sc_attrs.insert(attr);
+        }
+      }
+    }
+  }
   if (solver.linear.ams_singular_op < 0)
   {
     // A London flux film (a FluxLoopPEC boundary that is also a Superconductor sheet) leaves
