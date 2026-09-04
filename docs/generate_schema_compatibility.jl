@@ -9,8 +9,8 @@ using JSON
 const COMPATIBILITY_PATH =
     joinpath(@__DIR__, "..", "scripts", "schema", "schema-compatibility.json")
 const NOTES_PATH = joinpath(@__DIR__, "src", "developer", "notes.md")
-const TABLE_BEGIN = "<!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->"
-const TABLE_END = "<!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->"
+const TABLE_BEGIN = "```@raw html\n<!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->\n```"
+const TABLE_END = "```@raw html\n<!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->\n```"
 
 function markdown_row(values::Vector{String}, widths::Vector{Int})::String
     return "| " *
@@ -35,24 +35,24 @@ function compatibility_table(entries::Vector)::String
             [
                 "`$(entry["schema_version"])`",
                 "`$(entry["first_palace_release"])`",
-                entry["notes"]
-            ]
+                entry["notes"],
+            ],
         )
     end
 
     headers = ["Schema version", "First *Palace* release", "Notes"]
     widths = [maximum(length(row[i]) for row in [headers, rows...]) for i = 1:3]
-    separators = [":" * repeat("-", width - 2) * ":" for width in widths]
-    separators[3] = ":" * repeat("-", widths[3] - 1)
+    separators = [":" * repeat("-", width) * ":" for width in widths]
+    separators[3] = ":" * repeat("-", widths[3]) * " "
 
-    lines = [markdown_row(headers, widths), markdown_row(separators, widths)]
+    lines = [markdown_row(headers, widths), "|" * join(separators, "|") * "|"]
     append!(lines, markdown_row(row, widths) for row in rows)
     return join(lines, "\n")
 end
 
 function generate_schema_compatibility_table(;
-    compatibility_path::String=COMPATIBILITY_PATH,
-    notes_path::String=NOTES_PATH
+    compatibility_path::String = COMPATIBILITY_PATH,
+    notes_path::String = NOTES_PATH,
 )
     data = JSON.parsefile(compatibility_path)
     haskey(data, "schema_versions") ||
@@ -66,7 +66,7 @@ function generate_schema_compatibility_table(;
     length(findall(TABLE_END, source)) == 1 ||
         error("Expected exactly one compatibility table end marker in $notes_path")
 
-    generated = "$TABLE_BEGIN\n$(compatibility_table(data["schema_versions"]))\n$TABLE_END"
+    generated = "$TABLE_BEGIN\n\n$(compatibility_table(data["schema_versions"]))\n\n$TABLE_END"
     pattern = Regex("(?s)" * TABLE_BEGIN * ".*?" * TABLE_END)
     write(notes_path, replace(source, pattern => generated))
     @info "Generated schema compatibility table in $notes_path"

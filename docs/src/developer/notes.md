@@ -229,11 +229,17 @@ each schema version; a schema version applies to that release and all later ones
 file. Add an entry there whenever a release introduces a new schema version; the
 documentation build generates this table from that file.
 
+```@raw html
 <!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
+```
+
 | Schema version | First *Palace* release | Notes                              |
-| :------------: | :--------------------: | :--------------------------------- |
+|:--------------:|:----------------------:|:---------------------------------- |
 | `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
+
+```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
+```
 
 #### When and how to bump (PR checklist)
 
