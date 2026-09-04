@@ -3774,7 +3774,6 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
       fo.precision(MSH_FLT_PRECISION);
       part.Print(fo);
       so.push_back(fo.str());
-      // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
       if (i > 0)
       {
         int slen = static_cast<int>(so[i].length());
@@ -3784,7 +3783,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
       }
     }
     smesh.reset();
-    std::istringstream fi(so[0]);  // This is never compressed
+    std::istringstream fi(so[0]);
     pmesh =
         std::make_unique<mfem::ParMesh>(comm, fi, refine, generate_edges, fix_orientation);
     MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
@@ -3800,7 +3799,6 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     si.resize(rlen);
     MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
     std::istringstream fi(si);
-    // std::istringstream fi(zlib::DecompressString(si));
     pmesh =
         std::make_unique<mfem::ParMesh>(comm, fi, refine, generate_edges, fix_orientation);
   }

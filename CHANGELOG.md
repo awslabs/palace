@@ -21,9 +21,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
     gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
-    support (otherwise it is written uncompressed as `.mesh`, as before). MFEM detects the
-    compression from the file contents on read, so the saved mesh can still be used directly
-    as a restart mesh.
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
   - Improved configuration schema validation errors to list valid enum values through nested
     schema alternatives and suggest the canonical capitalization for case-only mismatches
     [PR 890](https://github.com/awslabs/palace/pull/890).
