@@ -1825,6 +1825,20 @@ WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_f
   return terms;
 }
 
+std::unique_ptr<ComplexVector>
+WavePortOperator::GetModeExcitationVector(int port_idx, double omega,
+                                          FiniteElementSpace &nd_fespace,
+                                          const mfem::Array<int> &nd_dbc_tdof_list)
+{
+  Initialize(omega);
+  auto it = ports.find(port_idx);
+  MFEM_VERIFY(it != ports.end(), "Unknown wave port index " << port_idx << "!");
+  MFEM_VERIFY(it->second.active, "Cannot assemble mode vector for an inactive wave port!");
+  auto cr = it->second.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
+  auto ci = it->second.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
+  return AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr, *ci);
+}
+
 std::vector<WavePortOperator::ModalCorrectionTerm>
 WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
                                           FiniteElementSpace &nd_fespace,

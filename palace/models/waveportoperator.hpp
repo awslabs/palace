@@ -395,6 +395,12 @@ public:
   GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &nd_dbc_tdof_list);
 
+  // Assemble the normalized full n×H mode vector used by both driven excitation and
+  // S-parameter observation for one active port at a real frequency.
+  std::unique_ptr<ComplexVector>
+  GetModeExcitationVector(int port_idx, double omega, FiniteElementSpace &nd_fespace,
+                          const mfem::Array<int> &nd_dbc_tdof_list);
+
   // Complex-ω overload for the eigenmode / synthesis path. n×H is linear in kₙ, so the
   // ω-dependence is carried by kₙ(ω)=SolveKnComplex(ω) while the mode-shape vectors stay
   // frozen at the last Initialize(ω0); reduces exactly to the real-ω terms at ω=ω0. Does
