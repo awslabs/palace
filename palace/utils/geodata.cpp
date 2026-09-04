@@ -2057,9 +2057,18 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   MPI_Comm comm = mesh->GetComm();
   if (iodata.model.refinement.save_adapt_mesh)
   {
-    // Create a separate serial mesh to write to disk.
+    // Create a separate serial mesh to write to disk. When MFEM is built with zlib the mesh
+    // is gzip-compressed and written with a ".meshgz" extension; MFEM detects gzip from the
+    // file's magic bytes on read, so a restart reopens it transparently regardless of the
+    // name. Without zlib it is written uncompressed as ".mesh".
     auto sfile = fs::path(iodata.problem.output) / fs::path(iodata.model.mesh).stem();
+#if defined(MFEM_USE_ZLIB)
+    constexpr bool compress_mesh = true;
+    sfile += ".meshgz";
+#else
+    constexpr bool compress_mesh = false;
     sfile += ".mesh";
+#endif
 
     auto PrintSerial = [&](mfem::Mesh &smesh)
     {
@@ -2074,14 +2083,13 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
           sfile, comm,
           [&](std::ostream &stream)
           {
-            // mfem::ofgzstream stream(sfile, true);  // Use zlib compression if available
-            // stream << std::fixed;
             stream << std::scientific;
             stream.precision(MSH_FLT_PRECISION);
             mesh::DimensionalizeMesh(smesh, iodata.units.GetMeshLengthRelativeScale());
             smesh.Mesh::Print(
                 stream);  // Do not need to nondimensionalize the temporary mesh
-          });
+          },
+          compress_mesh);
     };
 
     if (mesh->Nonconforming())
