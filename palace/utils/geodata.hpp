@@ -305,6 +305,13 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
                                 mfem::Vector &e1, mfem::Vector &e2);
 
+// Project a planar 2D mesh from 3D ambient coordinates into a caller-supplied tangent
+// frame. The frame must be identical on every rank for a parallel mesh. Unlike
+// ProjectSubmeshTo2D, this routine does not compute a centroid or normal and is safe for
+// distributed meshes with empty ranks.
+void ProjectMeshTo2D(mfem::Mesh &mesh, const mfem::Vector &origin, const mfem::Vector &e1,
+                     const mfem::Vector &e2);
+
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
                                   const mfem::Vector &e1, const mfem::Vector &e2)

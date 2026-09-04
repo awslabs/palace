@@ -1514,7 +1514,6 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   const auto &parent = *submesh.GetParent();
   MPI_Comm comm = GetSubMeshComm(submesh);
 
-  // Build a set of surface attributes for quick lookup.
   std::unordered_set<int> surface_attr_set;
   for (int i = 0; i < surface_attrs.Size(); i++)
   {
@@ -1527,21 +1526,22 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   mfem::Array<HYPRE_BigInt> pvert_gi;
   GetParentGlobalVertexIndices(parent, pvert_gi);
 
-  // Each rank: collect (gv0, gv1, attr, is_surface) for every edge of its local parent
-  // boundary elements, using sorted global vertex pairs as edge keys.
+  // First handle the conforming case with compact topological edge records. This is the
+  // common path and avoids constructing or communicating any geometric search data.
+  constexpr int edge_attr_record_size = 4;
   std::vector<int> local_edge_attrs;
   {
-    mfem::Array<int> edges, orientations, ev;
+    mfem::Array<int> edges, orientations, vertices;
     for (int be = 0; be < parent.GetNBE(); be++)
     {
-      int attr = parent.GetBdrAttribute(be);
-      bool is_surface = (surface_attr_set.count(attr) > 0);
+      const int attr = parent.GetBdrAttribute(be);
+      const bool is_surface = surface_attr_set.count(attr) > 0;
       parent.GetBdrElementEdges(be, edges, orientations);
-      for (int j = 0; j < edges.Size(); j++)
+      for (int edge : edges)
       {
-        parent.GetEdgeVertices(edges[j], ev);
-        int gv0 = static_cast<int>(pvert_gi[ev[0]]);
-        int gv1 = static_cast<int>(pvert_gi[ev[1]]);
+        parent.GetEdgeVertices(edge, vertices);
+        const int gv0 = static_cast<int>(pvert_gi[vertices[0]]);
+        const int gv1 = static_cast<int>(pvert_gi[vertices[1]]);
         local_edge_attrs.insert(
             local_edge_attrs.end(),
             {std::min(gv0, gv1), std::max(gv0, gv1), attr, is_surface ? 1 : 0});
@@ -1549,68 +1549,388 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     }
   }
 
-  // Allgather edge attribute data so every rank has the complete picture. The serial
-  // instantiation runs over MPI_COMM_SELF; the collectives degenerate to memcpy.
-  const int local_count = static_cast<int>(local_edge_attrs.size());
-  std::vector<int> recv_counts(Mpi::Size(comm));
-  Mpi::Allgather(1, &local_count, recv_counts.data(), comm);
-
-  std::vector<int> displs(Mpi::Size(comm));
-  int total = 0;
+  const int local_attr_count = static_cast<int>(local_edge_attrs.size());
+  std::vector<int> attr_counts(Mpi::Size(comm));
+  Mpi::Allgather(1, &local_attr_count, attr_counts.data(), comm);
+  std::vector<int> attr_displs(Mpi::Size(comm));
+  int attr_total = 0;
   for (int i = 0; i < Mpi::Size(comm); i++)
   {
-    displs[i] = total;
-    total += recv_counts[i];
+    attr_displs[i] = attr_total;
+    attr_total += attr_counts[i];
   }
-  std::vector<int> all_edge_attrs(total);
-  Mpi::Allgatherv(local_count, local_edge_attrs.data(), all_edge_attrs.data(),
-                  recv_counts.data(), displs.data(), comm);
+  std::vector<int> all_edge_attrs(attr_total);
+  Mpi::Allgatherv(local_attr_count, local_edge_attrs.data(), all_edge_attrs.data(),
+                  attr_counts.data(), attr_displs.data(), comm);
 
-  // Build resolved global vertex pair → attribute map. For edges shared by multiple parent
-  // boundary faces, prefer the face that is NOT part of the mode analysis surface.
+  // For edges shared by multiple parent boundary faces, prefer a face outside the selected
+  // mode surface. If multiple distinct non-surface attributes share the edge, choose the
+  // smallest deterministically and warn below if that edge is actually used by the
+  // submesh perimeter.
   std::map<std::pair<int, int>, int> gvpair_to_attr;
-  for (int i = 0; i < total / 4; i++)
+  std::set<std::pair<int, int>> ambiguous_gvpairs;
+  for (int i = 0; i < attr_total / edge_attr_record_size; i++)
   {
-    int gv0 = all_edge_attrs[4 * i];
-    int gv1 = all_edge_attrs[4 * i + 1];
-    int attr = all_edge_attrs[4 * i + 2];
-    bool is_surface = (all_edge_attrs[4 * i + 3] != 0);
-    auto key = std::make_pair(gv0, gv1);
+    const int *record = all_edge_attrs.data() + edge_attr_record_size * i;
+    const auto key = std::make_pair(record[0], record[1]);
     auto it = gvpair_to_attr.find(key);
     if (it == gvpair_to_attr.end())
     {
-      gvpair_to_attr[key] = attr;
+      gvpair_to_attr[key] = record[2];
     }
-    else if (!is_surface)
+    else if (record[3] == 0)
     {
-      it->second = attr;
+      if (surface_attr_set.count(it->second) > 0)
+      {
+        it->second = record[2];
+      }
+      else if (it->second != record[2])
+      {
+        ambiguous_gvpairs.insert(key);
+        it->second = std::min(it->second, record[2]);
+      }
     }
   }
 
-  // For each submesh boundary element, trace to parent edge, convert to global vertex pair,
-  // and apply the resolved attribute.
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
-  mfem::Array<int> ev;
+  mfem::Array<int> vertices;
+  std::vector<int> unresolved_sbe;
+  int ambiguous_topological = 0;
   for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
   {
-    int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
+    const int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
     MFEM_ASSERT(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size(),
                 "Submesh boundary element edge index out of range!");
-    int parent_edge = parent_edge_map[submesh_edge];
-    parent.GetEdgeVertices(parent_edge, ev);
-    int gv0 = static_cast<int>(pvert_gi[ev[0]]);
-    int gv1 = static_cast<int>(pvert_gi[ev[1]]);
-    auto key = std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
+    parent.GetEdgeVertices(parent_edge_map[submesh_edge], vertices);
+    const int gv0 = static_cast<int>(pvert_gi[vertices[0]]);
+    const int gv1 = static_cast<int>(pvert_gi[vertices[1]]);
+    const auto key = std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
     auto it = gvpair_to_attr.find(key);
-    if (it != gvpair_to_attr.end())
+    // A surface-only topological match is not final for an NC child edge: the child can be
+    // a strict subset of a coarse surface edge while lying on a nonmatching adjacent
+    // parent face. Route those cases through the geometric search below.
+    if (it != gvpair_to_attr.end() && surface_attr_set.count(it->second) == 0)
     {
       submesh.SetBdrAttribute(sbe, it->second);
+      ambiguous_topological += ambiguous_gvpairs.count(key) > 0;
+    }
+    else
+    {
+      unresolved_sbe.push_back(sbe);
     }
   }
 
-  // Note: do not touch submesh.bdr_attributes directly — modifying it on a ParSubMesh
-  // can corrupt internal MFEM state. The per-element SetBdrAttribute calls above are
-  // sufficient; RebuildCeedAttributes reads GetBdrAttribute(i) on demand.
+  int global_ambiguous_topological = ambiguous_topological;
+  Mpi::GlobalSum(1, &global_ambiguous_topological, comm);
+  if (global_ambiguous_topological > 0)
+  {
+    Mpi::Warning(fmt::format(
+        "Resolved {:d} ambiguous submesh perimeter edges using the smallest parent "
+        "boundary attribute!",
+        global_ambiguous_topological));
+  }
+
+  int unresolved_count = static_cast<int>(unresolved_sbe.size());
+  int global_unresolved_count = unresolved_count;
+  Mpi::GlobalSum(1, &global_unresolved_count, comm);
+  if (global_unresolved_count == 0)
+  {
+    return;
+  }
+
+  // NC child edges can be strict subsets of a coarser physical parent edge, or can fall
+  // inside a nonmatching adjacent parent boundary face. Gather only the query points;
+  // every rank tests them against its local parent geometry and reductions combine the
+  // answers. This keeps the geometric work distributed instead of replicating an
+  // O(N_query * N_global_boundary) search on every rank.
+  mfem::IntegrationPoint center;
+  center.Set1w(0.5, 1.0);
+  mfem::Vector physical_midpoint(submesh.SpaceDimension());
+  std::vector<double> local_query_points(3 * unresolved_sbe.size(), 0.0);
+  for (std::size_t i = 0; i < unresolved_sbe.size(); i++)
+  {
+    submesh.GetBdrElementTransformation(unresolved_sbe[i])
+        ->Transform(center, physical_midpoint);
+    for (int d = 0; d < physical_midpoint.Size(); d++)
+    {
+      local_query_points[3 * i + d] = physical_midpoint[d];
+    }
+  }
+
+  const int local_query_size = static_cast<int>(local_query_points.size());
+  std::vector<int> query_counts(Mpi::Size(comm));
+  Mpi::Allgather(1, &local_query_size, query_counts.data(), comm);
+  std::vector<int> query_displs(Mpi::Size(comm));
+  int query_total = 0;
+  for (int i = 0; i < Mpi::Size(comm); i++)
+  {
+    query_displs[i] = query_total;
+    query_total += query_counts[i];
+  }
+  MFEM_ASSERT(query_total % 3 == 0, "Invalid NC child-edge query buffer!");
+  std::vector<double> query_points(query_total);
+  Mpi::Allgatherv(local_query_size, local_query_points.data(), query_points.data(),
+                  query_counts.data(), query_displs.data(), comm);
+  const int num_queries = query_total / 3;
+
+  // Local non-surface geometry. Coordinates must come from the nodal transformation:
+  // Mesh::GetVertex can be stale after NC updates and nodal GridFunction reordering.
+  constexpr int edge_geom_record_size = 7;
+  constexpr int face_geom_record_size = 14;
+  std::vector<double> local_edge_geometry, local_face_geometry;
+  mfem::Array<int> edges, orientations;
+  mfem::Vector point(parent.SpaceDimension());
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    const int attr = parent.GetBdrAttribute(be);
+    if (surface_attr_set.count(attr) > 0)
+    {
+      continue;
+    }
+
+    parent.GetBdrElementEdges(be, edges, orientations);
+    mfem::IsoparametricTransformation transformation;
+    parent.GetBdrElementTransformation(be, &transformation);
+    const auto *vertex_rule =
+        mfem::Geometries.GetVertices(transformation.GetGeometryType());
+    const int nv = vertex_rule->GetNPoints();
+    MFEM_VERIFY((nv == 3 || nv == 4) && edges.Size() == nv,
+                "Expected triangular or quadrilateral parent boundary element!");
+    double corner_coordinates[4][3] = {};
+    for (int j = 0; j < nv; j++)
+    {
+      transformation.Transform(vertex_rule->IntPoint(j), point);
+      for (int d = 0; d < point.Size(); d++)
+      {
+        corner_coordinates[j][d] = point[d];
+      }
+    }
+
+    const auto face_offset = local_face_geometry.size();
+    local_face_geometry.resize(face_offset + face_geom_record_size, 0.0);
+    local_face_geometry[face_offset] = static_cast<double>(attr);
+    local_face_geometry[face_offset + 1] = static_cast<double>(nv);
+    for (int j = 0; j < nv; j++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local_face_geometry[face_offset + 2 + 3 * j + d] = corner_coordinates[j][d];
+      }
+    }
+
+    for (int j = 0; j < edges.Size(); j++)
+    {
+      const int *local_edge =
+          nv == 3 ? mfem::Mesh::tri_t::Edges[j] : mfem::Mesh::quad_t::Edges[j];
+      const double *x0 = corner_coordinates[local_edge[0]];
+      const double *x1 = corner_coordinates[local_edge[1]];
+      local_edge_geometry.insert(
+          local_edge_geometry.end(),
+          {static_cast<double>(attr), x0[0], x0[1], x0[2], x1[0], x1[1], x1[2]});
+    }
+  }
+
+  double coordinate_scale = 1.0;
+  for (int i = 0; i < static_cast<int>(local_edge_geometry.size()) / edge_geom_record_size;
+       i++)
+  {
+    const double *record = local_edge_geometry.data() + edge_geom_record_size * i;
+    for (int j = 1; j < edge_geom_record_size; j++)
+    {
+      coordinate_scale = std::max(coordinate_scale, std::abs(record[j]));
+    }
+  }
+  for (int i = 0; i < static_cast<int>(local_face_geometry.size()) / face_geom_record_size;
+       i++)
+  {
+    const double *record = local_face_geometry.data() + face_geom_record_size * i;
+    const int nv = static_cast<int>(record[1]);
+    for (int j = 0; j < 3 * nv; j++)
+    {
+      coordinate_scale = std::max(coordinate_scale, std::abs(record[2 + j]));
+    }
+  }
+  for (double x : query_points)
+  {
+    coordinate_scale = std::max(coordinate_scale, std::abs(x));
+  }
+  Mpi::GlobalMax(1, &coordinate_scale, comm);
+  const double distance_tol = 1.0e-10 * coordinate_scale;
+
+  auto PointOnSegment = [distance_tol](const double *p, const double *a, const double *b)
+  {
+    double direction[3], offset[3];
+    double length2 = 0.0, projection = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      direction[d] = b[d] - a[d];
+      offset[d] = p[d] - a[d];
+      length2 += direction[d] * direction[d];
+      projection += offset[d] * direction[d];
+    }
+    if (length2 == 0.0)
+    {
+      return false;
+    }
+    const double t = projection / length2;
+    if (t < -1.0e-10 || t > 1.0 + 1.0e-10)
+    {
+      return false;
+    }
+    double distance2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      const double delta = p[d] - (a[d] + t * direction[d]);
+      distance2 += delta * delta;
+    }
+    return distance2 <= distance_tol * distance_tol;
+  };
+
+  auto PointInTriangle =
+      [distance_tol](const double *p, const double *a, const double *b, const double *c)
+  {
+    double v0[3], v1[3], v2[3], normal[3];
+    for (int d = 0; d < 3; d++)
+    {
+      v0[d] = b[d] - a[d];
+      v1[d] = c[d] - a[d];
+      v2[d] = p[d] - a[d];
+    }
+    normal[0] = v0[1] * v1[2] - v0[2] * v1[1];
+    normal[1] = v0[2] * v1[0] - v0[0] * v1[2];
+    normal[2] = v0[0] * v1[1] - v0[1] * v1[0];
+    const double normal2 =
+        normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+    if (normal2 == 0.0)
+    {
+      return false;
+    }
+    const double distance =
+        std::abs(v2[0] * normal[0] + v2[1] * normal[1] + v2[2] * normal[2]) /
+        std::sqrt(normal2);
+    if (distance > distance_tol)
+    {
+      return false;
+    }
+    const double d00 = v0[0] * v0[0] + v0[1] * v0[1] + v0[2] * v0[2];
+    const double d01 = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
+    const double d11 = v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2];
+    const double d20 = v2[0] * v0[0] + v2[1] * v0[1] + v2[2] * v0[2];
+    const double d21 = v2[0] * v1[0] + v2[1] * v1[1] + v2[2] * v1[2];
+    const double denominator = d00 * d11 - d01 * d01;
+    if (denominator == 0.0)
+    {
+      return false;
+    }
+    const double v = (d11 * d20 - d01 * d21) / denominator;
+    const double w = (d00 * d21 - d01 * d20) / denominator;
+    const double u = 1.0 - v - w;
+    constexpr double barycentric_tol = 1.0e-8;
+    return u >= -barycentric_tol && v >= -barycentric_tol && w >= -barycentric_tol;
+  };
+
+  auto PointInFace = [&](const double *p, const double *record)
+  {
+    const int nv = static_cast<int>(record[1]);
+    const double *x0 = record + 2;
+    const double *x1 = record + 5;
+    const double *x2 = record + 8;
+    return PointInTriangle(p, x0, x1, x2) ||
+           (nv == 4 && PointInTriangle(p, x0, x2, record + 11));
+  };
+
+  const int no_min_match = std::numeric_limits<int>::max();
+  const int no_max_match = std::numeric_limits<int>::min();
+  std::vector<int> match_min(num_queries, no_min_match),
+      match_max(num_queries, no_max_match);
+
+  // Prefer a containing parent edge. Only queries with no global edge match proceed to
+  // the more general face-containment search.
+  for (int q = 0; q < num_queries; q++)
+  {
+    const double *query = query_points.data() + 3 * q;
+    for (int i = 0;
+         i < static_cast<int>(local_edge_geometry.size()) / edge_geom_record_size; i++)
+    {
+      const double *record = local_edge_geometry.data() + edge_geom_record_size * i;
+      if (PointOnSegment(query, record + 1, record + 4))
+      {
+        const int attr = static_cast<int>(record[0]);
+        match_min[q] = std::min(match_min[q], attr);
+        match_max[q] = std::max(match_max[q], attr);
+      }
+    }
+  }
+  Mpi::GlobalMin(num_queries, match_min.data(), comm);
+  Mpi::GlobalMax(num_queries, match_max.data(), comm);
+
+  std::vector<int> face_match_min(num_queries, no_min_match),
+      face_match_max(num_queries, no_max_match);
+  for (int q = 0; q < num_queries; q++)
+  {
+    if (match_min[q] != no_min_match)
+    {
+      continue;
+    }
+    const double *query = query_points.data() + 3 * q;
+    for (int i = 0;
+         i < static_cast<int>(local_face_geometry.size()) / face_geom_record_size; i++)
+    {
+      const double *record = local_face_geometry.data() + face_geom_record_size * i;
+      if (PointInFace(query, record))
+      {
+        const int attr = static_cast<int>(record[0]);
+        face_match_min[q] = std::min(face_match_min[q], attr);
+        face_match_max[q] = std::max(face_match_max[q], attr);
+      }
+    }
+  }
+  Mpi::GlobalMin(num_queries, face_match_min.data(), comm);
+  Mpi::GlobalMax(num_queries, face_match_max.data(), comm);
+
+  int remapped = 0, ambiguous_geometric = 0;
+  const int first_local_query = query_displs[Mpi::Rank(comm)] / 3;
+  for (int i = 0; i < unresolved_count; i++)
+  {
+    const int q = first_local_query + i;
+    int min_attr = match_min[q], max_attr = match_max[q];
+    if (min_attr == no_min_match)
+    {
+      min_attr = face_match_min[q];
+      max_attr = face_match_max[q];
+    }
+    if (min_attr != no_min_match)
+    {
+      ambiguous_geometric += min_attr != max_attr;
+      submesh.SetBdrAttribute(unresolved_sbe[i], min_attr);
+      remapped++;
+    }
+  }
+
+  int global_remapped = remapped;
+  Mpi::GlobalSum(1, &global_remapped, comm);
+  int global_ambiguous_geometric = ambiguous_geometric;
+  Mpi::GlobalSum(1, &global_ambiguous_geometric, comm);
+  if (global_ambiguous_geometric > 0)
+  {
+    Mpi::Warning(fmt::format(
+        "Resolved {:d} geometrically ambiguous NC child edges using the smallest parent "
+        "boundary attribute!",
+        global_ambiguous_geometric));
+  }
+  // Leave unmatched edges at their generated submesh attribute. This can be legitimate for
+  // artificial NC submesh boundaries that have no adjacent non-surface parent face; such
+  // edges must remain unconstrained. Keep the warning because the same outcome can also
+  // indicate missing physical boundary geometry.
+  if (global_remapped < global_unresolved_count)
+  {
+    Mpi::Warning(
+        fmt::format("Could not remap {:d}/{:d} NC child edges on the submesh perimeter!",
+                    global_unresolved_count - global_remapped, global_unresolved_count));
+  }
+
+  // Do not touch submesh.bdr_attributes directly: modifying it on a ParSubMesh can
+  // corrupt internal MFEM state. RebuildCeedAttributes reads per-element attributes.
 }
 
 template <class SubMeshT>
@@ -1802,80 +2122,82 @@ mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
     centroid /= nv;
   }
 
-  // Read the 3D node coordinates, project to 2D, then rebuild the mesh with 2D nodes.
-  // We read all coordinates first, then use SetCurvature to rebuild with SpaceDim=2.
+  ProjectMeshTo2D(submesh, centroid, e1, e2);
+  return normal;
+}
+
+void ProjectMeshTo2D(mfem::Mesh &mesh, const mfem::Vector &origin, const mfem::Vector &e1,
+                     const mfem::Vector &e2)
+{
+  MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 3,
+              "ProjectMeshTo2D requires a 2D mesh with 3D ambient coordinates!");
+  MFEM_VERIFY(origin.Size() == 3 && e1.Size() == 3 && e2.Size() == 3,
+              "ProjectMeshTo2D requires a three-dimensional tangent frame!");
+
+  int mesh_order = 1;
+  if (mesh.GetNodes() && mesh.GetNE() > 0)
   {
-    // Determine the mesh curvature order from the existing nodes.
-    int mesh_order = 1;
-    if (submesh.GetNodes() && submesh.GetNE() > 0)
-    {
-      mesh_order = submesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    }
+    mesh_order = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+  }
+  if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
+  {
+    Mpi::GlobalMax(1, &mesh_order, pmesh->GetComm());
+  }
 
-    // Read all 3D node coordinates. For high-order meshes, nodes includes interior DOFs;
-    // for linear meshes with nodes, it's just vertices.
-    mfem::GridFunction *nodes3d = submesh.GetNodes();
-    const int sdim = submesh.SpaceDimension();
-    std::vector<std::array<double, 2>> projected;
-
-    if (nodes3d)
-    {
-      const int npts = nodes3d->Size() / sdim;
-      projected.resize(npts);
-      for (int i = 0; i < npts; i++)
-      {
-        double coords[3] = {0.0, 0.0, 0.0};
-        for (int d = 0; d < sdim; d++)
-        {
-          // Handle both byNODES and byVDIM ordering.
-          int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
-                        ? d * npts + i
-                        : i * sdim + d;
-          coords[d] = (*nodes3d)(idx);
-        }
-        double dx = coords[0] - centroid(0);
-        double dy = coords[1] - centroid(1);
-        double dz = coords[2] - centroid(2);
-        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
-        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
-      }
-    }
-    else
-    {
-      projected.resize(nv);
-      for (int i = 0; i < nv; i++)
-      {
-        const double *v = submesh.GetVertex(i);
-        double dx = v[0] - centroid(0);
-        double dy = v[1] - centroid(1);
-        double dz = v[2] - centroid(2);
-        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
-        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
-      }
-    }
-
-    // Rebuild the mesh with 2D coordinates. SetCurvature creates a new Nodes
-    // GridFunction with the specified vdim (SpaceDim). Extraction runs on a rank that
-    // holds the serial mesh, so submesh.GetNE() > 0 is required.
-    MFEM_VERIFY(submesh.GetNE() > 0,
-                "ProjectSubmeshTo2D called on an empty mesh — extraction must run on a "
-                "rank that holds the serial mesh!");
-    submesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
-    mfem::GridFunction *nodes2d = submesh.GetNodes();
-    const int npts = static_cast<int>(projected.size());
-    MFEM_VERIFY(nodes2d->Size() == 2 * npts,
-                "ProjectSubmeshTo2D: mismatch between projected points ("
-                    << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+  mfem::GridFunction *nodes3d = mesh.GetNodes();
+  const int nv = mesh.GetNV();
+  std::vector<std::array<double, 2>> projected;
+  if (nodes3d)
+  {
+    const int sdim = mesh.SpaceDimension();
+    const int npts = nodes3d->Size() / sdim;
+    const double *nodes3d_data = nodes3d->HostRead();
+    projected.resize(npts);
     for (int i = 0; i < npts; i++)
     {
-      (*nodes2d)(0 * npts + i) = projected[i][0];
-      (*nodes2d)(1 * npts + i) = projected[i][1];
+      double coords[3] = {0.0, 0.0, 0.0};
+      for (int d = 0; d < sdim; d++)
+      {
+        const int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
+                            ? d * npts + i
+                            : i * sdim + d;
+        coords[d] = nodes3d_data[idx];
+      }
+      const double dx = coords[0] - origin(0);
+      const double dy = coords[1] - origin(1);
+      const double dz = coords[2] - origin(2);
+      projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+      projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
+    }
+  }
+  else
+  {
+    projected.resize(nv);
+    for (int i = 0; i < nv; i++)
+    {
+      const double *v = mesh.GetVertex(i);
+      const double dx = v[0] - origin(0);
+      const double dy = v[1] - origin(1);
+      const double dz = v[2] - origin(2);
+      projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+      projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
     }
   }
 
-  MFEM_VERIFY(submesh.SpaceDimension() == 2,
-              "ProjectSubmeshTo2D: SpaceDimension should be 2 after projection!");
-  return normal;
+  mesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
+  mfem::GridFunction *nodes2d = mesh.GetNodes();
+  const int npts = static_cast<int>(projected.size());
+  MFEM_VERIFY(nodes2d->Size() == 2 * npts,
+              "ProjectMeshTo2D: mismatch between projected points ("
+                  << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+  double *nodes2d_data = nodes2d->HostWrite();
+  for (int i = 0; i < npts; i++)
+  {
+    nodes2d_data[0 * npts + i] = projected[i][0];
+    nodes2d_data[1 * npts + i] = projected[i][1];
+  }
+  MFEM_VERIFY(mesh.SpaceDimension() == 2,
+              "ProjectMeshTo2D: SpaceDimension should be 2 after projection!");
 }
 
 // Explicit instantiations for the submesh helpers. Serial (mfem::SubMesh) is used by

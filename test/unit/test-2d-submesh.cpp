@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -206,6 +207,143 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
     CHECK(attr >= 1);
     CHECK(attr <= 6);
   }
+}
+
+TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs", "[geodata][Serial]")
+{
+  auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/mesh/nc-boundary-submesh.mesh";
+  mfem::Mesh serial_mesh(mesh_path.c_str(), 1, 1, true);
+  REQUIRE(serial_mesh.Nonconforming());
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
+
+  mfem::Array<int> surface_attrs;
+  surface_attrs.Append(14);
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(*par_mesh, surface_attrs);
+  REQUIRE(submesh.Nonconforming());
+  REQUIRE(submesh.GetNE() > 0);
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+  mfem::H1_FECollection parent_fec(1, 3), submesh_fec(1, 2);
+  mfem::ParFiniteElementSpace parent_fes(par_mesh.get(), &parent_fec);
+  mfem::ParFiniteElementSpace submesh_fes(&submesh, &submesh_fec);
+  mfem::ParGridFunction parent_marker_field(&parent_fes),
+      submesh_marker_field(&submesh_fes);
+  auto transfer =
+      mfem::ParSubMesh::CreateTransferMap(parent_marker_field, submesh_marker_field);
+  mfem::Array<int> attr4, parent_essential, direct_essential;
+  attr4.Append(4);
+  mfem::Array<int> parent_marker, submesh_marker;
+  mesh::AttrToMarker(par_mesh->bdr_attributes.Max(), attr4, parent_marker);
+  mesh::AttrToMarker(submesh.bdr_attributes.Max(), attr4, submesh_marker);
+  parent_fes.GetEssentialTrueDofs(parent_marker, parent_essential);
+  submesh_fes.GetEssentialTrueDofs(submesh_marker, direct_essential);
+  mfem::Vector parent_true(parent_fes.GetTrueVSize());
+  parent_true = 0.0;
+  for (int tdof : parent_essential)
+  {
+    parent_true[tdof] = 1.0;
+  }
+  parent_marker_field.SetFromTrueDofs(parent_true);
+  transfer.Transfer(parent_marker_field, submesh_marker_field);
+  mfem::Vector transferred_true(submesh_fes.GetTrueVSize());
+  submesh_marker_field.ParallelProject(transferred_true);
+  int transferred_essential = 0;
+  for (int i = 0; i < transferred_true.Size(); i++)
+  {
+    transferred_essential += transferred_true[i] != 0.0;
+  }
+  // Parent-marker transfer over-constrains two interior H1 DoFs on this NC surface.
+  // Essential DoFs must instead be extracted directly from the remapped submesh boundary.
+  CHECK(direct_essential.Size() == 6);
+  CHECK(transferred_essential == 8);
+}
+
+TEST_CASE("Flattened NC port mesh preserves ND DoFs", "[geodata][Serial][Parallel]")
+{
+  auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/mesh/nc-boundary-submesh.mesh";
+  mfem::Mesh serial_mesh(mesh_path.c_str(), 1, 1, true);
+  auto parent = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
+  mfem::Array<int> surface_attrs;
+  surface_attrs.Append(14);
+  auto embedded = mfem::ParSubMesh::CreateFromBoundary(*parent, surface_attrs);
+  REQUIRE(embedded.Dimension() == 2);
+  REQUIRE(embedded.SpaceDimension() == 3);
+  embedded.SetCurvature(3, false, 3, mfem::Ordering::byNODES);
+  REQUIRE(embedded.GetNodes()->FESpace()->GetMaxElementOrder() == 3);
+
+  const mfem::Vector normal = mesh::GetSurfaceNormal(embedded);
+  mfem::Vector origin(3), e1(3), e2(3);
+  origin = 0.0;
+  e1 = 0.0;
+  e1[1] = 1.0;
+  e1.Add(-(e1 * normal), normal);
+  e1 /= e1.Norml2();
+  e2[0] = normal[1] * e1[2] - normal[2] * e1[1];
+  e2[1] = normal[2] * e1[0] - normal[0] * e1[2];
+  e2[2] = normal[0] * e1[1] - normal[1] * e1[0];
+  e2 /= e2.Norml2();
+
+  mfem::ParMesh flattened(embedded, true);
+  mesh::ProjectMeshTo2D(flattened, origin, e1, e2);
+  REQUIRE(flattened.SpaceDimension() == 2);
+
+  constexpr int order = 3;
+  mfem::ND_FECollection embedded_fec(order, 2), flattened_fec(order, 2);
+  mfem::ParFiniteElementSpace embedded_fes(&embedded, &embedded_fec);
+  mfem::ParFiniteElementSpace flattened_fes(&flattened, &flattened_fec);
+  REQUIRE(embedded_fes.GetVSize() == flattened_fes.GetVSize());
+  REQUIRE(embedded_fes.GetTrueVSize() == flattened_fes.GetTrueVSize());
+
+  mfem::VectorFunctionCoefficient embedded_coefficient(
+      3,
+      [&](const mfem::Vector &, mfem::Vector &value)
+      {
+        value.SetSize(3);
+        for (int d = 0; d < 3; d++)
+        {
+          value[d] = 1.25 * e1[d] - 0.75 * e2[d];
+        }
+      });
+  mfem::VectorFunctionCoefficient flattened_coefficient(
+      2,
+      [](const mfem::Vector &, mfem::Vector &value)
+      {
+        value.SetSize(2);
+        value[0] = 1.25;
+        value[1] = -0.75;
+      });
+  mfem::ParGridFunction embedded_field(&embedded_fes), flattened_field(&flattened_fes);
+  embedded_field.ProjectCoefficient(embedded_coefficient);
+  flattened_field.ProjectCoefficient(flattened_coefficient);
+  mfem::ParGridFunction difference(embedded_field);
+  difference -= flattened_field;
+  double difference_norm = difference.Norml2();
+  Mpi::GlobalMax(1, &difference_norm, flattened.GetComm());
+  CHECK(difference_norm < 1.0e-12);
+
+#if defined(MFEM_USE_GSLIB)
+  mfem::IntegrationPoint ip0, ip1;
+  ip0.Set2(0.2, 0.2);
+  ip1.Set2(0.6, 0.2);
+  mfem::Vector p0(2), p1(2);
+  int point_owner = flattened.GetNE() > 0 ? Mpi::Rank(flattened.GetComm())
+                                          : Mpi::Size(flattened.GetComm());
+  Mpi::GlobalMin(1, &point_owner, flattened.GetComm());
+  REQUIRE(point_owner < Mpi::Size(flattened.GetComm()));
+  if (Mpi::Rank(flattened.GetComm()) == point_owner)
+  {
+    auto *transformation = flattened.GetElementTransformation(0);
+    transformation->Transform(ip0, p0);
+    transformation->Transform(ip1, p1);
+  }
+  Mpi::Broadcast(2, p0.HostReadWrite(), point_owner, flattened.GetComm());
+  Mpi::Broadcast(2, p1.HostReadWrite(), point_owner, flattened.GetComm());
+  mfem::FindPointsGSLIB point_locator(flattened.GetComm());
+  fem::SetupInterpolator(point_locator, flattened);
+  const double integral =
+      fem::ComputeLineIntegral(point_locator, p0, p1, flattened_field, 10);
+  const double expected = 1.25 * (p1[0] - p0[0]) - 0.75 * (p1[1] - p0[1]);
+  CHECK_THAT(integral, WithinAbs(expected, 1.0e-11));
+#endif
 }
 
 TEST_CASE("Tangent frame from SubMesh extraction", "[geodata][Serial]")
