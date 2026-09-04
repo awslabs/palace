@@ -2667,9 +2667,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                                          fmin_GHz, fmax_GHz, GetReducedDimension());
   ComputeEigenvalueEstimateErrors(units, eigs);
 
-  // Diagnostic scattering reconstruction from the synthesized loaded pencil plus the
-  // frequency-dependent wave-port input/output coupling vectors. A rotating hybrid mode
-  // cannot in general be represented by a fixed terminal selector alone.
+  // Complete synthesized wave-port realization: Y_syn(omega) y = G(omega) a, b = H(omega) y
+  // - a, so S(omega) = H(omega) Y_syn(omega)^{-1} G(omega) - I. G and H are built from each
+  // port's projected n x H vector, which rotates with frequency for a hybrid mode and so
+  // cannot be replaced by a fixed terminal selector. rom-coupled-S is the reconstructed S;
+  // rom-coupled-G/H export the maps so the S can be rebuilt off the pencil externally.
   std::vector<int> coupled_ports;
   for (const auto &[port_idx, port] : space_op.GetWavePortOp())
   {
@@ -2678,8 +2680,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       coupled_ports.push_back(port_idx);
     }
   }
+  const std::size_t n_ports = coupled_ports.size();
+  std::vector<Eigen::MatrixXcd> coupled_g,
+      coupled_h;  // per freq: na x n_ports, n_ports x na
   std::vector<std::vector<std::complex<double>>> coupled_s;
-  if (!coupled_ports.empty())
+  if (n_ports > 0)
   {
     const long nr = static_cast<long>(V.size());
     const long na = matrices.L_inv->rows();
@@ -2700,17 +2705,26 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     const double unit_henry_inv =
         1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
     const double omega0 = unit_henry_inv / unit_ohm_inv;
-    coupled_s.resize(sweep_omega_samples.size());
-    for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
+    const std::size_t n_freq = sweep_omega_samples.size();
+    coupled_g.assign(n_freq, Eigen::MatrixXcd::Zero(na, n_ports));
+    coupled_h.assign(n_freq, Eigen::MatrixXcd::Zero(n_ports, na));
+    coupled_s.resize(n_freq);
+    for (std::size_t fi = 0; fi < n_freq; fi++)
     {
       const double omega = sweep_omega_samples[fi];
-      std::vector<Eigen::VectorXcd> sv;
-      for (int port_idx : coupled_ports)
+      // Source map G forces the reduced circuit from an incident wave; observation map H
+      // reads the outgoing wave off the circuit state. Aux rows carry no port coupling.
+      Eigen::MatrixXcd &G = coupled_g[fi];
+      Eigen::MatrixXcd &H = coupled_h[fi];
+      for (std::size_t p = 0; p < n_ports; p++)
       {
-        auto s = space_op.GetWavePortModeVector(port_idx, omega);
-        Eigen::VectorXcd p(nr);
-        ProjectVecInternal(space_op.GetComm(), V, *s, p, 0);
-        sv.push_back(std::move(p));
+        auto s = space_op.GetWavePortModeVector(coupled_ports[p], omega);
+        Eigen::VectorXcd proj(nr);
+        ProjectVecInternal(space_op.GetComm(), V, *s, proj, 0);
+        const Eigen::VectorXcd dsv =
+            d.head(nr).cast<std::complex<double>>().cwiseProduct(proj);
+        G.col(p).head(nr) = -2.0 * unit_ohm_inv * dsv;
+        H.row(p).head(nr) = -dsv.conjugate().transpose();
       }
       const std::complex<double> s_phys = 1i * omega * omega0;
       Eigen::MatrixXcd Y = (*matrices.L_inv) / s_phys + s_phys * (*matrices.C);
@@ -2718,20 +2732,15 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         Y += *matrices.R_inv;
       }
+      Eigen::MatrixXcd s_mat = H * Y.fullPivLu().solve(G);  // n_ports x n_ports
+      s_mat.diagonal().array() -= 1.0;
       auto &vals = coupled_s[fi];
-      vals.resize(coupled_ports.size() * coupled_ports.size());
-      for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
+      vals.resize(n_ports * n_ports);
+      for (std::size_t obs = 0; obs < n_ports; obs++)
       {
-        Eigen::VectorXcd rhs = Eigen::VectorXcd::Zero(na);
-        rhs.head(nr) = -2.0 * unit_ohm_inv *
-                       d.head(nr).cast<std::complex<double>>().cwiseProduct(sv[drive]);
-        const Eigen::VectorXcd y = Y.fullPivLu().solve(rhs);
-        for (std::size_t obs = 0; obs < coupled_ports.size(); obs++)
+        for (std::size_t drive = 0; drive < n_ports; drive++)
         {
-          vals[obs * coupled_ports.size() + drive] =
-              -(sv[obs].adjoint() *
-                d.head(nr).cast<std::complex<double>>().cwiseProduct(y.head(nr)))(0, 0) -
-              ((obs == drive) ? 1.0 : 0.0);
+          vals[obs * n_ports + drive] = s_mat(obs, drive);
         }
       }
     }
@@ -2780,6 +2789,47 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       }
     }
     out.WriteFullTableTrunc();
+  }
+  // Export the frequency-dependent coupling maps themselves (na = L/R/C dimension, aux rows
+  // zero) so an external user can rebuild S = H Y_syn^{-1} G - I off the exported pencil.
+  if (!coupled_g.empty())
+  {
+    const double unit_GHz =
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+    auto write_coupling = [&](std::string_view filename, bool source)
+    {
+      auto out = TableWithCSVFile(post_dir / filename);
+      out.table.col_options.float_precision = 17;
+      out.table.insert("f", "f (GHz)");
+      for (std::size_t p = 0; p < n_ports; p++)
+      {
+        for (std::size_t i = 0; i < labels.size(); i++)
+        {
+          const auto key = source ? fmt::format("G[{}][{:d}]", labels[i], p + 1)
+                                  : fmt::format("H[{:d}][{}]", p + 1, labels[i]);
+          out.table.insert(fmt::format("re_{}_{}", p, i), fmt::format("Re{{{}}}", key));
+          out.table.insert(fmt::format("im_{}_{}", p, i), fmt::format("Im{{{}}}", key));
+        }
+      }
+      for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
+      {
+        out.table["f"] << sweep_omega_samples[fi] * unit_GHz;
+        for (std::size_t p = 0; p < n_ports; p++)
+        {
+          for (std::size_t i = 0; i < labels.size(); i++)
+          {
+            const std::complex<double> value =
+                source ? coupled_g[fi](static_cast<long>(i), static_cast<long>(p))
+                       : coupled_h[fi](static_cast<long>(p), static_cast<long>(i));
+            out.table[fmt::format("re_{}_{}", p, i)] << value.real();
+            out.table[fmt::format("im_{}_{}", p, i)] << value.imag();
+          }
+        }
+      }
+      out.WriteFullTableTrunc();
+    };
+    write_coupling("rom-coupled-G.csv", /*source=*/true);
+    write_coupling("rom-coupled-H.csv", /*source=*/false);
   }
   auto print_table = [post_dir](const Eigen::MatrixXd &mat, std::string_view filename,
                                 const std::vector<std::string> &table_labels)

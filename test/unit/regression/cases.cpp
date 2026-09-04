@@ -806,7 +806,9 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
                          "rom-C-",
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
-                         "rom-coupled-S"};
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
   // The error-estimator extrema and synthesized Y_ref drift with the partition/BLAS near
   // the pole, so these are presence-only here.
   opts.excluded_files = {"rom-eigenvectors", "error-indicators.csv", "rom-port-reference"};
@@ -1051,7 +1053,7 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
   // Synthesis matrices, eigenvectors, and the Y_ref table vary with the greedy sampling and
   // partition, so only their presence is checked; the round-trip below consumes them live.
-  opts.unstored_files = {"rom-coupled-S"};
+  opts.unstored_files = {"rom-coupled-S", "rom-coupled-G", "rom-coupled-H"};
   opts.excluded_files = {"rom-Linv",
                          "rom-Rinv",
                          "rom-C-",

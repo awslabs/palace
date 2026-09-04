@@ -82,11 +82,23 @@ of the driven solver as well as the following additional files:
     $Y_{\mathrm{ref}}(\omega)$ is the terminal admittance of that port's synthesized load pencil,
     i.e. the Schur complement of the port's `rom-portload-<label>-*` block onto its terminal node. It
     therefore carries the fitted propagation constant $k_n(\omega)$ together with the modal correction
-    $\bm{W}$ and any auxiliary states, and may vary with frequency. This keeps the table consistent
-    with the exported pencil: reducing the total matrices to the port terminals and de-embedding this
-    $Y_{\mathrm{ref}}$ reproduces the solver's own port S-parameters. The columns give frequency
-    followed by the real and imaginary parts of $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each
-    circuit port label.
+    $\bm{W}$ and any auxiliary states, and may vary with frequency. It is the port's driving-point
+    admittance, not the incident/outgoing wave coupling: for a mode whose $\bm{n}\times\bm{H}$ shape
+    rotates with frequency (a hybrid / LSM wave port with $E_n\neq 0$) the terminal $Y_{\mathrm{ref}}$
+    alone does not reproduce the solver's S-parameters, and the frequency-dependent coupling maps
+    $\bm{G}(\omega)$, $\bm{H}(\omega)$ below are required. The columns give frequency followed by the
+    real and imaginary parts of $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
+  - (Wave ports): `rom-coupled-G.csv`, `rom-coupled-H.csv`, `rom-coupled-S.csv`. The complete
+    synthesized model of a wave-port network is $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} =
+    \bm{G}(\omega)\,\bm{a}$, $\bm{b} = \bm{H}(\omega)\,\bm{y} - \bm{a}$, where $\bm{a}$/$\bm{b}$ are the
+    incident/outgoing wave amplitudes, $\bm{Y}_{\mathrm{syn}}$ is the exported L/R/C pencil, and
+    $\bm{G}$/$\bm{H}$ are the frequency-dependent source/observation maps built from each port's
+    projected $\bm{n}\times\bm{H}$ vector (aux rows are zero). The S-parameters follow as $\bm{S}(\omega)
+    = \bm{H}(\omega)\,\bm{Y}_{\mathrm{syn}}(\omega)^{-1}\,\bm{G}(\omega) - \bm{I}$. `rom-coupled-G.csv`
+    and `rom-coupled-H.csv` tabulate $\bm{G}$ and $\bm{H}$ over the sweep grid (columns keyed by node
+    label and port); `rom-coupled-S.csv` is the resulting $\bm{S}$. For a fixed-coupling port
+    ($E_n = 0$, so $\bm{W}=0$ and the coupling is frequency-independent) this reduces to the
+    terminal-only $Y_{\mathrm{ref}}$ de-embedding.
   - (Optional, for cascading): `rom-portload-<label>-{Linv,Rinv,C}-{re,im}.csv`. One set of files per
     included port, with the same node labels and dimensions as the total `rom-*` matrices. The label
     is `port_<idx>_re` (lumped) or `waveport_<idx>_re` (wave). Each set isolates that single port's
