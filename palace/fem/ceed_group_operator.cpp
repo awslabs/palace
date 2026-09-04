@@ -110,13 +110,9 @@ void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &group
   }
 }
 
-namespace
-{
-
-template <std::size_t N>
-void ApplyAddGroupOperatorsImpl(const std::vector<CeedGroupOperator> &groups,
-                                const std::array<const Vector *, N> &srcs,
-                                const Vector &out, const Vector *imported)
+void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
+                            const std::array<const Vector *, 4> &srcs, const Vector &out,
+                            const Vector *imported)
 {
   if (groups.empty())
   {
@@ -149,9 +145,10 @@ void ApplyAddGroupOperatorsImpl(const std::vector<CeedGroupOperator> &groups,
     }
     for (auto &[field_vec, source] : group.field_vec_sources)
     {
-      // Four-source users reserve source index 4 for imported face-neighbor values.
-      // The eight-source overload supplies every physical real/imaginary trace directly.
-      const Vector *sv = (source < static_cast<int>(N)) ? srcs[source] : imported;
+      // Source index 4 selects an optional imported vector used by surface
+      // postprocessing operators for face-neighbor field values. The restriction slices
+      // and transposes the shared vector to the per-element layout.
+      const Vector *sv = (source < 4) ? srcs[source] : imported;
       MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
       ceed::InitCeedVector(*sv, group.ceed, &field_vec, false,
                            !group.field_vectors_detached);
@@ -172,22 +169,6 @@ void ApplyAddGroupOperatorsImpl(const std::vector<CeedGroupOperator> &groups,
                                                     group.out_vec, CEED_REQUEST_IMMEDIATE));
     PalaceCeedCall(group.ceed, CeedVectorTakeArray(group.out_vec, out_mem, nullptr));
   }
-}
-
-}  // namespace
-
-void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
-                            const std::array<const Vector *, 4> &srcs, const Vector &out,
-                            const Vector *imported)
-{
-  ApplyAddGroupOperatorsImpl(groups, srcs, out, imported);
-}
-
-void ApplyAddComplexGroupOperators(const std::vector<CeedGroupOperator> &groups,
-                                   const std::array<const Vector *, 8> &srcs,
-                                   const Vector &out)
-{
-  ApplyAddGroupOperatorsImpl(groups, srcs, out, nullptr);
 }
 
 }  // namespace fem

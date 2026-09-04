@@ -123,35 +123,6 @@ CEED_QFUNCTION(f_eval_probe_hcurl_22)(void *, CeedInt Q, const CeedScalar *const
   return 0;
 }
 
-// Pointwise scalar L2 field value. Inputs: grad_x, u. The geometry input is unused but
-// kept so this probe has the same field list as the vector-valued domain probes.
-CEED_QFUNCTION(f_eval_probe_l2_22)(void *, CeedInt Q, const CeedScalar *const *in,
-                                   CeedScalar *const *out)
-{
-  const CeedScalar *u = in[1];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    v[i] = u[i];
-  }
-  return 0;
-}
-
-// Pointwise scalar INTEGRAL field value: v = u / |detJ|. Inputs: grad_x, u.
-CEED_QFUNCTION(f_eval_probe_integral_22)(void *, CeedInt Q, const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0], *u = in[1];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    v[i] = IntegralMap22(i, Q, J, u);
-  }
-  return 0;
-}
-
 // Pointwise H(div) field value: v = J/detJ u. Inputs: grad_x, u.
 CEED_QFUNCTION(f_eval_probe_hdiv_22)(void *, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)

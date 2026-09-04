@@ -336,7 +336,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                        : *viz_scalar_fespace;
     eval = std::make_unique<DomainPointFieldEvaluator>(
         kind, fem_op->GetMaterialOp().GetMesh(), fem_op->GetMaterialOp(), e_fespace,
-        b_fespace, target, scaling, true, false);
+        b_fespace, target, scaling);
     if (eval->IsValid())
     {
       gf = std::make_unique<mfem::ParGridFunction>(&target);
