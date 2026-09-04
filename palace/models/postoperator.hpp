@@ -12,18 +12,15 @@
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/boundary_derived_field_bundle.hpp"
-#include "fem/boundary_physical_trace.hpp"
+#include "fem/domain_point_field_evaluator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
-#include "fem/point_field_evaluator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
-#include "utils/ceedparaviewdatacollection.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -33,7 +30,6 @@ namespace palace
 
 class CurlCurlOperator;
 class ErrorIndicator;
-class FaceSamplingPlan;
 class IoData;
 class LaplaceOperator;
 class MaterialOperator;
@@ -186,8 +182,7 @@ protected:
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
   // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<CeedParaViewDataCollection> paraview;
-  std::optional<CeedParaViewDataCollection> paraview_bdr;
+  std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -196,38 +191,20 @@ protected:
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
   // Poynting Coefficient (vector for 3D), Electric Boundary Field (re+im), Magnetic
-  // Boundary Field (re+im), Surface Current (re+im).
-  std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, J_sr, J_si;
+  // Boundary Field (re+im), Vector Potential Boundary Field, Surface Current (re+im).
+  std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
 
-  // Electric Energy Density, Magnetic Energy Density, Surface Charge (re+im).
-  std::unique_ptr<mfem::Coefficient> U_e, U_m, Q_sr, Q_si;
+  // Electric Energy Density, Magnetic Energy Density, Scalar Potential Boundary Field,
+  // Surface Charge (re+im).
+  std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
 
-  // libCEED evaluators and optional output grid functions for the domain coefficient
-  // fields (U_e, U_m, S), replacing per-point host coefficient evaluation at ParaView
-  // save time when supported. ParaView output uses lazy component-major point buffers;
-  // gridfunction output still uses the GridFunction path when requested.
+  // libCEED evaluators and concrete output grid functions for derived domain fields.
+  // Both output formats consume these grid functions; ParaView itself remains MFEM's
+  // standard data collection.
   std::unique_ptr<mfem::L2_FECollection> viz_fec;
   std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf, Sn_gf;
-  std::unique_ptr<PointFieldEvaluator> E_domain_eval, B_domain_eval, En_domain_eval,
-      Bt_domain_eval, V_domain_eval, A_domain_eval, U_e_eval, U_m_eval, S_eval, Sn_eval;
-
-  // libCEED evaluators for boundary collection fields (E_s, B_s, Q_s, J_s, U_e, U_m,
-  // S). CeedParaViewDataCollection evaluates these lazily into one temporary buffer per
-  // field in the same integer boundary-element/refined-point order used for writing,
-  // avoiding coefficient adapters or floating-point point lookup at save time.
-  std::unique_ptr<PointFieldEvaluator> E_bdr_eval, B_bdr_eval, V_bdr_eval, A_bdr_eval,
-      Q_bdr_eval, J_bdr_eval, Ue_bdr_eval, Um_bdr_eval, S_bdr_eval;
-  // One immutable boundary lattice/trace plan is shared by every compatible ParaView
-  // evaluator built for this PostOperator setup.
-  std::shared_ptr<const FaceSamplingPlan> bdr_sampling_plan;
-  // Save-generation-scoped physical ND/RT/scalar traces shared by every compatible
-  // boundary point evaluator. The cache keeps canonical side traces device-resident;
-  // individual fields retain their legacy output routing.
-  std::shared_ptr<BoundaryPhysicalTraceCache> bdr_trace_cache;
-  // 3D E/B boundary family bundle. Compatible direct-VTU fields register non-owning
-  // packed slices from this result; unrelated fields retain individual evaluators.
-  std::shared_ptr<BoundaryDerivedFieldBundle> bdr_derived_bundle;
+  std::unique_ptr<DomainPointFieldEvaluator> U_e_eval, U_m_eval, S_eval, Sn_eval;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData

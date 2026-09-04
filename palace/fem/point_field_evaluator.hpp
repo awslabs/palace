@@ -24,10 +24,9 @@ class SurfaceFunctional;
 
 // Non-reducing libCEED evaluator for visualization point fields. Unlike reduction
 // functionals, this produces one value per local visualization point and is intended to
-// feed ParaView point data. Domain direct-VTU buffers are point-major; boundary buffers
-// use the existing component-major writer path. The mesh entity location selects domain
-// elements or boundary elements; the operation remains pointwise, not an MPI-reduced
-// functional.
+// feed visualization point data. Domain buffers are point-major; boundary buffers are
+// component-major. The mesh entity location selects domain elements or boundary elements;
+// the operation remains pointwise, not an MPI-reduced functional.
 class PointFieldEvaluator
 {
 public:
@@ -99,8 +98,8 @@ public:
   // Domain-only compatibility path for grid-function output.
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
 
-  // Fill the visualization buffer. Domain buffers are point-major for direct VTU output;
-  // boundary buffers are component-major. The Vector overload is for already split
+  // Fill the visualization buffer. Domain buffers are point-major; boundary buffers are
+  // component-major. The Vector overload is for already split
   // real/imaginary fields; the GridFunction overload accumulates real and imaginary
   // contributions for quadratic single-field quantities. For POYNTING pass E and B to
   // the two-field overload.

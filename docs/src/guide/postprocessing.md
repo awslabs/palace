@@ -118,10 +118,8 @@ directories located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The output
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/reference.md#config-problem).
 
-*Palace* writes ParaView data using raw-appended binary VTK XML. Use
-[ParaView 5.12.1](https://www.kitware.com/paraview-5-12-1-release-notes/) or newer to
-read these files. Older versions may work with a compatible VTK/Expat combination,
-but are not supported because some distribution builds fail to parse raw-appended data.
+*Palace* writes ParaView data using MFEM's binary VTK XML data collection. When MFEM is
+built with zlib support, the output uses its default compression level.
 
 ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
 format can be useful to embed visualizations in webpages with its
@@ -185,11 +183,11 @@ continuous. Similarly, at a material interface:
 
 Forcing these quantities into a continuous H1 space would select, average, or smooth values
 across interfaces and would discard the distinction between the two element-side traces.
-The L2 domain fields instead preserve the element-local result. The separate boundary
-visualization has one tuple per geometric interface point: primary fields are the average of
-the two traces, energy density and Poynting output average the corresponding per-side
-quantities, and surface charge/current use their oriented jump definitions. Exterior
-boundaries use the single adjacent element trace.
+The L2 domain fields instead preserve the element-local result. Boundary visualization uses
+the established MFEM coefficient path: on internal boundaries, Palace's boundary field
+coefficients select a neighboring material side for primary fields, while surface charge and
+surface current use their oriented two-sided definitions. Exterior boundaries use the single
+adjacent element trace.
 
 Also, at the final step of the simulation the following element-wise quantities are written
 for visualization:

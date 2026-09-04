@@ -54,7 +54,6 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacefunctional.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator-boundary-viz.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
@@ -79,13 +78,6 @@ target_link_libraries(unit-tests
           $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
-
-# The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
-# when MFEM is built with zlib support.
-find_package(ZLIB QUIET)
-if(ZLIB_FOUND)
-  target_link_libraries(unit-tests PRIVATE ZLIB::ZLIB)
-endif()
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
@@ -304,4 +296,3 @@ endif()
 
 # Enable testing
 enable_testing()
-

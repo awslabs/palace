@@ -110,7 +110,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   {
     // Point-major buffer layout matching VTK tuple order and MFEM's domain VTU point
     // order (element order, then refined/nodal points within each element). The output
-    // restriction scatters each point tuple contiguously so CeedParaViewDataCollection can
+    // restriction scatters each point tuple contiguously so visualization consumers can
     // write the payload without repacking.
     buffer_num_comp = target_fespace.GetVDim();
     buffer_bases.assign(pmesh.GetNE(), -1);
@@ -323,9 +323,9 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
 
     if (build_buffer)
     {
-      // Assemble a second operator for the direct VTU point-buffer path. This evaluates at
+      // Assemble a second operator for visualization point buffers. This evaluates at
       // MFEM's refined VTU points (not necessarily the same order as the target L2 nodes)
-      // and scatters into point-major tuples consumed by CeedParaViewDataCollection.
+      // and scatters into point-major tuples.
       const mfem::IntegrationRule &vtu_ir =
           mfem::GlobGeometryRefiner.Refine(geom, vtu_lod, 1)->RefPts;
       const int num_vtu_pts = vtu_ir.GetNPoints();
