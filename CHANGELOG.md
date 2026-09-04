@@ -99,6 +99,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Omit material terms with mathematically exact-zero coefficients from fine-level partial
     assembly while retaining the configured coarse sparse structure for symbolic reuse.
     [PR 876](https://github.com/awslabs/palace/pull/876).
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offlines modes. Also buffering CSV output, reusing reduced operators
+    and wave-port state across excitations, evaluating default domain energies in reduced
+    coordinates, and evaluating port quantities without unnecessary magnetic-field
+    reconstruction when possible. [PR 909](https://github.com/awslabs/palace/pull/909).
 
 #### Bug Fixes
 
@@ -110,6 +115,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigensolver. Affected `√(μ⁻¹ε)`, `(με)^(-1/2)`, `ε·√(I + tanδ·tanδᵀ)` in the material
     operator and the flux error-estimator weights.
     [PR 912](https://github.com/awslabs/palace/pull/912).
+  - Fixed numeric wave-port `MaxIts` and `KSPTol` settings being parsed but ignored by the
+    boundary-mode linear solver. [PR 909](https://github.com/awslabs/palace/pull/909).
   - Fixed adaptive iteration output archiving overwriting earlier meshes and made its
     filesystem updates more robust. [PR 892](https://github.com/awslabs/palace/pull/892).
   - Fixed ParaView output for multiple driven excitations deleting fields from earlier

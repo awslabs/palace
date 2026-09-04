@@ -240,7 +240,8 @@ class PostOperatorCSV
 protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
-  bool reload_table = false;  // True only for driven simulation with non-default restart
+  bool reload_table = false;        // Driven simulation with non-default restart.
+  bool defer_table_writes = false;  // Adaptive driven output is flushed at finalization.
 
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
@@ -263,6 +264,8 @@ protected:
   bool HasSingleExIdx() const { return ex_idx_v_all.size() == 1; }
 
   void MoveTableValidateReload(TableWithCSVFile &t_csv_base, Table &&t_ref);
+  void WriteTable(TableWithCSVFile &table);
+  void WriteTable(std::optional<TableWithCSVFile> &table);
 
   // Data tables.
   //
@@ -417,6 +420,10 @@ protected:
   auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
 
 public:
+  // Flush tables buffered during an adaptive driven sweep. Other solver modes continue to
+  // write eagerly and this is a no-op for them.
+  void FinalizeCSVData();
+
   // Print all data from nondim_measurement_cache.
   void PrintAllCSVData(const PostOperator<solver_t> &post_op,
                        const Measurement &nondim_measurement_cache,
@@ -431,6 +438,27 @@ public:
   {
     m_ex_idx = ex_idx;
     PrintAllCSVData(post_op, nondim_measurement_cache, idx_value_dimensionful, step);
+  }
+
+  // Adaptive reduced-order path preserving the default domain-energy and S tables.
+  template <ProblemType U = solver_t>
+  auto PrintReducedCSVData(const PostOperator<solver_t> &post_op,
+                           const Measurement &nondim_measurement_cache,
+                           double idx_value_dimensionful, int step, int ex_idx)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+  {
+    if (!Mpi::Root(post_op.fem_op->GetComm()))
+    {
+      return;
+    }
+    row_idx_v = idx_value_dimensionful;
+    row_i = step;
+    m_ex_idx = ex_idx;
+    measurement_cache =
+        Measurement::Dimensionalize(post_op.units, nondim_measurement_cache);
+    PrintDomainE();
+    PrintPortVI(post_op.fem_op->GetLumpedPortOp(), post_op.units);
+    PrintPortS();
   }
 
   // Special case of global indicator — init and print all at once.

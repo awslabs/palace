@@ -456,6 +456,61 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
 }
 
 template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
+{
+  if (!defer_table_writes)
+  {
+    table.WriteFullTableTrunc();
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::WriteTable(std::optional<TableWithCSVFile> &table)
+{
+  if (!table)
+  {
+    return;
+  }
+  if (table->table.n_rows() > 0)
+  {
+    table->WriteFullTableTrunc();
+  }
+  else
+  {
+    fs::remove(table->get_csv_filepath());
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::FinalizeCSVData()
+{
+  if (!defer_table_writes)
+  {
+    return;
+  }
+  WriteTable(domain_E);
+  WriteTable(surface_F);
+  WriteTable(surface_Q);
+  WriteTable(probe_E);
+  WriteTable(probe_En);
+  WriteTable(probe_Bt);
+  WriteTable(probe_B);
+  WriteTable(surface_I);
+  WriteTable(port_V);
+  WriteTable(port_I);
+  WriteTable(port_S);
+  WriteTable(port_Z);
+  WriteTable(floquet_port_S);
+  WriteTable(farfield_E);
+  WriteTable(eig);
+  WriteTable(mode_kn);
+  WriteTable(mode_Z);
+  WriteTable(mode_V);
+  WriteTable(port_EPR);
+  WriteTable(port_Q);
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_post_op)
 {
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
@@ -521,7 +576,7 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
     domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
         << data.participation_ratio;
   }
-  domain_E->WriteFullTableTrunc();
+  WriteTable(*domain_E);
 }
 
 template <ProblemType solver_t>
@@ -602,7 +657,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
       surface_F->table[fmt::format("F_{}_{}_im", data.idx, m_ex_idx)] << data.Phi.imag();
     }
   }
-  surface_F->WriteFullTableTrunc();
+  WriteTable(*surface_F);
 }
 
 template <ProblemType solver_t>
@@ -648,7 +703,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
         << data.energy_participation;
     surface_Q->table[fmt::format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
   }
-  surface_Q->WriteFullTableTrunc();
+  WriteTable(*surface_Q);
 }
 
 template <ProblemType solver_t>
@@ -730,7 +785,7 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
       farfield_E->table[fmt::format("rE{}_im", i_dim)] << E_field[i_dim].imag();
     }
   }
-  farfield_E->WriteFullTableTrunc();
+  WriteTable(*farfield_E);
 }
 
 template <ProblemType solver_t>
@@ -813,7 +868,7 @@ void PostOperatorCSV<solver_t>::PrintProbeField(
     }
     i++;
   }
-  probe_tbl->WriteFullTableTrunc();
+  WriteTable(*probe_tbl);
 }
 
 template <ProblemType solver_t>
@@ -923,7 +978,7 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI(const SurfaceCurrentOperator &surf
     auto I_inc = units.Dimensionalize<Units::ValueType::CURRENT>(I_inc_raw);
     surface_I->table[fmt::format("I_{}_{}", idx, m_ex_idx)] << I_inc;
   }
-  surface_I->WriteFullTableTrunc();
+  WriteTable(*surface_I);
 }
 
 template <ProblemType solver_t>
@@ -1095,8 +1150,8 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
       port_V->table[fmt::format("im_w{}_{}", idx, m_ex_idx)] << data.V.imag();
     }
   }
-  port_V->WriteFullTableTrunc();
-  port_I->WriteFullTableTrunc();
+  WriteTable(*port_V);
+  WriteTable(*port_I);
 }
 
 template <ProblemType solver_t>
@@ -1160,7 +1215,7 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
         << Measurement::Magnitude(data.S);
     port_S->table[fmt::format("arg_{}_{}", idx, m_ex_idx)] << Measurement::Phase(data.S);
   }
-  port_S->WriteFullTableTrunc();
+  WriteTable(*port_S);
 }
 
 template <ProblemType solver_t>
@@ -1322,7 +1377,7 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << 0.0;
     }
   }
-  port_Z->WriteFullTableTrunc();
+  WriteTable(*port_Z);
 }
 
 template <ProblemType solver_t>
@@ -1367,7 +1422,7 @@ auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
       col << std::numeric_limits<double>::quiet_NaN();
     }
   }
-  floquet_port_S->WriteFullTableTrunc();
+  WriteTable(*floquet_port_S);
 }
 
 template <ProblemType solver_t>
@@ -1383,7 +1438,7 @@ auto PostOperatorCSV<solver_t>::InitializeEig()
   eig->table.insert("q", "Q");
   eig->table.insert("err_back", "Error (Bkwd.)");
   eig->table.insert("err_abs", "Error (Abs.)");
-  eig->WriteFullTableTrunc();
+  WriteTable(*eig);
 }
 
 template <ProblemType solver_t>
@@ -1401,7 +1456,7 @@ auto PostOperatorCSV<solver_t>::PrintEig()
   eig->table["q"] << measurement_cache.eigenmode_Q;
   eig->table["err_back"] << measurement_cache.error_bkwd;
   eig->table["err_abs"] << measurement_cache.error_abs;
-  eig->WriteFullTableTrunc();
+  WriteTable(*eig);
 }
 
 template <ProblemType solver_t>
@@ -1429,7 +1484,7 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortEPR(
   {
     port_EPR->table.insert(fmt::format("p_{}", idx), fmt::format("p[{}]", idx));
   }
-  port_EPR->WriteFullTableTrunc();
+  WriteTable(*port_EPR);
 }
 
 template <ProblemType solver_t>
@@ -1447,7 +1502,7 @@ auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
     auto vi = measurement_cache.lumped_port_vi.at(idx);
     port_EPR->table[fmt::format("p_{}", idx)] << vi.inductive_energy_participation;
   }
-  port_EPR->WriteFullTableTrunc();
+  WriteTable(*port_EPR);
 }
 
 template <ProblemType solver_t>
@@ -1475,7 +1530,7 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lum
     port_Q->table.insert(fmt::format("Ql_{}", idx), fmt::format("Q_ext[{}]", idx));
     port_Q->table.insert(fmt::format("Kl_{}", idx), fmt::format("κ_ext[{}] (GHz)", idx));
   }
-  port_Q->WriteFullTableTrunc();
+  WriteTable(*port_Q);
 }
 
 template <ProblemType solver_t>
@@ -1494,7 +1549,7 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
     port_Q->table[fmt::format("Ql_{}", idx)] << vi.quality_factor;
     port_Q->table[fmt::format("Kl_{}", idx)] << vi.mode_port_kappa;
   }
-  port_Q->WriteFullTableTrunc();
+  WriteTable(*port_Q);
 }
 
 template <ProblemType solver_t>
@@ -1511,7 +1566,7 @@ auto PostOperatorCSV<solver_t>::InitializeModeKn()
   mode_kn->table.insert("neff_im", "Im{n_eff}");
   mode_kn->table.insert("err_back", "Error (Bkwd.)");
   mode_kn->table.insert("err_abs", "Error (Abs.)");
-  mode_kn->WriteFullTableTrunc();
+  WriteTable(*mode_kn);
 }
 
 template <ProblemType solver_t>
@@ -1530,7 +1585,7 @@ auto PostOperatorCSV<solver_t>::PrintModeKn()
   mode_kn->table["neff_im"] << measurement_cache.mode_data.n_eff.imag();
   mode_kn->table["err_back"] << measurement_cache.error_bkwd;
   mode_kn->table["err_abs"] << measurement_cache.error_abs;
-  mode_kn->WriteFullTableTrunc();
+  WriteTable(*mode_kn);
 }
 
 template <ProblemType solver_t>
@@ -1556,7 +1611,7 @@ auto PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
       mode_Z->table.insert(key("C_VI"), hdr("C_VI", "F/m"));
     }
   }
-  mode_Z->WriteFullTableTrunc();
+  WriteTable(*mode_Z);
 }
 
 template <ProblemType solver_t>
@@ -1587,7 +1642,7 @@ auto PostOperatorCSV<solver_t>::PrintModeZ()
       mode_Z->table[s("C_VI")] << n_eff_re / (result.Z_VI * electromagnetics::c0_);
     }
   }
-  mode_Z->WriteFullTableTrunc();
+  WriteTable(*mode_Z);
 }
 
 template <ProblemType solver_t>
@@ -1602,7 +1657,7 @@ auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
     mode_V->table.insert(fmt::format("V_re[{}]", idx), fmt::format("Re{{V[{}]}} (V)", idx));
     mode_V->table.insert(fmt::format("V_im[{}]", idx), fmt::format("Im{{V[{}]}} (V)", idx));
   }
-  mode_V->WriteFullTableTrunc();
+  WriteTable(*mode_V);
 }
 
 template <ProblemType solver_t>
@@ -1620,7 +1675,7 @@ auto PostOperatorCSV<solver_t>::PrintModeV()
     mode_V->table[fmt::format("V_re[{}]", idx)] << result.V.real();
     mode_V->table[fmt::format("V_im[{}]", idx)] << result.V.imag();
   }
-  mode_V->WriteFullTableTrunc();
+  WriteTable(*mode_V);
 }
 
 template <ProblemType solver_t>
@@ -1813,6 +1868,7 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
   {
     nr_expected_measurement_rows = solver.driven.sample_f.size();
     reload_table = (solver.driven.restart != 1);
+    defer_table_writes = (solver.driven.adaptive_tol > 0.0);
 
     row_i = std::size_t(solver.driven.restart - 1) % nr_expected_measurement_rows;
     ex_idx_i = std::size_t(solver.driven.restart - 1) / nr_expected_measurement_rows;

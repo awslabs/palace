@@ -239,6 +239,21 @@ SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
                                                        std::complex<double> s) const
 {
   const auto &bdr = boundaries[idx];
+  if (s == std::complex<double>(0.0, 0.0))
+  {
+    // Preserve the finite DC limit used by AddExtraSystemBdrCoefficients: if N has a
+    // simple zero at s = 0, lim s·D/N = D(0)/N'(0). A higher-order zero is singular.
+    const double n0 = bdr.num.back();
+    if (n0 == 0.0)
+    {
+      const double n1 = (bdr.num.size() >= 2) ? bdr.num[bdr.num.size() - 2] : 0.0;
+      MFEM_VERIFY(n1 != 0.0,
+                  "Rational impedance boundary has a transmission zero of order >= 2 at "
+                  "s = 0; the DC admittance iω/Zs is singular!");
+      return bdr.den.back() / n1;
+    }
+    return 0.0;
+  }
   const std::complex<double> N = EvalPoly(bdr.num, s);
   MFEM_VERIFY(std::abs(N) > 0.0,
               "Rational impedance boundary has a transmission zero (Zs = 0) at the "

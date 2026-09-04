@@ -701,6 +701,12 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   excitation_idx_cache = excitation_idx;
   // Reset has_RHS2 so SolveHDM re-checks, since it may differ per excited port.
   has_RHS2 = true;
+  if (auto it = RHS1r_online.find(excitation_idx); it != RHS1r_online.end())
+  {
+    RHS1r = it->second;
+    has_RHS1 = (RHS1r.size() > 0);
+    return;
+  }
   has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
   if (!has_RHS1)
   {
@@ -717,6 +723,25 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
       ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
     }
   }
+}
+
+void RomOperator::PrepareOnlineExcitations()
+{
+  RHS1r_online.clear();
+  MPI_Comm comm = space_op.GetComm();
+  ComplexVector rhs;
+  for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
+  {
+    if (!space_op.GetExcitationVector1(excitation_idx, rhs))
+    {
+      RHS1r_online.emplace(excitation_idx, Eigen::VectorXcd{});
+      continue;
+    }
+    Eigen::VectorXcd projected(V.size());
+    ProjectVecInternal(comm, V, rhs, projected, 0);
+    RHS1r_online.emplace(excitation_idx, std::move(projected));
+  }
+  excitation_idx_cache = 0;
 }
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
@@ -875,6 +900,8 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
+  RHS1r_online.clear();
+  Ar_omega = std::numeric_limits<double>::quiet_NaN();
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
   // vectors, if it has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
@@ -1075,6 +1102,7 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
+  BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
@@ -1092,227 +1120,233 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   Ar.resize(V.size(), V.size());
   RHSr.resize(V.size());
 
-  // Refresh Floquet port state for this frequency once, up front: the factored Robin
-  // term below reads gamma0 and the low-rank DtN correction reads gamma_sq (and, when
-  // k_F scales with frequency, the recomputed mode vectors).
-  if (!space_op.GetFloquetPortOp().Empty())
+  if (omega != Ar_omega)
   {
-    space_op.GetFloquetPortOp().Initialize(omega);
-  }
+    // Refresh Floquet port state for this frequency once, up front: the factored Robin
+    // term below reads gamma0 and the low-rank DtN correction reads gamma_sq (and, when
+    // k_F scales with frequency, the recomputed mode vectors).
+    if (!space_op.GetFloquetPortOp().Empty())
+    {
+      space_op.GetFloquetPortOp().Initialize(omega);
+    }
 
-  // Other ω-nonlinear A2 contributors (second-order farfield ABC and surface conductivity).
-  // These are applied in factored form: their ω-independent boundary masses (M_ff_r,
-  // Asig_g_r) were projected onto the basis once in UpdatePROM, exactly like the wave-port
-  // masses, so the online cost is a per-ω scalar times an n×n matrix add — no per-ω HDM-
-  // scale assembly or reprojection. This is algebraically identical to projecting the full
-  // A2(ω) here (the scalar is uniform per boundary group, so it commutes with the
-  // projection) and matches the HDM stamping to round-off.
-  //
-  // Robustness: the structural check below requires every factored operator we hold to be
-  // sized to the current basis, but it cannot know whether the factored set is COMPLETE
-  // (an ω-dependent non-wave-port BC in GetExtraSystemMatrix without a factored operator —
-  // e.g. Floquet Robin terms — would be silently dropped). So on the first factored online
-  // solve we additionally verify the factored Aᵣ contribution against the full HDM
-  // projection; on any mismatch we latch other_A2_factored_ok = false and use the slow
-  // fallback for the rest of the sweep.
-  auto apply_factored_other_A2 = [&]()
-  {
-    // Factored 2nd-order farfield ABC: A2_ff(ω) = i·(0.5/ω)·M_ff. M_ff_r carries the
-    // boundary mass on the imaginary slot (the i), so scaling by the real scalar 0.5/ω
-    // reproduces the full contribution.
-    if (M_ff_ && M_ff_r.rows() == static_cast<long>(V.size()))
+    // Other ω-nonlinear A2 contributors (second-order farfield ABC and surface
+    // conductivity). These are applied in factored form: their ω-independent boundary
+    // masses (M_ff_r, Asig_g_r) were projected onto the basis once in UpdatePROM, exactly
+    // like the wave-port masses, so the online cost is a per-ω scalar times an n×n matrix
+    // add — no per-ω HDM- scale assembly or reprojection. This is algebraically identical
+    // to projecting the full A2(ω) here (the scalar is uniform per boundary group, so it
+    // commutes with the projection) and matches the HDM stamping to round-off.
+    //
+    // Robustness: the structural check below requires every factored operator we hold to be
+    // sized to the current basis, but it cannot know whether the factored set is COMPLETE
+    // (an ω-dependent non-wave-port BC in GetExtraSystemMatrix without a factored operator
+    // — e.g. Floquet Robin terms — would be silently dropped). So on the first factored
+    // online solve we additionally verify the factored Aᵣ contribution against the full HDM
+    // projection; on any mismatch we latch other_A2_factored_ok = false and use the slow
+    // fallback for the rest of the sweep.
+    auto apply_factored_other_A2 = [&]()
     {
-      Ar += std::complex<double>(0.5 / omega, 0.0) * M_ff_r;
-    }
-    // Factored surface conductivity, per active group: A2_σ,g(ω) = (i·ω/Z_g(ω))·A_σ,g =
-    // EvaluateScalar(g,ω)·A_σ,g. Asig_g_r[g] carries A_σ,g on the imaginary slot, so the
-    // scalar here is EvaluateScalar/i to avoid double-counting the i (matching the
-    // synthesis convention in CalculateNormalizedPROMMatrices). EvaluateScalar is closed
-    // form (skin depth + optional finite-thickness correction) — a few transcendental ops
-    // per group, negligible versus the reduced solve. No AAA needed online.
-    const auto &surf_op = space_op.GetSurfaceConductivityOp();
-    for (std::size_t g = 0; g < Asig_g_.size(); g++)
-    {
-      if (Asig_g_[g] && Asig_g_r[g].rows() == static_cast<long>(V.size()))
+      // Factored 2nd-order farfield ABC: A2_ff(ω) = i·(0.5/ω)·M_ff. M_ff_r carries the
+      // boundary mass on the imaginary slot (the i), so scaling by the real scalar 0.5/ω
+      // reproduces the full contribution.
+      if (M_ff_ && M_ff_r.rows() == static_cast<long>(V.size()))
       {
-        const std::complex<double> s =
-            surf_op.EvaluateScalar(g, std::complex<double>(omega, 0.0)) /
-            std::complex<double>(0.0, 1.0);
-        Ar += s * Asig_g_r[g];
+        Ar += std::complex<double>(0.5 / omega, 0.0) * M_ff_r;
       }
-    }
-    // Factored rational surface impedance, per boundary: A2_rz,b(ω) = g(iω)·M_b =
-    // i·(g(iω)/i)·M_b. Arz_b_r[b] carries M_b on the imaginary slot, so the scalar here
-    // is EvalRobinCoefficient/i (matching the synthesis convention). Closed form (two
-    // Horner evaluations per boundary), no AAA needed online.
-    const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
-    for (std::size_t b = 0; b < Arz_b_.size(); b++)
-    {
-      if (Arz_b_[b] && Arz_b_r[b].rows() == static_cast<long>(V.size()))
+      // Factored surface conductivity, per active group: A2_σ,g(ω) = (i·ω/Z_g(ω))·A_σ,g =
+      // EvaluateScalar(g,ω)·A_σ,g. Asig_g_r[g] carries A_σ,g on the imaginary slot, so the
+      // scalar here is EvaluateScalar/i to avoid double-counting the i (matching the
+      // synthesis convention in CalculateNormalizedPROMMatrices). EvaluateScalar is closed
+      // form (skin depth + optional finite-thickness correction) — a few transcendental ops
+      // per group, negligible versus the reduced solve. No AAA needed online.
+      const auto &surf_op = space_op.GetSurfaceConductivityOp();
+      for (std::size_t g = 0; g < Asig_g_.size(); g++)
       {
-        const std::complex<double> s =
-            surf_rz_op.EvalRobinCoefficient(static_cast<int>(b),
-                                            std::complex<double>(0.0, omega)) /
-            std::complex<double>(0.0, 1.0);
-        Ar += s * Arz_b_r[b];
+        if (Asig_g_[g] && Asig_g_r[g].rows() == static_cast<long>(V.size()))
+        {
+          const std::complex<double> s =
+              surf_op.EvaluateScalar(g, std::complex<double>(omega, 0.0)) /
+              std::complex<double>(0.0, 1.0);
+          Ar += s * Asig_g_r[g];
+        }
       }
-    }
-    // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
-    // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
-    // the scalar multiplier is γ₀ (real, refreshed by the Initialize(omega) at the top
-    // of SolvePROM).
-    for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
-    {
-      if (Mp_r.rows() == static_cast<long>(V.size()))
+      // Factored rational surface impedance, per boundary: A2_rz,b(ω) = g(iω)·M_b =
+      // i·(g(iω)/i)·M_b. Arz_b_r[b] carries M_b on the imaginary slot, so the scalar here
+      // is EvalRobinCoefficient/i (matching the synthesis convention). Closed form (two
+      // Horner evaluations per boundary), no AAA needed online.
+      const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
+      for (std::size_t b = 0; b < Arz_b_.size(); b++)
       {
-        const double gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
-        Ar += std::complex<double>(gamma0, 0.0) * Mp_r;
+        if (Arz_b_[b] && Arz_b_r[b].rows() == static_cast<long>(V.size()))
+        {
+          const std::complex<double> s =
+              surf_rz_op.EvalRobinCoefficient(static_cast<int>(b),
+                                              std::complex<double>(0.0, omega)) /
+              std::complex<double>(0.0, 1.0);
+          Ar += s * Arz_b_r[b];
+        }
       }
-    }
-  };
+      // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
+      // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
+      // the scalar multiplier is γ₀ (real, refreshed by the Initialize(omega) at the top
+      // of SolvePROM).
+      for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
+      {
+        if (Mp_r.rows() == static_cast<long>(V.size()))
+        {
+          const double gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
+          Ar += std::complex<double>(gamma0, 0.0) * Mp_r;
+        }
+      }
+    };
 
-  // Structural precondition for the factored path: every factored operator we hold must be
-  // sized to the current basis, and we must hold at least one (else has_other_A2 came from
-  // a BC we don't factor).
-  bool other_A2_factored = false;
-  if (has_other_A2 && other_A2_factored_ok)
-  {
-    const long n = static_cast<long>(V.size());
-    bool any_factored = false, all_present = true;
-    if (M_ff_)
+    // Structural precondition for the factored path: every factored operator we hold must
+    // be sized to the current basis, and we must hold at least one (else has_other_A2 came
+    // from a BC we don't factor).
+    bool other_A2_factored = false;
+    if (has_other_A2 && other_A2_factored_ok)
     {
-      (M_ff_r.rows() == n) ? (any_factored = true) : (all_present = false);
-    }
-    for (std::size_t g = 0; g < Asig_g_.size(); g++)
-    {
-      if (Asig_g_[g])
+      const long n = static_cast<long>(V.size());
+      bool any_factored = false, all_present = true;
+      if (M_ff_)
       {
-        (Asig_g_r[g].rows() == n) ? (any_factored = true) : (all_present = false);
+        (M_ff_r.rows() == n) ? (any_factored = true) : (all_present = false);
       }
-    }
-    for (std::size_t b = 0; b < Arz_b_.size(); b++)
-    {
-      if (Arz_b_[b])
+      for (std::size_t g = 0; g < Asig_g_.size(); g++)
       {
-        (Arz_b_r[b].rows() == n) ? (any_factored = true) : (all_present = false);
+        if (Asig_g_[g])
+        {
+          (Asig_g_r[g].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
       }
+      for (std::size_t b = 0; b < Arz_b_.size(); b++)
+      {
+        if (Arz_b_[b])
+        {
+          (Arz_b_r[b].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
+      }
+      for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
+      {
+        (Mp_r.rows() == n) ? (any_factored = true) : (all_present = false);
+      }
+      other_A2_factored = any_factored && all_present;
     }
-    for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
-    {
-      (Mp_r.rows() == n) ? (any_factored = true) : (all_present = false);
-    }
-    other_A2_factored = any_factored && all_present;
-  }
 
-  Ar.setZero();
-  if (has_other_A2 && other_A2_factored)
-  {
-    apply_factored_other_A2();
-    if (!other_A2_self_checked)
+    Ar.setZero();
+    if (has_other_A2 && other_A2_factored)
     {
-      // One-time correctness self-check: compare the factored contribution to the full HDM
-      // projection of A2_other(ω) at this frequency. Cheap (runs once per RomOperator).
-      Eigen::MatrixXcd Ar_factored = Ar;
-      Eigen::MatrixXcd Ar_hdm = Eigen::MatrixXcd::Zero(V.size(), V.size());
+      apply_factored_other_A2();
+      if (!other_A2_self_checked)
+      {
+        // One-time correctness self-check: compare the factored contribution to the full
+        // HDM projection of A2_other(ω) at this frequency. Cheap (runs once per
+        // RomOperator).
+        Eigen::MatrixXcd Ar_factored = Ar;
+        Eigen::MatrixXcd Ar_hdm = Eigen::MatrixXcd::Zero(V.size(), V.size());
+        A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
+                                                            /*include_wave_ports=*/false);
+        if (A2)
+        {
+          ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0, true);
+        }
+        const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
+        const double ref =
+            std::max(Ar_hdm.cwiseAbs().maxCoeff(), Ar_factored.cwiseAbs().maxCoeff());
+        if (ref == 0.0)
+        {
+          // Both contributions vanish at this frequency (degenerate compare, e.g. all
+          // frequency-dependent terms zero at the first sweep point): nothing learned,
+          // retry the check at the next online frequency.
+        }
+        else
+        {
+          other_A2_self_checked = true;
+          if (err / ref > 1.0e-9)
+          {
+            other_A2_factored_ok = false;
+            Ar = Ar_hdm;  // Use the trusted HDM projection for this solve.
+            Mpi::Warning(
+                "Factored online A2 (farfield ABC, surface conductivity, rational "
+                "impedance, Floquet Robin) disagrees with the full operator "
+                "(rel. err {:.3e})!\n"
+                "Reverting to the per-frequency assembled A2 for the remaining sweep. "
+                "This indicates an ω-dependent boundary condition not covered by the "
+                "factored path.\n",
+                err / ref);
+          }
+        }
+      }
+    }
+    else if (has_other_A2)
+    {
+      // Slow fallback: reassemble and reproject the full non-wave-port A2(ω) per ω.
       A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
                                                           /*include_wave_ports=*/false);
       if (A2)
       {
-        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0, true);
+        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
       }
-      const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
-      const double ref =
-          std::max(Ar_hdm.cwiseAbs().maxCoeff(), Ar_factored.cwiseAbs().maxCoeff());
-      if (ref == 0.0)
+    }
+    Ar += Kr;
+    if (C)
+    {
+      Ar += (1i * omega) * Cr;
+    }
+    Ar += (-omega * omega) * Mr;
+    // Wave-port contribution: A_wp(ω) = i·Σ_p k_{n,p}(ω)·M_{μ⁻¹,p}. GetWavePortKn re-solves
+    // the per-port cross-section EVP at this ω and refreshes the modal post-processing
+    // state used by MeasureWavePorts for S-parameters and power.
+    {
+      BlockTimer bt(Timer::WAVE_PORT);
+      for (const auto &[port_idx, Mp_r] : Mwp_p_r)
       {
-        // Both contributions vanish at this frequency (degenerate compare, e.g. all
-        // frequency-dependent terms zero at the first sweep point): nothing learned,
-        // retry the check at the next online frequency.
-      }
-      else
-      {
-        other_A2_self_checked = true;
-        if (err / ref > 1.0e-9)
+        const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
+        if (!port_data.active)
         {
-          other_A2_factored_ok = false;
-          Ar = Ar_hdm;  // Use the trusted HDM projection for this solve.
-          Mpi::Warning(
-              "Factored online A2 (farfield ABC, surface conductivity, rational "
-              "impedance, Floquet Robin) disagrees with the full operator "
-              "(rel. err {:.3e})!\n"
-              "Reverting to the per-frequency assembled A2 for the remaining sweep. "
-              "This indicates an ω-dependent boundary condition not covered by the "
-              "factored path.\n",
-              err / ref);
+          continue;
+        }
+        const double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
+        Ar += std::complex<double>(kn, 0.0) * Mp_r;
+      }
+    }
+
+    // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^T v_k) conj(V^T v_k)^T
+    // (per-frequency state refreshed by the Initialize(omega) at the top of SolvePROM).
+
+    // When k_F scales with frequency, the mode vectors v_k change (polarization rotation).
+    // Reproject onto the PROM basis V for the current frequency.
+    if (space_op.GetMaterialOp().HasFloquetFrequencyScaling())
+    {
+      MPI_Comm comm = space_op.GetComm();
+      auto dim_V = static_cast<int>(V.size());
+      for (auto &rm : floquet_reduced)
+      {
+        for (int i = 0; i < dim_V; i++)
+        {
+          double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
+          double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
+          Mpi::GlobalSum(1, &dr, comm);
+          Mpi::GlobalSum(1, &di, comm);
+          std::complex<double> vt_vi(dr, di);
+          rm.vk_V(i) = vt_vi;
+          rm.Vh_cvk(i) = std::conj(vt_vi);
         }
       }
     }
-  }
-  else if (has_other_A2)
-  {
-    // Slow fallback: reassemble and reproject the full non-wave-port A2(ω) per ω.
-    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
-                                                        /*include_wave_ports=*/false);
-    if (A2)
-    {
-      ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
-    }
-  }
-  Ar += Kr;
-  if (C)
-  {
-    Ar += (1i * omega) * Cr;
-  }
-  Ar += (-omega * omega) * Mr;
-  // Wave-port contribution: A_wp(ω) = i·Σ_p k_{n,p}(ω)·M_{μ⁻¹,p}. GetWavePortKn re-solves
-  // the per-port cross-section EVP at this ω and refreshes the modal post-processing state
-  // used by MeasureWavePorts for S-parameters and power.
-  {
-    BlockTimer bt(Timer::WAVE_PORT);
-    for (const auto &[port_idx, Mp_r] : Mwp_p_r)
-    {
-      const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
-      if (!port_data.active)
-      {
-        continue;
-      }
-      const double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
-      Ar += std::complex<double>(kn, 0.0) * Mp_r;
-    }
-  }
 
-  // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^T v_k) conj(V^T v_k)^T
-  // (per-frequency state refreshed by the Initialize(omega) at the top of SolvePROM).
-
-  // When k_F scales with frequency, the mode vectors v_k change (polarization rotation).
-  // Reproject onto the PROM basis V for the current frequency.
-  if (space_op.GetMaterialOp().HasFloquetFrequencyScaling())
-  {
-    MPI_Comm comm = space_op.GetComm();
-    auto dim_V = static_cast<int>(V.size());
-    for (auto &rm : floquet_reduced)
+    for (const auto &rm : floquet_reduced)
     {
-      for (int i = 0; i < dim_V; i++)
+      const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);
+      auto g = port.ComputeDtNCorrectionCoeff(*rm.order, rm.is_te);
+      if (g != 0.0)
       {
-        double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
-        double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
-        Mpi::GlobalSum(1, &dr, comm);
-        Mpi::GlobalSum(1, &di, comm);
-        std::complex<double> vt_vi(dr, di);
-        rm.vk_V(i) = vt_vi;
-        rm.Vh_cvk(i) = std::conj(vt_vi);
+        Ar.noalias() += g * rm.vk_V * rm.Vh_cvk.transpose();
       }
     }
-  }
-
-  for (const auto &rm : floquet_reduced)
-  {
-    const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);
-    auto g = port.ComputeDtNCorrectionCoeff(*rm.order, rm.is_te);
-    if (g != 0.0)
-    {
-      Ar.noalias() += g * rm.vk_V * rm.Vh_cvk.transpose();
-    }
+    Ar_solver.compute(Ar);
+    Ar_omega = omega;
   }
 
   if (has_RHS2)
@@ -1337,11 +1371,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // Compute PROM solution at the given frequency and expand into high-dimensional space.
   // The PROM is solved on every process so the matrix-vector product for vector expansion
   // does not require communication.
-  BlockTimer bt(Timer::SOLVE_PROM);
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
-  RHSr = Ar.fullPivHouseholderQr().solve(RHSr);
+  RHSr = Ar_solver.solve(RHSr);
   ProlongatePROMSolution(V.size(), V, RHSr, u);
 }
 

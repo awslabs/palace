@@ -90,7 +90,9 @@ private:
   std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
 
-  // Boundary mode eigenvalue problem solver.
+  // Boundary mode eigenvalue problem solver. Keep a per-port owned solver configuration
+  // because ModeEigenSolver stores it by reference for its full lifetime.
+  config::LinearSolverData port_linear;
   std::unique_ptr<ModeEigenSolver> mode_solver;
   ComplexVector v0, e0;
 
@@ -147,6 +149,15 @@ public:
   const auto &GetAttrList() const { return attr_list; }
 
   void Initialize(double omega);
+
+  // Configure exact offline snapshot collection before any adaptive HDM or synthesis
+  // reference solve, then enable guarded reduced evaluation after offline training.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
+  void EnableReducedModel(double adaptive_tol);
+  ModeEigenSolver::ReducedModelStats GetReducedModelStats() const;
+  std::size_t GetReducedBasisSize() const;
+  double GetReducedTolerance() const;
 
   // Compute the sign of the modal E-field projected on the (high → low) direction
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
@@ -240,6 +251,20 @@ public:
 
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
+
+  // Prepare all frequency-dependent modal state once before evaluating multiple
+  // excitations at the same frequency.
+  void PrepareFrequency(double omega) { Initialize(omega); }
+
+  // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
+  // is a checked upper bound on possible exact mode snapshots and storage remains lazy.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
+
+  // Switch all trained port models to guarded reduced evaluation. Called only after the
+  // adaptive 3D offline phase so HDM snapshots always use exact port modes.
+  void EnableReducedModel(double adaptive_tol);
+  void PrintReducedModelStats() const;
 
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;
