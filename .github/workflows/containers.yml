@@ -1,9 +1,9 @@
 name: Backfill Release Containers
 
-# THROWAWAY one-shot workflow to backfill container images for ALREADY-RELEASED
-# Palace versions into the internal ECR repo + S3 bucket. Unlike containers.yml
-# (which builds the develop source tree), this builds `palace@<version>` from the
-# spack recipe's pinned release commit, so it can reproduce old releases.
+# THROWAWAY one-shot workflow to backfill generic container images for
+# ALREADY-RELEASED Palace versions into the internal ECR repo + S3 bucket.
+# Unlike containers.yml (which builds the develop source tree), this builds
+# `palace@<version>` from the spack recipe's pinned release commit.
 #
 # Deliberately self-contained: it does NOT reuse .github/actions/build-container
 # (whose example-test step runs TODAY's examples against the OLD binary and would
@@ -37,14 +37,51 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Backfilling ONLY neoverse_v2 (Graviton4 / c8g). The neoverse_v1 and
-        # sapphirerapids images for these versions are already published.
-        arch: [arm64-8g]
-    runs-on: [self-hosted, '${{ matrix.arch }}']
+        include:
+          - {runner: x64, target: x86_64_v3}
+          - {runner: arm64-8g, target: aarch64}
+    runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       - uses: actions/checkout@v6
 
+      - name: Check destination state
+        id: destination
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          ARCH_LABEL: ${{ matrix.target }}
+        run: |
+          S3_KEY="${VERSION}/${ARCH_LABEL}.sif"
+          ECR_TAG="${VERSION}-${ARCH_LABEL}"
+
+          s3_exists=false
+          if aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$S3_BUCKET" \
+            --key "$S3_KEY" >/dev/null 2>&1; then
+            s3_exists=true
+          fi
+
+          ecr_exists=false
+          if aws ecr describe-images \
+            --region "$AWS_REGION" \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=${ECR_TAG}" >/dev/null 2>&1; then
+            ecr_exists=true
+          fi
+
+          if [[ "$s3_exists" == true && "$ecr_exists" == true ]]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "${VERSION}/${ARCH_LABEL} is already fully published; skipping."
+          elif [[ "$s3_exists" == true || "$ecr_exists" == true ]]; then
+            echo "::error::Partial destination state for ${VERSION}/${ARCH_LABEL}: S3=${s3_exists}, ECR=${ecr_exists}"
+            exit 1
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup environment
+        if: steps.destination.outputs.build == 'true'
         uses: ./.github/actions/setup-runner
         with:
           spack-version: 'develop'
@@ -53,6 +90,7 @@ jobs:
           setup-intel: 'false'
 
       - name: Install Podman
+        if: steps.destination.outputs.build == 'true'
         shell: bash
         run: |
           sudo add-apt-repository -y ppa:apptainer/ppa
@@ -61,9 +99,11 @@ jobs:
           echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
 
       - name: Pin spack env to the requested release
+        if: steps.destination.outputs.build == 'true'
         shell: bash
         env:
           VERSION: ${{ github.event.inputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
           SPACK_YAML=.github/actions/build-container/spack_env/spack.yaml
 
@@ -83,16 +123,21 @@ jobs:
           open(p, "w").write(text)
           PY
 
+          spack -e .github/actions/build-container/spack_env \
+            config add "packages:all:target:[${TARGET}]"
+
           echo "=== resulting spec block ==="
           grep -nE "palace@|develop:|path:" "$SPACK_YAML" || true
+          spack -e .github/actions/build-container/spack_env config get packages
 
       - name: Compute names
+        if: steps.destination.outputs.build == 'true'
         id: name
         shell: bash
         env:
           VERSION: ${{ github.event.inputs.version }}
+          ARCH_LABEL: ${{ matrix.target }}
         run: |
-          ARCH_LABEL=$(spack arch -t)
           IMAGE_NAME="palace-${ARCH_LABEL}-${VERSION}"
           echo "arch_label=${ARCH_LABEL}" >> "$GITHUB_OUTPUT"
           echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
@@ -100,11 +145,13 @@ jobs:
           echo "Image name: ${IMAGE_NAME}"
 
       - name: Generate Dockerfile
+        if: steps.destination.outputs.build == 'true'
         shell: bash
         run: |
           cd .github/actions/build-container/spack_env && spack -e . containerize > "$GITHUB_WORKSPACE/Dockerfile"
 
       - name: Build OCI image
+        if: steps.destination.outputs.build == 'true'
         shell: bash
         run: |
           sudo podman build --format docker \
@@ -113,6 +160,7 @@ jobs:
             -t ${{ steps.name.outputs.image_name }} .
 
       - name: Save and convert to SIF
+        if: steps.destination.outputs.build == 'true'
         shell: bash
         run: |
           sudo podman save ${{ steps.name.outputs.image_name }}:latest -o ${{ steps.name.outputs.image_name }}.tar
@@ -121,6 +169,7 @@ jobs:
           sudo chmod a+r ${{ steps.name.outputs.image_name }}.sif
 
       - name: Push OCI image to ECR
+        if: steps.destination.outputs.build == 'true'
         # Auth is ambient via the runner's EC2 instance role.
         shell: bash
         env:
@@ -133,6 +182,14 @@ jobs:
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           REMOTE_TAG="${REGISTRY}/${ECR_REPOSITORY}:${VERSION}-${ARCH_LABEL}"
 
+          if aws ecr describe-images \
+            --region "$AWS_REGION" \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=${VERSION}-${ARCH_LABEL}" >/dev/null 2>&1; then
+            echo "::error::Refusing to overwrite existing ECR tag ${VERSION}-${ARCH_LABEL}"
+            exit 1
+          fi
+
           aws ecr get-login-password --region "$AWS_REGION" \
             | sudo podman login --username AWS --password-stdin "$REGISTRY"
           sudo podman tag "${IMAGE_NAME}:latest" "$REMOTE_TAG"
@@ -140,12 +197,34 @@ jobs:
           echo "Pushed image to ${REMOTE_TAG}"
 
       - name: Upload SIF to S3
+        if: steps.destination.outputs.build == 'true'
         shell: bash
         env:
           VERSION: ${{ github.event.inputs.version }}
           ARCH_LABEL: ${{ steps.name.outputs.arch_label }}
           IMAGE_NAME: ${{ steps.name.outputs.image_name }}
         run: |
-          S3_KEY="s3://${S3_BUCKET}/${VERSION}/${ARCH_LABEL}.sif"
-          aws s3 cp --region "$AWS_REGION" "${IMAGE_NAME}.sif" "$S3_KEY"
-          echo "Uploaded SIF to ${S3_KEY}"
+          S3_KEY="${VERSION}/${ARCH_LABEL}.sif"
+          aws s3api put-object \
+            --region "$AWS_REGION" \
+            --bucket "$S3_BUCKET" \
+            --key "$S3_KEY" \
+            --body "${IMAGE_NAME}.sif" \
+            --if-none-match '*'
+          echo "Uploaded SIF to s3://${S3_BUCKET}/${S3_KEY}"
+
+      - name: Verify published artifacts
+        if: steps.destination.outputs.build == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          ARCH_LABEL: ${{ steps.name.outputs.arch_label }}
+        run: |
+          aws ecr describe-images \
+            --region "$AWS_REGION" \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=${VERSION}-${ARCH_LABEL}" >/dev/null
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$S3_BUCKET" \
+            --key "${VERSION}/${ARCH_LABEL}.sif" >/dev/null
