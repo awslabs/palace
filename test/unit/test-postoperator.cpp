@@ -1,9 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <fstream>
+#include <iterator>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -600,9 +602,28 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
         B(space_op.GetRTSpace().GetTrueVSize());
     E = 0.0;
     B = 0.0;
-    post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
+    constexpr int num_conv = 3;
+    for (int i = 0; i < num_conv; i++)
+    {
+      post_op.MeasureAndPrintAll(i, E, B, 1.0 + i, 0.0, 0.0, num_conv);
+    }
     check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
                 {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
+
+    // Every converged mode is reported, while Save = 1 limits field data to the first
+    // requested mode.
+    std::ifstream eig_csv(fs::path(iodata.problem.output) / "eig.csv");
+    REQUIRE(eig_csv.good());
+    const int num_lines = static_cast<int>(std::count(
+        std::istreambuf_iterator<char>(eig_csv), std::istreambuf_iterator<char>(), '\n'));
+    CHECK(num_lines == num_conv + 1);  // Header plus one row per converged mode.
+    for (int rank = 0; rank < size; rank++)
+    {
+      auto extra_field =
+          fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" /
+          fmt::format("E_real_{:0{}d}.gf.{:0{}d}", 2, pad_digits, rank, pad_digits);
+      CHECK_FALSE(fs::exists(extra_field));
+    }
   }
 }
 
