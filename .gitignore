@@ -4,7 +4,6 @@ examples/**/log*/
 test/data/regression/input/**/postpro/
 test/data/regression/input/**/log/
 spack_repo/local/packages/palace/__pycache__/
-test/examples/ref/**/*.json
 .*.swp
 *.sif
 .DS_Store
