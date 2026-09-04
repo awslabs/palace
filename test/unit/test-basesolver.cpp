@@ -305,8 +305,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh::RebalanceMesh(iodata, parallel_mesh);
 
   // RebalanceMesh gzip-compresses the saved mesh (".meshgz") when MFEM is built with zlib,
-  // and writes it uncompressed (".mesh") otherwise; the archived bytes match the write either
-  // way, so this test is agnostic to which path ran.
+  // and writes it uncompressed (".mesh") otherwise; the archived bytes match the write
+  // either way, so this test is agnostic to which path ran.
 #if defined(MFEM_USE_ZLIB)
   const std::string saved_mesh = "model.meshgz";
 #else
@@ -331,6 +331,54 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_FALSE(fs::is_symlink(mesh_file));
   CHECK(ReadFile(mesh_file) != first_mesh);
   CHECK(ReadFile(temp_dir / "iteration1" / saved_mesh) == first_mesh);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Mesh loader reads a gzip-compressed mesh (.meshgz round-trip)",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto serial_mesh = SingleTetMesh();
+
+  // Write the same mesh two ways: gzip-compressed (the form SaveAdaptMesh emits under
+  // MFEM_USE_ZLIB) and uncompressed. Loading the compressed mesh must yield the same
+  // topology as the uncompressed one; before LoadMesh read through named_ifgzstream, a
+  // ".meshgz" aborted with "Unknown input mesh format" (the reader saw raw gzip bytes).
+  const auto gz_path = temp_dir / "mesh.meshgz";
+  const auto plain_path = temp_dir / "mesh.mesh";
+  {
+    mfem::ofgzstream os(gz_path.string(), /*compression=*/true);
+    serial_mesh.Print(os);
+  }
+  {
+    std::ofstream os(plain_path);
+    serial_mesh.Print(os);
+  }
+
+  Units units(1.0, 1.0);
+  auto load = [&](const fs::path &p)
+  {
+    IoData iodata(units);
+    iodata.model.mesh = p.string();
+    return mesh::Load(iodata, comm);
+  };
+  auto gz = load(gz_path);
+  auto plain = load(plain_path);
+  REQUIRE(gz);
+  REQUIRE(plain);
+  CHECK(gz->Dimension() == plain->Dimension());
+  CHECK(gz->GetNE() == plain->GetNE());
+  CHECK(gz->GetNV() == plain->GetNV());
+
+#if defined(MFEM_USE_ZLIB)
+  // Confirm the ".meshgz" really is gzip (magic bytes 0x1f 0x8b), so the load above
+  // exercised decompression rather than a silently-uncompressed file.
+  std::ifstream raw(gz_path, std::ios::binary);
+  unsigned char magic[2] = {0, 0};
+  raw.read(reinterpret_cast<char *>(magic), 2);
+  CHECK(magic[0] == 0x1f);
+  CHECK(magic[1] == 0x8b);
+#endif
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

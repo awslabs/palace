@@ -2178,8 +2178,11 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   }
   else
   {
-    // Otherwise, just rely on MFEM load the mesh.
-    std::ifstream fi(mesh_file);
+    // Otherwise, just rely on MFEM to load the mesh. Use named_ifgzstream (as MFEM's own
+    // Mesh::LoadFromFile does) so a gzip-compressed mesh, such as a ".meshgz" saved-adapt
+    // mesh, is transparently decompressed when MFEM is built with zlib; it detects gzip
+    // from the file's magic bytes, so a plain-text mesh reads through unchanged.
+    mfem::named_ifgzstream fi(mesh_file);
     if (!fi.good())
     {
       MFEM_ABORT("Unable to open mesh file \"" << mesh_file << "\"!");
