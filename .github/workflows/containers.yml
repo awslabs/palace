@@ -168,8 +168,26 @@ jobs:
           sudo apptainer build ${{ steps.name.outputs.image_name }}.sif docker-archive://${{ steps.name.outputs.image_name }}.tar
           sudo chmod a+r ${{ steps.name.outputs.image_name }}.sif
 
+      - name: Upload OCI archive
+        if: steps.destination.outputs.build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.name.outputs.image_name }}-oci
+          path: ${{ steps.name.outputs.image_name }}.tar
+          retention-days: 7
+
+      - name: Upload SIF image
+        if: steps.destination.outputs.build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.name.outputs.image_name }}-sif
+          path: ${{ steps.name.outputs.image_name }}.sif
+          retention-days: 7
+          compression-level: 0
+
       - name: Push OCI image to ECR
         if: steps.destination.outputs.build == 'true'
+        continue-on-error: true
         # Auth is ambient via the runner's EC2 instance role.
         shell: bash
         env:
@@ -198,6 +216,7 @@ jobs:
 
       - name: Upload SIF to S3
         if: steps.destination.outputs.build == 'true'
+        continue-on-error: true
         shell: bash
         env:
           VERSION: ${{ github.event.inputs.version }}
