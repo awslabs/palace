@@ -20,6 +20,37 @@
 namespace palace
 {
 
+namespace
+{
+
+// ±1 aligning the boundary-face normal with the flux loop direction. A hole aperture is an
+// *internal* surface, whose face orientations the mesh need not make consistent (EnsureNCMesh
+// scrambles them, and some generators emit them mixed), which would otherwise make c measure
+// only part of the aperture. Matches ComputeFluxThroughSurface's DIRECTION_BASED convention.
+class FluxOrientationCoefficient : public mfem::Coefficient
+{
+private:
+  const mfem::Vector dir;
+  mutable mfem::Vector nor;
+
+public:
+  FluxOrientationCoefficient(const std::vector<double> &d, int sdim)
+    : dir(const_cast<double *>(d.data()), sdim), nor(sdim)
+  {
+    MFEM_VERIFY(static_cast<int>(d.size()) >= sdim,
+                "London flux loop direction must have " << sdim << " components!");
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    T.SetIntPoint(&ip);
+    mfem::CalcOrtho(T.Jacobian(), nor);
+    return (nor * dir < 0.0) ? -1.0 : 1.0;
+  }
+};
+
+}  // namespace
+
 CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
                                    const config::SolverData &solver,
                                    const std::vector<config::MaterialData> &materials,
@@ -221,9 +252,9 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
                                static_cast<int>(data.hole_attributes.size()));
     auto hole_marker = mesh::BdrAttrToMarker(pmesh, hole_attr, true);
 
-    mfem::ConstantCoefficient one(1.0);
+    FluxOrientationCoefficient sgn(data.direction, pmesh.SpaceDimension());
     mfem::LinearForm lf(&curl_fespace.Get());
-    lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one), hole_marker);
+    lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(sgn), hole_marker);
     lf.UseFastAssembly(false);
     lf.UseDevice(false);
     lf.Assemble();
