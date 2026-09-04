@@ -96,9 +96,13 @@ of the driven solver as well as the following additional files:
     projected $\bm{n}\times\bm{H}$ vector (aux rows are zero). The S-parameters follow as $\bm{S}(\omega)
     = \bm{H}(\omega)\,\bm{Y}_{\mathrm{syn}}(\omega)^{-1}\,\bm{G}(\omega) - \bm{I}$. `rom-coupled-G.csv`
     and `rom-coupled-H.csv` tabulate $\bm{G}$ and $\bm{H}$ over the sweep grid (columns keyed by node
-    label and port); `rom-coupled-S.csv` is the resulting $\bm{S}$. For a fixed-coupling port
-    ($E_n = 0$, so $\bm{W}=0$ and the coupling is frequency-independent) this reduces to the
-    terminal-only $Y_{\mathrm{ref}}$ de-embedding.
+    label and port); `rom-coupled-S.csv` is the resulting $\bm{S}$. To reconstruct $\bm{S}$ at a swept
+    frequency $\omega$: (1) assemble $\bm{Y}_{\mathrm{syn}}(\omega) = \widehat{\bm{L}}^{-1}/s +
+    \widehat{\bm{R}}^{-1} + s\,\widehat{\bm{C}}$ with $s = i\omega$ from the exported pencil; (2) solve
+    $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} = \bm{G}(\omega)$ for the state (columns of $\bm{G}$ are the
+    per-port incident excitations); (3) form $\bm{S}(\omega) = \bm{H}(\omega)\,\bm{y} - \bm{I}$. For a
+    fixed-coupling port ($E_n = 0$, so $\bm{W}=0$ and the coupling is frequency-independent) this
+    reduces to the terminal-only $Y_{\mathrm{ref}}$ de-embedding.
   - (Optional, for cascading): `rom-portload-<label>-{Linv,Rinv,C}-{re,im}.csv`. One set of files per
     included port, with the same node labels and dimensions as the total `rom-*` matrices. The label
     is `port_<idx>_re` (lumped) or `waveport_<idx>_re` (wave). Each set isolates that single port's

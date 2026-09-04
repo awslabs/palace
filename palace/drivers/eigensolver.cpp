@@ -173,6 +173,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   nonlinear_type = NonlinearEigenSolver::HYBRID;
 #endif
+  // SLP is only realized through SLEPc's NEP path; ARPACK has no SLP solver, so fall back
+  // to Hybrid rather than hit the SLP-only API below with an ARPACK solver.
+  if (type == EigenSolverBackend::ARPACK && nonlinear_type == NonlinearEigenSolver::SLP)
+  {
+    Mpi::Warning("SLP nonlinear eigensolver requires the SLEPc backend, using Hybrid with "
+                 "ARPACK!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (type == EigenSolverBackend::ARPACK)
   {
 #if defined(PALACE_WITH_ARPACK)
