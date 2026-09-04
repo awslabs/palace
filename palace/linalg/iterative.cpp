@@ -304,26 +304,6 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
   }
 }
 
-template <typename VecType, typename ScalarType>
-inline void OrthogonalizeIteration(Orthogonalization type, MPI_Comm comm,
-                                   const std::vector<VecType> &V, VecType &w,
-                                   ScalarType *Hj, std::size_t j)
-{
-  // Orthogonalize w against the leading j + 1 columns of V.
-  switch (type)
-  {
-    case Orthogonalization::MGS:
-      linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
-      break;
-    case Orthogonalization::CGS:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
-      break;
-    case Orthogonalization::CGS2:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
-      break;
-  }
-}
-
 }  // namespace
 
 template <typename OperType>
@@ -627,7 +607,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      OrthogonalizeIteration(gs_orthog, comm, V, w, Hj, j);
+      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
       Hj[j + 1] = linalg::Norml2(comm, w);
       w *= 1.0 / Hj[j + 1];
 
@@ -806,7 +786,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      OrthogonalizeIteration(gs_orthog, comm, V, w, Hj, j);
+      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
       Hj[j + 1] = linalg::Norml2(comm, w);
       w *= 1.0 / Hj[j + 1];
 

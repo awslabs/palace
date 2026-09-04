@@ -187,27 +187,6 @@ inline std::complex<double> EvaluatePolyPlusPoles(std::complex<double> a0,
   return val;
 }
 
-template <typename VecType, typename ScalarType,
-          typename InnerProductW = linalg::IdentityInnerProduct>
-inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
-                                const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
-                                std::size_t j, const InnerProductW &dot_op = {})
-{
-  // Orthogonalize w against the leading j columns of V.
-  switch (type)
-  {
-    case Orthogonalization::MGS:
-      linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j, dot_op);
-      break;
-    case Orthogonalization::CGS:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, false, dot_op);
-      break;
-    case Orthogonalization::CGS2:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true, dot_op);
-      break;
-  }
-}
-
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                const ComplexOperator &A, Eigen::MatrixXcd &Ar,
                                ComplexVector &r, int n0, bool symmetric)
@@ -356,7 +335,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
   }
-  OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
+  linalg::OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
   dim_Q++;
@@ -910,7 +889,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     {
       auto pre_norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
       pre_norm = std::sqrt(std::abs(pre_norm_sq));
-      OrthogonalizeColumn(
+      linalg::OrthogonalizeColumn(
           orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
           [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
           { return W.InnerProduct(x, y, r.Real()); });
@@ -920,8 +899,8 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     else
     {
       pre_norm = linalg::Norml2(space_op.GetComm(), v);
-      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
-                          dim_V);
+      linalg::OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v,
+                                  orth_R.col(dim_V).data(), dim_V);
       orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
     }
 
