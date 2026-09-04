@@ -22,8 +22,11 @@ namespace palace::test
 
 // Callback signature for per-file custom checks. Tables are passed by
 // non-const reference because palace::Table's indexing operators are
-// non-const; the data itself is never mutated through them.
-using CustomCheck = std::function<void(Table &actual, Table &reference)>;
+// non-const; the data itself is never mutated through them. The third argument
+// is the absolute path of the live output CSV, so checks that need sibling
+// files (e.g. the synthesized pencil matrices) can load them from its parent.
+using CustomCheck =
+    std::function<void(Table &actual, Table &reference, const std::filesystem::path &)>;
 
 // How a regression case consumes the global CLI solver override.
 enum class SolverOverridePolicy
@@ -55,6 +58,10 @@ struct RegressionOptions
   // matrices (rom-Linv/Rinv/C), whose dimensions follow the adaptive sample count and
   // whose entries depend on the orthogonalized basis.
   std::vector<std::string> excluded_files;
+  // Path substrings for large solver outputs no check consumes (e.g. the multi-MB iris
+  // rom-Linv/Rinv/C pencil matrices): not stored in the reference tree, so they are dropped
+  // from the file-presence check, not just the comparison.
+  std::vector<std::string> unstored_files;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Compare at most this many leading rows. If unset for an Eigenmode case,

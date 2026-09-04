@@ -589,4 +589,103 @@ TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance]
   }
 }
 
+// A mu tensor with off-diagonal terms coupling the propagation axis to the transverse
+// plane makes the fundamental mode acquire a longitudinal E_n != 0. The full n×H
+// reconstruction applies the dense mu^-1 tensor and keeps the i∇ₜEₙ term, so its modal
+// reaction R = sᵀe differs from the scalar-admittance reaction (∇ₜEₙ dropped); with
+// isotropic mu the TE10 mode has E_n = 0 and the two agree. Pins the tensor mu^-1 path.
+TEST_CASE("WavePort rotated-mu reconstruction", "[waveportimpedance][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+  const double f_GHz = 20.0;
+
+  auto reactions = [&](const std::array<double, 3> &mu_s,
+                       const std::array<std::array<double, 3>, 3> &mu_v)
+      -> std::pair<std::complex<double>, std::complex<double>>
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(4, 14, 8, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+    Units units(1.0, 1.0);
+    IoData iodata(units);
+    iodata.model.L0 = 1.0;
+    iodata.model.Lc = 1.0;
+
+    auto &material = iodata.domains.materials.emplace_back();
+    material.attributes = {1};
+    material.epsilon_r.s = {1.0, 1.0, 1.0};
+    material.mu_r.s = mu_s;
+    material.mu_r.v = mu_v;
+
+    iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+    auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+    wave.attributes = {5};
+    wave.mode_idx = 1;
+    wave.excitation = 0;
+    wave.active = true;
+    wave.eig_tol = 1.0e-9;
+    wave.ksp_tol = 1.0e-9;
+    wave.ksp_max_its = 200;
+    wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+
+    iodata.solver.order = 2;
+    iodata.solver.linear.tol = 1.0e-9;
+    iodata.solver.linear.max_it = 200;
+    iodata.problem.type = ProblemType::DRIVEN;
+
+    iodata.NondimensionalizeInputs(serial_mesh);
+    auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    iodata.CheckConfiguration();
+    Mesh palace_mesh(std::move(par_mesh));
+
+    auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
+    FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
+    MaterialOperator mat_op(iodata, palace_mesh);
+
+    ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
+                                         h1_fespace.Get());
+    wave_port_op.SetSuppressOutput(true);
+    const double omega =
+        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    wave_port_op.Initialize(omega);
+    const auto &port = wave_port_op.GetPort(1);
+    return {port.modal_reaction, port.modal_reaction_scalar};
+  };
+
+  // Identity principal axes (diagonal mu in the global frame).
+  const std::array<std::array<double, 3>, 3> axes_id = {
+      {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  // Generic full-precision orthonormal frame (Euler ZYX 37deg, 24deg, 51deg): all
+  // off-diagonals of the resulting mu tensor are nonzero, coupling the propagation axis to
+  // the transverse plane.
+  const std::array<std::array<double, 3>, 3> axes_rot = {
+      {{0.7295898425157861, 0.5497853807416304, -0.4067366430758002},
+       {-0.1262907808070951, 0.6928275726704907, 0.7099581630143076},
+       {0.6721229801018, -0.4666111761095059, 0.5749127846454443}}};
+
+  // Isotropic baseline: TE10 has E_n = 0, so the gradient term is absent and the full modal
+  // reaction agrees with the scalar one to machine precision.
+  const auto [R_iso, R_iso_scalar] = reactions({1.0, 1.0, 1.0}, axes_id);
+  CAPTURE(R_iso, R_iso_scalar);
+  CHECK(std::abs(R_iso) > 1.0e-8);
+  CHECK_THAT(std::abs(R_iso - R_iso_scalar), WithinAbs(0.0, 1.0e-9 * std::abs(R_iso)));
+
+  // Rotated mu: the induced E_n != 0 makes the reconstruction's i∇ₜEₙ term contribute, so
+  // the full and scalar reactions differ well above the isotropic floor; both stay finite
+  // and nonzero.
+  const auto [R_rot, R_rot_scalar] = reactions({1.0, 3.0, 6.0}, axes_rot);
+  CAPTURE(R_rot, R_rot_scalar);
+  CHECK(std::isfinite(R_rot.real()));
+  CHECK(std::isfinite(R_rot.imag()));
+  CHECK(std::abs(R_rot) > 1.0e-8);
+  CHECK(std::abs(R_rot_scalar) > 1.0e-8);
+  CHECK(std::abs(R_rot - R_rot_scalar) > 1.0e-4 * std::abs(R_rot));
+}
+
 }  // namespace palace

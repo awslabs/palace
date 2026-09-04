@@ -68,7 +68,29 @@ public:
   double omega0;
   mfem::Vector port_normal;
 
+  // Unconjugated modal reactions R = ∫_Γ (n×H_mode)·E_mode = sᵀe, recomputed each
+  // Initialize(). Scale the rank-1 terms of the modal correction W_full − W_scalar added to
+  // the local boundary mass: W = (−iω/R) s sᵀ. `modal_reaction` uses the full modal n×H
+  // (incl. ∇ₜEₙ); `modal_reaction_scalar` uses the scalar-admittance n×H (i·k_n·E_t only),
+  // matching the local mass. Both zero until the first Initialize().
+  std::complex<double> modal_reaction = 0.0;
+  std::complex<double> modal_reaction_scalar = 0.0;
+
 private:
+  // Raw-gauge reference reactions of the frozen e0 at ω0, cached for
+  // ComputeComplexReactions to transport reactions into the ω0 gauge. Recomputed when
+  // omega0 changes.
+  std::complex<double> R_full_ref = 0.0, R_scalar_ref = 0.0;
+  double ref_reaction_omega0 = -1.0;
+
+  // Mode field recomputed at the last ComputeComplexReactions(ω), with the (kₙ, ω) of that
+  // solve. Used to assemble the full-mode modal-correction shape vectors s_full/s_scalar at
+  // ω (eigenmode path), so the correction tracks the true mode shape instead of freezing it
+  // at ω0. Populated only on port ranks. W = (−iω/R) s sᵀ is invariant to the mode's
+  // arbitrary EVP scale/phase, so no gauge-lock is needed for these.
+  std::unique_ptr<GridFunction> port_Et_omega, port_En_omega;
+  std::complex<double> kn_recompute = 0.0, omega_recompute = 0.0;
+
   // List of all boundary attributes making up this port boundary.
   mfem::Array<int> attr_list;
 
@@ -93,6 +115,21 @@ private:
   // Boundary mode eigenvalue problem solver.
   std::unique_ptr<ModeEigenSolver> mode_solver;
   ComplexVector v0, e0;
+
+  // Cache of the last complex-ω EVP solve, so kₙ (SolveKnComplex) and the reactions
+  // (ComputeComplexReactions) at the same ω share one solve on the same eigenbranch. Keyed
+  // by exact ω; the solve is independent of the ω0 reference. e is port-ranks only.
+  struct ModeSolveCache
+  {
+    bool valid = false;
+    std::complex<double> omega = 0.0;
+    std::complex<double> kn = 0.0;
+    ComplexVector e;
+  };
+  ModeSolveCache mode_cache;
+
+  // Solve the cross-section modal EVP at complex ω once and cache (kₙ, eigenvector).
+  const ModeSolveCache &EvalModeSolve(std::complex<double> omega);
 
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;
@@ -148,6 +185,12 @@ public:
 
   void Initialize(double omega);
 
+  // Tighten the cross-section EVP tolerances for wave-port circuit synthesis, so kₙ(ω) and
+  // M(ω) are not sampled below the port-mode accuracy floor (which would make the synthesis
+  // fit—and the eigenvalues derived from it—depend on the MPI partition). Invalidates the
+  // cached real-ω solve so the next Initialize re-solves at the new tolerance.
+  void SetSynthesisEigTol(double eig_tol, double ksp_tol);
+
   // Compute the sign of the modal E-field projected on the (high → low) direction
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
   // first, ground terminal second). Returns +1, -1, or 0 if attributes were not
@@ -166,11 +209,40 @@ public:
   // loss), whereas GetWavePortKn truncates to the real part.
   std::complex<double> SolveKnComplex(std::complex<double> omega);
 
+  // kₙ(ω) with the TRUE unconjugated modal reactions R_full(ω), R_scalar(ω) of the mode
+  // recomputed at complex ω, phase/scale-locked to the frozen ω0 reference. Pole-free (the
+  // reaction has no spurious zero away from ω0) unlike freezing the reaction shape. Does
+  // not disturb the cached reference; MPI-collective. Reduces to (kn0, modal_reaction,
+  // modal_reaction_scalar) at ω=ω0.
+  struct ComplexReactions
+  {
+    // kₙ(ω), the unit-power transported reactions R_full/R_scalar (paired with the frozen
+    // ω0-shape pencil in the synthesis path), and the raw recomputed-field reactions
+    // R_*_raw (paired with the recomputed shape vectors in the eigenmode modal correction,
+    // where the mode's arbitrary EVP scale/phase cancels in W = (−iω/R) s sᵀ).
+    std::complex<double> kn, R_full, R_scalar, R_full_raw, R_scalar_raw;
+  };
+  ComplexReactions ComputeComplexReactions(std::complex<double> omega);
+
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
-  std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientReal() const;
-  std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientImag() const;
+  // Modal n×H coefficient used to inject the excitation and to assemble the wave-port LHS
+  // operator. With include_gradient=false the ∇ₜEₙ longitudinal-gradient term is dropped
+  // (scalar-admittance n×H), matching the sparse local boundary mass; used to build
+  // W_scalar.
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetModeExcitationCoefficientReal(bool include_gradient = true) const;
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetModeExcitationCoefficientImag(bool include_gradient = true) const;
+
+  // As GetModeExcitationCoefficient* but from the mode recomputed at ω by the last
+  // ComputeComplexReactions (port_Et_omega/port_En_omega at kₙ(ω), ω).
+  // Full-mode modal correction for the eigenmode path.
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetOmegaModeExcitationCoefficientReal(bool include_gradient = true) const;
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetOmegaModeExcitationCoefficientImag(bool include_gradient = true) const;
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientReal(double scaling = 1.0) const;
@@ -241,6 +313,21 @@ public:
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
 
+  // Tighten every port's cross-section EVP tolerances for wave-port circuit synthesis. See
+  // WavePortData::SetSynthesisEigTol. A no-op when there are no wave ports.
+  void SetSynthesisEigTol(double eig_tol, double ksp_tol)
+  {
+    for (auto &[idx, data] : ports)
+    {
+      data.SetSynthesisEigTol(eig_tol, ksp_tol);
+    }
+  }
+
+  // Freeze the per-port modal reference state (mode field, k_n0, reactions) at a real
+  // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
+  // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
+  void InitializeModalReference(double omega) { Initialize(omega); }
+
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;
 
@@ -290,6 +377,90 @@ public:
   // excited port boundaries.
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
+
+  // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
+  // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k
+  // (Vᵀs_k)(Vᵀs_k)ᵀ directly instead of applying the matrix-free operator. `s` lives on the
+  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`.
+  struct ModalCorrectionTerm
+  {
+    std::unique_ptr<ComplexVector> s;
+    std::complex<double> g;
+  };
+
+  // Assemble the rank-1 terms of the modal correction W = Σ_ports (W_full − W_scalar) over
+  // the active wave ports (see GetModalCorrectionOperator for the physics). Triggers
+  // Initialize(ω). Returns an empty vector if no active wave port contributes.
+  std::vector<ModalCorrectionTerm>
+  GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_fespace,
+                          const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Assemble the normalized full n×H mode vector used by both driven excitation and
+  // S-parameter observation for one active port at a real frequency.
+  std::unique_ptr<ComplexVector>
+  GetModeExcitationVector(int port_idx, double omega, FiniteElementSpace &nd_fespace,
+                          const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Complex-ω overload for the eigenmode / synthesis path. n×H is linear in kₙ, so the
+  // ω-dependence is carried by kₙ(ω)=SolveKnComplex(ω) while the mode-shape vectors stay
+  // frozen at the last Initialize(ω0); reduces exactly to the real-ω terms at ω=ω0. Does
+  // not call Initialize — the caller must Initialize(target) once beforehand.
+  std::vector<ModalCorrectionTerm>
+  GetModalCorrectionTerms(std::complex<double> omega, FiniteElementSpace &nd_fespace,
+                          const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Build the modal-correction wave-port operator W = Σ_ports (W_full − W_scalar) added to
+  // the sparse local boundary mass i·k_n·M in the applied driven/HDM system operator. Per
+  // active port W_full = (−iω/R) s_full s_fullᵀ uses the full modal n×H (incl. ∇ₜEₙ) and
+  // W_scalar the scalar-admittance n×H that reproduces the local mass's modal action; their
+  // difference supplies only the ∇ₜEₙ term the sparse mass drops, restoring S-parameter
+  // unitarity/reciprocity for reactive-impedance and TM (E_z≠0) modes while leaving TEM
+  // modes (E_n≈0, where s_full=s_scalar) exactly at baseline. Complex-symmetric
+  // (unconjugated s sᵀ). Triggers Initialize(ω). s is assembled on nd_fespace true-dofs
+  // with the essential dofs in nd_dbc_tdof_list eliminated; returns nullptr if no active
+  // wave port contributes.
+  std::unique_ptr<ComplexOperator>
+  GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
+                             const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Complex-ω overload (see the complex GetModalCorrectionTerms). Caller must
+  // Initialize(target) once beforehand.
+  std::unique_ptr<ComplexOperator>
+  GetModalCorrectionOperator(std::complex<double> omega, FiniteElementSpace &nd_fespace,
+                             const mfem::Array<int> &nd_dbc_tdof_list);
+
+  // Circuit-synthesis form of W. Rather than freeze the mode shape at ω_ref (a fixed rank-2
+  // span cannot track the mode-shape rotation across the band), synthesis samples the
+  // recomputed n×H vectors at several ω, builds an orthonormal modal subspace Q, and fits
+  // the small complex-symmetric matrix M(ω) with Wᵣ(ω)=Q·M(ω)·Qᵀ.
+  // GetModalCorrectionSynthesis Ports enumerates the active ports (skipping TE/TEM modes
+  // where Eₙ≈0), and SampleModalCorrectionVectors returns, at a complex ω, the two
+  // recomputed rank-1 vectors and scalars of one port — the identical W(ω) = g_full·s_full
+  // s_fullᵀ + g_scalar·s_scalar s_scalarᵀ as the complex-ω GetModalCorrectionTerms (so
+  // synthesis and eigenmode agree).
+  struct ModalCorrectionSample
+  {
+    bool active = false;
+    std::unique_ptr<ComplexVector> s_full, s_scalar;
+    std::complex<double> g_full = 0.0, g_scalar = 0.0;
+  };
+  std::vector<int>
+  GetModalCorrectionSynthesisPorts(double omega_ref, FiniteElementSpace &nd_fespace,
+                                   const mfem::Array<int> &nd_dbc_tdof_list);
+  ModalCorrectionSample
+  SampleModalCorrectionVectors(int port_idx, std::complex<double> omega,
+                               FiniteElementSpace &nd_fespace,
+                               const mfem::Array<int> &nd_dbc_tdof_list);
+
+private:
+  // Recompute one port's mode at complex ω and assemble its two modal-correction rank-1
+  // vectors + scalars. Shared by the complex-ω GetModalCorrectionTerms (eigenmode path) and
+  // SampleModalCorrectionVectors (synthesis path) so both use an identical W(ω). Returns an
+  // inactive sample if the port has a vanishing reaction.
+  ModalCorrectionSample SamplePortModalCorrection(WavePortData &data,
+                                                  std::complex<double> omega,
+                                                  FiniteElementSpace &nd_fespace,
+                                                  const mfem::Array<int> &nd_dbc_tdof_list);
 };
 
 }  // namespace palace

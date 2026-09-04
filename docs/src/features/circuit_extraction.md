@@ -79,9 +79,30 @@ of the driven solver as well as the following additional files:
     least one port is included. For a lumped port, $Y_{\mathrm{ref}} = 1/R_{\mathrm{ref}}$, where
     $R_{\mathrm{ref}}$ is the configured `R` when it is non-zero and $Z_0$ otherwise. The full RLC
     load remains in the synthesized matrices and `rom-portload-*` files. For a wave port,
-    $Y_{\mathrm{ref}}$ comes from the fitted propagation constant $k_n(\omega)$ and may vary with
-    frequency. The columns give frequency followed by the real and imaginary parts of
-    $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
+    $Y_{\mathrm{ref}}(\omega)$ is the terminal admittance of that port's synthesized load pencil,
+    i.e. the Schur complement of the port's `rom-portload-<label>-*` block onto its terminal node. It
+    therefore carries the fitted propagation constant $k_n(\omega)$ together with the modal correction
+    $\bm{W}$ and any auxiliary states, and may vary with frequency. It is the port's driving-point
+    admittance, not the incident/outgoing wave coupling: for a mode whose $\bm{n}\times\bm{H}$ shape
+    rotates with frequency (a hybrid / LSM wave port with $E_n\neq 0$) the terminal $Y_{\mathrm{ref}}$
+    alone does not reproduce the solver's S-parameters, and the frequency-dependent coupling maps
+    $\bm{G}(\omega)$, $\bm{H}(\omega)$ below are required. The columns give frequency followed by the
+    real and imaginary parts of $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
+  - (Wave ports): `rom-coupled-G.csv`, `rom-coupled-H.csv`, `rom-coupled-S.csv`. The complete
+    synthesized model of a wave-port network is $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} =
+    \bm{G}(\omega)\,\bm{a}$, $\bm{b} = \bm{H}(\omega)\,\bm{y} - \bm{a}$, where $\bm{a}$/$\bm{b}$ are the
+    incident/outgoing wave amplitudes, $\bm{Y}_{\mathrm{syn}}$ is the exported L/R/C pencil, and
+    $\bm{G}$/$\bm{H}$ are the frequency-dependent source/observation maps built from each port's
+    projected $\bm{n}\times\bm{H}$ vector (aux rows are zero). The S-parameters follow as $\bm{S}(\omega)
+    = \bm{H}(\omega)\,\bm{Y}_{\mathrm{syn}}(\omega)^{-1}\,\bm{G}(\omega) - \bm{I}$. `rom-coupled-G.csv`
+    and `rom-coupled-H.csv` tabulate $\bm{G}$ and $\bm{H}$ over the sweep grid (columns keyed by node
+    label and port); `rom-coupled-S.csv` is the resulting $\bm{S}$. To reconstruct $\bm{S}$ at a swept
+    frequency $\omega$: (1) assemble $\bm{Y}_{\mathrm{syn}}(\omega) = \widehat{\bm{L}}^{-1}/s +
+    \widehat{\bm{R}}^{-1} + s\,\widehat{\bm{C}}$ with $s = i\omega$ from the exported pencil; (2) solve
+    $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} = \bm{G}(\omega)$ for the state (columns of $\bm{G}$ are the
+    per-port incident excitations); (3) form $\bm{S}(\omega) = \bm{H}(\omega)\,\bm{y} - \bm{I}$. For a
+    fixed-coupling port ($E_n = 0$, so $\bm{W}=0$ and the coupling is frequency-independent) this
+    reduces to the terminal-only $Y_{\mathrm{ref}}$ de-embedding.
   - (Optional, for cascading): `rom-portload-<label>-{Linv,Rinv,C}-{re,im}.csv`. One set of files per
     included port, with the same node labels and dimensions as the total `rom-*` matrices. The label
     is `port_<idx>_re` (lumped) or `waveport_<idx>_re` (wave). Each set isolates that single port's
@@ -334,7 +355,9 @@ operator and ``f(\omega)`` is a scalar *dispersion* that may not be quadratic in
 dispersion differs per boundary type:
 
   - **Wave port.** The boundary term is ``i\,k_n(\omega)\,\bm{M}_b``, where ``k_n(\omega)`` is the
-    modal propagation constant; the port admittance is $Y_p(\omega) = k_n(\omega) / (\omega\mu)$.
+    modal propagation constant; the scalar modal admittance is $Y_p(\omega) = k_n(\omega) / (\omega\mu)$
+    (the reference admittance reported in `rom-port-reference.csv` additionally includes the low-rank
+    modal correction $\bm{W}$; see above).
     The fitted scalar is ``k_n(\omega)``, obtained by re-solving the small cross-section eigenproblem
     at a set of fit frequencies. For the synthesis (and the underlying driven sweep) only the real,
     propagating part of ``k_n`` is used; the imaginary part (line attenuation) is dropped, so a

@@ -48,6 +48,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
   };
+  // As funcA2, plus the matrix-free wave-port modal correction W. Used by the SLP and
+  // Quasi-Newton solves (the polynomial seed keeps funcA2, since W cannot enter
+  // BuildParSumOperator).
+  auto funcA2_full =
+      [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  {
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
+    return space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+  };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
                            std::complex<double> a3) -> std::unique_ptr<ComplexOperator>
@@ -56,12 +65,30 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
+  // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
+  // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
+  // solves).
+  if (space_op.GetWavePortOp().Size() > 0)
+  {
+    space_op.GetWavePortOp().InitializeModalReference(target);
+  }
+
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+  if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
+  {
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
+    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
+    // null A2; fall back to the standard linear/quadratic eigensolver instead.
+    Mpi::Warning(
+        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
+        "absorbing boundaries), none found; using a linear eigensolver!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -146,6 +173,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   nonlinear_type = NonlinearEigenSolver::HYBRID;
 #endif
+  // SLP is only realized through SLEPc's NEP path; ARPACK has no SLP solver, so fall back
+  // to Hybrid rather than hit the SLP-only API below with an ARPACK solver.
+  if (type == EigenSolverBackend::ARPACK && nonlinear_type == NonlinearEigenSolver::SLP)
+  {
+    Mpi::Warning("SLP nonlinear eigensolver requires the SLEPc backend, using Hybrid with "
+                 "ARPACK!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (type == EigenSolverBackend::ARPACK)
   {
 #if defined(PALACE_WITH_ARPACK)
@@ -210,7 +245,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    eigen->SetExtraSystemMatrix(funcA2);
+    eigen->SetExtraSystemMatrix(funcA2_full);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -348,8 +383,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
-                                    K.get(), C.get(), M.get(), A2.get());
+  std::unique_ptr<ComplexOperator> A;
+  std::unique_ptr<ComplexOperator> A2_shift;
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  {
+    // Invert the same W-aware polynomial used by the seed eigensolver.
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
+                                 Cp.get(), Mp.get());
+  }
+  else
+  {
+    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
+    A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
+                                                             : std::move(A2);
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
+                                 C.get(), M.get(), A2_shift.get());
+  }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
       1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
@@ -418,7 +467,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
-    qn->SetExtraSystemMatrix(funcA2);
+    qn->SetExtraSystemMatrix(funcA2_full);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,

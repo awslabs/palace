@@ -326,8 +326,11 @@ protected:
     // to e.g. "farfield" or "surfsigma_<g>" for the other frequency-dependent BCs so their
     // aux rows are distinguishable in the emitted matrices.
     std::string label;
-    std::vector<double> sigmas;           // singular values kept above tolerance
-    std::vector<Eigen::VectorXd> u_dirs;  // matching left singular vectors
+    // Signed weights and matching real directions in the symmetric factorization
+    // M_proj = Σ_j weights[j] u_j u_jᵀ. The weights are eigenvalues, not unsigned
+    // singular values: modal-correction residue matrices are generally indefinite.
+    std::vector<double> weights;
+    std::vector<Eigen::VectorXd> u_dirs;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
   };
@@ -446,9 +449,9 @@ protected:
   // Build an aux block for one (matrix, pole-residue list) contribution, used by the ABC
   // (analytic single pole at ω=0, residue 0.5), surf-σ, and rational impedance (fitted
   // poles). `label` (required, nonempty) prefixes the aux-state row names in the
-  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; the SVD
-  // of its imaginary part gives the coupling directions exactly as in the wave-port
-  // augmented path.
+  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; a signed
+  // symmetric eigendecomposition of its imaginary part gives the coupling directions
+  // exactly, including indefinite modal-correction residue matrices.
   static std::optional<WavePortAuxBlock>
   MakeAuxBlock(std::string label, const Eigen::MatrixXcd &Mp_r,
                const std::vector<std::complex<double>> &poles,
@@ -552,9 +555,12 @@ public:
     double error_abs = -1.0;   // ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂
     double error_bkwd = -1.0;  // error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂)
   };
+  // n_basis is the number of physical (non-aux) basis rows; roots whose eigenvector energy
+  // lies mostly in the trailing aux rows are dropped as spurious aux-pole artifacts.
   static std::vector<EigenvalueEstimate>
   ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv,
-                             const Eigen::MatrixXcd &C, double fmin_GHz, double fmax_GHz);
+                             const Eigen::MatrixXcd &C, double fmin_GHz, double fmax_GHz,
+                             int n_basis);
 
   // Fill error_abs / error_bkwd for each estimate by prolongating the eigenvector's
   // basis block to the HDM space.
