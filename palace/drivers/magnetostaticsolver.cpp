@@ -163,10 +163,19 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
-  MFEM_VERIFY(
-      n_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
-          !iodata.model.refinement.nonconformal,
-      "Flux loop excitation is only supported with conformal adaptation or no adaptation!");
+  // A London loop's drive a_h is built directly on the 3D ND space and is nonconformal-safe.
+  // Only the legacy 2D submesh path needs global edge indexing, which NC meshes lack.
+  {
+    int n_submesh_flux_steps = 0;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+    {
+      n_submesh_flux_steps += !curlcurl_op.IsLondonFluxLoop(idx);
+    }
+    MFEM_VERIFY(n_submesh_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
+                    !iodata.model.refinement.nonconformal,
+                "Non-London flux loop excitation is only supported with conformal adaptation "
+                "or no adaptation!");
+  }
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
