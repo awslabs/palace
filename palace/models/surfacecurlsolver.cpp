@@ -5,6 +5,7 @@
 #include "surfacefluxoperator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <unordered_set>
 #include <mfem.hpp>
@@ -30,17 +31,23 @@ namespace
 {
 
 // Build the London drive a_h as a 3D curl-free cohomology generator carrying the hole
-// fluxoid ∮_∂hole a_h·dl = Φ: a_h = ∇θ with θ jumping by Φ across a cut half-plane S
-// bounded by the vertical flux line L = {x=cx, y=cy, all z} through the hole centroid. It
-// is assembled as a lowest-order (Whitney) edge cochain (edge DOF = ±Φ across S, 0
-// otherwise) then projected exactly into the order-p ND space (ND_1 ⊂ ND_p). curl a_h is
-// supported only on faces pierced by L, which threads the hole opening off the film Σ, so
-// a_h|Σ is curl-free with circulation Φ. Its gradient part is absorbable by A → A + ∇χ, so
-// the extracted inductance depends only on the cohomology class (Φ) and is gauge-invariant.
+// fluxoid ∮_∂hole a_h·dl = Φ, about the vertical flux line L = {x=cx, y=cy, all z} through
+// the hole centroid. L threads the hole opening off the film Σ, so a_h|Σ is curl-free with
+// circulation Φ; its gradient part is absorbable by A → A + ∇χ, so the extracted inductance
+// depends only on the cohomology class (Φ) and is gauge-invariant.
 //
-// PALACE_CUT_DIR selects the cut orientation (default "y": S = {x=cx, y≥cy}; "x": the
-// gauge-equivalent S = {y=cy, x≥cx}) for the gauge-invariance gate. Overall sign is
-// irrelevant: the downstream London normalization rescales a_h so cᵀa_h = Φ.
+// Default is a cut cochain: a lowest-order (Whitney) edge DOF of ±Φ across a cut half-plane
+// S bounded by L (0 otherwise), projected into the order-p ND space (ND_1 ⊂ ND_p).
+// PALACE_CUT_DIR orients S (default "y": S = {x=cx, y≥cy}; "x": S = {y=cy, x≥cx}). Overall
+// sign is irrelevant: the downstream London normalization rescales a_h so cᵀa_h = Φ.
+//
+// PALACE_LONDON_AH=angle selects the smooth representative a_h = (Φ/2π)∇θ,
+// θ = atan2(y-cy, x-cx), whose exact DOF ∫_e ∇θ·t is the angle subtended at L. It carries
+// the fluxoid exactly (verified to 4e-15) but is NOT interchangeable with the cut cochain:
+// the two differ by ∇ψ, ψ = (Φ/2π)θ_branch, which does not vanish on the PEC outer walls, so
+// A → A + ∇ψ is inadmissible and L is not invariant. Its large smooth a_h|Σ lets the film
+// phase gradient absorb the fluxoid at near-zero kinetic cost, collapsing the screening
+// current (square_hole: 109× low). Diagnostic use only.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
                                    const Mesh &mesh)
@@ -84,18 +91,50 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   Mpi::GlobalSum(3, csum, comm);
   Mpi::GlobalSum(1, &cnt, comm);
   MFEM_VERIFY(cnt > 0.0, "No hole boundary elements found for London cut generator!");
-  const double cx = csum[0] / cnt, cy = csum[1] / cnt;
+  double cx = csum[0] / cnt, cy = csum[1] / cnt;
 
-  // Cut half-plane orientation (see function comment). Default S = {x=cx, y≥cy};
-  // PALACE_CUT_DIR=x selects the gauge-equivalent S = {y=cy, x≥cx} sharing the same flux
-  // line L.
+  // Generator choice and cut half-plane orientation (see function comment).
+  const char *ah_env = std::getenv("PALACE_LONDON_AH");
+  const bool use_cut = !(ah_env && (ah_env[0] == 'a' || ah_env[0] == 'A'));
   const char *cut_env = std::getenv("PALACE_CUT_DIR");
   const bool cut_x = (cut_env && (cut_env[0] == 'x' || cut_env[0] == 'X'));
 
-  // Lowest-order (Whitney) cut cochain on an ND_1 space over the full 3D mesh. Each rank
-  // sets its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared
-  // edge) in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF
-  // value is correct and GetTrueDofs needs no cross-rank sign reconciliation.
+  if (!use_cut)
+  {
+    // θ is undefined on L. Measure the hole's radial extent and the closest approach of a
+    // hole vertex to L, then shift L off any vertex sitting on it — any interior point of
+    // the hole represents the same cohomology class.
+    double r_min = mfem::infinity(), r_max = 0.0;
+    for (int be = 0; be < pmesh.GetNBE(); be++)
+    {
+      if (!hole_attrs.count(pmesh.GetBdrAttribute(be)))
+      {
+        continue;
+      }
+      pmesh.GetBdrElementVertices(be, bverts);
+      for (int v : bverts)
+      {
+        const double *x = pmesh.GetVertex(v);
+        const double r = std::hypot(x[0] - cx, x[1] - cy);
+        r_min = std::min(r_min, r);
+        r_max = std::max(r_max, r);
+      }
+    }
+    Mpi::GlobalMin(1, &r_min, comm);
+    Mpi::GlobalMax(1, &r_max, comm);
+    if (r_min < 1.0e-6 * r_max)
+    {
+      cx += 3.7e-3 * r_max;
+      cy += 2.3e-3 * r_max;
+      Mpi::Print(" London a_h: flux line met a hole vertex, offset to ({:.6e}, {:.6e})\n", cx,
+                 cy);
+    }
+  }
+
+  // Lowest-order (Whitney) cochain on an ND_1 space over the full 3D mesh. Each rank sets
+  // its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared edge)
+  // in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF value is
+  // correct and GetTrueDofs needs no cross-rank sign reconciliation.
   mfem::ND_FECollection nd1_fec(1, sdim);
   mfem::ParFiniteElementSpace nd1_fespace(&pmesh, &nd1_fec);
   mfem::ParGridFunction ah1(&nd1_fespace);
@@ -107,6 +146,18 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     pmesh.GetEdgeVertices(e, ev);
     const double *x0 = pmesh.GetVertex(ev[0]);
     const double *x1 = pmesh.GetVertex(ev[1]);
+    if (!use_cut)
+    {
+      // DOF ∫_e ∇θ·t = angle subtended at L by ev0→ev1. atan2 returns the rotation of
+      // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only x,y enter: L
+      // is vertical, so ∇θ has no z-component and vertical edges get 0.
+      const double ax = x0[0] - cx, ay = x0[1] - cy;
+      const double bx = x1[0] - cx, by = x1[1] - cy;
+      const double dtheta = std::atan2(ax * by - ay * bx, ax * bx + ay * by);
+      nd1_fespace.GetEdgeDofs(e, edofs);
+      ah1(edofs[0]) = phi * dtheta / (2.0 * M_PI);
+      continue;
+    }
     // d = signed distance to the cut PLANE; s = the in-plane half-plane selector
     // coordinate.
     double d0, d1, s0, s1;
