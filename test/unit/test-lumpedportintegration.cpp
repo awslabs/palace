@@ -28,6 +28,10 @@ using namespace Catch::Matchers;
 class LumpedPortDataTest : public LumpedPortData
 {
 public:
+  void InitializeLinearFormsForTest(mfem::ParFiniteElementSpace &nd_fespace) const
+  {
+    InitializeLinearForms(nd_fespace);
+  }
   mfem::LinearForm *GetLinearFormS() const { return s.get(); }
   mfem::LinearForm *GetLinearFormV() const { return v.get(); }
 };
@@ -52,6 +56,92 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
     }
   }
   return mesh_;
+}
+
+TEST_CASE("LumpedPort batched voltages", "[lumped_port][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
+                                         "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
+                                          "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
+  auto order = GENERATE(1, 2);
+  CAPTURE(mesh_is_hex, order);
+
+  IoData iodata{Units(1.0e-6, 7.0)};
+  iodata.model.mesh = mesh_path;
+  iodata.model.L0 = 1.0e-6;
+  iodata.model.Lc = 7.0;
+  iodata.model.crack_bdr_elements = false;
+  iodata.solver.order = order;
+  json domains_json = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  iodata.domains = config::DomainData(domains_json);
+  json boundaries_json = {
+      {"LumpedPort",
+       json::array(
+           {json::object({{"Index", 1},
+                          {"R", 50.0},
+                          {"Excitation", uint(1)},
+                          {"Attributes", json::array({1})},
+                          {"Direction", "+Y"}}),
+            json::object(
+                {{"Index", 2},
+                 {"R", 75.0},
+                 {"Elements",
+                  json::array({json::object({{"Attributes", json::array({9, 11})},
+                                             {"Direction", "+Y"}}),
+                               json::object({{"Attributes", json::array({2, 6, 10})},
+                                             {"Direction", "+X"}})})}})})}};
+  iodata.boundaries = config::BoundaryData(boundaries_json);
+  iodata.CheckConfiguration();
+
+  auto mesh = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  GridFunction E(space_op.GetNDSpace(), true);
+  mfem::VectorFunctionCoefficient Er(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = 1.0 + x(1);
+                                       v(1) = 0.5 + 2.0 * x(0);
+                                       v(2) = x(0) - x(1);
+                                     });
+  mfem::VectorFunctionCoefficient Ei(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = x(0) + x(2);
+                                       v(1) = 1.0 - x(1);
+                                       v(2) = 0.25 + x(0) * x(1);
+                                     });
+  E.Real().ProjectCoefficient(Er);
+  E.Imag().ProjectCoefficient(Ei);
+
+  auto CheckBatched = [&]()
+  {
+    std::map<int, std::complex<double>> expected;
+    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+    {
+      expected.emplace(idx, data.GetVoltage(E));
+    }
+    const auto values = space_op.GetLumpedPortOp().GetVoltages(E);
+    REQUIRE(values.size() == expected.size());
+    for (const auto &[idx, ref] : expected)
+    {
+      CAPTURE(idx, ref.real(), ref.imag(), values.at(idx).real(), values.at(idx).imag());
+      const double tol = 1.0e-11 * std::max(std::abs(ref), 1.0);
+      CHECK_THAT(values.at(idx).real(), WithinAbs(ref.real(), tol));
+      CHECK_THAT(values.at(idx).imag(), WithinAbs(ref.imag(), tol));
+    }
+  };
+
+  CheckBatched();
+  E *= 1.75;
+  CheckBatched();
 }
 
 TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][Parallel]")
@@ -375,6 +465,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
@@ -728,6 +819,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());

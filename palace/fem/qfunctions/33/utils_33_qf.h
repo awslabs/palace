@@ -36,6 +36,15 @@ CEED_QFUNCTION_HELPER CeedScalar AdjJt33(const CeedScalar J[9], CeedScalar adjJt
   return ComputeDet ? (J[0] * adjJt[0] + J[1] * adjJt[1] + J[2] * adjJt[2]) : 0.0;
 }
 
+// Compute y = A x for a 3x3 matrix A stored column-major.
+CEED_QFUNCTION_HELPER void MultAx33(const CeedScalar A[9], const CeedScalar x[3],
+                                    CeedScalar y[3])
+{
+  y[0] = A[0] * x[0] + A[3] * x[1] + A[6] * x[2];
+  y[1] = A[1] * x[0] + A[4] * x[1] + A[7] * x[2];
+  y[2] = A[2] * x[0] + A[5] * x[1] + A[8] * x[2];
+}
+
 CEED_QFUNCTION_HELPER void MatUnpack33(const CeedScalar *A, const CeedInt A_stride,
                                        CeedScalar A_loc[9])
 {

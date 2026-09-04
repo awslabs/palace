@@ -4,6 +4,7 @@
 #include "ceed.hpp"
 
 #include <string_view>
+#include "basis.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed
@@ -62,6 +63,10 @@ void Initialize(const char *resource, const char *jit_source_dir)
 
 void Finalize()
 {
+  // Cached bases own references to their creating Ceed contexts and must be released before
+  // dropping Palace's top-level context references.
+  internal::FinalizeBasisCache();
+
   // Destroy Ceed context(s).
   for (std::size_t i = 0; i < internal::ceeds.size(); i++)
   {
@@ -81,7 +86,8 @@ std::string Print()
   return std::string(ceed_resource);
 }
 
-void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
+void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
+                    bool take_array)
 {
   CeedMemType mem;
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
@@ -94,7 +100,7 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)
   {
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, v.Size(), cv));
   }
-  else
+  else if (take_array)
   {
     PalaceCeedCall(ceed, CeedVectorTakeArray(*cv, mem, nullptr));
   }
