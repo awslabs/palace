@@ -812,7 +812,9 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   // The error-estimator extrema and synthesized Y_ref drift with the partition/BLAS near
   // the pole, so these are presence-only here.
   opts.excluded_files = {"rom-eigenvectors", "error-indicators.csv", "rom-port-reference"};
-  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-5);
+  // Synthesized vs field-derived S differ by ~4e-5 across eigensolver/BLAS backends; 1e-4
+  // clears that while still catching a dB-scale W regression.
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-4);
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
                             /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
