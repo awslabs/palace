@@ -329,6 +329,61 @@ palace::test::CustomCheck CompareRomEigenvalues(double bkwd_max, double rtol_re,
   };
 }
 
+// Compare the live field-derived S parameters against a reconstruction that solves the
+// synthesized pencil with the frequency-dependent projected wave-port source/observation
+// vectors. Hybrid modes rotate with frequency, so these coupling maps are required in
+// addition to the fixed L/R/C pencil.
+palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
+{
+  return [atol](palace::Table &actual, palace::Table &,
+                const std::filesystem::path &actual_path)
+  {
+    palace::TableWithCSVFile w((actual_path.parent_path() / "rom-coupled-S.csv").string(),
+                               /*load_existing_file=*/true);
+    palace::Table &circuit = w.table;
+    REQUIRE(circuit.n_rows() == actual.n_rows());
+
+    auto find = [](palace::Table &t, const std::string &header) -> int
+    {
+      for (std::size_t c = 0; c < t.n_cols(); c++)
+      {
+        if (t[c].header_text == header)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    for (std::size_t c = 0; c < actual.n_cols(); c++)
+    {
+      const std::string &header = actual[c].header_text;
+      if (header.rfind("|S[", 0) != 0)
+      {
+        continue;
+      }
+      const auto close = header.find("| (dB)");
+      REQUIRE(close != std::string::npos);
+      const std::string key = header.substr(1, close - 1);
+      const int phase = find(actual, "arg(" + key + ") (deg.)");
+      const int re = find(circuit, "Re{" + key + "}");
+      const int im = find(circuit, "Im{" + key + "}");
+      REQUIRE(phase >= 0);
+      REQUIRE(re >= 0);
+      REQUIRE(im >= 0);
+      for (std::size_t r = 0; r < actual.n_rows(); r++)
+      {
+        const double mag = std::pow(10.0, actual[c].data[r] / 20.0);
+        const double arg = M_PI * actual[phase].data[r] / 180.0;
+        const std::complex<double> field = mag * std::exp(std::complex<double>(0.0, arg));
+        const std::complex<double> synth(circuit[re].data[r], circuit[im].data[r]);
+        INFO("row " << r + 1 << " " << key << ": synthesized " << synth << " vs field "
+                    << field);
+        CHECK(std::abs(synth - field) <= atol);
+      }
+    }
+  };
+}
+
 // End-to-end de-embed/reconnect round-trip for a synthesized wave-port network. The swept
 // port-S.csv is field-derived (modal overlap of the ROM-reconstructed field); the
 // rom-{Linv,Rinv,C} pencil is the independently synthesized circuit. This check closes the
@@ -337,9 +392,8 @@ palace::test::CustomCheck CompareRomEigenvalues(double bkwd_max, double rtol_re,
 // port's own reference load y_ref (baked into the port's diagonal load block), renormalizes
 // to the real modal reference y_ref via a Kurokawa power-wave transform, and checks the
 // resulting |S| against Palace's field-derived port-S. Agreement validates that the
-// exported circuit reproduces the solver's own S-parameters. The W modal correction lives
-// in the port loads, so a regressed W shifts |S| by dB-scale amounts. Frequencies and
-// per-port y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
+// exported circuit reproduces the solver's own S-parameters. Frequencies and per-port
+// y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
 palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
 {
   return [atol_lin](palace::Table &, palace::Table &reference,
@@ -747,13 +801,16 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
   // Multi-MB partition-dependent pencil matrices consumed by no check here (their export is
   // exercised by the adapter round-trip); not stored rather than kept as dead weight.
-  opts.unstored_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
-                         "rom-orthogonalization-matrix-R"};
-  // Swept S, the error-estimator extrema, and the synthesized Y_ref all drift with the
-  // partition/BLAS near the pole; the W signal is checked via the eigenvalue custom check
-  // and (end-to-end) the adapter round-trip, so these are presence-only here.
-  opts.excluded_files = {"rom-eigenvectors", "port-S", "error-indicators.csv",
-                         "rom-port-reference"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S"};
+  // The error-estimator extrema and synthesized Y_ref drift with the partition/BLAS near
+  // the pole, so these are presence-only here.
+  opts.excluded_files = {"rom-eigenvectors", "error-indicators.csv", "rom-port-reference"};
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-5);
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
                             /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
@@ -994,6 +1051,7 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
   // Synthesis matrices, eigenvectors, and the Y_ref table vary with the greedy sampling and
   // partition, so only their presence is checked; the round-trip below consumes them live.
+  opts.unstored_files = {"rom-coupled-S"};
   opts.excluded_files = {"rom-Linv",
                          "rom-Rinv",
                          "rom-C-",

@@ -2667,6 +2667,76 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                                          fmin_GHz, fmax_GHz, GetReducedDimension());
   ComputeEigenvalueEstimateErrors(units, eigs);
 
+  // Diagnostic scattering reconstruction from the synthesized loaded pencil plus the
+  // frequency-dependent wave-port input/output coupling vectors. A rotating hybrid mode
+  // cannot in general be represented by a fixed terminal selector alone.
+  std::vector<int> coupled_ports;
+  for (const auto &[port_idx, port] : space_op.GetWavePortOp())
+  {
+    if (port.active && port.include_in_synthesis)
+    {
+      coupled_ports.push_back(port_idx);
+    }
+  }
+  std::vector<std::vector<std::complex<double>>> coupled_s;
+  if (!coupled_ports.empty())
+  {
+    const long nr = static_cast<long>(V.size());
+    const long na = matrices.L_inv->rows();
+    Eigen::VectorXd d = Eigen::VectorXd::Ones(na);
+    const long n_lumped = static_cast<long>(NumSynthesisPortModes());
+    long n_wave = 0;
+    for (long j = n_lumped; j < static_cast<long>(v_node_label.size()) &&
+                            v_node_label[j].rfind("waveport_", 0) == 0;
+         j++)
+    {
+      n_wave++;
+    }
+    for (long j = 0; j < n_lumped + n_wave; j++)
+    {
+      d(j) = orth_R(j, j);
+    }
+    const double unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    const double unit_henry_inv =
+        1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    const double omega0 = unit_henry_inv / unit_ohm_inv;
+    coupled_s.resize(sweep_omega_samples.size());
+    for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
+    {
+      const double omega = sweep_omega_samples[fi];
+      std::vector<Eigen::VectorXcd> sv;
+      for (int port_idx : coupled_ports)
+      {
+        auto s = space_op.GetWavePortModeVector(port_idx, omega);
+        Eigen::VectorXcd p(nr);
+        ProjectVecInternal(space_op.GetComm(), V, *s, p, 0);
+        sv.push_back(std::move(p));
+      }
+      const std::complex<double> s_phys = 1i * omega * omega0;
+      Eigen::MatrixXcd Y = (*matrices.L_inv) / s_phys + s_phys * (*matrices.C);
+      if (matrices.R_inv)
+      {
+        Y += *matrices.R_inv;
+      }
+      auto &vals = coupled_s[fi];
+      vals.resize(coupled_ports.size() * coupled_ports.size());
+      for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
+      {
+        Eigen::VectorXcd rhs = Eigen::VectorXcd::Zero(na);
+        rhs.head(nr) = -2.0 * unit_ohm_inv *
+                       d.head(nr).cast<std::complex<double>>().cwiseProduct(sv[drive]);
+        const Eigen::VectorXcd y = Y.fullPivLu().solve(rhs);
+        for (std::size_t obs = 0; obs < coupled_ports.size(); obs++)
+        {
+          vals[obs * coupled_ports.size() + drive] =
+              -(sv[obs].adjoint() *
+                d.head(nr).cast<std::complex<double>>().cwiseProduct(y.head(nr)))(0, 0) -
+              ((obs == drive) ? 1.0 : 0.0);
+        }
+      }
+    }
+  }
+
   if (!Mpi::Root(space_op.GetComm()))
   {
     return;
@@ -2678,6 +2748,38 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   for (const auto &lab : matrices.aux_labels)
   {
     labels.push_back(lab);
+  }
+  if (!coupled_s.empty())
+  {
+    auto out = TableWithCSVFile(post_dir / "rom-coupled-S.csv");
+    out.table.col_options.float_precision = 17;
+    out.table.insert("f", "f (GHz)");
+    for (std::size_t obs = 0; obs < coupled_ports.size(); obs++)
+    {
+      for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
+      {
+        const auto key = fmt::format("S[{:d}][{:d}]", obs + 1, drive + 1);
+        out.table.insert(fmt::format("re_{}", key), fmt::format("Re{{{}}}", key));
+        out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
+      }
+    }
+    const double unit_GHz =
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+    for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
+    {
+      out.table["f"] << sweep_omega_samples[fi] * unit_GHz;
+      for (std::size_t obs = 0; obs < coupled_ports.size(); obs++)
+      {
+        for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
+        {
+          const auto key = fmt::format("S[{:d}][{:d}]", obs + 1, drive + 1);
+          const auto value = coupled_s[fi][obs * coupled_ports.size() + drive];
+          out.table[fmt::format("re_{}", key)] << value.real();
+          out.table[fmt::format("im_{}", key)] << value.imag();
+        }
+      }
+    }
+    out.WriteFullTableTrunc();
   }
   auto print_table = [post_dir](const Eigen::MatrixXd &mat, std::string_view filename,
                                 const std::vector<std::string> &table_labels)

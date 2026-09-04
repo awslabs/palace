@@ -201,6 +201,7 @@ public:
   // applying the matrix-free operator built by GetExtraSystemOperator. Forwards to
   // WavePortOperator::GetModalCorrectionTerms on the finest ND space.
   std::vector<WavePortOperator::ModalCorrectionTerm> GetModalCorrectionTerms(double omega);
+  std::unique_ptr<ComplexVector> GetWavePortModeVector(int port_idx, double omega);
 
   // Circuit-synthesis form of the wave-port modal correction W (see
   // WavePortOperator::GetModalCorrectionSynthesisPorts / SampleModalCorrectionVectors),

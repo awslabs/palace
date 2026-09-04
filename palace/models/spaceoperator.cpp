@@ -936,6 +936,13 @@ SpaceOperator::GetModalCorrectionTerms(double omega)
                                               nd_dbc_tdof_lists.back());
 }
 
+std::unique_ptr<ComplexVector> SpaceOperator::GetWavePortModeVector(int port_idx,
+                                                                    double omega)
+{
+  return wave_port_op.GetModeExcitationVector(port_idx, omega, GetNDSpace(),
+                                              nd_dbc_tdof_lists.back());
+}
+
 std::vector<int> SpaceOperator::GetModalCorrectionSynthesisPorts(double omega_ref)
 {
   return wave_port_op.GetModalCorrectionSynthesisPorts(omega_ref, GetNDSpace(),
