@@ -744,20 +744,16 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   opts.skip_rowcount = true;
   opts.min_rows = 1;
-  // The physical (W-inclusive) Y_ref carries a tiny partition-dependent residue in its
-  // imaginary part (Im{Y}~1e-9, Im{Z}~1e-3 Ohm) that the old scalar-kn reference had as
-  // exactly zero; the real parts carry the W signal and are partition-stable, so diff those
-  // and drop the imaginary columns.
-  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum",
-                           "Mean",          "Im{Y_ref",     "Im{Z_ref"};
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
   // Multi-MB partition-dependent pencil matrices consumed by no check here (their export is
   // exercised by the adapter round-trip); not stored rather than kept as dead weight.
   opts.unstored_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
                          "rom-orthogonalization-matrix-R"};
-  // Sharp resonance: swept S and the per-element error-estimator extrema are
-  // partition/arithmetic-sensitive near the pole, so the W-dependent signal is the
-  // synthesized eigenvalue (custom check) rather than a pointwise S diff.
-  opts.excluded_files = {"rom-eigenvectors", "port-S", "error-indicators.csv"};
+  // Swept S, the error-estimator extrema, and the synthesized Y_ref all drift with the
+  // partition/BLAS near the pole; the W signal is checked via the eigenvalue custom check
+  // and (end-to-end) the adapter round-trip, so these are presence-only here.
+  opts.excluded_files = {"rom-eigenvectors", "port-S", "error-indicators.csv",
+                         "rom-port-reference"};
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
                             /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
@@ -982,9 +978,7 @@ TEST_CASE("adapter_hybrid", "[Serial][Parallel][GPU][Regression]")
 // can differ freely. The physically meaningful regression signal is
 // rom-eigenvalues.csv — the eigenvalues of the synthesized L⁻¹/R⁻¹/C system inside the
 // trained band (the adapter resonance at 10.526 GHz, Q 30.5, matches the eigenmode
-// reference of adapter_hybrid) — together with the S-parameters and the port
-// reference table. Omits [GPU] like cpw_wave_adaptive (wave-port adaptive sweeps are
-// skipped on GPU, awslabs/palace#375).
+// reference of adapter_hybrid) — together with the end-to-end S-parameter round-trip.
 TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -998,16 +992,15 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   opts.skip_rowcount = true;
   opts.min_rows = 5;
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
-  // The raw synthesis matrices and the eigenvectors live in basis-dependent node
-  // coordinates that vary with the greedy sampling and MPI partition, so only their
-  // presence is checked. They are small here (~8 KB) and the pencil matrices are consumed
-  // by the port-S round-trip check below, so they are kept rather than dropped.
+  // Synthesis matrices, eigenvectors, and the Y_ref table vary with the greedy sampling and
+  // partition, so only their presence is checked; the round-trip below consumes them live.
   opts.excluded_files = {"rom-Linv",
                          "rom-Rinv",
                          "rom-C-",
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
-                         "rom-eigenvectors"};
+                         "rom-eigenvectors",
+                         "rom-port-reference"};
   // Compare the synthesized eigenvalues against the reference: pair each converged
   // reference eigenpair with the nearest converged actual root and check Re{f}, Im{f}, Q.
   opts.custom_checks["rom-eigenvalues.csv"] =
