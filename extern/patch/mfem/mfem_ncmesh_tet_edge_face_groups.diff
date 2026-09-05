@@ -1,0 +1,144 @@
+Fix an MPI deadlock in ParFiniteElementSpace::BuildParallelConformingInterpolation
+for partitioned nonconforming tetrahedral meshes.
+
+When a tet master face's first-level slave faces are all local and unsplit,
+NCMesh::TraverseTriFace skipped emitting the tet edge-face constraints for the
+interior edges of the face split. An element of another MPI rank can be
+attached to such an interior edge without owning any of the slave faces (an
+"edge-only" neighbor). In that case the constraint entry is missing on the
+face-owning rank, so ParNCMesh::CalculatePMatrixGroups never adds the
+edge-neighbor rank to the P matrix groups of the master face and its edges and
+vertices. The owner then never sends those P matrix rows and
+BuildParallelConformingInterpolation deadlocks: the edge-neighbor rank spins in
+MPI_Iprobe waiting for rows while the remaining ranks enter the collective
+HypreParMatrix construction. Triggered by e.g. loading a serial nonconforming
+mesh saved by a previous AMR run and distributing it with a METIS partitioning
+(SFC-based partitions keep refinement siblings together, which makes the
+pattern rare, but arbitrary partitions hit it readily at high rank counts).
+
+Also fix ParNCMesh::MakeSharedList's handling of edge-face constraint slaves:
+entity_owner holds GroupIds, not ranks (group 0 is the singleton {MyRank}), and
+a locally owned slave edge must mark its (possibly ghost) master face as
+locally touched so the master lands in the shared list symmetrically.
+
+--- a/mesh/ncmesh.hpp
++++ b/mesh/ncmesh.hpp
+@@ -1085,6 +1085,14 @@
+    virtual void ElementSharesFace(int elem, int local, int face) {} // ParNCMesh
+    virtual void ElementSharesEdge(int elem, int local, int enode) {} // ParNCMesh
+    virtual void ElementSharesVertex(int elem, int local, int vnode) {} // ParNCMesh
++
++   /** Return true if the edge with the given index is known to be adjacent to
++       elements of other MPI ranks. Used by TraverseTriFace to decide whether
++       tet edge-face constraints must be emitted even when the first-level
++       slave faces are all local and unsplit (an element of another rank may be
++       constrained by the master face through one of its interior edges alone).
++       Always false in serial. */
++   virtual bool EdgeHasForeignNeighbors(int eindex) const { return false; } // ParNCMesh
+ 
+    // neighbors / element_vertex table
+ 
+--- a/mesh/ncmesh.cpp
++++ b/mesh/ncmesh.cpp
+@@ -3662,15 +3662,37 @@
+       // to occur if none of these first NC level faces are split further, OR if
+       // they are on different processors. The different processor constraint is
+       // needed in the case of local elements constrained by this face via the
+-      // edge alone. Cannot know this a priori, so just constrain any edge
+-      // attached to two neighbors.
+-      if (HaveTets() && (!b[3].unsplit || b[3].ghost_neighbor))
++      // edge alone. The slave faces being local and unsplit is not sufficient
++      // to skip: an element of another rank can be attached to an interior
++      // edge of the face split without owning any of the slave faces, in which
++      // case the edge-face constraint must still be emitted so that
++      // ParNCMesh::CalculatePMatrixGroups includes that rank in the master
++      // face's (and its edges'/vertices') groups. Otherwise the owner never
++      // sends the corresponding P matrix rows and
++      // ParFiniteElementSpace::BuildParallelConformingInterpolation deadlocks.
++      if (HaveTets())
+       {
+-         // If the faces have no further splits, so would not be captured by
+-         // normal face relations, add possible edge constraints.
+-         if (!b[1].unsplit || b[1].ghost_neighbor) { TraverseTetEdge(mid[0],mid[1], pmid0,pmid1, matrix_map); }
+-         if (!b[2].unsplit || b[2].ghost_neighbor) { TraverseTetEdge(mid[1],mid[2], pmid1,pmid2, matrix_map); }
+-         if (!b[0].unsplit || b[0].ghost_neighbor) { TraverseTetEdge(mid[2],mid[0], pmid2,pmid0, matrix_map); }
++         // Check whether an interior edge of the face split touches elements
++         // of other MPI ranks (always false in serial).
++         auto edge_foreign = [&](int vn_a, int vn_b)
++         {
++            int enode = nodes.FindId(vn_a, vn_b);
++            if (enode < 0) { return false; }
++            const Node &nd = nodes[enode];
++            return nd.HasEdge() && EdgeHasForeignNeighbors(nd.edge_index);
++         };
++         const bool ef01 = edge_foreign(mid[0], mid[1]);
++         const bool ef12 = edge_foreign(mid[1], mid[2]);
++         const bool ef20 = edge_foreign(mid[2], mid[0]);
++
++         if (!b[3].unsplit || b[3].ghost_neighbor || ef01 || ef12 || ef20)
++         {
++            // If the faces have no further splits, so would not be captured by
++            // normal face relations, add possible edge constraints.
++            if (!b[1].unsplit || b[1].ghost_neighbor || ef01) { TraverseTetEdge(mid[0],mid[1], pmid0,pmid1, matrix_map); }
++            if (!b[2].unsplit || b[2].ghost_neighbor || ef12) { TraverseTetEdge(mid[1],mid[2], pmid1,pmid2, matrix_map); }
++            if (!b[0].unsplit || b[0].ghost_neighbor || ef20) { TraverseTetEdge(mid[2],mid[0], pmid2,pmid0, matrix_map); }
++         }
+       }
+    }
+    return {false, false};
+--- a/mesh/pncmesh.hpp
++++ b/mesh/pncmesh.hpp
+@@ -358,6 +358,8 @@
+    void ElementSharesFace(int elem, int local, int face) override;
+    void ElementSharesEdge(int elem, int local, int enode) override;
+    void ElementSharesVertex(int elem, int local, int vnode) override;
++
++   bool EdgeHasForeignNeighbors(int eindex) const override;
+ 
+    GroupId GetGroupId(const CommGroup &group);
+    GroupId GetSingletonGroup(int rank);
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -378,6 +378,20 @@
+    }
+ }
+ 
++bool ParNCMesh::EdgeHasForeignNeighbors(int eindex) const
++{
++   // Only local edges have conforming groups; an interior edge of a face
++   // split whose slave faces are all local and unsplit is always a local
++   // edge, which is the only case TraverseTriFace needs answered here.
++   if (eindex < 0 || eindex >= entity_conf_group[1].Size() || eindex >= NEdges)
++   {
++      return false;
++   }
++   // Group 0 is the singleton {MyRank}: any other group means an element of
++   // another rank (possibly a ghost) is attached to this edge.
++   return entity_conf_group[1][eindex] != 0;
++}
++
+ void ParNCMesh::MakeSharedList(const NCList &list, NCList &shared)
+ {
+    MFEM_VERIFY(tmp_shared_flag.Size(), "wrong code path");
+@@ -398,12 +412,16 @@
+             master_flag |= slave_flag;
+             slave_flag |= master_old_flag;
+          }
+-         else // special case: prism edge-face constraint
++         else // special case: edge-face constraint (tet or prism)
+          {
+-            if (entity_owner[1][-1-si] != MyRank)
+-            {
+-               master_flag |= 0x2;
+-            }
++            // The slave is an edge; entity_owner holds GroupIds, and group 0
++            // is the singleton {MyRank}, so a nonzero owner group means the
++            // edge is owned by another rank. A locally owned slave edge must
++            // conversely mark the (possibly ghost) master face as locally
++            // touched, so that the master lands in the shared list and
++            // CalculatePMatrixGroups connects its constituents to the ranks
++            // of its edge-constrained slaves.
++            master_flag |= (entity_owner[1][-1-si] != 0) ? 0x2 : 0x1;
+          }
+       }
+    }
