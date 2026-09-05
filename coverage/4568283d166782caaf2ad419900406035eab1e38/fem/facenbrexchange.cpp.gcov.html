@@ -1,0 +1,646 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - fem/facenbrexchange.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">fem</a> - facenbrexchange.cpp<span style="font-size: 80%;"> (source / <a href="facenbrexchange.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">99.5&nbsp;%</td>
+            <td class="headerCovTableEntry">211</td>
+            <td class="headerCovTableEntry">210</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-09-05 04:38:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntry">9</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;facenbrexchange.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;algorithm&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;cmath&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;cstdint&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;cstring&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;limits&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;map&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;memory&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;mutex&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;fem/libceed/basis.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;fem/libceed/ceed.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;fem/libceed/functional.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;fem/libceed/restriction.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;utils/diagnostic.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : </span>
+<span id="L23"><span class="lineNum">      23</span>              : PalacePragmaDiagnosticPush</span>
+<span id="L24"><span class="lineNum">      24</span>              : PalacePragmaDiagnosticDisableUnused</span>
+<span id="L25"><span class="lineNum">      25</span>              : </span>
+<span id="L26"><span class="lineNum">      26</span>              : #include &quot;fem/qfunctions/22/eval_22_qf.h&quot;</span>
+<span id="L27"><span class="lineNum">      27</span>              : #include &quot;fem/qfunctions/33/eval_33_qf.h&quot;</span>
+<span id="L28"><span class="lineNum">      28</span>              : </span>
+<span id="L29"><span class="lineNum">      29</span>              : PalacePragmaDiagnosticPop</span>
+<span id="L30"><span class="lineNum">      30</span>              : </span>
+<span id="L31"><span class="lineNum">      31</span>              : namespace palace</span>
+<span id="L32"><span class="lineNum">      32</span>              : {</span>
+<span id="L33"><span class="lineNum">      33</span>              : </span>
+<span id="L34"><span class="lineNum">      34</span>              : namespace</span>
+<span id="L35"><span class="lineNum">      35</span>              : {</span>
+<span id="L36"><span class="lineNum">      36</span>              : </span>
+<span id="L37"><span class="lineNum">      37</span>              : // Key identifying one export point-evaluator group. Surface-functional requests carry</span>
+<span id="L38"><span class="lineNum">      38</span>              : // the canonical reference-face/subface transformation key. Every key is extended with</span>
+<span id="L39"><span class="lineNum">      39</span>              : // the exact mapped point-rule signature before it reaches the process-lifetime registry.</span>
+<span id="L40"><span class="lineNum">      40</span>              : using PointConfigKey = std::vector&lt;long long&gt;;</span>
+<span id="L41"><span class="lineNum">      41</span>              : </span>
+<span id="L42"><span class="lineNum">      42</span>              : // Message tags for the setup (payload size, payload) and evaluation exchanges. A</span>
+<span id="L43"><span class="lineNum">      43</span>              : // single evaluation tag is sufficient: all processes perform the evaluation calls of</span>
+<span id="L44"><span class="lineNum">      44</span>              : // every exchange object in the same order, so per-pair messages match in order (MPI</span>
+<span id="L45"><span class="lineNum">      45</span>              : // non-overtaking guarantee).</span>
+<span id="L46"><span class="lineNum">      46</span>              : constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;</span>
+<span id="L47"><span class="lineNum">      47</span>              : </span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC tlaBgGNC">          48 : void VerifyRegisteredIr(const mfem::IntegrationRule &amp;ir,</span></span>
+<span id="L49"><span class="lineNum">      49</span>              :                         const std::vector&lt;mfem::IntegrationPoint&gt; &amp;pts)</span>
+<span id="L50"><span class="lineNum">      50</span>              : {</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">          48 :   MFEM_VERIFY(ir.GetNPoints() == static_cast&lt;int&gt;(pts.size()),</span></span>
+<span id="L52"><span class="lineNum">      52</span>              :               &quot;Face-neighbor point key reused with a different point count!&quot;);</span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">         240 :   for (int q = 0; q &lt; ir.GetNPoints(); q++)</span></span>
+<span id="L54"><span class="lineNum">      54</span>              :   {</span>
+<span id="L55"><span class="lineNum">      55</span>              :     const auto &amp;a = ir.IntPoint(q);</span>
+<span id="L56"><span class="lineNum">      56</span>              :     const auto &amp;b = pts[static_cast&lt;std::size_t&gt;(q)];</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">         192 :     const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">         192 :                                  std::abs(a.z - b.z), std::abs(a.weight - b.weight)});</span></span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">         192 :     MFEM_VERIFY(err &lt;= 1.0e-12,</span></span>
+<span id="L60"><span class="lineNum">      60</span>              :                 &quot;Face-neighbor point key reused for different reference points!&quot;);</span>
+<span id="L61"><span class="lineNum">      61</span>              :   }</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">          48 : }</span></span>
+<span id="L63"><span class="lineNum">      63</span>              : </span>
+<span id="L64"><span class="lineNum">      64</span>              : long long EncodePointRuleDouble(double x)</span>
+<span id="L65"><span class="lineNum">      65</span>              : {</span>
+<span id="L66"><span class="lineNum">      66</span>              :   // Preserve every supplied IEEE-754 bit, including signed zero, in the immutable</span>
+<span id="L67"><span class="lineNum">      67</span>              :   // fixed-rule identity.</span>
+<span id="L68"><span class="lineNum">      68</span>              :   static_assert(sizeof(long long) == sizeof(double));</span>
+<span id="L69"><span class="lineNum">      69</span>              :   long long bits;</span>
+<span id="L70"><span class="lineNum">      70</span>              :   std::memcpy(&amp;bits, &amp;x, sizeof(bits));</span>
+<span id="L71"><span class="lineNum">      71</span>              :   return bits;</span>
+<span id="L72"><span class="lineNum">      72</span>              : }</span>
+<span id="L73"><span class="lineNum">      73</span>              : </span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">         606 : void AppendPointRuleSignature(PointConfigKey &amp;key,</span></span>
+<span id="L75"><span class="lineNum">      75</span>              :                               const std::vector&lt;mfem::IntegrationPoint&gt; &amp;pts)</span>
+<span id="L76"><span class="lineNum">      76</span>              : {</span>
+<span id="L77"><span class="lineNum">      77</span>              :   // Coordinate and weight bits are ordered by quadrature point and component. This</span>
+<span id="L78"><span class="lineNum">      78</span>              :   // keeps canonical rules reusable across exchange rebuilds while distinguishing any</span>
+<span id="L79"><span class="lineNum">      79</span>              :   // caller-supplied rule with changed point data.</span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         606 :   key.push_back(static_cast&lt;long long&gt;(pts.size()));</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">        3236 :   for (const auto &amp;ip : pts)</span></span>
+<span id="L82"><span class="lineNum">      82</span>              :   {</span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">        2630 :     key.push_back(EncodePointRuleDouble(ip.x));</span></span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">        2630 :     key.push_back(EncodePointRuleDouble(ip.y));</span></span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">        2630 :     key.push_back(EncodePointRuleDouble(ip.z));</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">        2630 :     key.push_back(EncodePointRuleDouble(ip.weight));</span></span>
+<span id="L87"><span class="lineNum">      87</span>              :   }</span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">         606 : }</span></span>
+<span id="L89"><span class="lineNum">      89</span>              : </span>
+<span id="L90"><span class="lineNum">      90</span>              : using SetupWord = std::uint64_t;</span>
+<span id="L91"><span class="lineNum">      91</span>              : </span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">        1632 : SetupWord EncodeSetupInt(int value)</span></span>
+<span id="L93"><span class="lineNum">      93</span>              : {</span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaGNC">        1632 :   MFEM_VERIFY(value &gt;= 0, &quot;Negative integer in face-neighbor setup payload!&quot;);</span></span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">        1632 :   return static_cast&lt;SetupWord&gt;(value);</span></span>
+<span id="L96"><span class="lineNum">      96</span>              : }</span>
+<span id="L97"><span class="lineNum">      97</span>              : </span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">        1632 : int DecodeSetupInt(SetupWord value)</span></span>
+<span id="L99"><span class="lineNum">      99</span>              : {</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">        1632 :   MFEM_VERIFY(value &lt;= static_cast&lt;SetupWord&gt;(std::numeric_limits&lt;int&gt;::max()),</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :               &quot;Invalid integer in face-neighbor setup payload!&quot;);</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">        1632 :   return static_cast&lt;int&gt;(value);</span></span>
+<span id="L103"><span class="lineNum">     103</span>              : }</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              : SetupWord EncodeSetupDouble(double value)</span>
+<span id="L106"><span class="lineNum">     106</span>              : {</span>
+<span id="L107"><span class="lineNum">     107</span>              :   static_assert(sizeof(SetupWord) == sizeof(double));</span>
+<span id="L108"><span class="lineNum">     108</span>              :   SetupWord bits;</span>
+<span id="L109"><span class="lineNum">     109</span>              :   std::memcpy(&amp;bits, &amp;value, sizeof(bits));</span>
+<span id="L110"><span class="lineNum">     110</span>              :   return bits;</span>
+<span id="L111"><span class="lineNum">     111</span>              : }</span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              : double DecodeSetupDouble(SetupWord bits)</span>
+<span id="L114"><span class="lineNum">     114</span>              : {</span>
+<span id="L115"><span class="lineNum">     115</span>              :   double value;</span>
+<span id="L116"><span class="lineNum">     116</span>              :   std::memcpy(&amp;value, &amp;bits, sizeof(value));</span>
+<span id="L117"><span class="lineNum">     117</span>              :   return value;</span>
+<span id="L118"><span class="lineNum">     118</span>              : }</span>
+<span id="L119"><span class="lineNum">     119</span>              : </span>
+<span id="L120"><span class="lineNum">     120</span>              : SetupWord EncodeSetupKey(long long value)</span>
+<span id="L121"><span class="lineNum">     121</span>              : {</span>
+<span id="L122"><span class="lineNum">     122</span>              :   static_assert(sizeof(SetupWord) == sizeof(long long));</span>
+<span id="L123"><span class="lineNum">     123</span>              :   SetupWord bits;</span>
+<span id="L124"><span class="lineNum">     124</span>              :   std::memcpy(&amp;bits, &amp;value, sizeof(bits));</span>
+<span id="L125"><span class="lineNum">     125</span>              :   return bits;</span>
+<span id="L126"><span class="lineNum">     126</span>              : }</span>
+<span id="L127"><span class="lineNum">     127</span>              : </span>
+<span id="L128"><span class="lineNum">     128</span>              : long long DecodeSetupKey(SetupWord bits)</span>
+<span id="L129"><span class="lineNum">     129</span>              : {</span>
+<span id="L130"><span class="lineNum">     130</span>              :   long long value;</span>
+<span id="L131"><span class="lineNum">     131</span>              :   std::memcpy(&amp;value, &amp;bits, sizeof(value));</span>
+<span id="L132"><span class="lineNum">     132</span>              :   return value;</span>
+<span id="L133"><span class="lineNum">     133</span>              : }</span>
+<span id="L134"><span class="lineNum">     134</span>              : </span>
+<span id="L135"><span class="lineNum">     135</span>              : // Registry of evaluation point integration rules with application lifetime (as in</span>
+<span id="L136"><span class="lineNum">     136</span>              : // output_functionals.cpp): mfem::FiniteElement::GetDofToQuad caches tabulations keyed by</span>
+<span id="L137"><span class="lineNum">     137</span>              : // the IntegrationRule pointer inside the (global, shared) FiniteElement objects, so</span>
+<span id="L138"><span class="lineNum">     138</span>              : // destroying an IntegrationRule which was used for tabulation would leave a dangling</span>
+<span id="L139"><span class="lineNum">     139</span>              : // cache entry.</span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">          73 : const mfem::IntegrationRule *GetRegisteredIr(const PointConfigKey &amp;key,</span></span>
+<span id="L141"><span class="lineNum">     141</span>              :                                              const std::vector&lt;mfem::IntegrationPoint&gt; &amp;pts)</span>
+<span id="L142"><span class="lineNum">     142</span>              : {</span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">          78 :   static std::map&lt;PointConfigKey, std::unique_ptr&lt;mfem::IntegrationRule&gt;&gt; registry;</span></span>
+<span id="L144"><span class="lineNum">     144</span>              :   static std::mutex registry_mutex;</span>
+<span id="L145"><span class="lineNum">     145</span>              :   std::lock_guard&lt;std::mutex&gt; lock(registry_mutex);</span>
+<span id="L146"><span class="lineNum">     146</span>              :   auto it = registry.find(key);</span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">          73 :   if (it == registry.end())</span></span>
+<span id="L148"><span class="lineNum">     148</span>              :   {</span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">          25 :     auto ir = std::make_unique&lt;mfem::IntegrationRule&gt;(static_cast&lt;int&gt;(pts.size()));</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">         146 :     for (std::size_t q = 0; q &lt; pts.size(); q++)</span></span>
+<span id="L151"><span class="lineNum">     151</span>              :     {</span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">         121 :       ir-&gt;IntPoint(static_cast&lt;int&gt;(q)) = pts[q];</span></span>
+<span id="L153"><span class="lineNum">     153</span>              :     }</span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">          25 :     it = registry.emplace(key, std::move(ir)).first;</span></span>
+<span id="L155"><span class="lineNum">     155</span>              :   }</span>
+<span id="L156"><span class="lineNum">     156</span>              :   else</span>
+<span id="L157"><span class="lineNum">     157</span>              :   {</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">          48 :     VerifyRegisteredIr(*it-&gt;second, pts);</span></span>
+<span id="L159"><span class="lineNum">     159</span>              :   }</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">          73 :   return it-&gt;second.get();</span></span>
+<span id="L161"><span class="lineNum">     161</span>              : }</span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span>              : }  // namespace</span>
+<span id="L164"><span class="lineNum">     164</span>              : </span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">          59 : FaceNbrFieldExchange::FaceNbrFieldExchange(</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :     const Mesh &amp;mesh,</span>
+<span id="L167"><span class="lineNum">     167</span>              :     const std::array&lt;const mfem::ParFiniteElementSpace *, MaxSources&gt; &amp;fespaces,</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">          59 :     const std::vector&lt;Request&gt; &amp;requests)</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">          59 :   : comm(mesh.GetComm())</span></span>
+<span id="L170"><span class="lineNum">     170</span>              : {</span>
+<span id="L171"><span class="lineNum">     171</span>              :   const mfem::ParMesh &amp;pmesh = mesh.Get();</span>
+<span id="L172"><span class="lineNum">     172</span>              :   const int num_nbr = pmesh.GetNFaceNeighbors();</span>
+<span id="L173"><span class="lineNum">     173</span>              :   const int value_dim = pmesh.SpaceDimension();</span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">          59 :   MFEM_VERIFY(value_dim == 2 || value_dim == 3,</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :               &quot;FaceNbrFieldExchange requires 2D or 3D physical-space fields!&quot;);</span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">          59 :   MFEM_VERIFY(requests.empty() || num_nbr &gt; 0,</span></span>
+<span id="L177"><span class="lineNum">     177</span>              :               &quot;FaceNbrFieldExchange requires face neighbor data &quot;</span>
+<span id="L178"><span class="lineNum">     178</span>              :               &quot;(ParMesh::ExchangeFaceNbrData)!&quot;);</span>
+<span id="L179"><span class="lineNum">     179</span>              : </span>
+<span id="L180"><span class="lineNum">     180</span>              :   // Route each request to its face neighbor process: ghost element index fn falls in</span>
+<span id="L181"><span class="lineNum">     181</span>              :   // the contiguous block [offset[i], offset[i+1]) of face neighbor i, and the ghost at</span>
+<span id="L182"><span class="lineNum">     182</span>              :   // position p = fn - offset[i] of the block is the element at position p of the</span>
+<span id="L183"><span class="lineNum">     183</span>              :   // neighbor's send_face_nbr_elements row for this process. This is the same</span>
+<span id="L184"><span class="lineNum">     184</span>              :   // correspondence ParMesh::ExchangeFaceNbrData (and the face neighbor dof data of</span>
+<span id="L185"><span class="lineNum">     185</span>              :   // ParFiniteElementSpace) relies on, for both conformal and nonconforming meshes.</span>
+<span id="L186"><span class="lineNum">     186</span>              :   const auto &amp;elem_offsets = pmesh.face_nbr_elements_offset;</span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">          59 :   std::vector&lt;std::vector&lt;int&gt;&gt; nbr_reqs(num_nbr);</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">         467 :   for (std::size_t r = 0; r &lt; requests.size(); r++)</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :   {</span>
+<span id="L190"><span class="lineNum">     190</span>              :     const auto &amp;req = requests[r];</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">         408 :     MFEM_VERIFY(req.face_nbr_elem &gt;= 0 &amp;&amp;</span></span>
+<span id="L192"><span class="lineNum">     192</span>              :                     req.face_nbr_elem &lt; pmesh.GetNFaceNeighborElements() &amp;&amp;</span>
+<span id="L193"><span class="lineNum">     193</span>              :                     req.source_mask != 0 &amp;&amp; !req.pts.empty(),</span>
+<span id="L194"><span class="lineNum">     194</span>              :                 &quot;Invalid face neighbor field exchange request!&quot;);</span>
+<span id="L195"><span class="lineNum">     195</span>              :     const int *it =</span>
+<span id="L196"><span class="lineNum">     196</span>              :         std::upper_bound(elem_offsets.begin(), elem_offsets.end(), req.face_nbr_elem);</span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">         408 :     nbr_reqs[static_cast&lt;int&gt;(it - elem_offsets.begin()) - 1].push_back(</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">         408 :         static_cast&lt;int&gt;(r));</span></span>
+<span id="L199"><span class="lineNum">     199</span>              :   }</span>
+<span id="L200"><span class="lineNum">     200</span>              : </span>
+<span id="L201"><span class="lineNum">     201</span>              :   // Serialize setup in raw 64-bit words: element position, point count, source mask,</span>
+<span id="L202"><span class="lineNum">     202</span>              :   // key length, key entries, then reference coordinates and weights. In particular, key</span>
+<span id="L203"><span class="lineNum">     203</span>              :   // entries are not converted through double, so exact IEEE coefficient bits survive MPI</span>
+<span id="L204"><span class="lineNum">     204</span>              :   // setup.</span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">          59 :   import_offsets.resize(requests.size());</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">         467 :   for (auto &amp;offsets : import_offsets)</span></span>
+<span id="L207"><span class="lineNum">     207</span>              :   {</span>
+<span id="L208"><span class="lineNum">     208</span>              :     offsets.fill(-1);</span>
+<span id="L209"><span class="lineNum">     209</span>              :   }</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">          59 :   std::vector&lt;std::vector&lt;SetupWord&gt;&gt; send_payload(num_nbr);</span></span>
+<span id="L211"><span class="lineNum">     211</span>              :   int import_size = 0;</span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">         101 :   for (int i = 0; i &lt; num_nbr; i++)</span></span>
+<span id="L213"><span class="lineNum">     213</span>              :   {</span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">          42 :     if (nbr_reqs[i].empty())</span></span>
+<span id="L215"><span class="lineNum">     215</span>              :     {</span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">           4 :       continue;</span></span>
+<span id="L217"><span class="lineNum">     217</span>              :     }</span>
+<span id="L218"><span class="lineNum">     218</span>              :     auto &amp;payload = send_payload[i];</span>
+<span id="L219"><span class="lineNum">     219</span>              :     const int block_start = import_size;</span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">         446 :     for (const int r : nbr_reqs[i])</span></span>
+<span id="L221"><span class="lineNum">     221</span>              :     {</span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">         408 :       const auto &amp;req = requests[r];</span></span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">         408 :       MFEM_VERIFY(req.pts.size() &lt;=</span></span>
+<span id="L224"><span class="lineNum">     224</span>              :                           static_cast&lt;std::size_t&gt;(std::numeric_limits&lt;int&gt;::max()) &amp;&amp;</span>
+<span id="L225"><span class="lineNum">     225</span>              :                       req.point_key.size() &lt;=</span>
+<span id="L226"><span class="lineNum">     226</span>              :                           static_cast&lt;std::size_t&gt;(std::numeric_limits&lt;int&gt;::max()),</span>
+<span id="L227"><span class="lineNum">     227</span>              :                   &quot;Face-neighbor setup payload exceeds int range!&quot;);</span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">         408 :       const int nq = static_cast&lt;int&gt;(req.pts.size());</span></span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">         408 :       payload.push_back(EncodeSetupInt(req.face_nbr_elem - elem_offsets[i]));</span></span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaGNC">         408 :       payload.push_back(EncodeSetupInt(nq));</span></span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaGNC">         408 :       payload.push_back(EncodeSetupInt(static_cast&lt;int&gt;(req.source_mask)));</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC">         408 :       payload.push_back(EncodeSetupInt(static_cast&lt;int&gt;(req.point_key.size())));</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaGNC">        3076 :       for (const auto value : req.point_key)</span></span>
+<span id="L234"><span class="lineNum">     234</span>              :       {</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">        2668 :         payload.push_back(EncodeSetupKey(value));</span></span>
+<span id="L236"><span class="lineNum">     236</span>              :       }</span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaGNC">        2176 :       for (const auto &amp;ip : req.pts)</span></span>
+<span id="L238"><span class="lineNum">     238</span>              :       {</span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">        1768 :         payload.push_back(EncodeSetupDouble(ip.x));</span></span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">        1768 :         payload.push_back(EncodeSetupDouble(ip.y));</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">        1768 :         payload.push_back(EncodeSetupDouble(ip.z));</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">        1768 :         payload.push_back(EncodeSetupDouble(ip.weight));</span></span>
+<span id="L243"><span class="lineNum">     243</span>              :       }</span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">        2040 :       for (int s = 0; s &lt; MaxSources; s++)</span></span>
+<span id="L245"><span class="lineNum">     245</span>              :       {</span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaGNC">        1632 :         if (req.source_mask &amp; (1u &lt;&lt; s))</span></span>
+<span id="L247"><span class="lineNum">     247</span>              :         {</span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC">         606 :           MFEM_VERIFY(fespaces[s],</span></span>
+<span id="L249"><span class="lineNum">     249</span>              :                       &quot;Missing finite element space for requested source slot!&quot;);</span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaGNC">         606 :           import_offsets[r][s] = import_size;</span></span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">         606 :           import_size += value_dim * nq;</span></span>
+<span id="L252"><span class="lineNum">     252</span>              :         }</span>
+<span id="L253"><span class="lineNum">     253</span>              :       }</span>
+<span id="L254"><span class="lineNum">     254</span>              :     }</span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">          38 :     recv_msgs.push_back({pmesh.GetFaceNbrRank(i), block_start, import_size - block_start});</span></span>
+<span id="L256"><span class="lineNum">     256</span>              :   }</span>
+<span id="L257"><span class="lineNum">     257</span>              : </span>
+<span id="L258"><span class="lineNum">     258</span>              :   // Symmetric setup exchange with all face neighbors (every pair exchanges, possibly</span>
+<span id="L259"><span class="lineNum">     259</span>              :   // empty): payload sizes, then raw setup words.</span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">          59 :   std::vector&lt;int&gt; send_len(num_nbr), recv_len(num_nbr);</span></span>
+<span id="L261"><span class="lineNum">     261</span>              :   {</span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">          59 :     std::vector&lt;MPI_Request&gt; mpi_reqs(2 * num_nbr);</span></span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">         101 :     for (int i = 0; i &lt; num_nbr; i++)</span></span>
+<span id="L264"><span class="lineNum">     264</span>              :     {</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">          42 :       MFEM_VERIFY(send_payload[i].size() &lt;=</span></span>
+<span id="L266"><span class="lineNum">     266</span>              :                       static_cast&lt;std::size_t&gt;(std::numeric_limits&lt;int&gt;::max()),</span>
+<span id="L267"><span class="lineNum">     267</span>              :                   &quot;Face-neighbor setup payload exceeds MPI count range!&quot;);</span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">          42 :       send_len[i] = static_cast&lt;int&gt;(send_payload[i].size());</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">          42 :       MPI_Irecv(&amp;recv_len[i], 1, MPI_INT, pmesh.GetFaceNbrRank(i), TAG_SETUP_SIZE, comm,</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">          42 :                 &amp;mpi_reqs[2 * i]);</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">          42 :       MPI_Isend(&amp;send_len[i], 1, MPI_INT, pmesh.GetFaceNbrRank(i), TAG_SETUP_SIZE, comm,</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">          42 :                 &amp;mpi_reqs[2 * i + 1]);</span></span>
+<span id="L273"><span class="lineNum">     273</span>              :     }</span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">          59 :     MPI_Waitall(static_cast&lt;int&gt;(mpi_reqs.size()), mpi_reqs.data(), MPI_STATUSES_IGNORE);</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   }</span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">          59 :   std::vector&lt;std::vector&lt;SetupWord&gt;&gt; recv_payload(num_nbr);</span></span>
+<span id="L277"><span class="lineNum">     277</span>              :   {</span>
+<span id="L278"><span class="lineNum">     278</span>              :     std::vector&lt;MPI_Request&gt; mpi_reqs;</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">          59 :     mpi_reqs.reserve(2 * num_nbr);</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">         101 :     for (int i = 0; i &lt; num_nbr; i++)</span></span>
+<span id="L281"><span class="lineNum">     281</span>              :     {</span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">          42 :       MFEM_VERIFY(recv_len[i] &gt;= 0, &quot;Invalid face-neighbor setup payload length!&quot;);</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaGNC">          42 :       if (recv_len[i] &gt; 0)</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :       {</span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaGNC">          38 :         recv_payload[i].resize(recv_len[i]);</span></span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">          38 :         MPI_Irecv(recv_payload[i].data(), recv_len[i], MPI_UINT64_T,</span></span>
+<span id="L287"><span class="lineNum">     287</span>              :                   pmesh.GetFaceNbrRank(i), TAG_SETUP_PAYLOAD, comm,</span>
+<span id="L288"><span class="lineNum">     288</span>              :                   &amp;mpi_reqs.emplace_back());</span>
+<span id="L289"><span class="lineNum">     289</span>              :       }</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">          42 :       if (send_len[i] &gt; 0)</span></span>
+<span id="L291"><span class="lineNum">     291</span>              :       {</span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">          38 :         MPI_Isend(send_payload[i].data(), send_len[i], MPI_UINT64_T,</span></span>
+<span id="L293"><span class="lineNum">     293</span>              :                   pmesh.GetFaceNbrRank(i), TAG_SETUP_PAYLOAD, comm,</span>
+<span id="L294"><span class="lineNum">     294</span>              :                   &amp;mpi_reqs.emplace_back());</span>
+<span id="L295"><span class="lineNum">     295</span>              :       }</span>
+<span id="L296"><span class="lineNum">     296</span>              :     }</span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">          59 :     MPI_Waitall(static_cast&lt;int&gt;(mpi_reqs.size()), mpi_reqs.data(), MPI_STATUSES_IGNORE);</span></span>
+<span id="L298"><span class="lineNum">     298</span>              :   }</span>
+<span id="L299"><span class="lineNum">     299</span>              : </span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">          59 :   Ceed ceed = ceed::internal::GetCeedObjects()[0];</span></span>
+<span id="L301"><span class="lineNum">     301</span>              : </span>
+<span id="L302"><span class="lineNum">     302</span>              :   // Parse the received requests, assigning export offsets with the same layout rules as</span>
+<span id="L303"><span class="lineNum">     303</span>              :   // the import offsets. Every group uses a fixed mapped integration rule and ordinary</span>
+<span id="L304"><span class="lineNum">     304</span>              :   // libCEED basis/operator. Equal canonical keys batch across faces and senders; exact</span>
+<span id="L305"><span class="lineNum">     305</span>              :   // point comparison remains a guard against an incomplete key.</span>
+<span id="L306"><span class="lineNum">     306</span>              :   struct ExportGroup</span>
+<span id="L307"><span class="lineNum">     307</span>              :   {</span>
+<span id="L308"><span class="lineNum">     308</span>              :     std::vector&lt;mfem::IntegrationPoint&gt; pts;</span>
+<span id="L309"><span class="lineNum">     309</span>              :     std::vector&lt;int&gt; elems;</span>
+<span id="L310"><span class="lineNum">     310</span>              :     std::vector&lt;int&gt; bases;  // Export vector base offset per element entry</span>
+<span id="L311"><span class="lineNum">     311</span>              :   };</span>
+<span id="L312"><span class="lineNum">     312</span>              :   std::map&lt;PointConfigKey, ExportGroup&gt; export_map;</span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">          59 :   int export_size = 0;</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">         101 :   for (int i = 0; i &lt; num_nbr; i++)</span></span>
+<span id="L315"><span class="lineNum">     315</span>              :   {</span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaGNC">          42 :     const auto &amp;payload = recv_payload[i];</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">          42 :     const int block_start = export_size;</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">          42 :     std::size_t k = 0;</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">       11372 :     auto ReadWord = [&amp;]()</span></span>
+<span id="L320"><span class="lineNum">     320</span>              :     {</span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">       11372 :       MFEM_VERIFY(k &lt; payload.size(), &quot;Truncated face-neighbor setup payload!&quot;);</span></span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">       11372 :       return payload[k++];</span></span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaGNC">          42 :     };</span></span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">         450 :     while (k &lt; payload.size())</span></span>
+<span id="L325"><span class="lineNum">     325</span>              :     {</span>
+<span id="L326"><span class="lineNum">     326</span> <span class="tlaGNC">         408 :       const int p = DecodeSetupInt(ReadWord());</span></span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">         408 :       const int nq = DecodeSetupInt(ReadWord());</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">         408 :       const auto mask = static_cast&lt;unsigned int&gt;(DecodeSetupInt(ReadWord()));</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaGNC">         408 :       const int point_key_size = DecodeSetupInt(ReadWord());</span></span>
+<span id="L330"><span class="lineNum">     330</span>              :       MFEM_VERIFY(</span>
+<span id="L331"><span class="lineNum">     331</span>              :           point_key_size &gt;= 0,</span>
+<span id="L332"><span class="lineNum">     332</span>              :           &quot;Invalid face-neighbor point-key size in received field exchange request!&quot;);</span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">         408 :       std::vector&lt;long long&gt; point_key(point_key_size);</span></span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">        3076 :       for (int q = 0; q &lt; point_key_size; q++)</span></span>
+<span id="L335"><span class="lineNum">     335</span>              :       {</span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaGNC">        2668 :         point_key[q] = DecodeSetupKey(ReadWord());</span></span>
+<span id="L337"><span class="lineNum">     337</span>              :       }</span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC">         408 :       MFEM_VERIFY(nq &gt; 0 &amp;&amp; p &gt;= 0 &amp;&amp; p &lt; pmesh.send_face_nbr_elements.RowSize(i),</span></span>
+<span id="L339"><span class="lineNum">     339</span>              :                   &quot;Invalid face-neighbor request in setup payload!&quot;);</span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">         408 :       const int elem = pmesh.send_face_nbr_elements.GetRow(i)[p];</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">         408 :       std::vector&lt;mfem::IntegrationPoint&gt; pts(nq);</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">        2176 :       for (int q = 0; q &lt; nq; q++)</span></span>
+<span id="L343"><span class="lineNum">     343</span>              :       {</span>
+<span id="L344"><span class="lineNum">     344</span>              :         // Read in wire order before Set3: function-argument evaluation order is not</span>
+<span id="L345"><span class="lineNum">     345</span>              :         // specified, while each ReadWord advances the payload cursor.</span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">        1768 :         const double x = DecodeSetupDouble(ReadWord());</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">        1768 :         const double y = DecodeSetupDouble(ReadWord());</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">        1768 :         const double z = DecodeSetupDouble(ReadWord());</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">        1768 :         const double weight = DecodeSetupDouble(ReadWord());</span></span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">        1768 :         pts[q].Set3(x, y, z);</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">        1768 :         pts[q].weight = weight;</span></span>
+<span id="L352"><span class="lineNum">     352</span>              :       }</span>
+<span id="L353"><span class="lineNum">     353</span>              :       const auto geom = pmesh.GetElementGeometry(elem);</span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaGNC">        2040 :       for (int s = 0; s &lt; MaxSources; s++)</span></span>
+<span id="L355"><span class="lineNum">     355</span>              :       {</span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaGNC">        1632 :         if (mask &amp; (1u &lt;&lt; s))</span></span>
+<span id="L357"><span class="lineNum">     357</span>              :         {</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaGNC">         606 :           MFEM_VERIFY(fespaces[s],</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :                       &quot;Missing finite element space for received source slot!&quot;);</span>
+<span id="L360"><span class="lineNum">     360</span>              :           PointConfigKey key;</span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">         606 :           key.reserve(5 + point_key.size() + 4 * pts.size());</span></span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaGNC">         606 :           key.push_back(s);</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">         606 :           key.push_back(static_cast&lt;long long&gt;(geom));</span></span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">         606 :           key.push_back(nq);</span></span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">        1212 :           key.push_back(point_key.empty() ? 0 : 1);</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">         606 :           key.push_back(static_cast&lt;long long&gt;(point_key.size()));</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">         606 :           key.insert(key.end(), point_key.begin(), point_key.end());</span></span>
+<span id="L368"><span class="lineNum">     368</span>              :           // The point signature is required even with a canonical transformation key:</span>
+<span id="L369"><span class="lineNum">     369</span>              :           // it is the immutable registry identity that prevents a reused ad-hoc key</span>
+<span id="L370"><span class="lineNum">     370</span>              :           // from aliasing changed coordinates after an exchange rebuild.</span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">         606 :           AppendPointRuleSignature(key, pts);</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">         606 :           auto &amp;group = export_map[key];</span></span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaGNC">         606 :           if (group.pts.empty())</span></span>
+<span id="L374"><span class="lineNum">     374</span>              :           {</span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaGNC">          73 :             group.pts = pts;</span></span>
+<span id="L376"><span class="lineNum">     376</span>              :           }</span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">         606 :           group.elems.push_back(elem);</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">         606 :           group.bases.push_back(export_size);</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">         606 :           export_size += value_dim * nq;</span></span>
+<span id="L380"><span class="lineNum">     380</span>              :         }</span>
+<span id="L381"><span class="lineNum">     381</span>              :       }</span>
+<span id="L382"><span class="lineNum">     382</span>              :     }</span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">          42 :     if (export_size &gt; block_start)</span></span>
+<span id="L384"><span class="lineNum">     384</span>              :     {</span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaGNC">          38 :       send_msgs.push_back(</span></span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaGNC">          38 :           {pmesh.GetFaceNbrRank(i), block_start, export_size - block_start});</span></span>
+<span id="L387"><span class="lineNum">     387</span>              :     }</span>
+<span id="L388"><span class="lineNum">     388</span>              :   }</span>
+<span id="L389"><span class="lineNum">     389</span>              : </span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaGNC">          59 :   imported.SetSize(import_size);</span></span>
+<span id="L391"><span class="lineNum">     391</span>              :   imported.UseDevice(true);</span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaGNC">          59 :   imported = 0.0;</span></span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaGNC">          59 :   exported.SetSize(export_size);</span></span>
+<span id="L394"><span class="lineNum">     394</span>              :   exported.UseDevice(true);</span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaGNC">          59 :   if (export_size == 0)</span></span>
+<span id="L396"><span class="lineNum">     396</span>              :   {</span>
+<span id="L397"><span class="lineNum">     397</span>              :     return;</span>
+<span id="L398"><span class="lineNum">     398</span>              :   }</span>
+<span id="L399"><span class="lineNum">     399</span>              : </span>
+<span id="L400"><span class="lineNum">     400</span>              :   // Assemble a libCEED point evaluator for each export group, writing the</span>
+<span id="L401"><span class="lineNum">     401</span>              :   // physical-space field values (space-dimension components per point, point-major)</span>
+<span id="L402"><span class="lineNum">     402</span>              :   // into the exported vector at the assigned offsets.</span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaGNC">          38 :   int max_vsize = 0;</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">         190 :   for (const auto *fespace : fespaces)</span></span>
+<span id="L405"><span class="lineNum">     405</span>              :   {</span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">         224 :     max_vsize = std::max(max_vsize, fespace ? fespace-&gt;GetVSize() : 0);</span></span>
+<span id="L407"><span class="lineNum">     407</span>              :   }</span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaGNC">          38 :   Vector field_staging(max_vsize);</span></span>
+<span id="L409"><span class="lineNum">     409</span>              :   field_staging.UseDevice(true);</span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaGNC">          38 :   field_staging = 0.0;</span></span>
+<span id="L411"><span class="lineNum">     411</span>              :   const mfem::FiniteElementSpace &amp;mesh_fespace = *pmesh.GetNodes()-&gt;FESpace();</span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">         111 :   for (const auto &amp;[key, group] : export_map)</span></span>
+<span id="L413"><span class="lineNum">     413</span>              :   {</span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaGNC">          73 :     const int s = static_cast&lt;int&gt;(key[0]);</span></span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaGNC">          73 :     const auto geom = static_cast&lt;mfem::Geometry::Type&gt;(key[1]);</span></span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">          73 :     const int nq = static_cast&lt;int&gt;(key[2]);</span></span>
+<span id="L417"><span class="lineNum">     417</span>              :     const std::size_t num_elem = group.elems.size();</span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">          73 :     const auto &amp;fespace = *fespaces[s];</span></span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">          73 :     MFEM_VERIFY(group.pts.size() == static_cast&lt;std::size_t&gt;(nq),</span></span>
+<span id="L420"><span class="lineNum">     420</span>              :                 &quot;Invalid fixed export rule for face neighbor exchange!&quot;);</span>
+<span id="L421"><span class="lineNum">     421</span> <span class="tlaGNC">          73 :     const mfem::IntegrationRule *ir = GetRegisteredIr(key, group.pts);</span></span>
+<span id="L422"><span class="lineNum">     422</span>              : </span>
+<span id="L423"><span class="lineNum">     423</span>              :     // Inputs: mesh node gradients (on-the-fly geometry for the Piola transformations)</span>
+<span id="L424"><span class="lineNum">     424</span>              :     // and the field, both evaluated at the fixed mapped rule.</span>
+<span id="L425"><span class="lineNum">     425</span>              :     std::vector&lt;ceed::CeedFunctionalFieldInput&gt; inputs;</span>
+<span id="L426"><span class="lineNum">     426</span>              :     std::vector&lt;std::pair&lt;std::string, int&gt;&gt; field_sources;</span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaGNC">          73 :     CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">          73 :         mesh_fespace, ceed, geom, group.elems, /*is_interp*/ true);</span></span>
+<span id="L429"><span class="lineNum">     429</span>              :     const mfem::FiniteElement *mesh_fe =</span>
+<span id="L430"><span class="lineNum">     430</span> <span class="tlaGNC">          73 :         mesh_fespace.FEColl()-&gt;FiniteElementForGeometry(geom);</span></span>
+<span id="L431"><span class="lineNum">     431</span>              :     CeedBasis mesh_basis;</span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC">          73 :     ceed::InitCachedBasisFromRule(*mesh_fe, *ir, mesh_fespace.GetVDim(), ceed, &amp;mesh_basis);</span></span>
+<span id="L433"><span class="lineNum">     433</span>              :     CeedVector mesh_nodes_vec;</span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaGNC">          73 :     ceed::InitCeedVector(*mesh_fespace.GetMesh()-&gt;GetNodes(), ceed, &amp;mesh_nodes_vec);</span></span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaGNC">          73 :     inputs.push_back({&quot;x&quot;, mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});</span></span>
+<span id="L436"><span class="lineNum">     436</span>              :     CeedElemRestriction field_restr;</span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaGNC">          73 :     ceed::InitRestriction(fespace, group.elems, false, /*is_interp*/ true, false, ceed,</span></span>
+<span id="L438"><span class="lineNum">     438</span>              :                           &amp;field_restr);</span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">          73 :     const mfem::FiniteElement *fe = fespace.FEColl()-&gt;FiniteElementForGeometry(geom);</span></span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaGNC">          73 :     MFEM_VERIFY(fe, &quot;Unable to get field finite element for face neighbor exchange!&quot;);</span></span>
+<span id="L441"><span class="lineNum">     441</span>              :     CeedBasis field_basis;</span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">          73 :     ceed::InitCachedBasisFromRule(*fe, *ir, fespace.GetVDim(), ceed, &amp;field_basis);</span></span>
+<span id="L443"><span class="lineNum">     443</span>              :     CeedVector field_vec;</span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaGNC">          73 :     ceed::InitCeedVector(field_staging, ceed, &amp;field_vec);</span></span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaGNC">          73 :     inputs.push_back({&quot;u_1&quot;, field_vec, field_restr, field_basis, ceed::EvalMode::Interp});</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">          73 :     field_sources.emplace_back(&quot;u_1&quot;, s);</span></span>
+<span id="L447"><span class="lineNum">     447</span>              : </span>
+<span id="L448"><span class="lineNum">     448</span>              :     // Output restriction: one physical-space vector per point at the assigned export</span>
+<span id="L449"><span class="lineNum">     449</span>              :     // offsets.</span>
+<span id="L450"><span class="lineNum">     450</span> <span class="tlaGNC">          73 :     std::vector&lt;CeedInt&gt; offsets(num_elem * nq);</span></span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaGNC">         679 :     for (std::size_t e = 0; e &lt; num_elem; e++)</span></span>
+<span id="L452"><span class="lineNum">     452</span>              :     {</span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaGNC">        3236 :       for (int j = 0; j &lt; nq; j++)</span></span>
+<span id="L454"><span class="lineNum">     454</span>              :       {</span>
+<span id="L455"><span class="lineNum">     455</span> <span class="tlaGNC">        2630 :         offsets[e * nq + j] = group.bases[e] + value_dim * j;</span></span>
+<span id="L456"><span class="lineNum">     456</span>              :       }</span>
+<span id="L457"><span class="lineNum">     457</span>              :     }</span>
+<span id="L458"><span class="lineNum">     458</span>              :     CeedElemRestriction out_restr;</span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast&lt;CeedInt&gt;(num_elem), nq,</span></span>
+<span id="L460"><span class="lineNum">     460</span>              :                                                    value_dim, 1, (CeedSize)export_size,</span>
+<span id="L461"><span class="lineNum">     461</span>              :                                                    CEED_MEM_HOST, CEED_COPY_VALUES,</span>
+<span id="L462"><span class="lineNum">     462</span>              :                                                    offsets.data(), &amp;out_restr));</span>
+<span id="L463"><span class="lineNum">     463</span>              : </span>
+<span id="L464"><span class="lineNum">     464</span>              :     // The reply contains physical-space field values: the Piola transformation</span>
+<span id="L465"><span class="lineNum">     465</span>              :     // (H(curl) or H(div) depending on the source space) is applied here so the</span>
+<span id="L466"><span class="lineNum">     466</span>              :     // requester needs no neighbor element geometry.</span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaGNC">          73 :     const auto map_type = fespace.FEColl()-&gt;GetMapType(pmesh.Dimension());</span></span>
+<span id="L468"><span class="lineNum">     468</span> <span class="tlaGNC">          73 :     MFEM_VERIFY(map_type == mfem::FiniteElement::H_CURL ||</span></span>
+<span id="L469"><span class="lineNum">     469</span>              :                     map_type == mfem::FiniteElement::H_DIV,</span>
+<span id="L470"><span class="lineNum">     470</span>              :                 &quot;FaceNbrFieldExchange requires H(curl) or H(div) source spaces!&quot;);</span>
+<span id="L471"><span class="lineNum">     471</span>              :     ceed::CeedQFunctionInfo info;</span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaGNC">          73 :     if (map_type == mfem::FiniteElement::H_CURL)</span></span>
+<span id="L473"><span class="lineNum">     473</span>              :     {</span>
+<span id="L474"><span class="lineNum">     474</span> <span class="tlaGNC">          39 :       if (value_dim == 2)</span></span>
+<span id="L475"><span class="lineNum">     475</span>              :       {</span>
+<span id="L476"><span class="lineNum">     476</span> <span class="tlaGNC">           2 :         info.apply_qf = f_eval_probe_hcurl_22;</span></span>
+<span id="L477"><span class="lineNum">     477</span>              :         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_22_loc);</span>
+<span id="L478"><span class="lineNum">     478</span>              :       }</span>
+<span id="L479"><span class="lineNum">     479</span>              :       else</span>
+<span id="L480"><span class="lineNum">     480</span>              :       {</span>
+<span id="L481"><span class="lineNum">     481</span> <span class="tlaGNC">          37 :         info.apply_qf = f_eval_probe_hcurl_33;</span></span>
+<span id="L482"><span class="lineNum">     482</span>              :         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);</span>
+<span id="L483"><span class="lineNum">     483</span>              :       }</span>
+<span id="L484"><span class="lineNum">     484</span>              :     }</span>
+<span id="L485"><span class="lineNum">     485</span>              :     else</span>
+<span id="L486"><span class="lineNum">     486</span>              :     {</span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">          34 :       if (value_dim == 2)</span></span>
+<span id="L488"><span class="lineNum">     488</span>              :       {</span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaUNC tlaBgUNC">           0 :         info.apply_qf = f_eval_probe_hdiv_22;</span></span>
+<span id="L490"><span class="lineNum">     490</span>              :         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_22_loc);</span>
+<span id="L491"><span class="lineNum">     491</span>              :       }</span>
+<span id="L492"><span class="lineNum">     492</span>              :       else</span>
+<span id="L493"><span class="lineNum">     493</span>              :       {</span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaGNC tlaBgGNC">          34 :         info.apply_qf = f_eval_probe_hdiv_33;</span></span>
+<span id="L495"><span class="lineNum">     495</span>              :         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);</span>
+<span id="L496"><span class="lineNum">     496</span>              :       }</span>
+<span id="L497"><span class="lineNum">     497</span>              :     }</span>
+<span id="L498"><span class="lineNum">     498</span>              :     CeedOperator op;</span>
+<span id="L499"><span class="lineNum">     499</span> <span class="tlaGNC">          73 :     ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, value_dim, out_restr,</span></span>
+<span id="L500"><span class="lineNum">     500</span>              :                                      &amp;op);</span>
+<span id="L501"><span class="lineNum">     501</span> <span class="tlaGNC">          73 :     export_groups.push_back({ceed, op, std::move(field_sources)});</span></span>
+<span id="L502"><span class="lineNum">     502</span> <span class="tlaGNC">          73 :     export_groups.back().mesh_nodes = pmesh.GetNodes();</span></span>
+<span id="L503"><span class="lineNum">     503</span> <span class="tlaGNC">         292 :     export_groups.back().mesh_node_fields = {&quot;grad_x&quot;};</span></span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC">          73 :     fem::CacheGroupOperatorFieldVectors(export_groups.back());</span></span>
+<span id="L505"><span class="lineNum">     505</span>              : </span>
+<span id="L506"><span class="lineNum">     506</span>              :     // Cleanup (the assembled operator holds its own references).</span>
+<span id="L507"><span class="lineNum">     507</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedVectorDestroy(&amp;mesh_nodes_vec));</span></span>
+<span id="L508"><span class="lineNum">     508</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedVectorDestroy(&amp;field_vec));</span></span>
+<span id="L509"><span class="lineNum">     509</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&amp;mesh_restr));</span></span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&amp;field_restr));</span></span>
+<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&amp;out_restr));</span></span>
+<span id="L512"><span class="lineNum">     512</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedBasisDestroy(&amp;mesh_basis));</span></span>
+<span id="L513"><span class="lineNum">     513</span> <span class="tlaGNC">          73 :     PalaceCeedCall(ceed, CeedBasisDestroy(&amp;field_basis));</span></span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">          73 :   }</span></span>
+<span id="L515"><span class="lineNum">     515</span>              : </span>
+<span id="L516"><span class="lineNum">     516</span>              :   // The field vectors borrow construction storage until they are re-pointed at the first</span>
+<span id="L517"><span class="lineNum">     517</span>              :   // Exchange(). Detach them before releasing the full solution-sized staging vector.</span>
+<span id="L518"><span class="lineNum">     518</span> <span class="tlaGNC">          38 :   fem::DetachGroupOperatorFieldVectors(export_groups);</span></span>
+<span id="L519"><span class="lineNum">     519</span> <span class="tlaGNC">          38 :   field_staging.Destroy();</span></span>
+<span id="L520"><span class="lineNum">     520</span>              :   MFEM_ASSERT(field_staging.Capacity() == 0,</span>
+<span id="L521"><span class="lineNum">     521</span>              :               &quot;Face-neighbor field staging storage was not released!&quot;);</span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">         337 : }</span></span>
+<span id="L523"><span class="lineNum">     523</span>              : </span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">          59 : FaceNbrFieldExchange::~FaceNbrFieldExchange()</span></span>
+<span id="L525"><span class="lineNum">     525</span>              : {</span>
+<span id="L526"><span class="lineNum">     526</span> <span class="tlaGNC">          59 :   fem::DestroyGroupOperators(export_groups);</span></span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaGNC">          59 : }</span></span>
+<span id="L528"><span class="lineNum">     528</span>              : </span>
+<span id="L529"><span class="lineNum">     529</span> <span class="tlaGNC">          91 : void FaceNbrFieldExchange::Exchange(</span></span>
+<span id="L530"><span class="lineNum">     530</span>              :     const std::array&lt;const Vector *, MaxSources&gt; &amp;srcs) const</span>
+<span id="L531"><span class="lineNum">     531</span>              : {</span>
+<span id="L532"><span class="lineNum">     532</span>              :   // Evaluate the values requested by the neighbors (on the device).</span>
+<span id="L533"><span class="lineNum">     533</span> <span class="tlaGNC">          91 :   if (exported.Size() &gt; 0)</span></span>
+<span id="L534"><span class="lineNum">     534</span>              :   {</span>
+<span id="L535"><span class="lineNum">     535</span> <span class="tlaGNC">          58 :     exported = 0.0;</span></span>
+<span id="L536"><span class="lineNum">     536</span> <span class="tlaGNC">          58 :     fem::ApplyAddGroupOperators(export_groups, srcs, exported);</span></span>
+<span id="L537"><span class="lineNum">     537</span>              :   }</span>
+<span id="L538"><span class="lineNum">     538</span> <span class="tlaGNC">          91 :   if (recv_msgs.empty() &amp;&amp; send_msgs.empty())</span></span>
+<span id="L539"><span class="lineNum">     539</span>              :   {</span>
+<span id="L540"><span class="lineNum">     540</span> <span class="tlaGNC">          25 :     return;</span></span>
+<span id="L541"><span class="lineNum">     541</span>              :   }</span>
+<span id="L542"><span class="lineNum">     542</span>              : </span>
+<span id="L543"><span class="lineNum">     543</span>              :   // Exchange: receive directly into the imported vector (contiguous per neighbor by</span>
+<span id="L544"><span class="lineNum">     544</span>              :   // construction), send directly from the exported vector.</span>
+<span id="L545"><span class="lineNum">     545</span>              :   std::vector&lt;MPI_Request&gt; mpi_reqs;</span>
+<span id="L546"><span class="lineNum">     546</span> <span class="tlaGNC">          66 :   mpi_reqs.reserve(recv_msgs.size() + send_msgs.size());</span></span>
+<span id="L547"><span class="lineNum">     547</span> <span class="tlaGNC">          66 :   double *dst = (imported.Size() &gt; 0) ? imported.HostWrite() : nullptr;</span></span>
+<span id="L548"><span class="lineNum">     548</span> <span class="tlaGNC">         124 :   for (const auto &amp;msg : recv_msgs)</span></span>
+<span id="L549"><span class="lineNum">     549</span>              :   {</span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaGNC">          58 :     MPI_Irecv(dst + msg.start, msg.size, MPI_DOUBLE, msg.rank, TAG_EVAL, comm,</span></span>
+<span id="L551"><span class="lineNum">     551</span>              :               &amp;mpi_reqs.emplace_back());</span>
+<span id="L552"><span class="lineNum">     552</span>              :   }</span>
+<span id="L553"><span class="lineNum">     553</span> <span class="tlaGNC">          66 :   const double *src = (exported.Size() &gt; 0) ? exported.HostRead() : nullptr;</span></span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">         124 :   for (const auto &amp;msg : send_msgs)</span></span>
+<span id="L555"><span class="lineNum">     555</span>              :   {</span>
+<span id="L556"><span class="lineNum">     556</span> <span class="tlaGNC">          58 :     MPI_Isend(src + msg.start, msg.size, MPI_DOUBLE, msg.rank, TAG_EVAL, comm,</span></span>
+<span id="L557"><span class="lineNum">     557</span>              :               &amp;mpi_reqs.emplace_back());</span>
+<span id="L558"><span class="lineNum">     558</span>              :   }</span>
+<span id="L559"><span class="lineNum">     559</span> <span class="tlaGNC">          66 :   MPI_Waitall(static_cast&lt;int&gt;(mpi_reqs.size()), mpi_reqs.data(), MPI_STATUSES_IGNORE);</span></span>
+<span id="L560"><span class="lineNum">     560</span>              : }</span>
+<span id="L561"><span class="lineNum">     561</span>              : </span>
+<span id="L562"><span class="lineNum">     562</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
