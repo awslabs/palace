@@ -80,6 +80,9 @@ DomainPointFieldEvaluator::DomainPointFieldEvaluator(
               "Missing finite element space for domain field evaluator!");
   MFEM_VERIFY(build_gridfunction || build_buffer,
               "Domain point evaluator has no requested output path!");
+  MFEM_VERIFY((mesh.Dimension() == 2 && mesh.SpaceDimension() == 2) ||
+                  (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3),
+              "Domain point field evaluation requires a 2D or 3D volume mesh!");
   Assemble(mesh, mat_op, target_fespace, scaling, build_gridfunction, build_buffer);
 }
 
@@ -95,12 +98,6 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
                                          bool build_buffer)
 {
   const int dim = mesh.Dimension();
-  const int sdim = mesh.SpaceDimension();
-  if (!((dim == 2 && sdim == 2) || (dim == 3 && sdim == 3)))
-  {
-    valid = false;
-    return;
-  }
   const bool scalar_magnetic_field = (dim == 2);
   const mfem::ParMesh &pmesh = mesh.Get();
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
@@ -108,21 +105,17 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   const int vtu_lod = target_fespace.GetMaxElementOrder();
   if (build_buffer)
   {
-    // Point-major buffer layout matching VTK tuple order and MFEM's domain VTU point
-    // order (element order, then refined/nodal points within each element). The output
-    // restriction scatters each point tuple contiguously so visualization consumers can
-    // write the payload without repacking.
     buffer_num_comp = target_fespace.GetVDim();
     buffer_bases.assign(pmesh.GetNE(), -1);
-    int buffer_points = 0;
+    int num_points = 0;
     for (int e = 0; e < pmesh.GetNE(); e++)
     {
-      const auto *RefG =
-          mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(e), vtu_lod, 1);
-      buffer_bases[e] = buffer_points;
-      buffer_points += RefG->RefPts.GetNPoints();
+      buffer_bases[e] = num_points;
+      num_points +=
+          mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(e), vtu_lod, 1)
+              ->RefPts.GetNPoints();
     }
-    buffer_size = buffer_points * buffer_num_comp;
+    buffer_size = num_points * buffer_num_comp;
   }
 
   // Group the elements by geometry type.
@@ -132,10 +125,8 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     geom_elems[pmesh.GetElementGeometry(e)].push_back(e);
   }
 
-  // QFunction context: derived quantities need a scaling factor followed by the material
-  // property table. Plain field probes only need geometry and field values.
   const bool field_value_kind =
-      (kind == Kind::FIELD_E || kind == Kind::FIELD_B || kind == Kind::FIELD_H1);
+      kind == Kind::FIELD_E || kind == Kind::FIELD_B || kind == Kind::FIELD_H1;
   std::vector<CeedIntScalar> ctx;
   if (!field_value_kind)
   {
@@ -213,17 +204,11 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         break;
     }
 
-    if (build_gridfunction)
+    auto AssembleAtPoints = [&](const mfem::IntegrationRule &ir,
+                                CeedElemRestriction out_restr,
+                                std::vector<fem::CeedGroupOperator> &operators)
     {
-      // Evaluation points are the nodal points of the (interpolatory) target space.
-      const mfem::FiniteElement *target_fe =
-          target_fespace.FEColl()->FiniteElementForGeometry(geom);
-      MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
-      const mfem::IntegrationRule &nodes_ir = target_fe->GetNodes();
-      const int num_pts = nodes_ir.GetNPoints();
-
-      // Element attributes (libCEED local, for material lookup) and mesh node gradients
-      // (for on the fly geometry evaluation at the points).
+      const int num_pts = ir.GetNPoints();
       std::vector<ceed::CeedFunctionalFieldInput> inputs;
       std::vector<std::pair<std::string, int>> field_sources;
       if (!field_value_kind)
@@ -240,17 +225,14 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
                                  ceed, indices.size(), 1, 1, indices.size(),
                                  CEED_STRIDES_BACKEND, &attr_restr));
-        {
-          // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-          Bt = 1.0;
-          Gt = 0.0;
-          qX = 0.0;
-          qW = 0.0;
-          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                                 qW.GetData(), &attr_basis));
-        }
+        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+        Bt = 1.0;
+        Gt = 0.0;
+        qX = 0.0;
+        qW = 0.0;
+        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                               qW.GetData(), &attr_basis));
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
@@ -258,24 +240,21 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         scratch.restrs.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
-      {
-        CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
-            mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
-        const mfem::FiniteElement *mesh_fe =
-            mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
-        CeedBasis mesh_basis;
-        ceed::InitCachedBasisFromRule(*mesh_fe, nodes_ir, mesh_fespace.GetVDim(), ceed,
-                                      &mesh_basis);
-        CeedVector mesh_nodes_vec;
-        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-        inputs.push_back(
-            {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-        scratch.vecs.push_back(mesh_nodes_vec);
-        scratch.restrs.push_back(mesh_restr);
-        scratch.bases.push_back(mesh_basis);
-      }
 
-      // Field inputs evaluated at the nodal points.
+      CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+          mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+      const mfem::FiniteElement *mesh_fe =
+          mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+      CeedBasis mesh_basis;
+      ceed::InitCachedBasisFromRule(*mesh_fe, ir, mesh_fespace.GetVDim(), ceed,
+                                    &mesh_basis);
+      CeedVector mesh_nodes_vec;
+      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+      inputs.push_back({"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+      scratch.vecs.push_back(mesh_nodes_vec);
+      scratch.restrs.push_back(mesh_restr);
+      scratch.bases.push_back(mesh_basis);
+
       auto AddFieldInput = [&](const std::string &name, int source,
                                const mfem::ParFiniteElementSpace &fespace)
       {
@@ -285,7 +264,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
                               &restr);
         const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
-        ceed::InitCachedBasisFromRule(*fe, nodes_ir, fespace.GetVDim(), ceed, &basis);
+        ceed::InitCachedBasisFromRule(*fe, ir, fespace.GetVDim(), ceed, &basis);
         ceed::InitCeedVector(field_staging, ceed, &vec);
         inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         field_sources.emplace_back(name, source);
@@ -305,139 +284,53 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
                       *rt_fespace);
       }
 
-      // Output restriction scattering nodal values into the target grid function.
-      CeedElemRestriction out_restr;
-      ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
-                            &out_restr);
-      scratch.restrs.push_back(out_restr);
-
       CeedOperator op;
       ceed::AssembleCeedPointEvaluator(info, ctx.empty() ? nullptr : ctx.data(),
                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
                                        target_fespace.GetVDim(), out_restr, &op);
-      groups.push_back({ceed, op, std::move(field_sources)});
-      groups.back().mesh_nodes = pmesh.GetNodes();
-      groups.back().mesh_node_fields = {"grad_x"};
-      fem::CacheGroupOperatorFieldVectors(groups.back());
-    }
+      operators.push_back({ceed, op, std::move(field_sources)});
+      operators.back().mesh_nodes = pmesh.GetNodes();
+      operators.back().mesh_node_fields = {"grad_x"};
+      fem::CacheGroupOperatorFieldVectors(operators.back());
+    };
 
+    if (build_gridfunction)
+    {
+      const mfem::FiniteElement *target_fe =
+          target_fespace.FEColl()->FiniteElementForGeometry(geom);
+      MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
+      CeedElemRestriction out_restr;
+      ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
+                            &out_restr);
+      scratch.restrs.push_back(out_restr);
+      AssembleAtPoints(target_fe->GetNodes(), out_restr, groups);
+    }
     if (build_buffer)
     {
-      // Assemble a second operator for visualization point buffers. This evaluates at
-      // MFEM's refined VTU points (not necessarily the same order as the target L2 nodes)
-      // and scatters into point-major tuples.
-      const mfem::IntegrationRule &vtu_ir =
+      const mfem::IntegrationRule &ir =
           mfem::GlobGeometryRefiner.Refine(geom, vtu_lod, 1)->RefPts;
-      const int num_vtu_pts = vtu_ir.GetNPoints();
-      std::vector<ceed::CeedFunctionalFieldInput> buffer_inputs;
-      std::vector<std::pair<std::string, int>> buffer_field_sources;
-      if (!field_value_kind)
+      const int num_pts = ir.GetNPoints();
+      std::vector<CeedInt> offsets(indices.size() * num_pts);
+      for (std::size_t e = 0; e < indices.size(); e++)
       {
-        auto &elem_attr = elem_attrs.emplace_back(indices.size());
-        const auto &loc_attr = mesh.GetCeedAttributes();
-        for (std::size_t k = 0; k < indices.size(); k++)
+        const int point_base = buffer_bases[indices[e]];
+        for (int j = 0; j < num_pts; j++)
         {
-          elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+          offsets[e * num_pts + j] = (point_base + j) * buffer_num_comp;
         }
-        CeedElemRestriction attr_restr;
-        CeedBasis attr_basis;
-        CeedVector attr_vec;
-        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                                 ceed, indices.size(), 1, 1, indices.size(),
-                                 CEED_STRIDES_BACKEND, &attr_restr));
-        {
-          mfem::Vector Bt(num_vtu_pts), Gt(num_vtu_pts), qX(num_vtu_pts), qW(num_vtu_pts);
-          Bt = 1.0;
-          Gt = 0.0;
-          qX = 0.0;
-          qW = 0.0;
-          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1,
-                                                 num_vtu_pts, Bt.GetData(), Gt.GetData(),
-                                                 qX.GetData(), qW.GetData(), &attr_basis));
-        }
-        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-        buffer_inputs.push_back(
-            {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
-        scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
-        scratch.bases.push_back(attr_basis);
       }
-      {
-        CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
-            mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
-        const mfem::FiniteElement *mesh_fe =
-            mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
-        CeedBasis mesh_basis;
-        ceed::InitCachedBasisFromRule(*mesh_fe, vtu_ir, mesh_fespace.GetVDim(), ceed,
-                                      &mesh_basis);
-        CeedVector mesh_nodes_vec;
-        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-        buffer_inputs.push_back(
-            {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-        scratch.vecs.push_back(mesh_nodes_vec);
-        scratch.restrs.push_back(mesh_restr);
-        scratch.bases.push_back(mesh_basis);
-      }
-      auto AddBufferFieldInput = [&](const std::string &name, int source,
-                                     const mfem::ParFiniteElementSpace &fespace)
-      {
-        CeedElemRestriction restr;
-        CeedBasis basis;
-        CeedVector vec;
-        ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
-                              &restr);
-        const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
-        ceed::InitCachedBasisFromRule(*fe, vtu_ir, fespace.GetVDim(), ceed, &basis);
-        ceed::InitCeedVector(field_staging, ceed, &vec);
-        buffer_inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
-        buffer_field_sources.emplace_back(name, source);
-        scratch.vecs.push_back(vec);
-        scratch.restrs.push_back(restr);
-        scratch.bases.push_back(basis);
-      };
-      if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
-          kind == Kind::POYNTING || kind == Kind::MODE_SN)
-      {
-        AddBufferFieldInput("u_1", 0, *nd_fespace);
-      }
-      if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING ||
-          kind == Kind::MODE_SN)
-      {
-        AddBufferFieldInput((kind == Kind::POYNTING || kind == Kind::MODE_SN) ? "u_2"
-                                                                              : "u_1",
-                            1, *rt_fespace);
-      }
-      CeedElemRestriction buffer_out_restr;
-      {
-        std::vector<CeedInt> offsets(indices.size() * num_vtu_pts);
-        for (std::size_t e = 0; e < indices.size(); e++)
-        {
-          const int point_base = buffer_bases[indices[e]];
-          for (int j = 0; j < num_vtu_pts; j++)
-          {
-            offsets[e * num_vtu_pts + j] = (point_base + j) * buffer_num_comp;
-          }
-        }
-        PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                                 ceed, static_cast<CeedInt>(indices.size()), num_vtu_pts,
-                                 buffer_num_comp, 1, (CeedSize)buffer_size, CEED_MEM_HOST,
-                                 CEED_COPY_VALUES, offsets.data(), &buffer_out_restr));
-      }
-      scratch.restrs.push_back(buffer_out_restr);
-      CeedOperator buffer_op;
-      ceed::AssembleCeedPointEvaluator(
-          info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-          ceed, buffer_inputs, buffer_num_comp, buffer_out_restr, &buffer_op);
-      buffer_groups.push_back({ceed, buffer_op, std::move(buffer_field_sources)});
-      buffer_groups.back().mesh_nodes = pmesh.GetNodes();
-      buffer_groups.back().mesh_node_fields = {"grad_x"};
-      fem::CacheGroupOperatorFieldVectors(buffer_groups.back());
+      CeedElemRestriction out_restr;
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(indices.size()),
+                                          num_pts, buffer_num_comp, 1,
+                                          static_cast<CeedSize>(buffer_size), CEED_MEM_HOST,
+                                          CEED_COPY_VALUES, offsets.data(), &out_restr));
+      scratch.restrs.push_back(out_restr);
+      AssembleAtPoints(ir, out_restr, buffer_groups);
     }
   }
 
-  // The passive libCEED field vectors are cached and re-pointed to caller-owned data on
-  // every apply. Detach their borrowed arrays before actually releasing the construction
-  // buffer, so no full device FE vector remains per evaluator through subsequent solves.
+  // Passive field vectors are re-pointed to caller-owned data on every apply.
   fem::DetachGroupOperatorFieldVectors(groups);
   fem::DetachGroupOperatorFieldVectors(buffer_groups);
   field_staging.Destroy();
@@ -448,11 +341,18 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
 void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
                                      Vector &out) const
 {
-  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainPointFieldEvaluator!");
-  MFEM_VERIFY(
-      (E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
-          (B || kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E),
-      "Missing field grid function for domain field evaluator!");
+  const bool needs_e =
+      kind == Kind::ENERGY_E || kind == Kind::POYNTING || kind == Kind::MODE_SN;
+  const bool needs_b =
+      kind == Kind::ENERGY_M || kind == Kind::POYNTING || kind == Kind::MODE_SN;
+  MFEM_VERIFY((!needs_e || E) && (!needs_b || B),
+              "Missing field grid function for domain field evaluator!");
+  if (E && B)
+  {
+    MFEM_VERIFY(E->HasImag() == B->HasImag(),
+                "Mismatched real and complex fields in domain field evaluator!");
+  }
+
   out = 0.0;
   fem::ApplyAddGroupOperators(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr},
                               out);
@@ -465,31 +365,27 @@ void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *
 
 void DomainPointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid,
-              "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
   MFEM_VERIFY(kind == Kind::FIELD_E || kind == Kind::FIELD_B || kind == Kind::FIELD_H1,
-              "Vector EvalBuffer is only valid for linear field evaluators!");
-  MFEM_ASSERT(buffer.Size() == buffer_size,
-              "Invalid buffer size for DomainPointFieldEvaluator::EvalBuffer!");
+              "Vector EvalBuffer is only valid for primary field evaluators!");
+  MFEM_VERIFY(buffer.Size() == buffer_size, "Invalid domain point buffer size!");
   buffer = 0.0;
   fem::ApplyAddGroupOperators(
       buffer_groups,
       {(kind == Kind::FIELD_E || kind == Kind::FIELD_H1) ? &u : nullptr,
-       kind == Kind::FIELD_B ? &u : nullptr, nullptr, nullptr},
+       kind == Kind::FIELD_B ? &u : nullptr},
       buffer);
 }
 
 void DomainPointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
                                            Vector &buffer) const
 {
-  MFEM_VERIFY(valid,
-              "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
-  MFEM_VERIFY(
-      (E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
-          (B || kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E),
-      "Missing field grid function for domain field evaluator!");
-  MFEM_ASSERT(buffer.Size() == buffer_size,
-              "Invalid buffer size for DomainPointFieldEvaluator::EvalBuffer!");
+  const bool needs_e =
+      kind == Kind::ENERGY_E || kind == Kind::POYNTING || kind == Kind::MODE_SN;
+  const bool needs_b =
+      kind == Kind::ENERGY_M || kind == Kind::POYNTING || kind == Kind::MODE_SN;
+  MFEM_VERIFY((!needs_e || E) && (!needs_b || B),
+              "Missing field grid function for domain field evaluator!");
+  MFEM_VERIFY(buffer.Size() == buffer_size, "Invalid domain point buffer size!");
   buffer = 0.0;
   fem::ApplyAddGroupOperators(buffer_groups,
                               {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr}, buffer);

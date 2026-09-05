@@ -18,10 +18,8 @@ class MaterialOperator;
 class Mesh;
 
 //
-// Class to evaluate derived field quantities (energy densities, Poynting vector) at the
-// nodal points of an interpolatory output space using libCEED, filling a grid function
-// for visualization output without per-point host coefficient evaluation. Follows the
-// conventions of EnergyDensityCoefficient and PoyntingVectorCoefficient.
+// Class to evaluate primary and derived fields using libCEED, either into an
+// interpolatory output grid function or directly into MFEM's refined VTU point order.
 //
 class DomainPointFieldEvaluator
 {
@@ -45,18 +43,12 @@ private:
   const mfem::ParFiniteElementSpace *nd_fespace;
   const mfem::ParFiniteElementSpace *rt_fespace;
 
-  // Whether the evaluator could be assembled.
-  bool valid = true;
-
-  // Per-geometry assembled libCEED operators, evaluating at the target space nodal
-  // points and scattering directly into the output grid function or into a point-major
-  // ParaView point buffer. The element attribute vectors are operator inputs and must
-  // outlive the operators.
+  // Per-geometry assembled libCEED operators for grid-function and direct point-buffer
+  // output. The element attribute vectors are operator inputs and must outlive them.
   std::vector<fem::CeedGroupOperator> groups, buffer_groups;
   std::deque<Vector> elem_attrs;
 
-  // Point-major buffer layout for domain visualization fields. Buffer bases are point
-  // offsets in the same element/refined-point order used by MFEM's VTU writer.
+  // Point-major VTU buffer layout: element order, refined point order, component.
   int buffer_size = 0, buffer_num_comp = 0;
   std::vector<int> buffer_bases;
 
@@ -75,33 +67,24 @@ public:
                             const mfem::ParFiniteElementSpace *rt_fespace,
                             const mfem::ParFiniteElementSpace &target_fespace,
                             double scaling, bool build_gridfunction = true,
-                            bool build_buffer = true);
+                            bool build_buffer = false);
   ~DomainPointFieldEvaluator();
 
   DomainPointFieldEvaluator(const DomainPointFieldEvaluator &) = delete;
   DomainPointFieldEvaluator &operator=(const DomainPointFieldEvaluator &) = delete;
-
-  // Whether the evaluator was successfully assembled.
-  bool IsValid() const { return valid; }
-
-  // Total buffer size (all elements, lattice points, components), number of components,
-  // and per-element point-base offsets for the domain visualization field. Vector
-  // buffers are point-major: xyzxyz... in VTK tuple order.
-  int BufferSize() const { return buffer_size; }
-  int BufferNumComp() const { return buffer_num_comp; }
-  const std::vector<int> &BufferBases() const { return buffer_bases; }
 
   // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
   // the pointwise quantity. Real and imaginary field contributions add. Local
   // operation (no MPI communication).
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
 
-  // Fill the point-major domain visualization point buffer for a single linear field.
-  // Local operation (no MPI communication).
+  int BufferSize() const { return buffer_size; }
+  int BufferNumComp() const { return buffer_num_comp; }
+
+  // Fill a point-major domain visualization buffer for a primary field.
   void EvalBuffer(const Vector &u, Vector &buffer) const;
 
-  // Fill the point-major domain visualization point buffer. Real and imaginary field
-  // contributions add. Local operation (no MPI communication).
+  // Fill a point-major domain visualization buffer for a derived field.
   void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;
 };
 

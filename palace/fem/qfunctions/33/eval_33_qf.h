@@ -113,14 +113,12 @@ CEED_QFUNCTION(f_eval_probe_hcurl_33)(void *, CeedInt Q, const CeedScalar *const
   return 0;
 }
 
-// Pointwise scalar H1/L2 field value. Inputs: grad_x, u. The geometry input is unused
-// but kept so this probe has the same field list as the vector-valued probes.
+// Pointwise scalar H1/L2 field value. Inputs: grad_x, u.
 CEED_QFUNCTION(f_eval_probe_l2_33)(void *, CeedInt Q, const CeedScalar *const *in,
                                    CeedScalar *const *out)
 {
   const CeedScalar *u = in[1];
   CeedScalar *v = out[0];
-
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     v[i] = u[i];
