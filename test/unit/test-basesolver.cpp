@@ -96,8 +96,8 @@ void CheckReconstructionOracle(const mesh::MeshEntityCounts &counts,
   }
 }
 
-// Distribute `serial_mesh`, gather geometry-resolved counts while writing model.mesh, then
-// collectively complete nonconforming true vertex and edge counts.
+// Distribute `serial_mesh`, gather geometry-resolved counts while writing the saved mesh,
+// then collectively complete nonconforming true vertex and edge counts.
 mesh::MeshEntityCounts ComputeCounts(MPI_Comm comm, const fs::path &out,
                                      mfem::Mesh &serial_mesh)
 {
@@ -304,15 +304,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto parallel_mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
   mesh::RebalanceMesh(iodata, parallel_mesh);
 
+  // RebalanceMesh gzip-compresses the saved mesh (".meshgz") when MFEM is built with zlib,
+  // and writes it uncompressed (".mesh") otherwise; the archived bytes match the write
+  // either way, so this test is agnostic to which path ran.
+#if defined(MFEM_USE_ZLIB)
+  const std::string saved_mesh = "model.meshgz";
+#else
+  const std::string saved_mesh = "model.mesh";
+#endif
+
   // Save the first adapted mesh contents for comparison.
-  auto mesh_file = temp_dir / "model.mesh";
+  auto mesh_file = temp_dir / saved_mesh;
   auto first_mesh = ReadFile(mesh_file);
   REQUIRE_FALSE(first_mesh.empty());
 
   // Archive the first mesh, leaving a top-level symlink to it.
   SaveIteration(comm, temp_dir, 1, 1);
   REQUIRE(fs::is_symlink(mesh_file));
-  REQUIRE(ReadFile(temp_dir / "iteration1" / "model.mesh") == first_mesh);
+  REQUIRE(ReadFile(temp_dir / "iteration1" / saved_mesh) == first_mesh);
 
   // Simulate the next AMR iteration with a changed mesh.
   parallel_mesh->GetVertex(0)[0] = -1.0;
@@ -321,7 +330,55 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The new mesh replaces the symlink without changing the archived mesh.
   CHECK_FALSE(fs::is_symlink(mesh_file));
   CHECK(ReadFile(mesh_file) != first_mesh);
-  CHECK(ReadFile(temp_dir / "iteration1" / "model.mesh") == first_mesh);
+  CHECK(ReadFile(temp_dir / "iteration1" / saved_mesh) == first_mesh);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Mesh loader reads a gzip-compressed mesh (.meshgz round-trip)",
+                 "[basesolver][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto serial_mesh = SingleTetMesh();
+
+  // Write the same mesh two ways: gzip-compressed (the form SaveAdaptMesh emits under
+  // MFEM_USE_ZLIB) and uncompressed. Loading the compressed mesh must yield the same
+  // topology as the uncompressed one; before LoadMesh read through named_ifgzstream, a
+  // ".meshgz" aborted with "Unknown input mesh format" (the reader saw raw gzip bytes).
+  const auto gz_path = temp_dir / "mesh.meshgz";
+  const auto plain_path = temp_dir / "mesh.mesh";
+  {
+    mfem::ofgzstream os(gz_path.string(), /*compression=*/true);
+    serial_mesh.Print(os);
+  }
+  {
+    std::ofstream os(plain_path);
+    serial_mesh.Print(os);
+  }
+
+  Units units(1.0, 1.0);
+  auto load = [&](const fs::path &p)
+  {
+    IoData iodata(units);
+    iodata.model.mesh = p.string();
+    return mesh::Load(iodata, comm);
+  };
+  auto gz = load(gz_path);
+  auto plain = load(plain_path);
+  REQUIRE(gz);
+  REQUIRE(plain);
+  CHECK(gz->Dimension() == plain->Dimension());
+  CHECK(gz->GetNE() == plain->GetNE());
+  CHECK(gz->GetNV() == plain->GetNV());
+
+#if defined(MFEM_USE_ZLIB)
+  // Confirm the ".meshgz" really is gzip (magic bytes 0x1f 0x8b), so the load above
+  // exercised decompression rather than a silently-uncompressed file.
+  std::ifstream raw(gz_path, std::ios::binary);
+  unsigned char magic[2] = {0, 0};
+  raw.read(reinterpret_cast<char *>(magic), 2);
+  CHECK(magic[0] == 0x1f);
+  CHECK(magic[1] == 0x8b);
+#endif
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -529,7 +586,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // through the NC FE-space + NC-face-list path) and compute again. The two must agree
   // exactly -- the robust guard that the NC counting reduces to the conforming answer when
   // there are no hanging entities. Each geometry uses its own subdirectory so the written
-  // model.mesh files do not collide.
+  // saved-mesh files do not collide.
   auto check_twin = [&](const std::string &name, const mfem::Mesh &base)
   {
     const auto conf_dir = temp_dir / (name + "-conf");
@@ -673,9 +730,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
   // With SaveAdaptMesh disabled no mesh is written, so no counts are produced. Also assert
   // the save side-effect did not happen, tying valid == false to its actual cause rather
-  // than merely to the struct's default.
+  // than merely to the struct's default. Check both possible names (compressed and not) so
+  // the guard holds regardless of whether MFEM was built with zlib.
   CHECK_FALSE(counts.valid);
   CHECK_FALSE(fs::exists(temp_dir / "model.mesh"));
+  CHECK_FALSE(fs::exists(temp_dir / "model.meshgz"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

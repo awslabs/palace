@@ -170,7 +170,10 @@ solve.
 
 When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
 is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk and also
-records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. The block always
+records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. When *Palace*
+is built with `zlib`, the saved mesh is gzip-compressed and written with a `.meshgz`
+extension; without `zlib` it is written uncompressed as `.mesh`. MFEM detects the compression
+from the file contents when reading, so either file can be used directly as a restart mesh. The block always
 describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
 mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
 that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
