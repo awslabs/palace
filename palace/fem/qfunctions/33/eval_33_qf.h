@@ -113,6 +113,19 @@ CEED_QFUNCTION(f_eval_probe_hcurl_33)(void *, CeedInt Q, const CeedScalar *const
   return 0;
 }
 
+// Pointwise scalar H1/L2 field value. Inputs: grad_x, u.
+CEED_QFUNCTION(f_eval_probe_l2_33)(void *, CeedInt Q, const CeedScalar *const *in,
+                                   CeedScalar *const *out)
+{
+  const CeedScalar *u = in[1];
+  CeedScalar *v = out[0];
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = u[i];
+  }
+  return 0;
+}
+
 // Pointwise H(div) field value: v = J/detJ u. Inputs: grad_x, u.
 CEED_QFUNCTION(f_eval_probe_hdiv_33)(void *, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)

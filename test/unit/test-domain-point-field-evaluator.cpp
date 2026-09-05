@@ -38,6 +38,60 @@ void CheckField(const mfem::ParGridFunction &value, const mfem::ParGridFunction 
   CHECK(max_diff <= 1.0e-11 * std::max(max_ref, 1.0));
 }
 
+void CheckBuffer(const Vector &value, mfem::ParMesh &mesh, int lod,
+                 mfem::Coefficient &reference)
+{
+  const double *v = value.HostRead();
+  int idx = 0;
+  double max_diff = 0.0, max_ref = 0.0;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const auto &ir =
+        mfem::GlobGeometryRefiner.Refine(mesh.GetElementBaseGeometry(e), lod, 1)->RefPts;
+    auto *T = mesh.GetElementTransformation(e);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      const double r = reference.Eval(*T, ip);
+      max_diff = std::max(max_diff, std::abs(v[idx++] - r));
+      max_ref = std::max(max_ref, std::abs(r));
+    }
+  }
+  REQUIRE(idx == value.Size());
+  CAPTURE(max_diff, max_ref);
+  CHECK(max_diff <= 1.0e-11 * std::max(max_ref, 1.0));
+}
+
+void CheckBuffer(const Vector &value, mfem::ParMesh &mesh, int lod,
+                 mfem::VectorCoefficient &reference)
+{
+  const double *v = value.HostRead();
+  int idx = 0;
+  double max_diff = 0.0, max_ref = 0.0;
+  mfem::Vector r(reference.GetVDim());
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const auto &ir =
+        mfem::GlobGeometryRefiner.Refine(mesh.GetElementBaseGeometry(e), lod, 1)->RefPts;
+    auto *T = mesh.GetElementTransformation(e);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      reference.Eval(r, *T, ip);
+      for (int d = 0; d < r.Size(); d++)
+      {
+        max_diff = std::max(max_diff, std::abs(v[idx++] - r[d]));
+        max_ref = std::max(max_ref, std::abs(r[d]));
+      }
+    }
+  }
+  REQUIRE(idx == value.Size());
+  CAPTURE(max_diff, max_ref);
+  CHECK(max_diff <= 1.0e-11 * std::max(max_ref, 1.0));
+}
+
 }  // namespace
 
 TEST_CASE("Domain point field evaluator 3D", "[postoperator][Serial][Parallel][GPU]")
@@ -116,40 +170,73 @@ TEST_CASE("Domain point field evaluator 3D", "[postoperator][Serial][Parallel][G
   mfem::ParFiniteElementSpace vector_fespace(&mesh.Get(), &output_fec, 3);
   const double scaling = 2.5;
 
+  SECTION("Primary fields")
+  {
+    DomainPointFieldEvaluator e_evaluator(DomainPointFieldEvaluator::Kind::FIELD_E, mesh,
+                                          mat_op, E.ParFESpace(), nullptr, vector_fespace,
+                                          1.0, false, true);
+    Vector e_value(e_evaluator.BufferSize());
+    e_value.UseDevice(true);
+    e_evaluator.EvalBuffer(E.Real(), e_value);
+    mfem::VectorGridFunctionCoefficient e_reference(&E.Real());
+    CheckBuffer(e_value, mesh.Get(), order, e_reference);
+
+    DomainPointFieldEvaluator b_evaluator(DomainPointFieldEvaluator::Kind::FIELD_B, mesh,
+                                          mat_op, nullptr, B.ParFESpace(), vector_fespace,
+                                          1.0, false, true);
+    Vector b_value(b_evaluator.BufferSize());
+    b_value.UseDevice(true);
+    b_evaluator.EvalBuffer(B.Real(), b_value);
+    mfem::VectorGridFunctionCoefficient b_reference(&B.Real());
+    CheckBuffer(b_value, mesh.Get(), order, b_reference);
+  }
+
   SECTION("Electric energy")
   {
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_E, mesh,
                                         mat_op, E.ParFESpace(), nullptr, scalar_fespace,
-                                        scaling);
+                                        scaling, true, true);
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(&E, nullptr, value);
     EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
     reference.ProjectCoefficient(legacy);
     CheckField(value, reference);
+    Vector buffer(evaluator.BufferSize());
+    buffer.UseDevice(true);
+    evaluator.EvalBuffer(&E, nullptr, buffer);
+    CheckBuffer(buffer, mesh.Get(), order, legacy);
   }
 
   SECTION("Magnetic energy")
   {
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_M, mesh,
                                         mat_op, nullptr, B.ParFESpace(), scalar_fespace,
-                                        scaling);
+                                        scaling, true, true);
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(nullptr, &B, value);
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
     reference.ProjectCoefficient(legacy);
     CheckField(value, reference);
+    Vector buffer(evaluator.BufferSize());
+    buffer.UseDevice(true);
+    evaluator.EvalBuffer(nullptr, &B, buffer);
+    CheckBuffer(buffer, mesh.Get(), order, legacy);
   }
 
   SECTION("Poynting vector")
   {
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::POYNTING, mesh,
                                         mat_op, E.ParFESpace(), B.ParFESpace(),
-                                        vector_fespace, scaling);
+                                        vector_fespace, scaling, true, true);
     mfem::ParGridFunction value(&vector_fespace), reference(&vector_fespace);
     evaluator.Eval(&E, &B, value);
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
     reference.ProjectCoefficient(legacy);
     CheckField(value, reference);
+    Vector buffer(evaluator.BufferSize());
+    buffer.UseDevice(true);
+    evaluator.EvalBuffer(&E, &B, buffer);
+    CheckBuffer(buffer, mesh.Get(), order, legacy);
   }
 }
 
@@ -218,40 +305,73 @@ TEST_CASE("Domain point field evaluator 2D", "[postoperator][Serial][Parallel][G
   mfem::ParFiniteElementSpace vector_fespace(&mesh.Get(), &output_fec, 2);
   const double scaling = 1.7;
 
+  SECTION("Primary fields")
+  {
+    DomainPointFieldEvaluator e_evaluator(DomainPointFieldEvaluator::Kind::FIELD_E, mesh,
+                                          mat_op, E.ParFESpace(), nullptr, vector_fespace,
+                                          1.0, false, true);
+    Vector e_value(e_evaluator.BufferSize());
+    e_value.UseDevice(true);
+    e_evaluator.EvalBuffer(E.Real(), e_value);
+    mfem::VectorGridFunctionCoefficient e_reference(&E.Real());
+    CheckBuffer(e_value, mesh.Get(), order, e_reference);
+
+    DomainPointFieldEvaluator b_evaluator(DomainPointFieldEvaluator::Kind::FIELD_B, mesh,
+                                          mat_op, nullptr, B.ParFESpace(), scalar_fespace,
+                                          1.0, false, true);
+    Vector b_value(b_evaluator.BufferSize());
+    b_value.UseDevice(true);
+    b_evaluator.EvalBuffer(B.Real(), b_value);
+    mfem::GridFunctionCoefficient b_reference(&B.Real());
+    CheckBuffer(b_value, mesh.Get(), order, b_reference);
+  }
+
   SECTION("Electric energy")
   {
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_E, mesh,
                                         mat_op, E.ParFESpace(), nullptr, scalar_fespace,
-                                        scaling);
+                                        scaling, true, true);
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(&E, nullptr, value);
     EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
     reference.ProjectCoefficient(legacy);
     CheckField(value, reference);
+    Vector buffer(evaluator.BufferSize());
+    buffer.UseDevice(true);
+    evaluator.EvalBuffer(&E, nullptr, buffer);
+    CheckBuffer(buffer, mesh.Get(), order, legacy);
   }
 
   SECTION("Magnetic energy")
   {
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::ENERGY_M, mesh,
                                         mat_op, nullptr, B.ParFESpace(), scalar_fespace,
-                                        scaling);
+                                        scaling, true, true);
     mfem::ParGridFunction value(&scalar_fespace), reference(&scalar_fespace);
     evaluator.Eval(nullptr, &B, value);
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
     reference.ProjectCoefficient(legacy);
     CheckField(value, reference);
+    Vector buffer(evaluator.BufferSize());
+    buffer.UseDevice(true);
+    evaluator.EvalBuffer(nullptr, &B, buffer);
+    CheckBuffer(buffer, mesh.Get(), order, legacy);
   }
 
   SECTION("Poynting vector")
   {
     DomainPointFieldEvaluator evaluator(DomainPointFieldEvaluator::Kind::POYNTING, mesh,
                                         mat_op, E.ParFESpace(), B.ParFESpace(),
-                                        vector_fespace, scaling);
+                                        vector_fespace, scaling, true, true);
     mfem::ParGridFunction value(&vector_fespace), reference(&vector_fespace);
     evaluator.Eval(&E, &B, value);
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
     reference.ProjectCoefficient(legacy);
     CheckField(value, reference);
+    Vector buffer(evaluator.BufferSize());
+    buffer.UseDevice(true);
+    evaluator.EvalBuffer(&E, &B, buffer);
+    CheckBuffer(buffer, mesh.Get(), order, legacy);
   }
 }
 

@@ -260,6 +260,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@4.9.0",
                 ),
+                patch(
+                    "mfem_paraview_point_fields.diff",
+                    sha256="d691b7ada942f7f976bfbebc72e00f69d2d421b88bba239627ab84dcd0efdbd0",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")

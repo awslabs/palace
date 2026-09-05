@@ -457,6 +457,11 @@ download_mfem_patch(
   "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
   482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
 )
+# Allow Palace to provide device-evaluated point-major fields while retaining MFEM's
+# standard ParaView mesh, encoding, compression, and collection output.
+list(APPEND MFEM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/spack_repo/local/packages/palace/mfem_paraview_point_fields.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem

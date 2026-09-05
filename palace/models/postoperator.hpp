@@ -198,13 +198,13 @@ protected:
   // Surface Charge (re+im).
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
 
-  // libCEED evaluators and concrete output grid functions for derived domain fields.
-  // Both output formats consume these grid functions; ParaView itself remains MFEM's
-  // standard data collection.
+  // libCEED evaluators for direct ParaView point buffers and concrete output grid
+  // functions for the separate MFEM grid-function format.
   std::unique_ptr<mfem::L2_FECollection> viz_fec;
   std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf, Sn_gf;
-  std::unique_ptr<DomainPointFieldEvaluator> U_e_eval, U_m_eval, S_eval, Sn_eval;
+  std::unique_ptr<DomainPointFieldEvaluator> E_domain_eval, B_domain_eval, En_domain_eval,
+      Bt_domain_eval, V_domain_eval, A_domain_eval, U_e_eval, U_m_eval, S_eval, Sn_eval;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
