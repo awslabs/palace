@@ -202,7 +202,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
-            "mfem+mpi+metis+lapack@4.9:",
+            "mfem+mpi+metis+lapack@4.9.0",
             patches=[
                 # https://github.com/mfem/mfem/pull/3847
                 patch(
