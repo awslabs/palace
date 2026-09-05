@@ -213,12 +213,6 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       std::vector<std::pair<std::string, int>> field_sources;
       if (!field_value_kind)
       {
-        auto &elem_attr = elem_attrs.emplace_back(indices.size());
-        const auto &loc_attr = mesh.GetCeedAttributes();
-        for (std::size_t k = 0; k < indices.size(); k++)
-        {
-          elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
-        }
         CeedElemRestriction attr_restr;
         CeedBasis attr_basis;
         CeedVector attr_vec;
@@ -233,7 +227,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
                                                Bt.GetData(), Gt.GetData(), qX.GetData(),
                                                qW.GetData(), &attr_basis));
-        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        ceed::InitCeedVector(elem_attrs.back(), ceed, &attr_vec);
         inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
         scratch.vecs.push_back(attr_vec);
@@ -294,6 +288,15 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       fem::CacheGroupOperatorFieldVectors(operators.back());
     };
 
+    if (!field_value_kind)
+    {
+      auto &elem_attr = elem_attrs.emplace_back(indices.size());
+      const auto &loc_attr = mesh.GetCeedAttributes();
+      for (std::size_t k = 0; k < indices.size(); k++)
+      {
+        elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+      }
+    }
     if (build_gridfunction)
     {
       const mfem::FiniteElement *target_fe =
@@ -333,6 +336,8 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   // Passive field vectors are re-pointed to caller-owned data on every apply.
   fem::DetachGroupOperatorFieldVectors(groups);
   fem::DetachGroupOperatorFieldVectors(buffer_groups);
+  buffer_bases.clear();
+  buffer_bases.shrink_to_fit();
   field_staging.Destroy();
   MFEM_ASSERT(field_staging.Capacity() == 0,
               "Domain evaluator staging allocation was not released!");
