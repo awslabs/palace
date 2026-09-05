@@ -260,6 +260,18 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@4.9.0",
                 ),
+                # Fix MPI deadlock in BuildParallelConformingInterpolation for
+                # partitioned nonconforming tet meshes (incomplete fix of
+                # mfem#3925: missing tet edge-face constraints for edge-only
+                # foreign neighbors). Remove once fixed upstream and MFEM is
+                # bumped.
+                patch(
+                    "https://raw.githubusercontent.com/awslabs/palace/"
+                    "d8afaa2e12a71e98c58b23ef8d5b5a5ad015176b/extern/patch/mfem/"
+                    "mfem_ncmesh_tet_edge_face_groups.diff",
+                    sha256="0d9d1a43848c32cc060483cdc0b9bf8fd5d954d777f8f16ef812ef603374ade7",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")
