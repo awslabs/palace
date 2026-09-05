@@ -22,9 +22,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Improved configuration schema validation errors to list valid enum values through nested
     schema alternatives and suggest the canonical capitalization for case-only mismatches
     [PR 890](https://github.com/awslabs/palace/pull/890).
-  - Added libCEED-based GPU evaluation for derived domain visualization fields in
-    ParaView and grid function output. ParaView output continues to use MFEM's standard
-    data collection and native primary-field spaces
+  - Added libCEED-based GPU evaluation for domain and boundary visualization fields in
+    ParaView and grid function output, preserving native primary-field spaces and
+    discontinuous element-local derived fields
     [PR 825](https://github.com/awslabs/palace/pull/825).
   - Added libCEED-based GPU evaluation for domain and boundary postprocessing
     functionals, avoiding host coefficient projection for energy, flux, current, port, and

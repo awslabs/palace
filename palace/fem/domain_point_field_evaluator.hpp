@@ -80,6 +80,7 @@ public:
 
   int BufferSize() const { return buffer_size; }
   int BufferNumComp() const { return buffer_num_comp; }
+  const std::vector<int> &BufferBases() const { return buffer_bases; }
 
   // Fill a point-major domain visualization buffer for a primary field.
   void EvalBuffer(const Vector &u, Vector &buffer) const;

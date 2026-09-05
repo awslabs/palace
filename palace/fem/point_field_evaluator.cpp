@@ -64,7 +64,7 @@ PointFieldEvaluator::PointFieldEvaluator(Kind kind, const Mesh &mesh,
   domain_eval = std::make_unique<DomainPointFieldEvaluator>(
       ToDomainKind(kind), mesh, mat_op, nd_fespace, rt_fespace, target_fespace, scaling,
       build_gridfunction, build_buffer);
-  valid = domain_eval->IsValid();
+  valid = true;
 }
 
 PointFieldEvaluator::PointFieldEvaluator(

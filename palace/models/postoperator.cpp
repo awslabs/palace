@@ -14,6 +14,7 @@
 #include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/face_sampling_plan.hpp"
 #include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -40,6 +41,14 @@ using namespace std::complex_literals;
 
 namespace
 {
+
+void RequireBoundaryPointFieldEvaluator(const PointFieldEvaluator *eval,
+                                        const std::string &what)
+{
+  MFEM_VERIFY(eval && eval->IsValid(),
+              "libCEED postprocessing was expected for " + what +
+                  ", but its boundary evaluator could not assemble!");
+}
 
 std::string OutputFolderName(const ProblemType solver_t)
 {
@@ -358,6 +367,100 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         kind == DomainPointFieldEvaluator::Kind::FIELD_B ? &fespace : nullptr, target, 1.0,
         false, true);
   };
+  const bool use_ceed_boundary_fields = ShouldWriteParaviewFields();
+  auto MakeBdrSamplingPlan = [&]()
+  {
+    if (bdr_sampling_plan)
+    {
+      return;
+    }
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    bdr_sampling_plan =
+        std::make_shared<FaceSamplingPlan>(mesh, marker, paraview_refine_order);
+    bdr_trace_cache =
+        std::make_shared<BoundaryPhysicalTraceCache>(mesh, marker, bdr_sampling_plan);
+  };
+  auto MakeBdrFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                   mfem::ParFiniteElementSpace &fespace,
+                                   std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    MakeBdrSamplingPlan();
+    eval = std::make_unique<PointFieldEvaluator>(kind, mesh, marker, fespace,
+                                                 paraview_refine_order, bdr_sampling_plan,
+                                                 bdr_trace_cache, bdr_derived_bundle);
+    RequireBoundaryPointFieldEvaluator(eval.get(), "boundary field visualization");
+  };
+  auto MakeBdrCoeffEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                   mfem::ParFiniteElementSpace &fespace, double scaling,
+                                   std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    MakeBdrSamplingPlan();
+    eval = std::make_unique<PointFieldEvaluator>(
+        kind, mesh, marker, fespace, fem_op->GetMaterialOp(), paraview_refine_order,
+        scaling, bdr_sampling_plan, bdr_trace_cache, bdr_derived_bundle);
+    RequireBoundaryPointFieldEvaluator(eval.get(), "boundary coefficient visualization");
+  };
+  auto MakeBdrPoyntingEvaluator =
+      [&](mfem::ParFiniteElementSpace &e_fespace, mfem::ParFiniteElementSpace &b_fespace,
+          double scaling, std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    MakeBdrSamplingPlan();
+    eval = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::POYNTING, mesh, marker, e_fespace, b_fespace,
+        fem_op->GetMaterialOp(), paraview_refine_order, scaling, bdr_sampling_plan,
+        bdr_trace_cache, bdr_derived_bundle);
+    RequireBoundaryPointFieldEvaluator(eval.get(), "boundary Poynting visualization");
+  };
+
+  if (use_ceed_boundary_fields)
+  {
+    MakeBdrSamplingPlan();
+    if constexpr (HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
+    {
+      const auto &output_mesh = fem_op->GetNDSpace().GetParMesh();
+      if (output_mesh.Dimension() == 3 && output_mesh.SpaceDimension() == 3)
+      {
+        const double electric_scaling =
+            units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+            units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+        const double magnetic_scaling =
+            units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+        const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+        const auto &pmesh = mesh.Get();
+        const int bdr_attr_max =
+            pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+        mfem::Array<int> marker(bdr_attr_max);
+        marker = 1;
+        bdr_derived_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
+            mesh, marker, fem_op->GetMaterialOp(), *E->ParFESpace(), *B->ParFESpace(),
+            bdr_sampling_plan, bdr_trace_cache, *E, *B, electric_scaling, magnetic_scaling);
+        if (!bdr_derived_bundle->IsValid())
+        {
+          bdr_derived_bundle.reset();
+        }
+      }
+    }
+  }
 
   if (En)
   {
@@ -380,6 +483,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     MakePrimaryFieldEvaluator(DomainPointFieldEvaluator::Kind::FIELD_H1, *V->ParFESpace(),
                               V_domain_eval);
     V_s = std::make_unique<BdrFieldCoefficient>(V->Real());
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_H1, *V->ParFESpace(),
+                            V_bdr_eval);
+    }
   }
 
   if constexpr (HasAGridFunction<solver_t>())
@@ -387,6 +495,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     MakePrimaryFieldEvaluator(DomainPointFieldEvaluator::Kind::FIELD_E, *A->ParFESpace(),
                               A_domain_eval);
     A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real());
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *A->ParFESpace(),
+                            A_bdr_eval);
+    }
   }
 
   if constexpr (HasEGridFunction<solver_t>())
@@ -408,8 +521,20 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *E, fem_op->GetMaterialOp(), scaling);
     MakeFieldEvaluator(DomainPointFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
                        scaling, U_e_eval, U_e_gf);
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_E, *E->ParFESpace(), scaling,
+                            Ue_bdr_eval);
+    }
 
     // Electric Boundary Field & Surface Charge.
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
+                            E_bdr_eval);
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
+                            Q_bdr_eval);
+    }
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
@@ -441,12 +566,27 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *B, fem_op->GetMaterialOp(), scaling);
     MakeFieldEvaluator(DomainPointFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
                        scaling, U_m_eval, U_m_gf);
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_M, *B->ParFESpace(), scaling,
+                            Um_bdr_eval);
+    }
 
     // Magnetic Boundary Field & Surface Current. In 2D, B is scalar (L2), so the
     // boundary B vector is not applicable, but J_s remains a valid in-plane vector.
     if (B->Real().VectorDim() > 1)
     {
       B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+      if (use_ceed_boundary_fields)
+      {
+        MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
+                              B_bdr_eval);
+      }
+    }
+    if (use_ceed_boundary_fields)
+    {
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(), scaling,
+                            J_bdr_eval);
     }
     J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
         B->Real(), fem_op->GetMaterialOp(), scaling);
@@ -476,6 +616,10 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                                                       scaling);
       MakeFieldEvaluator(DomainPointFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
                          B->ParFESpace(), scaling, S_eval, S_gf);
+      if (use_ceed_boundary_fields)
+      {
+        MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling, S_bdr_eval);
+      }
     }
   }
 }
@@ -579,6 +723,31 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
                                  [eval_ptr, E_field, B_field](mfem::Vector &buffer)
                                  { eval_ptr->EvalBuffer(E_field, B_field, buffer); });
   };
+  auto RegisterBoundaryField = [&](const std::string &name,
+                                   const std::unique_ptr<PointFieldEvaluator> &eval,
+                                   const auto &field)
+  {
+    const auto *eval_ptr = eval.get();
+    const auto *field_ptr = &field;
+    RequireBoundaryPointFieldEvaluator(eval_ptr,
+                                       fmt::format("boundary {} visualization", name));
+    paraview_bdr->RegisterPointField(
+        name, eval_ptr->BufferNumComp(), eval_ptr->BufferSize(),
+        [eval_ptr, field_ptr](mfem::Vector &buffer)
+        { eval_ptr->EvalBuffer(*field_ptr, buffer); }, eval_ptr->BufferBases(), false);
+  };
+  auto RegisterBoundaryPoyntingField = [&](const std::string &name)
+  {
+    const auto *eval_ptr = S_bdr_eval.get();
+    const auto *E_ptr = E.get();
+    const auto *B_ptr = B.get();
+    RequireBoundaryPointFieldEvaluator(eval_ptr,
+                                       fmt::format("boundary {} visualization", name));
+    paraview_bdr->RegisterPointField(
+        name, eval_ptr->BufferNumComp(), eval_ptr->BufferSize(),
+        [eval_ptr, E_ptr, B_ptr](mfem::Vector &buffer)
+        { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); }, eval_ptr->BufferBases(), false);
+  };
 
   if (E)
   {
@@ -586,13 +755,13 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       RegisterPrimaryField("E_real", E_domain_eval, E->Real());
       RegisterPrimaryField("E_imag", E_domain_eval, E->Imag());
-      paraview_bdr->RegisterVCoeffField("E_real", E_sr.get());
-      paraview_bdr->RegisterVCoeffField("E_imag", E_si.get());
+      RegisterBoundaryField("E_real", E_bdr_eval, E->Real());
+      RegisterBoundaryField("E_imag", E_bdr_eval, E->Imag());
     }
     else
     {
       RegisterPrimaryField("E", E_domain_eval, E->Real());
-      paraview_bdr->RegisterVCoeffField("E", E_sr.get());
+      RegisterBoundaryField("E", E_bdr_eval, E->Real());
     }
   }
   if (En)
@@ -613,21 +782,18 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       RegisterPrimaryField("B_real", B_domain_eval, B->Real());
       RegisterPrimaryField("B_imag", B_domain_eval, B->Imag());
-      if (B_sr)
+      if (B_bdr_eval)
       {
-        paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
-      }
-      if (B_si)
-      {
-        paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+        RegisterBoundaryField("B_real", B_bdr_eval, B->Real());
+        RegisterBoundaryField("B_imag", B_bdr_eval, B->Imag());
       }
     }
     else
     {
       RegisterPrimaryField("B", B_domain_eval, B->Real());
-      if (B_sr)
+      if (B_bdr_eval)
       {
-        paraview_bdr->RegisterVCoeffField("B", B_sr.get());
+        RegisterBoundaryField("B", B_bdr_eval, B->Real());
       }
     }
   }
@@ -639,56 +805,56 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   if (V)
   {
     RegisterPrimaryField("V", V_domain_eval, V->Real());
-    paraview_bdr->RegisterCoeffField("V", V_s.get());
+    RegisterBoundaryField("V", V_bdr_eval, V->Real());
   }
   if (A)
   {
     RegisterPrimaryField("A", A_domain_eval, A->Real());
-    paraview_bdr->RegisterVCoeffField("A", A_s.get());
+    RegisterBoundaryField("A", A_bdr_eval, A->Real());
   }
 
   if (U_e_eval)
   {
     RegisterDerivedField("U_e", U_e_eval, E.get(), nullptr);
-    paraview_bdr->RegisterCoeffField("U_e", U_e.get());
+    RegisterBoundaryField("U_e", Ue_bdr_eval, *E);
   }
   if (U_m_eval)
   {
     RegisterDerivedField("U_m", U_m_eval, nullptr, B.get());
-    paraview_bdr->RegisterCoeffField("U_m", U_m.get());
+    RegisterBoundaryField("U_m", Um_bdr_eval, *B);
   }
   if (S_eval)
   {
     RegisterDerivedField("S", S_eval, E.get(), B.get());
-    paraview_bdr->RegisterVCoeffField("S", S.get());
+    RegisterBoundaryPoyntingField("S");
   }
   if (Sn_eval)
   {
     RegisterDerivedField("Sn", Sn_eval, E.get(), Bt_inplane.get());
   }
 
-  if (Q_sr)
+  if (Q_bdr_eval)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview_bdr->RegisterCoeffField("Q_s_real", Q_sr.get());
-      paraview_bdr->RegisterCoeffField("Q_s_imag", Q_si.get());
+      RegisterBoundaryField("Q_s_real", Q_bdr_eval, E->Real());
+      RegisterBoundaryField("Q_s_imag", Q_bdr_eval, E->Imag());
     }
     else
     {
-      paraview_bdr->RegisterCoeffField("Q_s", Q_sr.get());
+      RegisterBoundaryField("Q_s", Q_bdr_eval, E->Real());
     }
   }
-  if (J_sr)
+  if (J_bdr_eval)
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview_bdr->RegisterVCoeffField("J_s_real", J_sr.get());
-      paraview_bdr->RegisterVCoeffField("J_s_imag", J_si.get());
+      RegisterBoundaryField("J_s_real", J_bdr_eval, B->Real());
+      RegisterBoundaryField("J_s_imag", J_bdr_eval, B->Imag());
     }
     else
     {
-      paraview_bdr->RegisterVCoeffField("J_s", J_sr.get());
+      RegisterBoundaryField("J_s", J_bdr_eval, B->Real());
     }
   }
 
@@ -819,6 +985,14 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
+  if (bdr_derived_bundle)
+  {
+    bdr_derived_bundle->Invalidate();
+  }
+  if (bdr_trace_cache)
+  {
+    bdr_trace_cache->Invalidate();
+  }
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
@@ -828,8 +1002,26 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
+  const auto domain_save_start = Timer::Now();
   paraview->Save();
+  double domain_save_seconds = Timer::Duration(Timer::Now() - domain_save_start).count();
+  const auto boundary_save_start = Timer::Now();
   paraview_bdr->Save();
+  double boundary_save_seconds =
+      Timer::Duration(Timer::Now() - boundary_save_start).count();
+  Mpi::GlobalMax(1, &domain_save_seconds, fem_op->GetComm());
+  Mpi::GlobalMax(1, &boundary_save_seconds, fem_op->GetComm());
+  Mpi::Print(fem_op->GetComm(),
+             " ParaView save timing: domain = {:.6f} s, boundary = {:.6f} s\n",
+             domain_save_seconds, boundary_save_seconds);
+  if (bdr_derived_bundle)
+  {
+    bdr_derived_bundle->PrintProfile();
+  }
+  if (bdr_trace_cache)
+  {
+    bdr_trace_cache->PrintProfile();
+  }
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);

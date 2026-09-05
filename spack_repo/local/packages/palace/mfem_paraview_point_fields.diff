@@ -31,35 +31,43 @@ index a7abd160fa..8b1bf7d753 100644
     os << "</PointData>\n";
     // close the mesh
     os << "</Piece>\n"; // close the piece open in the PrintVTU method
-@@ -1160,6 +1175,56 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
+@@ -1160,6 +1175,89 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     os << "</VTKFile>" << std::endl;
  }
  
 +void ParaViewDataCollection::RegisterPointField(
 +   const std::string &field_name, int vdim, int size,
-+   std::function<void(Vector &)> evaluator)
++   std::function<void(Vector &)> evaluator,
++   const std::vector<int> &bases, bool point_major)
 +{
 +   MFEM_VERIFY(vdim > 0 && size >= 0 && evaluator,
 +               "Invalid ParaView point field registration!");
-+   point_field_map[field_name] = {vdim, size, std::move(evaluator)};
++   point_field_map[field_name] =
++      {vdim, size, std::move(evaluator), bases, point_major};
 +}
 +
 +void ParaViewDataCollection::SavePointFieldVTU(
 +   std::ostream &os, int ref, const std::string &name,
 +   const PointField &field, Vector &values)
 +{
-+   MFEM_VERIFY(!bdr_output,
-+               "Direct point field output is not supported for "
-+               "ParaViewDataCollection on domain boundary!");
++   const int num_entities = bdr_output ? mesh->GetNBE() : mesh->GetNE();
++   auto GetGeometry = [&](int i)
++   {
++      return bdr_output ? mesh->GetBdrElementBaseGeometry(i)
++                        : mesh->GetElementBaseGeometry(i);
++   };
 +   int num_points = 0;
-+   for (int i = 0; i < mesh->GetNE(); i++)
++   for (int i = 0; i < num_entities; i++)
 +   {
 +      num_points += GlobGeometryRefiner.Refine(
-+                       mesh->GetElementBaseGeometry(i), ref, 1)->RefPts.GetNPoints();
++                       GetGeometry(i), ref, 1)->RefPts.GetNPoints();
 +   }
 +   MFEM_VERIFY(field.size == num_points * field.vdim,
 +               "Invalid direct point field size for \"" << name << "\": expected "
 +               << num_points * field.vdim << ", got " << field.size);
++   MFEM_VERIFY(field.point_major ||
++                  static_cast<int>(field.bases.size()) == num_entities,
++               "Component-major point field base offsets do not match the mesh!");
 +
 +   values.SetSize(field.size);
 +   field.evaluator(values);
@@ -73,10 +81,35 @@ index a7abd160fa..8b1bf7d753 100644
 +      << "format=\"" << GetDataFormatString() << "\" >" << '\n';
 +   std::vector<char> buf;
 +   const real_t *data = values.HostRead();
-+   for (int i = 0; i < values.Size(); i++)
++   if (field.point_major)
 +   {
-+      WriteBinaryOrASCII(os, buf, data[i],
-+                         ((i + 1) % field.vdim) ? " " : "\n", pv_data_format);
++      for (int i = 0; i < values.Size(); i++)
++      {
++         WriteBinaryOrASCII(os, buf, data[i],
++                            ((i + 1) % field.vdim) ? " " : "\n", pv_data_format);
++      }
++   }
++   else
++   {
++      const int component_stride = values.Size() / field.vdim;
++      for (int i = 0; i < num_entities; i++)
++      {
++         const int base = field.bases[i];
++         const int npts =
++            GlobGeometryRefiner.Refine(GetGeometry(i), ref, 1)->RefPts.GetNPoints();
++         MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
++                     "Point field \"" << name
++                     << "\" buffer is missing data for mesh entity " << i << "!");
++         for (int j = 0; j < npts; j++)
++         {
++            for (int c = 0; c < field.vdim; c++)
++            {
++               WriteBinaryOrASCII(os, buf, data[base + j + c * component_stride],
++                                  (c + 1 < field.vdim) ? " " : "\n",
++                                  pv_data_format);
++            }
++         }
++      }
 +   }
 +   if (pv_data_format != VTKFormat::ASCII)
 +   {
@@ -92,16 +125,17 @@ diff --git a/fem/datacollection.hpp b/fem/datacollection.hpp
 index 41c0a06276..51800b63e4 100644
 --- a/fem/datacollection.hpp
 +++ b/fem/datacollection.hpp
-@@ -18,6 +18,8 @@
+@@ -18,6 +18,9 @@
  #ifdef MFEM_USE_MPI
  #include "pgridfunc.hpp"
  #endif
 +#include <functional>
 +#include <utility>
++#include <vector>
  #include <string>
  #include <map>
  #include <fstream>
-@@ -583,6 +584,15 @@ public:
+@@ -583,6 +584,17 @@ public:
  /// Writer for ParaView visualization (PVD and VTU format)
  class ParaViewDataCollection : public ParaViewDataCollectionBase
  {
@@ -111,6 +145,8 @@ index 41c0a06276..51800b63e4 100644
 +      int vdim;
 +      int size;
 +      std::function<void(Vector &)> evaluator;
++      std::vector<int> bases;
++      bool point_major;
 +   };
 +   using PointFieldMap = std::map<std::string, PointField>;
 +
@@ -142,13 +178,15 @@ index 41c0a06276..51800b63e4 100644
  
     /// Add a Coefficient or VectorCoefficient to the collection.
     void RegisterCoeffField(const std::string& field_name, Coefficient *coeff)
-@@ -633,12 +649,17 @@ public:
+@@ -633,12 +649,19 @@ public:
     void RegisterVCoeffField(const std::string& field_name,
                              VectorCoefficient *vcoeff)
     { vcoeff_field_map.Register(field_name, vcoeff, own_data); }
 +   /// Add a lazily evaluated point-major field to the collection.
 +   void RegisterPointField(const std::string &field_name, int vdim, int size,
-+                           std::function<void(Vector &)> evaluator);
++                           std::function<void(Vector &)> evaluator,
++                           const std::vector<int> &bases = {},
++                           bool point_major = true);
  
     /// Remove a Coefficient or VectorCoefficient from the collection
     void DeregisterCoeffField(const std::string& field_name)

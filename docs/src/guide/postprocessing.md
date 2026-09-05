@@ -183,11 +183,11 @@ continuous. Similarly, at a material interface:
 
 Forcing these quantities into a continuous H1 space would select, average, or smooth values
 across interfaces and would discard the distinction between the two element-side traces.
-The L2 domain fields instead preserve the element-local result. Boundary visualization uses
-the established MFEM coefficient path: on internal boundaries, Palace's boundary field
-coefficients select a neighboring material side for primary fields, while surface charge and
-surface current use their oriented two-sided definitions. Exterior boundaries use the single
-adjacent element trace.
+The L2 domain fields instead preserve the element-local result. The separate boundary
+visualization has one tuple per geometric interface point: primary fields are the average of
+the two traces, energy density and Poynting output average the corresponding per-side
+quantities, and surface charge/current use their oriented jump definitions. Exterior
+boundaries use the single adjacent element trace.
 
 Also, at the final step of the simulation the following element-wise quantities are written
 for visualization:

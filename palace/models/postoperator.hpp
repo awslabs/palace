@@ -12,9 +12,12 @@
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/boundary_derived_field_bundle.hpp"
+#include "fem/boundary_physical_trace.hpp"
 #include "fem/domain_point_field_evaluator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/point_field_evaluator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
@@ -30,6 +33,7 @@ namespace palace
 
 class CurlCurlOperator;
 class ErrorIndicator;
+class FaceSamplingPlan;
 class IoData;
 class LaplaceOperator;
 class MaterialOperator;
@@ -205,6 +209,15 @@ protected:
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf, Sn_gf;
   std::unique_ptr<DomainPointFieldEvaluator> E_domain_eval, B_domain_eval, En_domain_eval,
       Bt_domain_eval, V_domain_eval, A_domain_eval, U_e_eval, U_m_eval, S_eval, Sn_eval;
+
+  // libCEED boundary evaluators share one nonconforming sampling plan, physical trace
+  // cache, and (for the 3D E/B family) fused derived-field bundle. MFEM remains
+  // responsible for VTU serialization.
+  std::unique_ptr<PointFieldEvaluator> E_bdr_eval, B_bdr_eval, V_bdr_eval, A_bdr_eval,
+      Q_bdr_eval, J_bdr_eval, Ue_bdr_eval, Um_bdr_eval, S_bdr_eval;
+  std::shared_ptr<const FaceSamplingPlan> bdr_sampling_plan;
+  std::shared_ptr<BoundaryPhysicalTraceCache> bdr_trace_cache;
+  std::shared_ptr<BoundaryDerivedFieldBundle> bdr_derived_bundle;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
