@@ -260,29 +260,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@4.9.0",
                 ),
-                # Fix MPI deadlock in BuildParallelConformingInterpolation for
-                # partitioned nonconforming tet meshes (incomplete fix of
-                # mfem#3925: missing tet edge-face constraints for edge-only
-                # foreign neighbors). Remove once fixed upstream and MFEM is
-                # bumped.
+                # Fix an MPI deadlock and silently wrong parallel conforming
+                # interpolation for partitioned nonconforming tet meshes
+                # (mfem#3925 family: tet edge-face constraint emission and
+                # hanging-vertex ownership). Remove once fixed upstream and
+                # MFEM is bumped.
                 patch(
                     "https://raw.githubusercontent.com/awslabs/palace/"
-                    "d8afaa2e12a71e98c58b23ef8d5b5a5ad015176b/extern/patch/mfem/"
-                    "mfem_ncmesh_tet_edge_face_groups.diff",
-                    sha256="0d9d1a43848c32cc060483cdc0b9bf8fd5d954d777f8f16ef812ef603374ade7",
-                    when="@4.9.0",
-                ),
-                # Fix partition-dependent true DOF counts / wrong P matrix rows
-                # for hanging vertices owned by ranks without a local
-                # constraining slave (silently wrong solves on restarted
-                # nonconforming meshes; rest of mfem#3925). Applies on top of
-                # the previous patch. Remove once fixed upstream and MFEM is
-                # bumped.
-                patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "50a3438351376da8b1f1ecf1c132987b36491817/extern/patch/mfem/"
-                    "mfem_ncmesh_hanging_vertex_ownership.diff",
-                    sha256="a4fe8d8492cd3665b709bc323a34a09feda72f5923fdf62ef138311848281312",
+                    "0228371801f5738f9097a449353991150ee57b10/extern/patch/mfem/"
+                    "mfem_nc_partition_fixes.diff",
+                    sha256="5180c357a47fb2c36f618045f02f020dcd6eea3aae787614fec4bce6ca9ecdd9",
                     when="@4.9.0",
                 ),
             ],
