@@ -2767,7 +2767,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     {
       for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
       {
-        const auto key = fmt::format("S[{:d}][{:d}]", obs + 1, drive + 1);
+        const auto key =
+            fmt::format("S[{:d}][{:d}]", coupled_ports[obs], coupled_ports[drive]);
         out.table.insert(fmt::format("re_{}", key), fmt::format("Re{{{}}}", key));
         out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
       }
@@ -2781,7 +2782,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
         {
-          const auto key = fmt::format("S[{:d}][{:d}]", obs + 1, drive + 1);
+          const auto key =
+              fmt::format("S[{:d}][{:d}]", coupled_ports[obs], coupled_ports[drive]);
           const auto value = coupled_s[fi][obs * coupled_ports.size() + drive];
           out.table[fmt::format("re_{}", key)] << value.real();
           out.table[fmt::format("im_{}", key)] << value.imag();
@@ -2805,8 +2807,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         for (std::size_t i = 0; i < labels.size(); i++)
         {
-          const auto key = source ? fmt::format("G[{}][{:d}]", labels[i], p + 1)
-                                  : fmt::format("H[{:d}][{}]", p + 1, labels[i]);
+          const auto key = source ? fmt::format("G[{}][{:d}]", labels[i], coupled_ports[p])
+                                  : fmt::format("H[{:d}][{}]", coupled_ports[p], labels[i]);
           out.table.insert(fmt::format("re_{}_{}", p, i), fmt::format("Re{{{}}}", key));
           out.table.insert(fmt::format("im_{}_{}", p, i), fmt::format("Im{{{}}}", key));
         }

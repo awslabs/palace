@@ -338,10 +338,8 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
   return [atol](palace::Table &actual, palace::Table &,
                 const std::filesystem::path &actual_path)
   {
-    palace::TableWithCSVFile w((actual_path.parent_path() / "rom-coupled-S.csv").string(),
-                               /*load_existing_file=*/true);
-    palace::Table &circuit = w.table;
-    REQUIRE(circuit.n_rows() == actual.n_rows());
+    namespace fs = std::filesystem;
+    const fs::path dir = actual_path.parent_path();
 
     auto find = [](palace::Table &t, const std::string &header) -> int
     {
@@ -354,6 +352,191 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
       }
       return -1;
     };
+
+    // Read a synthesized matrix CSV (column c header = node label, data[r] = M(r, c)); a
+    // missing file yields an empty matrix, treated as zero.
+    auto read_real = [](const fs::path &p, std::vector<std::string> *lab) -> Eigen::MatrixXd
+    {
+      if (!fs::is_regular_file(p))
+      {
+        return Eigen::MatrixXd(0, 0);
+      }
+      palace::TableWithCSVFile w(p.string(), /*load_existing_file=*/true);
+      palace::Table &t = w.table;
+      const long n = static_cast<long>(t.n_cols()), m = static_cast<long>(t.n_rows());
+      Eigen::MatrixXd M(m, n);
+      for (long c = 0; c < n; ++c)
+      {
+        if (lab)
+        {
+          lab->push_back(t[c].header_text);
+        }
+        for (long r = 0; r < m; ++r)
+        {
+          M(r, c) = t[c].data[r];
+        }
+      }
+      return M;
+    };
+
+    // Rebuild the exported pencil Y_syn(ω) = L⁻¹/s + R⁻¹ + s·C and the coupling maps
+    // G(ω)/H(ω), all from the CSVs, so the check validates the exported files (not the
+    // in-memory objects). Node labels come from L⁻¹'s always-populated real part.
+    std::vector<std::string> labels;
+    const Eigen::MatrixXd linv_re = read_real(dir / "rom-Linv-re.csv", &labels);
+    REQUIRE(linv_re.rows() > 0);
+    const long na = linv_re.rows();
+    std::map<std::string, long> row_of;
+    for (long i = 0; i < na; ++i)
+    {
+      row_of[labels[i]] = i;
+    }
+    auto term = [&](const std::string &stem) -> Eigen::MatrixXcd
+    {
+      const Eigen::MatrixXd re = read_real(dir / (stem + "-re.csv"), nullptr);
+      const Eigen::MatrixXd im = read_real(dir / (stem + "-im.csv"), nullptr);
+      Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(na, na);
+      if (re.rows() == na && re.cols() == na)
+      {
+        M.real() = re;
+      }
+      if (im.rows() == na && im.cols() == na)
+      {
+        M.imag() = im;
+      }
+      return M;
+    };
+    const Eigen::MatrixXcd linv = term("rom-Linv"), rinv = term("rom-Rinv"),
+                           cap = term("rom-C");
+
+    // Parse a coupling-map CSV. G columns are keyed Re/Im{G[<label>][<port>]} (state row,
+    // port col); H columns Re/Im{H[<port>][<label>]}. Returns one na×n_ports (G) or
+    // n_ports×na (H) matrix per frequency, plus the port order as first seen.
+    auto load_coupling = [&](const std::string &fname, bool is_g,
+                             std::vector<int> &ports) -> std::vector<Eigen::MatrixXcd>
+    {
+      palace::TableWithCSVFile w((dir / fname).string(), /*load_existing_file=*/true);
+      palace::Table &t = w.table;
+      const long nf = static_cast<long>(t.n_rows());
+      struct Entry
+      {
+        long row, pcol, re_c, im_c;
+      };
+      std::vector<Entry> entries;
+      ports.clear();
+      auto port_col = [&](int port) -> long
+      {
+        for (std::size_t k = 0; k < ports.size(); ++k)
+        {
+          if (ports[k] == port)
+          {
+            return static_cast<long>(k);
+          }
+        }
+        ports.push_back(port);
+        return static_cast<long>(ports.size()) - 1;
+      };
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        const std::string &h = t[c].header_text;
+        const bool re = h.rfind("Re{", 0) == 0, im = h.rfind("Im{", 0) == 0;
+        if ((!re && !im) || h[3] != (is_g ? 'G' : 'H'))
+        {
+          continue;
+        }
+        const auto l = h.find('['), mid = h.find("]["), r = h.find("]}");
+        REQUIRE(l != std::string::npos);
+        REQUIRE(mid != std::string::npos);
+        REQUIRE(r != std::string::npos);
+        const std::string a = h.substr(l + 1, mid - l - 1);
+        const std::string b = h.substr(mid + 2, r - mid - 2);
+        const std::string label = is_g ? a : b;
+        const int port = std::stoi(is_g ? b : a);
+        auto it = row_of.find(label);
+        REQUIRE(it != row_of.end());
+        const long pc = port_col(port);
+        // Find or create the entry for this (row, port).
+        Entry *e = nullptr;
+        for (auto &en : entries)
+        {
+          if (en.row == it->second && en.pcol == pc)
+          {
+            e = &en;
+            break;
+          }
+        }
+        if (!e)
+        {
+          entries.push_back({it->second, pc, -1, -1});
+          e = &entries.back();
+        }
+        (re ? e->re_c : e->im_c) = static_cast<long>(c);
+      }
+      const long np = static_cast<long>(ports.size());
+      std::vector<Eigen::MatrixXcd> out(nf);
+      for (long f = 0; f < nf; ++f)
+      {
+        out[f] = is_g ? Eigen::MatrixXcd::Zero(na, np) : Eigen::MatrixXcd::Zero(np, na);
+        for (const auto &e : entries)
+        {
+          const double vr = e.re_c >= 0 ? t[e.re_c].data[f] : 0.0;
+          const double vi = e.im_c >= 0 ? t[e.im_c].data[f] : 0.0;
+          const std::complex<double> v(vr, vi);
+          if (is_g)
+          {
+            out[f](e.row, e.pcol) = v;
+          }
+          else
+          {
+            out[f](e.pcol, e.row) = v;
+          }
+        }
+      }
+      return out;
+    };
+    std::vector<int> g_ports, h_ports;
+    const std::vector<Eigen::MatrixXcd> G =
+        load_coupling("rom-coupled-G.csv", true, g_ports);
+    const std::vector<Eigen::MatrixXcd> H =
+        load_coupling("rom-coupled-H.csv", false, h_ports);
+    REQUIRE(g_ports == h_ports);
+    const long np = static_cast<long>(g_ports.size());
+
+    palace::TableWithCSVFile sw((dir / "rom-coupled-S.csv").string(),
+                                /*load_existing_file=*/true);
+    palace::Table &circuit = sw.table;
+    REQUIRE(circuit.n_rows() == actual.n_rows());
+    REQUIRE(static_cast<long>(G.size()) == static_cast<long>(circuit.n_rows()));
+    const int f_col = find(circuit, "f (GHz)");
+    REQUIRE(f_col >= 0);
+
+    for (std::size_t r = 0; r < circuit.n_rows(); r++)
+    {
+      // Reconstruct S = H Y_syn⁻¹ G - I from the exported CSVs at this frequency.
+      const std::complex<double> s(0.0, 2.0 * M_PI * circuit[f_col].data[r] * 1.0e9);
+      const Eigen::MatrixXcd Y = linv / s + rinv + s * cap;
+      const Eigen::MatrixXcd S_csv =
+          H[r] * Y.fullPivLu().solve(G[r]) - Eigen::MatrixXcd::Identity(np, np);
+      for (long obs = 0; obs < np; obs++)
+      {
+        for (long drive = 0; drive < np; drive++)
+        {
+          const auto key = "S[" + std::to_string(g_ports[obs]) + "][" +
+                           std::to_string(g_ports[drive]) + "]";
+          const int re = find(circuit, "Re{" + key + "}");
+          const int im = find(circuit, "Im{" + key + "}");
+          REQUIRE(re >= 0);
+          REQUIRE(im >= 0);
+          // The exported G/H/L/R/C must rebuild the exported S to roundoff.
+          const std::complex<double> s_rom(circuit[re].data[r], circuit[im].data[r]);
+          INFO("row " << r + 1 << " " << key << " CSV-reconstructed " << S_csv(obs, drive)
+                      << " vs rom-coupled-S " << s_rom);
+          CHECK(std::abs(S_csv(obs, drive) - s_rom) <= 1.0e-9);
+        }
+      }
+    }
+
+    // rom-coupled-S vs the live field-derived port-S (physics; cross-backend tolerance).
     for (std::size_t c = 0; c < actual.n_cols(); c++)
     {
       const std::string &header = actual[c].header_text;
@@ -812,9 +995,9 @@ TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
   // The error-estimator extrema and synthesized Y_ref drift with the partition/BLAS near
   // the pole, so these are presence-only here.
   opts.excluded_files = {"rom-eigenvectors", "error-indicators.csv", "rom-port-reference"};
-  // Synthesized vs field-derived S differ by ~4e-5 across eigensolver/BLAS backends; 1e-4
-  // clears that while still catching a dB-scale W regression.
-  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-4);
+  // Near the iris resonance both S paths wobble with partition/backend by up to ~1.3e-4;
+  // 1e-3 clears that while still catching the dB-scale shift a regressed W would produce.
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-3);
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
                             /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);

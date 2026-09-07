@@ -79,6 +79,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+  // SLP is only realized through SLEPc's NEP path. Resolve it against the selected backend
+  // here, before the HYBRID interpolation below: an ARPACK backend (or a build without
+  // SLEPc) has no SLP solver, and switching later would leave Kp/Cp/Mp unbuilt and crash.
+  bool slp_available = true;
+#if !defined(PALACE_WITH_SLEPC)
+  slp_available = false;
+#endif
+  if (iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK)
+  {
+    slp_available = false;
+  }
+  if (nonlinear_type == NonlinearEigenSolver::SLP && !slp_available)
+  {
+    Mpi::Warning("SLP nonlinear eigensolver requires the SLEPc backend, using Hybrid!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
   {
     // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
@@ -166,21 +182,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 #if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
 #error "Eigenmode solver requires building with ARPACK or SLEPc!"
 #endif
-#if !defined(PALACE_WITH_SLEPC)
-  if (nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    Mpi::Warning("SLP nonlinear eigensolver not available without SLEPc, using Hybrid!\n");
-  }
-  nonlinear_type = NonlinearEigenSolver::HYBRID;
-#endif
-  // SLP is only realized through SLEPc's NEP path; ARPACK has no SLP solver, so fall back
-  // to Hybrid rather than hit the SLP-only API below with an ARPACK solver.
-  if (type == EigenSolverBackend::ARPACK && nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    Mpi::Warning("SLP nonlinear eigensolver requires the SLEPc backend, using Hybrid with "
-                 "ARPACK!\n");
-    nonlinear_type = NonlinearEigenSolver::HYBRID;
-  }
   if (type == EigenSolverBackend::ARPACK)
   {
 #if defined(PALACE_WITH_ARPACK)
@@ -244,7 +245,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
-    eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    if (C)
+    {
+      eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    }
+    else
+    {
+      eigen->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
+    }
     eigen->SetExtraSystemMatrix(funcA2_full);
     eigen->SetPreconditionerUpdate(funcP);
   }
