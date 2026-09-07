@@ -1,0 +1,222 @@
+Fix two parallel decomposition bugs for partitioned nonconforming tetrahedral
+meshes that make results depend on the partitioning: an MPI deadlock and
+silently wrong parallel conforming interpolation. Both surface readily when a
+serial nonconforming mesh (e.g. saved by a previous AMR run) is loaded and
+distributed with an arbitrary (e.g. METIS) partitioning; SFC-based partitions
+keep refinement neighborhoods together, which makes the configurations rare
+during live AMR.
+
+1. NCMesh::TraverseTriFace only emitted tet edge-face constraints when a
+   first-level slave face was split further or belonged to another rank. A
+   rank whose elements are attached to an interior edge of the face split
+   without owning any slave face (an "edge-only" neighbor) was then invisible
+   on the master's owner: the constraint never entered its face list,
+   ParNCMesh::CalculatePMatrixGroups omitted the neighbor from the master's
+   P matrix groups, and
+   ParFiniteElementSpace::BuildParallelConformingInterpolation deadlocked
+   (the neighbor spins in MPI_Iprobe for rows that are never sent while the
+   remaining ranks enter the collective HypreParMatrix construction). The
+   constraints are now emitted unconditionally: TraverseTetEdge only
+   registers edges that are MASTER or CONFORMING in the edge list, and
+   AddDependencies keeps the first constraint for a DOF, so the resulting
+   interpolation is unchanged; the fix also repairs the related GroupId/rank
+   confusion in ParNCMesh::MakeSharedList (entity_owner holds GroupIds, and
+   group 0 is the singleton {MyRank}).
+
+2. A hanging vertex interior to a master edge/face could be owned (minimum
+   rank among elements touching it) by a rank whose elements touch the
+   refined region only through that vertex. Such a rank sees the master and
+   all of its slaves as ghosts, and BuildParallelConformingInterpolation
+   skips ghost slaves when building dependencies, so the owner never
+   constrained the vertex and wrongly treated it as a true DOF with an
+   identity P row: the global number of true DOFs depended on the
+   partitioning (the symptom of mfem#3925) and downstream solves were
+   silently wrong. ParNCMesh::BuildVertexList now reassigns each such vertex
+   to the minimum rank among the owners of the slaves whose closure contains
+   it; every rank touching the vertex sees the same master and slave lists,
+   so the assignment is globally consistent, and the new owner constrains
+   the vertex through its local slave with the existing dependency code.
+
+--- a/mesh/ncmesh.cpp
++++ b/mesh/ncmesh.cpp
+@@ -3658,19 +3658,23 @@
+                              PointMatrix(pmid1, pmid2, pmid0),
+                              level+1, matrix_map);
+ 
+-      // Traverse possible tet edges constrained by the master face. This needs
+-      // to occur if none of these first NC level faces are split further, OR if
+-      // they are on different processors. The different processor constraint is
+-      // needed in the case of local elements constrained by this face via the
+-      // edge alone. Cannot know this a priori, so just constrain any edge
+-      // attached to two neighbors.
+-      if (HaveTets() && (!b[3].unsplit || b[3].ghost_neighbor))
++      // Traverse possible tet edges constrained by the master face. Emit the
++      // edge-face constraints unconditionally: gating them on the slave faces
++      // being split or foreign misses ranks whose elements are attached to an
++      // interior edge of the face split without owning any slave face. On such
++      // an "edge-only" neighbor's constraining rank the constraint then never
++      // enters the face list, ParNCMesh::CalculatePMatrixGroups omits the
++      // neighbor from the master's groups, and
++      // ParFiniteElementSpace::BuildParallelConformingInterpolation deadlocks
++      // waiting for P matrix rows that are never sent. TraverseTetEdge only
++      // registers edges that are MASTER or CONFORMING in the edge list, and
++      // AddDependencies keeps the first constraint for a DOF, so the
++      // unconditional emission does not change the resulting interpolation.
++      if (HaveTets())
+       {
+-         // If the faces have no further splits, so would not be captured by
+-         // normal face relations, add possible edge constraints.
+-         if (!b[1].unsplit || b[1].ghost_neighbor) { TraverseTetEdge(mid[0],mid[1], pmid0,pmid1, matrix_map); }
+-         if (!b[2].unsplit || b[2].ghost_neighbor) { TraverseTetEdge(mid[1],mid[2], pmid1,pmid2, matrix_map); }
+-         if (!b[0].unsplit || b[0].ghost_neighbor) { TraverseTetEdge(mid[2],mid[0], pmid2,pmid0, matrix_map); }
++         TraverseTetEdge(mid[0],mid[1], pmid0,pmid1, matrix_map);
++         TraverseTetEdge(mid[1],mid[2], pmid1,pmid2, matrix_map);
++         TraverseTetEdge(mid[2],mid[0], pmid2,pmid0, matrix_map);
+       }
+    }
+    return {false, false};
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -341,6 +341,11 @@
+    // This is an extension of NCMesh::BuildVertexList() which also determines
+    // vertex ownership and creates vertex processor groups.
+ 
++   // The hanging-vertex ownership correction below needs the edge and face
++   // lists (and their entity owners) to exist first.
++   GetEdgeList();
++   if (Dim >= 3) { GetFaceList(); }
++
+    int nvertices = NVertices + NGhostVertices;
+ 
+    tmp_owner.SetSize(nvertices);
+@@ -357,6 +362,114 @@
+ 
+    NCMesh::BuildVertexList();
+ 
++   // A hanging vertex interior to a master edge/face must be owned by a rank
++   // that holds one of the constraining slaves locally: otherwise the owner
++   // cannot build the vertex's dependencies in
++   // ParFiniteElementSpace::BuildParallelConformingInterpolation (it skips
++   // ghost slaves) and wrongly treats the vertex as a true DOF. This happens
++   // with arbitrary partitions when a rank's elements touch the refined
++   // region only through the hanging vertex. Reassign each such vertex to the
++   // minimum rank among the owners of the slaves whose closure contains it;
++   // every rank touching the vertex sees the same master and slave lists, so
++   // the assignment is globally consistent.
++   {
++      // An edge's endpoints are the parents of its node.
++      Array<int> edge_node(NEdges + NGhostEdges);
++      edge_node = -1;
++      for (auto node = nodes.cbegin(); node != nodes.cend(); ++node)
++      {
++         if (node->HasEdge() && node->edge_index >= 0 &&
++             node->edge_index < edge_node.Size())
++         {
++            edge_node[node->edge_index] = node.index();
++         }
++      }
++      auto edge_verts = [&](int eindex, int vi[2])
++      {
++         vi[0] = vi[1] = -1;
++         if (eindex < 0 || eindex >= edge_node.Size()) { return; }
++         const int en = edge_node[eindex];
++         if (en < 0) { return; }
++         const Node &nd = nodes[en];
++         if (nd.p1 == nd.p2) { return; }
++         if (nodes[nd.p1].HasVertex()) { vi[0] = nodes[nd.p1].vert_index; }
++         if (nodes[nd.p2].HasVertex()) { vi[1] = nodes[nd.p2].vert_index; }
++      };
++      auto owner_rank_of = [&](int entity, int index) -> int
++      {
++         if (index < 0 || index >= entity_owner[entity].Size())
++         {
++            return INT_MAX;
++         }
++         return groups[entity_owner[entity][index]][0];
++      };
++      Array<int> hang_owner(nvertices);
++      hang_owner = INT_MAX;
++      auto assign = [&](int vindex, int rank, const int *excl, int nexcl)
++      {
++         if (vindex < 0 || vindex >= hang_owner.Size() || rank == INT_MAX)
++         {
++            return;
++         }
++         for (int k = 0; k < nexcl; k++)
++         {
++            if (excl[k] == vindex) { return; }
++         }
++         hang_owner[vindex] = std::min(hang_owner[vindex], rank);
++      };
++
++      int mv[4], me[4], meo[4], sv[4], se[4], seo[4], ev[2];
++      for (const auto &master : edge_list.masters)
++      {
++         edge_verts(master.index, mv); // master endpoints are not interior
++         for (int j = master.slaves_begin; j < master.slaves_end; j++)
++         {
++            const NCMesh::Slave &sf = edge_list.slaves[j];
++            if (sf.index < 0) { continue; }
++            const int owner = owner_rank_of(1, sf.index);
++            edge_verts(sf.index, ev);
++            assign(ev[0], owner, mv, 2);
++            assign(ev[1], owner, mv, 2);
++         }
++      }
++      if (Dim >= 3)
++      {
++         for (const auto &master : face_list.masters)
++         {
++            const int nmv = GetFaceVerticesEdges(master, mv, me, meo);
++            for (int j = master.slaves_begin; j < master.slaves_end; j++)
++            {
++               const NCMesh::Slave &sf = face_list.slaves[j];
++               if (sf.index >= 0)
++               {
++                  if (sf.element < 0) { continue; }
++                  const int owner = owner_rank_of(2, sf.index);
++                  const int nsv = GetFaceVerticesEdges(sf, sv, se, seo);
++                  for (int k = 0; k < nsv; k++)
++                  {
++                     assign(sv[k], owner, mv, nmv);
++                  }
++               }
++               else // edge-face constraint (tet or prism)
++               {
++                  const int owner = owner_rank_of(1, -1 - sf.index);
++                  edge_verts(-1 - sf.index, ev);
++                  assign(ev[0], owner, mv, nmv);
++                  assign(ev[1], owner, mv, nmv);
++               }
++            }
++         }
++      }
++
++      for (int i = 0; i < nvertices && i < tmp_owner.Size(); i++)
++      {
++         if (hang_owner[i] != INT_MAX)
++         {
++            tmp_owner[i] = hang_owner[i];
++         }
++      }
++   }
++
+    InitOwners(nvertices, entity_owner[0]);
+    MakeSharedList(vertex_list, shared_vertices);
+ 
+@@ -398,9 +511,13 @@
+             master_flag |= slave_flag;
+             slave_flag |= master_old_flag;
+          }
+-         else // special case: prism edge-face constraint
++         else // special case: edge-face constraint (tet or prism)
+          {
+-            if (entity_owner[1][-1-si] != MyRank)
++            // entity_owner holds GroupIds and group 0 is the singleton
++            // {MyRank}, so a nonzero owner group means the slave edge is
++            // owned by another rank (comparing against MyRank confuses
++            // GroupIds with ranks).
++            if (entity_owner[1][-1-si] != 0)
+             {
+                master_flag |= 0x2;
+             }

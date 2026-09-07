@@ -457,18 +457,12 @@ download_mfem_patch(
   "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
   482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
 )
-# Fix MPI deadlock in ParFiniteElementSpace::BuildParallelConformingInterpolation
-# for partitioned nonconforming tet meshes (missing tet edge-face constraints in
-# NCMesh::TraverseTriFace for edge-only foreign neighbors); see the patch header.
+# Fix an MPI deadlock and silently wrong parallel conforming interpolation for
+# partitioned nonconforming tet meshes (missing tet edge-face constraint
+# emission and hanging-vertex ownership by ranks without a local constraining
+# slave); see the patch header.
 list(APPEND MFEM_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_ncmesh_tet_edge_face_groups.diff"
-)
-# Fix partition-dependent true DOF counts / wrong P matrix rows for hanging
-# vertices owned by ranks without a local constraining slave (silently wrong
-# solves on restarted nonconforming meshes); see the patch header. Applies on
-# top of the previous patch.
-list(APPEND MFEM_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_ncmesh_hanging_vertex_ownership.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_nc_partition_fixes.diff"
 )
 
 include(ExternalProject)
