@@ -272,6 +272,19 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="0d9d1a43848c32cc060483cdc0b9bf8fd5d954d777f8f16ef812ef603374ade7",
                     when="@4.9.0",
                 ),
+                # Fix partition-dependent true DOF counts / wrong P matrix rows
+                # for hanging vertices owned by ranks without a local
+                # constraining slave (silently wrong solves on restarted
+                # nonconforming meshes; rest of mfem#3925). Applies on top of
+                # the previous patch. Remove once fixed upstream and MFEM is
+                # bumped.
+                patch(
+                    "https://raw.githubusercontent.com/awslabs/palace/"
+                    "50a3438351376da8b1f1ecf1c132987b36491817/extern/patch/mfem/"
+                    "mfem_ncmesh_hanging_vertex_ownership.diff",
+                    sha256="a4fe8d8492cd3665b709bc323a34a09feda72f5923fdf62ef138311848281312",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")
