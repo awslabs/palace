@@ -73,9 +73,6 @@ constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
 // whose SVD rank flips across partitions, so skip any part below this floor as numerically
 // zero.
 constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_TOL = 1.0e-6;
-// Drop synthesized eigenvalues whose eigenvector energy in the basis rows falls below this
-// fraction; aux states inject roots at their pole frequencies that live in the aux rows.
-constexpr double SYNTHESIS_EIG_BASIS_FRAC_MIN = 1.0e-2;
 // Synthesized-eigenvalue filter: the augmented realization's aux states (zero-capacitance
 // rows, cond(C) = ∞) produce spurious near-critically-damped roots at Q ≲ 0.5 that carry
 // no physical content.
@@ -2664,7 +2661,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   const double fmax_GHz =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
-                                         fmin_GHz, fmax_GHz, GetReducedDimension());
+                                         fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
 
   // Complete synthesized wave-port realization: Y_syn(omega) y = G(omega) a, b = H(omega) y
@@ -2970,7 +2967,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
 std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstimates(
     const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv, const Eigen::MatrixXcd &C,
-    double fmin_GHz, double fmax_GHz, int n_basis)
+    double fmin_GHz, double fmax_GHz)
 {
   // Solve the quadratic eigenvalue problem (L⁻¹ + iωR⁻¹ − ω²C)v = 0 via companion
   // linearization. SI matrices span ~28 orders of magnitude (L⁻¹ ~ 1e14, C ~ 1e-14), so
@@ -3081,17 +3078,11 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     if (vnorm > 0.0)
     {
       est.eigvec /= vnorm;
-      // Drop spurious aux-pole roots: the augmented realization's aux states inject roots
-      // at their pole frequencies whose eigenvector lives almost entirely in the trailing
-      // aux rows, whereas a physical resonance has substantial energy in the basis rows.
-      if (n_basis > 0 && n_basis < n)
-      {
-        const double basis_frac = est.eigvec.head(n_basis).norm();  // eigvec is unit-norm
-        if (basis_frac < SYNTHESIS_EIG_BASIS_FRAC_MIN)
-        {
-          continue;
-        }
-      }
+      // Aux-pole artifacts are not filtered by a coordinate-norm heuristic here: the
+      // physical/aux norm ratio depends on the arbitrary scaling of the aux realization
+      // states, and a genuine dispersive mode can carry real aux participation. All finite
+      // candidates are retained; the reported HDM backward/absolute residuals classify
+      // them.
       Eigen::Index i_max;
       est.eigvec.cwiseAbs().maxCoeff(&i_max);
       const std::complex<double> pivot = est.eigvec(i_max);
