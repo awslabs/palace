@@ -1,0 +1,268 @@
+Fix partition-dependent true DOF counts and wrong P matrix rows for hanging
+vertices on partitioned nonconforming meshes.
+
+With an arbitrary (e.g. METIS) partitioning, a hanging vertex interior to a
+master edge or face can be owned (minimum rank among elements touching it) by
+a rank whose elements touch the refined region only through that vertex. Such
+a "fan" rank sees the master and all of its slaves as ghosts, and
+ParFiniteElementSpace::BuildParallelConformingInterpolation skips ghost slaves
+when building dependencies, so the owner never constrains the vertex and
+wrongly counts it as a true DOF with an identity P matrix row. The number of
+true DOFs then depends on the partitioning (the symptom of mfem#3925), and the
+wrong H1 rows corrupt anything built from the space: in Palace the corrupted
+auxiliary-space operators make the multigrid V-cycle amplify instead of
+contract, after which left-preconditioned GMRES reports convergence on the
+preconditioned residual while the true residual is O(1), and eigensolves
+return silently wrong results.
+
+Fix: in ParNCMesh::BuildVertexList, reassign each vertex interior to a master
+edge/face to the minimum rank among the owners of the slaves whose closure
+contains it. Every rank touching the vertex sees the same master and slave
+lists, so the assignment is globally consistent, and the new owner constrains
+the vertex through its local slave with the existing dependency code. Fan
+ranks receive the finalized row like any other unowned DOF.
+
+Also harden the neighbor-row message decoding (ElementSet::SkipTree and an
+invalid-ID skip in NeighborRowMessage::Decode): a receiver that cannot resolve
+an encoded refinement subtree now consumes it in sync and ignores the
+corresponding rows instead of reading out of bounds.
+
+Applies on top of mfem_ncmesh_tet_edge_face_groups.diff.
+
+--- a/mesh/pncmesh.hpp
++++ b/mesh/pncmesh.hpp
+@@ -416,6 +416,7 @@
+ 
+       void EncodeTree(int elem);
+       void DecodeTree(int elem, int &pos, Array<int> &elements) const;
++      void SkipTree(int &pos, Array<int> &elements) const;
+ 
+       void WriteInt(int value);
+       int  GetInt(int pos) const;
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -340,6 +340,11 @@
+ {
+    // This is an extension of NCMesh::BuildVertexList() which also determines
+    // vertex ownership and creates vertex processor groups.
++
++   // The hanging-vertex ownership correction below needs the edge and face
++   // lists (and their entity owners) to exist first.
++   GetEdgeList();
++   if (Dim >= 3) { GetFaceList(); }
+ 
+    int nvertices = NVertices + NGhostVertices;
+ 
+@@ -356,7 +361,115 @@
+    entity_elem_local[0] = -1;
+ 
+    NCMesh::BuildVertexList();
++
++   // A hanging vertex interior to a master edge/face must be owned by a rank
++   // that holds one of the constraining slaves locally: otherwise the owner
++   // cannot build the vertex's dependencies in
++   // ParFiniteElementSpace::BuildParallelConformingInterpolation (it skips
++   // ghost slaves) and wrongly treats the vertex as a true DOF. This happens
++   // with arbitrary partitions when a rank's elements touch the refined
++   // region only through the hanging vertex. Reassign each such vertex to the
++   // minimum rank among the owners of the slaves whose closure contains it;
++   // every rank touching the vertex sees the same master and slave lists, so
++   // the assignment is globally consistent.
++   {
++      // An edge's endpoints are the parents of its node.
++      Array<int> edge_node(NEdges + NGhostEdges);
++      edge_node = -1;
++      for (auto node = nodes.cbegin(); node != nodes.cend(); ++node)
++      {
++         if (node->HasEdge() && node->edge_index >= 0 &&
++             node->edge_index < edge_node.Size())
++         {
++            edge_node[node->edge_index] = node.index();
++         }
++      }
++      auto edge_verts = [&](int eindex, int vi[2])
++      {
++         vi[0] = vi[1] = -1;
++         if (eindex < 0 || eindex >= edge_node.Size()) { return; }
++         const int en = edge_node[eindex];
++         if (en < 0) { return; }
++         const Node &nd = nodes[en];
++         if (nd.p1 == nd.p2) { return; }
++         if (nodes[nd.p1].HasVertex()) { vi[0] = nodes[nd.p1].vert_index; }
++         if (nodes[nd.p2].HasVertex()) { vi[1] = nodes[nd.p2].vert_index; }
++      };
++      auto owner_rank_of = [&](int entity, int index) -> int
++      {
++         if (index < 0 || index >= entity_owner[entity].Size())
++         {
++            return INT_MAX;
++         }
++         return groups[entity_owner[entity][index]][0];
++      };
++      Array<int> hang_owner(nvertices);
++      hang_owner = INT_MAX;
++      auto assign = [&](int vindex, int rank, const int *excl, int nexcl)
++      {
++         if (vindex < 0 || vindex >= hang_owner.Size() || rank == INT_MAX)
++         {
++            return;
++         }
++         for (int k = 0; k < nexcl; k++)
++         {
++            if (excl[k] == vindex) { return; }
++         }
++         hang_owner[vindex] = std::min(hang_owner[vindex], rank);
++      };
++
++      int mv[4], me[4], meo[4], sv[4], se[4], seo[4], ev[2];
++      for (const auto &master : edge_list.masters)
++      {
++         edge_verts(master.index, mv); // master endpoints are not interior
++         for (int j = master.slaves_begin; j < master.slaves_end; j++)
++         {
++            const NCMesh::Slave &sf = edge_list.slaves[j];
++            if (sf.index < 0) { continue; }
++            const int owner = owner_rank_of(1, sf.index);
++            edge_verts(sf.index, ev);
++            assign(ev[0], owner, mv, 2);
++            assign(ev[1], owner, mv, 2);
++         }
++      }
++      if (Dim >= 3)
++      {
++         for (const auto &master : face_list.masters)
++         {
++            const int nmv = GetFaceVerticesEdges(master, mv, me, meo);
++            for (int j = master.slaves_begin; j < master.slaves_end; j++)
++            {
++               const NCMesh::Slave &sf = face_list.slaves[j];
++               if (sf.index >= 0)
++               {
++                  if (sf.element < 0) { continue; }
++                  const int owner = owner_rank_of(2, sf.index);
++                  const int nsv = GetFaceVerticesEdges(sf, sv, se, seo);
++                  for (int k = 0; k < nsv; k++)
++                  {
++                     assign(sv[k], owner, mv, nmv);
++                  }
++               }
++               else // edge-face constraint (tet or prism)
++               {
++                  const int owner = owner_rank_of(1, -1 - sf.index);
++                  edge_verts(-1 - sf.index, ev);
++                  assign(ev[0], owner, mv, nmv);
++                  assign(ev[1], owner, mv, nmv);
++               }
++            }
++         }
++      }
+ 
++      for (int i = 0; i < nvertices && i < tmp_owner.Size(); i++)
++      {
++         if (hang_owner[i] != INT_MAX)
++         {
++            tmp_owner[i] = hang_owner[i];
++         }
++      }
++   }
++
+    InitOwners(nvertices, entity_owner[0]);
+    MakeSharedList(vertex_list, shared_vertices);
+ 
+@@ -2987,6 +3100,23 @@
+    return oss.str();
+ }
+ #endif
++
++void ParNCMesh::ElementSet::SkipTree(int &pos, Array<int> &elements) const
++{
++   int mask = data[pos++];
++   if (!mask)
++   {
++      elements.Append(-1); // placeholder for a leaf unknown on this rank
++      return;
++   }
++   for (int i = 0; i < 8; i++)
++   {
++      if (mask & (1 << i))
++      {
++         SkipTree(pos, elements);
++      }
++   }
++}
+ 
+ void ParNCMesh::ElementSet::DecodeTree(int elem, int &pos,
+                                        Array<int> &elements) const
+@@ -3011,10 +3141,24 @@
+          }
+          else { MFEM_ASSERT(ref_type == el.ref_type, "") }
+       }
+-      else
++      else if (!el.ref_type)
+       {
+-         MFEM_ASSERT(el.ref_type != 0, "Path not found:\n"
+-                     << RefPath() << "     mask = " << mask);
++         // The encoded subtree does not exist on this rank (its tree is
++         // coarser here). Consume the encoded subtree to stay in sync and
++         // append placeholders so subsequent element references remain
++         // aligned; the corresponding mesh IDs decode as invalid and are
++         // ignored by the receiver.
++         for (int i = 0; i < 8; i++)
++         {
++            if (mask & (1 << i))
++            {
++               SkipTree(pos, elements);
++            }
++         }
++#ifdef MFEM_DEBUG
++         ref_path.DeleteLast();
++#endif
++         return;
+       }
+ 
+       for (int i = 0; i < 8; i++)
+@@ -3255,14 +3399,22 @@
+       {
+          int el_num = read<int>(is);
+          int elem = elems[el_num];
+-         Element &el = elements[elem];
+ 
+-         MFEM_VERIFY(!el.ref_type, "not a leaf element: " << el_num);
+-
+          MeshId &id = ids[type][i];
+          id.element = elem;
+          id.local = read<char>(is);
++
++         if (elem < 0)
++         {
++            // reference to an element whose subtree is unknown on this rank
++            // (see ElementSet::SkipTree); mark the ID invalid
++            id.index = -1;
++            continue;
++         }
++         Element &el = elements[elem];
+ 
++         MFEM_VERIFY(!el.ref_type, "not a leaf element: " << el_num);
++
+          // find vertex/edge/face index
+          GeomInfo &gi = GI[el.Geom()];
+          switch (type)
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -3320,6 +3320,16 @@
+          int edof = bin_io::read<int>(stream);
+          int order_i = bin_io::read<int>(stream);
+          MFEM_ASSERT(order_i >= 0, "");
++
++         if (id.index < 0)
++         {
++            // Entity not identifiable on this rank (see
++            // ParNCMesh::ElementSet::SkipTree); consume the row and ignore it.
++            RowInfo tmprow(1, 0, 0, 0);  // Fake, unused row, just to read stream.
++            tmprow.row.read(stream, 1.0);
++            gi++;
++            continue;
++         }
+ 
+          // Handle orientation and sign change. This flips the sign on dofs
+          // where necessary, and for edges and faces also reorders if flipped,

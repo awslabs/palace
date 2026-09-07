@@ -463,6 +463,13 @@ download_mfem_patch(
 list(APPEND MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_ncmesh_tet_edge_face_groups.diff"
 )
+# Fix partition-dependent true DOF counts / wrong P matrix rows for hanging
+# vertices owned by ranks without a local constraining slave (silently wrong
+# solves on restarted nonconforming meshes); see the patch header. Applies on
+# top of the previous patch.
+list(APPEND MFEM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_ncmesh_hanging_vertex_ownership.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
