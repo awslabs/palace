@@ -2063,8 +2063,14 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       Eigen::BDCSVD<Eigen::MatrixXcd, Eigen::ComputeThinU> svd;
       svd.compute(cols);
       const auto &sv = svd.singularValues();
+      // Adaptive rank: grow until the discarded SVD tail energy (modal content the subspace
+      // cannot represent) falls below the synthesis tolerance.
+      const double sv_total = std::sqrt(sv.array().square().sum());
       int r = 0;
-      while (r < sv.size() && sv(r) > waveport_synthesis_rank_tol * sv(0))
+      while (r < sv.size() &&
+             (sv_total <= 0.0 ||
+              std::sqrt(sv.tail(sv.size() - r).array().square().sum()) / sv_total >
+                  waveport_synthesis_tol))
       {
         r++;
       }
@@ -2074,9 +2080,16 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       }
       if (r > WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX)
       {
-        Mpi::Warning(" Wave port {:d} modal subspace rank {:d} capped at {:d}; synthesis "
-                     "accuracy may be reduced\n",
-                     port_idx, r, WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX);
+        const double tail =
+            std::sqrt(sv.tail(sv.size() - WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX)
+                          .array()
+                          .square()
+                          .sum()) /
+            sv_total;
+        Mpi::Warning(" Wave port {:d} modal subspace rank {:d} capped at {:d} (discarded "
+                     "tail energy {:.3e} > tol {:.3e}); add band samples to resolve it\n",
+                     port_idx, r, WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX, tail,
+                     waveport_synthesis_tol);
         r = WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX;
       }
       const Eigen::MatrixXcd Q = svd.matrixU().leftCols(r);
@@ -2087,25 +2100,49 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       // large nonminimal realization with nearly repeated poles. Instead obtain one AAA
       // denominator from the vectorized matrix residual, then solve a linear least-squares
       // problem for all polynomial and residue matrices using those common poles.
-      std::map<std::pair<double, double>, Eigen::MatrixXcd> M_cache;
-      auto eval_M = [&](std::complex<double> w) -> const Eigen::MatrixXcd &
+      // Cache samples so both the projected fit target M (r×r) and the exact full-space
+      // correction Wₑ(ω)=g_f ŝ_f ŝ_fᵀ+g_s ŝ_s ŝ_sᵀ (nr×nr) reuse one EVP solve per ω.
+      struct ModalSample
+      {
+        Eigen::MatrixXcd M;           // Qᴴ correction, r×r
+        Eigen::VectorXcd sf, ss;      // full reduced n×H vectors
+        std::complex<double> gf, gs;  // scalar dispersion weights
+        bool active = false;
+      };
+      std::map<std::pair<double, double>, ModalSample> M_cache;
+      auto sample_at = [&](std::complex<double> w) -> const ModalSample &
       {
         const auto key = std::make_pair(w.real(), w.imag());
         auto it = M_cache.find(key);
         if (it == M_cache.end())
         {
-          Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(r, r);
-          Eigen::VectorXcd sf, ss;
-          auto smp = sample_reduced(port_idx, w, sf, ss);
+          ModalSample e;
+          e.M = Eigen::MatrixXcd::Zero(r, r);
+          auto smp = sample_reduced(port_idx, w, e.sf, e.ss);
+          e.active = smp.active;
+          e.gf = smp.g_full;
+          e.gs = smp.g_scalar;
           if (smp.active)
           {
-            const Eigen::VectorXcd af = Q.adjoint() * sf, as = Q.adjoint() * ss;
-            M = smp.g_full * (af * af.transpose()) + smp.g_scalar * (as * as.transpose());
-            M = 0.5 * (M + M.transpose()).eval();
+            const Eigen::VectorXcd af = Q.adjoint() * e.sf, as = Q.adjoint() * e.ss;
+            e.M = smp.g_full * (af * af.transpose()) + smp.g_scalar * (as * as.transpose());
+            e.M = 0.5 * (e.M + e.M.transpose()).eval();
           }
-          it = M_cache.emplace(key, std::move(M)).first;
+          it = M_cache.emplace(key, std::move(e)).first;
         }
         return it->second;
+      };
+      auto eval_M = [&](std::complex<double> w) -> const Eigen::MatrixXcd &
+      { return sample_at(w).M; };
+      // Exact full-space correction Wₑ(ω) in nr coordinates (no subspace projection).
+      auto exact_W = [&](std::complex<double> w) -> Eigen::MatrixXcd
+      {
+        const auto &e = sample_at(w);
+        if (!e.active)
+        {
+          return Eigen::MatrixXcd::Zero(nr, nr);
+        }
+        return e.gf * (e.sf * e.sf.transpose()) + e.gs * (e.ss * e.ss.transpose());
       };
       auto pack_matrix = [r](const Eigen::MatrixXcd &M)
       {
@@ -2187,6 +2224,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       }
 
       const std::complex<double> imag_unit(0.0, 1.0);
+      // Track the actually-realized residues (kept parts only) so the residual below
+      // reflects the MODAL_PART_TOL truncation, not the untruncated fit.
+      std::vector<std::pair<std::complex<double>, Eigen::MatrixXcd>> realized_poles;
       for (int k = 0; k < n_poles; k++)
       {
         const Eigen::MatrixXcd R = unpack_matrix(coeff.row(3 + k));
@@ -2196,6 +2236,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
             std::make_pair(R_full.real(), std::complex<double>(0.0, -1.0)),
             std::make_pair(R_full.imag(), std::complex<double>(1.0, 0.0))};
         const char *suffix[2] = {"re", "im"};
+        Eigen::MatrixXcd R_kept = Eigen::MatrixXcd::Zero(nr, nr);
         for (int part = 0; part < 2; part++)
         {
           if (residue_norm == 0.0 ||
@@ -2205,6 +2246,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
           }
           const Eigen::MatrixXcd Mp =
               imag_unit * parts[part].first.cast<std::complex<double>>();
+          // Realized contribution to W(ω): (i·part)·coeff/(ω-pole) = R_full's kept component.
+          R_kept += Mp * parts[part].second;
           auto blk = MakeAuxBlock(
               fmt::format("waveport_{:d}_modal_p{:d}_{}", port_idx, k, suffix[part]), Mp,
               {denominator.poles(k)}, {parts[part].second}, waveport_synthesis_rank_tol);
@@ -2217,29 +2260,36 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
             }
           }
         }
+        if (R_kept.norm() > 0.0)
+        {
+          realized_poles.emplace_back(denominator.poles(k), std::move(R_kept));
+        }
       }
 
+      // Residual of the realized correction (subspace + fit + kept residues) against the
+      // exact full W(ω) on an independent grid: the error the eigenmode/S paths actually see.
       double max_err = 0.0, max_ref = 0.0;
       for (const double wr : dense_real)
       {
         const std::complex<double> w(wr, 0.0);
-        Eigen::MatrixXcd M_fit = P0 + w * P1 + w * w * P2;
-        for (int k = 0; k < n_poles; k++)
+        Eigen::MatrixXcd W_realized = P0_full + w * P1_full + w * w * P2_full;
+        for (const auto &[pole, R_kept] : realized_poles)
         {
-          M_fit += unpack_matrix(coeff.row(3 + k)) / (w - denominator.poles(k));
+          W_realized += R_kept / (w - pole);
         }
-        max_err = std::max(max_err, (M_fit - eval_M(w)).norm());
-        max_ref = std::max(max_ref, eval_M(w).norm());
+        const Eigen::MatrixXcd W_ex = exact_W(w);
+        max_err = std::max(max_err, (W_realized - W_ex).norm());
+        max_ref = std::max(max_ref, W_ex.norm());
       }
       const double rel_err = (max_ref > 0.0) ? max_err / max_ref : 0.0;
       Mpi::Print(" Wave port {:d} common-pole modal synthesis: rank {:d}, {:d} pole{}, "
-                 "matrix residual {:.3e} (tol {:.3e})\n",
+                 "realized residual {:.3e} (tol {:.3e})\n",
                  port_idx, r, n_poles, n_poles == 1 ? "" : "s", rel_err,
                  waveport_synthesis_tol);
       if (rel_err > waveport_synthesis_tol)
       {
-        Mpi::Warning("Wave port {:d} common-pole modal synthesis residual {:.3e} exceeds "
-                     "AdaptiveTol={:.3e}!\n",
+        Mpi::Warning("Wave port {:d} realized modal synthesis residual {:.3e} exceeds "
+                     "AdaptiveTol={:.3e}; increase band samples or subspace rank cap!\n",
                      port_idx, rel_err, waveport_synthesis_tol);
       }
     }
