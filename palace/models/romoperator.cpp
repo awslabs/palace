@@ -1974,28 +1974,31 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       auto fit = FitWavePortDispersion(port_idx, Mp_r);
       out.wave_port_fits.push_back(fit);
 
-      // Inactive included ports are unloaded synthesis terminals. They need the fit for
-      // rom-port-reference.csv, but their Robin termination must not be added to either the
-      // loaded total pencil or the removable per-port load.
+      // Inactive included ports are matched (unloaded) terminals: build a reference-only
+      // per-port load for rom-port-reference.csv, but keep it out of the loaded total
+      // pencil.
       const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
-      if (!port_data.active)
-      {
-        continue;
-      }
 
       PendingPortLoad port_load;
       port_load.label = fmt::format("waveport_{:d}_re", port_idx);
       port_load.Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-      ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr, Mr_total_corr);
       ApplyPolynomialFitCorrections(fit, Mp_r, port_load.Kr_corr, port_load.Cr_corr,
                                     port_load.Mr_corr);
-      if (fit.aux)
+      if (port_data.active)
       {
-        aux_blocks_total.push_back(*fit.aux);
-        port_load.aux_blocks.push_back(*fit.aux);
+        // Active ports also load the total pencil and carry their dispersion aux states.
+        ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr,
+                                      Mr_total_corr);
+        if (fit.aux)
+        {
+          aux_blocks_total.push_back(*fit.aux);
+          port_load.aux_blocks.push_back(*fit.aux);
+        }
       }
+      // Inactive ports keep only the polynomial part (aux rows would have to live in the
+      // unloaded total pencil).
       pending_port_loads.push_back(std::move(port_load));
     }
   }
@@ -2679,8 +2682,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   }
   const std::size_t n_ports = coupled_ports.size();
   std::vector<Eigen::MatrixXcd> coupled_g,
-      coupled_h;  // per freq: na x n_ports, n_ports x na
+      coupled_h;  // per freq: na x n_ports, n_ports x na (boundary-plane maps)
   std::vector<std::vector<std::complex<double>>> coupled_s;
+  // Per-port de-embedding factor exp(i·kₙ·d_offset), applied to rom-coupled-S so it matches
+  // Palace's offset-de-embedded port-S; G/H stay boundary-plane and are exported unphased.
+  std::vector<std::vector<std::complex<double>>> coupled_deembed;
   if (n_ports > 0)
   {
     const long nr = static_cast<long>(V.size());
@@ -2706,6 +2712,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     coupled_g.assign(n_freq, Eigen::MatrixXcd::Zero(na, n_ports));
     coupled_h.assign(n_freq, Eigen::MatrixXcd::Zero(n_ports, na));
     coupled_s.resize(n_freq);
+    coupled_deembed.assign(n_freq, std::vector<std::complex<double>>(n_ports, {1.0, 0.0}));
     for (std::size_t fi = 0; fi < n_freq; fi++)
     {
       const double omega = sweep_omega_samples[fi];
@@ -2722,6 +2729,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
             d.head(nr).cast<std::complex<double>>().cwiseProduct(proj);
         G.col(p).head(nr) = -2.0 * unit_ohm_inv * dsv;
         H.row(p).head(nr) = -dsv.conjugate().transpose();
+        // kn0 is current (GetWavePortModeVector just Initialized at omega).
+        const auto &pd = space_op.GetWavePortOp().GetPort(coupled_ports[p]);
+        coupled_deembed[fi][p] = std::exp(1i * pd.kn0 * pd.d_offset);
       }
       const std::complex<double> s_phys = 1i * omega * omega0;
       Eigen::MatrixXcd Y = (*matrices.L_inv) / s_phys + s_phys * (*matrices.C);
@@ -2729,7 +2739,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         Y += *matrices.R_inv;
       }
-      Eigen::MatrixXcd s_mat = H * Y.fullPivLu().solve(G);  // n_ports x n_ports
+      Eigen::MatrixXcd s_mat = H * Y.fullPivLu().solve(G);  // boundary-plane S + I
       s_mat.diagonal().array() -= 1.0;
       auto &vals = coupled_s[fi];
       vals.resize(n_ports * n_ports);
@@ -2737,6 +2747,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         for (std::size_t drive = 0; drive < n_ports; drive++)
         {
+          // De-embed to the offset reference planes so rom-coupled-S matches port-S.
+          s_mat(obs, drive) *= coupled_deembed[fi][obs] * coupled_deembed[fi][drive];
           vals[obs * n_ports + drive] = s_mat(obs, drive);
         }
       }
@@ -2770,6 +2782,14 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
         out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
       }
     }
+    // Export the per-port de-embed factor: S[q][p] = (H Y⁻¹ G -
+    // I)[q][p]·deembed[q]·deembed[p].
+    for (std::size_t p = 0; p < coupled_ports.size(); p++)
+    {
+      const auto key = fmt::format("deembed[{:d}]", coupled_ports[p]);
+      out.table.insert(fmt::format("re_{}", key), fmt::format("Re{{{}}}", key));
+      out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
+    }
     const double unit_GHz =
         units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
     for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
@@ -2785,6 +2805,12 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
           out.table[fmt::format("re_{}", key)] << value.real();
           out.table[fmt::format("im_{}", key)] << value.imag();
         }
+      }
+      for (std::size_t p = 0; p < coupled_ports.size(); p++)
+      {
+        const auto key = fmt::format("deembed[{:d}]", coupled_ports[p]);
+        out.table[fmt::format("re_{}", key)] << coupled_deembed[fi][p].real();
+        out.table[fmt::format("im_{}", key)] << coupled_deembed[fi][p].imag();
       }
     }
     out.WriteFullTableTrunc();
@@ -3078,11 +3104,8 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     if (vnorm > 0.0)
     {
       est.eigvec /= vnorm;
-      // Aux-pole artifacts are not filtered by a coordinate-norm heuristic here: the
-      // physical/aux norm ratio depends on the arbitrary scaling of the aux realization
-      // states, and a genuine dispersive mode can carry real aux participation. All finite
-      // candidates are retained; the reported HDM backward/absolute residuals classify
-      // them.
+      // Retain all finite candidates: a coordinate-norm split of physical vs aux energy is
+      // gauge-dependent, so the reported HDM residuals classify aux-pole artifacts instead.
       Eigen::Index i_max;
       est.eigvec.cwiseAbs().maxCoeff(&i_max);
       const std::complex<double> pivot = est.eigvec(i_max);

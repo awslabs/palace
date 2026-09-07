@@ -510,13 +510,30 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
     const int f_col = find(circuit, "f (GHz)");
     REQUIRE(f_col >= 0);
 
+    // Per-port de-embed factor exp(i·kₙ·d_offset): G/H are boundary-plane maps,
+    // rom-coupled-S carries the offset phase, so S[q][p] = (H Y⁻¹ G -
+    // I)[q][p]·deembed[q]·deembed[p].
+    std::vector<int> de_re(np, -1), de_im(np, -1);
+    for (long p = 0; p < np; p++)
+    {
+      const auto key = "deembed[" + std::to_string(g_ports[p]) + "]";
+      de_re[p] = find(circuit, "Re{" + key + "}");
+      de_im[p] = find(circuit, "Im{" + key + "}");
+      REQUIRE(de_re[p] >= 0);
+      REQUIRE(de_im[p] >= 0);
+    }
     for (std::size_t r = 0; r < circuit.n_rows(); r++)
     {
-      // Reconstruct S = H Y_syn⁻¹ G - I from the exported CSVs at this frequency.
+      // Reconstruct the boundary-plane S = H Y_syn⁻¹ G - I from the exported CSVs.
       const std::complex<double> s(0.0, 2.0 * M_PI * circuit[f_col].data[r] * 1.0e9);
       const Eigen::MatrixXcd Y = linv / s + rinv + s * cap;
       const Eigen::MatrixXcd S_csv =
           H[r] * Y.fullPivLu().solve(G[r]) - Eigen::MatrixXcd::Identity(np, np);
+      std::vector<std::complex<double>> deembed(np);
+      for (long p = 0; p < np; p++)
+      {
+        deembed[p] = {circuit[de_re[p]].data[r], circuit[de_im[p]].data[r]};
+      }
       for (long obs = 0; obs < np; obs++)
       {
         for (long drive = 0; drive < np; drive++)
@@ -527,11 +544,13 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
           const int im = find(circuit, "Im{" + key + "}");
           REQUIRE(re >= 0);
           REQUIRE(im >= 0);
-          // The exported G/H/L/R/C must rebuild the exported S to roundoff.
+          // The exported G/H/L/R/C plus de-embed factors must rebuild the exported S.
+          const std::complex<double> s_rec =
+              S_csv(obs, drive) * deembed[obs] * deembed[drive];
           const std::complex<double> s_rom(circuit[re].data[r], circuit[im].data[r]);
-          INFO("row " << r + 1 << " " << key << " CSV-reconstructed " << S_csv(obs, drive)
+          INFO("row " << r + 1 << " " << key << " CSV-reconstructed " << s_rec
                       << " vs rom-coupled-S " << s_rom);
-          CHECK(std::abs(S_csv(obs, drive) - s_rom) <= 1.0e-9);
+          CHECK(std::abs(s_rec - s_rom) <= 1.0e-9);
         }
       }
     }
