@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_DOMAIN_POINT_FIELD_EVALUATOR_HPP
 #define PALACE_FEM_DOMAIN_POINT_FIELD_EVALUATOR_HPP
 
+#include <array>
 #include <deque>
 #include <vector>
 #include <mfem.hpp>
@@ -60,8 +61,9 @@ private:
   int buffer_size = 0, buffer_num_comp = 0;
   std::vector<int> buffer_bases;
 
-  // Staging vector used to initialize the field input CeedVectors at construction.
-  mutable Vector field_staging;
+  // Exact-size staging vectors used to initialize the field input CeedVectors at
+  // construction, indexed by E/B source slot.
+  mutable std::array<Vector, 2> field_staging;
 
   void Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
                 const mfem::ParFiniteElementSpace &target_fespace, double scaling,

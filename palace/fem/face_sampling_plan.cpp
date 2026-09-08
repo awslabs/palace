@@ -251,6 +251,7 @@ FaceSamplingPlan::FaceSamplingPlan(const Mesh &mesh_,
   marker.assign(bdr_attr_marker.begin(), bdr_attr_marker.end());
 
   const mfem::ParMesh &pmesh = mesh->Get();
+  buffer_bases.assign(pmesh.GetNBE(), -1);
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
   for (int i = 0; i < pmesh.GetNBE(); i++)
@@ -334,10 +335,6 @@ FaceSamplingPlan::FaceSamplingPlan(const Mesh &mesh_,
       }
     }
 
-    if (buffer_bases.empty())
-    {
-      buffer_bases.resize(pmesh.GetNBE(), -1);
-    }
     buffer_bases[i] = num_points;
     num_points += nq;
     entries.push_back(std::move(entry));

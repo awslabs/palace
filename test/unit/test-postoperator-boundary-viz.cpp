@@ -239,7 +239,7 @@ struct ErrorStats
   void Add(double val, double ref, double rtol, double atol)
   {
     const double err = std::abs(val - ref);
-    const double denom = atol + rtol * std::max({1.0, std::abs(val), std::abs(ref)});
+    const double denom = atol + rtol * std::max(std::abs(val), std::abs(ref));
     max_abs = std::max(max_abs, err);
     max_scaled = std::max(max_scaled, err / denom);
     sum_sq += err * err;

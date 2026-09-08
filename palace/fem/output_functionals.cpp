@@ -1404,10 +1404,27 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         storage_batch_size));
     num_out = 6 * farfield_batch_size;
   }
-  local_out.SetSize(buffer_kind ? 0
-                                : (kind == KernelKind::FARFIELD) ? num_out
-                                                                : num_marked * num_out);
+  local_out.SetSize(buffer_kind                      ? 0
+                    : (kind == KernelKind::FARFIELD) ? num_out
+                                                     : num_marked * num_out);
   local_out.UseDevice(true);
+
+  auto GetFieldStaging = [this](int source,
+                                const mfem::ParFiniteElementSpace &fespace) -> Vector &
+  {
+    MFEM_VERIFY(source >= 0 && source < static_cast<int>(field_staging.size()),
+                "Invalid source slot for surface functional field input!");
+    auto &staging = field_staging[source];
+    if (staging.Size() == 0)
+    {
+      staging.SetSize(fespace.GetVSize());
+      staging.UseDevice(true);
+      staging = 0.0;
+    }
+    MFEM_VERIFY(staging.Size() == fespace.GetVSize(),
+                "Surface functional source slot is used with mismatched field spaces!");
+    return staging;
+  };
 
   // Build the (group independent part of the) QFunction context for the integrand.
   std::vector<CeedIntScalar> base_ctx = BuildBaseContext(dim, is_2d);
@@ -1481,6 +1498,16 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
       }
       face_nbr_exchange = std::make_unique<FaceNbrFieldExchange>(mesh, ex_fes, requests);
+      // Warm-up is collective: this rank may serve a neighbor's request for a source slot
+      // that none of its local output groups consume. Allocate every exchanged source at
+      // its exact FE-space length before passing the synthetic source array to Exchange().
+      for (int source = 0; source < FaceNbrFieldExchange::MaxSources; source++)
+      {
+        if ((source_mask & (1u << source)) && ex_fes[source])
+        {
+          GetFieldStaging(source, *ex_fes[source]);
+        }
+      }
     }
   }
 
@@ -1742,29 +1769,34 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       }
 
-      // Constant identity Jacobian (component-major [elem][comp][pt]), passed directly
-      // to the kernel's grad_x_<suffix> input (EVAL_NONE). It is 2x2 for 2D line
-      // integrals and 3x3 for 3D surface integrals.
+      // Constant identity Jacobian (component-major [comp][pt]), passed directly to the
+      // kernel's grad_x_<suffix> input (EVAL_NONE). Every element references the same
+      // immutable 2x2 (2D line) or 3x3 (3D surface) data instead of storing a duplicate
+      // at every lattice point of every trace-consumer group.
       const int geom_comp = dim * sdim;
-      auto &ident = elem_attrs.emplace_back(num_elem * geom_comp * num_pts);
+      auto &ident = elem_attrs.emplace_back(geom_comp * num_pts);
       ident = 0.0;
+      for (int d = 0; d < dim; d++)
+      {
+        const int c = d * (sdim + 1);
+        for (int i = 0; i < num_pts; i++)
+        {
+          ident[c * num_pts + i] = 1.0;
+        }
+      }
+      std::vector<CeedInt> ident_offsets(num_elem * num_pts);
       for (std::size_t e = 0; e < num_elem; e++)
       {
-        for (int d = 0; d < dim; d++)
+        for (int i = 0; i < num_pts; i++)
         {
-          const int c = d * (sdim + 1);
-          for (int i = 0; i < num_pts; i++)
-          {
-            ident[e * geom_comp * num_pts + c * num_pts + i] = 1.0;
-          }
+          ident_offsets[e * num_pts + i] = i;
         }
       }
       CeedElemRestriction ident_restr;
-      const CeedInt strides[3] = {1, num_pts, geom_comp * num_pts};
-      PalaceCeedCall(ceed,
-                     CeedElemRestrictionCreateStrided(
-                         ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp,
-                         (CeedSize)num_elem * geom_comp * num_pts, strides, &ident_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                               ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp,
+                               num_pts, (CeedSize)geom_comp * num_pts, CEED_MEM_HOST,
+                               CEED_COPY_VALUES, ident_offsets.data(), &ident_restr));
       CeedVector ident_vec;
       ceed::InitCeedVector(ident, ceed, &ident_vec);
       inputs.push_back(
@@ -1847,18 +1879,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "Unable to get field finite element for surface functional!");
       ceed::InitCachedBasisFromRule(*fe, ir, fespace.GetVDim(), ceed, &basis);
-      MFEM_VERIFY(source >= 0 && source < static_cast<int>(field_staging.size()),
-                  "Invalid source slot for surface functional field input!");
-      auto &staging = field_staging[source];
-      if (staging.Size() == 0)
-      {
-        staging.SetSize(fespace.GetVSize());
-        staging.UseDevice(true);
-        staging = 0.0;
-      }
-      MFEM_VERIFY(staging.Size() == fespace.GetVSize(),
-                  "Surface functional source slot is used with mismatched field spaces!");
-      ceed::InitCeedVector(staging, ceed, &vec);
+      ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
       scratch.vecs.push_back(vec);
@@ -2331,12 +2352,36 @@ void SurfaceFunctional::WarmUpBufferOperators() const
   // Force libCEED/CUDA lazy initialization for boundary point-field operators while the
   // output backend is being configured instead of during the first VTU payload write.
   // This does not remove any output fields or payload bytes; secondary timers track the
-  // shifted setup cost in the full application run.
+  // shifted setup cost in the full application run. A rank with no local output groups
+  // may still need to export values requested by a neighbor, so prepare the exact source
+  // lengths independently of local group construction.
+  auto PrepareStaging = [this](int source, const mfem::ParFiniteElementSpace *fespace)
+  {
+    MFEM_VERIFY(fespace, "Missing finite element space for point-field warm-up source!");
+    auto &staging = field_staging[source];
+    if (staging.Size() == 0)
+    {
+      staging.SetSize(fespace->GetVSize());
+      staging.UseDevice(true);
+      staging = 0.0;
+    }
+    MFEM_VERIFY(staging.Size() == fespace->GetVSize(),
+                "Point-field warm-up source has a mismatched staging length!");
+  };
+  if (kind == KernelKind::BDR_POYNTING)
+  {
+    PrepareStaging(0, nd_fespace);
+    PrepareStaging(1, rt_fespace);
+  }
+  else
+  {
+    PrepareStaging(0, rt_fespace ? rt_fespace : nd_fespace);
+  }
   Vector buffer(buffer_size);
   buffer.UseDevice(true);
   buffer = 0.0;
-  const std::array<const Vector *, 4> sources = {
-      &field_staging[0], &field_staging[1], &field_staging[2], &field_staging[3]};
+  const std::array<const Vector *, 4> sources = {&field_staging[0], &field_staging[1],
+                                                 &field_staging[2], &field_staging[3]};
   if (face_nbr_exchange)
   {
     face_nbr_exchange->Exchange(sources);

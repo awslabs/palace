@@ -154,10 +154,22 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
 
-  field_staging.SetSize(std::max(nd_fespace ? nd_fespace->GetVSize() : 0,
-                                 rt_fespace ? rt_fespace->GetVSize() : 0));
-  field_staging.UseDevice(true);
-  field_staging = 0.0;
+  auto GetFieldStaging = [this](int source,
+                                const mfem::ParFiniteElementSpace &fespace) -> Vector &
+  {
+    MFEM_VERIFY(source >= 0 && source < static_cast<int>(field_staging.size()),
+                "Invalid source slot for domain point-field input!");
+    auto &staging = field_staging[source];
+    if (staging.Size() == 0)
+    {
+      staging.SetSize(fespace.GetVSize());
+      staging.UseDevice(true);
+      staging = 0.0;
+    }
+    MFEM_VERIFY(staging.Size() == fespace.GetVSize(),
+                "Domain point-field source slot is used with mismatched field spaces!");
+    return staging;
+  };
 
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   for (const auto &geom_indices : geom_elems)
@@ -286,7 +298,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
                               &restr);
         const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
         ceed::InitCachedBasisFromRule(*fe, nodes_ir, fespace.GetVDim(), ceed, &basis);
-        ceed::InitCeedVector(field_staging, ceed, &vec);
+        ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
         inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         field_sources.emplace_back(name, source);
         scratch.vecs.push_back(vec);
@@ -388,7 +400,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
                               &restr);
         const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
         ceed::InitCachedBasisFromRule(*fe, vtu_ir, fespace.GetVDim(), ceed, &basis);
-        ceed::InitCeedVector(field_staging, ceed, &vec);
+        ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
         buffer_inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         buffer_field_sources.emplace_back(name, source);
         scratch.vecs.push_back(vec);
@@ -437,12 +449,15 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
 
   // The passive libCEED field vectors are cached and re-pointed to caller-owned data on
   // every apply. Detach their borrowed arrays before actually releasing the construction
-  // buffer, so no full device FE vector remains per evaluator through subsequent solves.
+  // buffers, so no full device FE vector remains per evaluator through subsequent solves.
   fem::DetachGroupOperatorFieldVectors(groups);
   fem::DetachGroupOperatorFieldVectors(buffer_groups);
-  field_staging.Destroy();
-  MFEM_ASSERT(field_staging.Capacity() == 0,
-              "Domain evaluator staging allocation was not released!");
+  for (auto &staging : field_staging)
+  {
+    staging.Destroy();
+    MFEM_ASSERT(staging.Capacity() == 0,
+                "Domain evaluator staging allocation was not released!");
+  }
 }
 
 void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,

@@ -2606,6 +2606,23 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   REQUIRE_FALSE(interior_farfield.IsValid());
 }
 
+TEST_CASE("FaceSamplingPlan retains unmatched boundary slots",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  auto mesh = MakeInterfaceMesh(MPI_COMM_WORLD, mfem::Element::TETRAHEDRON);
+  auto &pmesh = mesh->Get();
+  REQUIRE(pmesh.GetNBE() > 0);
+
+  mfem::Array<int> marker(pmesh.bdr_attributes.Max());
+  marker = 0;
+  FaceSamplingPlan sampling_plan(*mesh, marker, 1);
+  CHECK(sampling_plan.NumPoints() == 0);
+  CHECK(sampling_plan.Entries().empty());
+  REQUIRE(sampling_plan.BufferBases().size() == static_cast<std::size_t>(pmesh.GetNBE()));
+  CHECK(std::all_of(sampling_plan.BufferBases().begin(), sampling_plan.BufferBases().end(),
+                    [](int base) { return base == -1; }));
+}
+
 TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
           "[surfacefunctional][Serial][Parallel][GPU]")
 {

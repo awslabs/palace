@@ -409,6 +409,9 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
   auto check_files = [&](const std::string &subdir, int step, int pad_digits,
                          const std::vector<std::string> &fields)
   {
+    // Root-owned metadata and every rank's payload must be complete before any rank
+    // inspects the shared output tree.
+    Mpi::Barrier(comm);
     for (int i = 0; i < size; i++)
     {
       for (const auto &field : fields)
