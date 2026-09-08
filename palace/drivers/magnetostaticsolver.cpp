@@ -214,6 +214,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
+  solve_converged_ = true;
 
   // Unified loop over all excitation sources (current and flux loops).
   if (n_current_steps > 0 && n_flux_steps > 0)
@@ -344,15 +345,24 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // clean zero start makes both solves robust and partition-/roundoff-independent.
         A_p_london = 0.0;
         ksp.Mult(RHS, A_p_london);
-        MFEM_VERIFY(ksp.GetConverged(),
-                    "London particular-solution solve A_p = K⁻¹b did not converge for flux "
-                    "loop " << idx << "; extracted inductance would be unreliable!");
+        if (!ksp.GetConverged())
+        {
+          // Return unconverged so SolveEstimateMarkRefine can halt adaptation and keep the
+          // last converged iteration. Bail before postprocessing so no unreliable inductance
+          // is written; the initial-solve check downstream still fails loud with no fallback.
+          Mpi::Warning("London solve A_p = K⁻¹b did not converge for flux loop {:d}!\n", idx);
+          solve_converged_ = false;
+          return {indicator, curlcurl_op.GlobalTrueVSize()};
+        }
         curlcurl_op.GetFluxConstraintVector(idx, RHS_c_london);
         A_h_london = 0.0;
         ksp.Mult(RHS_c_london, A_h_london);
-        MFEM_VERIFY(ksp.GetConverged(),
-                    "London fluxoid-mode solve A_h = K⁻¹c did not converge for flux loop "
-                        << idx << "; extracted inductance would be unreliable!");
+        if (!ksp.GetConverged())
+        {
+          Mpi::Warning("London solve A_h = K⁻¹c did not converge for flux loop {:d}!\n", idx);
+          solve_converged_ = false;
+          return {indicator, curlcurl_op.GlobalTrueVSize()};
+        }
         double phi_p = curlcurl_op.MeasureLondonHoleFlux(idx, A_p_london);
         double phi_h = curlcurl_op.MeasureLondonHoleFlux(idx, A_h_london);
         MFEM_VERIFY(

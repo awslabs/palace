@@ -208,6 +208,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
+  MFEM_VERIFY(solve_converged_,
+              "Initial solve did not converge; no converged result to fall back on!");
   double err = indicators.Norml2(comm);
 
   // Collection of all tests that might exhaust resources.
@@ -304,6 +306,17 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
+    if (!solve_converged_)
+    {
+      // Solver could not converge on the refined mesh (e.g. the fluxoid solve as the mesh
+      // grows). Halt adaptation and retain the previous, converged iteration's output rather
+      // than aborting the run or reporting an unreliable result.
+      Mpi::Warning(comm,
+                   "Solve did not converge after refinement iteration {:d}; halting AMR and "
+                   "keeping the last converged iteration!\n",
+                   it);
+      break;
+    }
     err = indicators.Norml2(comm);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
