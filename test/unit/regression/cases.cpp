@@ -240,7 +240,7 @@ TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
-  palace::test::RunRegressionCase("circular_hole_london", "circular_hole.json", "", opts);
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole.json", "base", opts);
 }
 
 // Two London holes on a shared film, each an independent flux loop. Locks the London-London
