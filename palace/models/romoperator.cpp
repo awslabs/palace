@@ -2246,7 +2246,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
           }
           const Eigen::MatrixXcd Mp =
               imag_unit * parts[part].first.cast<std::complex<double>>();
-          // Realized contribution to W(ω): (i·part)·coeff/(ω-pole) = R_full's kept component.
+          // Realized contribution to W(ω): (i·part)·coeff/(ω-pole) = R_full's kept
+          // component.
           R_kept += Mp * parts[part].second;
           auto blk = MakeAuxBlock(
               fmt::format("waveport_{:d}_modal_p{:d}_{}", port_idx, k, suffix[part]), Mp,
@@ -2267,7 +2268,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       }
 
       // Residual of the realized correction (subspace + fit + kept residues) against the
-      // exact full W(ω) on an independent grid: the error the eigenmode/S paths actually see.
+      // exact full W(ω) on an independent grid: the error the eigenmode/S paths actually
+      // see.
       double max_err = 0.0, max_ref = 0.0;
       for (const double wr : dense_real)
       {
@@ -2717,17 +2719,30 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                                          fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
 
-  // Complete synthesized wave-port realization: Y_syn(omega) y = G(omega) a, b = H(omega) y
-  // - a, so S(omega) = H(omega) Y_syn(omega)^{-1} G(omega) - I. G and H are built from each
-  // port's projected n x H vector, which rotates with frequency for a hybrid mode and so
-  // cannot be replaced by a fixed terminal selector. rom-coupled-S is the reconstructed S;
-  // rom-coupled-G/H export the maps so the S can be rebuilt off the pencil externally.
-  std::vector<int> coupled_ports;
+  // Synthesized port realization Y_syn(ω) y = G(ω) a, b = H(ω) y - a, so
+  // S(ω) = H(ω) Y_syn(ω)⁻¹ G(ω) - I. Each map column is √y_ref times the port's coupling
+  // vector (a wave port's projected n×H, or a lumped port's terminal selector), the
+  // symmetric power-wave form that mixes lumped/wave references. rom-coupled-S is the
+  // reconstructed S; rom-coupled-G/H export the maps for external reconstruction off the
+  // pencil.
+  struct CoupledPort
+  {
+    bool is_wave;
+    int idx;
+  };
+  std::vector<CoupledPort> coupled_ports;
+  for (const auto &[port_idx, port] : space_op.GetLumpedPortOp())
+  {
+    if (port.active && port.include_in_synthesis)
+    {
+      coupled_ports.push_back({false, port_idx});
+    }
+  }
   for (const auto &[port_idx, port] : space_op.GetWavePortOp())
   {
     if (port.active && port.include_in_synthesis)
     {
-      coupled_ports.push_back(port_idx);
+      coupled_ports.push_back({true, port_idx});
     }
   }
   const std::size_t n_ports = coupled_ports.size();
@@ -2772,16 +2787,36 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       Eigen::MatrixXcd &H = coupled_h[fi];
       for (std::size_t p = 0; p < n_ports; p++)
       {
-        auto s = space_op.GetWavePortModeVector(coupled_ports[p], omega);
-        Eigen::VectorXcd proj(nr);
-        ProjectVecInternal(space_op.GetComm(), V, *s, proj, 0);
+        Eigen::VectorXcd cvec = Eigen::VectorXcd::Zero(nr);
+        double y_ref = unit_ohm_inv;  // wave-port modal (unit-power) reference
+        if (coupled_ports[p].is_wave)
+        {
+          auto s = space_op.GetWavePortModeVector(coupled_ports[p].idx, omega);
+          ProjectVecInternal(space_op.GetComm(), V, *s, cvec, 0);
+          // kn0 is current (GetWavePortModeVector just Initialized at omega).
+          const auto &pd = space_op.GetWavePortOp().GetPort(coupled_ports[p].idx);
+          coupled_deembed[fi][p] = std::exp(1i * pd.kn0 * pd.d_offset);
+        }
+        else
+        {
+          // Lumped port: fixed selector at its terminal basis row, referenced to R_ref. The
+          // sign aligns the terminal current polarity with the wave-port n×H convention so
+          // mixed lumped↔wave cross-terms match Palace's port-S.
+          const long row =
+              LabelIndex(v_node_label, fmt::format("port_{:d}_re", coupled_ports[p].idx));
+          if (row >= 0 && row < nr)
+          {
+            cvec(row) = -1.0;
+          }
+          y_ref = unit_ohm_inv / space_op.GetLumpedPortOp()
+                                     .GetPort(coupled_ports[p].idx)
+                                     .GetExcitationRefResistance();
+        }
         const Eigen::VectorXcd dsv =
-            d.head(nr).cast<std::complex<double>>().cwiseProduct(proj);
-        G.col(p).head(nr) = -2.0 * unit_ohm_inv * dsv;
-        H.row(p).head(nr) = -dsv.conjugate().transpose();
-        // kn0 is current (GetWavePortModeVector just Initialized at omega).
-        const auto &pd = space_op.GetWavePortOp().GetPort(coupled_ports[p]);
-        coupled_deembed[fi][p] = std::exp(1i * pd.kn0 * pd.d_offset);
+            d.head(nr).cast<std::complex<double>>().cwiseProduct(cvec);
+        const double root_y = std::sqrt(y_ref);
+        G.col(p).head(nr) = -2.0 * root_y * dsv;
+        H.row(p).head(nr) = -root_y * dsv.conjugate().transpose();
       }
       const std::complex<double> s_phys = 1i * omega * omega0;
       Eigen::MatrixXcd Y = (*matrices.L_inv) / s_phys + s_phys * (*matrices.C);
@@ -2827,7 +2862,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
       {
         const auto key =
-            fmt::format("S[{:d}][{:d}]", coupled_ports[obs], coupled_ports[drive]);
+            fmt::format("S[{:d}][{:d}]", coupled_ports[obs].idx, coupled_ports[drive].idx);
         out.table.insert(fmt::format("re_{}", key), fmt::format("Re{{{}}}", key));
         out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
       }
@@ -2836,7 +2871,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     // I)[q][p]·deembed[q]·deembed[p].
     for (std::size_t p = 0; p < coupled_ports.size(); p++)
     {
-      const auto key = fmt::format("deembed[{:d}]", coupled_ports[p]);
+      const auto key = fmt::format("deembed[{:d}]", coupled_ports[p].idx);
       out.table.insert(fmt::format("re_{}", key), fmt::format("Re{{{}}}", key));
       out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
     }
@@ -2849,8 +2884,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         for (std::size_t drive = 0; drive < coupled_ports.size(); drive++)
         {
-          const auto key =
-              fmt::format("S[{:d}][{:d}]", coupled_ports[obs], coupled_ports[drive]);
+          const auto key = fmt::format("S[{:d}][{:d}]", coupled_ports[obs].idx,
+                                       coupled_ports[drive].idx);
           const auto value = coupled_s[fi][obs * coupled_ports.size() + drive];
           out.table[fmt::format("re_{}", key)] << value.real();
           out.table[fmt::format("im_{}", key)] << value.imag();
@@ -2858,7 +2893,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       }
       for (std::size_t p = 0; p < coupled_ports.size(); p++)
       {
-        const auto key = fmt::format("deembed[{:d}]", coupled_ports[p]);
+        const auto key = fmt::format("deembed[{:d}]", coupled_ports[p].idx);
         out.table[fmt::format("re_{}", key)] << coupled_deembed[fi][p].real();
         out.table[fmt::format("im_{}", key)] << coupled_deembed[fi][p].imag();
       }
@@ -2880,8 +2915,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       {
         for (std::size_t i = 0; i < labels.size(); i++)
         {
-          const auto key = source ? fmt::format("G[{}][{:d}]", labels[i], coupled_ports[p])
-                                  : fmt::format("H[{:d}][{}]", coupled_ports[p], labels[i]);
+          const auto key =
+              source ? fmt::format("G[{}][{:d}]", labels[i], coupled_ports[p].idx)
+                     : fmt::format("H[{:d}][{}]", coupled_ports[p].idx, labels[i]);
           out.table.insert(fmt::format("re_{}_{}", p, i), fmt::format("Re{{{}}}", key));
           out.table.insert(fmt::format("im_{}_{}", p, i), fmt::format("Im{{{}}}", key));
         }

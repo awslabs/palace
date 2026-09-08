@@ -1133,6 +1133,40 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// Mixed lumped + wave port circuit synthesis. Validates that the exported coupling maps
+// carry lumped-to-wave and wave-to-lumped scattering, not just the wave-port block: the
+// coupled round-trip reconstructs the full 2x2 S (including the cross-type terms) from the
+// synthesized pencil and matches the live field-derived port-S. Coaxial TEM => W = 0.
+TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvectors",    "rom-port-reference", "port-I.csv",
+                         "port-V.csv",          "port-Z.csv",         "domain-E.csv",
+                         "error-indicators.csv"};
+  // Full mixed 2x2 round-trip: synthesized-vs-field S to ~6e-4 here, so 2e-3 clears
+  // cross-backend noise while catching a broken cross-type coupling map.
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-3);
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("coaxial", "lumped_wave_synth.json", "lumped_wave_synth",
+                                  opts);
+}
+
 TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1280,6 +1314,38 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   // No field output is requested in the config.
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);
+}
+
+// Wave port 2 is Active:false but IncludeInSynthesis:true, i.e. an unloaded matched
+// terminal. A reference-only load pencil is synthesized for it so rom-port-reference.csv
+// resolves its matched admittance instead of aborting on a missing load. Running to
+// completion (rom-port-reference.csv present) with sane synthesized eigenvalues is the
+// guard.
+TEST_CASE("adapter_driven_synth_inactive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 5;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
+  opts.unstored_files = {"rom-coupled-S", "rom-coupled-G", "rom-coupled-H"};
+  opts.excluded_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-eigenvectors",
+                         "rom-port-reference",
+                         "port-S",
+                         "error-indicators.csv",
+                         "domain-E.csv"};
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("adapter", "driven_synth_inactive.json",
+                                  "driven_synth_inactive", opts);
 }
 
 // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the
