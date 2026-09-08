@@ -99,7 +99,6 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   const char *cut_env = std::getenv("PALACE_CUT_DIR");
   const bool cut_x = (cut_env && (cut_env[0] == 'x' || cut_env[0] == 'X'));
 
-  if (!use_cut)
   {
     // θ is undefined on L. Measure the hole's radial extent and the closest approach of a
     // hole vertex to L, then shift L off any vertex sitting on it — any interior point of
@@ -140,54 +139,69 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   mfem::ParGridFunction ah1(&nd1_fespace);
   ah1.UseDevice(false);
   ah1 = 0.0;
-  mfem::Array<int> ev, edofs;
+
+  // Nodal branch-cut potential ψ = (Φ/2π)·atan2(d, -s), whose branch discontinuity is exactly
+  // the cut half-plane, so cut = Grad ψ - a_angle. Carrying the O(1) step as a discrete
+  // gradient is what makes this non-conformal-safe: Grad of a *conformed* H1 function is
+  // exactly conforming and exactly curl-free, whereas a step written on edges is neither, and
+  // cᵀGrad = 0 identically, so ψ cannot perturb the circulation.
+  mfem::H1_FECollection h1_fec(1, sdim);
+  mfem::ParFiniteElementSpace h1_fespace(&pmesh, &h1_fec);
+  mfem::ParGridFunction psi(&h1_fespace);
+  psi.UseDevice(false);
+  psi = 0.0;
+  if (use_cut)
+  {
+    mfem::Array<int> vdofs;
+    for (int v = 0; v < pmesh.GetNV(); v++)
+    {
+      const double *x = pmesh.GetVertex(v);
+      const double d = cut_x ? (x[1] - cy) : (x[0] - cx);
+      const double s = cut_x ? (x[0] - cx) : (x[1] - cy);
+      h1_fespace.GetVertexDofs(v, vdofs);
+      psi(vdofs[0]) = phi * std::atan2(d, -s) / (2.0 * M_PI);
+    }
+    mfem::Vector t(h1_fespace.GetTrueVSize());
+    t.UseDevice(false);
+    psi.GetTrueDofs(t);
+    psi.SetFromTrueDofs(t);
+  }
+
+  mfem::Array<int> ev, edofs, vd0, vd1;
   for (int e = 0; e < pmesh.GetNEdges(); e++)
   {
     pmesh.GetEdgeVertices(e, ev);
     const double *x0 = pmesh.GetVertex(ev[0]);
     const double *x1 = pmesh.GetVertex(ev[1]);
-    if (!use_cut)
-    {
-      // DOF ∫_e ∇θ·t = angle subtended at L by ev0→ev1. atan2 returns the rotation of
-      // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only x,y enter: L
-      // is vertical, so ∇θ has no z-component and vertical edges get 0.
-      const double ax = x0[0] - cx, ay = x0[1] - cy;
-      const double bx = x1[0] - cx, by = x1[1] - cy;
-      const double dtheta = std::atan2(ax * by - ay * bx, ax * bx + ay * by);
-      nd1_fespace.GetEdgeDofs(e, edofs);
-      ah1(edofs[0]) = phi * dtheta / (2.0 * M_PI);
-      continue;
-    }
-    // d = signed distance to the cut PLANE; s = the in-plane half-plane selector
-    // coordinate.
-    double d0, d1, s0, s1;
-    if (!cut_x)
-    {
-      d0 = x0[0] - cx;  // plane x=cx
-      d1 = x1[0] - cx;
-      s0 = x0[1];  // half-plane y≥cy
-      s1 = x1[1];
-    }
-    else
-    {
-      d0 = x0[1] - cy;  // plane y=cy
-      d1 = x1[1] - cy;
-      s0 = x0[0];  // half-plane x≥cx
-      s1 = x1[0];
-    }
-    if (d0 * d1 >= 0.0)
-    {
-      continue;  // edge does not cross the cut plane
-    }
-    const double t = d0 / (d0 - d1);
-    const double scoord = s0 + t * (s1 - s0);
-    if ((!cut_x && scoord < cy) || (cut_x && scoord < cx))
-    {
-      continue;  // crossing point lies off the half-plane
-    }
-    // Edge ev0→ev1 crosses the cut: θ jumps +Φ toward the +normal (d1>0) side of the plane.
+    // DOF ∫_e ∇θ·t = angle subtended at L by ev0→ev1. atan2 returns the rotation of
+    // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only x,y enter: L
+    // is vertical, so ∇θ has no z-component and vertical edges get 0.
+    const double ax = x0[0] - cx, ay = x0[1] - cy;
+    const double bx = x1[0] - cx, by = x1[1] - cy;
+    const double dtheta = std::atan2(ax * by - ay * bx, ax * bx + ay * by);
     nd1_fespace.GetEdgeDofs(e, edofs);
-    ah1(edofs[0]) = (d1 > 0.0) ? phi : -phi;
+    double val = phi * dtheta / (2.0 * M_PI);
+    if (use_cut)
+    {
+      // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
+      // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
+      h1_fespace.GetVertexDofs(ev[0], vd0);
+      h1_fespace.GetVertexDofs(ev[1], vd1);
+      val = psi(vd1[0]) - psi(vd0[0]) - val;
+    }
+    ah1(edofs[0]) = val;
+  }
+
+  // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
+  // function, so it survives the round trip exactly (circulation and curl-free-on-Σ intact);
+  // only the smooth a_angle term is re-interpolated onto slaves. On a non-conformal mesh that
+  // leaves a small residual curl on Σ near graded refinement, which the range-space two-solve
+  // absorbs (does not affect L); on a conformal mesh a_h is the exact integer step, curl-free.
+  {
+    mfem::Vector t(nd1_fespace.GetTrueVSize());
+    t.UseDevice(false);
+    ah1.GetTrueDofs(t);
+    ah1.SetFromTrueDofs(t);
   }
 
   // Project the ND_1 cut field exactly into the order-p ND space. The per-element field is
