@@ -40,16 +40,18 @@
         "Index": 1,
         "Attributes": [3],
         "Mode": 3,
-        "Excitation": true,
+        "Excitation": 1,
         "Offset": 0.003,  // nonzero de-embed reference-plane offset (exercises G/H phase)
         "KSPTol": 1e-8,
         "EigenTol": 1e-6
       },
       {
+        // Second excitation so both hybrid-port coupling columns (drive 1 and drive 2) are
+        // validated by the coupled round-trip.
         "Index": 2,
         "Attributes": [4],
         "Mode": 3,
-        "Excitation": false,
+        "Excitation": 2,
         "Offset": 0.005,  // distinct per-port offset
         "KSPTol": 1e-8,
         "EigenTol": 1e-6

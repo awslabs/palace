@@ -790,9 +790,11 @@ WavePortData::~WavePortData()
 void WavePortData::SetSynthesisEigTol(double eig_tol, double ksp_tol)
 {
   mode_solver->SetSynthesisTol(eig_tol, ksp_tol);
-  // Invalidate the cached real-ω solve (omega0 == 0 initially, and physical ω > 0) so the
-  // next Initialize re-solves the cross-section EVP at the tightened tolerance.
+  // Invalidate both the cached real-ω solve (omega0 == 0 initially, physical ω > 0) and the
+  // complex mode cache so the next solve re-runs the cross-section EVP at the tightened
+  // tolerance instead of reusing a result computed at the old one.
   omega0 = -1.0;
+  mode_cache.valid = false;
 }
 
 void WavePortData::Initialize(double omega)

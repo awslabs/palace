@@ -1329,18 +1329,15 @@ TEST_CASE("adapter_driven_synth_inactive", "[Serial][Parallel][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
   opts.skip_rowcount = true;
-  opts.unstored_files = {"rom-coupled-S", "rom-coupled-G", "rom-coupled-H"};
-  opts.excluded_files = {"rom-Linv",
-                         "rom-Rinv",
-                         "rom-C-",
-                         "rom-portload-",
-                         "rom-orthogonalization-matrix-R",
-                         "rom-eigenvectors",
-                         "rom-eigenvalues",
-                         "rom-port-reference",
-                         "port-S",
-                         "error-indicators.csv",
-                         "domain-E.csv"};
+  // Presence-only guard: keep just the small files that prove the run completed (notably
+  // rom-port-reference.csv, whose synthesis is the path that used to abort). The multi-MB
+  // matrices/eigenvectors are dropped rather than stored-but-excluded.
+  opts.unstored_files = {
+      "rom-coupled-S",   "rom-coupled-G", "rom-coupled-H", "rom-Linv",
+      "rom-Rinv",        "rom-C-",        "rom-portload-", "rom-orthogonalization-matrix-R",
+      "rom-eigenvectors"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-port-reference", "port-S",
+                         "error-indicators.csv", "domain-E.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth_inactive.json",
                                   "driven_synth_inactive", opts);
