@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -45,6 +46,12 @@ namespace
 // rule. Canonical mapped point clouds, not face orientation/local-face metadata, form
 // the trace identity; exact point signatures keep the finite registry reusable.
 using FaceConfigKey = std::vector<long long>;
+
+// Bound the retained element-output storage for each far-field direction batch. The
+// additional direction cap keeps QFunction contexts and component counts modest on
+// ranks with only a few marked faces, while ordinary small requests remain single-pass.
+constexpr CeedSize FarFieldMaxBatchStorage = 64LL * 1024LL * 1024LL;
+constexpr int FarFieldMaxDirectionsPerBatch = 256;
 
 long long EncodePointRuleDouble(double x)
 {
@@ -462,7 +469,10 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
     fem::DestroyGroupOperators(groups);
     face_nbr_exchange.reset();
     elem_attrs.clear();
-    field_staging.SetSize(0);
+    for (auto &staging : field_staging)
+    {
+      staging.Destroy();
+    }
     local_out.SetSize(0);
     local_out_attrs.clear();
     valid = false;
@@ -470,9 +480,12 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
   // Passive field vectors are re-pointed at caller data on every apply. Detach their
   // borrowed construction arrays before releasing the staging allocation.
   fem::DetachGroupOperatorFieldVectors(groups);
-  field_staging.Destroy();
-  MFEM_ASSERT(field_staging.Capacity() == 0,
-              "Surface functional staging allocation was not released!");
+  for (auto &staging : field_staging)
+  {
+    staging.Destroy();
+    MFEM_ASSERT(staging.Capacity() == 0,
+                "Surface functional staging allocation was not released!");
+  }
 }
 
 std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_2d) const
@@ -549,7 +562,9 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
   }
   else if (kind == KernelKind::FARFIELD)
   {
-    const int N = static_cast<int>(farfield_dirs.size());
+    const int N = farfield_batch_size;
+    MFEM_VERIFY(N > 0 && N <= static_cast<int>(farfield_dirs.size()),
+                "Invalid far-field direction batch size!");
     const auto b_map_type = rt_fespace->FEColl()->GetMapType(dim);
     MFEM_VERIFY(b_map_type == mfem::FiniteElement::H_CURL ||
                     b_map_type == mfem::FiniteElement::H_DIV,
@@ -1031,20 +1046,31 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
   }
 
-  // Initialize the local output vector and field staging vector. Far-field operators
-  // produce 6 values (Re/Im of a 3-vector) per direction per element.
-  const int num_out =
-      (kind == KernelKind::FARFIELD) ? 6 * static_cast<int>(farfield_dirs.size()) : 1;
-  local_out.SetSize(num_marked * num_out);
-  local_out.UseDevice(true);
-  if (need_field)
+  // Far-field operators produce 6 values (Re/Im of a 3-vector) per direction. Process
+  // directions in bounded batches: reference backends retain an element output vector
+  // with num_marked * num_out entries for each operator, even though the final reduction
+  // has only num_out entries. Each batch therefore bounds the aggregate retained element
+  // storage across groups, and the output restriction reduces elements directly into the
+  // compact local output vector.
+  int num_out = 1;
+  if (kind == KernelKind::FARFIELD)
   {
-    const int max_vsize = std::max(nd_fespace ? nd_fespace->GetVSize() : 0,
-                                   rt_fespace ? rt_fespace->GetVSize() : 0);
-    field_staging.SetSize(max_vsize);
-    field_staging.UseDevice(true);
-    field_staging = 0.0;
+    MFEM_VERIFY(!farfield_dirs.empty(),
+                "Far-field postprocessing requires at least one observation direction!");
+    MFEM_VERIFY(farfield_dirs.size() <=
+                    static_cast<std::size_t>(std::numeric_limits<int>::max() / 6),
+                "Too many far-field observation directions!");
+    const CeedSize values_per_direction =
+        6 * static_cast<CeedSize>(std::max(num_marked, 1));
+    const CeedSize storage_batch_size = std::max<CeedSize>(
+        1, FarFieldMaxBatchStorage / (sizeof(CeedScalar) * values_per_direction));
+    farfield_batch_size = static_cast<int>(std::min<CeedSize>(
+        std::min<CeedSize>(farfield_dirs.size(), FarFieldMaxDirectionsPerBatch),
+        storage_batch_size));
+    num_out = 6 * farfield_batch_size;
   }
+  local_out.SetSize((kind == KernelKind::FARFIELD) ? num_out : num_marked * num_out);
+  local_out.UseDevice(true);
 
   // Build the (group independent part of the) QFunction context for the integrand.
   std::vector<CeedIntScalar> base_ctx = BuildBaseContext(dim, is_2d);
@@ -1425,7 +1451,18 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "Unable to get field finite element for surface functional!");
       ceed::InitCachedBasisFromRule(*fe, ir, fespace.GetVDim(), ceed, &basis);
-      ceed::InitCeedVector(field_staging, ceed, &vec);
+      MFEM_VERIFY(source >= 0 && source < static_cast<int>(field_staging.size()),
+                  "Invalid source slot for surface functional field input!");
+      auto &staging = field_staging[source];
+      if (staging.Size() == 0)
+      {
+        staging.SetSize(fespace.GetVSize());
+        staging.UseDevice(true);
+        staging = 0.0;
+      }
+      MFEM_VERIFY(staging.Size() == fespace.GetVSize(),
+                  "Surface functional source slot is used with mismatched field spaces!");
+      ceed::InitCeedVector(staging, ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
       scratch.vecs.push_back(vec);
@@ -1535,13 +1572,23 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
     }
 
-    // Output restriction: num_out slots per boundary element in the local output vector
-    // (component stride num_marked).
+    // Ordinary functionals retain one output slot per marked boundary element for later
+    // attribute binning. Far-field outputs need only the sum over elements: duplicate
+    // offsets let the restriction transpose reduce directly into one compact component
+    // vector, avoiding num_marked * num_directions persistent storage.
+    std::vector<int> reduced_out_slots;
+    const int *out_slots = group.out_slots.data();
+    const bool reduce_farfield = (kind == KernelKind::FARFIELD);
+    if (reduce_farfield)
+    {
+      reduced_out_slots.assign(num_elem, 0);
+      out_slots = reduced_out_slots.data();
+    }
     CeedElemRestriction out_restr;
     PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                             ceed, static_cast<CeedInt>(num_elem), 1, num_out, num_marked,
-                             (CeedSize)num_marked * num_out, CEED_MEM_HOST,
-                             CEED_COPY_VALUES, group.out_slots.data(), &out_restr));
+                             ceed, static_cast<CeedInt>(num_elem), 1, num_out,
+                             reduce_farfield ? 1 : num_marked, local_out.Size(),
+                             CEED_MEM_HOST, CEED_COPY_VALUES, out_slots, &out_restr));
     scratch.restrs.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
@@ -1762,15 +1809,17 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
               "complex-valued fields!");
   MFEM_VERIFY(valid, "EvalFarField called on an invalid (unassembled) SurfaceFunctional!");
 
-  // The frequency enters only the QFunction context (the omega slots); update it in
-  // place rather than reassembling the operators. Reassembly would rebuild the bases,
-  // restrictions, and on-the-fly geometry inputs and re-JIT the (expensive) far-field
-  // kernel on every frequency -- none of which depend on omega. FARFIELD context layout
-  // (see Assemble): [0] normal sign, [1] omega_re, [2] omega_im, [3] N,
-  // [4] B Piola map, [5..] directions, then the material context.
-  if (omega != farfield_omega)
+  // Frequency and directions enter only the retained QFunction contexts. Reuse the
+  // assembled bases, restrictions, and geometry inputs while processing bounded
+  // direction batches. FARFIELD context layout is [0] normal sign, [1..2] omega,
+  // [3] batch size, [4] B Piola map, [5..] batch directions, then material data.
+  const int N = static_cast<int>(farfield_dirs.size());
+  MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
+              "Invalid far-field batch output layout!");
+  std::vector<double> integrals(6 * N, 0.0);
+  for (int first = 0; first < N; first += farfield_batch_size)
   {
-    farfield_omega = omega;
+    const int batch_count = std::min(farfield_batch_size, N - first);
     for (auto &group : groups)
     {
       if (!group.ctx)
@@ -1782,28 +1831,24 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
                      CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &data));
       data[1].second = omega.real();
       data[2].second = omega.imag();
+      for (int d = 0; d < farfield_batch_size; d++)
+      {
+        for (int c = 0; c < 3; c++)
+        {
+          data[5 + 3 * d + c].second =
+              (d < batch_count) ? farfield_dirs[first + d][c] : 0.0;
+        }
+      }
       PalaceCeedCall(group.ceed, CeedQFunctionContextRestoreData(group.ctx, &data));
     }
-  }
 
-  // Integrate, reduce each component over the local elements and all processes, and
-  // apply the final cross products (following GetFarFieldrE).
-  const int N = static_cast<int>(farfield_dirs.size());
-  const int num_marked = local_out.Size() / std::max(6 * N, 1);
-  std::vector<double> integrals(6 * N, 0.0);
-  if (local_out.Size() > 0)
-  {
     local_out = 0.0;
     fem::ApplyAddGroupOperators(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()},
                                 local_out);
-    Vector slice;
-    slice.UseDevice(true);
-    for (int c = 0; c < 6 * N; c++)
-    {
-      slice.MakeRef(local_out, c * num_marked, num_marked);
-      integrals[c] = linalg::LocalSum(slice);
-    }
+    const double *batch_data = local_out.HostRead();
+    std::copy_n(batch_data, 6 * batch_count, integrals.data() + 6 * first);
   }
+  farfield_omega = omega;
   Mpi::GlobalSum(6 * N, integrals.data(), comm);
 
   std::vector<std::array<std::complex<double>, 3>> result(N);

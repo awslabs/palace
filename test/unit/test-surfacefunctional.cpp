@@ -1861,6 +1861,19 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     r_naughts.push_back({std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi),
                          std::cos(theta)});
   }
+  if (elem_type == mfem::Element::TETRAHEDRON && order == 1)
+  {
+    // Exercise more than one bounded far-field direction batch in one generated case.
+    // Other element/order combinations retain the compact three-direction coverage.
+    constexpr int num_directions = 257;
+    for (int i = static_cast<int>(r_naughts.size()); i < num_directions; i++)
+    {
+      const double theta = M_PI * (i + 0.5) / num_directions;
+      const double phi = 2.0 * M_PI * i * 0.6180339887498948;
+      r_naughts.push_back({std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi),
+                           std::cos(theta)});
+    }
+  }
   const double omega_re = 2.7, omega_im = 0.15;
 
   const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;

@@ -100,9 +100,18 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
   {
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, v.Size(), cv));
   }
-  else if (take_array)
+  else
   {
-    PalaceCeedCall(ceed, CeedVectorTakeArray(*cv, mem, nullptr));
+    CeedSize length;
+    PalaceCeedCall(ceed, CeedVectorGetLength(*cv, &length));
+    MFEM_VERIFY(length == static_cast<CeedSize>(v.Size()),
+                "Cannot re-point a libCEED vector at an MFEM vector with a different "
+                "length ("
+                    << length << " != " << v.Size() << ")!");
+    if (take_array)
+    {
+      PalaceCeedCall(ceed, CeedVectorTakeArray(*cv, mem, nullptr));
+    }
   }
   PalaceCeedCall(
       ceed, CeedVectorSetArray(*cv, mem, CEED_USE_POINTER, const_cast<CeedScalar *>(data)));

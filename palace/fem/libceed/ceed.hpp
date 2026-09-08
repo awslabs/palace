@@ -54,8 +54,8 @@ void Finalize();
 // Get the configured libCEED backend.
 std::string Print();
 
-// Initialize a CeedVector from an mfem::Vector. When init is false, expects the CeedVector
-// has already been initialized and just sets the data pointer.
+// Initialize a CeedVector from an mfem::Vector. When init is false, expects an existing
+// CeedVector of exactly the same length and only replaces its borrowed data pointer.
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init = true,
                     bool take_array = true);
 

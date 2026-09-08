@@ -400,18 +400,13 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   // Assemble a libCEED point evaluator for each export group, writing the
   // physical-space field values (space-dimension components per point, point-major)
   // into the exported vector at the assigned offsets.
-  int max_vsize = 0;
-  for (const auto *fespace : fespaces)
-  {
-    max_vsize = std::max(max_vsize, fespace ? fespace->GetVSize() : 0);
-  }
-  Vector field_staging(max_vsize);
-  field_staging.UseDevice(true);
-  field_staging = 0.0;
+  std::array<Vector, MaxSources> field_staging;
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
   for (const auto &[key, group] : export_map)
   {
     const int s = static_cast<int>(key[0]);
+    MFEM_VERIFY(s >= 0 && s < MaxSources,
+                "Invalid source slot for face-neighbor field exchange!");
     const auto geom = static_cast<mfem::Geometry::Type>(key[1]);
     const int nq = static_cast<int>(key[2]);
     const std::size_t num_elem = group.elems.size();
@@ -440,8 +435,17 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     MFEM_VERIFY(fe, "Unable to get field finite element for face neighbor exchange!");
     CeedBasis field_basis;
     ceed::InitCachedBasisFromRule(*fe, *ir, fespace.GetVDim(), ceed, &field_basis);
+    auto &staging = field_staging[s];
+    if (staging.Size() == 0)
+    {
+      staging.SetSize(fespace.GetVSize());
+      staging.UseDevice(true);
+      staging = 0.0;
+    }
+    MFEM_VERIFY(staging.Size() == fespace.GetVSize(),
+                "Face-neighbor source slot is used with mismatched field spaces!");
     CeedVector field_vec;
-    ceed::InitCeedVector(field_staging, ceed, &field_vec);
+    ceed::InitCeedVector(staging, ceed, &field_vec);
     inputs.push_back({"u_1", field_vec, field_restr, field_basis, ceed::EvalMode::Interp});
     field_sources.emplace_back("u_1", s);
 
@@ -514,11 +518,14 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   }
 
   // The field vectors borrow construction storage until they are re-pointed at the first
-  // Exchange(). Detach them before releasing the full solution-sized staging vector.
+  // Exchange(). Detach them before releasing the exact-size source staging vectors.
   fem::DetachGroupOperatorFieldVectors(export_groups);
-  field_staging.Destroy();
-  MFEM_ASSERT(field_staging.Capacity() == 0,
-              "Face-neighbor field staging storage was not released!");
+  for (auto &staging : field_staging)
+  {
+    staging.Destroy();
+    MFEM_ASSERT(staging.Capacity() == 0,
+                "Face-neighbor field staging storage was not released!");
+  }
 }
 
 FaceNbrFieldExchange::~FaceNbrFieldExchange()

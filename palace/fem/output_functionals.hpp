@@ -100,6 +100,7 @@ private:
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
   std::complex<double> farfield_omega = 0.0;
+  int farfield_batch_size = 0;
   std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
 
   // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
@@ -131,9 +132,10 @@ private:
   // when no marked boundary element has a ghost neighbor). Refilled before each apply.
   std::unique_ptr<FaceNbrFieldExchange> face_nbr_exchange;
 
-  // Staging vector used to initialize the field input CeedVectors at construction. The
-  // field CeedVectors are re-pointed at the caller's data on each Eval() call.
-  mutable Vector field_staging;
+  // Exact-size staging vectors used to initialize the passive field CeedVectors at
+  // construction, indexed by caller source slot. The CeedVectors are re-pointed at the
+  // caller's data on each Eval() call and must retain that source vector's exact length.
+  mutable std::array<Vector, 4> field_staging;
 
   // Local output vector with one slot per marked boundary element on this process.
   // Integral functionals also keep the originating boundary attribute for each slot so
@@ -240,8 +242,9 @@ public:
                               const mfem::Array<int> &attr_to_bin, int num_bins) const;
 
   // Evaluate the far-field rE integrals for all observation directions at the given
-  // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when
-  // the frequency changes. Collective on the mesh communicator.
+  // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Direction batches
+  // and frequency are updated in the retained QFunction contexts without reassembly.
+  // Collective on the mesh communicator.
   std::vector<std::array<std::complex<double>, 3>>
   EvalFarField(const GridFunction &E, const GridFunction &B, std::complex<double> omega);
 
