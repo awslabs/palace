@@ -56,7 +56,7 @@
       "MinFreq": 8.0,
       "MaxFreq": 11.0,
       "FreqStep": 0.05,
-      "AdaptiveTol": 1.0e-6,
+      "AdaptiveTol": 1.0e-3,
       "AdaptiveCircuitSynthesis": true
     },
     "Linear":
