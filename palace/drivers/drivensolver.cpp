@@ -236,7 +236,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 {
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
-
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
@@ -310,6 +309,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
              omega_sample.back() * unit_GHz);
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   space_op.GetWavePortOp().SetSuppressOutput(true);
+  space_op.GetWavePortOp().ConfigureReducedModelTraining(
+      max_size_per_excitation, port_excitations.Size(),
+      iodata.solver.driven.adaptive_circuit_synthesis);
 
   // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
@@ -429,62 +431,100 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
+  // Exact wave-port modes computed by the HDM samples have trained a separate per-port
+  // reduced eigenspace. Enable guarded Rayleigh-Ritz evaluation before circuit-synthesis
+  // dispersion fitting and the online output sweep; failed residual checks transparently
+  // fall back to the exact port eigensolver and enrich the basis.
+  space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
+
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
+  prom_op.PrepareOnlineExcitations();
+  post_op.ConfigureReducedPostprocessing(prom_op);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  excitation_counter = 0;
-  for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+  auto solve_online_point = [&](int excitation_idx, std::size_t omega_i)
   {
-    if (port_excitations.Size() > 1)
-    {
-      Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
-                 ++excitation_counter, port_excitations.Size());
-    }
-    // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
-    post_op.InitializeParaviewDataCollection(excitation_idx);
+    const auto omega = omega_sample[omega_i];
+    // Refresh every port, including inactive observation-only ports, before either PROM
+    // assembly or postprocessing. Repeated calls at the same frequency are cached.
+    space_op.GetWavePortOp().PrepareFrequency(omega);
+    Mpi::Print("\nIt {:d}/{:d}, excitation {:d}: ω/2π = {:.3e} GHz "
+               "(total elapsed time = {:.2e} s)\n",
+               omega_i + 1, omega_sample.size(), excitation_idx,
+               iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+               Timer::Duration(Timer::Now() - t0).count());
 
-    // Frequency loop.
+    // Assemble and solve the PROM linear system.
+    prom_op.SolvePROM(excitation_idx, omega, E);
+    Mpi::Print("\n");
+
+    if (post_op.HasReducedPostprocessing() &&
+        !post_op.HasFieldOutput(static_cast<int>(omega_i)))
+    {
+      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
+                                     prom_op.GetReducedSolution());
+      return;
+    }
+
+    // Start full post-processing.
+    BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+    }
+    post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
+  };
+
+  if (!post_op.HasFieldOutput())
+  {
+    // Port modes depend on frequency, not excitation. Frequency-major traversal keeps the
+    // one-frequency modal cache hot for every excitation and also fills one complete row
+    // of each deferred CSV table at a time.
     for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
     {
-      auto omega = omega_sample[omega_i];
-      Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
-                 omega_i + 1, omega_sample.size(),
-                 iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-                     (2 * M_PI),
-                 Timer::Duration(Timer::Now() - t0).count());
-
-      // Assemble and solve the PROM linear system.
-      prom_op.SolvePROM(excitation_idx, omega, E);
-      Mpi::Print("\n");
-
-      // Start Post-processing.
-      BlockTimer bt0(Timer::POSTPRO);
-      Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
-
-      // Compute B = -1/(iω) ∇ x E on the true dofs.
-      Curl.Mult(E.Real(), B.Real());
-      Curl.Mult(E.Imag(), B.Imag());
-      B *= -1.0 / (1i * omega);
-      if (space_op.GetMaterialOp().HasWaveVector())
+      for (const auto &[excitation_idx, excitation_spec] : port_excitations)
       {
-        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
-        floquet_corr->AddMult(
-            E, B,
-            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+        solve_online_point(excitation_idx, omega_i);
       }
-      post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
     }
+  }
+  else
+  {
+    // Preserve excitation-major ordering for excitation-specific field collections.
+    for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+    {
+      if (port_excitations.Size() > 1)
+      {
+        Mpi::Print("\nSweeping excitation index {:d}:\n", excitation_idx);
+      }
+      post_op.InitializeParaviewDataCollection(excitation_idx);
+      for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+      {
+        solve_online_point(excitation_idx, omega_i);
+      }
+    }
+  }
 
-    // Final postprocessing & printing: no change to indicator since these are in PROM.
+  // Final postprocessing & printing: no change to indicator since these are in PROM.
+  {
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }
+  space_op.GetWavePortOp().PrintReducedModelStats();
   post_op.MeasureFinalize(indicator);
   return indicator;
 }

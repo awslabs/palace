@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <limits>
 #include <string>
 
@@ -138,6 +139,76 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
                        Catch::Matchers::WithinAbs(reference[c].data[r], atol));
       }
     }
+  };
+}
+
+// Compare port-S.csv as complex scattering amplitudes rather than separately comparing
+// logarithmic magnitude and wrapped phase. This gives a stable absolute tolerance near
+// transmission zeros and a relative tolerance for order-one reflection/transmission.
+palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
+{
+  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  {
+    CHECK(actual.n_rows() == reference.n_rows());
+    CHECK(actual.n_cols() == reference.n_cols());
+    const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &needle) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text.find(needle) != std::string::npos)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+
+    palace::Column *freq_a = find_header(actual, "f (GHz)");
+    palace::Column *freq_r = find_header(reference, "f (GHz)");
+    REQUIRE(freq_a != nullptr);
+    REQUIRE(freq_r != nullptr);
+    for (std::size_t row = 0; row < n_rows; row++)
+    {
+      CHECK_THAT(freq_a->data[row], Catch::Matchers::WithinAbs(freq_r->data[row], 1.0e-12));
+    }
+
+    std::size_t num_s_columns = 0;
+    for (auto &mag_r : reference)
+    {
+      const std::string &header = mag_r.header_text;
+      const auto start = header.find("S[");
+      const auto end = header.find("]|", start);
+      if (header.find("|S[") == std::string::npos || end == std::string::npos)
+      {
+        continue;
+      }
+      num_s_columns++;
+      const std::string id = header.substr(start, end - start + 1);
+      palace::Column *mag_a = find_header(actual, "|" + id + "|");
+      palace::Column *phase_a = find_header(actual, "arg(" + id + ")");
+      palace::Column *phase_r = find_header(reference, "arg(" + id + ")");
+      REQUIRE(mag_a != nullptr);
+      REQUIRE(phase_a != nullptr);
+      REQUIRE(phase_r != nullptr);
+      for (std::size_t row = 0; row < n_rows; row++)
+      {
+        const double amp_a = std::pow(10.0, mag_a->data[row] / 20.0);
+        const double amp_r = std::pow(10.0, mag_r.data[row] / 20.0);
+        const double phase_a_rad = phase_a->data[row] * M_PI / 180.0;
+        const double phase_r_rad = phase_r->data[row] * M_PI / 180.0;
+        const std::complex<double> s_a = std::polar(amp_a, phase_a_rad);
+        const std::complex<double> s_r = std::polar(amp_r, phase_r_rad);
+        const double error = std::abs(s_a - s_r);
+        const double tolerance = atol + rtol * std::max(std::abs(s_a), std::abs(s_r));
+        INFO("row " << row + 1 << " " << id << ": |ΔS|=" << error
+                    << " tolerance=" << tolerance);
+        CHECK(error <= tolerance);
+      }
+    }
+    CHECK(num_s_columns > 0);
   };
 }
 
@@ -442,9 +513,9 @@ TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_uniform.json", "wave_uniform", opts);
 }
 
-// Adaptive frequency sweeps run as smoke tests: structure (output tree,
-// CSV set, headers, row/column counts) is enforced, numeric comparison
-// is disabled via infinite tolerances.
+// Adaptive frequency sweeps primarily run as structural smoke tests because the greedy
+// sample sequence can vary. The wave-port case additionally applies a targeted complex
+// S-parameter comparison over every output frequency.
 TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -458,8 +529,12 @@ TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
 TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
+  // Keep non-port outputs as structural smoke checks because their adaptive interpolation
+  // can vary with the greedy sample sequence, but require the complete complex S-parameter
+  // response to match the exact-wave-port reference over every output frequency.
   opts.rtol = std::numeric_limits<double>::infinity();
   opts.atol = std::numeric_limits<double>::infinity();
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(1.0e-3, 1.0e-4);
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
 }
 
@@ -537,6 +612,10 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
                          "rom-eigenvectors"};
   // No field output is requested in the config.
   opts.paraview_fields = false;
+  // AdaptiveTol is 1e-6 for this case. Compare the physical complex S-parameters over all
+  // 61 output frequencies much more tightly than the generic 2% synthesis/eigenvalue
+  // tolerance while retaining a small absolute allowance near zeros.
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(1.0e-4, 1.0e-7);
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);
 }
 
