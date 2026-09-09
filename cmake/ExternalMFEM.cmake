@@ -457,6 +457,12 @@ download_mfem_patch(
   "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
   482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
 )
+# NC partition constraints and hanging-vertex ownership, backported to MFEM 4.9.
+download_mfem_patch(
+  mfem_nc_partition_fixes.diff
+  "https://raw.githubusercontent.com/awslabs/palace/4c623220da5671ff94db222d3a3a733bcd0f6c9e/extern/patch/mfem/mfem_nc_partition_fixes.diff"
+  d9453a39ed02060442229a6ad6b8d887e496d6a52475dd6c10d51aa3010ba243
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem

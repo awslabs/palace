@@ -260,6 +260,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@4.9.0",
                 ),
+                # NC partition constraints and hanging-vertex ownership.
+                patch(
+                    "https://raw.githubusercontent.com/awslabs/palace/"
+                    "4c623220da5671ff94db222d3a3a733bcd0f6c9e/extern/patch/mfem/"
+                    "mfem_nc_partition_fixes.diff",
+                    sha256="d9453a39ed02060442229a6ad6b8d887e496d6a52475dd6c10d51aa3010ba243",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")
