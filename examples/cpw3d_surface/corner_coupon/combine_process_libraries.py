@@ -133,6 +133,7 @@ def main():
         "Version": version,
         "Name": args.name,
         "MatchingRadius": matching_radius,
+        "ExhaustiveSpatialClosure": True,
         "Models": [],
     }
     if trace_lift_version:
@@ -182,6 +183,24 @@ def main():
                 target = model_destination / PATH_NAMES[field]
                 shutil.copy2(source, target)
                 model[field] = str(relative_directory / target.name)
+            if "TraceMesh" in model:
+                trace_mesh = dict(model["TraceMesh"])
+                for field, filename in (
+                    ("Vertices", "trace-vertices.csv"),
+                    ("Triangles", "trace-triangles.csv"),
+                ):
+                    source = Path(trace_mesh[field])
+                    if not source.is_absolute():
+                        source = source_root / source
+                    source = source.resolve()
+                    if not source.is_file():
+                        raise FileNotFoundError(
+                            f"{name} TraceMesh.{field} does not exist: {source}"
+                        )
+                    target = model_destination / filename
+                    shutil.copy2(source, target)
+                    trace_mesh[field] = str(relative_directory / target.name)
+                model["TraceMesh"] = trace_mesh
             result["Models"].append(model)
         interpolation.extend(library.get("CornerRadiusInterpolation", []))
 

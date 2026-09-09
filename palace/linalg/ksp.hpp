@@ -66,6 +66,11 @@ public:
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
+  bool GetConverged() const { return ksp->GetConverged(); }
+  double GetFinalRelativeResidual() const
+  {
+    return ksp->GetInitialRes() > 0.0 ? ksp->GetFinalRes() / ksp->GetInitialRes() : 0.0;
+  }
 
   // Forward tolerance access to the underlying iterative solver.
   double GetRelTol() const { return ksp->GetRelTol(); }

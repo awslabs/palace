@@ -226,6 +226,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 COMBINER.main()
             combined = PREPARE.load_json(output / "process-library.json")
             self.assertEqual(combined["Version"], 3)
+            self.assertTrue(combined["ExhaustiveSpatialClosure"])
             self.assertEqual(combined["Models"], [])
             self.assertEqual(combined["Fabrication"], {"InterfaceLayers": {}})
 
@@ -885,6 +886,91 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         canonical = SPATIAL.canonical_points(points, frame)
         self.assertEqual(canonical.shape, points.shape)
 
+    def test_spatial_conductor_reference_is_order_invariant_and_inside_mask(self):
+        edges = [
+            {
+                "Point": [0.0, 0.0, 0.0],
+                "GapDirection": [-1.0, 0.0, 0.0],
+                "Interval": [-1.0, 1.0],
+                "Conductor": 1,
+            },
+            {
+                "Point": [2.0, 0.0, 0.0],
+                "GapDirection": [1.0, 0.0, 0.0],
+                "Interval": [-1.0, 1.0],
+                "Conductor": 1,
+            },
+        ]
+        facets = [
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": [[0.0, -1.0], [2.0, -1.0], [2.0, 1.0], [0.0, 1.0]],
+            }
+        ]
+        first = SPATIAL.reference_points({}, edges, facets, np.eye(3), 2.0)
+        second = SPATIAL.reference_points({}, list(reversed(edges)), facets, np.eye(3), 2.0)
+        self.assertEqual(first, second)
+        self.assertGreater(first[0][0], 0.0)
+        self.assertLess(first[0][0], 2.0)
+
+    def test_spatial_mask_labels_continuation_metal_outside_edge_interval(self):
+        points = np.asarray([[-3.0, 3.0, 0.0]])
+        edges = [
+            {
+                "Point": [0.0, 0.0, 0.0],
+                "GapDirection": [1.0, 0.0, 0.0],
+                "Tangent": [0.0, 1.0, 0.0],
+                "ProcessNormal": [0.0, 0.0, 1.0],
+                "Interval": [-0.5, 0.5],
+                "Conductor": 1,
+            }
+        ]
+        facets = [
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": [[-4.0, -4.0], [0.0, -4.0], [0.0, 4.0], [-4.0, 4.0]],
+            }
+        ]
+        labels = SPATIAL.conductor_at_points(points, edges, 2.0, 0.1, 90.0, facets)
+        np.testing.assert_array_equal(labels, [1])
+
+    def test_spatial_conductor_lift_is_one_only_on_excluded_contact_nodes(self):
+        points = np.asarray(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+            ]
+        )
+        labels = np.asarray([1, 0, 2])
+        lifts = SPATIAL.conductor_trace_lifts(points, labels, 2)
+        np.testing.assert_array_equal(lifts[2], [0.0, 0.0, 1.0])
+
+    def test_spatial_probe_cutoff_is_compatible_with_thin_and_fabricated_cuts(self):
+        points = np.asarray(
+            [
+                [0.0, 0.0, -1.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.05],
+                [0.0, 0.0, 0.1],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        edges = [
+            {
+                "Point": [0.0, 0.0, 0.0],
+                "ProcessNormal": [0.0, 0.0, 1.0],
+            }
+        ]
+        cutoff = SPATIAL.spatial_metal_band_cutoff(points, edges, 2.0, 0.1)
+        self.assertEqual(cutoff[1], 0.0)
+        self.assertEqual(cutoff[2], 0.0)
+        self.assertEqual(cutoff[3], 0.0)
+        self.assertGreater(cutoff[0], 0.0)
+        self.assertGreater(cutoff[4], 0.0)
+
     def test_spatial_strip_extension_stops_at_finite_intervals(self):
         vertex_arm = {"Interval": [0.0, 2.0], "VertexArm": True}
         continuing = {"Interval": [-2.0, 2.0], "VertexArm": False}
@@ -1232,10 +1318,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             1.0,
         )
         self.assertEqual(len(points), 8)
-        with self.assertRaisesRegex(ValueError, "exceeds 12R"):
+        with self.assertRaisesRegex(ValueError, "exceeds 16R"):
             SPATIAL.matching_support_points(
-                np.asarray([-6.1, -3.0, -1.0]),
-                np.asarray([6.1, 3.0, 1.0]),
+                np.asarray([-8.1, -3.0, -1.0]),
+                np.asarray([8.1, 3.0, 1.0]),
                 frame,
                 1.0,
             )
@@ -1275,7 +1361,9 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 process_parameters(),
                 "single-conductor",
             )
-            model = PREPARE.load_json(path)["Models"][0]
+            library = PREPARE.load_json(path)
+            model = library["Models"][0]
+        self.assertTrue(library["ExhaustiveSpatialClosure"])
         self.assertEqual(model["Reference"], [0.0, 0.0, 0.0])
         self.assertEqual(len(model["SupportPoints"]), 8)
         self.assertNotIn("ConductorReferences", model)
@@ -1340,6 +1428,141 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 )
             self.assertEqual(reused_library, library)
             self.assertEqual(reused_qualification, qualification)
+
+    def test_spatial_mesher_selection_is_explicit_and_fingerprinted(self):
+        coupon = endpoint_coupon()
+        parameters = process_parameters()
+        common = {
+            "matching_radius": 2.0,
+            "orders": [1, 2],
+            "spatial_lc_fine": 0.02,
+            "spatial_lc_tangent": 0.1,
+            "spatial_lc_far": 0.3,
+            "mesh_order": 2,
+            "spatial_ring_size": 8,
+            "min_process_feature_elements": 2.0,
+        }
+        field_args = SimpleNamespace(**common, spatial_mesher="field")
+        swept_args = SimpleNamespace(**common, spatial_mesher="swept")
+        self.assertEqual(
+            PREPARE.spatial_mesh_path(field_args),
+            PREPARE.SPATIAL_FIELD_MESH,
+        )
+        self.assertEqual(
+            PREPARE.spatial_mesh_path(swept_args),
+            PREPARE.SPATIAL_SWEPT_MESH,
+        )
+        swept_preparation = PREPARE.preparation(
+            coupon,
+            PREPARE.SPATIAL_SWEPT_MESH,
+        )
+        self.assertTrue(
+            swept_preparation["MeshGenerator"].endswith(
+                "mesh_spatial_coupon_swept.jl"
+            )
+        )
+        field = PREPARE.spatial_spec(coupon, field_args, parameters)
+        swept = PREPARE.spatial_spec(coupon, swept_args, parameters)
+        self.assertEqual(field["Mesh"]["Mesher"], "field")
+        self.assertEqual(swept["Mesh"]["Mesher"], "swept")
+        self.assertNotEqual(
+            PREPARE.fingerprint(field),
+            PREPARE.fingerprint(swept),
+        )
+
+    def test_swept_spatial_command_keeps_tangent_fixed_during_normal_refinement(self):
+        args = SimpleNamespace(
+            spatial_mesher="swept",
+            force=True,
+            julia="julia",
+            julia_project=None,
+            matching_radius=2.0,
+            spatial_lc_fine=0.02,
+            spatial_lc_tangent=0.1,
+            spatial_lc_far=0.3,
+            spatial_process_core_width=1.0,
+            spatial_process_fine_width=0.0,
+            spatial_process_grading_power=1.7,
+            spatial_max_nodes=500_000,
+            spatial_max_elements=2_000_000,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signature = root / "mesh-signature.csv"
+            signature.write_text("signature\n")
+            commands = []
+            with mock.patch.object(
+                PREPARE,
+                "run",
+                side_effect=lambda command: commands.append(
+                    [str(value) for value in command]
+                ),
+            ):
+                PREPARE.generate_spatial_meshes(
+                    root,
+                    signature,
+                    root / "missing-mask.csv",
+                    root / "missing-boundary.csv",
+                    args,
+                    process_parameters(),
+                    {"Mesh": {"Order": 2}},
+                    2.0,
+                )
+        self.assertEqual(len(commands), 2)
+        for command in commands:
+            self.assertEqual(command[1], str(PREPARE.SPATIAL_SWEPT_MESH))
+            self.assertEqual(
+                command[command.index("--lc-fine") + 1],
+                "0.04",
+            )
+            self.assertEqual(
+                command[command.index("--lc-tangent") + 1],
+                "0.1",
+            )
+
+    def test_swept_spatial_parser_requires_positive_independent_tangent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = [
+                "prepare_surface_response_coupons.py",
+                "manifest.json",
+                "--output",
+                directory,
+                "--spatial-mesher",
+                "swept",
+            ]
+            with mock.patch.object(sys, "argv", common):
+                with self.assertRaises(SystemExit):
+                    PREPARE.parse_args()
+            with mock.patch.object(
+                sys,
+                "argv",
+                common + ["--spatial-lc-tangent", "0.01"],
+            ):
+                args = PREPARE.parse_args()
+        self.assertEqual(args.spatial_mesher, "swept")
+        self.assertEqual(args.spatial_lc_tangent, 0.01)
+        self.assertEqual(args.spatial_max_nodes, 3_000_000)
+
+    def test_field_spatial_parser_checks_coarsest_normal_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = [
+                "prepare_surface_response_coupons.py",
+                "manifest.json",
+                "--output",
+                directory,
+                "--spatial-mesher",
+                "field",
+                "--spatial-lc-fine",
+                "0.02",
+                "--spatial-lc-tangent",
+                "0.02",
+                "--spatial-h-factors",
+                "2",
+                "1",
+            ]
+            with mock.patch.object(sys, "argv", command):
+                with self.assertRaises(SystemExit):
+                    PREPARE.parse_args()
 
     def test_spatial_cache_key_uses_union_boundary_not_facet_triangulation(self):
         args = SimpleNamespace(

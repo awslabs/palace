@@ -1,0 +1,5 @@
+Loop,Vertex,Conductor,Plane,Hole,Class,X,Y
+1,1,1,0,0,Continuation,-4,-8
+1,2,1,0,0,Physical,0,-8
+1,3,1,0,0,Continuation,0,8
+1,4,1,0,0,Continuation,-4,8

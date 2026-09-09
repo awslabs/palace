@@ -9,9 +9,12 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import shlex
 import subprocess
 from pathlib import Path
+
+import numpy as np
 
 import prepare_surface_response_coupons as planner
 
@@ -86,7 +89,71 @@ def conductor_references(edges, separation=1.0):
     return references
 
 
-def placeholder_model(requirement, matching_radius):
+def spatial_support_points(geometry, matching_radius, fabrication):
+    """Reproduce the production spatial-coupon matching box without meshing it."""
+    edges = geometry.get("Edges", [])
+    if not edges:
+        raise ValueError("SpatialEdgeCluster has no complete edge geometry")
+    normal = np.asarray(edges[0]["ProcessNormal"], dtype=float)
+    normal /= np.linalg.norm(normal)
+    gap = np.asarray(edges[0]["GapDirection"], dtype=float)
+    gap /= np.linalg.norm(gap)
+    axis_y = np.cross(normal, gap)
+    axis_y /= np.linalg.norm(axis_y)
+    frame = np.vstack((gap, axis_y, normal))
+    radius = float(matching_radius)
+    points = []
+    local_edges = []
+    for entry in edges:
+        point = frame @ np.asarray(entry["Point"], dtype=float)
+        local_gap = frame @ np.asarray(entry["GapDirection"], dtype=float)
+        local_normal = frame @ np.asarray(entry["ProcessNormal"], dtype=float)
+        tangent = np.cross(local_gap, local_normal)
+        begin, end = (float(value) for value in entry["Interval"])
+        tolerance = 1.0e-10 * radius
+        if begin <= -radius + tolerance:
+            begin -= 2.0 * radius
+        if end >= radius - tolerance:
+            end += 2.0 * radius
+        for coordinate in (begin, end):
+            boundary = point + coordinate * tangent
+            for side in (-1.0, 1.0):
+                points.append(boundary + side * radius * local_gap)
+        local_edges.append(point)
+    points = np.asarray(points)
+    lower = np.min(points, axis=0) - radius
+    upper = np.max(points, axis=0) + radius
+    metal_thickness = float(fabrication.get("MetalThickness", 0.0))
+    overetch_depth = float(fabrication.get("OveretchDepth", 0.0))
+    lower[2] = min(
+        lower[2], min(point[2] for point in local_edges) - radius - overetch_depth
+    )
+    upper[2] = max(
+        upper[2], max(point[2] for point in local_edges) + radius + metal_thickness
+    )
+    local_support = np.asarray(
+        [
+            (x, y, z)
+            for x in (lower[0], upper[0])
+            for y in (lower[1], upper[1])
+            for z in (lower[2], upper[2])
+        ]
+    )
+    support = local_support @ frame
+    tolerance = max(
+        1.0e-10 * radius, 64.0 * np.finfo(float).eps
+    )
+    exponent = math.floor(math.log10(tolerance))
+    step = 10.0**exponent
+    decimals = max(0, -exponent)
+    support = np.asarray(
+        [[round(float(value), decimals) for value in point] for point in support]
+    )
+    support[np.abs(support) < 0.5 * step] = 0.0
+    return support.tolist()
+
+
+def placeholder_model(requirement, matching_radius, fabrication=None):
     signature = planner.coupon_signature(requirement)
     digest = hashlib.sha256(
         json.dumps(signature, sort_keys=True, separators=(",", ":")).encode()
@@ -166,14 +233,15 @@ def placeholder_model(requirement, matching_radius):
             model["Reference"] = references[0]
         else:
             model["ConductorReferences"] = references
-        # Multi-conductor signatures need the exact mask to disambiguate ownership.
-        # For a single conductor, edge geometry is sufficient for virtual closure and
-        # avoids round-trip sensitivity in canonicalized sampled face loops. The full
-        # PlanViewFacets remain in the final requirement fingerprint.
-        if len(references) > 1:
-            for key in ("PlanViewBoundary", "MaskRegularization"):
-                if key in geometry:
-                    model[key] = copy.deepcopy(geometry[key])
+        # Virtual closure must use the same exact mask and matching support as the
+        # production model. Omitting either can make ownership change after the real
+        # coupon is inserted and expose a new overlap only after expensive generation.
+        for key in ("PlanViewBoundary", "MaskRegularization"):
+            if key in geometry:
+                model[key] = copy.deepcopy(geometry[key])
+        model["SupportPoints"] = spatial_support_points(
+            geometry, matching_radius, fabrication or {}
+        )
     elif topology in ("Endpoint", "Junction"):
         model["Reference"] = [0.0, 0.0, 0.0]
         model["BoundaryCondition"] = boundary
@@ -258,6 +326,7 @@ def main():
     # when fabrication metadata is present, but do not force older libraries to invent it.
     virtual_library["Version"] = max(2, int(virtual_library.get("Version", 0)))
     virtual_library["Name"] = f"{virtual_library.get('Name', source_path.stem)}-closure"
+    virtual_library["ExhaustiveSpatialClosure"] = True
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -280,34 +349,63 @@ def main():
         write_json(pass_config_path, pass_config)
         run_preflight(args.palace, pass_config_path, pass_root / "preflight.log")
         manifest = load_json(pass_root / "postpro" / "surface-response-requirements.json")
-        final_manifest = manifest
+
+        # Discovery deliberately uses wider geometry components to expose every support
+        # overlap before coupon generation. Validate the same virtual library with strict
+        # production component construction as well; the returned library must satisfy
+        # both views, not merely the wider discovery partition.
+        production_config = copy.deepcopy(pass_config)
+        production_config["Problem"]["Output"] = str(pass_root / "production-postpro")
+        production_response = response_section(production_config)
+        production_response["UnmatchedPolicy"] = "Error"
+        production_config_path = pass_root / "production-config.json"
+        write_json(production_config_path, production_config)
+        run_preflight(
+            args.palace,
+            production_config_path,
+            pass_root / "production-preflight.log",
+        )
+        production_manifest = load_json(
+            pass_root / "production-postpro" / "surface-response-requirements.json"
+        )
+        final_manifest = production_manifest
 
         added = []
-        for requirement in manifest["Requirements"]:
-            if requirement["Status"] != "Missing":
-                continue
-            digest, model = placeholder_model(
-                requirement, float(manifest["Library"]["MatchingRadius"])
-            )
-            if digest in known:
-                continue
-            known.add(digest)
-            placeholder_names.add(model["Name"])
-            placeholder_requirements[model["Name"]] = copy.deepcopy(requirement)
-            virtual_library["Models"].append(model)
-            added.append({"Id": digest, "Topology": requirement["Topology"]})
+        for current_manifest in (manifest, production_manifest):
+            for requirement in current_manifest["Requirements"]:
+                if requirement["Status"] != "Missing":
+                    continue
+                digest, model = placeholder_model(
+                    requirement,
+                    float(current_manifest["Library"]["MatchingRadius"]),
+                    virtual_library.get("Fabrication", {}),
+                )
+                if digest in known:
+                    continue
+                known.add(digest)
+                placeholder_names.add(model["Name"])
+                placeholder_requirements[model["Name"]] = copy.deepcopy(requirement)
+                virtual_library["Models"].append(model)
+                added.append(
+                    {"Id": digest, "Topology": requirement["Topology"]}
+                )
         history.append(
             {
                 "Pass": pass_index,
                 "Summary": manifest["Summary"],
+                "DiscoverySummary": manifest["Summary"],
+                "ProductionSummary": production_manifest["Summary"],
                 "AddedPlaceholders": added,
             }
         )
         if not added:
-            if manifest["Summary"]["Counts"]["Missing"]:
+            discovery_missing = manifest["Summary"]["Counts"]["Missing"]
+            production_missing = production_manifest["Summary"]["Counts"]["Missing"]
+            if discovery_missing or production_missing:
                 raise RuntimeError(
                     "Geometry closure stalled with missing requirements; see "
-                    f"{pass_root / 'postpro/surface-response-requirements.json'}"
+                    f"{pass_root / 'postpro/surface-response-requirements.json'} and "
+                    f"{pass_root / 'production-postpro/surface-response-requirements.json'}"
                 )
             break
     else:

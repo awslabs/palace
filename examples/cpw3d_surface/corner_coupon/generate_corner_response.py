@@ -113,6 +113,39 @@ def build_surface(
     return points, np.asarray(triangles, dtype=int), [ring_size] * len(rings)
 
 
+def write_trace_mesh(output, points, triangles, zero_trace_indices):
+    constrained = set(zero_trace_indices)
+    vertex_rows = [
+        (
+            index,
+            *point,
+            index,
+            1 if index in constrained else 0,
+        )
+        for index, point in enumerate(points, start=1)
+    ]
+    np.savetxt(
+        output / "trace-vertices.csv",
+        np.asarray(vertex_rows),
+        delimiter=",",
+        header="vertex,x,y,z,basis,conductor",
+        comments="",
+        fmt=("%d", "%.16e", "%.16e", "%.16e", "%d", "%d"),
+    )
+    triangle_rows = [
+        (index, *(np.asarray(triangle, dtype=int) + 1))
+        for index, triangle in enumerate(triangles, start=1)
+    ]
+    np.savetxt(
+        output / "trace-triangles.csv",
+        np.asarray(triangle_rows),
+        delimiter=",",
+        header="triangle,vertex_i,vertex_j,vertex_k",
+        comments="",
+        fmt="%d",
+    )
+
+
 def write_basis(output, points, triangles):
     np.savetxt(
         output / "basis-points.csv",
@@ -477,6 +510,10 @@ def write_library(
         "ThinSurfaceMatrix":
             "postpro/thin/surface-response-matrix-aggregate.csv",
         "BasisPoints": "basis-points.csv",
+        "TraceMesh": {
+            "Vertices": "trace-vertices.csv",
+            "Triangles": "trace-triangles.csv",
+        },
         "ContourGroups": contour_groups,
         "Interfaces": [
             {"Type": "SA", "Coupon": 1},
@@ -642,6 +679,7 @@ def main():
     ).tolist()
     if not zero_trace_indices:
         raise ValueError("corner coupon has no PEC-constrained trace knots")
+    write_trace_mesh(output, points, triangles, zero_trace_indices)
     for name, mesh, fabricated in (
         ("thin", thin_mesh, False),
         ("fabricated", fabricated_mesh, True),

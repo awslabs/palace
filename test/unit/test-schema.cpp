@@ -898,6 +898,13 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
                         {"Reference", {-1.0, 0.0, 0.0}}}}}}}};
     CHECK(ValidateConfig(modern, "Electrostatic").empty());
 
+    auto trace_mesh = modern;
+    trace_mesh["ResponseCorrection"]["Models"][0]["TraceMesh"] = {
+        {"Vertices", "trace-vertices.csv"}, {"Triangles", "trace-triangles.csv"}};
+    CHECK(ValidateConfig(trace_mesh, "Electrostatic").empty());
+    trace_mesh["ResponseCorrection"]["Models"][0]["TraceMesh"].erase("Triangles");
+    CHECK(!ValidateConfig(trace_mesh, "Electrostatic").empty());
+
     auto missing_surface_pair = modern;
     missing_surface_pair["ResponseCorrection"]["Models"][0].erase("ThinSurfaceMatrix");
     CHECK(!ValidateConfig(missing_surface_pair, "Electrostatic").empty());
@@ -927,6 +934,32 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(ValidateConfig(response_solve_tol, "Electrostatic").empty());
     response_solve_tol["ResponseCorrection"]["SolveTol"] = 0.0;
     CHECK(!ValidateConfig(response_solve_tol, "Electrostatic").empty());
+
+    for (const auto *mode : {"Disabled", "FixedTrace", "FixedFlux"})
+    {
+      auto domain_config = automatic;
+      domain_config["ResponseCorrection"]["TranslationalDomainCorrection"] = mode;
+      CHECK(ValidateConfig(domain_config, "Electrostatic").empty());
+    }
+    auto invalid_domain_correction = automatic;
+    invalid_domain_correction["ResponseCorrection"]["TranslationalDomainCorrection"] =
+        "disabled";
+    CHECK(!ValidateConfig(invalid_domain_correction, "Electrostatic").empty());
+
+    for (const auto *coupling : {"Collocated", "SurfaceMortar"})
+    {
+      auto trace_config = automatic;
+      trace_config["ResponseCorrection"]["TraceCoupling"] = coupling;
+      CHECK(ValidateConfig(trace_config, "Electrostatic").empty());
+    }
+    auto invalid_trace_coupling = automatic;
+    invalid_trace_coupling["ResponseCorrection"]["TraceCoupling"] = "Mortar";
+    CHECK(!ValidateConfig(invalid_trace_coupling, "Electrostatic").empty());
+    auto mortar_oversampling = automatic;
+    mortar_oversampling["ResponseCorrection"]["MortarOversampling"] = 2;
+    CHECK(ValidateConfig(mortar_oversampling, "Electrostatic").empty());
+    mortar_oversampling["ResponseCorrection"]["MortarOversampling"] = 0;
+    CHECK(!ValidateConfig(mortar_oversampling, "Electrostatic").empty());
 
     auto duplicate_targets = automatic;
     duplicate_targets["ResponseCorrection"]["TargetInterfaces"] = {1, 1};

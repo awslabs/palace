@@ -107,6 +107,35 @@ private:
     int end_conductor = 0;
   };
 
+  enum class DomainCorrectionMode : char
+  {
+    DISABLED,
+    FIXED_TRACE,
+    FIXED_FLUX
+  };
+
+  struct MortarSegment
+  {
+    int begin = 0;
+    int end = 0;
+    double length = 0.0;
+    int subdivisions = 1;
+  };
+
+  struct MortarVertex
+  {
+    std::array<double, 3> point{};
+    int basis = -1;
+    int conductor = 0;
+  };
+
+  struct MortarTriangle
+  {
+    std::array<int, 3> vertices{};
+    double area = 0.0;
+    double maximum_edge_length = 0.0;
+  };
+
   struct ResponseModel
   {
     int idx = 0;
@@ -119,12 +148,22 @@ private:
     mfem::DenseMatrix thin_domain;
     mfem::DenseMatrix domain_defect;
     mfem::DenseMatrix fixed_flux_transform;
+    mfem::DenseMatrix fixed_flux_domain_defect;
+    DomainCorrectionMode domain_correction_mode = DomainCorrectionMode::FIXED_TRACE;
     std::map<int, mfem::DenseMatrix> fabricated_surfaces;
     std::map<int, mfem::DenseMatrix> surface_defects;
     bool spatial_basis = false;
     std::vector<int> contour_groups;
     std::vector<int> zero_trace_indices;
     std::vector<OpenContourPath> open_contour_paths;
+    bool surface_mortar = false;
+    bool spatial_mortar = false;
+    std::vector<MortarSegment> mortar_segments;
+    std::vector<MortarVertex> mortar_vertices;
+    std::vector<MortarTriangle> mortar_triangles;
+    mfem::DenseMatrix mortar_mass_inverse;
+    mfem::Vector mortar_constant_load;
+    std::vector<mfem::Vector> mortar_conductor_loads;
   };
 
   struct Patch
@@ -133,6 +172,9 @@ private:
     int model = -1;
     int point_offset = 0;
     int trace_offset = 0;
+    int point_count = 0;
+    int mortar_longitudinal_subdivisions = 1;
+    double mortar_resolution = 0.0;
     double weight = 1.0;
   };
 
@@ -171,6 +213,7 @@ private:
   int maxwell_quadrature_order = 0;
 
   double matching_radius = 0.0;
+  double mesh_coordinate_scale = 1.0;
   double minimum_wave_speed = mfem::infinity();
   double matched_length_fraction = 1.0;
   double corner_neighborhood_fraction = 0.0;
@@ -181,6 +224,7 @@ private:
   bool boundary_law_verified = true;
 
   mutable Vector x_free, local_x, local_x_imag, local_y, trace, response, correction;
+  mutable Vector mortar_load, mortar_coefficients;
   mutable std::vector<double> point_owned_values, point_packed_values;
   mutable std::vector<double> point_owned_values_pair, point_packed_values_pair;
   mutable Vector maxwell_point_values, maxwell_conductor_adjoint, maxwell_path_adjoint;
@@ -313,9 +357,10 @@ public:
   // interface. Corrected participation replaces the measured global core with this data.
   std::map<int, double> GetFabricatedSurfaceEnergy(const Vector &x) const;
 
-  // Evaluate fixed-trace and fixed-flux coupon responses on an unchanged electrostatic
-  // thin-metal potential. This is the electrostatic analogue of the postprocessing-only
-  // Maxwell correction.
+  // Evaluate coupon responses on an electrostatic potential. With fixed flux enabled,
+  // return both complete postprocessing-only closure ensembles. Otherwise use the active
+  // per-model domain-coupling policy for corrected-domain accounting while retaining the
+  // fabricated fixed-trace surface evaluation.
   ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
                                                  bool include_fixed_flux = true) const;
 

@@ -250,12 +250,21 @@ python3 discover_surface_response_requirements.py \
 ```
 
 The helper performs only cheap geometry preflights with virtual model
-descriptors; it never meshes or solves a coupon. This prevents adding a corner
-or spatial model from changing the residual partition and exposing new coupon
-requirements after expensive generation. Its final
-`surface-response-requirements.json` records exact, interpolated, and missing
-coverage against the original source library. Convert those entries into a
-fabrication-aware work plan with:
+descriptors; it never meshes or solves a coupon. Spatial placeholders preserve
+the exact plan-view mask and the same matching support box as the eventual
+production model. During requirements discovery, nearby same-interface events
+are included in cross-interface components, and overlapping subordinate
+supports are coalesced into an enlarged owner whose edge intervals and exact
+mask contain the complete neighborhood. Every pass evaluates both the widened
+discovery partition and the ordinary production partition; closure continues
+until both have zero missing requirements. Combined libraries record
+`ExhaustiveSpatialClosure: true`, which makes ordinary corrected simulations
+use the same widened spatial partition; unmarked legacy libraries retain their
+historical partition. This prevents adding a corner or spatial model from
+changing ownership and exposing new coupon requirements after expensive
+generation. Its final `surface-response-requirements.json`
+records exact, interpolated, and missing coverage against the original source
+library. Convert those entries into a fabrication-aware work plan with:
 
 ```text
 python3 prepare_surface_response_coupons.py \

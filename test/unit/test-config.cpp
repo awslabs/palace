@@ -620,7 +620,11 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   REQUIRE(electrostatic.response_correction);
   using CorrectionMode =
       config::ElectrostaticSolverData::ResponseCorrectionData::CorrectionMode;
+  using DomainCorrection = config::ElectrostaticSolverData::ResponseCorrectionData::
+      TranslationalDomainCorrection;
   CHECK(electrostatic.response_correction->correction_mode == CorrectionMode::BOTH);
+  CHECK(electrostatic.response_correction->translational_domain_correction ==
+        DomainCorrection::FIXED_TRACE);
   CHECK(electrostatic.response_correction->IncludesPostprocessing());
   CHECK(electrostatic.response_correction->IncludesSelfConsistent());
   CHECK(electrostatic.response_correction->solve_tol == 1.0e-6);
@@ -649,25 +653,31 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   auto concretized_correction = correction;
   concretized_correction["CorrectionMode"] = "Both";
   concretized_correction["SolveTol"] = 1.0e-6;
+  concretized_correction["TranslationalDomainCorrection"] = "FixedTrace";
+  concretized_correction["TraceCoupling"] = "Collocated";
+  concretized_correction["MortarOversampling"] = 2;
   CHECK(sparse["Solver"]["Electrostatic"]["ResponseCorrection"] == concretized_correction);
 
   config["Problem"]["Type"] = "Magnetostatic";
   CHECK_THROWS(IoData(config, false));
 
-  const json multi_model = {{"Models",
-                             {{{"Index", 7},
-                               {"FabricatedMatrix", "fabricated-domain.csv"},
-                               {"ThinMatrix", "thin-domain.csv"},
-                               {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
-                               {"ThinSurfaceMatrix", "thin-surface.csv"},
-                               {"BasisPoints", "pair-points.csv"},
-                               {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
-                            {"Patches",
-                             {{{"Model", 7},
-                               {"Origin", {3.0, 4.0, 0.0}},
-                               {"AxisU", {1.0, 0.0, 0.0}},
-                               {"AxisV", {0.0, 1.0, 0.0}},
-                               {"Reference", {-1.0, 0.0, 0.0}}}}}};
+  const json multi_model = {
+      {"Models",
+       {{{"Index", 7},
+         {"FabricatedMatrix", "fabricated-domain.csv"},
+         {"ThinMatrix", "thin-domain.csv"},
+         {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
+         {"ThinSurfaceMatrix", "thin-surface.csv"},
+         {"BasisPoints", "pair-points.csv"},
+         {"TraceMesh",
+          {{"Vertices", "trace-vertices.csv"}, {"Triangles", "trace-triangles.csv"}}},
+         {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
+      {"Patches",
+       {{{"Model", 7},
+         {"Origin", {3.0, 4.0, 0.0}},
+         {"AxisU", {1.0, 0.0, 0.0}},
+         {"AxisV", {0.0, 1.0, 0.0}},
+         {"Reference", {-1.0, 0.0, 0.0}}}}}};
   const config::ElectrostaticSolverData modern(json{{"ResponseCorrection", multi_model}});
   REQUIRE(modern.response_correction);
   REQUIRE(modern.response_correction->models.size() == 1);
@@ -675,6 +685,8 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   REQUIRE(modern.response_correction->models[0].interfaces.size() == 1);
   CHECK(modern.response_correction->models[0].interfaces[0].target == 4);
   CHECK(modern.response_correction->models[0].interfaces[0].coupon == 1);
+  CHECK(modern.response_correction->models[0].trace_vertices == "trace-vertices.csv");
+  CHECK(modern.response_correction->models[0].trace_triangles == "trace-triangles.csv");
   REQUIRE(modern.response_correction->patches.size() == 1);
   CHECK(modern.response_correction->patches[0].model == 7);
   CHECK(modern.response_correction->patches[0].conductor_references.front() ==
@@ -724,6 +736,52 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   auto invalid_mode = automatic_correction;
   invalid_mode["CorrectionMode"] = "postprocessonly";
   CHECK_THROWS(config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_mode}}));
+
+  for (const auto &[name, mode] : std::vector<std::pair<const char *, DomainCorrection>>{
+           {"Disabled", DomainCorrection::DISABLED},
+           {"FixedTrace", DomainCorrection::FIXED_TRACE},
+           {"FixedFlux", DomainCorrection::FIXED_FLUX}})
+  {
+    auto domain_config = automatic_correction;
+    domain_config["TranslationalDomainCorrection"] = name;
+    const config::ElectrostaticSolverData domain_data(
+        json{{"ResponseCorrection", domain_config}});
+    REQUIRE(domain_data.response_correction);
+    CHECK(domain_data.response_correction->translational_domain_correction == mode);
+  }
+  auto invalid_domain_mode = automatic_correction;
+  invalid_domain_mode["TranslationalDomainCorrection"] = "disabled";
+  CHECK_THROWS(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_domain_mode}}));
+
+  for (const auto &[name, mode] :
+       std::vector<std::pair<const char *, config::ElectrostaticSolverData::
+                                               ResponseCorrectionData::TraceCoupling>>{
+           {"Collocated", config::ElectrostaticSolverData::ResponseCorrectionData::
+                              TraceCoupling::COLLOCATED},
+           {"SurfaceMortar", config::ElectrostaticSolverData::ResponseCorrectionData::
+                                 TraceCoupling::SURFACE_MORTAR}})
+  {
+    auto trace_config = automatic_correction;
+    trace_config["TraceCoupling"] = name;
+    const config::ElectrostaticSolverData trace_data(
+        json{{"ResponseCorrection", trace_config}});
+    REQUIRE(trace_data.response_correction);
+    CHECK(trace_data.response_correction->trace_coupling == mode);
+  }
+  auto invalid_trace_coupling = automatic_correction;
+  invalid_trace_coupling["TraceCoupling"] = "Mortar";
+  CHECK_THROWS(config::ElectrostaticSolverData(
+      json{{"ResponseCorrection", invalid_trace_coupling}}));
+  auto oversampled_mortar = automatic_correction;
+  oversampled_mortar["MortarOversampling"] = 2;
+  const config::ElectrostaticSolverData oversampled_data(
+      json{{"ResponseCorrection", oversampled_mortar}});
+  REQUIRE(oversampled_data.response_correction);
+  CHECK(oversampled_data.response_correction->mortar_oversampling == 2);
+  oversampled_mortar["MortarOversampling"] = 0;
+  CHECK_THROWS(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", oversampled_mortar}}));
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;

@@ -830,6 +830,9 @@ and `Patches` lists:
   "TargetInterfaces": [1, 2, 3],
   "UnmatchedPolicy": "Warn",
   "CorrectionMode": "Both",
+  "TranslationalDomainCorrection": "FixedTrace",
+  "TraceCoupling": "Collocated",
+  "MortarOversampling": 2,
   "SolveTol": 1.0e-6
 }
 ```
@@ -855,6 +858,45 @@ unchanged in every mode.
 thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
 respectively. The default `1.0e-6` is normally well below the accuracy of the local
 fabrication response model; it can be tightened independently when needed.
+
+`TranslationalDomainCorrection` controls how isolated-edge, gap, strip, and parallel-edge
+coupon domain matrices enter the self-consistent global operator. `FixedTrace` preserves
+the original additive defect, while `FixedFlux` pulls the fabricated domain response back
+to the thin trace under conserved coupon flux. `Disabled` omits only these translational
+domain defects; their fabricated surface energies are still evaluated on the corrected
+field, and spatial clusters, corners, endpoints, and junctions remain fixed-trace coupled.
+`Disabled` is an isolation diagnostic, not a production approximation: translational
+families represent most transmission-line edge length. An independently discretized
+coupon-thin matrix is not generally an exact suboperator of the global thin-metal
+stiffness, and point-collocated trace coupling is not uniformly bounded under three-
+dimensional mesh refinement, so either enabled translational mode can become poorly
+conditioned as AMR resolves additional trace modes. Production self-consistent use
+therefore requires an energy-compatible mortar trace and response-aware preconditioner;
+until those are available, use the converged fixed-trace/fixed-flux estimates rather than
+silently disabling translational physics.
+
+`TraceCoupling` selects the map from the global field into coupon coefficients.
+`Collocated` preserves the historical point evaluation. The experimental
+`SurfaceMortar` option uses a piecewise-linear L2 projection around each translational
+coupon contour and over a finite longitudinal matching-surface strip. Its quadrature is
+refined with the global mesh resolution, preventing a fixed-weight point functional from
+dominating successively smaller H1 finite-element modes. Fixed-trace and fixed-flux
+postprocessing remain available and use the same selected trace map. The mortar
+implementation covers electrostatic isolated-edge, gap, strip, and parallel-edge models,
+as well as single-conductor spatial clusters and corners represented by equal closed
+contour rings. Multi-conductor spatial models with open paths remain collocated until the
+library carries their complete constrained trace-surface connectivity; H(curl)-compatible
+Maxwell mortars are also not yet enabled. A spatial model may supply an explicit
+`TraceMesh` object with `Vertices` and `Triangles` CSV paths. Each trace vertex records
+its canonical local coordinate and one-based basis/conductor ownership. Explicit trace
+connectivity removes all assumptions about edge count, equal rings, cap triangulation, or
+conductor count. `SurfaceMortar` fails closed when a spatial model with `OpenContourPaths`
+lacks this metadata. Current spatial and corner generators write it automatically;
+`export_legacy_trace_mesh.py` upgrades retained legacy generation artifacts without
+rerunning coupon solves. `MortarOversampling` refines the surface quadrature relative to
+the local finite-element mesh size and is intended for fixed-mesh quadrature convergence
+checks. `SurfaceMortar` is therefore an experimental convergence path, not yet a
+production default.
 
 The remaining sites are assigned to their electrostatic conductor and clustered when
 their separation is less than ``2R``. A one-site cluster uses an `IsolatedEdge` model.

@@ -179,6 +179,32 @@ const char *CorrectionModeName(
   return "Both";
 }
 
+const char *TraceCouplingName(
+    config::ElectrostaticSolverData::ResponseCorrectionData::TraceCoupling coupling)
+{
+  using TraceCoupling =
+      config::ElectrostaticSolverData::ResponseCorrectionData::TraceCoupling;
+  return coupling == TraceCoupling::SURFACE_MORTAR ? "SurfaceMortar" : "Collocated";
+}
+
+const char *TranslationalDomainCorrectionName(
+    config::ElectrostaticSolverData::ResponseCorrectionData::TranslationalDomainCorrection
+        mode)
+{
+  using DomainCorrection = config::ElectrostaticSolverData::ResponseCorrectionData::
+      TranslationalDomainCorrection;
+  switch (mode)
+  {
+    case DomainCorrection::DISABLED:
+      return "Disabled";
+    case DomainCorrection::FIXED_TRACE:
+      return "FixedTrace";
+    case DomainCorrection::FIXED_FLUX:
+      return "FixedFlux";
+  }
+  return "FixedTrace";
+}
+
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
                              json &j_electrostatic)
 {
@@ -200,6 +226,10 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
     auto &j_response = j_electrostatic["ResponseCorrection"] = json::object();
     j_response["CorrectionMode"] = CorrectionModeName(response.correction_mode);
     j_response["SolveTol"] = response.solve_tol;
+    j_response["TranslationalDomainCorrection"] =
+        TranslationalDomainCorrectionName(response.translational_domain_correction);
+    j_response["TraceCoupling"] = TraceCouplingName(response.trace_coupling);
+    j_response["MortarOversampling"] = response.mortar_oversampling;
     if (response.IsAutomatic())
     {
       j_response["Library"] = response.library;

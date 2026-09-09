@@ -6,8 +6,11 @@ import unittest
 from pathlib import Path
 
 CPW2D = Path(__file__).parent
+SPATIAL = CPW2D.parent / "cpw3d_surface" / "spatial_coupon"
 sys.path.insert(0, str(CPW2D))
+sys.path.insert(0, str(SPATIAL))
 import discover_surface_response_requirements as DISCOVERY  # noqa: E402
+import generate_spatial_response as SPATIAL_RESPONSE  # noqa: E402
 
 
 class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
@@ -49,9 +52,28 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
                 },
             ],
         )
-        _, model = DISCOVERY.placeholder_model(single, 2.0)
+        single["Geometry"]["PlanViewBoundary"] = [
+            {
+                "Conductor": 1,
+                "Segments": [[[0, 0, 0], [1, 0, 0]]],
+                "ContinuationSegments": [],
+            }
+        ]
+        single["Geometry"]["MaskRegularization"] = {"Version": 1}
+        _, model = DISCOVERY.placeholder_model(
+            single,
+            2.0,
+            {"MetalThickness": 0.1, "OveretchDepth": 0.05},
+        )
         self.assertIn("Reference", model)
         self.assertNotIn("ConductorReferences", model)
+        self.assertEqual(
+            model["PlanViewBoundary"], single["Geometry"]["PlanViewBoundary"]
+        )
+        self.assertEqual(
+            model["MaskRegularization"], single["Geometry"]["MaskRegularization"]
+        )
+        self.assertEqual(len(model["SupportPoints"]), 8)
 
         different = self.requirement(
             "DifferentConductorGap", {"EdgeCount": 2, "Separation": 1.0}
@@ -59,6 +81,45 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
         _, model = DISCOVERY.placeholder_model(different, 2.0)
         self.assertEqual(len(model["ConductorReferences"]), 2)
         self.assertNotIn("Reference", model)
+
+    def test_virtual_and_production_spatial_support_are_identical(self):
+        direction = 2.0**-0.5
+        geometry = {
+            "EdgeCount": 2,
+            "Edges": [
+                {
+                    "Conductor": 1,
+                    "Point": [0.123456789, 0.0, -0.987654321],
+                    "GapDirection": [direction, 0.0, direction],
+                    "ProcessNormal": [0.0, 1.0, 0.0],
+                    "Interval": [-2.0, 0.0],
+                    "InterfaceSlot": 0,
+                    "BoundaryCondition": {"Type": "PEC"},
+                },
+                {
+                    "Conductor": 1,
+                    "Point": [1.234567891, 0.0, 0.345678912],
+                    "GapDirection": [-direction, 0.0, -direction],
+                    "ProcessNormal": [0.0, 1.0, 0.0],
+                    "Interval": [0.0, 2.0],
+                    "InterfaceSlot": 0,
+                    "BoundaryCondition": {"Type": "PEC"},
+                },
+            ],
+        }
+        fabrication = {"MetalThickness": 0.1, "OveretchDepth": 0.05}
+        virtual = DISCOVERY.spatial_support_points(geometry, 2.0, fabrication)
+        coupon = {
+            "Topology": "SpatialEdgeCluster",
+            "Geometry": geometry,
+            "BoundaryCondition": {"Type": "PEC"},
+        }
+        frame, edges, _ = SPATIAL_RESPONSE.normalize_geometry(coupon, 2.0)
+        lower, upper = SPATIAL_RESPONSE.coupon_bounds(edges, 2.0, 0.1, 0.05)
+        production = SPATIAL_RESPONSE.matching_support_points(
+            lower, upper, frame, 2.0
+        )
+        self.assertEqual(virtual, production)
 
     def test_restore_source_status_marks_only_placeholders_missing(self):
         manifest = {

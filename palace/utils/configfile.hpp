@@ -1042,6 +1042,11 @@ public:
     // Local coupon contour knot coordinates, in mesh length units.
     std::string basis_points;
 
+    // Optional complete spatial matching-surface mesh. Vertices map to a free basis
+    // coefficient or a constrained conductor; triangles use one-based vertex indices.
+    std::string trace_vertices;
+    std::string trace_triangles;
+
     // Internal metadata for a three-dimensional vertex coupon. ContourGroups partitions
     // the basis points into independent closed Maxwell voltage contours.
     bool spatial_basis = false;
@@ -1079,6 +1084,19 @@ public:
       BOTH
     };
 
+    enum class TranslationalDomainCorrection : char
+    {
+      DISABLED,
+      FIXED_TRACE,
+      FIXED_FLUX
+    };
+
+    enum class TraceCoupling : char
+    {
+      COLLOCATED,
+      SURFACE_MORTAR
+    };
+
     // Optional fabrication-process response library. When specified, Palace extracts and
     // classifies the target edges and constructs models and patches automatically.
     std::string library;
@@ -1098,6 +1116,20 @@ public:
     // Relative tolerance for an optional self-consistent corrected-field solve. The raw
     // field solve continues to use Solver.Linear.Tol.
     double solve_tol = 1.0e-6;
+
+    // Coupling used by translational coupon families in the self-consistent domain
+    // operator. Disabling this coupling leaves their fabricated surface response active
+    // while avoiding subtraction of an independently discretized thin coupon operator.
+    TranslationalDomainCorrection translational_domain_correction =
+        TranslationalDomainCorrection::FIXED_TRACE;
+
+    // Map the global field into coupon trace coefficients either by the historical point
+    // collocation or by an L2 projection on a matching-surface mortar. The latter is
+    // uniformly bounded under mesh refinement and is intended for self-consistent use.
+    TraceCoupling trace_coupling = TraceCoupling::COLLOCATED;
+
+    // Integer quadrature refinement factor for experimental surface-mortar traces.
+    int mortar_oversampling = 2;
 
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.

@@ -1,0 +1,17 @@
+Loop,Vertex,Conductor,Plane,Hole,Class,X,Y
+1,1,1,0.0,0,Physical,-6.5,-4.5
+1,2,1,0.0,0,Physical,-6.5,-0.5
+1,3,1,0.0,0,Physical,-1.0,-0.5
+1,4,1,0.0,0,Physical,-1.0,0.5
+1,5,1,0.0,0,Physical,-6.5,0.5
+1,6,1,0.0,0,Continuation,-6.5,4.5
+1,7,1,0.0,0,Continuation,-9.916666666000001,4.5
+1,8,1,0.0,0,Continuation,-9.916666666000001,-4.5
+2,1,2,0.0,0,Physical,5.5,-0.5
+2,2,2,0.0,0,Continuation,5.5,-4.5
+2,3,2,0.0,0,Continuation,8.916666666000001,-4.5
+2,4,2,0.0,0,Continuation,8.916666666000001,4.5
+2,5,2,0.0,0,Physical,5.5,4.5
+2,6,2,0.0,0,Physical,5.5,0.5
+2,7,2,0.0,0,Physical,0.0,0.5
+2,8,2,0.0,0,Physical,0.0,-0.5

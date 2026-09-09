@@ -8,6 +8,7 @@
 import argparse
 import csv
 import json
+import math
 import shlex
 import subprocess
 from pathlib import Path
@@ -67,6 +68,16 @@ def device_trace(path, source, patch):
     )
 
 
+def relative_error(direct, predicted, scale):
+    values = (direct, predicted, scale)
+    if not all(math.isfinite(value) for value in values):
+        return math.inf
+    denominator = max(abs(direct), abs(predicted), 1.0e-14 * abs(scale))
+    if denominator == 0.0:
+        return 0.0
+    return abs(predicted - direct) / denominator
+
+
 def write_trace(source, destination, values):
     rows = read_rows(source)
     if len(rows) % 3 != 0:
@@ -95,9 +106,20 @@ def main():
     parser.add_argument("--palace", type=Path, required=True)
     parser.add_argument("--ranks", type=int, default=1)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--max-relative-error",
+        type=float,
+        help=(
+            "Fail when any replayed domain or interface energy exceeds this "
+            "relative-error limit"
+        ),
+    )
     args = parser.parse_args()
+    if args.max_relative_error is not None and args.max_relative_error <= 0.0:
+        parser.error("--max-relative-error must be positive")
 
     coupon = args.coupon.expanduser().resolve()
+    palace = args.palace.expanduser().resolve()
     output = (
         args.output.expanduser().resolve()
         if args.output
@@ -161,11 +183,24 @@ def main():
     full_trace_path = None
     if len(conductor_states) == 1 and abs(conductor_states[0]) > 1.0e-14:
         full_scale = float(conductor_states[0])
+        full_values = values.copy()
+        lift_path = coupon / "probe-conductor-2.csv"
+        if library.get("TraceLiftVersion", 0) >= 3:
+            if not lift_path.is_file():
+                raise ValueError(f"Missing conductor trace lift {lift_path}")
+            lift = {
+                (row["x"], row["y"], row["z"]): row["V"]
+                for row in read_rows(lift_path)
+            }
+            if set(lift) != set(full_values):
+                raise ValueError("Conductor trace lift geometry does not match zero trace")
+            for key, value in lift.items():
+                full_values[key] += full_scale * value
         full_trace_path = output / "device-trace-full-normalized.csv"
         write_trace(
             coupon / "zero-trace.csv",
             full_trace_path,
-            {key: value / full_scale for key, value in values.items()},
+            {key: value / full_scale for key, value in full_values.items()},
         )
 
     # The direct replay imposes the exported contour trace with every conductor
@@ -175,7 +210,7 @@ def main():
     imposed = coefficients.copy()
     imposed[contour_size:] = 0.0
 
-    report = {"Version": 1, "Coupon": str(coupon), "Source": args.source,
+    report = {"Version": 2, "Coupon": str(coupon), "Source": args.source,
               "Patch": args.patch, "Results": []}
     for kind in ("thin", "fabricated"):
         matrix = read_domain_matrix(
@@ -203,7 +238,7 @@ def main():
             config_path = output / f"{kind}-{excitation}.json"
             config_path.write_text(json.dumps(config, indent=2) + "\n")
             command = [
-                str(args.palace),
+                str(palace),
                 *( ["--serial"] if args.ranks == 1 else ["-np", str(args.ranks)]),
                 str(config_path),
             ]
@@ -212,26 +247,58 @@ def main():
 
             direct_domain = energy_scale * read_row(root / "domain-E.csv")["E_elec (J)"]
             surface = read_row(root / "surface-Q.csv")
+            predicted_domain = float(prediction @ matrix @ prediction)
+            domain_error = relative_error(
+                direct_domain,
+                predicted_domain,
+                direct_domain,
+            )
             entry = {
                 "Kind": kind,
                 "Excitation": excitation,
                 "DirectDomainEnergy": direct_domain,
-                "PredictedDomainEnergy": float(prediction @ matrix @ prediction),
+                "PredictedDomainEnergy": predicted_domain,
+                "DomainRelativeError": domain_error,
                 "Interfaces": {},
             }
             for interface, response in sorted(surfaces.items()):
-                entry["Interfaces"][str(interface)] = {
-                    "DirectEnergy": energy_scale
+                direct_surface = (
+                    energy_scale
                     * surface.get(f"p_surf[{interface}]", 0.0)
-                    * (direct_domain / energy_scale),
-                    "PredictedEnergy": float(prediction @ response @ prediction),
+                    * (direct_domain / energy_scale)
+                )
+                predicted_surface = float(prediction @ response @ prediction)
+                entry["Interfaces"][str(interface)] = {
+                    "DirectEnergy": direct_surface,
+                    "PredictedEnergy": predicted_surface,
+                    "RelativeError": relative_error(
+                        direct_surface,
+                        predicted_surface,
+                        direct_domain,
+                    ),
                 }
             report["Results"].append(entry)
 
+    errors = []
+    for result in report["Results"]:
+        errors.append(result["DomainRelativeError"])
+        errors.extend(
+            interface["RelativeError"]
+            for interface in result["Interfaces"].values()
+        )
+    maximum_error = max(errors, default=0.0)
     report["ConductorStates"] = conductor_states.tolist()
+    report["MaximumRelativeError"] = maximum_error
+    report["Limit"] = args.max_relative_error
+    report["Passed"] = math.isfinite(maximum_error) and (
+        args.max_relative_error is None
+        or maximum_error <= args.max_relative_error
+    )
     report_path = output / "device-trace-replay.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(report_path)
+    if not report["Passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

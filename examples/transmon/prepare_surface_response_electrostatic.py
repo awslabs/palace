@@ -28,6 +28,12 @@ def main():
         choices=("PostprocessOnly", "SelfConsistent", "Both"),
         default="Both",
     )
+    parser.add_argument(
+        "--trace-coupling",
+        choices=("Collocated", "SurfaceMortar"),
+        default="Collocated",
+    )
+    parser.add_argument("--mortar-oversampling", type=int, choices=range(1, 9), default=2)
     args = parser.parse_args()
     if args.order <= 0 or args.substrate_permittivity <= 0.0:
         parser.error("order and substrate permittivity must be positive")
@@ -74,6 +80,9 @@ def main():
                 "TargetInterfaces": [1, 2, 3],
                 "UnmatchedPolicy": "Error",
                 "CorrectionMode": args.correction_mode,
+                "TranslationalDomainCorrection": "FixedTrace",
+                "TraceCoupling": args.trace_coupling,
+                "MortarOversampling": args.mortar_oversampling,
                 "SolveTol": 1.0e-6,
             },
         },

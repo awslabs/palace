@@ -351,11 +351,12 @@ def coupon_bounds(edges, radius, metal_thickness, overetch):
 
 def matching_support_points(lower, upper, frame, radius):
     plan_span = np.max(upper[:2] - lower[:2])
-    # Event components are bounded to 8R. The rectangular coupon adds up to 2R of
-    # continuation/padding on either side, so its matching box is bounded to 12R.
-    if plan_span > 12.0 * radius * (1.0 + 1.0e-12):
+    # Exhaustive ownership can merge support-overlapping neighborhoods whose centers
+    # span up to 12R. Continuation and matching padding add up to 4R, so the resulting
+    # matching box is bounded to 16R.
+    if plan_span > 16.0 * radius * (1.0 + 1.0e-12):
         raise ValueError(
-            "Spatial coupon matching support exceeds 12R in the process plane; "
+            "Spatial coupon matching support exceeds 16R in the process plane; "
             "split the interaction component or increase the matching radius"
         )
     local = np.asarray(
@@ -366,7 +367,17 @@ def matching_support_points(lower, upper, frame, radius):
             for z in (lower[2], upper[2])
         ]
     )
-    return canonical_points(local, frame).tolist()
+    support = canonical_points(local, frame)
+    tolerance = max(
+        1.0e-10 * radius, 64.0 * np.finfo(float).eps
+    )
+    exponent = math.floor(math.log10(tolerance))
+    decimals = max(0, -exponent)
+    support = np.asarray(
+        [[round(float(value), decimals) for value in point] for point in support]
+    )
+    support[np.abs(support) < 0.5 * 10.0**exponent] = 0.0
+    return support.tolist()
 
 
 def rectangle_perimeter_point(bounds, z, coordinate):
@@ -624,6 +635,35 @@ def conductor_at_points(
     pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
     width = 3.0 * radius
     tolerance = 1.0e-10 * radius
+    if facets:
+        layers = {
+            (
+                int(edge["Conductor"]),
+                float(edge["Point"][2]),
+                1.0 if edge["ProcessNormal"][2] > 0.0 else -1.0,
+            )
+            for edge in edges
+        }
+        for conductor, plane, normal_sign in sorted(layers):
+            height = normal_sign * (points[:, 2] - plane)
+            active = (
+                (height >= -tolerance)
+                & (height <= metal_thickness + tolerance)
+                & points_in_plan_view_mask(
+                    points[:, :2],
+                    facets,
+                    conductor,
+                    plane,
+                    tolerance,
+                )
+            )
+            conflict = active & (labels != 0) & (labels != conductor)
+            if np.any(conflict):
+                raise ValueError(
+                    "Different coupon conductors overlap on the matching surface"
+                )
+            labels[active] = conductor
+        return labels
     for edge in edges:
         point = np.asarray(edge["Point"])
         tangent = np.asarray(edge["Tangent"])
@@ -645,14 +685,6 @@ def conductor_at_points(
             & (transverse <= -shift + tolerance)
             & (transverse >= -width - tolerance)
         )
-        if facets:
-            active &= points_in_plan_view_mask(
-                points[:, :2],
-                facets,
-                edge["Conductor"],
-                edge["Point"][2],
-                tolerance,
-            )
         conflict = active & (labels != 0) & (labels != edge["Conductor"])
         if np.any(conflict):
             raise ValueError("Different coupon conductors overlap on the matching surface")
@@ -672,6 +704,40 @@ def write_surface_trace(path, points, triangles, values):
         header="x,y,z,V,triangle",
         comments="",
         fmt=("%.16e", "%.16e", "%.16e", "%.16e", "%d"),
+    )
+
+
+def write_trace_mesh(output, points, triangles, active, labels, frame):
+    active_lookup = {vertex: basis for basis, vertex in enumerate(active, start=1)}
+    canonical = canonical_points(points, frame)
+    vertex_rows = [
+        (
+            index + 1,
+            *canonical[index],
+            active_lookup.get(index, 0),
+            int(labels[index]),
+        )
+        for index in range(len(points))
+    ]
+    np.savetxt(
+        output / "trace-vertices.csv",
+        np.asarray(vertex_rows),
+        delimiter=",",
+        header="vertex,x,y,z,basis,conductor",
+        comments="",
+        fmt=("%d", "%.16e", "%.16e", "%.16e", "%d", "%d"),
+    )
+    triangle_rows = [
+        (index, *(np.asarray(triangle, dtype=int) + 1))
+        for index, triangle in enumerate(triangles, start=1)
+    ]
+    np.savetxt(
+        output / "trace-triangles.csv",
+        np.asarray(triangle_rows),
+        delimiter=",",
+        header="triangle,vertex_i,vertex_j,vertex_k",
+        comments="",
+        fmt="%d",
     )
 
 
@@ -942,6 +1008,7 @@ def make_config(
     response_matrix=True,
     available_attributes=None,
     slot_partitioned=False,
+    terminal_traces=None,
 ):
     validate_metal_slot_partitioning(
         edges, fabricated, available_attributes, slot_partitioned
@@ -958,7 +1025,7 @@ def make_config(
                 "TerminalAttributes": conductor_attributes(
                     edges, fabricated, conductor, available_attributes
                 ),
-                "DataFile": str(zero_trace),
+                "DataFile": str((terminal_traces or {}).get(conductor, zero_trace)),
             }
         )
     active_interfaces = []
@@ -1083,7 +1150,9 @@ def make_config(
             "Linear": {
                 "Type": "BoomerAMG",
                 "KSPType": "CG",
-                "Tol": 1.0e-10,
+                # A controlled p4 coupon comparison found sub-4e-4% worst-energy
+                # change between 1e-10 and 1e-8, with about 25% lower solve time.
+                "Tol": 1.0e-8,
                 "MaxIts": 1000,
                 "EstimatorTol": 5.0e-1,
                 "EstimatorMaxIts": 5,
@@ -1135,6 +1204,10 @@ def write_library(
             "postpro/spatial_fabricated/surface-response-matrix.csv",
         "ThinSurfaceMatrix": "postpro/spatial_thin/surface-response-matrix.csv",
         "BasisPoints": str(basis_path.relative_to(output)),
+        "TraceMesh": {
+            "Vertices": "trace-vertices.csv",
+            "Triangles": "trace-triangles.csv",
+        },
         "Interfaces": [
             {
                 "Slot": interface["Slot"],
@@ -1193,9 +1266,10 @@ def write_library(
             model["ZeroTraceIndices"] = zero_indices
     library = {
         "Version": 3,
-        "TraceLiftVersion": 2,
+        "TraceLiftVersion": 3,
         "Name": model_name,
         "MatchingRadius": radius,
+        "ExhaustiveSpatialClosure": True,
         "Fabrication": fabrication,
         "Models": [model],
     }
@@ -1204,14 +1278,71 @@ def write_library(
     return path
 
 
-def reference_points(coupon, edges, frame, radius):
+def spatial_metal_band_cutoff(points, edges, radius, metal_thickness):
+    """Smoothly suppress traces on every thin/fabricated process-plane cut."""
+    transition = radius / 3.0
+    cutoff = np.ones(len(points))
+    layers = {
+        (round(edge["Point"][2], 12), int(np.sign(edge["ProcessNormal"][2])))
+        for edge in edges
+    }
+    for plane, normal_sign in layers:
+        coordinate = normal_sign * (points[:, 2] - plane)
+        distance = np.maximum(-coordinate, coordinate - metal_thickness)
+        normalized = np.clip(distance / transition, 0.0, 1.0)
+        layer_cutoff = normalized * normalized * (3.0 - 2.0 * normalized)
+        cutoff = np.minimum(cutoff, layer_cutoff)
+    return cutoff
+
+
+def conductor_trace_lifts(points, labels, conductor_count):
+    """Lift conductor states at excluded contact nodes, zero at free trace knots."""
+    if conductor_count <= 1:
+        return {}
+    expected = set(range(1, conductor_count + 1))
+    found = {int(label) for label in labels if label > 0}
+    if found != expected:
+        raise ValueError(
+            "Matching surface does not intersect every coupon conductor: "
+            f"expected {sorted(expected)}, found {sorted(found)}"
+        )
+    lifts = {}
+    for conductor in range(2, conductor_count + 1):
+        lifts[conductor] = (labels == conductor).astype(float)
+    return lifts
+
+
+def reference_points(coupon, edges, facets, frame, radius):
     conductor_count = max(edge["Conductor"] for edge in edges)
     references = []
     for conductor in range(1, conductor_count + 1):
-        edge = next(item for item in edges if item["Conductor"] == conductor)
-        local = np.asarray(edge["Point"]) - 0.5 * radius * np.asarray(
-            edge["GapDirection"]
+        candidates = sorted(
+            (edge for edge in edges if edge["Conductor"] == conductor),
+            key=lambda edge: (
+                tuple(edge["Point"]),
+                tuple(edge["GapDirection"]),
+                tuple(edge["Interval"]),
+            ),
         )
+        local = None
+        for fraction in (0.1, 0.05, 0.025, 0.0125, 0.00625):
+            for edge in candidates:
+                candidate = np.asarray(edge["Point"]) - fraction * radius * np.asarray(
+                    edge["GapDirection"]
+                )
+                if not facets or points_in_plan_view_mask(
+                    candidate[np.newaxis, :2],
+                    facets,
+                    conductor,
+                    edge["Point"][2],
+                    1.0e-10 * radius,
+                )[0]:
+                    local = candidate
+                    break
+            if local is not None:
+                break
+        if local is None:
+            raise ValueError(f"Unable to place conductor {conductor} reference in mask")
         references.append((local @ frame).tolist())
     return references
 
@@ -1676,10 +1807,17 @@ def main():
         comments="",
         fmt="%.16e",
     )
+    write_trace_mesh(output, points, triangles, active.tolist(), labels, frame)
 
     scale = np.maximum(upper - lower, np.finfo(float).tiny)
     normalized = (points - 0.5 * (lower + upper)) / scale
-    heldout_values = (
+    cutoff = spatial_metal_band_cutoff(
+        points,
+        edges,
+        args.radius,
+        args.metal_thickness,
+    )
+    heldout_values = cutoff * (
         0.35
         + 0.20 * normalized[:, 0]
         - 0.15 * normalized[:, 1]
@@ -1687,7 +1825,8 @@ def main():
         + 0.08 * normalized[:, 0] * normalized[:, 1]
         + 0.06 * normalized[:, 2] ** 2
     )
-    heldout_values[labels != 0] = 0.0
+    heldout_values[labels == 1] = 0.0
+    heldout_values[labels > 1] = 1.0
     heldout_trace = output / "heldout-trace.csv"
     write_surface_trace(heldout_trace, points, triangles, heldout_values)
     heldout_coefficients = np.concatenate(
@@ -1702,6 +1841,17 @@ def main():
         fmt="%.16e",
     )
 
+    conductor_lifts = conductor_trace_lifts(
+        points,
+        labels,
+        conductor_count,
+    )
+    conductor_probe_paths = {}
+    for conductor, values in conductor_lifts.items():
+        path = output / f"probe-conductor-{conductor}.csv"
+        write_surface_trace(path, points, triangles, values)
+        conductor_probe_paths[conductor] = path
+
     probes = (
         ("common", "cutoff", np.ones(len(points))),
         ("x-linear", "cutoff*x/Lx", normalized[:, 0]),
@@ -1713,7 +1863,7 @@ def main():
     probe_paths = []
     probe_metadata = []
     for index, (name, expression, values) in enumerate(probes, start=1):
-        values = values.copy()
+        values = cutoff * values
         values[labels != 0] = 0.0
         path = output / f"probe-{index:02d}.csv"
         write_surface_trace(path, points, triangles, values)
@@ -1723,7 +1873,7 @@ def main():
         probe_metadata.append(
             {
                 "Name": f"conductor-{conductor}",
-                "Expression": f"V_{conductor}-V_1",
+                "Expression": f"contact-lift(V_{conductor}-V_1)",
             }
         )
     (output / "probe-manifest.json").write_text(
@@ -1770,6 +1920,7 @@ def main():
             edges,
             available_attributes=available_attributes,
             slot_partitioned=slot_partitioned,
+            terminal_traces=conductor_probe_paths,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
         heldout_name = f"heldout_{name}"
@@ -1822,6 +1973,7 @@ def main():
             edges,
             available_attributes=available_attributes,
             slot_partitioned=slot_partitioned,
+            terminal_traces=conductor_probe_paths,
         )
         (output / f"{probe_name}.json").write_text(
             json.dumps(probe, indent=2) + "\n"
@@ -1852,7 +2004,7 @@ def main():
         contour_groups,
         zero_indices,
         paths,
-        reference_points(coupon, edges, frame, args.radius),
+        reference_points(coupon, edges, facets, frame, args.radius),
         interfaces,
         fabrication,
         args.model_name,

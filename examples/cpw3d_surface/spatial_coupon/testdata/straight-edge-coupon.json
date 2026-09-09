@@ -1,0 +1,39 @@
+{
+  "Id": "straight-edge-swept",
+  "Topology": "SpatialEdgeCluster",
+  "Geometry": {
+    "Edges": [
+      {
+        "Point": [0.0, 0.0, 0.0],
+        "GapDirection": [1.0, 0.0, 0.0],
+        "ProcessNormal": [0.0, 0.0, 1.0],
+        "Interval": [-2.0, 2.0],
+        "Conductor": 1,
+        "InterfaceSlot": 0,
+        "BoundaryCondition": {
+          "Type": "PEC"
+        }
+      }
+    ]
+  },
+  "Interfaces": [
+    {
+      "Slot": 0,
+      "Type": "SA",
+      "Target": 1
+    },
+    {
+      "Slot": 0,
+      "Type": "MS",
+      "Target": 2
+    },
+    {
+      "Slot": 0,
+      "Type": "MA",
+      "Target": 3
+    }
+  ],
+  "BoundaryCondition": {
+    "Type": "PEC"
+  }
+}

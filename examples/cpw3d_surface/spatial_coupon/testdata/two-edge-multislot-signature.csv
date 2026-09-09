@@ -1,0 +1,3 @@
+Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm
+1,0,1,2.5,0,0,1,0,0,0,-1,0,1,-2,0,0
+2,1,1,0,0,0,0,-1,0,-1,0,0,1,-2,2,0

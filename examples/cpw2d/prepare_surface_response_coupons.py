@@ -28,7 +28,11 @@ CORNER_FINALIZER = CORNER_ROOT / "finalize_corner_response.py"
 CORNER_CONVERGENCE = CORNER_ROOT / "run_probe_convergence.py"
 LIBRARY_COMBINER = CORNER_ROOT / "combine_process_libraries.py"
 SPATIAL_ROOT = ROOT.parent / "cpw3d_surface" / "spatial_coupon"
-SPATIAL_MESH = SPATIAL_ROOT / "mesh_spatial_coupon.jl"
+SPATIAL_FIELD_MESH = SPATIAL_ROOT / "mesh_spatial_coupon.jl"
+SPATIAL_SWEPT_MESH = SPATIAL_ROOT / "mesh_spatial_coupon_swept.jl"
+# Retain the historical name for plan manifests and callers that inspect it. Actual
+# execution resolves the explicitly selected implementation with spatial_mesh_path().
+SPATIAL_MESH = SPATIAL_FIELD_MESH
 SPATIAL_GENERATOR = SPATIAL_ROOT / "generate_spatial_response.py"
 
 PAIRED_TOPOLOGIES = {
@@ -206,7 +210,7 @@ def uses_finite_impedance(coupon):
     )
 
 
-def preparation(requirement):
+def preparation(requirement, spatial_mesh=SPATIAL_MESH):
     topology = requirement["Topology"]
     geometry = requirement.get("Geometry", {})
     try:
@@ -247,7 +251,7 @@ def preparation(requirement):
         return {
             "Method": "SpatialCoupon",
             "MeshGenerator": str(
-                SPATIAL_MESH.relative_to(ROOT.parent.parent)
+                spatial_mesh.relative_to(ROOT.parent.parent)
             ),
             "ResponseGenerator": str(
                 SPATIAL_GENERATOR.relative_to(ROOT.parent.parent)
@@ -256,7 +260,14 @@ def preparation(requirement):
     return {"Method": "Unsupported", "Reason": "Unknown coupon topology"}
 
 
-def plan_from_manifest(manifest_path, manifest, library_path, library, include_matched):
+def plan_from_manifest(
+    manifest_path,
+    manifest,
+    library_path,
+    library,
+    include_matched,
+    spatial_mesh=SPATIAL_MESH,
+):
     coupons = {}
     signatures = {}
     matching_radius = float(manifest["Library"]["MatchingRadius"])
@@ -288,7 +299,7 @@ def plan_from_manifest(manifest_path, manifest, library_path, library, include_m
             "DeviceOccurrences": requirement.get("Count", 0),
             "DeviceEdgeLength": requirement.get("TotalEdgeLength", 0.0),
             "CoverageStatus": requirement.get("Status"),
-            "Preparation": preparation(requirement),
+            "Preparation": preparation(requirement, spatial_mesh),
         }
         if uses_finite_impedance(coupon):
             coupon["Preparation"]["BoundaryLawQualification"] = "Missing"
@@ -1790,7 +1801,17 @@ def spatial_complete(root):
     )
 
 
+def spatial_mesh_path(args):
+    mode = getattr(args, "spatial_mesher", "field")
+    if mode == "field":
+        return SPATIAL_FIELD_MESH
+    if mode == "swept":
+        return SPATIAL_SWEPT_MESH
+    raise ValueError(f"Unknown spatial mesher {mode!r}")
+
+
 def spatial_spec(coupon, args, parameters):
+    mesher = spatial_mesh_path(args)
     resolution = process_resolution(
         parameters, args.spatial_lc_fine, args.min_process_feature_elements
     )
@@ -1830,12 +1851,14 @@ def spatial_spec(coupon, args, parameters):
         "MatchingRadius": args.matching_radius,
         "Orders": args.orders,
         "Mesh": {
+            "Mesher": getattr(args, "spatial_mesher", "field"),
             "FineSize": args.spatial_lc_fine,
             "TangentialSize": getattr(args, "spatial_lc_tangent", 0.0),
             "FarSize": args.spatial_lc_far,
             "ProcessCoreWidth": getattr(args, "spatial_process_core_width", 0.0),
             "ProcessFineWidth": getattr(args, "spatial_process_fine_width", 0.0),
             "ProcessGradingPower": getattr(args, "spatial_process_grading_power", 1.7),
+            "NormalGrowthRatio": getattr(args, "spatial_normal_growth_ratio", 1.4),
             "MaxNodes": getattr(args, "spatial_max_nodes", 500_000),
             "MaxElements": getattr(args, "spatial_max_elements", 2_000_000),
             "Order": max(2, args.mesh_order),
@@ -1849,7 +1872,7 @@ def spatial_spec(coupon, args, parameters):
         "RegularizationPolicy": geometry.get("MaskRegularization"),
         "ToolFingerprint": tool_fingerprint(
             (
-                SPATIAL_MESH,
+                mesher,
                 SPATIAL_GENERATOR,
                 STRAIGHT_QUALIFIER,
                 CORNER_CONVERGENCE,
@@ -1869,6 +1892,7 @@ def generate_spatial_meshes(
     spec,
     factor,
 ):
+    mesher = spatial_mesh_path(args)
     mesh_root = (
         root
         if math.isclose(factor, 1.0)
@@ -1884,7 +1908,7 @@ def generate_spatial_meshes(
         run(
             [
                 *julia_command(args),
-                SPATIAL_MESH,
+                mesher,
                 signature,
                 kind,
                 mesh,
@@ -1914,6 +1938,8 @@ def generate_spatial_meshes(
                 getattr(args, "spatial_process_fine_width", 0.0),
                 "--process-grading-power",
                 getattr(args, "spatial_process_grading_power", 1.7),
+                "--normal-growth-ratio",
+                getattr(args, "spatial_normal_growth_ratio", 1.4),
                 "--max-nodes",
                 getattr(args, "spatial_max_nodes", 500_000),
                 "--max-elements",
@@ -2426,12 +2452,24 @@ def parse_args():
             "mesh-resolution convergence gate"
         ),
     )
+    parser.add_argument(
+        "--spatial-mesher",
+        choices=("field", "swept"),
+        default="field",
+        help=(
+            "Spatial coupon mesher. 'field' is the existing experimental "
+            "unstructured mode; 'swept' selects the explicit swept-prism path"
+        ),
+    )
     parser.add_argument("--spatial-lc-fine", type=float, default=0.02)
     parser.add_argument(
         "--spatial-lc-tangent",
         type=float,
         default=0.0,
-        help="Near-edge longitudinal size; 0 uses isotropic size",
+        help=(
+            "Independent longitudinal size. The field mesher accepts 0 for its "
+            "isotropic fallback; the swept mesher requires a positive value"
+        ),
     )
     parser.add_argument("--spatial-lc-far", type=float, default=0.3)
     parser.add_argument(
@@ -2455,7 +2493,20 @@ def parse_args():
         default=1.7,
         help="Power-law exponent for edge-normal grading from fine to far size",
     )
-    parser.add_argument("--spatial-max-nodes", type=int, default=500_000)
+    parser.add_argument(
+        "--spatial-normal-growth-ratio",
+        type=float,
+        default=1.4,
+        help="Geometric growth ratio for explicit swept normal coordinates",
+    )
+    parser.add_argument(
+        "--spatial-max-nodes",
+        type=int,
+        help=(
+            "Spatial mesh node budget; defaults to 500k for field mode and "
+            "3M for explicit swept meshes"
+        ),
+    )
     parser.add_argument("--spatial-max-elements", type=int, default=2_000_000)
     parser.add_argument(
         "--spatial-h-factors",
@@ -2516,9 +2567,16 @@ def parse_args():
         parser.error("--edge-offset-tolerance must be nonnegative")
     if args.min_process_feature_elements <= 0.0:
         parser.error("--min-process-feature-elements must be positive")
+    if args.spatial_lc_fine <= 0.0:
+        parser.error("--spatial-lc-fine must be positive")
+    if args.spatial_lc_far < args.spatial_lc_fine:
+        parser.error("--spatial-lc-far must not be smaller than fine size")
     if args.spatial_lc_tangent < 0.0:
         parser.error("--spatial-lc-tangent must be nonnegative")
-    if args.spatial_lc_tangent and not (
+    if args.spatial_mesher == "swept":
+        if args.spatial_lc_tangent <= 0.0:
+            parser.error("the swept spatial mesher requires --spatial-lc-tangent > 0")
+    elif args.spatial_lc_tangent and not (
         args.spatial_lc_fine <= args.spatial_lc_tangent <= args.spatial_lc_far
     ):
         parser.error("--spatial-lc-tangent must lie between fine and far sizes")
@@ -2528,6 +2586,12 @@ def parse_args():
         parser.error("--spatial-process-fine-width must be nonnegative")
     if args.spatial_process_grading_power <= 0.0:
         parser.error("--spatial-process-grading-power must be positive")
+    if args.spatial_normal_growth_ratio <= 1.0:
+        parser.error("--spatial-normal-growth-ratio must exceed one")
+    if args.spatial_max_nodes is None:
+        args.spatial_max_nodes = (
+            3_000_000 if args.spatial_mesher == "swept" else 500_000
+        )
     if args.spatial_max_nodes <= 0 or args.spatial_max_elements <= 0:
         parser.error("spatial mesh budgets must be positive")
     args.cluster_h_factors = sorted(
@@ -2563,6 +2627,16 @@ def parse_args():
         parser.error(
             "--spatial-h-factors requires at least two values >= 1 ending at 1"
         )
+    if (
+        args.spatial_mesher == "field"
+        and args.spatial_lc_tangent
+        and args.spatial_h_factors[0] * args.spatial_lc_fine
+        > args.spatial_lc_tangent
+    ):
+        parser.error(
+            "the field spatial mesher requires --spatial-lc-tangent to be at "
+            "least the coarsest h-refined normal size"
+        )
     return args
 
 
@@ -2581,7 +2655,12 @@ def main():
         library_path = (manifest_path.parent / library_path).resolve()
     library = load_json(library_path)
     plan = plan_from_manifest(
-        manifest_path, manifest, library_path, library, args.include_matched
+        manifest_path,
+        manifest,
+        library_path,
+        library,
+        args.include_matched,
+        spatial_mesh_path(args),
     )
     args.output.mkdir(parents=True, exist_ok=True)
     destination = args.output / "coupon-plan.json"

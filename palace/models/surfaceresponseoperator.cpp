@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -643,6 +644,7 @@ struct ProcessLibrary
 {
   int version = 0;
   int trace_lift_version = 0;
+  bool exhaustive_spatial_closure = false;
   std::string name;
   double matching_radius = 0.0;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
@@ -1342,6 +1344,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   ProcessLibrary library;
   library.version = version;
   library.trace_lift_version = data.value("TraceLiftVersion", 0);
+  library.exhaustive_spatial_closure = data.value("ExhaustiveSpatialClosure", false);
   MFEM_VERIFY(library.trace_lift_version >= 0,
               "Fabrication-process response-library TraceLiftVersion must be "
               "nonnegative!");
@@ -1438,6 +1441,11 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     }
     const bool parallel_cluster = model.topology == LibraryTopology::PARALLEL_EDGE_CLUSTER;
     const bool spatial_cluster = model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER;
+    const bool trace_mesh_topology = spatial_cluster ||
+                                     model.topology == LibraryTopology::CONVEX_CORNER ||
+                                     model.topology == LibraryTopology::CONCAVE_CORNER ||
+                                     model.topology == LibraryTopology::ENDPOINT ||
+                                     model.topology == LibraryTopology::JUNCTION;
     if (auto edges = entry.find("Edges"); edges != entry.end())
     {
       MFEM_VERIFY(
@@ -1762,6 +1770,18 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                 "fabrication-process response model!");
     model.response.basis_points =
         ResolveLibraryPath(directory, entry.at("BasisPoints").get<std::string>());
+    if (auto trace_mesh = entry.find("TraceMesh"); trace_mesh != entry.end())
+    {
+      MFEM_VERIFY(version >= 3 && trace_mesh->is_object() &&
+                      trace_mesh->contains("Vertices") &&
+                      trace_mesh->contains("Triangles") && trace_mesh_topology,
+                  "TraceMesh requires Vertices and Triangles and is supported by a "
+                  "version-3 spatial response model!");
+      model.response.trace_vertices =
+          ResolveLibraryPath(directory, trace_mesh->at("Vertices").get<std::string>());
+      model.response.trace_triangles =
+          ResolveLibraryPath(directory, trace_mesh->at("Triangles").get<std::string>());
+    }
     if (auto references = entry.find("ConductorReferences"); references != entry.end())
     {
       MFEM_VERIFY(version >= 2,
@@ -3676,6 +3696,13 @@ std::string TopologyName(LibraryTopology topology)
   return "unknown";
 }
 
+bool IsTranslationalTopology(std::string_view topology)
+{
+  return topology == "isolated edge" || topology == "same-conductor gap" ||
+         topology == "different-conductor gap" || topology == "same-conductor strip" ||
+         topology == "parallel-edge cluster";
+}
+
 std::string TopologyIdentifier(LibraryTopology topology)
 {
   switch (topology)
@@ -4061,6 +4088,9 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
 
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
+  result.translational_domain_correction = request.translational_domain_correction;
+  result.trace_coupling = request.trace_coupling;
+  result.mortar_oversampling = request.mortar_oversampling;
   int next_model_index = 1;
   int matched_clusters = 0;
   int matched_edges = 0;
@@ -4075,7 +4105,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       const std::string reason =
           "target interfaces sharing EdgeAttributes require EdgeFrameNormal for "
           "automatic two-dimensional response matching";
-      if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+      if (!requirements &&
+          request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
         MFEM_ABORT(reason);
       }
@@ -4387,7 +4418,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
 
     if (!group_matched)
     {
-      if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+      if (!requirements &&
+          request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
@@ -4635,14 +4667,43 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
     return std::nullopt;
   }
 
+  auto OwnershipPriority = [](const LibraryModel &model)
+  {
+    ElementBox support;
+    for (const auto &point : model.support_points)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        support.min[d] = std::min(support.min[d], point[d]);
+        support.max[d] = std::max(support.max[d], point[d]);
+      }
+    }
+    double volume = 0.0;
+    if (!model.support_points.empty())
+    {
+      volume = 1.0;
+      for (int d = 0; d < 3; d++)
+      {
+        volume *= std::max(0.0, support.max[d] - support.min[d]);
+      }
+    }
+    double interval_span = 0.0;
+    for (const auto &edge : model.spatial_edges)
+    {
+      interval_span += edge.interval[1] - edge.interval[0];
+    }
+    return std::make_pair(volume, interval_span);
+  };
+
   std::optional<SpatialClusterSelection3D> best;
   double best_distance = mfem::infinity();
+  std::pair<double, double> best_priority{-mfem::infinity(), -mfem::infinity()};
   for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
   {
     const auto &model = library.models[model_index];
     if (excluded_models.find(model_index) != excluded_models.end() ||
         model.topology != LibraryTopology::SPATIAL_EDGE_CLUSTER ||
-        model.spatial_edges.size() != sites.size())
+        model.spatial_edges.size() < sites.size())
     {
       continue;
     }
@@ -4651,6 +4712,7 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
     const double angle_tolerance =
         std::max(model.spatial_angle_tolerance, 1.0e-10 * std::acos(-1.0));
     const auto &model_anchor = model.spatial_edges.front();
+    const auto ownership_priority = OwnershipPriority(model);
 
     for (std::size_t site_anchor_index = 0; site_anchor_index < sites.size();
          site_anchor_index++)
@@ -4696,9 +4758,12 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
               std::acos(std::clamp(Dot(gap, site.gap_direction), -1.0, 1.0));
           const double normal_error =
               std::acos(std::clamp(Dot(normal, site.process_normal), -1.0, 1.0));
-          const double interval_error =
-              std::max(std::abs(edge.interval[0] - site.interval[0]),
-                       std::abs(edge.interval[1] - site.interval[1]));
+          // A unified owner can deliberately extend farther along a physical edge than
+          // the interaction site which selects it. Require complete containment rather
+          // than identical clipped intervals so that one enlarged coupon can own every
+          // overlapping subordinate support.
+          const double interval_error = std::max({0.0, edge.interval[0] - site.interval[0],
+                                                  site.interval[1] - edge.interval[1]});
           const double normalized_error = std::max(
               {position_error / position_tolerance, gap_error / angle_tolerance,
                normal_error / angle_tolerance, interval_error / position_tolerance});
@@ -4707,15 +4772,6 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
             candidates[edge_index].push_back({site_index, normalized_error});
           }
         }
-        if (candidates[edge_index].empty())
-        {
-          break;
-        }
-      }
-      if (std::any_of(candidates.begin(), candidates.end(),
-                      [](const auto &candidate) { return candidate.empty(); }))
-      {
-        continue;
       }
 
       std::vector<std::size_t> order(model.spatial_edges.size());
@@ -4729,16 +4785,24 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
       std::map<int, int> conductor_to_model;
       std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
       std::map<std::vector<std::pair<InterfaceDielectric, int>>, int> slot_by_targets;
-      std::function<void(std::size_t, double)> Match =
-          [&](std::size_t depth, double normalized_distance)
+      std::function<void(std::size_t, std::size_t, double)> Match =
+          [&](std::size_t depth, std::size_t assigned_sites, double normalized_distance)
       {
-        if (normalized_distance >= best_distance)
+        if (normalized_distance > best_distance)
         {
           return;
         }
         if (depth == order.size())
         {
-          if (!MatchLibraryInterfaces(model, targets_by_slot))
+          if (assigned_sites != sites.size() ||
+              !MatchLibraryInterfaces(model, targets_by_slot))
+          {
+            return;
+          }
+          const double distance_tolerance =
+              1.0e-12 * std::max({1.0, normalized_distance, best_distance});
+          if (best && std::abs(normalized_distance - best_distance) <= distance_tolerance &&
+              ownership_priority <= best_priority)
           {
             return;
           }
@@ -4757,10 +4821,17 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
           }
           best = std::move(selection);
           best_distance = normalized_distance;
+          best_priority = ownership_priority;
           return;
         }
 
         const std::size_t edge_index = order[depth];
+        const std::size_t remaining_edges = order.size() - depth - 1;
+        const std::size_t remaining_sites = sites.size() - assigned_sites;
+        if (remaining_edges >= remaining_sites)
+        {
+          Match(depth + 1, assigned_sites, normalized_distance);
+        }
         const int model_conductor = model.spatial_edges[edge_index].conductor;
         const int interface_slot = model.spatial_edges[edge_index].interface_slot;
         for (const auto &candidate : candidates[edge_index])
@@ -4810,7 +4881,8 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
           }
           assignment[edge_index] = candidate.site;
           used_site[candidate.site] = true;
-          Match(depth + 1, std::max(normalized_distance, candidate.distance));
+          Match(depth + 1, assigned_sites + 1,
+                std::max(normalized_distance, candidate.distance));
           used_site[candidate.site] = false;
           assignment[edge_index] = std::numeric_limits<std::size_t>::max();
           if (new_model)
@@ -4831,7 +4903,7 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
           }
         }
       };
-      Match(0, 0.0);
+      Match(0, 0, 0.0);
     }
   }
   return best;
@@ -4856,6 +4928,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
   }
+  const bool exhaustive_spatial_closure =
+      library.exhaustive_spatial_closure ||
+      (requirements &&
+       request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::WARN);
   if (diagnostics)
   {
     diagnostics->matching_radius = library.matching_radius;
@@ -5002,6 +5078,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * std::max(1, iodata.solver.order));
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
+  result.translational_domain_correction = request.translational_domain_correction;
+  result.trace_coupling = request.trace_coupling;
+  result.mortar_oversampling = request.mortar_oversampling;
   int next_model_index = 1;
   int next_interpolation_group = 1;
   int matched_intervals = 0;
@@ -5138,6 +5217,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     for (std::size_t model_edge = 0; model_edge < selection.model_to_site.size();
          model_edge++)
     {
+      if (selection.model_to_site[model_edge] == std::numeric_limits<std::size_t>::max())
+      {
+        continue;
+      }
       const auto &site = selection.sites[selection.model_to_site[model_edge]];
       auto [conductor, inserted] =
           conductor_ids.emplace(site.conductor, conductor_ids.size() + 1);
@@ -5223,7 +5306,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   auto GatherPlanViewFacets = [&](const std::vector<SpatialEdgeSite3D> &sites,
                                   const Point3D &origin, const std::array<Point3D, 3> &axes,
                                   const std::map<int, int> &conductor_by_metal_component,
-                                  int process_axis = 1)
+                                  int process_axis = 1,
+                                  const std::vector<Point3D> *support_points = nullptr)
   {
     if (statistics)
     {
@@ -5290,6 +5374,17 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       lower[d] -= library.matching_radius;
       upper[d] += library.matching_radius;
+    }
+    if (support_points)
+    {
+      for (const auto &point : *support_points)
+      {
+        for (int d = 0; d < 2; d++)
+        {
+          lower[d] = std::min(lower[d], point[plan_axes[d]]);
+          upper[d] = std::max(upper[d], point[plan_axes[d]]);
+        }
+      }
     }
 
     std::vector<PlanViewFacet> local_facets;
@@ -5530,6 +5625,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       for (std::size_t model_edge = 0; model_edge < model.spatial_edges.size();
            model_edge++)
       {
+        if (selection.model_to_site[model_edge] == std::numeric_limits<std::size_t>::max())
+        {
+          continue;
+        }
         const auto &site = sites[selection.model_to_site[model_edge]];
         if (site.metal_component < 0)
         {
@@ -5546,8 +5645,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         expected_conductors.insert(edge.conductor);
       }
-      const auto plan_view = GatherPlanViewFacets(sites, selection.origin, selection.axes,
-                                                  conductor_by_metal_component);
+      const auto plan_view =
+          GatherPlanViewFacets(sites, selection.origin, selection.axes,
+                               conductor_by_metal_component, 1, &model.support_points);
       std::set<int> found_conductors;
       for (const auto &facet : plan_view.facets)
       {
@@ -5817,7 +5917,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   {
     const auto &first_source = geometry.segments[global_segments[i].geometry_index];
     const auto &second_source = geometry.segments[global_segments[j].geometry_index];
-    if (global_segments[i].targets == global_segments[j].targets ||
+    if ((!exhaustive_spatial_closure &&
+         global_segments[i].targets == global_segments[j].targets) ||
         first_source.physical_chain == second_source.physical_chain ||
         SegmentsShareVertex(first_source, second_source))
     {
@@ -5876,24 +5977,32 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     std::vector<std::size_t> event_component = {seed};
     visited_global_event[seed] = true;
-    for (std::size_t cursor = 0; cursor < event_component.size(); cursor++)
+    for (std::size_t candidate = 0; candidate < global_spatial_events.size(); candidate++)
     {
-      const std::size_t event_index = event_component[cursor];
-      for (std::size_t candidate = 0; candidate < global_spatial_events.size(); candidate++)
+      if (!visited_global_event[candidate] &&
+          std::all_of(event_component.begin(), event_component.end(),
+                      [&](std::size_t member)
+                      {
+                        return Distance(global_spatial_events[member].center,
+                                        global_spatial_events[candidate].center) <
+                               (exhaustive_spatial_closure ? 4.0 : 1.0) *
+                                   global_interaction_distance;
+                      }))
       {
-        if (!visited_global_event[candidate] &&
-            Distance(global_spatial_events[event_index].center,
-                     global_spatial_events[candidate].center) < global_interaction_distance)
-        {
-          visited_global_event[candidate] = true;
-          event_component.push_back(candidate);
-        }
+        visited_global_event[candidate] = true;
+        event_component.push_back(candidate);
       }
     }
 
     double event_diameter = 0.0;
+    std::set<TargetSignature> component_targets;
     for (std::size_t i = 0; i < event_component.size(); i++)
     {
+      const auto &event = global_spatial_events[event_component[i]];
+      component_targets.emplace(global_segments[event.first].targets.begin(),
+                                global_segments[event.first].targets.end());
+      component_targets.emplace(global_segments[event.second].targets.begin(),
+                                global_segments[event.second].targets.end());
       for (std::size_t j = i + 1; j < event_component.size(); j++)
       {
         event_diameter = std::max(
@@ -5901,10 +6010,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                      global_spatial_events[event_component[j]].center));
       }
     }
-    MFEM_VERIFY(event_diameter <= 4.0 * global_interaction_distance * (1.0 + 1.0e-12),
-                "Transitive cross-interface spatial-event clustering produced a "
-                "component wider than 8R. Split the component or increase the matching "
-                "radius!");
+    // Build cross-interface components from every nearby interaction, including
+    // same-interface pairs connected to the cross-interface neighborhood. Otherwise a
+    // later per-interface model can overlap the cross-interface model and expose a new
+    // unified coupon only after expensive generation. Purely local components remain the
+    // responsibility of the per-interface pass below.
+    if (component_targets.size() < 2)
+    {
+      continue;
+    }
+    const double maximum_global_event_diameter = 4.0 * global_interaction_distance;
+    MFEM_VERIFY(event_diameter <= maximum_global_event_diameter * (1.0 + 1.0e-12),
+                "Cross-interface spatial-event clustering produced an oversized "
+                "component. Split the component or increase the matching radius!");
 
     std::map<int, std::vector<Point3D>> points_by_chain;
     for (const std::size_t event_index : event_component)
@@ -6014,8 +6132,102 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   struct ClaimedSpatialSupport
   {
     ElementBox box;
+    ElementBox local_box;
     std::set<int> targets;
     std::string model;
+    std::vector<SpatialEdgeSite3D> sites;
+    Point3D origin{};
+    std::array<Point3D, 3> axes{};
+  };
+  auto OwnershipSites =
+      [](const SpatialClusterSelection3D &selection, const LibraryModel &model)
+  {
+    std::vector<SpatialEdgeSite3D> sites;
+    sites.reserve(selection.model_to_site.size());
+    for (std::size_t model_edge = 0; model_edge < selection.model_to_site.size();
+         model_edge++)
+    {
+      if (selection.model_to_site[model_edge] == std::numeric_limits<std::size_t>::max())
+      {
+        continue;
+      }
+      auto site = selection.sites[selection.model_to_site[model_edge]];
+      site.interval = model.spatial_edges[model_edge].interval;
+      sites.push_back(std::move(site));
+    }
+    return sites;
+  };
+  auto MakeClaimedSupport =
+      [&](const SpatialClusterSelection3D &selection, const LibraryModel &model)
+  {
+    ElementBox local_box;
+    for (const auto &point : model.support_points)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local_box.min[d] = std::min(local_box.min[d], point[d]);
+        local_box.max[d] = std::max(local_box.max[d], point[d]);
+      }
+    }
+    return ClaimedSpatialSupport{SpatialSupportBox(selection, model),
+                                 local_box,
+                                 SpatialTargetAttributes(selection),
+                                 model.name,
+                                 OwnershipSites(selection, model),
+                                 selection.origin,
+                                 selection.axes};
+  };
+  auto OwnsSpatialSupport =
+      [&](const ClaimedSpatialSupport &claimed, const SpatialClusterSelection3D &candidate,
+          const LibraryModel &candidate_model, const std::set<int> &candidate_targets)
+  {
+    if (!std::includes(claimed.targets.begin(), claimed.targets.end(),
+                       candidate_targets.begin(), candidate_targets.end()))
+    {
+      return false;
+    }
+    const double tolerance = 1.0e-10 * library.matching_radius;
+    const auto candidate_sites = OwnershipSites(candidate, candidate_model);
+    for (const auto &site : candidate_sites)
+    {
+      const auto owner =
+          std::find_if(claimed.sites.begin(), claimed.sites.end(), [&](const auto &entry)
+                       { return entry.physical_chain == site.physical_chain; });
+      if (owner == claimed.sites.end())
+      {
+        return false;
+      }
+      const Point3D owner_tangent =
+          Normalize(Cross(owner->gap_direction, owner->process_normal));
+      const Point3D site_tangent =
+          Normalize(Cross(site.gap_direction, site.process_normal));
+      for (const double coordinate : site.interval)
+      {
+        const Point3D endpoint = Add(site.point, Scale(coordinate, site_tangent));
+        const double owner_coordinate =
+            Dot(Subtract(endpoint, owner->point), owner_tangent);
+        if (owner_coordinate < owner->interval[0] - tolerance ||
+            owner_coordinate > owner->interval[1] + tolerance)
+        {
+          return false;
+        }
+      }
+    }
+    for (const auto &point : candidate_model.support_points)
+    {
+      const Point3D global = TransformLocalPoint(candidate.origin, candidate.axes, point);
+      const Point3D relative = Subtract(global, claimed.origin);
+      Point3D local{};
+      for (int d = 0; d < 3; d++)
+      {
+        local[d] = Dot(relative, claimed.axes[d]);
+      }
+      if (!claimed.local_box.Contains(local, 3, tolerance))
+      {
+        return false;
+      }
+    }
+    return true;
   };
   std::vector<ClaimedSpatialSupport> claimed_spatial_supports;
   for (const auto &selection : cross_interface_selections)
@@ -6023,8 +6235,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     const auto &source = library.models[selection.response.models.front().index];
     if (!source.support_points.empty())
     {
-      claimed_spatial_supports.push_back({SpatialSupportBox(selection, source),
-                                          SpatialTargetAttributes(selection), source.name});
+      claimed_spatial_supports.push_back(MakeClaimedSupport(selection, source));
     }
   }
 
@@ -6253,7 +6464,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     if (externally_conflicted_segments > 0)
     {
-      if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+      if (!requirements &&
+          request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
         MFEM_ABORT("A three-dimensional target edge is within 2R of a physical metal "
                    "edge with a different interface mapping!");
@@ -6400,6 +6612,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     std::vector<SpatialClusterSelection3D> spatial_cluster_selections;
     std::set<std::pair<int, int>> described_spatial_pairs;
+    std::set<std::pair<int, int>> owned_spatial_pairs;
     std::vector<bool> visited_spatial_event(spatial_events.size(), false);
     for (std::size_t seed = 0; seed < spatial_events.size(); seed++)
     {
@@ -6409,18 +6622,20 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
       std::vector<std::size_t> event_component = {seed};
       visited_spatial_event[seed] = true;
-      for (std::size_t cursor = 0; cursor < event_component.size(); cursor++)
+      for (std::size_t candidate = 0; candidate < spatial_events.size(); candidate++)
       {
-        const std::size_t event_index = event_component[cursor];
-        for (std::size_t candidate = 0; candidate < spatial_events.size(); candidate++)
+        if (!visited_spatial_event[candidate] &&
+            std::all_of(event_component.begin(), event_component.end(),
+                        [&](std::size_t member)
+                        {
+                          return Distance(spatial_events[member].center,
+                                          spatial_events[candidate].center) <
+                                 (exhaustive_spatial_closure ? 4.0 : 1.0) *
+                                     interaction_distance;
+                        }))
         {
-          if (!visited_spatial_event[candidate] &&
-              Distance(spatial_events[event_index].center,
-                       spatial_events[candidate].center) < interaction_distance)
-          {
-            visited_spatial_event[candidate] = true;
-            event_component.push_back(candidate);
-          }
+          visited_spatial_event[candidate] = true;
+          event_component.push_back(candidate);
         }
       }
 
@@ -6434,9 +6649,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                                 spatial_events[event_component[j]].center));
         }
       }
-      MFEM_VERIFY(event_diameter <= 4.0 * interaction_distance * (1.0 + 1.0e-12),
-                  "Transitive spatial-event clustering produced a component wider than "
-                  "8R. Split the component or increase the matching radius!");
+      const double maximum_event_diameter = 4.0 * interaction_distance;
+      MFEM_VERIFY(event_diameter <= maximum_event_diameter * (1.0 + 1.0e-12),
+                  "Spatial-event clustering produced an oversized component. Split the "
+                  "component or increase the matching radius!");
 
       std::map<int, std::vector<Point3D>> points_by_chain;
       for (const std::size_t event_index : event_component)
@@ -6504,9 +6720,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
       auto selection = FindMatchingSpatialModel(sites);
       bool support_owned = false;
+      std::vector<SpatialEdgeSite3D> unified_sites;
+      std::vector<std::string> overlapping_models;
+      std::string candidate_model;
       if (selection)
       {
         const auto &source = library.models[selection->response.models.front().index];
+        candidate_model = source.name;
         if (!source.support_points.empty())
         {
           const auto candidate_box = SpatialSupportBox(*selection, source);
@@ -6517,20 +6737,94 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             {
               continue;
             }
-            const bool targets_covered =
-                std::includes(claimed.targets.begin(), claimed.targets.end(),
-                              candidate_targets.begin(), candidate_targets.end());
-            if (claimed.box.Contains(candidate_box, 3) && targets_covered)
+            if (OwnsSpatialSupport(claimed, *selection, source, candidate_targets))
             {
               support_owned = true;
               break;
             }
-            MFEM_ABORT("Spatial response matching volumes for models \""
-                       << claimed.model << "\" and \"" << source.name
-                       << "\" overlap without one model owning the complete support and "
-                          "interface mapping. Generate one unified spatial cluster!");
+            if (!requirements)
+            {
+              MFEM_ABORT("Spatial response matching volumes for models \""
+                         << claimed.model << "\" and \"" << source.name
+                         << "\" overlap without one model owning the complete support "
+                            "and interface mapping. Generate one unified spatial "
+                            "cluster!");
+            }
+            overlapping_models.push_back(claimed.model);
+            auto MergeSites = [&](const std::vector<SpatialEdgeSite3D> &additional)
+            {
+              for (const auto &site : additional)
+              {
+                auto existing = std::find_if(
+                    unified_sites.begin(), unified_sites.end(), [&](const auto &candidate)
+                    { return candidate.physical_chain == site.physical_chain; });
+                if (existing == unified_sites.end())
+                {
+                  unified_sites.push_back(site);
+                  continue;
+                }
+                const Point3D tangent =
+                    Normalize(Cross(existing->gap_direction, existing->process_normal));
+                const Point3D site_tangent =
+                    Normalize(Cross(site.gap_direction, site.process_normal));
+                const double offset = Dot(Subtract(site.point, existing->point), tangent);
+                const double orientation = Dot(site_tangent, tangent);
+                const double begin =
+                    offset + (orientation >= 0.0 ? site.interval[0] : -site.interval[1]);
+                const double end =
+                    offset + (orientation >= 0.0 ? site.interval[1] : -site.interval[0]);
+                existing->interval[0] = std::min(existing->interval[0], begin);
+                existing->interval[1] = std::max(existing->interval[1], end);
+              }
+            };
+            if (unified_sites.empty())
+            {
+              if (claimed.sites.size() >= selection->sites.size())
+              {
+                unified_sites = claimed.sites;
+                MergeSites(OwnershipSites(*selection, source));
+              }
+              else
+              {
+                unified_sites = OwnershipSites(*selection, source);
+                MergeSites(claimed.sites);
+              }
+            }
+            else
+            {
+              MergeSites(claimed.sites);
+            }
           }
         }
+      }
+      if (!support_owned && !unified_sites.empty())
+      {
+        auto [spatial_geometry, targets_by_slot] =
+            DescribeMissingSpatialGeometry(unified_sites);
+        std::string reason = "Overlapping spatial matching volumes for models ";
+        for (std::size_t i = 0; i < overlapping_models.size(); i++)
+        {
+          reason += (i == 0 ? "\"" : ", \"") + overlapping_models[i] + "\"";
+        }
+        reason += " and \"" + candidate_model + "\" require one complete support owner";
+        requirements->Add(3, LibraryTopology::SPATIAL_EDGE_CLUSTER, targets_by_slot,
+                          unified_sites.front().boundary_condition, spatial_geometry,
+                          library, nullptr,
+                          2.0 * group.matching_radius * unified_sites.size(), reason);
+        for (const std::size_t event_index : event_component)
+        {
+          const auto &event = spatial_events[event_index];
+          int first_chain =
+              geometry.segments[segments[event.first].geometry_index].physical_chain;
+          int second_chain =
+              geometry.segments[segments[event.second].geometry_index].physical_chain;
+          if (first_chain > second_chain)
+          {
+            std::swap(first_chain, second_chain);
+          }
+          described_spatial_pairs.emplace(first_chain, second_chain);
+        }
+        continue;
       }
       if (support_owned)
       {
@@ -6546,6 +6840,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             std::swap(first_chain, second_chain);
           }
           described_spatial_pairs.emplace(first_chain, second_chain);
+          owned_spatial_pairs.emplace(first_chain, second_chain);
         }
         continue;
       }
@@ -6593,9 +6888,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const auto &source = library.models[selection->response.models.front().index];
       if (!source.support_points.empty())
       {
-        claimed_spatial_supports.push_back({SpatialSupportBox(*selection, source),
-                                            SpatialTargetAttributes(*selection),
-                                            source.name});
+        claimed_spatial_supports.push_back(MakeClaimedSupport(*selection, source));
       }
       spatial_cluster_selections.push_back(std::move(*selection));
     }
@@ -6610,6 +6903,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         std::swap(first_chain, second_chain);
       }
+      if (exhaustive_spatial_closure &&
+          owned_spatial_pairs.find({first_chain, second_chain}) !=
+              owned_spatial_pairs.end())
+      {
+        return true;
+      }
       const auto closest = ClosestSegmentApproach(segments[first].p0, segments[first].p1,
                                                   segments[second].p0, segments[second].p1);
       const Point3D center = Scale(
@@ -6621,8 +6920,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                          {
                            return interaction.first_chain == first_chain &&
                                   interaction.second_chain == second_chain &&
-                                  Distance(interaction.center, center) <
-                                      interaction_distance;
+                                  (exhaustive_spatial_closure ||
+                                   Distance(interaction.center, center) <
+                                       interaction_distance);
                          });
     };
     std::vector<SpatialClusterSelection3D::InteractionNeighborhood>
@@ -6687,7 +6987,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             message);
         }
       }
-      if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+      if (!requirements &&
+          request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
         MFEM_ABORT(message);
       }
@@ -7028,6 +7329,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     auto ExcludeSpatialInterval =
         [&](const SpatialClusterSelection3D &selection, std::size_t model_edge_index)
     {
+      if (selection.model_to_site[model_edge_index] ==
+          std::numeric_limits<std::size_t>::max())
+      {
+        return;
+      }
       const auto &model = library.models[selection.response.models.front().index];
       const auto &edge = model.spatial_edges[model_edge_index];
       const auto &site = selection.sites[selection.model_to_site[model_edge_index]];
@@ -8696,7 +9002,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     if (!group_matched)
     {
       unmatched_groups++;
-      if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+      if (!requirements &&
+          request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
@@ -8828,6 +9135,92 @@ ResponseCorrectionData BuildAutomaticResponseData(const IoData &iodata,
   }
   MFEM_ABORT("Automatic fabrication-process response matching requires a 2D or 3D "
              "electrostatic mesh!");
+}
+
+struct TraceMeshData
+{
+  struct Vertex
+  {
+    Point3D point{};
+    int basis = 0;
+    int conductor = 0;
+  };
+  std::vector<Vertex> vertices;
+  std::vector<std::array<int, 3>> triangles;
+};
+
+TraceMeshData ReadTraceMesh(const std::string &vertex_path,
+                            const std::string &triangle_path)
+{
+  TraceMeshData mesh;
+  std::ifstream vertices(vertex_path);
+  MFEM_VERIFY(vertices,
+              "Unable to open response trace vertex file \"" << vertex_path << "\"!");
+  std::string line;
+  while (std::getline(vertices, line))
+  {
+    auto first = line.find_first_not_of(" \t\r");
+    if (first == std::string::npos || line[first] == '#')
+    {
+      continue;
+    }
+    std::replace(line.begin(), line.end(), ',', ' ');
+    std::istringstream row(line);
+    int index = 0;
+    TraceMeshData::Vertex vertex;
+    if (!(row >> index >> vertex.point[0] >> vertex.point[1] >> vertex.point[2] >>
+          vertex.basis >> vertex.conductor))
+    {
+      MFEM_VERIFY(mesh.vertices.empty(),
+                  "Could not parse response trace vertex file \"" << vertex_path << "\"!");
+      continue;
+    }
+    MFEM_VERIFY(index == static_cast<int>(mesh.vertices.size()) + 1 && vertex.basis >= 0 &&
+                    vertex.conductor >= 0 &&
+                    std::all_of(vertex.point.begin(), vertex.point.end(),
+                                [](double value) { return std::isfinite(value); }),
+                "Invalid response trace vertex in \"" << vertex_path << "\"!");
+    mesh.vertices.push_back(vertex);
+  }
+  MFEM_VERIFY(!mesh.vertices.empty(),
+              "Response trace vertex file \"" << vertex_path << "\" is empty!");
+
+  std::ifstream triangles(triangle_path);
+  MFEM_VERIFY(triangles,
+              "Unable to open response trace triangle file \"" << triangle_path << "\"!");
+  while (std::getline(triangles, line))
+  {
+    auto first = line.find_first_not_of(" \t\r");
+    if (first == std::string::npos || line[first] == '#')
+    {
+      continue;
+    }
+    std::replace(line.begin(), line.end(), ',', ' ');
+    std::istringstream row(line);
+    int index = 0;
+    std::array<int, 3> triangle{};
+    if (!(row >> index >> triangle[0] >> triangle[1] >> triangle[2]))
+    {
+      MFEM_VERIFY(mesh.triangles.empty(), "Could not parse response trace triangle file \""
+                                              << triangle_path << "\"!");
+      continue;
+    }
+    MFEM_VERIFY(index == static_cast<int>(mesh.triangles.size()) + 1,
+                "Invalid response trace triangle index in \"" << triangle_path << "\"!");
+    for (int &vertex : triangle)
+    {
+      MFEM_VERIFY(vertex > 0 && vertex <= static_cast<int>(mesh.vertices.size()),
+                  "Invalid response trace triangle vertex in \"" << triangle_path << "\"!");
+      vertex--;
+    }
+    MFEM_VERIFY(triangle[0] != triangle[1] && triangle[1] != triangle[2] &&
+                    triangle[2] != triangle[0],
+                "Degenerate response trace triangle in \"" << triangle_path << "\"!");
+    mesh.triangles.push_back(triangle);
+  }
+  MFEM_VERIFY(!mesh.triangles.empty(),
+              "Response trace triangle file \"" << triangle_path << "\" is empty!");
+  return mesh;
 }
 
 std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path)
@@ -9002,6 +9395,7 @@ struct DomainResponseMatrices
   mfem::DenseMatrix thin;
   mfem::DenseMatrix defect;
   mfem::DenseMatrix fixed_flux_transform;
+  mfem::DenseMatrix fixed_flux_defect;
 };
 
 DomainResponseMatrices
@@ -9075,8 +9469,16 @@ BuildDomainResponseMatrices(const std::string &fabricated_path,
       }
     }
   }
+  mfem::DenseMatrix fabricated_times_transform(expected_size),
+      fixed_flux_defect(expected_size);
+  mfem::Mult(fabricated, fixed_flux_transform, fabricated_times_transform);
+  mfem::MultAtB(fixed_flux_transform, fabricated_times_transform, fixed_flux_defect);
+  fixed_flux_defect.Add(-1.0, thin);
+  // At fixed coupon flux, v_f = F⁺ T v_t and the fabricated energy operator pulled
+  // back to the thin trace is Aᵀ F A. This congruence is symmetric even when quotient-
+  // space pseudoinverses are required.
   return {std::move(fabricated), std::move(thin), std::move(defect),
-          std::move(fixed_flux_transform)};
+          std::move(fixed_flux_transform), std::move(fixed_flux_defect)};
 }
 
 std::map<int, mfem::DenseMatrix> ReadSurfaceResponseMatrices(const std::string &path,
@@ -9331,6 +9733,141 @@ bool PolygonsOverlap(const std::vector<Point2D> &a, const std::vector<Point2D> &
   return false;
 }
 
+std::optional<std::filesystem::path> ResponseGeometryCachePath()
+{
+  const char *value = std::getenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+  if (!value || std::string_view(value).empty())
+  {
+    return std::nullopt;
+  }
+  return std::filesystem::absolute(value).lexically_normal();
+}
+
+void WriteResponseGeometryCache(const std::filesystem::path &path,
+                                const ResponseCorrectionData &config)
+{
+  nlohmann::json models = nlohmann::json::array();
+  for (const auto &model : config.models)
+  {
+    nlohmann::json interfaces = nlohmann::json::array();
+    for (const auto &interface : model.interfaces)
+    {
+      interfaces.push_back({{"Target", interface.target}, {"Coupon", interface.coupon}});
+    }
+    nlohmann::json open_paths = nlohmann::json::array();
+    for (const auto &entry : model.open_contour_paths)
+    {
+      open_paths.push_back({{"Indices", entry.indices},
+                            {"StartConductor", entry.start_conductor},
+                            {"EndConductor", entry.end_conductor}});
+    }
+    models.push_back({{"Index", model.idx},
+                      {"Name", model.name},
+                      {"Topology", model.topology},
+                      {"FabricatedMatrix", model.fabricated_matrix},
+                      {"ThinMatrix", model.thin_matrix},
+                      {"FabricatedSurfaceMatrix", model.fabricated_surface_matrix},
+                      {"ThinSurfaceMatrix", model.thin_surface_matrix},
+                      {"BasisPoints", model.basis_points},
+                      {"TraceVertices", model.trace_vertices},
+                      {"TraceTriangles", model.trace_triangles},
+                      {"SpatialBasis", model.spatial_basis},
+                      {"ContourGroups", model.contour_groups},
+                      {"ZeroTraceIndices", model.zero_trace_indices},
+                      {"OpenContourPaths", std::move(open_paths)},
+                      {"ConductorStateCount", model.conductor_state_count},
+                      {"Interfaces", std::move(interfaces)}});
+  }
+  nlohmann::json patches = nlohmann::json::array();
+  for (const auto &patch : config.patches)
+  {
+    patches.push_back({{"Model", patch.model},
+                       {"Origin", patch.origin},
+                       {"AxisU", patch.axis_u},
+                       {"AxisV", patch.axis_v},
+                       {"AxisW", patch.axis_w},
+                       {"ConductorReferences", patch.conductor_references},
+                       {"Weight", patch.weight},
+                       {"InterpolationGroup", patch.interpolation_group},
+                       {"MaxwellConductorAnchors", patch.maxwell_conductor_anchors},
+                       {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec}});
+  }
+  if (path.has_parent_path())
+  {
+    std::filesystem::create_directories(path.parent_path());
+  }
+  std::ofstream output(path);
+  MFEM_VERIFY(output,
+              "Unable to write response-geometry cache \"" << path.string() << "\"!");
+  output << nlohmann::json{{"Version", 1},
+                           {"Models", std::move(models)},
+                           {"Patches", std::move(patches)}}
+                .dump(2)
+         << '\n';
+}
+
+ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &path,
+                                                 const ResponseCorrectionData &request)
+{
+  std::ifstream input(path);
+  MFEM_VERIFY(input, "Unable to read response-geometry cache \"" << path.string() << "\"!");
+  nlohmann::json data;
+  input >> data;
+  MFEM_VERIFY(data.value("Version", 0) == 1,
+              "Unsupported response-geometry cache version!");
+  ResponseCorrectionData result = request;
+  result.library.clear();
+  result.models.clear();
+  result.patches.clear();
+  for (const auto &entry : data.at("Models"))
+  {
+    ResponseModelData model;
+    model.idx = entry.at("Index");
+    model.name = entry.value("Name", std::string{});
+    model.topology = entry.value("Topology", std::string{});
+    model.fabricated_matrix = entry.at("FabricatedMatrix");
+    model.thin_matrix = entry.at("ThinMatrix");
+    model.fabricated_surface_matrix = entry.value("FabricatedSurfaceMatrix", std::string{});
+    model.thin_surface_matrix = entry.value("ThinSurfaceMatrix", std::string{});
+    model.basis_points = entry.at("BasisPoints");
+    model.trace_vertices = entry.value("TraceVertices", std::string{});
+    model.trace_triangles = entry.value("TraceTriangles", std::string{});
+    model.spatial_basis = entry.value("SpatialBasis", false);
+    model.contour_groups = entry.value("ContourGroups", std::vector<int>{});
+    model.zero_trace_indices = entry.value("ZeroTraceIndices", std::vector<int>{});
+    model.conductor_state_count = entry.value("ConductorStateCount", 0);
+    for (const auto &value : entry.value("OpenContourPaths", nlohmann::json::array()))
+    {
+      model.open_contour_paths.push_back(
+          {value.at("Indices"), value.at("StartConductor"), value.at("EndConductor")});
+    }
+    for (const auto &value : entry.value("Interfaces", nlohmann::json::array()))
+    {
+      model.interfaces.push_back({value.at("Target"), value.at("Coupon")});
+    }
+    result.models.push_back(std::move(model));
+  }
+  for (const auto &entry : data.at("Patches"))
+  {
+    ResponsePatchData patch;
+    patch.model = entry.at("Model");
+    patch.origin = entry.at("Origin");
+    patch.axis_u = entry.at("AxisU");
+    patch.axis_v = entry.at("AxisV");
+    patch.axis_w = entry.at("AxisW");
+    patch.conductor_references = entry.at("ConductorReferences");
+    patch.weight = entry.at("Weight");
+    patch.interpolation_group = entry.value("InterpolationGroup", 0);
+    patch.maxwell_conductor_anchors =
+        entry.value("MaxwellConductorAnchors", std::vector<std::array<double, 3>>{});
+    patch.maxwell_reference_is_pec = entry.value("MaxwellReferenceIsPEC", true);
+    result.patches.push_back(std::move(patch));
+  }
+  MFEM_VERIFY(!result.models.empty() && !result.patches.empty(),
+              "Response-geometry cache contains no models or patches!");
+  return result;
+}
+
 double QuadraticForm(const mfem::DenseMatrix &matrix, const Vector &x, Vector &workspace)
 {
   workspace.SetSize(x.Size());
@@ -9350,8 +9887,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
               "Surface-response preflight requires an automatic fabrication-process "
               "response library!");
 
-  auto request = *configured_request;
-  request.unmatched_policy = ResponseCorrectionData::UnmatchedPolicy::WARN;
+  const auto request = *configured_request;
   MaterialOperator mat_op(iodata, mesh);
   AutomaticResponseRequirements requirements(iodata.units,
                                              iodata.InputsNondimensionalized());
@@ -9409,6 +9945,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   const auto &request = iodata.solver.electrostatic.response_correction;
   MFEM_VERIFY(request, "Missing electrostatic surface response correction configuration!");
   const int dimension = fespace.Dimension();
+  const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+  mesh_coordinate_scale = coordinate_scale;
+  auto &response_mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
   MFEM_VERIFY((dimension == 2 || dimension == 3) && fespace.SpaceDimension() == dimension,
               "Surface response correction requires a 2D or 3D electrostatic mesh!");
   MFEM_VERIFY(dimension == 2 || request->IsAutomatic(),
@@ -9431,10 +9970,40 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     else
     {
       BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-      AutomaticResponseStatistics statistics;
-      automatic_config =
-          BuildAutomaticResponseData(iodata, laplace_op, *request, &statistics);
-      automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), statistics);
+      const auto geometry_cache = ResponseGeometryCachePath();
+      const char *write_cache_environment =
+          std::getenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      const bool write_geometry_cache = write_cache_environment &&
+                                        std::string_view(write_cache_environment) != "0" &&
+                                        !std::string_view(write_cache_environment).empty();
+      if (geometry_cache && !write_geometry_cache)
+      {
+        MFEM_VERIFY(std::filesystem::is_regular_file(*geometry_cache),
+                    "PALACE_RESPONSE_GEOMETRY_CACHE does not name an existing cache. "
+                    "Set PALACE_RESPONSE_GEOMETRY_CACHE_WRITE=1 in a serial run to "
+                    "create it first!");
+        automatic_config = ReadResponseGeometryCache(*geometry_cache, *request);
+        automatic_statistics = {{"GeometryCache", geometry_cache->string()}};
+        Mpi::Print("Loaded response-geometry cache: {}\n", geometry_cache->string());
+      }
+      else
+      {
+        AutomaticResponseStatistics statistics;
+        automatic_config =
+            BuildAutomaticResponseData(iodata, laplace_op, *request, &statistics);
+        automatic_statistics = BuildAutomaticStatistics(fespace.GetComm(), statistics);
+        if (geometry_cache)
+        {
+          MFEM_VERIFY(write_geometry_cache, "Response-geometry cache generation requires "
+                                            "PALACE_RESPONSE_GEOMETRY_CACHE_WRITE=1!");
+          if (Mpi::Root(fespace.GetComm()))
+          {
+            WriteResponseGeometryCache(*geometry_cache, *automatic_config);
+          }
+          Mpi::Barrier(fespace.GetComm());
+          Mpi::Print("Wrote response-geometry cache: {}\n", geometry_cache->string());
+        }
+      }
       if (automatic_geometry)
       {
         auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
@@ -9460,6 +10029,21 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   std::vector<std::vector<std::array<double, 3>>> basis_points;
   models.reserve(config->models.size());
   basis_points.reserve(config->models.size());
+  auto GetTranslationalDomainCorrectionMode = [&]()
+  {
+    using ConfigMode = ResponseCorrectionData::TranslationalDomainCorrection;
+    switch (config->translational_domain_correction)
+    {
+      case ConfigMode::DISABLED:
+        return DomainCorrectionMode::DISABLED;
+      case ConfigMode::FIXED_TRACE:
+        return DomainCorrectionMode::FIXED_TRACE;
+      case ConfigMode::FIXED_FLUX:
+        return DomainCorrectionMode::FIXED_FLUX;
+    }
+    MFEM_ABORT("Unknown translational response domain-correction mode!");
+    return DomainCorrectionMode::FIXED_TRACE;
+  };
   for (const auto &model_config : config->models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -9471,6 +10055,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.name =
         model_config.name.empty() ? fmt::format("model-{}", model.idx) : model_config.name;
     model.topology = model_config.topology.empty() ? "Explicit" : model_config.topology;
+    if (IsTranslationalTopology(model.topology))
+    {
+      model.domain_correction_mode = GetTranslationalDomainCorrectionMode();
+      model.surface_mortar =
+          config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR;
+    }
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
     MFEM_VERIFY(model.conductor_state_count >= 0,
@@ -9522,6 +10112,263 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           std::all_of(assigned.begin(), assigned.end(), [](bool value) { return value; }),
           "Response-correction OpenContourPaths do not partition BasisPoints!");
     }
+    MFEM_VERIFY(config->trace_coupling !=
+                        ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
+                    !model.spatial_basis || model.open_contour_paths.empty() ||
+                    !model_config.trace_vertices.empty(),
+                "SurfaceMortar requires an explicit TraceMesh for a spatial model with "
+                "OpenContourPaths; regenerate or augment the process library!");
+    if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
+        model.spatial_basis &&
+        (model.open_contour_paths.empty() || !model_config.trace_vertices.empty()))
+    {
+      model.surface_mortar = true;
+      model.spatial_mortar = true;
+    }
+    if (model.surface_mortar)
+    {
+      mfem::DenseMatrix mass(model.contour_size);
+      mass = 0.0;
+      if (model.spatial_mortar)
+      {
+        model.mortar_constant_load.SetSize(model.contour_size);
+        model.mortar_constant_load = 0.0;
+        model.mortar_conductor_loads.resize(model.conductor_state_count);
+        for (auto &load : model.mortar_conductor_loads)
+        {
+          load.SetSize(model.contour_size);
+          load = 0.0;
+        }
+        std::vector<bool> represented_basis(model.contour_size, false);
+        const bool explicit_trace_mesh = !model_config.trace_vertices.empty();
+        TraceMeshData trace_mesh;
+        if (explicit_trace_mesh)
+        {
+          MFEM_VERIFY(!model_config.trace_triangles.empty(),
+                      "A response TraceMesh requires both vertex and triangle files!");
+          trace_mesh =
+              ReadTraceMesh(model_config.trace_vertices, model_config.trace_triangles);
+          model.mortar_vertices.reserve(trace_mesh.vertices.size());
+          for (const auto &vertex : trace_mesh.vertices)
+          {
+            MFEM_VERIFY(vertex.basis <= model.contour_size &&
+                            vertex.conductor <= model.conductor_state_count + 1 &&
+                            (vertex.basis > 0 || vertex.conductor > 0),
+                        "A response trace vertex has invalid basis/conductor ownership!");
+            const int basis = vertex.basis - 1;
+            if (basis >= 0)
+            {
+              MFEM_VERIFY(
+                  !represented_basis[basis],
+                  "A response TraceMesh maps one basis coefficient more than once!");
+              represented_basis[basis] = true;
+            }
+            model.mortar_vertices.push_back({vertex.point, basis, vertex.conductor});
+          }
+        }
+        else
+        {
+          model.mortar_vertices.reserve(points.size());
+          std::set<int> constrained(model.zero_trace_indices.begin(),
+                                    model.zero_trace_indices.end());
+          for (int i = 0; i < model.contour_size; i++)
+          {
+            model.mortar_vertices.push_back({points[i], i, constrained.count(i) ? 1 : 0});
+            represented_basis[i] = true;
+          }
+        }
+        MFEM_VERIFY(std::all_of(represented_basis.begin(), represented_basis.end(),
+                                [](bool represented) { return represented; }),
+                    "A response TraceMesh must represent every coupon basis coefficient!");
+
+        auto AddTriangle = [&](int first, int second, int third)
+        {
+          const auto &a = model.mortar_vertices[first].point;
+          const auto &b = model.mortar_vertices[second].point;
+          const auto &c = model.mortar_vertices[third].point;
+          Point3D ab{}, ac{};
+          double maximum_edge_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            ab[d] = b[d] - a[d];
+            ac[d] = c[d] - a[d];
+          }
+          for (const auto edge :
+               {std::make_pair(first, second), std::make_pair(second, third),
+                std::make_pair(third, first)})
+          {
+            double length_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              const double delta = model.mortar_vertices[edge.first].point[d] -
+                                   model.mortar_vertices[edge.second].point[d];
+              length_squared += delta * delta;
+            }
+            maximum_edge_squared = std::max(maximum_edge_squared, length_squared);
+          }
+          const double area = 0.5 * Norm(Cross(ab, ac));
+          const double scale = std::max(1.0, maximum_edge_squared);
+          MFEM_VERIFY(area > 1.0e-14 * scale || !explicit_trace_mesh,
+                      "A response TraceMesh contains a degenerate triangle!");
+          if (area <= 1.0e-14 * scale)
+          {
+            return;
+          }
+          model.mortar_triangles.push_back(
+              {{first, second, third}, area, std::sqrt(maximum_edge_squared)});
+          constexpr double diagonal = 1.0 / 6.0;
+          constexpr double off_diagonal = 1.0 / 12.0;
+          for (int local_i = 0; local_i < 3; local_i++)
+          {
+            const int basis_i =
+                model.mortar_vertices[model.mortar_triangles.back().vertices[local_i]]
+                    .basis;
+            if (basis_i < 0)
+            {
+              continue;
+            }
+            model.mortar_constant_load[basis_i] += area / 3.0;
+            for (int local_j = 0; local_j < 3; local_j++)
+            {
+              const int basis_j =
+                  model.mortar_vertices[model.mortar_triangles.back().vertices[local_j]]
+                      .basis;
+              if (basis_j >= 0)
+              {
+                mass(basis_i, basis_j) +=
+                    area * (local_i == local_j ? diagonal : off_diagonal);
+              }
+              else
+              {
+                const int conductor =
+                    model.mortar_vertices[model.mortar_triangles.back().vertices[local_j]]
+                        .conductor;
+                if (conductor > 1)
+                {
+                  model.mortar_conductor_loads[conductor - 2][basis_i] +=
+                      area * (local_i == local_j ? diagonal : off_diagonal);
+                }
+              }
+            }
+          }
+        };
+        if (explicit_trace_mesh)
+        {
+          for (const auto &triangle : trace_mesh.triangles)
+          {
+            AddTriangle(triangle[0], triangle[1], triangle[2]);
+          }
+        }
+        else
+        {
+          MFEM_VERIFY(model.contour_groups.size() >= 2,
+                      "A spatial surface mortar requires at least two contour rings!");
+          const int ring_size = model.contour_groups.front();
+          MFEM_VERIFY(ring_size >= 3 &&
+                          std::all_of(model.contour_groups.begin(),
+                                      model.contour_groups.end(), [ring_size](int count)
+                                      { return count == ring_size; }),
+                      "A spatial surface mortar requires equal nontrivial contour rings!");
+          for (std::size_t ring = 0; ring + 1 < model.contour_groups.size(); ring++)
+          {
+            const int first_offset = static_cast<int>(ring) * ring_size;
+            const int second_offset = first_offset + ring_size;
+            for (int i = 0; i < ring_size; i++)
+            {
+              const int next = (i + 1) % ring_size;
+              AddTriangle(first_offset + i, first_offset + next, second_offset + next);
+              AddTriangle(first_offset + i, second_offset + next, second_offset + i);
+            }
+          }
+          const int last_offset =
+              (static_cast<int>(model.contour_groups.size()) - 1) * ring_size;
+          for (int i = 1; i + 1 < ring_size; i++)
+          {
+            AddTriangle(0, i + 1, i);
+            AddTriangle(last_offset, last_offset + i, last_offset + i + 1);
+          }
+        }
+        MFEM_VERIFY(!model.mortar_triangles.empty(),
+                    "A spatial surface mortar has no nondegenerate triangles!");
+      }
+      else
+      {
+        auto AddSegment = [&](int begin, int end)
+        {
+          MFEM_VERIFY(begin >= 0 && begin < model.contour_size && end >= 0 &&
+                          end < model.contour_size && begin != end,
+                      "Surface-mortar contour contains an invalid segment!");
+          double length_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double delta = points[end][d] - points[begin][d];
+            length_squared += delta * delta;
+          }
+          const double length = std::sqrt(length_squared);
+          MFEM_VERIFY(length > 0.0,
+                      "Surface-mortar contour contains a zero-length segment!");
+          model.mortar_segments.push_back({begin, end, length, 1});
+        };
+        if (!model.open_contour_paths.empty())
+        {
+          for (const auto &path : model.open_contour_paths)
+          {
+            MFEM_VERIFY(
+                path.indices.size() >= 2,
+                "A translational surface-mortar path requires at least two points!");
+            for (std::size_t i = 1; i < path.indices.size(); i++)
+            {
+              AddSegment(path.indices[i - 1], path.indices[i]);
+            }
+          }
+        }
+        else
+        {
+          int offset = 0;
+          for (const int count : model.contour_groups)
+          {
+            MFEM_VERIFY(count >= 3,
+                        "A closed translational surface-mortar contour requires at least "
+                        "three points!");
+            for (int i = 0; i < count; i++)
+            {
+              AddSegment(offset + i, offset + (i + 1) % count);
+            }
+            offset += count;
+          }
+        }
+        for (const auto &segment : model.mortar_segments)
+        {
+          mass(segment.begin, segment.begin) += segment.length / 3.0;
+          mass(segment.end, segment.end) += segment.length / 3.0;
+          mass(segment.begin, segment.end) += segment.length / 6.0;
+          mass(segment.end, segment.begin) += segment.length / 6.0;
+        }
+      }
+      if (!model.spatial_mortar)
+      {
+        model.mortar_constant_load.SetSize(model.contour_size);
+        for (int i = 0; i < model.contour_size; i++)
+        {
+          model.mortar_constant_load[i] = 0.0;
+          for (int j = 0; j < model.contour_size; j++)
+          {
+            model.mortar_constant_load[i] += mass(i, j);
+          }
+        }
+      }
+      for (const int index : model.zero_trace_indices)
+      {
+        for (int j = 0; j < model.contour_size; j++)
+        {
+          mass(index, j) = 0.0;
+          mass(j, index) = 0.0;
+        }
+        mass(index, index) = 1.0;
+      }
+      model.mortar_mass_inverse.SetSize(model.contour_size);
+      mfem::DenseMatrixInverse(mass, true).GetInverseMatrix(model.mortar_mass_inverse);
+    }
     auto domain_response = BuildDomainResponseMatrices(
         model_config.fabricated_matrix, model_config.thin_matrix, model.basis_size,
         model.zero_trace_indices, iodata.units);
@@ -9529,6 +10376,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
     model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+    model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
     auto surface_response =
         BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
@@ -9544,13 +10392,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // the shared physical domain twice. Use transformed matching-contour bounds as a
   // conservative fail-closed ownership check until an explicit partition-of-unity
   // representation is available.
-  const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   struct SpatialSupport
   {
     std::size_t patch = 0;
     ElementBox box;
   };
   std::vector<SpatialSupport> spatial_supports;
+  std::set<std::size_t> spatially_owned_patches;
   if (dimension == 3)
   {
     for (std::size_t patch_idx = 0; patch_idx < config->patches.size(); patch_idx++)
@@ -9586,20 +10434,40 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       {
         const auto first = spatial_supports[i].patch;
         const auto second = spatial_supports[j].patch;
+        if (spatially_owned_patches.count(first) || spatially_owned_patches.count(second))
+        {
+          continue;
+        }
         const int interpolation_group = config->patches[first].interpolation_group;
         if (interpolation_group > 0 &&
             interpolation_group == config->patches[second].interpolation_group)
         {
           continue;
         }
-        MFEM_VERIFY(!spatial_supports[i].box.InteriorOverlaps(spatial_supports[j].box, 3),
-                    "Three-dimensional response-correction matching volumes for patches "
-                        << first + 1 << " ("
-                        << models[model_indices.at(config->patches[first].model)].name
-                        << ") and " << second + 1 << " ("
-                        << models[model_indices.at(config->patches[second].model)].name
-                        << ") overlap. Replace them with one coupled spatial model or an "
-                           "explicit nonoverlapping partition!");
+        if (!spatial_supports[i].box.InteriorOverlaps(spatial_supports[j].box, 3))
+        {
+          continue;
+        }
+        const auto &first_model = models[model_indices.at(config->patches[first].model)];
+        const auto &second_model = models[model_indices.at(config->patches[second].model)];
+        const bool first_cluster = first_model.topology == "spatial edge cluster";
+        const bool second_cluster = second_model.topology == "spatial edge cluster";
+        if (first_cluster != second_cluster)
+        {
+          // Exact spatial clusters own their complete local interaction neighborhood.
+          // Give them deterministic priority over any overlapping corner/vertex patch;
+          // retaining both would double count the intersection, while clipping the dense
+          // coupon operator is not yet supported.
+          const auto subordinate = first_cluster ? j : i;
+          spatially_owned_patches.insert(spatial_supports[subordinate].patch);
+          continue;
+        }
+        MFEM_ABORT("Three-dimensional response-correction matching volumes for patches "
+                   << first + 1 << " (" << first_model.name << ") and " << second + 1
+                   << " (" << second_model.name
+                   << ") overlap without complete spatial-cluster ownership. Replace "
+                      "them with one coupled spatial model or an explicit nonoverlapping "
+                      "partition!");
       }
     }
   }
@@ -9610,6 +10478,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   std::vector<std::size_t> local_patch_indices;
   for (std::size_t patch_idx = 0; patch_idx < config->patches.size(); patch_idx++)
   {
+    if (spatially_owned_patches.count(patch_idx))
+    {
+      continue;
+    }
     const auto &patch_config = config->patches[patch_idx];
     const auto model_it = model_indices.find(patch_config.model);
     MFEM_VERIFY(model_it != model_indices.end(),
@@ -9631,15 +10503,135 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       continue;
     }
     local_patch_indices.push_back(patch_idx);
-    patches.push_back(Patch{static_cast<int>(patch_idx), model_it->second, point_count,
-                            basis_size, patch_config.weight});
-    point_count += model.contour_size + 1 + model.conductor_state_count;
+    patches.push_back(Patch{static_cast<int>(patch_idx), model_it->second, 0, basis_size, 0,
+                            1, 0.0, patch_config.weight});
     basis_size += model.basis_size;
+  }
+
+  // Surface-mortar quadrature follows the mesh resolution local to each matching surface,
+  // not the smallest element anywhere in the distributed device. This keeps AMR in an
+  // unrelated hotspot from refining every translational response patch.
+  std::vector<std::size_t> mortar_patch_indices;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    if (models[patches[patch_idx].model].surface_mortar)
+    {
+      mortar_patch_indices.push_back(patch_idx);
+    }
+  }
+  int global_mortar_patch_count = static_cast<int>(mortar_patch_indices.size());
+  Mpi::GlobalSum(1, &global_mortar_patch_count, fespace.GetComm());
+  if (global_mortar_patch_count > 0)
+  {
+    mfem::L2_FECollection size_collection(0, dimension);
+    mfem::ParFiniteElementSpace size_space(&response_mesh, &size_collection);
+    mfem::ParGridFunction size_field(&size_space);
+    mfem::Array<int> dofs;
+    for (int element = 0; element < response_mesh.GetNE(); element++)
+    {
+      size_space.GetElementDofs(element, dofs);
+      MFEM_ASSERT(dofs.Size() == 1, "Invalid piecewise-constant mesh-size space!");
+      size_field[dofs[0]] = response_mesh.GetElementSize(element, 1);
+    }
+    mfem::Vector centers(dimension * mortar_patch_indices.size());
+    for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
+    {
+      const std::size_t patch_idx = mortar_patch_indices[i];
+      const auto &patch = patches[patch_idx];
+      const auto &patch_config = config->patches[local_patch_indices[patch_idx]];
+      const auto &point = basis_points[patch.model].front();
+      for (int d = 0; d < dimension; d++)
+      {
+        centers(d * mortar_patch_indices.size() + i) =
+            patch_config.origin[d] +
+            (point[0] * patch_config.axis_u[d] + point[1] * patch_config.axis_v[d] +
+             (models[patch.model].spatial_mortar ? point[2] * patch_config.axis_w[d]
+                                                 : 0.0)) /
+                coordinate_scale;
+      }
+    }
+    mfem::FindPointsGSLIB finder(fespace.GetComm());
+    finder.Setup(response_mesh, 0.01, 1.0e-12, 256);
+    finder.FindPoints(centers, mfem::Ordering::byNODES);
+    mfem::Vector local_resolution(mortar_patch_indices.size());
+    finder.Interpolate(size_field, local_resolution);
+    for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
+    {
+      MFEM_VERIFY(finder.GetCode()[i] != 2 && std::isfinite(local_resolution[i]) &&
+                      local_resolution[i] > 0.0,
+                  "Unable to determine a local surface-mortar mesh resolution!");
+      patches[mortar_patch_indices[i]].mortar_resolution =
+          local_resolution[i] / config->mortar_oversampling;
+    }
+  }
+
+  point_count = 0;
+  for (auto &patch : patches)
+  {
+    const auto &model = models[patch.model];
+    patch.point_offset = point_count;
+    patch.point_count = model.contour_size + 1 + model.conductor_state_count;
+    if (model.surface_mortar)
+    {
+      MFEM_ASSERT(patch.mortar_resolution > 0.0,
+                  "Missing local surface-mortar resolution!");
+      if (model.spatial_mortar)
+      {
+        patch.mortar_longitudinal_subdivisions = 1;
+        int surface_sample_count = 0;
+        for (const auto &triangle : model.mortar_triangles)
+        {
+          const int subdivisions = std::max(
+              1, static_cast<int>(std::ceil(triangle.maximum_edge_length /
+                                            coordinate_scale / patch.mortar_resolution)));
+          surface_sample_count += 4 * subdivisions * subdivisions;
+        }
+        patch.point_count = surface_sample_count + model.conductor_state_count + 1;
+      }
+      else
+      {
+        patch.mortar_longitudinal_subdivisions =
+            dimension == 3 ? std::max(1, static_cast<int>(std::ceil(
+                                             patch.weight / patch.mortar_resolution)))
+                           : 1;
+        int contour_sample_count = 0;
+        for (const auto &segment : model.mortar_segments)
+        {
+          const int subdivisions =
+              std::max(1, static_cast<int>(std::ceil(segment.length / coordinate_scale /
+                                                     patch.mortar_resolution)));
+          contour_sample_count += 2 * subdivisions;
+        }
+        patch.point_count = patch.mortar_longitudinal_subdivisions *
+                            (contour_sample_count + model.conductor_state_count + 1);
+      }
+    }
+    point_count += patch.point_count;
   }
   global_patch_count = static_cast<int>(patches.size());
   global_basis_size = basis_size;
+  long long int global_point_count = point_count;
+  Mpi::GlobalSum(1, &global_point_count, fespace.GetComm());
+  constexpr long long int maximum_experimental_mortar_points = 300000000;
+  MFEM_VERIFY(config->trace_coupling !=
+                      ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
+                  global_point_count <= maximum_experimental_mortar_points,
+              "Experimental SurfaceMortar trace quadrature requires "
+                  << global_point_count
+                  << " distributed points, exceeding its current safety limit of "
+                  << maximum_experimental_mortar_points
+                  << ". Assemble and compress the mortar projection before continuing "
+                     "this AMR level!");
+  std::array<int, 3> domain_mode_patch_count{};
+  for (const auto &patch : patches)
+  {
+    domain_mode_patch_count[static_cast<std::size_t>(
+        models[patch.model].domain_correction_mode)]++;
+  }
   Mpi::GlobalSum(1, &global_patch_count, fespace.GetComm());
   Mpi::GlobalSum(1, &global_basis_size, fespace.GetComm());
+  Mpi::GlobalSum(static_cast<int>(domain_mode_patch_count.size()),
+                 domain_mode_patch_count.data(), fespace.GetComm());
 
   mfem::Vector xyz(dimension * point_count);
   std::vector<std::vector<Point2D>> polygons;
@@ -9671,16 +10663,23 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     const auto &patch_config = config->patches[local_patch_indices[patch_idx]];
     const auto &model = models[patch.model];
     const auto &local_points = basis_points[patch.model];
+    auto axis_w = patch_config.axis_w;
+    if (model.surface_mortar && dimension == 3 &&
+        std::all_of(axis_w.begin(), axis_w.end(),
+                    [](double value) { return std::abs(value) < 1.0e-14; }))
+    {
+      axis_w = Cross(patch_config.axis_u, patch_config.axis_v);
+    }
     double norm_u = 0.0, norm_v = 0.0, norm_w = 0.0;
     double dot_uv = 0.0, dot_uw = 0.0, dot_vw = 0.0;
     for (int d = 0; d < dimension; d++)
     {
       norm_u += patch_config.axis_u[d] * patch_config.axis_u[d];
       norm_v += patch_config.axis_v[d] * patch_config.axis_v[d];
-      norm_w += patch_config.axis_w[d] * patch_config.axis_w[d];
+      norm_w += axis_w[d] * axis_w[d];
       dot_uv += patch_config.axis_u[d] * patch_config.axis_v[d];
-      dot_uw += patch_config.axis_u[d] * patch_config.axis_w[d];
-      dot_vw += patch_config.axis_v[d] * patch_config.axis_w[d];
+      dot_uw += patch_config.axis_u[d] * axis_w[d];
+      dot_vw += patch_config.axis_v[d] * axis_w[d];
     }
     norm_u = std::sqrt(norm_u);
     norm_v = std::sqrt(norm_v);
@@ -9688,42 +10687,156 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                     std::abs(dot_uv) < 1.0e-10,
                 "Surface response correction AxisU and AxisV must be orthonormal in the "
                 "coupon cross-section!");
-    if (model.spatial_basis)
+    if (model.spatial_basis || (model.surface_mortar && dimension == 3))
     {
       MFEM_VERIFY(dimension == 3 && std::abs(std::sqrt(norm_w) - 1.0) < 1.0e-10 &&
                       std::abs(dot_uw) < 1.0e-10 && std::abs(dot_vw) < 1.0e-10,
-                  "A spatial response-correction basis requires an orthonormal three-"
-                  "dimensional coupon frame!");
+                  "A spatial or surface-mortar response basis requires an orthonormal "
+                  "three-dimensional coupon frame!");
     }
 
-    for (const auto &local : local_points)
+    if (model.surface_mortar)
     {
-      MFEM_VERIFY(model.spatial_basis || std::abs(local[2]) <= 1.0e-12,
-                  "Response-correction basis points must lie in the local coupon "
-                  "cross-section!");
-      for (int d = 0; d < dimension; d++)
+      constexpr double gauss_offset = 0.5 / 1.7320508075688772935;
+      if (model.spatial_mortar)
       {
-        double coordinate = patch_config.origin[d] + (local[0] * patch_config.axis_u[d] +
-                                                      local[1] * patch_config.axis_v[d]) /
-                                                         coordinate_scale;
-        if (model.spatial_basis)
+        for (const auto &triangle : model.mortar_triangles)
         {
-          coordinate += local[2] * patch_config.axis_w[d] / coordinate_scale;
+          const int subdivisions = std::max(
+              1, static_cast<int>(std::ceil(triangle.maximum_edge_length /
+                                            coordinate_scale / patch.mortar_resolution)));
+          for (int first = 0; first < subdivisions; first++)
+          {
+            for (const double first_offset : {-gauss_offset, gauss_offset})
+            {
+              const double u =
+                  (static_cast<double>(first) + 0.5 + first_offset) / subdivisions;
+              for (int second = 0; second < subdivisions; second++)
+              {
+                for (const double second_offset : {-gauss_offset, gauss_offset})
+                {
+                  const double v =
+                      (static_cast<double>(second) + 0.5 + second_offset) / subdivisions;
+                  const std::array<double, 3> barycentric = {u, (1.0 - u) * v,
+                                                             (1.0 - u) * (1.0 - v)};
+                  Point3D local{};
+                  for (int q = 0; q < 3; q++)
+                  {
+                    for (int d = 0; d < 3; d++)
+                    {
+                      local[d] += barycentric[q] *
+                                  model.mortar_vertices[triangle.vertices[q]].point[d];
+                    }
+                  }
+                  for (int d = 0; d < dimension; d++)
+                  {
+                    xyz(d * point_count + point) =
+                        patch_config.origin[d] +
+                        (local[0] * patch_config.axis_u[d] +
+                         local[1] * patch_config.axis_v[d] + local[2] * axis_w[d]) /
+                            coordinate_scale;
+                  }
+                  point++;
+                }
+              }
+            }
+          }
         }
-        xyz(d * point_count + point) = coordinate;
+        for (const auto &reference : patch_config.conductor_references)
+        {
+          for (int d = 0; d < dimension; d++)
+          {
+            xyz(d * point_count + point) =
+                patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
+                reference[1] * patch_config.axis_v[d] + reference[2] * axis_w[d];
+          }
+          point++;
+        }
       }
-      point++;
-    }
-    for (const auto &reference : patch_config.conductor_references)
-    {
-      for (int d = 0; d < dimension; d++)
+      else
       {
-        xyz(d * point_count + point) =
-            patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
-            reference[1] * patch_config.axis_v[d] + reference[2] * patch_config.axis_w[d];
+        for (int longitudinal = 0; longitudinal < patch.mortar_longitudinal_subdivisions;
+             longitudinal++)
+        {
+          const double longitudinal_coordinate =
+              dimension == 3 ? patch.weight * ((static_cast<double>(longitudinal) + 0.5) /
+                                                   patch.mortar_longitudinal_subdivisions -
+                                               0.5)
+                             : 0.0;
+          for (const auto &segment : model.mortar_segments)
+          {
+            const auto &begin = local_points[segment.begin];
+            const auto &end = local_points[segment.end];
+            const int transverse_subdivisions =
+                std::max(1, static_cast<int>(std::ceil(segment.length / coordinate_scale /
+                                                       patch.mortar_resolution)));
+            for (int subdivision = 0; subdivision < transverse_subdivisions; subdivision++)
+            {
+              for (const double offset : {-gauss_offset, gauss_offset})
+              {
+                const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
+                                 transverse_subdivisions;
+                for (int d = 0; d < dimension; d++)
+                {
+                  const double local_u = (1.0 - t) * begin[0] + t * end[0];
+                  const double local_v = (1.0 - t) * begin[1] + t * end[1];
+                  xyz(d * point_count + point) = patch_config.origin[d] +
+                                                 (local_u * patch_config.axis_u[d] +
+                                                  local_v * patch_config.axis_v[d]) /
+                                                     coordinate_scale +
+                                                 longitudinal_coordinate * axis_w[d];
+                }
+                point++;
+              }
+            }
+          }
+          for (const auto &reference : patch_config.conductor_references)
+          {
+            for (int d = 0; d < dimension; d++)
+            {
+              xyz(d * point_count + point) =
+                  patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
+                  reference[1] * patch_config.axis_v[d] +
+                  (reference[2] + longitudinal_coordinate) * axis_w[d];
+            }
+            point++;
+          }
+        }
       }
-      point++;
     }
+    else
+    {
+      for (const auto &local : local_points)
+      {
+        MFEM_VERIFY(model.spatial_basis || std::abs(local[2]) <= 1.0e-12,
+                    "Response-correction basis points must lie in the local coupon "
+                    "cross-section!");
+        for (int d = 0; d < dimension; d++)
+        {
+          double coordinate = patch_config.origin[d] + (local[0] * patch_config.axis_u[d] +
+                                                        local[1] * patch_config.axis_v[d]) /
+                                                           coordinate_scale;
+          if (model.spatial_basis)
+          {
+            coordinate += local[2] * axis_w[d] / coordinate_scale;
+          }
+          xyz(d * point_count + point) = coordinate;
+        }
+        point++;
+      }
+      for (const auto &reference : patch_config.conductor_references)
+      {
+        for (int d = 0; d < dimension; d++)
+        {
+          xyz(d * point_count + point) =
+              patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
+              reference[1] * patch_config.axis_v[d] + reference[2] * axis_w[d];
+        }
+        point++;
+      }
+    }
+    MFEM_ASSERT(point == patch.point_offset + patch.point_count,
+                "Incorrect surface-response patch point count!");
   }
   for (std::size_t i = 0; i < polygons.size(); i++)
   {
@@ -9748,11 +10861,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     ConfigurePointCommunication(xyz, dimension);
   }
 
-  Mpi::Print("\nConfigured surface response correction:\n"
-             " Coupon models: {:d}\n"
-             " Global patches: {:d}\n"
-             " Total trace coefficients: {:d}\n",
-             static_cast<int>(models.size()), global_patch_count, global_basis_size);
+  Mpi::Print(
+      "\nConfigured surface response correction:\n"
+      " Coupon models: {:d}\n"
+      " Global patches: {:d}\n"
+      " Domain-coupled patches (disabled/fixed-trace/fixed-flux): {:d}/{:d}/{:d}\n"
+      " Trace quadrature points: {:d}\n"
+      " Total trace coefficients: {:d}\n",
+      static_cast<int>(models.size()), global_patch_count,
+      domain_mode_patch_count[static_cast<std::size_t>(DomainCorrectionMode::DISABLED)],
+      domain_mode_patch_count[static_cast<std::size_t>(DomainCorrectionMode::FIXED_TRACE)],
+      domain_mode_patch_count[static_cast<std::size_t>(DomainCorrectionMode::FIXED_FLUX)],
+      global_point_count, global_basis_size);
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -9789,6 +10909,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   MFEM_VERIFY(request->IsAutomatic(),
               "Maxwell surface response correction requires automatic fabrication-"
               "process library matching!");
+  MFEM_VERIFY(request->trace_coupling !=
+                  ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR,
+              "Maxwell SurfaceMortar response trace coupling is not implemented yet; "
+              "use Collocated while the H(curl)-compatible mortar projection is under "
+              "development!");
   const int dimension = fespace.Dimension();
   MFEM_VERIFY((dimension == 2 || dimension == 3) && fespace.SpaceDimension() == dimension,
               "Maxwell surface response correction requires a two- or three-dimensional "
@@ -9969,6 +11094,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
     model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
+    model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
     auto surface_response =
         BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
@@ -10091,7 +11217,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
 
     patches.push_back(Patch{static_cast<int>(patches.size()), model_it->second, 0,
-                            basis_size, patch_config.weight});
+                            basis_size, 0, 1, 0.0, patch_config.weight});
     basis_size += model.basis_size;
   }
 
@@ -10776,162 +11902,189 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     return result;
   };
 
-  std::vector<int> candidate_send_counts(size, 0);
-  for (int point = 0; point < point_query_count; point++)
-  {
-    const auto coordinate = GetPoint(point);
-    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-    {
-      if (RankContains(candidate_rank, coordinate))
-      {
-        candidate_send_counts[candidate_rank]++;
-      }
-    }
-  }
-  std::vector<int> candidate_receive_counts(size);
-  Mpi::Alltoall(1, candidate_send_counts.data(), candidate_receive_counts.data(), comm);
-  std::vector<int> candidate_send_offsets, candidate_receive_offsets;
-  const int candidate_send_total =
-      SetOffsets(candidate_send_counts, candidate_send_offsets);
-  candidate_query_count += candidate_send_total;
-  const int candidate_receive_total =
-      SetOffsets(candidate_receive_counts, candidate_receive_offsets);
-
-  std::vector<int> candidate_query_indices(candidate_send_total);
-  std::vector<double> candidate_send_coordinates(dimension * candidate_send_total);
-  std::vector<int> candidate_cursor(candidate_send_offsets);
-  for (int point = 0; point < point_query_count; point++)
-  {
-    const auto coordinate = GetPoint(point);
-    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-    {
-      if (!RankContains(candidate_rank, coordinate))
-      {
-        continue;
-      }
-      const int packed = candidate_cursor[candidate_rank]++;
-      candidate_query_indices[packed] = point;
-      for (int d = 0; d < dimension; d++)
-      {
-        candidate_send_coordinates[dimension * packed + d] = coordinate[d];
-      }
-    }
-  }
-  const auto candidate_send_coordinate_counts =
-      ScaleCommunicationPlan(candidate_send_counts, dimension);
-  const auto candidate_send_coordinate_offsets =
-      ScaleCommunicationPlan(candidate_send_offsets, dimension);
-  const auto candidate_receive_coordinate_counts =
-      ScaleCommunicationPlan(candidate_receive_counts, dimension);
-  const auto candidate_receive_coordinate_offsets =
-      ScaleCommunicationPlan(candidate_receive_offsets, dimension);
-  std::vector<double> candidate_receive_coordinates(dimension * candidate_receive_total);
-  Mpi::Alltoallv(candidate_send_coordinates.data(), candidate_send_coordinate_counts.data(),
-                 candidate_send_coordinate_offsets.data(),
-                 candidate_receive_coordinates.data(),
-                 candidate_receive_coordinate_counts.data(),
-                 candidate_receive_coordinate_offsets.data(), comm);
-
-  std::vector<int> candidate_receive_elements(candidate_receive_total, -1);
-  std::vector<double> candidate_receive_references(dimension * candidate_receive_total);
-  std::vector<int> candidates;
-  for (int i = 0; i < candidate_receive_total; i++)
-  {
-    std::array<double, 3> coordinate{};
-    for (int d = 0; d < dimension; d++)
-    {
-      coordinate[d] = candidate_receive_coordinates[dimension * i + d];
-    }
-    mfem::IntegrationPoint reference;
-    if (locator.Find(coordinate, box_tolerance, candidate_receive_elements[i], reference,
-                     candidates))
-    {
-      reference.Get(candidate_receive_references.data() + dimension * i, dimension);
-    }
-  }
-
-  std::vector<int> candidate_result_elements(candidate_send_total);
-  Mpi::Alltoallv(candidate_receive_elements.data(), candidate_receive_counts.data(),
-                 candidate_receive_offsets.data(), candidate_result_elements.data(),
-                 candidate_send_counts.data(), candidate_send_offsets.data(), comm);
-  std::vector<double> candidate_result_references(dimension * candidate_send_total);
-  Mpi::Alltoallv(
-      candidate_receive_references.data(), candidate_receive_coordinate_counts.data(),
-      candidate_receive_coordinate_offsets.data(), candidate_result_references.data(),
-      candidate_send_coordinate_counts.data(), candidate_send_coordinate_offsets.data(),
-      comm);
-
   std::vector<int> point_owners(point_query_count, size);
   std::vector<int> point_elements(point_query_count, -1);
   std::vector<double> point_references(dimension * point_query_count);
-  for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+  const char *gslib_environment = std::getenv("PALACE_RESPONSE_USE_GSLIB_POINTS");
+  const bool use_gslib =
+      size >= 64 || (gslib_environment && std::string_view(gslib_environment) != "0" &&
+                     !std::string_view(gslib_environment).empty());
+  if (use_gslib)
   {
-    const int begin = candidate_send_offsets[candidate_rank];
-    const int end = begin + candidate_send_counts[candidate_rank];
-    for (int packed = begin; packed < end; packed++)
-    {
-      if (candidate_result_elements[packed] < 0)
-      {
-        continue;
-      }
-      const int point = candidate_query_indices[packed];
-      if (candidate_rank > point_owners[point] ||
-          (candidate_rank == point_owners[point] &&
-           candidate_result_elements[packed] >= point_elements[point]))
-      {
-        continue;
-      }
-      point_owners[point] = candidate_rank;
-      point_elements[point] = candidate_result_elements[packed];
-      for (int d = 0; d < dimension; d++)
-      {
-        point_references[dimension * point + d] =
-            candidate_result_references[dimension * packed + d];
-      }
-    }
-  }
-
-  std::vector<int> fallback_indices;
-  for (int point = 0; point < point_query_count; point++)
-  {
-    if (point_owners[point] == size)
-    {
-      fallback_indices.push_back(point);
-    }
-  }
-  fallback_query_count += fallback_indices.size();
-  int fallback_count = static_cast<int>(fallback_indices.size());
-  Mpi::GlobalSum(1, &fallback_count, comm);
-  if (fallback_count > 0)
-  {
-    Mpi::Warning(
-        comm,
-        "Distributed surface-response point location could not resolve {:d} contour "
-        "points; falling back to FindPointsGSLIB!\n",
-        fallback_count);
-    mfem::Vector fallback_xyz(dimension * fallback_indices.size());
-    for (std::size_t i = 0; i < fallback_indices.size(); i++)
-    {
-      for (int d = 0; d < dimension; d++)
-      {
-        fallback_xyz(d * fallback_indices.size() + i) =
-            xyz(d * point_query_count + fallback_indices[i]);
-      }
-    }
+    Mpi::Print(" Using FindPointsGSLIB for {:d} local response points on {:d} ranks\n",
+               point_query_count, size);
     mfem::FindPointsGSLIB finder(comm);
     finder.Setup(mesh, 0.01, 1.0e-12, 256);
-    finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
+    finder.FindPoints(xyz, mfem::Ordering::byNODES);
     const auto &reference = finder.GetReferencePosition();
-    for (std::size_t i = 0; i < fallback_indices.size(); i++)
+    for (int point = 0; point < point_query_count; point++)
     {
-      const int point = fallback_indices[i];
-      MFEM_VERIFY(finder.GetCode()[i] != 2,
+      MFEM_VERIFY(finder.GetCode()[point] != 2,
                   "Surface-response contour point " << point << " could not be located!");
-      point_owners[point] = static_cast<int>(finder.GetProc()[i]);
-      point_elements[point] = static_cast<int>(finder.GetElem()[i]);
+      point_owners[point] = static_cast<int>(finder.GetProc()[point]);
+      point_elements[point] = static_cast<int>(finder.GetElem()[point]);
       for (int d = 0; d < dimension; d++)
       {
-        point_references[dimension * point + d] = reference(dimension * i + d);
+        point_references[dimension * point + d] = reference(dimension * point + d);
+      }
+    }
+  }
+  else
+  {
+    std::vector<int> candidate_send_counts(size, 0);
+    for (int point = 0; point < point_query_count; point++)
+    {
+      const auto coordinate = GetPoint(point);
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        if (RankContains(candidate_rank, coordinate))
+        {
+          candidate_send_counts[candidate_rank]++;
+        }
+      }
+    }
+    std::vector<int> candidate_receive_counts(size);
+    Mpi::Alltoall(1, candidate_send_counts.data(), candidate_receive_counts.data(), comm);
+    std::vector<int> candidate_send_offsets, candidate_receive_offsets;
+    const int candidate_send_total =
+        SetOffsets(candidate_send_counts, candidate_send_offsets);
+    candidate_query_count += candidate_send_total;
+    const int candidate_receive_total =
+        SetOffsets(candidate_receive_counts, candidate_receive_offsets);
+
+    std::vector<int> candidate_query_indices(candidate_send_total);
+    std::vector<double> candidate_send_coordinates(dimension * candidate_send_total);
+    std::vector<int> candidate_cursor(candidate_send_offsets);
+    for (int point = 0; point < point_query_count; point++)
+    {
+      const auto coordinate = GetPoint(point);
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        if (!RankContains(candidate_rank, coordinate))
+        {
+          continue;
+        }
+        const int packed = candidate_cursor[candidate_rank]++;
+        candidate_query_indices[packed] = point;
+        for (int d = 0; d < dimension; d++)
+        {
+          candidate_send_coordinates[dimension * packed + d] = coordinate[d];
+        }
+      }
+    }
+    const auto candidate_send_coordinate_counts =
+        ScaleCommunicationPlan(candidate_send_counts, dimension);
+    const auto candidate_send_coordinate_offsets =
+        ScaleCommunicationPlan(candidate_send_offsets, dimension);
+    const auto candidate_receive_coordinate_counts =
+        ScaleCommunicationPlan(candidate_receive_counts, dimension);
+    const auto candidate_receive_coordinate_offsets =
+        ScaleCommunicationPlan(candidate_receive_offsets, dimension);
+    std::vector<double> candidate_receive_coordinates(dimension * candidate_receive_total);
+    Mpi::Alltoallv(
+        candidate_send_coordinates.data(), candidate_send_coordinate_counts.data(),
+        candidate_send_coordinate_offsets.data(), candidate_receive_coordinates.data(),
+        candidate_receive_coordinate_counts.data(),
+        candidate_receive_coordinate_offsets.data(), comm);
+
+    std::vector<int> candidate_receive_elements(candidate_receive_total, -1);
+    std::vector<double> candidate_receive_references(dimension * candidate_receive_total);
+    std::vector<int> candidates;
+    for (int i = 0; i < candidate_receive_total; i++)
+    {
+      std::array<double, 3> coordinate{};
+      for (int d = 0; d < dimension; d++)
+      {
+        coordinate[d] = candidate_receive_coordinates[dimension * i + d];
+      }
+      mfem::IntegrationPoint reference;
+      if (locator.Find(coordinate, box_tolerance, candidate_receive_elements[i], reference,
+                       candidates))
+      {
+        reference.Get(candidate_receive_references.data() + dimension * i, dimension);
+      }
+    }
+
+    std::vector<int> candidate_result_elements(candidate_send_total);
+    Mpi::Alltoallv(candidate_receive_elements.data(), candidate_receive_counts.data(),
+                   candidate_receive_offsets.data(), candidate_result_elements.data(),
+                   candidate_send_counts.data(), candidate_send_offsets.data(), comm);
+    std::vector<double> candidate_result_references(dimension * candidate_send_total);
+    Mpi::Alltoallv(
+        candidate_receive_references.data(), candidate_receive_coordinate_counts.data(),
+        candidate_receive_coordinate_offsets.data(), candidate_result_references.data(),
+        candidate_send_coordinate_counts.data(), candidate_send_coordinate_offsets.data(),
+        comm);
+
+    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+    {
+      const int begin = candidate_send_offsets[candidate_rank];
+      const int end = begin + candidate_send_counts[candidate_rank];
+      for (int packed = begin; packed < end; packed++)
+      {
+        if (candidate_result_elements[packed] < 0)
+        {
+          continue;
+        }
+        const int point = candidate_query_indices[packed];
+        if (candidate_rank > point_owners[point] ||
+            (candidate_rank == point_owners[point] &&
+             candidate_result_elements[packed] >= point_elements[point]))
+        {
+          continue;
+        }
+        point_owners[point] = candidate_rank;
+        point_elements[point] = candidate_result_elements[packed];
+        for (int d = 0; d < dimension; d++)
+        {
+          point_references[dimension * point + d] =
+              candidate_result_references[dimension * packed + d];
+        }
+      }
+    }
+
+    std::vector<int> fallback_indices;
+    for (int point = 0; point < point_query_count; point++)
+    {
+      if (point_owners[point] == size)
+      {
+        fallback_indices.push_back(point);
+      }
+    }
+    fallback_query_count += fallback_indices.size();
+    int fallback_count = static_cast<int>(fallback_indices.size());
+    Mpi::GlobalSum(1, &fallback_count, comm);
+    if (fallback_count > 0)
+    {
+      Mpi::Warning(
+          comm,
+          "Distributed surface-response point location could not resolve {:d} contour "
+          "points; falling back to FindPointsGSLIB!\n",
+          fallback_count);
+      mfem::Vector fallback_xyz(dimension * fallback_indices.size());
+      for (std::size_t i = 0; i < fallback_indices.size(); i++)
+      {
+        for (int d = 0; d < dimension; d++)
+        {
+          fallback_xyz(d * fallback_indices.size() + i) =
+              xyz(d * point_query_count + fallback_indices[i]);
+        }
+      }
+      mfem::FindPointsGSLIB finder(comm);
+      finder.Setup(mesh, 0.01, 1.0e-12, 256);
+      finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
+      const auto &reference = finder.GetReferencePosition();
+      for (std::size_t i = 0; i < fallback_indices.size(); i++)
+      {
+        const int point = fallback_indices[i];
+        MFEM_VERIFY(finder.GetCode()[i] != 2,
+                    "Surface-response contour point " << point << " could not be located!");
+        point_owners[point] = static_cast<int>(finder.GetProc()[i]);
+        point_elements[point] = static_cast<int>(finder.GetElem()[i]);
+        for (int d = 0; d < dimension; d++)
+        {
+          point_references[dimension * point + d] = reference(dimension * i + d);
+        }
       }
     }
   }
@@ -11374,9 +12527,119 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
   }
   EvaluatePoints(x, correction);
   values.SetSize(basis_size);
+  constexpr double gauss_offset = 0.5 / 1.7320508075688772935;
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
+    if (model.surface_mortar)
+    {
+      mortar_load.SetSize(model.contour_size);
+      mortar_load = 0.0;
+      std::vector<double> references(model.conductor_state_count + 1, 0.0);
+      int point = patch.point_offset;
+      if (model.spatial_mortar)
+      {
+        for (const auto &triangle : model.mortar_triangles)
+        {
+          const int subdivisions = std::max(
+              1,
+              static_cast<int>(std::ceil(triangle.maximum_edge_length /
+                                         mesh_coordinate_scale / patch.mortar_resolution)));
+          for (int first = 0; first < subdivisions; first++)
+          {
+            for (const double first_offset : {-gauss_offset, gauss_offset})
+            {
+              const double u =
+                  (static_cast<double>(first) + 0.5 + first_offset) / subdivisions;
+              for (int second = 0; second < subdivisions; second++)
+              {
+                for (const double second_offset : {-gauss_offset, gauss_offset})
+                {
+                  const double v =
+                      (static_cast<double>(second) + 0.5 + second_offset) / subdivisions;
+                  const std::array<double, 3> barycentric = {u, (1.0 - u) * v,
+                                                             (1.0 - u) * (1.0 - v)};
+                  const double quadrature_weight =
+                      triangle.area * (1.0 - u) / (2.0 * subdivisions * subdivisions);
+                  const double value = correction(point++);
+                  for (int q = 0; q < 3; q++)
+                  {
+                    const int basis = model.mortar_vertices[triangle.vertices[q]].basis;
+                    if (basis >= 0)
+                    {
+                      mortar_load[basis] += quadrature_weight * barycentric[q] * value;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        for (double &reference : references)
+        {
+          reference = correction(point++);
+        }
+        for (int i = 0; i < model.contour_size; i++)
+        {
+          mortar_load[i] -= references[0] * model.mortar_constant_load[i];
+          for (int state = 0; state < model.conductor_state_count; state++)
+          {
+            mortar_load[i] -= (references[state + 1] - references[0]) *
+                              model.mortar_conductor_loads[state][i];
+          }
+        }
+        for (const int index : model.zero_trace_indices)
+        {
+          mortar_load[index] = 0.0;
+        }
+      }
+      else
+      {
+        const double longitudinal_weight = 1.0 / patch.mortar_longitudinal_subdivisions;
+        for (int longitudinal = 0; longitudinal < patch.mortar_longitudinal_subdivisions;
+             longitudinal++)
+        {
+          for (const auto &segment : model.mortar_segments)
+          {
+            const int transverse_subdivisions = std::max(
+                1, static_cast<int>(std::ceil(segment.length / mesh_coordinate_scale /
+                                              patch.mortar_resolution)));
+            const double quadrature_weight =
+                longitudinal_weight * segment.length / (2.0 * transverse_subdivisions);
+            for (int subdivision = 0; subdivision < transverse_subdivisions; subdivision++)
+            {
+              for (const double offset : {-gauss_offset, gauss_offset})
+              {
+                const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
+                                 transverse_subdivisions;
+                const double value = correction(point++);
+                mortar_load[segment.begin] += quadrature_weight * (1.0 - t) * value;
+                mortar_load[segment.end] += quadrature_weight * t * value;
+              }
+            }
+          }
+          for (double &reference : references)
+          {
+            reference += longitudinal_weight * correction(point++);
+          }
+        }
+      }
+      MFEM_ASSERT(point == patch.point_offset + patch.point_count,
+                  "Incorrect surface-mortar point count!");
+      mortar_coefficients.SetSize(model.contour_size);
+      model.mortar_mass_inverse.Mult(mortar_load, mortar_coefficients);
+      for (int i = 0; i < model.contour_size; i++)
+      {
+        values(patch.trace_offset + i) =
+            mortar_coefficients[i] - (model.spatial_mortar ? 0.0 : references[0]);
+      }
+      for (int state = 0; state < model.conductor_state_count; state++)
+      {
+        values(patch.trace_offset + model.contour_size + state) =
+            references[state + 1] - references[0];
+      }
+      continue;
+    }
     const double reference = correction(patch.point_offset + model.contour_size);
     for (int i = 0; i < model.contour_size; i++)
     {
@@ -11401,9 +12664,126 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
   }
   correction.SetSize(point_query_count);
   correction = 0.0;
+  constexpr double gauss_offset = 0.5 / 1.7320508075688772935;
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
+    if (model.surface_mortar)
+    {
+      Vector patch_values(const_cast<double *>(values.GetData()) + patch.trace_offset,
+                          model.basis_size);
+      Vector contour_values(patch_values.GetData(), model.contour_size);
+      mortar_load.SetSize(model.contour_size);
+      model.mortar_mass_inverse.MultTranspose(contour_values, mortar_load);
+      std::vector<double> references(model.conductor_state_count + 1, 0.0);
+      if (model.spatial_mortar)
+      {
+        for (const int index : model.zero_trace_indices)
+        {
+          mortar_load[index] = 0.0;
+        }
+        references[0] = -mfem::InnerProduct(model.mortar_constant_load, mortar_load);
+        for (int state = 0; state < model.conductor_state_count; state++)
+        {
+          const double coupling =
+              mfem::InnerProduct(model.mortar_conductor_loads[state], mortar_load);
+          const double direct = patch_values[model.contour_size + state];
+          references[0] += coupling - direct;
+          references[state + 1] = direct - coupling;
+        }
+      }
+      else
+      {
+        for (int i = 0; i < model.contour_size; i++)
+        {
+          references[0] -= patch_values[i];
+        }
+        for (int state = 0; state < model.conductor_state_count; state++)
+        {
+          references[state + 1] += patch_values[model.contour_size + state];
+          references[0] -= patch_values[model.contour_size + state];
+        }
+      }
+      int point = patch.point_offset;
+      if (model.spatial_mortar)
+      {
+        for (const auto &triangle : model.mortar_triangles)
+        {
+          const int subdivisions = std::max(
+              1,
+              static_cast<int>(std::ceil(triangle.maximum_edge_length /
+                                         mesh_coordinate_scale / patch.mortar_resolution)));
+          for (int first = 0; first < subdivisions; first++)
+          {
+            for (const double first_offset : {-gauss_offset, gauss_offset})
+            {
+              const double u =
+                  (static_cast<double>(first) + 0.5 + first_offset) / subdivisions;
+              for (int second = 0; second < subdivisions; second++)
+              {
+                for (const double second_offset : {-gauss_offset, gauss_offset})
+                {
+                  const double v =
+                      (static_cast<double>(second) + 0.5 + second_offset) / subdivisions;
+                  const std::array<double, 3> barycentric = {u, (1.0 - u) * v,
+                                                             (1.0 - u) * (1.0 - v)};
+                  const double quadrature_weight =
+                      triangle.area * (1.0 - u) / (2.0 * subdivisions * subdivisions);
+                  double value = 0.0;
+                  for (int q = 0; q < 3; q++)
+                  {
+                    const int basis = model.mortar_vertices[triangle.vertices[q]].basis;
+                    if (basis >= 0)
+                    {
+                      value += barycentric[q] * mortar_load[basis];
+                    }
+                  }
+                  correction[point++] = quadrature_weight * value;
+                }
+              }
+            }
+          }
+        }
+        for (const double reference : references)
+        {
+          correction[point++] = reference;
+        }
+      }
+      else
+      {
+        const double longitudinal_weight = 1.0 / patch.mortar_longitudinal_subdivisions;
+        for (int longitudinal = 0; longitudinal < patch.mortar_longitudinal_subdivisions;
+             longitudinal++)
+        {
+          for (const auto &segment : model.mortar_segments)
+          {
+            const int transverse_subdivisions = std::max(
+                1, static_cast<int>(std::ceil(segment.length / mesh_coordinate_scale /
+                                              patch.mortar_resolution)));
+            const double quadrature_weight =
+                longitudinal_weight * segment.length / (2.0 * transverse_subdivisions);
+            for (int subdivision = 0; subdivision < transverse_subdivisions; subdivision++)
+            {
+              for (const double offset : {-gauss_offset, gauss_offset})
+              {
+                const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
+                                 transverse_subdivisions;
+                correction[point++] =
+                    quadrature_weight *
+                    ((1.0 - t) * mortar_load[segment.begin] + t * mortar_load[segment.end]);
+              }
+            }
+          }
+          for (const double reference : references)
+          {
+            correction[point++] = longitudinal_weight * reference;
+          }
+        }
+      }
+      MFEM_ASSERT(point == patch.point_offset + patch.point_count,
+                  "Incorrect surface-mortar point count!");
+      continue;
+    }
     double reference = 0.0;
     for (int i = 0; i < model.contour_size; i++)
     {
@@ -11432,7 +12812,18 @@ void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) cons
     const auto &model = models[patch.model];
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
     Vector patch_response(response.GetData() + patch.trace_offset, model.basis_size);
-    model.domain_defect.Mult(patch_trace, patch_response);
+    switch (model.domain_correction_mode)
+    {
+      case DomainCorrectionMode::DISABLED:
+        patch_response = 0.0;
+        break;
+      case DomainCorrectionMode::FIXED_TRACE:
+        model.domain_defect.Mult(patch_trace, patch_response);
+        break;
+      case DomainCorrectionMode::FIXED_FLUX:
+        model.fixed_flux_domain_defect.Mult(patch_trace, patch_response);
+        break;
+    }
     patch_response *= patch.weight;
   }
   ApplyTraceTranspose(response, y);
@@ -11473,8 +12864,16 @@ SurfaceResponseOperator::GetEnergyCorrection(const Vector &x) const
   {
     const auto &model = models[patch.model];
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
-    energy.domain +=
-        0.5 * patch.weight * QuadraticForm(model.domain_defect, patch_trace, response);
+    if (model.domain_correction_mode == DomainCorrectionMode::FIXED_TRACE)
+    {
+      energy.domain +=
+          0.5 * patch.weight * QuadraticForm(model.domain_defect, patch_trace, response);
+    }
+    else if (model.domain_correction_mode == DomainCorrectionMode::FIXED_FLUX)
+    {
+      energy.domain += 0.5 * patch.weight *
+                       QuadraticForm(model.fixed_flux_domain_defect, patch_trace, response);
+    }
     for (const auto &[interface, defect] : model.surface_defects)
     {
       energy.interfaces[interface] +=
@@ -11574,20 +12973,37 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
     contribution.patch_count += 1.0;
     contribution.patch_weight += patch.weight;
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
-    const double domain_correction =
+    const double domain_correction_fixed_trace =
         0.5 * patch.weight * QuadraticForm(model.domain_defect, patch_trace, response);
-    result.domain_correction += domain_correction;
-    contribution.domain_correction += domain_correction;
-    if (include_fixed_flux)
+    const bool evaluate_fixed_flux =
+        include_fixed_flux ||
+        model.domain_correction_mode == DomainCorrectionMode::FIXED_FLUX;
+    double domain_correction_fixed_flux = 0.0;
+    if (evaluate_fixed_flux)
     {
       fixed_flux.SetSize(model.basis_size);
       model.fixed_flux_transform.Mult(patch_trace, fixed_flux);
-      const double domain_correction_fixed_flux =
+      domain_correction_fixed_flux =
           0.5 * patch.weight *
           (QuadraticForm(model.fabricated_domain, fixed_flux, response) -
            QuadraticForm(model.thin_domain, patch_trace, response));
+    }
+    if (include_fixed_flux)
+    {
+      result.domain_correction += domain_correction_fixed_trace;
+      contribution.domain_correction += domain_correction_fixed_trace;
       result.domain_correction_fixed_flux += domain_correction_fixed_flux;
       contribution.domain_correction_fixed_flux += domain_correction_fixed_flux;
+    }
+    else if (model.domain_correction_mode == DomainCorrectionMode::FIXED_TRACE)
+    {
+      result.domain_correction += domain_correction_fixed_trace;
+      contribution.domain_correction += domain_correction_fixed_trace;
+    }
+    else if (model.domain_correction_mode == DomainCorrectionMode::FIXED_FLUX)
+    {
+      result.domain_correction += domain_correction_fixed_flux;
+      contribution.domain_correction += domain_correction_fixed_flux;
     }
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
@@ -12095,6 +13511,8 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                              {"Name", models[i].name},
                              {"Topology", models[i].topology},
                              {"BasisSize", models[i].basis_size},
+                             {"SurfaceMortar", models[i].surface_mortar},
+                             {"SpatialMortar", models[i].spatial_mortar},
                              {"PatchCount", model_patch_counts[i]},
                              {"PatchWeight", model_patch_weights[i]}});
   }

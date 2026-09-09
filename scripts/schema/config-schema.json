@@ -3173,6 +3173,32 @@
               "description": "Relative convergence tolerance for an optional self-consistent fabrication-response corrected-field solve. The raw field solve continues to use `Solver.Linear.Tol`.",
               "default": 1e-06
             },
+            "TranslationalDomainCorrection": {
+              "type": "string",
+              "enum": [
+                "Disabled",
+                "FixedTrace",
+                "FixedFlux"
+              ],
+              "description": "Self-consistent domain coupling for translational isolated-edge, gap, strip, and parallel-edge coupon families. `Disabled` retains their fabricated surface-energy evaluation but omits their domain defect from the corrected global operator. Spatial clusters and corners remain fixed-trace coupled.",
+              "default": "FixedTrace"
+            },
+            "TraceCoupling": {
+              "type": "string",
+              "enum": [
+                "Collocated",
+                "SurfaceMortar"
+              ],
+              "description": "Map the global field into coupon trace coefficients by historical point collocation or by an L2 matching-surface mortar projection. SurfaceMortar applies to electrostatic translational families and single-conductor spatial/corner models with closed contour rings. Multi-conductor open spatial traces and Maxwell H(curl) mortars remain under development.",
+              "default": "Collocated"
+            },
+            "MortarOversampling": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8,
+              "description": "Quadrature refinement factor relative to the local finite-element mesh size for SurfaceMortar trace coupling.",
+              "default": 2
+            },
             "FabricatedMatrix": {
               "type": "string",
               "description": "Path to the fabricated coupon `domain-response-matrix.csv` file."
@@ -3184,6 +3210,24 @@
             "BasisPoints": {
               "type": "string",
               "description": "CSV file containing the local coupon contour knot coordinates, one x,y,z point for each response-matrix basis function."
+            },
+            "TraceMesh": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "Vertices",
+                "Triangles"
+              ],
+              "properties": {
+                "Vertices": {
+                  "type": "string",
+                  "description": "CSV file containing canonical trace-surface vertices and their basis/conductor ownership."
+                },
+                "Triangles": {
+                  "type": "string",
+                  "description": "CSV file containing one-based trace-surface triangle connectivity."
+                }
+              }
             },
             "Edges": {
               "type": "array",
@@ -3249,6 +3293,22 @@
                   "BasisPoints": {
                     "type": "string",
                     "description": "CSV file containing the ordered local coupon contour knots, one x,y,z point for each response-matrix basis function."
+                  },
+                  "TraceMesh": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "Vertices",
+                      "Triangles"
+                    ],
+                    "properties": {
+                      "Vertices": {
+                        "type": "string"
+                      },
+                      "Triangles": {
+                        "type": "string"
+                      }
+                    }
                   },
                   "Interfaces": {
                     "type": "array",

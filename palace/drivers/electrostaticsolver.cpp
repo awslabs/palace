@@ -17,10 +17,138 @@
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <limits>
+#include <optional>
+#include <sstream>
+#include <string_view>
 
 namespace palace
 {
+
+namespace
+{
+
+constexpr std::uint64_t response_archive_magic = 0x50414c5253503031ULL;
+constexpr std::uint32_t response_archive_version = 1;
+
+enum class ArchivedField : std::uint32_t
+{
+  POTENTIAL = 1,
+  FLUX = 2
+};
+
+bool EnvironmentFlag(const char *name)
+{
+  const char *value = std::getenv(name);
+  return value && std::string_view(value) == "1";
+}
+
+std::optional<std::filesystem::path> ResponseArchiveDirectory()
+{
+  const char *value = std::getenv("PALACE_RESPONSE_ARCHIVE_DIR");
+  if (!value || std::string_view(value).empty())
+  {
+    return std::nullopt;
+  }
+  return std::filesystem::absolute(value).lexically_normal();
+}
+
+int ResponseArchiveBlockSize()
+{
+  const char *value = std::getenv("PALACE_RESPONSE_BLOCK_SIZE");
+  if (!value)
+  {
+    return 3;
+  }
+  const int size = std::stoi(value);
+  MFEM_VERIFY(size > 0, "PALACE_RESPONSE_BLOCK_SIZE must be positive!");
+  return size;
+}
+
+std::filesystem::path ArchivePath(const std::filesystem::path &directory, int source,
+                                  int rank, ArchivedField field)
+{
+  std::ostringstream name;
+  name << "source-" << std::setw(6) << std::setfill('0') << source << "-rank-"
+       << std::setw(6) << rank << "-" << (field == ArchivedField::POTENTIAL ? "V" : "D")
+       << ".bin";
+  return directory / name.str();
+}
+
+template <typename T>
+void WriteArchiveValue(std::ofstream &stream, const T &value)
+{
+  stream.write(reinterpret_cast<const char *>(&value), sizeof(value));
+}
+
+template <typename T>
+void ReadArchiveValue(std::ifstream &stream, T &value)
+{
+  stream.read(reinterpret_cast<char *>(&value), sizeof(value));
+}
+
+void WriteArchivedVector(const std::filesystem::path &directory, int source,
+                         ArchivedField field, const Vector &vector, MPI_Comm comm)
+{
+  const int rank = Mpi::Rank(comm);
+  const int size = Mpi::Size(comm);
+  const auto path = ArchivePath(directory, source, rank, field);
+  std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+  MFEM_VERIFY(stream,
+              "Unable to create response archive field \"" << path.string() << "\"!");
+  const std::int64_t source_value = source;
+  const std::int64_t rank_value = rank;
+  const std::int64_t size_value = size;
+  const std::int64_t local_size = vector.Size();
+  WriteArchiveValue(stream, response_archive_magic);
+  WriteArchiveValue(stream, response_archive_version);
+  WriteArchiveValue(stream, static_cast<std::uint32_t>(field));
+  WriteArchiveValue(stream, source_value);
+  WriteArchiveValue(stream, rank_value);
+  WriteArchiveValue(stream, size_value);
+  WriteArchiveValue(stream, local_size);
+  stream.write(reinterpret_cast<const char *>(vector.HostRead()),
+               local_size * sizeof(double));
+  MFEM_VERIFY(stream, "Failed writing response archive field \"" << path.string() << "\"!");
+}
+
+Vector ReadArchivedVector(const std::filesystem::path &directory, int source,
+                          ArchivedField field, MPI_Comm comm)
+{
+  const int rank = Mpi::Rank(comm);
+  const int size = Mpi::Size(comm);
+  const auto path = ArchivePath(directory, source, rank, field);
+  std::ifstream stream(path, std::ios::binary);
+  MFEM_VERIFY(stream, "Unable to open response archive field \"" << path.string() << "\"!");
+  std::uint64_t magic = 0;
+  std::uint32_t version = 0, stored_field = 0;
+  std::int64_t stored_source = 0, stored_rank = 0, stored_size = 0, local_size = 0;
+  ReadArchiveValue(stream, magic);
+  ReadArchiveValue(stream, version);
+  ReadArchiveValue(stream, stored_field);
+  ReadArchiveValue(stream, stored_source);
+  ReadArchiveValue(stream, stored_rank);
+  ReadArchiveValue(stream, stored_size);
+  ReadArchiveValue(stream, local_size);
+  MFEM_VERIFY(
+      stream && magic == response_archive_magic && version == response_archive_version &&
+          stored_field == static_cast<std::uint32_t>(field) && stored_source == source &&
+          stored_rank == rank && stored_size == size && local_size >= 0,
+      "Invalid response archive header in \"" << path.string() << "\"!");
+  Vector vector(static_cast<int>(local_size));
+  stream.read(reinterpret_cast<char *>(vector.HostWrite()), local_size * sizeof(double));
+  MFEM_VERIFY(stream && stream.peek() == std::ifstream::traits_type::eof(),
+              "Invalid response archive payload in \"" << path.string() << "\"!");
+  vector.UseDevice(true);
+  return vector;
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -101,6 +229,31 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MFEM_VERIFY(n_step > 0,
               "No terminal or prescribed potential boundaries specified for electrostatic "
               "simulation!");
+  const auto response_archive = ResponseArchiveDirectory();
+  const bool archive_reduce_only = EnvironmentFlag("PALACE_RESPONSE_REDUCE_ONLY");
+  const bool archive_stream_only = EnvironmentFlag("PALACE_RESPONSE_ARCHIVE_ONLY");
+  const bool archive_recycle_initial_guess =
+      archive_stream_only && EnvironmentFlag("PALACE_RESPONSE_RECYCLE_INITIAL_GUESS");
+  MFEM_VERIFY(!archive_stream_only ||
+                  (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
+                   iodata.solver.electrostatic.response_matrix &&
+                   iodata.solver.electrostatic.aggregate_response_matrix),
+              "PALACE_RESPONSE_ARCHIVE_ONLY requires PALACE_RESPONSE_ARCHIVE_DIR and an "
+              "aggregated prescribed-potential response-matrix configuration!");
+  MFEM_VERIFY(!archive_reduce_only ||
+                  (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
+                   iodata.solver.electrostatic.response_matrix &&
+                   iodata.solver.electrostatic.aggregate_response_matrix),
+              "PALACE_RESPONSE_REDUCE_ONLY requires PALACE_RESPONSE_ARCHIVE_DIR and an "
+              "aggregated prescribed-potential response-matrix configuration!");
+  if (response_archive)
+  {
+    if (root)
+    {
+      std::filesystem::create_directories(*response_archive);
+    }
+    Mpi::Barrier(laplace_op.GetComm());
+  }
 
   // Right-hand side term and solution vector storage.
   Vector RHS(Grad.Width()), E(Grad.Height()), D(laplace_op.GetRTSpace().GetTrueVSize());
@@ -108,7 +261,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<Vector> V(n_step);
   std::vector<Vector> V_corrected(self_consistent_response ? n_step : 0);
   std::vector<Vector> D_basis(post_op.NeedsRecoveredElectricFlux() &&
-                                      iodata.solver.electrostatic.response_matrix
+                                      iodata.solver.electrostatic.response_matrix &&
+                                      !archive_stream_only
                                   ? n_step
                                   : 0);
   using EnergyData = PostOperator<ProblemType::ELECTROSTATIC>::ElectrostaticEnergyData;
@@ -137,6 +291,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   long long int raw_linear_iterations = 0;
   long long int corrected_linear_solves = 0;
   long long int corrected_linear_iterations = 0;
+  Vector previous_archive_solution;
 
   // Initialize structures for storing and reducing the results of error estimation.
   GradFluxErrorEstimator estimator(
@@ -144,6 +299,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
+
+  if (archive_reduce_only)
+  {
+    Mpi::Print("\nReducing archived electrostatic response fields from {}\n",
+               response_archive->string());
+    PostprocessArchivedResponseMatrix(post_op, laplace_op, Grad, *response_archive,
+                                      ResponseArchiveBlockSize());
+    SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
+    return {indicator, laplace_op.GlobalTrueVSize()};
+  }
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} {}\n", n_step,
@@ -159,6 +324,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // terminal.
     Mpi::Print("\n");
     laplace_op.GetExcitationVector(idx, *K, V[step], RHS);
+    if (archive_recycle_initial_guess && previous_archive_solution.Size() == V[step].Size())
+    {
+      Vector essential_values;
+      V[step].GetSubVector(laplace_op.GetDbcTDofList(), essential_values);
+      V[step] = previous_archive_solution;
+      V[step].SetSubVector(laplace_op.GetDbcTDofList(), essential_values);
+      ksp.SetInitialGuess(true);
+    }
     const double rhs_norm = linalg::Norml2(laplace_op.GetComm(), RHS);
     const bool zero_response = iodata.solver.electrostatic.response_matrix &&
                                rhs_norm <= 100.0 * std::numeric_limits<double>::epsilon();
@@ -202,6 +375,26 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         D_basis[step] = D;
       }
+    }
+    if (response_archive)
+    {
+      WriteArchivedVector(*response_archive, idx, ArchivedField::POTENTIAL, V[step],
+                          laplace_op.GetComm());
+      if (post_op.NeedsRecoveredElectricFlux())
+      {
+        WriteArchivedVector(*response_archive, idx, ArchivedField::FLUX, D,
+                            laplace_op.GetComm());
+      }
+    }
+    if (archive_stream_only)
+    {
+      if (archive_recycle_initial_guess)
+      {
+        previous_archive_solution = V[step];
+      }
+      V[step].SetSize(0);
+      step++;
+      continue;
     }
 
     // Measurement and printing.
@@ -277,9 +470,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             "exceeded: max interface trace-closure spread = {:.3e}, response-weighted "
             "local trace-closure spread = {:.3e}, trace-closure response fraction above "
             "5% = {:.3e}. Corrected values are reported, but the raw thin-metal "
-            "field does not determine a closure-independent local response. The "
-            "self-consistent corrected result remains the preferred value because it "
-            "solves the globally coupled response-corrected system.\n",
+            "field does not determine a closure-independent local response. A "
+            "self-consistent result is preferable only when its globally coupled "
+            "corrected solve remains well-conditioned and converges.\n",
             response.maximum_trace_closure_spread,
             response.response_weighted_trace_closure_spread,
             response.trace_closure_response_failure_fraction);
@@ -298,39 +491,52 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         const auto solves_before = ksp.NumTotalMult();
         const auto iterations_before = ksp.NumTotalMultIterations();
         ksp.Mult(corrected_rhs, V_corrected[step]);
+        const bool corrected_converged = ksp.GetConverged();
+        const double corrected_relative_residual = ksp.GetFinalRelativeResidual();
         corrected_linear_solves += ksp.NumTotalMult() - solves_before;
         corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
         ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
         ksp.SetOperator(*K);
         ksp.SetRelTol(solve_tol);
-        Vector E_corrected(Grad.Height()), D_corrected;
-        E_corrected = 0.0;
-        Grad.AddMult(V_corrected[step], E_corrected, -1.0);
-        const Vector *D_corrected_ptr = nullptr;
-        if (post_op.NeedsRecoveredElectricFlux())
+        if (!corrected_converged)
         {
-          D_corrected.SetSize(laplace_op.GetRTSpace().GetTrueVSize());
-          D_corrected.UseDevice(true);
-          estimator.RecoverFlux(E_corrected, D_corrected);
-          D_corrected_ptr = &D_corrected;
+          Mpi::Warning(
+              "Self-consistent response-corrected solve did not converge (relative "
+              "residual = {:.3e}); corrected energies and participations are reported "
+              "as unavailable instead of evaluating the unconverged field.\n",
+              corrected_relative_residual);
         }
+        else
+        {
+          Vector E_corrected(Grad.Height()), D_corrected;
+          E_corrected = 0.0;
+          Grad.AddMult(V_corrected[step], E_corrected, -1.0);
+          const Vector *D_corrected_ptr = nullptr;
+          if (post_op.NeedsRecoveredElectricFlux())
+          {
+            D_corrected.SetSize(laplace_op.GetRTSpace().GetTrueVSize());
+            D_corrected.UseDevice(true);
+            estimator.RecoverFlux(E_corrected, D_corrected);
+            D_corrected_ptr = &D_corrected;
+          }
 
-        const auto target_interfaces = response_correction->GetTargetInterfaces();
-        {
-          BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
-          corrected_energies = post_op.GetElectrostaticEnergies(
-              V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
+          const auto target_interfaces = response_correction->GetTargetInterfaces();
+          {
+            BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+            corrected_energies = post_op.GetElectrostaticEnergies(
+                V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
+          }
+          SurfaceResponseOperator::ElectrostaticResponse corrected_response;
+          {
+            BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+            corrected_response =
+                response_correction->GetElectrostaticResponse(V_corrected[step], false);
+          }
+          corrected_energies = ApplyResponse(std::move(corrected_energies),
+                                             corrected_response.domain_correction,
+                                             corrected_response.fabricated_surface_energy);
+          corrected_contributions = std::move(corrected_response.model_contributions);
         }
-        SurfaceResponseOperator::ElectrostaticResponse corrected_response;
-        {
-          BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-          corrected_response =
-              response_correction->GetElectrostaticResponse(V_corrected[step], false);
-        }
-        corrected_energies = ApplyResponse(std::move(corrected_energies),
-                                           corrected_response.domain_correction,
-                                           corrected_response.fabricated_surface_energy);
-        corrected_contributions = std::move(corrected_response.model_contributions);
       }
 
       if (response_correction->HasSurfaceResponse())
@@ -369,7 +575,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     PostprocessTerminals(post_op, laplace_op.GetSources(), V);
   }
-  else if (iodata.solver.electrostatic.response_matrix)
+  else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
   {
     PostprocessResponseMatrix(post_op, laplace_op, Grad, V, D_basis);
   }
@@ -601,6 +807,206 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     SaveMetadata(*response_correction);
   }
   return {indicator, laplace_op.GlobalTrueVSize()};
+}
+
+void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
+    PostOperator<ProblemType::ELECTROSTATIC> &post_op, const LaplaceOperator &laplace_op,
+    const Operator &Grad, const std::filesystem::path &archive, int block_size) const
+{
+  const auto &sources = laplace_op.GetSources();
+  std::vector<int> basis_indices;
+  basis_indices.reserve(sources.size());
+  for (const auto &[idx, data] : sources)
+  {
+    (void)data;
+    basis_indices.push_back(idx);
+  }
+  const std::size_t basis_size = basis_indices.size();
+  MFEM_VERIFY(basis_size > 0 && block_size > 0,
+              "Archived response reduction requires sources and a positive block size!");
+  int archive_has_flux = std::filesystem::is_regular_file(ArchivePath(
+                             archive, basis_indices.front(),
+                             Mpi::Rank(laplace_op.GetComm()), ArchivedField::FLUX))
+                             ? 1
+                             : 0;
+  const int local_archive_has_flux = archive_has_flux;
+  Mpi::GlobalMin(1, &archive_has_flux, laplace_op.GetComm());
+  int maximum_archive_has_flux = local_archive_has_flux;
+  Mpi::GlobalMax(1, &maximum_archive_has_flux, laplace_op.GetComm());
+  MFEM_VERIFY(archive_has_flux == maximum_archive_has_flux,
+              "Response archive flux fields are inconsistent across MPI ranks!");
+
+  TableWithCSVFile surface_output, domain_output;
+  if (root)
+  {
+    surface_output = TableWithCSVFile(post_dir / "surface-response-matrix.csv");
+    surface_output.table.insert(Column("interface", "interface", 0, 0, 2, ""));
+    surface_output.table.insert(Column("edge", "edge", 0, 0, 2, ""));
+    surface_output.table.insert("distance", "R (m)");
+    surface_output.table.insert(Column("basis_i", "basis_i", 0, 0, 2, ""));
+    surface_output.table.insert(Column("basis_j", "basis_j", 0, 0, 2, ""));
+    surface_output.table.insert("Q", "Q_ij (J)");
+    surface_output.table.insert("Q_normal", "Q_ij normal (J)");
+    surface_output.table.insert("Q_tangential", "Q_ij tangential (J)");
+    surface_output.table.insert("Q_total", "Q_total_ij (J)");
+    surface_output.table.insert("Q_total_normal", "Q_total_ij normal (J)");
+    surface_output.table.insert("Q_total_tangential", "Q_total_ij tangential (J)");
+
+    domain_output = TableWithCSVFile(post_dir / "domain-response-matrix.csv");
+    domain_output.table.insert(Column("basis_i", "basis_i", 0, 0, 2, ""));
+    domain_output.table.insert(Column("basis_j", "basis_j", 0, 0, 2, ""));
+    domain_output.table.insert("Q", "Q_ij (J)");
+    domain_output.table.reserve(basis_size * (basis_size + 1) / 2, 3);
+  }
+
+  using VT = Units::ValueType;
+  auto AppendSurface = [&](int interface, double distance, std::size_t i, std::size_t j,
+                           const auto &entry, int local_i, int local_j)
+  {
+    if (!root)
+    {
+      return;
+    }
+    surface_output.table["interface"] << interface;
+    surface_output.table["edge"] << 1;
+    surface_output.table["distance"] << iodata.units.Dimensionalize<VT::LENGTH>(distance);
+    surface_output.table["basis_i"] << basis_indices[i];
+    surface_output.table["basis_j"] << basis_indices[j];
+    surface_output.table["Q"] << iodata.units.Dimensionalize<VT::ENERGY>(
+        entry.energy_inside(local_i, local_j));
+    surface_output.table["Q_normal"] << iodata.units.Dimensionalize<VT::ENERGY>(
+        entry.energy_inside_normal(local_i, local_j));
+    surface_output.table["Q_tangential"] << iodata.units.Dimensionalize<VT::ENERGY>(
+        entry.energy_inside_tangential(local_i, local_j));
+    surface_output.table["Q_total"]
+        << iodata.units.Dimensionalize<VT::ENERGY>(entry.energy_total(local_i, local_j));
+    surface_output.table["Q_total_normal"] << iodata.units.Dimensionalize<VT::ENERGY>(
+        entry.energy_total_normal(local_i, local_j));
+    surface_output.table["Q_total_tangential"] << iodata.units.Dimensionalize<VT::ENERGY>(
+        entry.energy_total_tangential(local_i, local_j));
+  };
+
+  auto &V_gf = post_op.GetVGridFunction().Real();
+  auto &D_gf = post_op.GetDomainPostOp().D;
+  const std::size_t block = static_cast<std::size_t>(block_size);
+  const std::size_t block_count = (basis_size + block - 1) / block;
+  std::size_t completed = 0;
+  const std::size_t total_blocks = block_count * (block_count + 1) / 2;
+  for (std::size_t first_block = 0; first_block < block_count; first_block++)
+  {
+    const std::size_t first_begin = first_block * block;
+    const std::size_t first_end = std::min(first_begin + block, basis_size);
+    const std::size_t first_count = first_end - first_begin;
+    for (std::size_t second_block = first_block; second_block < block_count; second_block++)
+    {
+      const std::size_t second_begin = second_block * block;
+      const std::size_t second_end = std::min(second_begin + block, basis_size);
+      const std::size_t second_count = second_end - second_begin;
+      const bool diagonal_block = first_block == second_block;
+
+      std::vector<std::size_t> global_indices;
+      global_indices.reserve(first_count + (diagonal_block ? 0 : second_count));
+      for (std::size_t i = first_begin; i < first_end; i++)
+      {
+        global_indices.push_back(i);
+      }
+      if (!diagonal_block)
+      {
+        for (std::size_t i = second_begin; i < second_end; i++)
+        {
+          global_indices.push_back(i);
+        }
+      }
+
+      std::vector<Vector> V, D, E_basis, V_local;
+      V.reserve(global_indices.size());
+      if (archive_has_flux)
+      {
+        D.reserve(global_indices.size());
+      }
+      E_basis.resize(global_indices.size());
+      V_local.resize(global_indices.size());
+      for (std::size_t local = 0; local < global_indices.size(); local++)
+      {
+        const int source = basis_indices[global_indices[local]];
+        V.push_back(ReadArchivedVector(archive, source, ArchivedField::POTENTIAL,
+                                       laplace_op.GetComm()));
+        if (archive_has_flux)
+        {
+          D.push_back(ReadArchivedVector(archive, source, ArchivedField::FLUX,
+                                         laplace_op.GetComm()));
+        }
+        MFEM_VERIFY(V.back().Size() == Grad.Width(),
+                    "Archived potential field has an incompatible local size!");
+        E_basis[local].SetSize(Grad.Height());
+        E_basis[local] = 0.0;
+        Grad.AddMult(V.back(), E_basis[local], -1.0);
+        V_gf.SetFromTrueDofs(V.back());
+        V_local[local] = V_gf;
+      }
+
+      const auto surface_matrices = post_op.GetInterfaceElectricFieldEnergyMatrices(
+          E_basis, archive_has_flux ? &D : nullptr);
+      mfem::DenseMatrix local_domain(static_cast<int>(first_count),
+                                     static_cast<int>(second_count));
+      local_domain = 0.0;
+      for (std::size_t local_i = 0; local_i < first_count; local_i++)
+      {
+        post_op.GetDomainPostOp().M_elec->Mult(V_local[local_i], D_gf);
+        for (std::size_t local_j = 0; local_j < second_count; local_j++)
+        {
+          const std::size_t union_j = diagonal_block ? local_j : first_count + local_j;
+          if (diagonal_block && local_j < local_i)
+          {
+            continue;
+          }
+          local_domain(static_cast<int>(local_i), static_cast<int>(local_j)) =
+              0.5 * linalg::LocalDot(V_local[union_j], D_gf);
+        }
+      }
+      Mpi::GlobalSum(local_domain.Height() * local_domain.Width(), local_domain.GetData(),
+                     post_op.GetComm());
+
+      for (std::size_t local_i = 0; local_i < first_count; local_i++)
+      {
+        const std::size_t global_i = first_begin + local_i;
+        for (std::size_t local_j = 0; local_j < second_count; local_j++)
+        {
+          if (diagonal_block && local_j < local_i)
+          {
+            continue;
+          }
+          const std::size_t global_j = second_begin + local_j;
+          const int union_i = static_cast<int>(local_i);
+          const int union_j =
+              static_cast<int>(diagonal_block ? local_j : first_count + local_j);
+          for (const auto &[interface, entries] : surface_matrices)
+          {
+            for (const auto &entry : entries)
+            {
+              AppendSurface(interface, entry.distance, global_i, global_j, entry, union_i,
+                            union_j);
+            }
+          }
+          if (root)
+          {
+            domain_output.table["basis_i"] << basis_indices[global_i];
+            domain_output.table["basis_j"] << basis_indices[global_j];
+            domain_output.table["Q"] << iodata.units.Dimensionalize<VT::ENERGY>(
+                local_domain(static_cast<int>(local_i), static_cast<int>(local_j)));
+          }
+        }
+      }
+      completed++;
+      Mpi::Print(" Archived response block pair {:d}/{:d}\n", static_cast<int>(completed),
+                 static_cast<int>(total_blocks));
+    }
+  }
+  if (root)
+  {
+    surface_output.WriteFullTableTrunc();
+    domain_output.WriteFullTableTrunc();
+  }
 }
 
 void ElectrostaticSolver::PostprocessResponseMatrix(

@@ -1471,6 +1471,46 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     data.solve_tol = correction.value("SolveTol", data.solve_tol);
     MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
                 "Electrostatic response-correction \"SolveTol\" must be positive!");
+    const std::string translational_domain_correction =
+        correction.value("TranslationalDomainCorrection", "FixedTrace");
+    if (translational_domain_correction == "Disabled")
+    {
+      data.translational_domain_correction =
+          ResponseCorrectionData::TranslationalDomainCorrection::DISABLED;
+    }
+    else if (translational_domain_correction == "FixedTrace")
+    {
+      data.translational_domain_correction =
+          ResponseCorrectionData::TranslationalDomainCorrection::FIXED_TRACE;
+    }
+    else if (translational_domain_correction == "FixedFlux")
+    {
+      data.translational_domain_correction =
+          ResponseCorrectionData::TranslationalDomainCorrection::FIXED_FLUX;
+    }
+    else
+    {
+      MFEM_ABORT("Electrostatic response-correction \"TranslationalDomainCorrection\" "
+                 "must be \"Disabled\", \"FixedTrace\", or \"FixedFlux\"!");
+    }
+    const std::string trace_coupling = correction.value("TraceCoupling", "Collocated");
+    if (trace_coupling == "Collocated")
+    {
+      data.trace_coupling = ResponseCorrectionData::TraceCoupling::COLLOCATED;
+    }
+    else if (trace_coupling == "SurfaceMortar")
+    {
+      data.trace_coupling = ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR;
+    }
+    else
+    {
+      MFEM_ABORT("Response-correction \"TraceCoupling\" must be \"Collocated\" or "
+                 "\"SurfaceMortar\"!");
+    }
+    data.mortar_oversampling =
+        correction.value("MortarOversampling", data.mortar_oversampling);
+    MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
+                "Response-correction \"MortarOversampling\" must be between 1 and 8!");
     if (auto library = correction.find("Library"); library != correction.end())
     {
       data.library = library->get<std::string>();
@@ -1508,6 +1548,11 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           model.value("FabricatedSurfaceMatrix", std::string{});
       model_data.thin_surface_matrix = model.value("ThinSurfaceMatrix", std::string{});
       model_data.basis_points = model.at("BasisPoints");
+      if (auto trace_mesh = model.find("TraceMesh"); trace_mesh != model.end())
+      {
+        model_data.trace_vertices = trace_mesh->at("Vertices");
+        model_data.trace_triangles = trace_mesh->at("Triangles");
+      }
       if (auto interfaces = model.find("Interfaces"); interfaces != model.end())
       {
         for (const auto &interface : *interfaces)

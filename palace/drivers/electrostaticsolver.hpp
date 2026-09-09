@@ -4,6 +4,7 @@
 #ifndef PALACE_DRIVERS_ELECTROSTATIC_SOLVER_HPP
 #define PALACE_DRIVERS_ELECTROSTATIC_SOLVER_HPP
 
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <vector>
@@ -47,6 +48,11 @@ private:
                                  const LaplaceOperator &laplace_op, const Operator &Grad,
                                  const std::vector<Vector> &V,
                                  const std::vector<Vector> &D) const;
+  void PostprocessArchivedResponseMatrix(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
+                                         const LaplaceOperator &laplace_op,
+                                         const Operator &Grad,
+                                         const std::filesystem::path &archive,
+                                         int block_size) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

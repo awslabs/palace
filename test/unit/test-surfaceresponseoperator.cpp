@@ -1807,6 +1807,34 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(parallel_cluster_response_2d.GetPatchCount() == 1);
   CHECK(parallel_cluster_response_2d.GetBasisSize() == 5);
 
+  auto mortar_cluster_config_2d = parallel_cluster_config_2d;
+  mortar_cluster_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                          ["TraceCoupling"] = "SurfaceMortar";
+  IoData mortar_cluster_iodata_2d(mortar_cluster_config_2d, false);
+  mortar_cluster_iodata_2d.boundaries.cracked_attributes.insert(9);
+  mortar_cluster_iodata_2d.boundaries.cracked_attributes.insert(10);
+  LaplaceOperator mortar_cluster_laplace_2d(mortar_cluster_iodata_2d,
+                                            parallel_cluster_meshes_2d);
+  SurfaceResponseOperator mortar_cluster_response_2d(mortar_cluster_iodata_2d,
+                                                     mortar_cluster_laplace_2d);
+  mfem::FunctionCoefficient linear_trace_coefficient([](const mfem::Vector &x)
+                                                     { return x[0] + 2.0 * x[1]; });
+  mfem::ParGridFunction linear_trace_field(&parallel_cluster_laplace_2d.GetH1Space().Get());
+  linear_trace_field.ProjectCoefficient(linear_trace_coefficient);
+  Vector linear_trace_true;
+  linear_trace_field.GetTrueDofs(linear_trace_true);
+  const auto collocated_linear_response =
+      parallel_cluster_response_2d.GetElectrostaticResponse(linear_trace_true);
+  const auto mortar_linear_response =
+      mortar_cluster_response_2d.GetElectrostaticResponse(linear_trace_true);
+  CHECK_THAT(mortar_linear_response.domain_correction,
+             WithinAbs(collocated_linear_response.domain_correction, 1.0e-12));
+  CHECK_THAT(mortar_linear_response.domain_correction_fixed_flux,
+             WithinAbs(collocated_linear_response.domain_correction_fixed_flux, 1.0e-12));
+  CHECK_THAT(
+      mortar_linear_response.fabricated_surface_energy.at(4),
+      WithinAbs(collocated_linear_response.fabricated_surface_energy.at(4), 1.0e-12));
+
   auto parallel_cluster_boundary_config_2d = parallel_cluster_config_2d;
   parallel_cluster_boundary_config_2d["Problem"]["Type"] = "BoundaryMode";
   parallel_cluster_boundary_config_2d["Boundaries"].erase("Ground");
@@ -1876,6 +1904,58 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto parallel_cluster_electrostatic_result_2d =
       parallel_cluster_response_2d.GetElectrostaticResponse(
           parallel_cluster_potential_true_2d);
+
+  // A disabled translational domain correction must remove the cluster from both the
+  // self-consistent operator and corrected-domain accounting without disabling its
+  // fabricated surface-energy evaluation.
+  auto disabled_translational_config_2d = parallel_cluster_config_2d;
+  disabled_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                  ["TranslationalDomainCorrection"] = "Disabled";
+  IoData disabled_translational_iodata_2d(disabled_translational_config_2d, false);
+  disabled_translational_iodata_2d.boundaries.cracked_attributes.insert(9);
+  disabled_translational_iodata_2d.boundaries.cracked_attributes.insert(10);
+  LaplaceOperator disabled_translational_laplace_2d(disabled_translational_iodata_2d,
+                                                    parallel_cluster_meshes_2d);
+  SurfaceResponseOperator disabled_translational_response_2d(
+      disabled_translational_iodata_2d, disabled_translational_laplace_2d);
+  Vector disabled_translational_action(parallel_cluster_potential_true_2d.Size());
+  disabled_translational_response_2d.Mult(parallel_cluster_potential_true_2d,
+                                          disabled_translational_action);
+  CHECK(disabled_translational_action.Norml2() == 0.0);
+  const auto disabled_translational_result_2d =
+      disabled_translational_response_2d.GetElectrostaticResponse(
+          parallel_cluster_potential_true_2d, false);
+  CHECK(disabled_translational_result_2d.domain_correction == 0.0);
+  CHECK_THAT(
+      disabled_translational_result_2d.fabricated_surface_energy.at(4),
+      WithinRel(parallel_cluster_electrostatic_result_2d.fabricated_surface_energy.at(4),
+                1.0e-12));
+
+  auto fixed_flux_translational_config_2d = parallel_cluster_config_2d;
+  fixed_flux_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                    ["TranslationalDomainCorrection"] = "FixedFlux";
+  IoData fixed_flux_translational_iodata_2d(fixed_flux_translational_config_2d, false);
+  fixed_flux_translational_iodata_2d.boundaries.cracked_attributes.insert(9);
+  fixed_flux_translational_iodata_2d.boundaries.cracked_attributes.insert(10);
+  LaplaceOperator fixed_flux_translational_laplace_2d(fixed_flux_translational_iodata_2d,
+                                                      parallel_cluster_meshes_2d);
+  SurfaceResponseOperator fixed_flux_translational_response_2d(
+      fixed_flux_translational_iodata_2d, fixed_flux_translational_laplace_2d);
+  Vector fixed_flux_translational_action(parallel_cluster_potential_true_2d.Size());
+  fixed_flux_translational_response_2d.Mult(parallel_cluster_potential_true_2d,
+                                            fixed_flux_translational_action);
+  const auto fixed_flux_translational_result_2d =
+      fixed_flux_translational_response_2d.GetElectrostaticResponse(
+          parallel_cluster_potential_true_2d, false);
+  CHECK_THAT(
+      fixed_flux_translational_result_2d.domain_correction,
+      WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction_fixed_flux,
+                1.0e-12));
+  const auto fixed_flux_translational_energy_2d =
+      fixed_flux_translational_response_2d.GetEnergyCorrection(
+          parallel_cluster_potential_true_2d);
+  CHECK_THAT(fixed_flux_translational_energy_2d.domain,
+             WithinRel(fixed_flux_translational_result_2d.domain_correction, 1.0e-12));
 
   GridFunction parallel_cluster_boundary_field_2d(
       parallel_cluster_boundary_op_2d.GetNDSpace(), true);
