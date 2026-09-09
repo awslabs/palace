@@ -179,8 +179,13 @@ inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
 // The postprocessing directory is Palace-owned, so any existing file, directory, or
 // symlink at the path can be removed. Open and write failures are propagated collectively
 // to keep all ranks on the same MPI control path.
+//
+// With compress = true the file is written through mfem::ofgzstream, which gzip-compresses
+// the bytes when MFEM is built with zlib (MFEM_USE_ZLIB) and writes them verbatim
+// otherwise.
 template <typename Func>
-inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func)
+inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func,
+                                bool compress = false)
 {
   BlockTimer bt(Timer::IO);
   ApplyOnRootFilesystem(
@@ -188,6 +193,17 @@ inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&writ
       [&]()
       {
         fs::remove_all(path);
+        if (compress)
+        {
+          mfem::ofgzstream stream(path.string(), true);
+          if (!stream.good())
+          {
+            throw fs::filesystem_error("Could not open output file", path,
+                                       std::make_error_code(std::errc::io_error));
+          }
+          write_func(stream);
+          return;
+        }
         std::ofstream stream(path);
         if (!stream.is_open())
         {

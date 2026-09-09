@@ -260,6 +260,18 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@4.9.0",
                 ),
+                # Fix an MPI deadlock and silently wrong parallel conforming
+                # interpolation for partitioned nonconforming tet meshes
+                # (mfem#3925 family: tet edge-face constraint emission and
+                # hanging-vertex ownership). Remove once fixed upstream and
+                # MFEM is bumped.
+                patch(
+                    "https://raw.githubusercontent.com/awslabs/palace/"
+                    "0228371801f5738f9097a449353991150ee57b10/extern/patch/mfem/"
+                    "mfem_nc_partition_fixes.diff",
+                    sha256="5180c357a47fb2c36f618045f02f020dcd6eea3aae787614fec4bce6ca9ecdd9",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")
