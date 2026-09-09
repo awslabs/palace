@@ -1100,11 +1100,13 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
                 solver_t == ProblemType::TRANSIENT)
   {
+    const auto port_powers = fem_op->GetLumpedPortOp().GetPowers(*E, *B);
+    const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
-      vi.V = data.GetVoltage(*E);
+      vi.P = port_powers.at(idx);
+      vi.V = port_voltages.at(idx);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
@@ -1130,7 +1132,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
                 : 0.0;
         vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
                                std::complex<double>{0.0, 0.0});
-        vi.S = data.GetSParameter(*E);
+        vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
 
         // Add contribution due to all inductive lumped boundaries in the model:
         //                      E_ind = ∑_j 1/2 L_j I_mj².
@@ -1441,8 +1443,7 @@ void PostOperator<solver_t>::MeasureFarField() const
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq.real(),
-        measurement_cache.freq.imag());
+        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
   }
 }
 
