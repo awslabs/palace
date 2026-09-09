@@ -205,6 +205,16 @@ public:
     return GetCurlSpace().GetDiscreteInterpolator(GetNDSpace());
   }
 
+  // Apply the cached sheet mass M_sheet (∫_Σ (1/L_ksq) A_t·v_t). Requires a prior
+  // GetFluxExcitationVector on a London loop to have built it. Lets the driver form the
+  // kinetic penalty energy S(A−a_h) = (A−a_h)ᵀ M_sheet (A−a_h) directly, avoiding the
+  // catastrophic cancellation of the expanded S(A,A) − 2S(A,a_h) + S(a_h,a_h) form.
+  void ApplySheetMass(const Vector &x, Vector &y) const
+  {
+    MFEM_VERIFY(M_sheet_, "Sheet mass operator has not been built!");
+    M_sheet_->Mult(x, y);
+  }
+
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
   void GetCurrentExcitationVector(int idx, Vector &RHS);

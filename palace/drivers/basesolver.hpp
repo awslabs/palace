@@ -44,9 +44,15 @@ protected:
   virtual std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const = 0;
 
-  // Set false by Solve when a linear solve fails to converge. Lets SolveEstimateMarkRefine
-  // halt adaptation gracefully (keeping the last converged iteration) instead of aborting.
+  // Set false by Solve when a linear solve fails to converge, or when the London kinetic
+  // penalty energy spikes (a stiff λ→0 penalty the solver cannot resolve on a refined mesh).
+  // Lets SolveEstimateMarkRefine halt adaptation gracefully, keeping the last converged
+  // iteration, instead of aborting or reporting a collapsed inductance.
   mutable bool solve_converged_ = true;
+
+  // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting an
+  // anomalous spike; negative until the first London solve sets it.
+  mutable double prev_london_kinetic_ = -1.0;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,

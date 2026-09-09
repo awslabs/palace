@@ -215,6 +215,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
   solve_converged_ = true;
+  // Total London kinetic penalty energy S(A_t − a_h) summed over flux loops this solve. A
+  // stiff (λ→0) penalty that the linear solve cannot resolve on a refined mesh makes this
+  // spike; comparing against the previous adaptation iteration flags the under-resolution.
+  double london_kinetic = 0.0;
 
   // Unified loop over all excitation sources (current and flux loops).
   if (n_current_steps > 0 && n_flux_steps > 0)
@@ -371,6 +375,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         double alpha = (data.GetExcitationFlux() - phi_p) / phi_h;
         A[step] = A_p_london;
         A[step].Add(alpha, A_h_london);
+
+        // Accumulate the kinetic penalty energy S(A_t − a_h) = (A − a_h)ᵀ M_sheet (A − a_h),
+        // formed directly (not via the cancellation-prone S(A,A) − 2S(A,a_h) + S(a_h,a_h)) so
+        // it is trustworthy even when the stiff-penalty solve is under-resolved.
+        Vector d(A[step]), msd(A[step].Size());
+        msd.UseDevice(true);
+        d -= boundary_values;
+        curlcurl_op.ApplySheetMass(d, msd);
+        london_kinetic += linalg::Dot(curlcurl_op.GetComm(), d, msd);
         Phi_inc[step] = data.GetExcitationFlux();  // Exact via the flux constraint.
 
         // Retain b and a_h for the cross-energy correction in PostprocessTerminals.
@@ -382,6 +395,27 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         ksp.Mult(RHS, A[step]);
       }
     }
+  }
+
+  // Guard against a stiff (λ→0) London penalty the linear solve cannot resolve on a refined
+  // mesh: the kinetic energy S(A_t − a_h) then jumps far above the previous adaptation
+  // iteration and the extracted inductance collapses. Flag it (before postprocessing writes
+  // an unreliable result) so SolveEstimateMarkRefine halts AMR and keeps the last converged
+  // iteration. A converging solve grows this energy at most mildly between iterations.
+  constexpr double london_kinetic_growth = 20.0;
+  if (prev_london_kinetic_ > 0.0 &&
+      london_kinetic > london_kinetic_growth * prev_london_kinetic_)
+  {
+    Mpi::Warning(curlcurl_op.GetComm(),
+                 "London kinetic energy jumped {:.2e}x after refinement ({:.3e} -> {:.3e}); "
+                 "the stiff-penalty solve is under-resolved!\n",
+                 london_kinetic / prev_london_kinetic_, prev_london_kinetic_, london_kinetic);
+    solve_converged_ = false;
+    return {indicator, curlcurl_op.GlobalTrueVSize()};
+  }
+  if (london_kinetic > 0.0)
+  {
+    prev_london_kinetic_ = london_kinetic;
   }
 
   // Pass 2: postprocess in canonical step order so output is independent of solve order.
