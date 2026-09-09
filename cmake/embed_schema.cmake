@@ -16,8 +16,9 @@ endif()
 get_filename_component(SCHEMA_OUTPUT_DIR "${SCHEMA_HEADER}" DIRECTORY)
 file(MAKE_DIRECTORY "${SCHEMA_OUTPUT_DIR}")
 
-# Collect all schema files
-file(GLOB SCHEMA_FILES "${SCHEMA_DIR}/*.json")
+# Embed only the validation schema. Other JSON files in this directory contain
+# distribution metadata rather than JSON Schemas.
+set(SCHEMA_FILES "${SCHEMA_DIR}/config-schema.json")
 
 # Generate the header file
 set(SCHEMA_HEADER_CONTENT

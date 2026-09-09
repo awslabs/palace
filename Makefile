@@ -4,7 +4,8 @@
 CLANG_FORMAT ?= clang-format
 JULIA ?= julia
 
-.PHONY: format format-cpp format-jl docs tests
+.PHONY: format format-cpp format-jl docs docs-generate-config \
+	docs-generate-schema-compatibility tests
 
 # Style/format
 format: format-cpp format-jl
@@ -23,6 +24,9 @@ docs:
 
 docs-generate-config:
 	$(JULIA) --project=docs --color=yes docs/generate_config_docs.jl
+
+docs-generate-schema-compatibility:
+	$(JULIA) --project=docs --color=yes docs/generate_schema_compatibility.jl
 
 # Tests
 #
