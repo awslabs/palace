@@ -86,6 +86,15 @@ and the provisional engineering versus strict accuracy profiles. The focused
 [measured mesh results](mesh-growth-results-20260910.md) track DOFs, conditioning,
 source timings, memory, and accuracy without changing the integration method.
 
+`frozen_volume_study.jl` generates independent volume candidates from one fixed
+surface mesh. For multislot coupons, `relabel_frozen_interface_mesh.jl` creates a
+derived **Gmsh 2.2** mesh after volume generation. It applies exact exclusive
+ownership, retains the frozen input unchanged, and verifies in-memory IDs plus
+serialized geometry/connectivity, quality, grouped physical-family areas,
+expected attributes, and SHA-bound partition certificates. MSH 2.2 is
+intentional: it is the format consumed by the Palace/MFEM reader used by these
+campaigns.
+
 ## Straight-edge swept milestone
 
 The straight-edge branch accepts one continuing edge without a plan-view mask.
