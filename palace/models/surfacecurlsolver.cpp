@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <unordered_set>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
@@ -36,18 +35,13 @@ namespace
 // circulation Φ; its gradient part is absorbable by A → A + ∇χ, so the extracted inductance
 // depends only on the cohomology class (Φ) and is gauge-invariant.
 //
-// Default is a cut cochain: a lowest-order (Whitney) edge DOF of ±Φ across a cut half-plane
-// S bounded by L (0 otherwise), projected into the order-p ND space (ND_1 ⊂ ND_p).
-// PALACE_CUT_DIR orients S (default "y": S = {x=cx, y≥cy}; "x": S = {y=cy, x≥cx}). Overall
-// sign is irrelevant: the downstream London normalization rescales a_h so cᵀa_h = Φ.
-//
-// PALACE_LONDON_AH=angle selects the smooth representative a_h = (Φ/2π)∇θ,
-// θ = atan2(y-cy, x-cx), whose exact DOF ∫_e ∇θ·t is the angle subtended at L. It carries
-// the fluxoid exactly (verified to 4e-15) but is NOT interchangeable with the cut cochain:
-// the two differ by ∇ψ, ψ = (Φ/2π)θ_branch, which does not vanish on the PEC outer walls,
-// so A → A + ∇ψ is inadmissible and L is not invariant. Its large smooth a_h|Σ lets the
-// film phase gradient absorb the fluxoid at near-zero kinetic cost, collapsing the
-// screening current (square_hole: 109× low). Diagnostic use only.
+// a_h is the cut cochain a_h = Grad ψ − a_angle: a lowest-order (Whitney) edge DOF of ±Φ
+// across the cut half-plane S = {x=cx, y≥cy} bounded by L (0 otherwise), projected into the
+// order-p ND space (ND_1 ⊂ ND_p). It is formed as the discrete gradient of a conformed
+// nodal branch potential ψ minus the smooth angle interpolant a_angle so it is
+// non-conformal-safe (see below). The cut shape is irrelevant to L (orienting S along x vs
+// y agrees to ~11 figures), as is the overall sign: the downstream normalization rescales
+// a_h so cᵀa_h = Φ.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
                                    const Mesh &mesh)
@@ -92,12 +86,6 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   Mpi::GlobalSum(1, &cnt, comm);
   MFEM_VERIFY(cnt > 0.0, "No hole boundary elements found for London cut generator!");
   double cx = csum[0] / cnt, cy = csum[1] / cnt;
-
-  // Generator choice and cut half-plane orientation (see function comment).
-  const char *ah_env = std::getenv("PALACE_LONDON_AH");
-  const bool use_cut = !(ah_env && (ah_env[0] == 'a' || ah_env[0] == 'A'));
-  const char *cut_env = std::getenv("PALACE_CUT_DIR");
-  const bool cut_x = (cut_env && (cut_env[0] == 'x' || cut_env[0] == 'X'));
 
   {
     // θ is undefined on L. Measure the hole's radial extent and the closest approach of a
@@ -150,16 +138,13 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   mfem::ParGridFunction psi(&h1_fespace);
   psi.UseDevice(false);
   psi = 0.0;
-  if (use_cut)
   {
     mfem::Array<int> vdofs;
     for (int v = 0; v < pmesh.GetNV(); v++)
     {
       const double *x = pmesh.GetVertex(v);
-      const double d = cut_x ? (x[1] - cy) : (x[0] - cx);
-      const double s = cut_x ? (x[0] - cx) : (x[1] - cy);
       h1_fespace.GetVertexDofs(v, vdofs);
-      psi(vdofs[0]) = phi * std::atan2(d, -s) / (2.0 * M_PI);
+      psi(vdofs[0]) = phi * std::atan2(x[0] - cx, -(x[1] - cy)) / (2.0 * M_PI);
     }
     mfem::Vector t(h1_fespace.GetTrueVSize());
     t.UseDevice(false);
@@ -178,18 +163,14 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     // is vertical, so ∇θ has no z-component and vertical edges get 0.
     const double ax = x0[0] - cx, ay = x0[1] - cy;
     const double bx = x1[0] - cx, by = x1[1] - cy;
-    const double dtheta = std::atan2(ax * by - ay * bx, ax * bx + ay * by);
+    const double a_angle =
+        phi * std::atan2(ax * by - ay * bx, ax * bx + ay * by) / (2.0 * M_PI);
     nd1_fespace.GetEdgeDofs(e, edofs);
-    double val = phi * dtheta / (2.0 * M_PI);
-    if (use_cut)
-    {
-      // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
-      // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
-      h1_fespace.GetVertexDofs(ev[0], vd0);
-      h1_fespace.GetVertexDofs(ev[1], vd1);
-      val = psi(vd1[0]) - psi(vd0[0]) - val;
-    }
-    ah1(edofs[0]) = val;
+    // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
+    // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
+    h1_fespace.GetVertexDofs(ev[0], vd0);
+    h1_fespace.GetVertexDofs(ev[1], vd1);
+    ah1(edofs[0]) = psi(vd1[0]) - psi(vd0[0]) - a_angle;
   }
 
   // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
