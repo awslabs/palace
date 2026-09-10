@@ -396,6 +396,36 @@ void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOpera
   TestCeedOperator(op_test, op_ref, true, true, scaling);
 }
 
+// Quadrature data assembly splits an integrator into a build QFunction, which writes the
+// per-quadrature-point tensor into a cache, and a generic apply QFunction which consumes
+// it. The two must agree on how that cache is laid out: a wrong block offset in a build
+// QFunction silently corrupts one block and leaves another zero. Compare against the same
+// integrator applied without cached quadrature data, which shares the coefficient and
+// geometry code paths but none of the layout logic.
+template <typename T>
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
+                            T AddIntegrators)
+{
+  BilinearForm a_test(fespace), a_ref(fespace);
+  AddIntegrators(a_test);
+  AddIntegrators(a_ref);
+  a_test.AssembleQuadratureData();
+  auto op_test = a_test.PartialAssemble();
+  auto op_ref = a_ref.PartialAssemble();
+
+  // Guard against vacuously comparing two empty operators.
+  Vector x(op_ref->Width()), y_ref(op_ref->Height());
+  x.UseDevice(true);
+  y_ref.UseDevice(true);
+  x.Randomize(1);
+  op_ref->Mult(x, y_ref);
+  double norm_ref = y_ref * y_ref;
+  Mpi::GlobalSum(1, &norm_ref, comm);
+  REQUIRE(norm_ref > 0.0);
+
+  TestCeedOperatorMult(*op_test, *op_ref, false);
+}
+
 template <typename T1, typename T2, typename T3>
 void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
                              T2 AssembleTestRef, T3 AssembleRef, int q_data_size)
@@ -1601,6 +1631,77 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
   auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
                          0, false, order, true);
+}
+
+// SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
+// configures when running on CPU, including the boundary terms contributed by absorbing and
+// impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
+// particular, a boundary curl-curl + mass term on a 3D mesh selects the 32 QFunctions,
+// which no other test exercises.
+TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
+{
+  auto mesh_file =
+      GENERATE("star-quad.mesh", "star-tri.mesh", "fichera-hex.mesh", "fichera-tet.mesh");
+  auto order = GENERATE(1, 2);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh =
+      Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+  const int dim = mesh.Dimension();
+
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  INFO("Mesh: " << mesh_file << "\nOrder: " << order);
+
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto Q_bdr = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  auto MQ_bdr = BuildCoefficient(mesh, true, CoeffType::Matrix);
+
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::H1_FECollection h1_fec(order, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+
+  SECTION("Domain Curl-Curl + Mass")
+  {
+    // The curl coefficient is scalar wherever the curl itself is scalar-valued (Dim < 3).
+    TestCeedQuadratureData(comm, nd_fespace,
+                           [&](BilinearForm &a)
+                           {
+                             if (dim < 3)
+                             {
+                               a.AddDomainIntegrator<CurlCurlMassIntegrator>(Q, MQ);
+                             }
+                             else
+                             {
+                               a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+                             }
+                           });
+  }
+  if (dim == 3)
+  {
+    SECTION("Boundary Curl-Curl + Mass")
+    {
+      // A second-order absorbing boundary fills both coefficients, so
+      // AddConfiguredIntegrators builds this integrator on the boundary.
+      TestCeedQuadratureData(
+          comm, nd_fespace, [&](BilinearForm &a)
+          { a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(Q_bdr, MQ_bdr); });
+    }
+  }
+  SECTION("Boundary Mass")
+  {
+    TestCeedQuadratureData(comm, nd_fespace, [&](BilinearForm &a)
+                           { a.AddBoundaryIntegrator<VectorFEMassIntegrator>(MQ_bdr); });
+  }
+  SECTION("Auxiliary Diffusion")
+  {
+    TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
