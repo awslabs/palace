@@ -419,6 +419,38 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 
+        # Pass the concrete Spack provenance of each dependency through to
+        # `palace --version`. The short DAG hash distinguishes different
+        # concrete builds of the same nominal version (e.g. develop).
+        dependency_versions = {
+            "STRUMPACK": "strumpack",
+            "arpack_ng": "arpack-ng",
+            "eigen": "eigen",
+            "fmt": "fmt",
+            "gslib": "gslib",
+            "hypre": "hypre",
+            "json": "nlohmann-json",
+            "libCEED": "libceed",
+            "libxsmm": "libxsmm",
+            "magma": "magma",
+            "metis": "metis",
+            "mfem": "mfem",
+            "mumps": "mumps",
+            "parmetis": "parmetis",
+            "petsc": "petsc",
+            "scalapack": "scalapack",
+            "scn": "scnlib",
+            "slepc": "slepc",
+            "sundials": "sundials",
+            "superlu_dist": "superlu-dist",
+        }
+        for cmake_name, spack_name in dependency_versions.items():
+            if spack_name not in self.spec:
+                continue
+            dep = self.spec[spack_name]
+            provenance = f"{dep.version} /{dep.dag_hash(7)}"
+            args.append(self.define(f"PALACE_DEP_{cmake_name}_VERSION", provenance))
+
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
             if self.spec.satisfies("+mumps"):
