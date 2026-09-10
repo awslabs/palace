@@ -21,6 +21,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
     integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
+  - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
+    or leading to incorrect results. [PR 927](https://github.com/awslabs/palace/pull/927).
 
 #### Performance Improvements
 
