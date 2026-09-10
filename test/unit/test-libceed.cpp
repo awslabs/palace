@@ -5,12 +5,14 @@
 #include <sstream>
 #include <string>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/basis.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "models/materialoperator.hpp"
@@ -1442,7 +1444,117 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   Mpi::Barrier(comm);
 }
 
+void CheckMfemFixedBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &points,
+                         bool check_gradient)
+{
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  CeedBasis basis;
+  // The arbitrary target rule is tabulated once at setup. Apply then uses the ordinary
+  // fixed basis API, exactly as mapped face/subface operators do.
+  ceed::InitBasisFromRule(fe, points, 1, ceed, &basis);
+
+  const int num_nodes = fe.GetDof();
+  const int num_points = points.GetNPoints();
+  const int value_dim = fe.GetRangeType() == mfem::FiniteElement::VECTOR ? fe.GetDim() : 1;
+  CeedVector u, v;
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, num_nodes, &u));
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, value_dim * num_points, &v));
+
+  mfem::Vector u_values(num_nodes);
+  for (int i = 0; i < num_nodes; i++)
+  {
+    u_values(i) = 0.25 * (i + 1) - 0.1 * (i % 3);
+  }
+  PalaceCeedCall(
+      ceed, CeedVectorSetArray(u, CEED_MEM_HOST, CEED_COPY_VALUES, u_values.GetData()));
+  PalaceCeedCall(ceed, CeedBasisApply(basis, 1, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, u, v));
+
+  const CeedScalar *values;
+  PalaceCeedCall(ceed, CeedVectorGetArrayRead(v, CEED_MEM_HOST, &values));
+  mfem::Vector shape(num_nodes);
+  mfem::DenseMatrix vshape(num_nodes, fe.GetDim());
+  for (int q = 0; q < num_points; q++)
+  {
+    if (value_dim == 1)
+    {
+      fe.CalcShape(points.IntPoint(q), shape);
+      CHECK(values[q] == Catch::Approx(shape * u_values).epsilon(1.0e-11).margin(1.0e-13));
+    }
+    else
+    {
+      fe.CalcVShape(points.IntPoint(q), vshape);
+      for (int d = 0; d < value_dim; d++)
+      {
+        mfem::Vector column(vshape.GetColumn(d), num_nodes);
+        CHECK(values[d * num_points + q] ==
+              Catch::Approx(column * u_values).epsilon(1.0e-11).margin(1.0e-13));
+      }
+    }
+  }
+  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(v, &values));
+
+  if (check_gradient)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, fe.GetDim() * num_points, &v));
+    PalaceCeedCall(ceed, CeedBasisApply(basis, 1, CEED_NOTRANSPOSE, CEED_EVAL_GRAD, u, v));
+    PalaceCeedCall(ceed, CeedVectorGetArrayRead(v, CEED_MEM_HOST, &values));
+    mfem::DenseMatrix dshape(num_nodes, fe.GetDim());
+    for (int q = 0; q < num_points; q++)
+    {
+      fe.CalcDShape(points.IntPoint(q), dshape);
+      for (int d = 0; d < fe.GetDim(); d++)
+      {
+        mfem::Vector column(dshape.GetColumn(d), num_nodes);
+        CHECK(values[d * num_points + q] ==
+              Catch::Approx(column * u_values).epsilon(1.0e-11).margin(1.0e-13));
+      }
+    }
+    PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(v, &values));
+  }
+
+  PalaceCeedCall(ceed, CeedVectorDestroy(&u));
+  PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&basis));
+}
+
 }  // namespace
+
+TEST_CASE("MFEM fixed arbitrary-rule bases", "[libCEED][Serial][Parallel][GPU]")
+{
+  SECTION("Rational pyramid H1")
+  {
+    mfem::LinearPyramidFiniteElement fe;
+    mfem::IntegrationRule points(3);
+    points.IntPoint(0).Set3(0.10, 0.10, 0.50);
+    points.IntPoint(1).Set3(0.20, 0.15, 0.30);
+    points.IntPoint(2).Set3(0.05, 0.20, 0.60);
+    for (int q = 0; q < points.GetNPoints(); q++)
+    {
+      points.IntPoint(q).weight = 1.0;
+    }
+    CheckMfemFixedBasis(fe, points, true);
+  }
+
+  SECTION("Square full-rank wedge Hcurl and Hdiv")
+  {
+    for (int order : {1, 2})
+    {
+      mfem::ND_WedgeElement nd_fe(order);
+      mfem::RT_WedgeElement rt_fe(order - 1);
+      mfem::IntegrationRule points(3);
+      points.IntPoint(0).Set3(0.20, 0.10, 0.25);
+      points.IntPoint(1).Set3(0.40, 0.20, 0.75);
+      points.IntPoint(2).Set3(0.10, 0.30, 0.50);
+      for (int q = 0; q < points.GetNPoints(); q++)
+      {
+        points.IntPoint(q).weight = 1.0;
+      }
+      CheckMfemFixedBasis(nd_fe, points, false);
+      CheckMfemFixedBasis(rt_fe, points, false);
+    }
+  }
+}
 
 TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel]")
 {
