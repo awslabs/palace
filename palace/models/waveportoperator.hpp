@@ -114,20 +114,23 @@ private:
   int voltage_n_samples;
   bool has_voltage_coords = false;
 
-  // Flattened 2D companion of the embedded port submesh, with identical topology and FE
-  // ordering. Modal ND DoFs are copied directly to this mesh for VoltagePath integration,
-  // avoiding the lossy port-to-parent transfer on nonconforming meshes.
-  std::vector<mfem::Vector> voltage_path_2d;
-  std::unique_ptr<Mesh> voltage_port_mesh;
-  std::unique_ptr<mfem::FiniteElementCollection> voltage_port_nd_fec;
-  std::unique_ptr<FiniteElementSpace> voltage_port_nd_fespace;
-  std::unique_ptr<GridFunction> voltage_port_E0t;
+  // Cached quadrature locations on the embedded port submesh. Each point is owned by one
+  // rank and evaluated directly in port_E0t, avoiding any port-to-parent field transfer or
+  // duplicate flattened finite element space.
+  struct VoltageSample
+  {
+    int element;
+    mfem::IntegrationPoint point;
+    std::array<double, 3> weighted_tangent;
+  };
+  std::vector<VoltageSample> voltage_samples;
 
-  // Cached GSLIB point locators on the fixed parent mesh (for driven-field voltage) and
-  // flattened port companion (for modal excitation voltage).
+  // Cached GSLIB point locator on the fixed parent mesh for driven-field voltage.
 #if defined(MFEM_USE_GSLIB)
-  std::unique_ptr<mfem::FindPointsGSLIB> voltage_gslib_op, port_voltage_gslib_op;
+  std::unique_ptr<mfem::FindPointsGSLIB> voltage_gslib_op;
 #endif
+
+  void SetUpExcitationVoltagePath();
 
   // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal
   // first, ground second). When non-zero (i.e. set by the user) the mode is flipped
