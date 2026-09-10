@@ -110,13 +110,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     validates only domains owned by a local volume element, ignoring ghost/neighbor
     bookkeeping attributes. [PR 888](https://github.com/awslabs/palace/pull/888).
   - Fixed non-unitary wave-port S-parameters for modes with a longitudinal electric field
-    (`E_n` ≠ 0, e.g. TM modes). The assembled Robin operator enforced only the scalar surface
-    admittance `i·k_n·M`, while the excitation, normalization, and S-parameter projection used
-    the full modal `n×H` (including the `∇ₜE_n` term), so a lossless shorted guide could report
-    `|S11|` > 1. A complex-symmetric modal correction supplies the missing term, restoring
-    S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged. The
-    correction is also projected into the reduced-order operator so the adaptive fast frequency
-    sweep is corrected as well. [PR 886](https://github.com/awslabs/palace/pull/886).
+    (`E_n` ≠ 0, e.g. TM/hybrid modes). The assembled Robin operator enforced only the scalar
+    surface admittance `i·k_n·M`, while the excitation, normalization, and S-parameter projection
+    used the full modal `n×H` (including the `∇ₜE_n` term), so a lossless shorted guide could
+    report `|S11|` > 1. A complex-symmetric modal correction `W` supplies the missing term,
+    restoring S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged.
+    `W` is applied consistently across the driven solve, its reduced-order (PROM) fast-frequency
+    sweep, the complex-frequency eigenmode solve, and the circuit synthesis (where it enters the
+    synthesized pencil and the exported frequency-dependent coupling maps).
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+  - Fixed the SLP nonlinear eigensolver to fall back to the Hybrid method when SLEPc is
+    unavailable or an ARPACK backend is selected (SLP is realized only through SLEPc), resolved
+    before the Hybrid interpolation is built, and to handle a null damping matrix and a missing
+    nonlinear term, preventing crashes on otherwise valid problems.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+  - Reported synthesized eigenvalue estimates with the same `Q = |ω|/(2|Im ω|)` convention as
+    the eigenmode postprocessor, and filter spurious roots by their reported HDM absolute and
+    backward residuals rather than fixed quality-factor or coordinate-norm cutoffs.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
