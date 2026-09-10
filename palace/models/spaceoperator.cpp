@@ -399,7 +399,7 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
   // independent of the chosen sparse-solver representation. Fine partial-assembly levels
   // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, assemble_q_data);
+  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -423,7 +423,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  AddConfiguredAuxIntegrators(coarse, f, fb, assemble_q_data);
+  AddConfiguredAuxIntegrators(coarse, f, fb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -1024,7 +1024,10 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &bi_vec,
     std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
 {
-  constexpr bool skip_zeros = false, assemble_q_data = false;
+  constexpr bool skip_zeros = false;
+  // Cache geometry/material tensors for repeated CPU smoother applications. Only the
+  // fine hierarchy uses this data; the coarse sparse operator is assembled separately.
+  const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
       dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
       fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
@@ -1087,7 +1090,8 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec)
 {
-  constexpr bool skip_zeros = false, assemble_q_data = false;
+  constexpr bool skip_zeros = false;
+  const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
       dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
@@ -1121,7 +1125,8 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec)
 {
-  constexpr bool skip_zeros = false, assemble_q_data = false;
+  constexpr bool skip_zeros = false;
+  const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
       dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0, dfr, fr);
