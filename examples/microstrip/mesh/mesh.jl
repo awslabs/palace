@@ -43,7 +43,7 @@ parallel-plate limit `separation << plate_width` yields the analytic loop induct
 """
 function generate_microstrip_mesh(;
     filename::AbstractString,
-    strip_length::Real   = 100.0,
+    strip_length::Real    = 100.0,
     plate_width::Real     = 40.0,
     separation::Real      = 2.0,
     terminal_length::Real = 4.0,
@@ -128,7 +128,13 @@ function generate_microstrip_mesh(;
     tol = 1.0e-3
     surfs_in(x0, y0, z0, x1, y1, z1) = [
         s[2] for s in gmsh.model.getEntitiesInBoundingBox(
-            x0 - tol, y0 - tol, z0 - tol, x1 + tol, y1 + tol, z1 + tol, 2
+            x0 - tol,
+            y0 - tol,
+            z0 - tol,
+            x1 + tol,
+            y1 + tol,
+            z1 + tol,
+            2
         )
     ]
 
@@ -183,8 +189,10 @@ function generate_microstrip_mesh(;
     println("Farfield boundaries: ", farfield_group)
     println("Conductor: ", conductor_group)
     println("Terminal: ", terminal_group)
-    println("Loop squares (perimeter / width): ",
-            (2.0 * strip_length + 2.0 * separation) / plate_width)
+    println(
+        "Loop squares (perimeter / width): ",
+        (2.0 * strip_length + 2.0 * separation) / plate_width
+    )
     println()
 
     # Optionally launch GUI

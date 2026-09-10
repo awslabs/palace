@@ -42,6 +42,7 @@ Whether a film screens perfectly or penetrates is set by how its attribute is de
     only is treated as a perfect screen: the flux-expulsion condition
     ``\mathbf{B}\cdot\mathbf{n} = 0`` holds together with the fluxoid, and the extracted
     inductance is purely **geometric**.
+
   - **London film (finite ``\lambda``).** A film attribute listed also under
     [`"Superconductor"`](../config/reference.md#config-boundaries-superconductor) carries the
     shifted London sheet penalty
@@ -204,11 +205,11 @@ geometric baseline as the film penetration grows, and the ``\lambda\to0`` value 
 perfect-conductor limit:
 
 | ``\lambda`` (μm) | ``L_{\mathrm{ksq}} = \lambda^2/d`` | ``L`` (pH) |
-|:---:|:---:|:---:|
-| ``0`` (PEC) | ``0`` | ``2.853`` |
-| ``0.1`` | ``0.1`` | ``3.288`` |
-| ``0.2`` | ``0.4`` | ``4.017`` |
-| ``0.4`` | ``1.6`` | ``5.157`` |
+|:----------------:|:----------------------------------:|:----------:|
+| ``0`` (PEC)      | ``0``                              | ``2.853``  |
+| ``0.1``          | ``0.1``                            | ``3.288``  |
+| ``0.2``          | ``0.4``                            | ``4.017``  |
+| ``0.4``          | ``1.6``                            | ``5.157``  |
 
 At ``\lambda = 0.4\,\mu\text{m}`` the self-inductance is ``L = 5.157\,\text{pH}``, of which
 ``2.853\,\text{pH}`` is geometric and ``\approx 2.30\,\text{pH}`` kinetic. The geometric value

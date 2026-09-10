@@ -40,14 +40,54 @@ function generate_rect_hole_mesh(;
     fx, fy = dx / 2 + W, dy / 2 + W    # film half-sides
 
     cube_pts = [
-        gmsh.model.geo.addPoint(cx - L_outer / 2, cy - L_outer / 2, cz - L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx + L_outer / 2, cy - L_outer / 2, cz - L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx + L_outer / 2, cy + L_outer / 2, cz - L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx - L_outer / 2, cy + L_outer / 2, cz - L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx - L_outer / 2, cy - L_outer / 2, cz + L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx + L_outer / 2, cy - L_outer / 2, cz + L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx + L_outer / 2, cy + L_outer / 2, cz + L_outer / 2, mesh_size_coarse),
-        gmsh.model.geo.addPoint(cx - L_outer / 2, cy + L_outer / 2, cz + L_outer / 2, mesh_size_coarse)
+        gmsh.model.geo.addPoint(
+            cx - L_outer / 2,
+            cy - L_outer / 2,
+            cz - L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx + L_outer / 2,
+            cy - L_outer / 2,
+            cz - L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx + L_outer / 2,
+            cy + L_outer / 2,
+            cz - L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx - L_outer / 2,
+            cy + L_outer / 2,
+            cz - L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx - L_outer / 2,
+            cy - L_outer / 2,
+            cz + L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx + L_outer / 2,
+            cy - L_outer / 2,
+            cz + L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx + L_outer / 2,
+            cy + L_outer / 2,
+            cz + L_outer / 2,
+            mesh_size_coarse
+        ),
+        gmsh.model.geo.addPoint(
+            cx - L_outer / 2,
+            cy + L_outer / 2,
+            cz + L_outer / 2,
+            mesh_size_coarse
+        )
     ]
 
     outer_pts = [
@@ -96,12 +136,42 @@ function generate_rect_hole_mesh(;
     hole_surface = gmsh.model.geo.addPlaneSurface([inner_loop])
 
     cube_loops = [
-        gmsh.model.geo.addCurveLoop([cube_lines[1], cube_lines[2], cube_lines[3], cube_lines[4]]),
-        gmsh.model.geo.addCurveLoop([cube_lines[5], cube_lines[6], cube_lines[7], cube_lines[8]]),
-        gmsh.model.geo.addCurveLoop([cube_lines[9], cube_lines[5], -cube_lines[10], -cube_lines[1]]),
-        gmsh.model.geo.addCurveLoop([cube_lines[10], cube_lines[6], -cube_lines[11], -cube_lines[2]]),
-        gmsh.model.geo.addCurveLoop([cube_lines[11], cube_lines[7], -cube_lines[12], -cube_lines[3]]),
-        gmsh.model.geo.addCurveLoop([cube_lines[12], cube_lines[8], -cube_lines[9], -cube_lines[4]])
+        gmsh.model.geo.addCurveLoop([
+            cube_lines[1],
+            cube_lines[2],
+            cube_lines[3],
+            cube_lines[4]
+        ]),
+        gmsh.model.geo.addCurveLoop([
+            cube_lines[5],
+            cube_lines[6],
+            cube_lines[7],
+            cube_lines[8]
+        ]),
+        gmsh.model.geo.addCurveLoop([
+            cube_lines[9],
+            cube_lines[5],
+            -cube_lines[10],
+            -cube_lines[1]
+        ]),
+        gmsh.model.geo.addCurveLoop([
+            cube_lines[10],
+            cube_lines[6],
+            -cube_lines[11],
+            -cube_lines[2]
+        ]),
+        gmsh.model.geo.addCurveLoop([
+            cube_lines[11],
+            cube_lines[7],
+            -cube_lines[12],
+            -cube_lines[3]
+        ]),
+        gmsh.model.geo.addCurveLoop([
+            cube_lines[12],
+            cube_lines[8],
+            -cube_lines[9],
+            -cube_lines[4]
+        ])
     ]
     cube_surfaces = [gmsh.model.geo.addPlaneSurface([loop]) for loop in cube_loops]
 
