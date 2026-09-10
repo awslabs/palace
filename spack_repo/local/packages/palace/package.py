@@ -202,7 +202,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
-            "mfem+mpi+metis+lapack@4.9:",
+            "mfem+mpi+metis+lapack@4.9.0",
             patches=[
                 # https://github.com/mfem/mfem/pull/3847
                 patch(
@@ -258,6 +258,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 patch(
                     "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
+                    when="@4.9.0",
+                ),
+                # https://github.com/mfem/mfem/pull/5494
+                # Source-only backport for MFEM 4.9.
+                patch(
+                    "https://raw.githubusercontent.com/awslabs/palace/"
+                    "1382ca5e9f72369b33c0ff5e8e0a244ac6597f6a/extern/patch/mfem/"
+                    "mfem_nc_partition_fixes.diff",
+                    sha256="a28bf879ecf197856d24ef5427d493f84a159224c22e7cd17ec977e06a222ffb",
                     when="@4.9.0",
                 ),
             ],
