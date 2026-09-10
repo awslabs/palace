@@ -5,7 +5,6 @@
 #define PALACE_MODELS_SURFACE_FLUX_OPERATOR_HPP
 
 #include <map>
-#include <memory>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/vector.hpp"
@@ -43,7 +42,6 @@ class SurfaceFluxOperator
 {
 private:
   std::map<int, SurfaceFluxData> sources;
-  std::unique_ptr<IoData> solver_config_;  // Store only solver configuration
 
   void SetUpBoundaryProperties(const IoData &iodata);
   void PrintBoundaryInfo(const IoData &iodata);
@@ -64,8 +62,7 @@ public:
   void SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
                                const FiniteElementSpace &nd_fespace,
                                PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                               palace::Vector &result,
-                               bool harmonic_generator = false) const;
+                               palace::Vector &result) const;
 };
 
 }  // namespace palace

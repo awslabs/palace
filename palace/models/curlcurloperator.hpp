@@ -99,10 +99,6 @@ private:
   // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
   SuperconductorSheetOperator sc_sheet_op;
 
-  // Cached original matrix for flux loop boundary-interior coupling (curl-curl only, no
-  // sheet term). Used for the pure-PEC flux-loop RHS lift.
-  mutable std::unique_ptr<ParOperator> K_orig_;
-
   // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
   std::set<int> london_flux_loops_;
@@ -248,14 +244,13 @@ public:
     return linalg::Dot(GetComm(), london_flux_constraint_.at(idx), A);
   }
 
-  // Solve 2D surface curl problem for flux loop boundary conditions
+  // Build the London cut cohomology generator a_h for the given flux loop.
   template <ProblemType T>
-  Vector SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
-                                 bool harmonic_generator = false) const;
+  Vector SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op) const;
 
   template <ProblemType T>
-  void SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op, Vector &result,
-                               bool harmonic_generator = false) const;
+  void SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
+                               Vector &result) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }

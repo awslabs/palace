@@ -542,93 +542,68 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   RHS = 0.0;
 
   // Solve the surface problem for a_h, the film field carrying the hole fluxoid ∮a_h·dl =
-  // Φ. Pure-PEC uses the uniform-perimeter Dirichlet clamp; London uses the curl-free cut
-  // cohomology generator, whose gradient part the 3D solve absorbs (no spurious penalty
-  // energy).
-  const bool london = IsLondonFluxLoop(idx);
+  // Φ, as the curl-free cut cohomology generator (see BuildCutCohomologyGenerator); its
+  // gradient part the 3D solve absorbs (no spurious penalty energy). Every flux loop is a
+  // London sheet (a bare PEC film is auto-registered as a λ→0 Superconductor in iodata), so
+  // there is a single path here.
   Vector flux_solution;
   if (boundary_values)
   {
-    SolveSurfaceCurlProblem(idx, post_op, *boundary_values, london);
+    SolveSurfaceCurlProblem(idx, post_op, *boundary_values);
     flux_solution = *boundary_values;  // Use the pre-allocated result
   }
   else
   {
-    flux_solution = SolveSurfaceCurlProblem(idx, post_op, london);
+    flux_solution = SolveSurfaceCurlProblem(idx, post_op);
   }
 
-  // Early exit if boundary values are zero
+  // Early exit if the generator is zero.
   double boundary_norm = linalg::Norml2(GetComm(), flux_solution);
   if (boundary_norm < 1e-12)
   {
     return;
   }
 
-  if (london)
+  // The shifted penalty ½∫_Σ (1/L_ksq)|A_t − a_h|² has Euler-Lagrange equation
+  // [K_cc + M_sheet] A = M_sheet·a_h, so with the sheet-inclusive base operator K on the
+  // LHS the RHS is M_sheet·a_h. The film is absent from dbc_tdof_lists (only PEC DOFs are
+  // pinned), so its interior relaxes freely; as λ→0 the penalty drives A_t → a_h (geometric
+  // limit) and at finite λ the film penetrates and stores kinetic energy.
+  if (!M_sheet_)
   {
-    // London flux film: the shifted penalty ½∫_Σ (1/L_ksq)|A_t − a_h|² has Euler-Lagrange
-    // equation [K_cc + M_sheet] A = M_sheet·a_h, so with the sheet-inclusive base operator
-    // K on the LHS the RHS is M_sheet·a_h. The film is absent from dbc_tdof_lists (only PEC
-    // DOFs are pinned), so its interior relaxes freely; as λ→0 the penalty drives A_t → a_h
-    // (geometric limit) and at finite λ the film penetrates and stores kinetic energy.
-    if (!M_sheet_)
+    MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+    sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
+    BilinearForm m(GetNDSpace());
+    if (!fbr.empty())
     {
-      MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-      sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
-      BilinearForm m(GetNDSpace());
-      if (!fbr.empty())
-      {
-        m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
-      }
-      auto m_mat = m.Assemble(GetNDSpaces(), false);
-      M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+      m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
     }
-    // Normalize the generator so its exact fluxoid cᵀa_h = ∮a_h·dl equals Φ. The driver
-    // still enforces the constraint on the full solution via α; this just keeps the drive
-    // a_h normalized.
+    auto m_mat = m.Assemble(GetNDSpaces(), false);
+    M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+  }
+  // Normalize the generator so its exact fluxoid cᵀa_h = ∮a_h·dl equals Φ. The driver still
+  // enforces the constraint on the full solution via α; this just keeps the drive
+  // normalized.
+  {
+    double c_ah = MeasureLondonHoleFlux(idx, flux_solution);
+    double phi = surf_flux_op.GetSource(idx).GetExcitationFlux();
+    if (std::abs(c_ah) > 1.0e-30)
     {
-      double c_ah = MeasureLondonHoleFlux(idx, flux_solution);
-      double phi = surf_flux_op.GetSource(idx).GetExcitationFlux();
-      if (std::abs(c_ah) > 1.0e-30)
+      double s = phi / c_ah;
+      flux_solution *= s;
+      if (boundary_values)
       {
-        double s = phi / c_ah;
-        flux_solution *= s;
-        if (boundary_values)
-        {
-          *boundary_values = flux_solution;
-        }
+        *boundary_values = flux_solution;
       }
     }
-    M_sheet_->Mult(flux_solution, RHS);
-    linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
-    return;
   }
-
-  // Pure-PEC flux loop (unchanged): clamp the whole film Dirichlet.
-  // Lift with the curl-curl-only operator and prescribe the whole-film boundary
-  // distribution.
-  if (!K_orig_)
-  {
-    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetInvPermeability());
-    BilinearForm k(GetNDSpace());
-    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
-    auto k_mat = k.Assemble(GetNDSpaces(), false);
-    K_orig_ = std::make_unique<ParOperator>(std::move(k_mat.back()), GetNDSpace());
-  }
-
-  // Compute RHS = -K × boundary_values for boundary-interior coupling
-  K_orig_->Mult(flux_solution, RHS);
-  RHS *= -1.0;
-
-  // Set boundary DOF entries to the prescribed values
-  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), flux_solution);
+  M_sheet_->Mult(flux_solution, RHS);
+  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
 template <ProblemType T>
 Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
-                                                 PostOperator<T> &post_op,
-                                                 bool harmonic_generator) const
+                                                 PostOperator<T> &post_op) const
 {
   // Validate flux loop index exists
   MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
@@ -636,21 +611,20 @@ Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
 
   Vector result;
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result, harmonic_generator);
+                                       result);
   return result;
 }
 
 template <ProblemType T>
 void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
-                                               Vector &result,
-                                               bool harmonic_generator) const
+                                               Vector &result) const
 {
   // Validate flux loop index exists
   MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
   surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result, harmonic_generator);
+                                       result);
 }
 
 // Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
@@ -662,11 +636,10 @@ template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTAT
     Vector *boundary_values);
 
 template Vector CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
-    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    bool harmonic_generator) const;
+    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
 
 template void CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
-    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result,
-    bool harmonic_generator) const;
+    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+    Vector &result) const;
 
 }  // namespace palace
