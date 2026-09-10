@@ -687,7 +687,8 @@ endif()
 # Report build dependency versions through `palace --version`. For each
 # dependency the version is resolved in order of decreasing authority:
 #   1. PALACE_DEP_<NAME>_VERSION passed in by the producer that knows the
-#      concrete provenance (e.g. a Spack recipe passing its resolved spec).
+#      concrete provenance (the superbuild's pinned revision or a Spack recipe
+#      passing its resolved spec).
 #   2. The version number discovered by find_package.
 #   3. As a last resort, the git description of the dependency source tree under
 #      PALACE_EXTERN_SOURCE_DIR (only meaningful for the superbuild layout).
