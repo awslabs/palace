@@ -103,6 +103,7 @@ jobs:
       S3_CONTAINERS_BUCKET: palace-ci-containers
       S3_SCHEMAS_BUCKET: palace-ci-schemas
       GH_TOKEN: ${{ github.token }}
+      SELECTOR: ${{ needs.authorize.outputs.selector }}
       OWNER_REPO: ${{ github.repository }}
       RUN_ID: ${{ github.event.workflow_run.id }}
       SOURCE_EVENT: ${{ github.event.workflow_run.event }}
@@ -167,10 +168,10 @@ jobs:
       - name: Re-verify authorization before publishing
         if: steps.download.outputs.has_artifacts == 'true'
         shell: bash
-        run: python3 .github/publish_containers/authorize.py --reverify "${{ needs.authorize.outputs.selector }}"
+        run: python3 .github/publish_containers/authorize.py --reverify "$SELECTOR"
 
       # Publish each downloaded build leg: OCI tar -> ECR (skopeo), SIF -> S3.
       - name: Publish OCI images to ECR and SIFs to S3
         if: steps.download.outputs.has_artifacts == 'true'
         shell: bash
-        run: python3 .github/publish_containers/publish.py --selector "${{ needs.authorize.outputs.selector }}"
+        run: python3 .github/publish_containers/publish.py --selector "$SELECTOR"
