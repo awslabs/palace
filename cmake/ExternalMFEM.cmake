@@ -419,43 +419,11 @@ download_mfem_patch(
   "https://github.com/mfem/mfem/compare/2d574015756711029556c14d096ca52c15d5b663...50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff"
   e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4
 )
-# https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
-download_mfem_patch(
-  mfem_gmsh_parser_performance.diff
-  "https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247.diff"
-  6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e
-)
-# https://github.com/mfem/mfem/pull/5246
-download_mfem_patch(
-  mfem_pr5246.diff
-  "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5246.diff"
-  d5227c18768369b8fa3a20f4457dd378a360346850329ab1970d18ed5a73b0d6
-)
 # https://github.com/mfem/mfem/pull/5353
 download_mfem_patch(
   mfem_pr5353.diff
   "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5353.diff"
   c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f
-)
-# https://github.com/mfem/mfem/pull/4983
-download_mfem_patch(
-  mfem_pr4983.diff
-  "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr4983.diff"
-  530532da3ae8815d004bb6ce19f6f08a1248c3d585503551c90d0eeae7fb3f87
-)
-if(PALACE_WITH_CUDSS)
-  # https://github.com/mfem/mfem/pull/5124
-  download_mfem_patch(
-    mfem_pr5124_cudss.diff
-    "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5124_cudss.diff"
-    d0b5893ec7925cbc8a70cc5eba2abe037754b99b5bb366c4bae90f0583d22290
-  )
-endif()
-# https://github.com/mfem/mfem/pull/5415
-download_mfem_patch(
-  mfem_pr5415.diff
-  "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
-  482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
 )
 
 include(ExternalProject)
