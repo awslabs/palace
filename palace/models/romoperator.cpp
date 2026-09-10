@@ -889,10 +889,19 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     {
       auto pre_norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
       pre_norm = std::sqrt(std::abs(pre_norm_sq));
-      linalg::OrthogonalizeColumn(
-          orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
-          [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
-          { return W.InnerProduct(x, y, r.Real()); });
+      if (orthog_type == Orthogonalization::MGS)
+      {
+        linalg::OrthogonalizeColumnMGS(
+            space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
+            [&W = *weight_op_W, &r = this->r](const Vector &x, const Vector &y)
+            { return W.InnerProduct(x, y, r.Real()); });
+      }
+      else
+      {
+        linalg::OrthogonalizeColumnWeightedCGS(
+            space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V, *weight_op_W,
+            r.Real(), orthog_type == Orthogonalization::CGS2);
+      }
       auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
       orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
     }
