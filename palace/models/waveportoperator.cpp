@@ -562,47 +562,12 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
     voltage_n_samples = data.n_samples;
 
-    // Build a rank-independent, orientation-preserving tangent frame from the first path
-    // segment and the port normal, then project both the path and a deep copy of the port
-    // mesh into that frame.
-    MFEM_VERIFY(voltage_path[0].Size() == 3 && voltage_path[1].Size() == 3,
-                "Wave port VoltagePath points must be three-dimensional!");
-    mfem::Vector origin(voltage_path[0]), e1(voltage_path[1]), e2(3);
-    e1 -= origin;
-    e1.Add(-(e1 * port_normal), port_normal);
-    MFEM_VERIFY(e1.Norml2() > 0.0,
-                "Wave port VoltagePath must contain a nonzero tangential segment!");
-    e1 /= e1.Norml2();
-    e2(0) = port_normal(1) * e1(2) - port_normal(2) * e1(1);
-    e2(1) = port_normal(2) * e1(0) - port_normal(0) * e1(2);
-    e2(2) = port_normal(0) * e1(1) - port_normal(1) * e1(0);
-    e2 /= e2.Norml2();
-    for (const auto &p : voltage_path)
-    {
-      MFEM_VERIFY(p.Size() == 3, "Wave port VoltagePath points must be three-dimensional!");
-      voltage_path_2d.push_back(mesh::Project3Dto2D(p, origin, e1, e2));
-    }
-
-    auto flat_pmesh = std::make_unique<mfem::ParMesh>(port_mesh->Get(), true);
-    mesh::ProjectMeshTo2D(*flat_pmesh, origin, e1, e2);
-    voltage_port_mesh = std::make_unique<Mesh>(std::move(flat_pmesh));
-    voltage_port_nd_fec = std::make_unique<mfem::ND_FECollection>(
-        port_nd_fespace->GetMaxElementOrder(), voltage_port_mesh->Dimension());
-    voltage_port_nd_fespace =
-        std::make_unique<FiniteElementSpace>(*voltage_port_mesh, voltage_port_nd_fec.get());
-    voltage_port_E0t = std::make_unique<GridFunction>(*voltage_port_nd_fespace, true);
-    MFEM_VERIFY(voltage_port_nd_fespace->GetVSize() == port_nd_fespace->GetVSize() &&
-                    voltage_port_nd_fespace->GetTrueVSize() ==
-                        port_nd_fespace->GetTrueVSize(),
-                "Flattened wave port ND space does not match the embedded port space!");
+    SetUpExcitationVoltagePath();
 
 #if defined(MFEM_USE_GSLIB)
     auto &parent_mesh = *nd_fespace.GetParMesh();
     voltage_gslib_op = std::make_unique<mfem::FindPointsGSLIB>(parent_mesh.GetComm());
     fem::SetupInterpolator(*voltage_gslib_op, parent_mesh);
-    port_voltage_gslib_op =
-        std::make_unique<mfem::FindPointsGSLIB>(voltage_port_mesh->Get().GetComm());
-    fem::SetupInterpolator(*port_voltage_gslib_op, voltage_port_mesh->Get());
 #endif
   }
 
@@ -618,6 +583,126 @@ WavePortData::~WavePortData()
   if (port_comm != MPI_COMM_NULL)
   {
     MPI_Comm_free(&port_comm);
+  }
+}
+
+void WavePortData::SetUpExcitationVoltagePath()
+{
+  auto &port_submesh = static_cast<mfem::ParSubMesh &>(port_mesh->Get());
+  MFEM_VERIFY(port_submesh.Dimension() == 2 && port_submesh.SpaceDimension() == 3,
+              "Wave port VoltagePath requires a two-dimensional surface in 3D!");
+  for (const auto &point : voltage_path)
+  {
+    MFEM_VERIFY(point.Size() == 3,
+                "Wave port VoltagePath points must be three-dimensional!");
+  }
+
+  // Use one physical point on the port to define its plane. All ranks need identical query
+  // coordinates for ParMesh::FindPoints, so broadcast it from the first rank that owns the
+  // port. Projecting the configured path onto this plane matches the previous flattened
+  // representation without introducing a second mesh or finite element space.
+  mfem::Vector plane_point(3);
+  plane_point = 0.0;
+  if (Mpi::Rank(port_submesh.GetComm()) == port_root)
+  {
+    MFEM_VERIFY(port_submesh.GetNE() > 0, "Wave port root has no local surface elements!");
+    auto *transformation = port_submesh.GetElementTransformation(0);
+    const auto &center = mfem::Geometries.GetCenter(transformation->GetGeometryType());
+    transformation->Transform(center, plane_point);
+  }
+  Mpi::Broadcast(3, plane_point.HostReadWrite(), port_root, port_submesh.GetComm());
+
+  std::vector<mfem::Vector> projected_path;
+  projected_path.reserve(voltage_path.size());
+  for (const auto &point : voltage_path)
+  {
+    mfem::Vector projected(point);
+    mfem::Vector offset(point);
+    offset -= plane_point;
+    projected.Add(-(offset * port_normal), port_normal);
+    projected_path.push_back(std::move(projected));
+  }
+
+  const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, voltage_n_samples);
+  const int points_per_segment = rule.GetNPoints();
+  const int num_segments = static_cast<int>(projected_path.size()) - 1;
+  const int num_points = num_segments * points_per_segment;
+  mfem::DenseMatrix points(3, num_points);
+  std::vector<std::array<double, 3>> weighted_tangents(num_points);
+  int point_index = 0;
+  for (int segment = 0; segment < num_segments; segment++)
+  {
+    mfem::Vector tangent(projected_path[segment + 1]);
+    tangent -= projected_path[segment];
+    MFEM_VERIFY(tangent.Norml2() > 0.0,
+                "Wave port VoltagePath must contain nonzero tangential segments!");
+    for (int i = 0; i < points_per_segment; i++, point_index++)
+    {
+      const auto &ip = rule.IntPoint(i);
+      for (int d = 0; d < 3; d++)
+      {
+        points(d, point_index) = projected_path[segment](d) + ip.x * tangent(d);
+        weighted_tangents[point_index][d] = ip.weight * tangent(d);
+      }
+    }
+  }
+
+  // Point location is performed once for the fixed port/path. Check every local element
+  // rather than relying on Mesh::FindPoints, whose nearest-element search is documented as
+  // not completely reliable. If a point lies on a partition boundary, use the lowest-rank
+  // owner so its contribution is counted exactly once.
+  mfem::Array<int> elements(num_points);
+  mfem::Array<mfem::IntegrationPoint> reference_points(num_points);
+  elements = -1;
+  mfem::InverseElementTransformation inverse;
+  mfem::Vector physical_point(3);
+  for (int i = 0; i < num_points; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      physical_point[d] = points(d, i);
+    }
+    for (int element = 0; element < port_submesh.GetNE(); element++)
+    {
+      inverse.SetTransformation(*port_submesh.GetElementTransformation(element));
+      if (inverse.Transform(physical_point, reference_points[i]) ==
+          mfem::InverseElementTransformation::Inside)
+      {
+        elements[i] = element;
+        break;
+      }
+    }
+  }
+
+  const int rank = Mpi::Rank(port_submesh.GetComm());
+  const int size = Mpi::Size(port_submesh.GetComm());
+  std::vector<int> owners(num_points);
+  for (int i = 0; i < num_points; i++)
+  {
+    owners[i] = elements[i] >= 0 ? rank : size;
+  }
+  Mpi::GlobalMin(num_points, owners.data(), port_submesh.GetComm());
+  int found = 0;
+  for (int i = 0; i < num_points; i++)
+  {
+    found += owners[i] < size;
+    if (owners[i] != rank)
+    {
+      elements[i] = owners[i] < size ? -2 : -1;
+    }
+  }
+  MFEM_VERIFY(found == num_points,
+              "Could not locate all WavePort VoltagePath quadrature points on the port "
+                  << "surface (found " << found << "/" << num_points << ")!");
+
+  voltage_samples.clear();
+  voltage_samples.reserve(num_points);
+  for (int i = 0; i < num_points; i++)
+  {
+    if (elements[i] >= 0)
+    {
+      voltage_samples.push_back({elements[i], reference_points[i], weighted_tangents[i]});
+    }
   }
 }
 
@@ -997,31 +1082,24 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
     return 0.0;
   }
 
-  // The flattened companion has identical topology, orientation, and ND ordering. Copying
-  // all local DoFs preserves NC slave values and avoids the lossy submesh-to-parent
-  // transfer.
-  MFEM_VERIFY(voltage_port_E0t->Real().Size() == port_E0t->Real().Size(),
-              "Flattened wave port field size mismatch!");
-  voltage_port_E0t->Real() = port_E0t->Real();
-  voltage_port_E0t->Imag() = port_E0t->Imag();
-
-  std::complex<double> V(0.0, 0.0);
-#if defined(MFEM_USE_GSLIB)
-  for (std::size_t k = 0; k + 1 < voltage_path_2d.size(); k++)
+  // The modal field already lives on the embedded port submesh. Evaluate it directly at
+  // the cached segment quadrature points instead of transferring it to the parent mesh or
+  // copying it into a duplicate flattened finite element space.
+  double voltage_real = 0.0, voltage_imag = 0.0;
+  mfem::Vector field_real(3), field_imag(3);
+  for (const auto &sample : voltage_samples)
   {
-    V.real(V.real() + fem::ComputeLineIntegral(*port_voltage_gslib_op, voltage_path_2d[k],
-                                               voltage_path_2d[k + 1],
-                                               voltage_port_E0t->Real(),
-                                               voltage_n_samples));
-    V.imag(V.imag() + fem::ComputeLineIntegral(*port_voltage_gslib_op, voltage_path_2d[k],
-                                               voltage_path_2d[k + 1],
-                                               voltage_port_E0t->Imag(),
-                                               voltage_n_samples));
+    port_E0t->Real().GetVectorValue(sample.element, sample.point, field_real);
+    port_E0t->Imag().GetVectorValue(sample.element, sample.point, field_imag);
+    for (int d = 0; d < 3; d++)
+    {
+      voltage_real += sample.weighted_tangent[d] * field_real[d];
+      voltage_imag += sample.weighted_tangent[d] * field_imag[d];
+    }
   }
-#else
-  MFEM_ABORT("Wave port VoltagePath computation requires MFEM_USE_GSLIB!");
-#endif
-  return V;
+  double voltage[2] = {voltage_real, voltage_imag};
+  Mpi::GlobalSum(2, voltage, port_mesh->GetComm());
+  return {voltage[0], voltage[1]};
 }
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const

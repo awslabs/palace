@@ -43,7 +43,7 @@ struct ExposedWavePortOperator : public WavePortOperator
 //
 // Reference: Pozar, "Microwave Engineering" (4th ed.), Sec. 3.3 / Table 3.1
 // (equivalent voltage / current / impedance for waveguide modes).
-TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
+TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
 
@@ -63,6 +63,26 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
   // Use a moderately fine mesh so the line integral converges within ~1%.
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(8, 8, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+  // Refine only part of the port-adjacent layer. This creates hanging edges on the port
+  // surface and makes the impedance check exercise both NC boundary remapping and direct
+  // VoltagePath evaluation on the extracted port field.
+  mfem::Array<int> refinements;
+  mfem::Vector center(3);
+  for (int element = 0; element < serial_mesh->GetNE(); element++)
+  {
+    auto *transformation = serial_mesh->GetElementTransformation(element);
+    const auto &ip = mfem::Geometries.GetCenter(transformation->GetGeometryType());
+    transformation->Transform(ip, center);
+    if (center[0] < L_m / 8.0 && center[1] < a_m / 2.0 && center[2] < b_m / 2.0)
+    {
+      refinements.Append(element);
+    }
+  }
+  REQUIRE(refinements.Size() > 0);
+  serial_mesh->EnsureNCMesh(true);
+  serial_mesh->GeneralRefinement(refinements);
+  REQUIRE(serial_mesh->Nonconforming());
 
   Units units(1.0, 1.0);
   IoData iodata(units);
