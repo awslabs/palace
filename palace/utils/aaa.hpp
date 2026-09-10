@@ -224,6 +224,130 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
   return r;
 }
 
+// Set-valued AAA: fit all columns of F with one barycentric denominator. The returned
+// support points and weights define that common denominator; fj is intentionally zero and
+// EvaluateAAA must not be used on this result. This is used to obtain basis-covariant
+// common poles for a matrix-valued rational fit. Support selection and convergence use the
+// maximum row 2-norm, and the stacked Loewner matrix uses every component.
+inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::MatrixXcd &F, double tol,
+                        std::size_t m_max)
+{
+  AAAResult r;
+  const auto M = static_cast<std::size_t>(z.size());
+  const auto N = static_cast<std::size_t>(F.cols());
+  MFEM_VERIFY(F.rows() == z.size(), "Set-valued AAA sample-size mismatch!");
+  if (M == 0 || N == 0)
+  {
+    r.converged = true;
+    return r;
+  }
+  double F_norm = 0.0;
+  for (long i = 0; i < F.rows(); i++)
+  {
+    F_norm = std::max(F_norm, F.row(i).norm());
+  }
+  if (F_norm == 0.0)
+  {
+    r.converged = true;
+    return r;
+  }
+  const double abs_tol = tol * F_norm;
+
+  std::vector<bool> is_support(M, false);
+  std::vector<std::size_t> support_indices;
+  support_indices.reserve(m_max);
+  Eigen::MatrixXcd R = F.colwise().mean().replicate(static_cast<long>(M), 1);
+  Eigen::VectorXcd zj_buf(m_max), wj_buf;
+  r.err_history.resize(static_cast<long>(m_max));
+  long n_hist = 0;
+  for (std::size_t m = 0; m < m_max; m++)
+  {
+    std::size_t j_pick = 0;
+    double max_err = -1.0;
+    for (std::size_t i = 0; i < M; i++)
+    {
+      if (!is_support[i])
+      {
+        const double e = (F.row(static_cast<long>(i)) - R.row(static_cast<long>(i))).norm();
+        if (e > max_err)
+        {
+          max_err = e;
+          j_pick = i;
+        }
+      }
+    }
+    is_support[j_pick] = true;
+    support_indices.push_back(j_pick);
+    zj_buf(static_cast<long>(m)) = z(static_cast<long>(j_pick));
+
+    const std::size_t M_J = M - support_indices.size();
+    if (M_J == 0)
+    {
+      wj_buf = Eigen::VectorXcd::Ones(static_cast<long>(m + 1));
+      r.err_history(n_hist++) = 0.0;
+      break;
+    }
+    Eigen::MatrixXcd A(static_cast<long>(M_J * N), static_cast<long>(m + 1));
+    std::size_t sample_row = 0;
+    for (std::size_t i = 0; i < M; i++)
+    {
+      if (is_support[i])
+      {
+        continue;
+      }
+      for (std::size_t c = 0; c < N; c++)
+      {
+        const long row = static_cast<long>(sample_row * N + c);
+        for (std::size_t k = 0; k <= m; k++)
+        {
+          const auto jk = support_indices[k];
+          A(row, static_cast<long>(k)) =
+              (F(static_cast<long>(i), static_cast<long>(c)) -
+               F(static_cast<long>(jk), static_cast<long>(c))) /
+              (z(static_cast<long>(i)) - z(static_cast<long>(jk)));
+        }
+      }
+      sample_row++;
+    }
+    Eigen::JacobiSVD<Eigen::MatrixXcd> svd(A, Eigen::ComputeFullV);
+    wj_buf = svd.matrixV().col(static_cast<long>(m));
+
+    double cur_err = 0.0;
+    for (std::size_t i = 0; i < M; i++)
+    {
+      if (is_support[i])
+      {
+        R.row(static_cast<long>(i)) = F.row(static_cast<long>(i));
+        continue;
+      }
+      std::complex<double> den = 0.0;
+      Eigen::RowVectorXcd num = Eigen::RowVectorXcd::Zero(static_cast<long>(N));
+      for (std::size_t k = 0; k <= m; k++)
+      {
+        const auto jk = support_indices[k];
+        const auto term = wj_buf(static_cast<long>(k)) /
+                          (z(static_cast<long>(i)) - z(static_cast<long>(jk)));
+        den += term;
+        num += term * F.row(static_cast<long>(jk));
+      }
+      R.row(static_cast<long>(i)) = num / den;
+      cur_err = std::max(
+          cur_err, (F.row(static_cast<long>(i)) - R.row(static_cast<long>(i))).norm());
+    }
+    r.err_history(n_hist++) = cur_err;
+    if (cur_err <= abs_tol)
+    {
+      r.converged = true;
+      break;
+    }
+  }
+  r.err_history.conservativeResize(n_hist);
+  r.zj = zj_buf.head(static_cast<long>(support_indices.size()));
+  r.fj = Eigen::VectorXcd::Zero(r.zj.size());
+  r.wj = wj_buf;
+  return r;
+}
+
 // Extract the polynomial quotient, poles, and residues from an AAA result.
 //
 // Clear the barycentric denominators in the affine-normalized coordinate
