@@ -30,7 +30,7 @@ class SurfaceFluxData
 public:
   std::vector<int> hole_attributes;
   std::vector<double> flux_amounts;
-  std::vector<int> fluxloop_pec;
+  std::vector<int> film_attributes;
   std::vector<double> direction;
   double regularization;
 

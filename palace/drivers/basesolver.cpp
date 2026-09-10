@@ -354,12 +354,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     if (!solve_converged_)
     {
       // Solver could not converge on the refined mesh (e.g. the fluxoid solve as the mesh
-      // grows). Halt adaptation and retain the previous, converged iteration's output rather
-      // than aborting the run or reporting an unreliable result.
-      Mpi::Warning(comm,
-                   "Solve did not converge after refinement iteration {:d}; halting AMR and "
-                   "keeping the last converged iteration!\n",
-                   it);
+      // grows). Halt adaptation and retain the previous, converged iteration's output
+      // rather than aborting the run or reporting an unreliable result.
+      Mpi::Warning(
+          comm,
+          "Solve did not converge after refinement iteration {:d}; halting AMR and "
+          "keeping the last converged iteration!\n",
+          it);
       break;
     }
     err = indicators.Norml2(comm);

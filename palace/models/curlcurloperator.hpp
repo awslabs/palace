@@ -51,10 +51,11 @@ private:
   // Helper variable for log file printing.
   bool print_hdr;
 
-  // FluxLoopPEC film attributes that are also Superconductor sheets ("London flux films").
-  // Their whole surface is a free unknown; the hole fluxoid is realized through the sheet
-  // penalty, not by pinning DOFs. Declared before dbc_attr because SetUpBoundaryProperties
-  // (which initializes dbc_attr) populates this set, so it must be constructed first.
+  // Film attributes (from FilmAttributes) that are also Superconductor sheets ("London flux
+  // films"). Their whole surface is a free unknown; the hole fluxoid is realized through
+  // the sheet penalty, not by pinning DOFs. Declared before dbc_attr because
+  // SetUpBoundaryProperties (which initializes dbc_attr) populates this set, so it must be
+  // constructed first.
   std::set<int> london_flux_film_attr_;
 
   // Essential boundary condition attributes.
@@ -102,7 +103,7 @@ private:
   // sheet term). Used for the pure-PEC flux-loop RHS lift.
   mutable std::unique_ptr<ParOperator> K_orig_;
 
-  // Flux-loop indices whose FluxLoopPEC film is (partly) a Superconductor sheet — i.e.
+  // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
   std::set<int> london_flux_loops_;
 

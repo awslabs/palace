@@ -579,11 +579,12 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
-  // Auto-register a FluxLoopPEC film that is NOT declared a Superconductor sheet as the λ→0
-  // London limit: a superconductor sheet with a small effective L_ksq = λ⊥ (set λ = d = λ⊥ so
-  // λ²/d = λ⊥). This routes the film through the range-space two-solve (rigorous fluxoid + B·n=0,
-  // gauge-invariant, partition-independent) instead of the whole-film Dirichlet clamp. Runs
-  // before the ams_singular_op default below so the film is seen as a London film.
+  // Auto-register a film listed in FilmAttributes but not declared a Superconductor sheet
+  // as the λ→0 London limit: a superconductor sheet with a small effective L_ksq = λ⊥ (set
+  // λ = d = λ⊥ so λ²/d = λ⊥). This routes the film through the range-space two-solve
+  // (rigorous fluxoid + B·n=0, gauge-invariant, partition-independent) instead of the
+  // whole-film Dirichlet clamp. Runs before the ams_singular_op default below so the film
+  // is seen as a London film.
   if (problem.type == ProblemType::MAGNETOSTATIC)
   {
     std::set<int> sc_attrs;
@@ -596,7 +597,7 @@ void IoData::CheckConfiguration()
     }
     for (const auto &[idx, fl] : boundaries.fluxloop)
     {
-      for (auto attr : fl.fluxloop_pec)
+      for (auto attr : fl.film_attributes)
       {
         if (!sc_attrs.count(attr))
         {
@@ -612,12 +613,13 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.ams_singular_op < 0)
   {
-    // A London flux film (a FluxLoopPEC boundary that is also a Superconductor sheet) leaves
-    // the film interior free, so the shifted-penalty operator K̃ = A_curlcurl + (1/L_ksq)
-    // M_sheet keeps a residual 1-D gradient null space and is NOT the pure singular curl-curl
-    // operator: singular-AMS (which skips gradient G-space corrections) then stalls/diverges
-    // in parallel. For that case default AMSSingularOperator=false so AMS does the G-space
-    // corrections, which are well-posed against the preconditioner gauge shift (LondonPCShift).
+    // A London flux film (a FilmAttributes boundary that is also a Superconductor sheet)
+    // leaves the film interior free, so the shifted-penalty operator K̃ = A_curlcurl +
+    // (1/L_ksq) M_sheet keeps a residual 1-D gradient null space and is NOT the pure
+    // singular curl-curl operator: singular-AMS (which skips gradient G-space corrections)
+    // then stalls/diverges in parallel. For that case default AMSSingularOperator=false so
+    // AMS does the G-space corrections, which are well-posed against the preconditioner
+    // gauge shift (LondonPCShift).
     bool has_london_film = false;
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
@@ -631,7 +633,7 @@ void IoData::CheckConfiguration()
       }
       for (const auto &[idx, fl] : boundaries.fluxloop)
       {
-        for (auto attr : fl.fluxloop_pec)
+        for (auto attr : fl.film_attributes)
         {
           if (sc_attrs.count(attr))
           {

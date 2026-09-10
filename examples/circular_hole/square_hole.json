@@ -40,7 +40,7 @@
     [
       {
         "Index": 1,
-        "FluxLoopPEC": [8],   // λ→0 washer: auto-routed through the range-space two-solve
+        "FilmAttributes": [8],   // λ→0 washer: auto-routed through the range-space two-solve
         "HoleAttributes": [9],
         "FluxAmounts": [1.0],  // nondimensional flux-loop excitation amplitude
         "Direction": "+Z"

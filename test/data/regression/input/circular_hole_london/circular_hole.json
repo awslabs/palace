@@ -48,7 +48,7 @@
     [
       {
         "Index": 1,
-        "FluxLoopPEC": [8],
+        "FilmAttributes": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0],
         "Direction": "+Z"

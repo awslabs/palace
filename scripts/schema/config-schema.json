@@ -1587,7 +1587,7 @@
       "additionalProperties": false,
       "required": [
         "Index",
-        "FluxLoopPEC",
+        "FilmAttributes",
         "HoleAttributes",
         "FluxAmounts",
         "Direction"
@@ -1598,7 +1598,7 @@
           "description": "Index of this flux loop, used in postprocessing output files.",
           "exclusiveMinimum": 0
         },
-        "FluxLoopPEC": {
+        "FilmAttributes": {
           "$ref": "#/$defs/Attributes",
           "description": "Integer array of mesh boundary attributes for the metal surface on which the 2D surface curl problem is solved."
         },

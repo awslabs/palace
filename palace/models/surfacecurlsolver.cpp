@@ -44,10 +44,10 @@ namespace
 // PALACE_LONDON_AH=angle selects the smooth representative a_h = (Φ/2π)∇θ,
 // θ = atan2(y-cy, x-cx), whose exact DOF ∫_e ∇θ·t is the angle subtended at L. It carries
 // the fluxoid exactly (verified to 4e-15) but is NOT interchangeable with the cut cochain:
-// the two differ by ∇ψ, ψ = (Φ/2π)θ_branch, which does not vanish on the PEC outer walls, so
-// A → A + ∇ψ is inadmissible and L is not invariant. Its large smooth a_h|Σ lets the film
-// phase gradient absorb the fluxoid at near-zero kinetic cost, collapsing the screening
-// current (square_hole: 109× low). Diagnostic use only.
+// the two differ by ∇ψ, ψ = (Φ/2π)θ_branch, which does not vanish on the PEC outer walls,
+// so A → A + ∇ψ is inadmissible and L is not invariant. Its large smooth a_h|Σ lets the
+// film phase gradient absorb the fluxoid at near-zero kinetic cost, collapsing the
+// screening current (square_hole: 109× low). Diagnostic use only.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
                                    const Mesh &mesh)
@@ -125,26 +125,26 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     {
       cx += 3.7e-3 * r_max;
       cy += 2.3e-3 * r_max;
-      Mpi::Print(" London a_h: flux line met a hole vertex, offset to ({:.6e}, {:.6e})\n", cx,
-                 cy);
+      Mpi::Print(" London a_h: flux line met a hole vertex, offset to ({:.6e}, {:.6e})\n",
+                 cx, cy);
     }
   }
 
   // Lowest-order (Whitney) cochain on an ND_1 space over the full 3D mesh. Each rank sets
   // its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared edge)
-  // in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF value is
-  // correct and GetTrueDofs needs no cross-rank sign reconciliation.
+  // in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF value
+  // is correct and GetTrueDofs needs no cross-rank sign reconciliation.
   mfem::ND_FECollection nd1_fec(1, sdim);
   mfem::ParFiniteElementSpace nd1_fespace(&pmesh, &nd1_fec);
   mfem::ParGridFunction ah1(&nd1_fespace);
   ah1.UseDevice(false);
   ah1 = 0.0;
 
-  // Nodal branch-cut potential ψ = (Φ/2π)·atan2(d, -s), whose branch discontinuity is exactly
-  // the cut half-plane, so cut = Grad ψ - a_angle. Carrying the O(1) step as a discrete
-  // gradient is what makes this non-conformal-safe: Grad of a *conformed* H1 function is
-  // exactly conforming and exactly curl-free, whereas a step written on edges is neither, and
-  // cᵀGrad = 0 identically, so ψ cannot perturb the circulation.
+  // Nodal branch-cut potential ψ = (Φ/2π)·atan2(d, -s), whose branch discontinuity is
+  // exactly the cut half-plane, so cut = Grad ψ - a_angle. Carrying the O(1) step as a
+  // discrete gradient is what makes this non-conformal-safe: Grad of a *conformed* H1
+  // function is exactly conforming and exactly curl-free, whereas a step written on edges
+  // is neither, and cᵀGrad = 0 identically, so ψ cannot perturb the circulation.
   mfem::H1_FECollection h1_fec(1, sdim);
   mfem::ParFiniteElementSpace h1_fespace(&pmesh, &h1_fec);
   mfem::ParGridFunction psi(&h1_fespace);
@@ -193,10 +193,11 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   }
 
   // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
-  // function, so it survives the round trip exactly (circulation and curl-free-on-Σ intact);
-  // only the smooth a_angle term is re-interpolated onto slaves. On a non-conformal mesh that
-  // leaves a small residual curl on Σ near graded refinement, which the range-space two-solve
-  // absorbs (does not affect L); on a conformal mesh a_h is the exact integer step, curl-free.
+  // function, so it survives the round trip exactly (circulation and curl-free-on-Σ
+  // intact); only the smooth a_angle term is re-interpolated onto slaves. On a
+  // non-conformal mesh that leaves a small residual curl on Σ near graded refinement, which
+  // the range-space two-solve absorbs (does not affect L); on a conformal mesh a_h is the
+  // exact integer step, curl-free.
   {
     mfem::Vector t(nd1_fespace.GetTrueVSize());
     t.UseDevice(false);
@@ -260,14 +261,14 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
 
   // Extract metal surface and hole attributes from flux_data
   mfem::Array<int> metal_surface_attrs;
-  for (int metal_attr : flux_data.fluxloop_pec)
+  for (int metal_attr : flux_data.film_attributes)
   {
     metal_surface_attrs.Append(metal_attr);
   }
 
   // Validate that we have at least one metal surface attribute
   MFEM_VERIFY(metal_surface_attrs.Size() > 0,
-              "At least one metal surface attribute must be specified in FluxLoopPEC!");
+              "At least one metal surface attribute must be specified in FilmAttributes!");
   mfem::Array<int> hole_surface_attrs;
   for (int hole_attr : flux_data.hole_attributes)
   {

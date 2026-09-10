@@ -905,10 +905,10 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 }
 FluxLoopData::FluxLoopData(const json &fluxloop)
 {
-  MFEM_VERIFY(fluxloop.find("FluxLoopPEC") != fluxloop.end(),
-              "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
-  fluxloop_pec = fluxloop.at("FluxLoopPEC").get<std::vector<int>>();
-  std::sort(fluxloop_pec.begin(), fluxloop_pec.end());
+  MFEM_VERIFY(fluxloop.find("FilmAttributes") != fluxloop.end(),
+              "Missing \"FilmAttributes\" for \"FluxLoop\" boundary!");
+  film_attributes = fluxloop.at("FilmAttributes").get<std::vector<int>>();
+  std::sort(film_attributes.begin(), film_attributes.end());
 
   MFEM_VERIFY(fluxloop.find("HoleAttributes") != fluxloop.end(),
               "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");

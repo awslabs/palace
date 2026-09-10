@@ -48,14 +48,14 @@
     [
       {
         "Index": 1,
-        "FluxLoopPEC": [8],
+        "FilmAttributes": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0],
         "Direction": [0.0, 0.0, 1.0]
       },
       {
         "Index": 2,
-        "FluxLoopPEC": [8],
+        "FilmAttributes": [8],
         "HoleAttributes": [10],
         "FluxAmounts": [1.0],
         "Direction": [0.0, 0.0, 1.0]

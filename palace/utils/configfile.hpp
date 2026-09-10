@@ -781,7 +781,7 @@ struct FluxLoopData
 {
 public:
   // List of boundary attributes for the metal surface.
-  std::vector<int> fluxloop_pec = {};
+  std::vector<int> film_attributes = {};
 
   // List of boundary attributes for holes (one per hole).
   std::vector<int> hole_attributes = {};
@@ -795,8 +795,9 @@ public:
   // Regularization parameter for curl-curl system stability.
   double regularization = 1e-6;
 
-  // Effective λ⊥ [mesh units] for a FluxLoopPEC film not declared Superconductor: models it as
-  // the λ→0 London limit (auto-registered SC sheet, solved by the two-solve).
+  // Effective λ⊥ [mesh units] for a film listed in FilmAttributes but not declared a
+  // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet, solved by
+  // the two-solve).
   double pec_lperp = 1.0e-4;
 
   FluxLoopData() = default;
@@ -1138,7 +1139,8 @@ public:
   int ams_singular_op = -1;
 
   // Preconditioner-only gauge shift for the London (superconductor sheet) magnetostatic
-  // operator. When a London flux film is present the shifted-penalty operator K̃ = A_curlcurl
+  // operator. When a London flux film is present the shifted-penalty operator K̃ =
+  // A_curlcurl
   // + (1/L_ksq) M_sheet has a residual 1-D gradient null space (film-constant potential),
   // which stalls/diverges AMS in parallel. This adds london_pc_shift · (1/µ) ∫|A|² as a
   // volume mass to the PRECONDITIONER matrix ONLY (the actual operator, solution and

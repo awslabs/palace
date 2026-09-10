@@ -32,7 +32,7 @@
     [
       {
         "Index": 2,
-        "FluxLoopPEC": [5],     // Disk metal
+        "FilmAttributes": [5],     // Disk metal
         "HoleAttributes": [6],  // Hole through the disk
         "FluxAmounts": [1.0],
         "Direction": "+Z"

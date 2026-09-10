@@ -24,9 +24,10 @@ namespace
 {
 
 // ±1 aligning the boundary-face normal with the flux loop direction. A hole aperture is an
-// *internal* surface, whose face orientations the mesh need not make consistent (EnsureNCMesh
-// scrambles them, and some generators emit them mixed), which would otherwise make c measure
-// only part of the aperture. Matches ComputeFluxThroughSurface's DIRECTION_BASED convention.
+// *internal* surface, whose face orientations the mesh need not make consistent
+// (EnsureNCMesh scrambles them, and some generators emit them mixed), which would otherwise
+// make c measure only part of the aperture. Matches ComputeFluxThroughSurface's
+// DIRECTION_BASED convention.
 class FluxOrientationCoefficient : public mfem::Coefficient
 {
 private:
@@ -105,12 +106,13 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
 {
   surf_flux_op = SurfaceFluxOperator(iodata);
 
-  // Identify London flux films (FluxLoopPEC ∩ Superconductor). For these the whole film is
-  // a free unknown governed by the sheet term; the flux excitation uses the shifted London
-  // penalty (RHS = M_sheet·a_h in GetFluxExcitationVector), not the whole-film PEC clamp.
+  // Identify London flux films (FilmAttributes ∩ Superconductor). For these the whole film
+  // is a free unknown governed by the sheet term; the flux excitation uses the shifted
+  // London penalty (RHS = M_sheet·a_h in GetFluxExcitationVector), not the whole-film PEC
+  // clamp.
   for (const auto &[idx, data] : surf_flux_op)
   {
-    for (int attr : data.fluxloop_pec)
+    for (int attr : data.film_attributes)
     {
       if (london_flux_film_attr_.count(attr))
       {
@@ -168,7 +170,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
     }
     dbc_bcs.Append(attr);
   }
-  // Superconductor-sheet attributes (finite-λ films). A FluxLoopPEC film that is also a
+  // Superconductor-sheet attributes (finite-λ films). A film that is also a
   // superconductor sheet is a "London flux film": its whole surface is a free unknown
   // governed by the sheet term, so it is NOT marked essential here. Its hole fluxoid is an
   // integral constraint enforced by the range-space two-solve.
@@ -185,10 +187,10 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
   std::set<int> flux_attrs;
   for (const auto &[idx, data] : fluxloop)
   {
-    for (auto attr : data.fluxloop_pec)
+    for (auto attr : data.film_attributes)
     {
       MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1],
-                  "Unknown FluxLoopPEC boundary attribute "
+                  "Unknown FilmAttributes boundary attribute "
                       << attr << " for FluxLoop index " << idx << "!");
       if (sc_attrs.count(attr))
       {
@@ -224,7 +226,7 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
   // ∫_hole B·n is a well-defined face functional. In 2D curl maps to a scalar L2 space and
   // this construction does not apply.
   MFEM_VERIFY(!l2_curl_fespace,
-              "London flux films (FluxLoopPEC ∩ Superconductor) require a 3D mesh!");
+              "London flux films (FilmAttributes ∩ Superconductor) require a 3D mesh!");
 
   const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
   const Operator &curl = GetCurlMatrix();

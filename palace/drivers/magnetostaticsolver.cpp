@@ -163,18 +163,20 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
-  // A London loop's drive a_h is built directly on the 3D ND space and is nonconformal-safe.
-  // Only the legacy 2D submesh path needs global edge indexing, which NC meshes lack.
+  // A London loop's drive a_h is built directly on the 3D ND space and is
+  // nonconformal-safe. Only the legacy 2D submesh path needs global edge indexing, which NC
+  // meshes lack.
   {
     int n_submesh_flux_steps = 0;
     for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
     {
       n_submesh_flux_steps += !curlcurl_op.IsLondonFluxLoop(idx);
     }
-    MFEM_VERIFY(n_submesh_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
-                    !iodata.model.refinement.nonconformal,
-                "Non-London flux loop excitation is only supported with conformal adaptation "
-                "or no adaptation!");
+    MFEM_VERIFY(
+        n_submesh_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
+            !iodata.model.refinement.nonconformal,
+        "Non-London flux loop excitation is only supported with conformal adaptation "
+        "or no adaptation!");
   }
 
   // Source term and solution vector storage.
@@ -342,19 +344,22 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         MFEM_ASSERT(A_p_london.Size() == RHS.Size(),
                     "London scratch vector size mismatch!");
         // Zero the scratch vectors before each solve. Magnetostatics defaults to a nonzero
-        // initial guess (iodata.cpp), and these vectors are reused across flux steps; a stale
-        // guess carrying a gradient/near-null-space component intermittently stalls CG on the
-        // gauge-singular operator K = K_cc + M_sheet (the fluxoid RHS c = Curlᵀf is marginally
-        // conditioned), producing a garbage A_h whose bad energy is injected via α·A_h. A
-        // clean zero start makes both solves robust and partition-/roundoff-independent.
+        // initial guess (iodata.cpp), and these vectors are reused across flux steps; a
+        // stale guess carrying a gradient/near-null-space component intermittently stalls
+        // CG on the gauge-singular operator K = K_cc + M_sheet (the fluxoid RHS c = Curlᵀf
+        // is marginally conditioned), producing a garbage A_h whose bad energy is injected
+        // via α·A_h. A clean zero start makes both solves robust and
+        // partition-/roundoff-independent.
         A_p_london = 0.0;
         ksp.Mult(RHS, A_p_london);
         if (!ksp.GetConverged())
         {
           // Return unconverged so SolveEstimateMarkRefine can halt adaptation and keep the
-          // last converged iteration. Bail before postprocessing so no unreliable inductance
-          // is written; the initial-solve check downstream still fails loud with no fallback.
-          Mpi::Warning("London solve A_p = K⁻¹b did not converge for flux loop {:d}!\n", idx);
+          // last converged iteration. Bail before postprocessing so no unreliable
+          // inductance is written; the initial-solve check downstream still fails loud with
+          // no fallback.
+          Mpi::Warning("London solve A_p = K⁻¹b did not converge for flux loop {:d}!\n",
+                       idx);
           solve_converged_ = false;
           return {indicator, curlcurl_op.GlobalTrueVSize()};
         }
@@ -363,7 +368,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         ksp.Mult(RHS_c_london, A_h_london);
         if (!ksp.GetConverged())
         {
-          Mpi::Warning("London solve A_h = K⁻¹c did not converge for flux loop {:d}!\n", idx);
+          Mpi::Warning("London solve A_h = K⁻¹c did not converge for flux loop {:d}!\n",
+                       idx);
           solve_converged_ = false;
           return {indicator, curlcurl_op.GlobalTrueVSize()};
         }
@@ -376,9 +382,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         A[step] = A_p_london;
         A[step].Add(alpha, A_h_london);
 
-        // Accumulate the kinetic penalty energy S(A_t − a_h) = (A − a_h)ᵀ M_sheet (A − a_h),
-        // formed directly (not via the cancellation-prone S(A,A) − 2S(A,a_h) + S(a_h,a_h)) so
-        // it is trustworthy even when the stiff-penalty solve is under-resolved.
+        // Accumulate the kinetic penalty energy S(A_t − a_h) = (A − a_h)ᵀ M_sheet (A −
+        // a_h), formed directly (not via the cancellation-prone S(A,A) − 2S(A,a_h) +
+        // S(a_h,a_h)) so it is trustworthy even when the stiff-penalty solve is
+        // under-resolved.
         Vector d(A[step]), msd(A[step].Size());
         msd.UseDevice(true);
         d -= boundary_values;
@@ -406,10 +413,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (prev_london_kinetic_ > 0.0 &&
       london_kinetic > london_kinetic_growth * prev_london_kinetic_)
   {
-    Mpi::Warning(curlcurl_op.GetComm(),
-                 "London kinetic energy jumped {:.2e}x after refinement ({:.3e} -> {:.3e}); "
-                 "the stiff-penalty solve is under-resolved!\n",
-                 london_kinetic / prev_london_kinetic_, prev_london_kinetic_, london_kinetic);
+    Mpi::Warning(
+        curlcurl_op.GetComm(),
+        "London kinetic energy jumped {:.2e}x after refinement ({:.3e} -> {:.3e}); "
+        "the stiff-penalty solve is under-resolved!\n",
+        london_kinetic / prev_london_kinetic_, prev_london_kinetic_, london_kinetic);
     solve_converged_ = false;
     return {indicator, curlcurl_op.GlobalTrueVSize()};
   }

@@ -240,7 +240,8 @@ TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
-  palace::test::RunRegressionCase("circular_hole_london", "circular_hole.json", "base", opts);
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole.json", "base",
+                                  opts);
 }
 
 // Two London holes on a shared film, each an independent flux loop. Locks the London-London
@@ -258,9 +259,10 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
 }
 
 // London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
-// a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and curl-free-on-Σ
-// gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH after one refinement).
-// Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive, awslabs/palace#375).
+// a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
+// curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
+// after one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
+// awslabs/palace#375).
 TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
