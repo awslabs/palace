@@ -86,24 +86,29 @@ of the driven solver as well as the following additional files:
     admittance, not the incident/outgoing wave coupling: for a mode whose $\bm{n}\times\bm{H}$ shape
     rotates with frequency (a hybrid / LSM wave port with $E_n\neq 0$) the terminal $Y_{\mathrm{ref}}$
     alone does not reproduce the solver's S-parameters, and the frequency-dependent coupling maps
-    $\bm{G}(\omega)$, $\bm{H}(\omega)$ below are required. The columns give frequency followed by the
-    real and imaginary parts of $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
-  - (Wave ports): `rom-coupled-G.csv`, `rom-coupled-H.csv`, `rom-coupled-S.csv`. The complete
-    synthesized model of a wave-port network is $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} =
-    \bm{G}(\omega)\,\bm{a}$, $\bm{b} = \bm{H}(\omega)\,\bm{y} - \bm{a}$, where $\bm{a}$/$\bm{b}$ are the
-    incident/outgoing wave amplitudes, $\bm{Y}_{\mathrm{syn}}$ is the exported L/R/C pencil, and
-    $\bm{G}$/$\bm{H}$ are the frequency-dependent source/observation maps built from each port's
-    projected $\bm{n}\times\bm{H}$ vector (aux rows are zero). The S-parameters follow as $\bm{S}(\omega)
-    = \bm{H}(\omega)\,\bm{Y}_{\mathrm{syn}}(\omega)^{-1}\,\bm{G}(\omega) - \bm{I}$. `rom-coupled-G.csv`
+    $\bm{G}(\omega)$, $\bm{H}(\omega)$ below are required. An inactive included wave port is reported at
+    polynomial order only (its rational auxiliary states cannot enter the unloaded total pencil), so its
+    $Y_{\mathrm{ref}}$ matches its exported `rom-portload-*` load exactly but drops any rational tail of
+    the $k_n(\omega)$ fit. The columns give frequency followed by the real and imaginary parts of
+    $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
+  - `rom-coupled-G.csv`, `rom-coupled-H.csv`, `rom-coupled-S.csv`. The complete synthesized model of
+    the included-port network is $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} = \bm{G}(\omega)\,\bm{a}$,
+    $\bm{b} = \bm{H}(\omega)\,\bm{y} - \bm{a}$, where $\bm{a}$/$\bm{b}$ are the incident/outgoing wave
+    amplitudes at the mesh boundary plane, $\bm{Y}_{\mathrm{syn}}$ is the exported L/R/C pencil, and
+    $\bm{G}$/$\bm{H}$ are the frequency-dependent source/observation maps. A wave port's columns are
+    its projected $\bm{n}\times\bm{H}$ vector (which rotates with frequency for a hybrid mode); a
+    lumped port's columns are a fixed selector on its terminal node. Aux rows are zero. `rom-coupled-G.csv`
     and `rom-coupled-H.csv` tabulate $\bm{G}$ and $\bm{H}$ over the sweep grid (columns keyed by node
-    label and port); `rom-coupled-S.csv` is the resulting $\bm{S}$. To reconstruct $\bm{S}$ at a swept
-    frequency $\omega$: (1) assemble $\bm{Y}_{\mathrm{syn}}(\omega) = \widehat{\bm{L}}^{-1}/s +
-    \widehat{\bm{R}}^{-1} + s\,\widehat{\bm{C}}$ with $s = i\omega$ from the exported pencil; (2) solve
-    $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} = \bm{G}(\omega)$ for the state (columns of $\bm{G}$ are the
-    per-port incident excitations); (3) form $\bm{S}(\omega) = \bm{H}(\omega)\,\bm{y} - \bm{I}$. For a
-    homogeneous fixed-shape TE/TEM port, where $E_n = 0$, $\bm{W}=0$, and the coupling maps are
-    approximately frequency-independent, this reduces to the terminal-only $Y_{\mathrm{ref}}$
-    de-embedding.
+    label and port). To reconstruct the S-parameters at a swept frequency $\omega$: (1) assemble
+    $\bm{Y}_{\mathrm{syn}}(\omega) = \widehat{\bm{L}}^{-1}/s + \widehat{\bm{R}}^{-1} + s\,\widehat{\bm{C}}$
+    with $s = i\omega$ from the exported pencil; (2) solve $\bm{Y}_{\mathrm{syn}}(\omega)\,\bm{y} =
+    \bm{G}(\omega)$; (3) form the boundary-plane $\bm{S}_b(\omega) = \bm{H}(\omega)\,\bm{y} - \bm{I}$;
+    (4) de-embed to the reference planes, $\bm{S}(\omega) = \bm{D}(\omega)\,\bm{S}_b(\omega)\,\bm{D}(\omega)$
+    with $\bm{D} = \mathrm{diag}(e^{i k_n d_{\mathrm{offset}}})$. `rom-coupled-S.csv` is this final
+    $\bm{S}$ and additionally tabulates the per-port de-embedding factors as `deembed[<idx>]` columns
+    (unity for lumped ports and for wave ports with zero `Offset`). For a homogeneous fixed-shape
+    TE/TEM port ($E_n = 0$, $\bm{W}=0$, frequency-independent coupling) this reduces to the
+    terminal-only $Y_{\mathrm{ref}}$ de-embedding.
   - (Optional, for cascading): `rom-portload-<label>-{Linv,Rinv,C}-{re,im}.csv`. One set of files per
     included port, with the same node labels and dimensions as the total `rom-*` matrices. The label
     is `port_<idx>_re` (lumped) or `waveport_<idx>_re` (wave). Each set isolates that single port's

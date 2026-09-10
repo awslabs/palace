@@ -598,7 +598,7 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
 // y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
 palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
 {
-  return [atol_lin](palace::Table &, palace::Table &reference,
+  return [atol_lin](palace::Table &actual, palace::Table &,
                     const std::filesystem::path &actual_path)
   {
     namespace fs = std::filesystem;
@@ -761,7 +761,7 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
       const Eigen::MatrixXcd smat =
           rootY * (id - z0 * yports) * (id + z0 * yports).fullPivLu().inverse() * rootZ;
 
-      // Compare |S[i][j]| against the field-derived reference (dB → linear).
+      // Compare |S[i][j]| against the live field-derived port-S (dB → linear).
       for (long i = 0; i < n_ports; ++i)
       {
         for (long jj = 0; jj < n_ports; ++jj)
@@ -769,19 +769,19 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
           const std::string hdr =
               "|S[" + std::to_string(i + 1) + "][" + std::to_string(jj + 1) + "]| (dB)";
           int sc = -1;
-          for (std::size_t c = 0; c < reference.n_cols(); ++c)
+          for (std::size_t c = 0; c < actual.n_cols(); ++c)
           {
-            if (reference[c].header_text == hdr)
+            if (actual[c].header_text == hdr)
             {
               sc = static_cast<int>(c);
               break;
             }
           }
-          if (sc < 0 || rr >= reference.n_rows())
+          if (sc < 0 || rr >= actual.n_rows())
           {
             continue;
           }
-          const double meas_lin = std::pow(10.0, reference[sc].data[rr] / 20.0);
+          const double meas_lin = std::pow(10.0, actual[sc].data[rr] / 20.0);
           const double pen_lin = std::abs(smat(i, jj));
           INFO("f = " << f_ghz << " GHz, |S[" << i + 1 << "][" << jj + 1 << "]| pencil "
                       << pen_lin << " vs field " << meas_lin);

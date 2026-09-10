@@ -1995,8 +1995,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
           port_load.aux_blocks.push_back(*fit.aux);
         }
       }
-      // Inactive ports keep only the polynomial part (aux rows would have to live in the
-      // unloaded total pencil).
+      // Inactive included ports keep only the polynomial fit: their rational aux states
+      // cannot live in the unloaded total pencil, so the exported load and the reported
+      // Y_ref stay consistent (both drop the rational tail).
       pending_port_loads.push_back(std::move(port_load));
     }
   }
@@ -2648,20 +2649,6 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
       if (std::isfinite(corr.real()) && std::isfinite(corr.imag()))
       {
         y_eff -= corr;
-      }
-    }
-    // An inactive included port loads only the polynomial part of its kₙ(ω) fit (its aux
-    // rows cannot live in the unloaded total pencil). Its terminal admittance is linear in
-    // kₙ (Y_ref = i·kₙ·Schur(M_proj)), so rescale to the full fitted dispersion — including
-    // the rational pole terms — so rom-port-reference reports the fitted matched port.
-    if (ref.type == RefType::Wave && ref.wave_fit &&
-        !space_op.GetWavePortOp().GetPort(ref.port_idx).active)
-    {
-      const double kn_poly = ref.wave_fit->alpha0 + ref.wave_fit->alpha1 * omega +
-                             ref.wave_fit->alpha2 * omega * omega;
-      if (std::abs(kn_poly) > 1.0e-300)
-      {
-        y_eff *= EvaluateWavePortKnFit(*ref.wave_fit, omega) / kn_poly;
       }
     }
     return y_eff;
