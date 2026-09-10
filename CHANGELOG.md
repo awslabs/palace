@@ -15,6 +15,8 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
 ## [0.18.0] - 2026-09-09
 
 #### New Features
