@@ -226,10 +226,11 @@ several *Palace* releases. The table below records the schema version shipped by
 *Palace* release; a listed version applies from that release until the next row. Add a
 row when a release is cut, recording the schema version at that boundary.
 
-| Schema version | *Palace* release | Notes                              |
-|:--------------:|:----------------:|:---------------------------------- |
-| `1-0-0`        | `0.17`           | First explicitly-versioned schema. |
-| `1-6-0`        | `0.18`           |                                    |
+| Schema version | *Palace* release | Notes                                                                                                                |
+|:--------------:|:----------------:|:-------------------------------------------------------------------------------------------------------------------- |
+| `1-0-0`        | `0.17`           | First explicitly-versioned schema.                                                                                   |
+| `1-6-0`        | `0.18`           |                                                                                                                      |
+| `2-0-0`        | `0.18`           | Rename FluxLoop `FluxLoopPEC` to `FilmAttributes`; add `Superconductor` boundary and FluxLoop `PecPenetrationDepth`. |
 
 #### When and how to bump (PR checklist)
 

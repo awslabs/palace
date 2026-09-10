@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "surfacefluxoperator.hpp"
-#include <memory>
 #include "models/surfacecurlsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -12,7 +11,7 @@ namespace palace
 
 SurfaceFluxData::SurfaceFluxData(const config::FluxLoopData &data)
   : hole_attributes(data.hole_attributes), flux_amounts(data.flux_amounts),
-    fluxloop_pec(data.fluxloop_pec),
+    film_attributes(data.film_attributes),
     direction(data.direction.begin(), data.direction.end()),
     regularization(data.regularization)
 {
@@ -24,7 +23,6 @@ double SurfaceFluxData::GetExcitationFlux() const
 }
 
 SurfaceFluxOperator::SurfaceFluxOperator(const IoData &iodata)
-  : solver_config_(std::make_unique<IoData>(iodata))
 {
   SetUpBoundaryProperties(iodata);
   PrintBoundaryInfo(iodata);
@@ -63,8 +61,7 @@ palace::Vector SurfaceFluxOperator::SolveSurfaceCurlProblem(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const
 {
   const auto &data = GetSource(idx);
-  return palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx,
-                                         post_op);
+  return palace::SolveSurfaceCurlProblem(data, mesh, nd_fespace, post_op);
 }
 
 void SurfaceFluxOperator::SolveSurfaceCurlProblem(
@@ -72,8 +69,7 @@ void SurfaceFluxOperator::SolveSurfaceCurlProblem(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result) const
 {
   const auto &data = GetSource(idx);
-  palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx, post_op,
-                                  result);
+  palace::SolveSurfaceCurlProblem(data, mesh, nd_fespace, post_op, result);
 }
 
 }  // namespace palace

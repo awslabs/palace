@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -14,6 +15,7 @@
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfacefluxoperator.hpp"
@@ -23,6 +25,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class Units;
 template <ProblemType T>
 class PostOperator;
 
@@ -33,6 +36,7 @@ struct BoundaryData;
 struct MaterialData;
 struct PecBoundaryData;
 struct SolverData;
+struct SuperconductorData;
 
 }  // namespace config
 
@@ -46,6 +50,13 @@ class CurlCurlOperator
 private:
   // Helper variable for log file printing.
   bool print_hdr;
+
+  // Film attributes (from FilmAttributes) that are also Superconductor sheets ("London flux
+  // films"). Their whole surface is a free unknown; the hole fluxoid is realized through
+  // the sheet penalty, not by pinning DOFs. Declared before dbc_attr because
+  // SetUpBoundaryProperties (which initializes dbc_attr) populates this set, so it must be
+  // constructed first.
+  std::set<int> london_flux_film_attr_;
 
   // Essential boundary condition attributes.
   mfem::Array<int> dbc_attr;
@@ -85,19 +96,40 @@ private:
   // Operator for flux loop excitation.
   SurfaceFluxOperator surf_flux_op;
 
-  // Cached original matrix for flux loop boundary-interior coupling
-  mutable std::unique_ptr<ParOperator> K_orig_;
+  // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
+  SuperconductorSheetOperator sc_sheet_op;
+
+  // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
+  // London flux films. Populated at construction after surf_flux_op is set.
+  std::set<int> london_flux_loops_;
+
+  // Preconditioner-only gauge shift (config LondonPCShift); see GetPreconditionerMatrix.
+  double london_pc_shift_;
+
+  // Cached sheet-only mass operator M_sheet (the boundary term ∫_Σ (1/L_ksq) A_t·v_t). The
+  // London flux excitation RHS = M_sheet·a_h is the Euler-Lagrange source of the shifted
+  // penalty ½∫_Σ (1/L_ksq)|A_t − a_h|². Lazily assembled in GetFluxExcitationVector.
+  mutable std::unique_ptr<ParOperator> M_sheet_;
+
+  // Fluxoid circulation functional c = Curlᵀ·f_hole per London flux loop (f_hole the RT
+  // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Imposes the scalar
+  // constraint cᵀA = Φ via the range-space two-solve A = A_p + α·A_h. Zeroed on the PEC
+  // essential set.
+  std::map<int, Vector> london_flux_constraint_;
+
+  void SetUpLondonFluxConstraints();
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::FluxLoopData> &fluxloop,
+                          const std::vector<config::SuperconductorData> &superconductor,
                           const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
 public:
   CurlCurlOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
                    const std::vector<config::MaterialData> &materials,
-                   ProblemType problem_type,
+                   ProblemType problem_type, const Units &units,
                    const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
@@ -107,6 +139,8 @@ public:
   // Access to underlying BC operator objects for postprocessing.
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
+  auto &GetSuperconductorOp() { return sc_sheet_op; }
+  const auto &GetSuperconductorOp() const { return sc_sheet_op; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
@@ -136,6 +170,19 @@ public:
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
+  // True if any flux loop drives a London (finite-λ) superconductor film, whose free
+  // interior gives the shifted-penalty operator a residual 1-D gradient null space.
+  bool HasLondonFluxLoops() const { return !london_flux_loops_.empty(); }
+
+  // Construct the preconditioner matrix for the London magnetostatic path: the stiffness
+  // matrix plus a small reluctance-weighted volume mass (london_pc_shift_ · (1/µ) ∫|A|²)
+  // that lifts the residual gradient null space so AMS is SPD-solvable in parallel. This
+  // shift is applied ONLY to the preconditioner, so the operator, solution, and extracted
+  // inductance are unchanged. Returns nullptr when there is no London flux film or the
+  // shift is non-positive, signaling that the stiffness matrix itself should be used as
+  // preconditioner.
+  std::unique_ptr<Operator> GetPreconditionerMatrix();
+
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
   // construction, without mutating base boundary state. Used in Short mode to treat
   // inactive surface current ports as PEC for a single excitation step. The operator is
@@ -155,6 +202,16 @@ public:
     return GetCurlSpace().GetDiscreteInterpolator(GetNDSpace());
   }
 
+  // Apply the cached sheet mass M_sheet (∫_Σ (1/L_ksq) A_t·v_t). Requires a prior
+  // GetFluxExcitationVector on a London loop to have built it. Lets the driver form the
+  // kinetic penalty energy S(A−a_h) = (A−a_h)ᵀ M_sheet (A−a_h) directly, avoiding the
+  // catastrophic cancellation of the expanded S(A,A) − 2S(A,a_h) + S(a_h,a_h) form.
+  void ApplySheetMass(const Vector &x, Vector &y) const
+  {
+    MFEM_VERIFY(M_sheet_, "Sheet mass operator has not been built!");
+    M_sheet_->Mult(x, y);
+  }
+
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
   void GetCurrentExcitationVector(int idx, Vector &RHS);
@@ -167,7 +224,27 @@ public:
   void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op,
                                Vector *boundary_values);
 
-  // Solve 2D surface curl problem for flux loop boundary conditions
+  // True if flux loop idx has a London (finite-λ) film. Its flux excitation uses the
+  // shifted London sheet penalty ½∫(1/L_ksq)|A_t − a_h|² (RHS = M_sheet·a_h), so the driver
+  // measures the realized hole flux for normalization and corrects the extracted energy to
+  // |A_t − a_h|².
+  bool IsLondonFluxLoop(int idx) const { return london_flux_loops_.count(idx) > 0; }
+
+  // Copy the fluxoid constraint functional c for London flux loop idx (c = Curlᵀ·f_hole,
+  // zeroed on the PEC essential set). Used as the RHS of the fluxoid-mode solve A_h = K⁻¹c.
+  void GetFluxConstraintVector(int idx, Vector &c) const
+  {
+    c = london_flux_constraint_.at(idx);
+  }
+
+  // Measure the hole flux ∮A·dl = cᵀA of a candidate London field via the stored fluxoid
+  // functional (exact by Stokes; cheaper than integrating B·n over the hole).
+  double MeasureLondonHoleFlux(int idx, const Vector &A) const
+  {
+    return linalg::Dot(GetComm(), london_flux_constraint_.at(idx), A);
+  }
+
+  // Build the London cut cohomology generator a_h for the given flux loop.
   template <ProblemType T>
   Vector SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op) const;
 

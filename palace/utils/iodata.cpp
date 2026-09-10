@@ -453,6 +453,15 @@ void IoData::CheckConfiguration()
     }
   }
 
+  // Superconductor sheet boundaries (kinetic inductance) are only meaningful for the
+  // magnetostatic total-inductance extraction.
+  if (!boundaries.superconductor.empty() && problem.type != ProblemType::MAGNETOSTATIC)
+  {
+    Mpi::Warning(
+        "Only the Magnetostatic problem type supports Superconductor sheet boundary "
+        "conditions!\n");
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -570,9 +579,71 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
+  // Auto-register a film listed in FilmAttributes but not declared a Superconductor sheet
+  // as the λ→0 London limit: a superconductor sheet with a small effective L_ksq = λ⊥ (set
+  // λ = d = λ⊥ so λ²/d = λ⊥). This routes the film through the range-space two-solve
+  // (rigorous fluxoid + B·n=0, gauge-invariant, partition-independent) instead of the
+  // whole-film Dirichlet clamp. Runs before the ams_singular_op default below so the film
+  // is seen as a London film.
+  if (problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    std::set<int> sc_attrs;
+    for (const auto &sc : boundaries.superconductor)
+    {
+      for (auto attr : sc.attributes)
+      {
+        sc_attrs.insert(attr);
+      }
+    }
+    for (const auto &[idx, fl] : boundaries.fluxloop)
+    {
+      for (auto attr : fl.film_attributes)
+      {
+        if (!sc_attrs.count(attr))
+        {
+          config::SuperconductorData sc;
+          sc.lambda_L = fl.pec_lperp;
+          sc.thickness = fl.pec_lperp;
+          sc.attributes = {attr};
+          boundaries.superconductor.push_back(sc);
+          sc_attrs.insert(attr);
+        }
+      }
+    }
+  }
   if (solver.linear.ams_singular_op < 0)
   {
-    solver.linear.ams_singular_op = (problem.type == ProblemType::MAGNETOSTATIC);
+    // A London flux film (a FilmAttributes boundary that is also a Superconductor sheet)
+    // leaves the film interior free, so the shifted-penalty operator K̃ = A_curlcurl +
+    // (1/L_ksq) M_sheet keeps a residual 1-D gradient null space and is NOT the pure
+    // singular curl-curl operator: singular-AMS (which skips gradient G-space corrections)
+    // then stalls/diverges in parallel. For that case default AMSSingularOperator=false so
+    // AMS does the G-space corrections, which are well-posed against the preconditioner
+    // gauge shift (LondonPCShift).
+    bool has_london_film = false;
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      std::set<int> sc_attrs;
+      for (const auto &sc : boundaries.superconductor)
+      {
+        for (auto attr : sc.attributes)
+        {
+          sc_attrs.insert(attr);
+        }
+      }
+      for (const auto &[idx, fl] : boundaries.fluxloop)
+      {
+        for (auto attr : fl.film_attributes)
+        {
+          if (sc_attrs.count(attr))
+          {
+            has_london_film = true;
+          }
+        }
+      }
+    }
+    solver.linear.ams_singular_op =
+        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {
@@ -715,6 +786,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
     config::Nondimensionalize(units, data);
   }
   for (auto &data : boundaries.rational_impedance)
+  {
+    config::Nondimensionalize(units, data);
+  }
+  for (auto &data : boundaries.superconductor)
   {
     config::Nondimensionalize(units, data);
   }

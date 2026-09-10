@@ -1,0 +1,319 @@
+>> /opt/homebrew/bin/mpirun -n 1 /Users/dzpham/palace_ci/install/bin/palace-arm64.bin microstrip.json
+
+_____________     _______
+_____   __   \____ __   /____ ____________
+____   /_/  /  __ ` /  /  __ ` /  ___/  _ \
+___   _____/  /_/  /  /  /_/  /  /__/  ___/
+  /__/     \___,__/__/\___,__/\_____\_____/
+
+
+[38;2;255;255;000m--> Warning![0m
+Output folder is not empty; program will overwrite content! (postpro/superconductor)
+Git changeset ID: v0.17.0-368-g9ae69fc02-dirty
+Running with 1 MPI process
+Device configuration: cpu
+Memory configuration: host-std
+libCEED backend: /cpu/self/opt/blocked
+
+Added 36 elements in 1 iterations of local bisection for under-resolved interior boundaries
+Added 19 duplicate vertices for interior boundaries in the mesh
+Added 58 duplicate boundary elements for interior boundaries in the mesh
+
+Characteristic length and time scales:
+ Lc = 5.000e-04 m, tc = 1.668e-03 ns
+Finished partitioning mesh into 1 subdomain
+
+Mesh curvature order: 2
+Mesh bounding box:
+ (Xmin, Ymin, Zmin) = (-2.500e-04, -2.000e-04, -2.000e-04) m
+ (Xmax, Ymax, Zmax) = (+2.500e-04, +2.400e-04, +2.020e-04) m
+
+Parallel Mesh Stats:
+
+                minimum     average     maximum       total
+ vertices          2222        2222        2222        2222
+ edges            14552       14552       14552       14552
+ faces            24159       24159       24159       24159
+ elements         11827       11827       11827       11827
+ neighbors            0           0           0
+
+            minimum     maximum
+ h       0.00141519    0.189567
+ kappa      1.02062     255.441
+
+Estimated current per-rank memory usage is: Min. 32.2M, Max. 32.2M, Avg. 32.2M, Total 32.2M
+Estimated current per-node memory usage is: Min. 32.2M, Max. 32.2M, Avg. 32.2M, Total 32.2M
+
+Configuring surface current excitation source term at attributes:
+ 4: Index = 1, n = (+0.0,+0.0,+1.0)
+
+Configuring superconductor sheet BC at attributes:
+ 3: L_ksq = 2.011e-06 H/sq, n = (+0.1,-0.0,-1.0)
+ 4: L_ksq = 2.011e-06 H/sq, n = (+0.0,+0.0,+1.0)
+
+Configuring Dirichlet BC at attributes:
+ 2
+
+Assembling system matrices, number of global unknowns:
+ H1 (p = 2): 16774, ND (p = 2): 77422, RT (p = 2): 107958
+ Operator assembly level: Partial
+ Mesh geometries:
+  Tetrahedron: P = 20, Q = 14 (quadrature order = 4)
+
+Assembling multigrid hierarchy:
+ Level 0 (p = 1): 14552 unknowns
+ Level 1 (p = 2): 77422 unknowns
+
+Computing magnetostatic fields for 1 source boundary
+
+It 1/1: Current Index = 1 (elapsed time = 1.21e-05 s)
+  Residual norms for PCG solve
+  0 KSP residual norm ||r||_B = 2.401472e-02
+  1 KSP residual norm ||r||_B = 4.304011e-02
+  2 KSP residual norm ||r||_B = 1.755205e-01
+  3 KSP residual norm ||r||_B = 8.175868e-01
+  4 KSP residual norm ||r||_B = 1.313791e+00
+  5 KSP residual norm ||r||_B = 1.511106e+00
+  6 KSP residual norm ||r||_B = 2.227276e+00
+  7 KSP residual norm ||r||_B = 2.742041e+00
+  8 KSP residual norm ||r||_B = 4.200476e+00
+  9 KSP residual norm ||r||_B = 3.531885e+00
+ 10 KSP residual norm ||r||_B = 1.583581e+00
+ 11 KSP residual norm ||r||_B = 4.841543e-01
+ 12 KSP residual norm ||r||_B = 1.251408e-01
+ 13 KSP residual norm ||r||_B = 2.693104e-02
+ 14 KSP residual norm ||r||_B = 1.199480e-02
+ 15 KSP residual norm ||r||_B = 2.122111e-02
+ 16 KSP residual norm ||r||_B = 8.675412e-02
+ 17 KSP residual norm ||r||_B = 4.165738e-01
+ 18 KSP residual norm ||r||_B = 1.284775e+00
+ 19 KSP residual norm ||r||_B = 2.168925e+00
+ 20 KSP residual norm ||r||_B = 1.810777e+00
+ 21 KSP residual norm ||r||_B = 6.923252e-01
+ 22 KSP residual norm ||r||_B = 4.195000e-01
+ 23 KSP residual norm ||r||_B = 1.699580e-01
+ 24 KSP residual norm ||r||_B = 4.024450e-02
+ 25 KSP residual norm ||r||_B = 1.108230e-02
+ 26 KSP residual norm ||r||_B = 7.461805e-03
+ 27 KSP residual norm ||r||_B = 1.645885e-02
+ 28 KSP residual norm ||r||_B = 6.156832e-02
+ 29 KSP residual norm ||r||_B = 2.544542e-01
+ 30 KSP residual norm ||r||_B = 1.079040e+00
+ 31 KSP residual norm ||r||_B = 1.625043e+00
+ 32 KSP residual norm ||r||_B = 4.541625e-01
+ 33 KSP residual norm ||r||_B = 9.247097e-02
+ 34 KSP residual norm ||r||_B = 1.879624e-02
+ 35 KSP residual norm ||r||_B = 5.554902e-03
+ 36 KSP residual norm ||r||_B = 5.856978e-03
+ 37 KSP residual norm ||r||_B = 2.141321e-02
+ 38 KSP residual norm ||r||_B = 1.126518e-01
+ 39 KSP residual norm ||r||_B = 5.468790e-01
+ 40 KSP residual norm ||r||_B = 9.914217e-01
+ 41 KSP residual norm ||r||_B = 5.712418e-01
+ 42 KSP residual norm ||r||_B = 7.442935e-01
+ 43 KSP residual norm ||r||_B = 7.639148e-01
+ 44 KSP residual norm ||r||_B = 1.865925e-01
+ 45 KSP residual norm ||r||_B = 3.489209e-02
+ 46 KSP residual norm ||r||_B = 7.066377e-03
+ 47 KSP residual norm ||r||_B = 3.715477e-03
+ 48 KSP residual norm ||r||_B = 8.928133e-03
+ 49 KSP residual norm ||r||_B = 2.799830e-02
+ 50 KSP residual norm ||r||_B = 4.428018e-02
+ 51 KSP residual norm ||r||_B = 1.297234e-01
+ 52 KSP residual norm ||r||_B = 5.973766e-01
+ 53 KSP residual norm ||r||_B = 1.005129e+00
+ 54 KSP residual norm ||r||_B = 2.813116e-01
+ 55 KSP residual norm ||r||_B = 5.775778e-02
+ 56 KSP residual norm ||r||_B = 1.175471e-02
+ 57 KSP residual norm ||r||_B = 3.451279e-03
+ 58 KSP residual norm ||r||_B = 3.858584e-03
+ 59 KSP residual norm ||r||_B = 1.550727e-02
+ 60 KSP residual norm ||r||_B = 7.020322e-02
+ 61 KSP residual norm ||r||_B = 1.482876e-01
+ 62 KSP residual norm ||r||_B = 2.459161e-01
+ 63 KSP residual norm ||r||_B = 6.690948e-01
+ 64 KSP residual norm ||r||_B = 4.516929e-01
+ 65 KSP residual norm ||r||_B = 1.005243e-01
+ 66 KSP residual norm ||r||_B = 2.544248e-02
+ 67 KSP residual norm ||r||_B = 9.426596e-03
+ 68 KSP residual norm ||r||_B = 3.598129e-03
+ 69 KSP residual norm ||r||_B = 3.094212e-03
+ 70 KSP residual norm ||r||_B = 9.118984e-03
+ 71 KSP residual norm ||r||_B = 3.812129e-02
+ 72 KSP residual norm ||r||_B = 1.380094e-01
+ 73 KSP residual norm ||r||_B = 3.485648e-01
+ 74 KSP residual norm ||r||_B = 5.466763e-01
+ 75 KSP residual norm ||r||_B = 3.190254e-01
+ 76 KSP residual norm ||r||_B = 2.166463e-01
+ 77 KSP residual norm ||r||_B = 2.854152e-01
+ 78 KSP residual norm ||r||_B = 1.201151e-01
+ 79 KSP residual norm ||r||_B = 2.373404e-02
+ 80 KSP residual norm ||r||_B = 4.554564e-03
+ 81 KSP residual norm ||r||_B = 1.985302e-03
+ 82 KSP residual norm ||r||_B = 4.122451e-03
+ 83 KSP residual norm ||r||_B = 2.094271e-02
+ 84 KSP residual norm ||r||_B = 1.171604e-01
+ 85 KSP residual norm ||r||_B = 5.122652e-01
+ 86 KSP residual norm ||r||_B = 3.701576e-01
+ 87 KSP residual norm ||r||_B = 7.399435e-02
+ 88 KSP residual norm ||r||_B = 1.414748e-02
+ 89 KSP residual norm ||r||_B = 4.011959e-03
+ 90 KSP residual norm ||r||_B = 2.912695e-03
+ 91 KSP residual norm ||r||_B = 2.324091e-03
+ 92 KSP residual norm ||r||_B = 3.067932e-03
+ 93 KSP residual norm ||r||_B = 1.197296e-02
+ 94 KSP residual norm ||r||_B = 6.194377e-02
+ 95 KSP residual norm ||r||_B = 3.129447e-01
+ 96 KSP residual norm ||r||_B = 4.541057e-01
+ 97 KSP residual norm ||r||_B = 1.073044e-01
+ 98 KSP residual norm ||r||_B = 2.126728e-02
+ 99 KSP residual norm ||r||_B = 5.271818e-03
+100 KSP residual norm ||r||_B = 2.177415e-03
+101 KSP residual norm ||r||_B = 1.996390e-03
+102 KSP residual norm ||r||_B = 3.571883e-03
+103 KSP residual norm ||r||_B = 5.511624e-03
+104 KSP residual norm ||r||_B = 1.300492e-02
+105 KSP residual norm ||r||_B = 5.931279e-02
+106 KSP residual norm ||r||_B = 2.641415e-01
+107 KSP residual norm ||r||_B = 2.833656e-01
+108 KSP residual norm ||r||_B = 1.581402e-01
+109 KSP residual norm ||r||_B = 2.462256e-01
+110 KSP residual norm ||r||_B = 1.261299e-01
+111 KSP residual norm ||r||_B = 2.390980e-02
+112 KSP residual norm ||r||_B = 4.431022e-03
+113 KSP residual norm ||r||_B = 1.437057e-03
+114 KSP residual norm ||r||_B = 2.097640e-03
+115 KSP residual norm ||r||_B = 9.503113e-03
+116 KSP residual norm ||r||_B = 5.063069e-02
+117 KSP residual norm ||r||_B = 2.316638e-01
+118 KSP residual norm ||r||_B = 3.837728e-01
+119 KSP residual norm ||r||_B = 2.342379e-01
+120 KSP residual norm ||r||_B = 8.476565e-02
+121 KSP residual norm ||r||_B = 1.877813e-02
+122 KSP residual norm ||r||_B = 3.895478e-03
+123 KSP residual norm ||r||_B = 1.413352e-03
+124 KSP residual norm ||r||_B = 1.744327e-03
+125 KSP residual norm ||r||_B = 4.424207e-03
+126 KSP residual norm ||r||_B = 1.305280e-02
+127 KSP residual norm ||r||_B = 4.906901e-02
+128 KSP residual norm ||r||_B = 1.928245e-01
+129 KSP residual norm ||r||_B = 3.663169e-01
+130 KSP residual norm ||r||_B = 1.315097e-01
+131 KSP residual norm ||r||_B = 3.568859e-02
+132 KSP residual norm ||r||_B = 1.892680e-02
+133 KSP residual norm ||r||_B = 8.929104e-03
+134 KSP residual norm ||r||_B = 2.193631e-03
+135 KSP residual norm ||r||_B = 1.161580e-03
+136 KSP residual norm ||r||_B = 2.630173e-03
+137 KSP residual norm ||r||_B = 1.297810e-02
+138 KSP residual norm ||r||_B = 6.570150e-02
+139 KSP residual norm ||r||_B = 1.233670e-01
+140 KSP residual norm ||r||_B = 9.111913e-02
+141 KSP residual norm ||r||_B = 1.993637e-01
+142 KSP residual norm ||r||_B = 2.582198e-01
+143 KSP residual norm ||r||_B = 6.514966e-02
+144 KSP residual norm ||r||_B = 2.263980e-02
+145 KSP residual norm ||r||_B = 1.507676e-02
+146 KSP residual norm ||r||_B = 4.785365e-03
+147 KSP residual norm ||r||_B = 1.245017e-03
+148 KSP residual norm ||r||_B = 1.179259e-03
+149 KSP residual norm ||r||_B = 4.445499e-03
+150 KSP residual norm ||r||_B = 2.352236e-02
+151 KSP residual norm ||r||_B = 1.227566e-01
+152 KSP residual norm ||r||_B = 3.284046e-01
+153 KSP residual norm ||r||_B = 1.108098e-01
+154 KSP residual norm ||r||_B = 2.069788e-02
+155 KSP residual norm ||r||_B = 3.747859e-03
+156 KSP residual norm ||r||_B = 9.615709e-04
+157 KSP residual norm ||r||_B = 9.669137e-04
+158 KSP residual norm ||r||_B = 3.821197e-03
+159 KSP residual norm ||r||_B = 2.075603e-02
+160 KSP residual norm ||r||_B = 1.111370e-01
+161 KSP residual norm ||r||_B = 2.692315e-01
+162 KSP residual norm ||r||_B = 8.393685e-02
+163 KSP residual norm ||r||_B = 1.731823e-02
+164 KSP residual norm ||r||_B = 5.306176e-03
+165 KSP residual norm ||r||_B = 2.157370e-03
+166 KSP residual norm ||r||_B = 8.150805e-04
+167 KSP residual norm ||r||_B = 1.000124e-03
+168 KSP residual norm ||r||_B = 4.060428e-03
+169 KSP residual norm ||r||_B = 1.135678e-02
+170 KSP residual norm ||r||_B = 1.112548e-02
+171 KSP residual norm ||r||_B = 1.625896e-02
+172 KSP residual norm ||r||_B = 3.010359e-02
+173 KSP residual norm ||r||_B = 4.618234e-02
+174 KSP residual norm ||r||_B = 1.182907e-01
+175 KSP residual norm ||r||_B = 2.176373e-01
+176 KSP residual norm ||r||_B = 7.837363e-02
+177 KSP residual norm ||r||_B = 1.925737e-02
+178 KSP residual norm ||r||_B = 5.021179e-03
+179 KSP residual norm ||r||_B = 1.331637e-03
+180 KSP residual norm ||r||_B = 6.168697e-04
+181 KSP residual norm ||r||_B = 1.111611e-03
+182 KSP residual norm ||r||_B = 4.161958e-03
+183 KSP residual norm ||r||_B = 1.129655e-02
+184 KSP residual norm ||r||_B = 2.918483e-02
+185 KSP residual norm ||r||_B = 6.296075e-02
+186 KSP residual norm ||r||_B = 1.010355e-01
+187 KSP residual norm ||r||_B = 1.786484e-01
+188 KSP residual norm ||r||_B = 7.314541e-02
+189 KSP residual norm ||r||_B = 1.438415e-02
+190 KSP residual norm ||r||_B = 2.652340e-03
+191 KSP residual norm ||r||_B = 6.316412e-04
+192 KSP residual norm ||r||_B = 5.772249e-04
+193 KSP residual norm ||r||_B = 2.258209e-03
+194 KSP residual norm ||r||_B = 1.286811e-02
+195 KSP residual norm ||r||_B = 7.114324e-02
+196 KSP residual norm ||r||_B = 1.644469e-01
+197 KSP residual norm ||r||_B = 4.722353e-02
+198 KSP residual norm ||r||_B = 8.939107e-03
+199 KSP residual norm ||r||_B = 1.769063e-03
+200 KSP residual norm ||r||_B = 5.201579e-04
+PCG solver did NOT converge in 200 iterations (avg. reduction factor: 9.810e-01)
+
+[38;2;255;255;000m--> Warning![0m
+Linear solver did not converge, norm(Ax-b)/norm(b) = 2.166e-02 (norm(b) = 2.401e-02)!
+
+ Field energy H = 2.614e-10 J
+
+Completed 0 iterations of adaptive mesh refinement (AMR):
+ Indicator norm = 5.040e-05, global unknowns = 77422
+ Max. iterations = 0, tol. = 1.000e-02
+
+Estimated peak per-rank memory usage is: Min. 265.6M, Max. 265.6M, Avg. 265.6M, Total 265.6M
+Estimated peak per-node memory usage is: Min. 265.6M, Max. 265.6M, Avg. 265.6M, Total 265.6M
+
+Elapsed Time Report (s)           Min.        Max.        Avg.
+==============================================================
+Initialization                   0.061       0.061       0.061
+  Mesh Preprocessing             0.241       0.241       0.241
+Operator Construction            0.101       0.101       0.101
+Linear Solve                     1.235       1.235       1.235
+  Setup                          0.764       0.764       0.764
+  Preconditioner                10.004      10.004      10.004
+  Coarse Solve                   0.688       0.688       0.688
+Estimation                       0.009       0.009       0.009
+  Construction                   0.354       0.354       0.354
+  Solve                          0.850       0.850       0.850
+Postprocessing                   0.026       0.026       0.026
+Disk IO                          0.106       0.106       0.106
+--------------------------------------------------------------
+Total                           14.457      14.457      14.457
+
+Peak Memory                   Per-Node       Total   Total HWM
+==============================================================
+Initialization                    1.6M        1.6M        1.6M
+  Mesh Preprocessing             13.6M       13.6M       15.2M
+Operator Construction            42.4M       42.4M       57.6M
+Linear Solve                     16.0K       16.0K       57.6M
+  Setup                          52.2M       52.2M      109.9M
+  Preconditioner                  5.8M        5.8M      115.7M
+  Coarse Solve                    4.2M        4.2M      120.0M
+Estimation                       19.8M       19.8M      139.7M
+  Construction                   56.1M       56.1M      195.8M
+  Solve                          18.2M       18.2M      214.0M
+Postprocessing                   21.0M       21.0M      235.0M
+Disk IO                          12.9M       12.9M      247.9M
+--------------------------------------------------------------
+Total                           257.9M      257.9M      257.9M
+

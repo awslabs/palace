@@ -1,0 +1,145 @@
+>> /opt/homebrew/bin/mpirun -n 1 /Users/dzpham/palace_ci/install/bin/palace-arm64.bin microstrip_pec.json
+
+_____________     _______
+_____   __   \____ __   /____ ____________
+____   /_/  /  __ ` /  /  __ ` /  ___/  _ \
+___   _____/  /_/  /  /  /_/  /  /__/  ___/
+  /__/     \___,__/__/\___,__/\_____\_____/
+
+Git changeset ID: v0.17.0-368-g9ae69fc02-dirty
+Running with 1 MPI process
+Device configuration: cpu
+Memory configuration: host-std
+libCEED backend: /cpu/self/opt/blocked
+
+Added 602 duplicate vertices for interior boundaries in the mesh
+Added 1308 duplicate boundary elements for interior boundaries in the mesh
+
+Characteristic length and time scales:
+ Lc = 5.000e-04 m, tc = 1.668e-03 ns
+Finished partitioning mesh into 1 subdomain
+
+Mesh curvature order: 2
+Mesh bounding box:
+ (Xmin, Ymin, Zmin) = (-2.500e-04, -2.000e-04, -2.000e-04) m
+ (Xmax, Ymax, Zmax) = (+2.500e-04, +2.400e-04, +2.020e-04) m
+
+Parallel Mesh Stats:
+
+                minimum     average     maximum       total
+ vertices          2796        2796        2796        2796
+ edges            16341       16341       16341       16341
+ faces            25337       25337       25337       25337
+ elements         11791       11791       11791       11791
+ neighbors            0           0           0
+
+            minimum     maximum
+ h       0.00141519    0.189567
+ kappa      1.02062     255.441
+
+Estimated current per-rank memory usage is: Min. 33.3M, Max. 33.3M, Avg. 33.3M, Total 33.3M
+Estimated current per-node memory usage is: Min. 33.3M, Max. 33.3M, Avg. 33.3M, Total 33.3M
+
+Configuring surface current excitation source term at attributes:
+ 4: Index = 1, n = (+0.0,+0.0,+1.0)
+
+Configuring Dirichlet BC at attributes:
+ 2-3
+
+Assembling system matrices, number of global unknowns:
+ H1 (p = 2): 19137, ND (p = 2): 83356, RT (p = 2): 111384
+ Operator assembly level: Partial
+ Mesh geometries:
+  Tetrahedron: P = 20, Q = 14 (quadrature order = 4)
+
+Assembling multigrid hierarchy:
+ Level 0 (p = 1): 16341 unknowns
+ Level 1 (p = 2): 83356 unknowns
+
+Computing magnetostatic fields for 1 source boundary
+
+It 1/1: Current Index = 1 (elapsed time = 7.23e-05 s)
+  Residual norms for PCG solve
+  0 KSP residual norm ||r||_B = 2.133008e-02
+  1 KSP residual norm ||r||_B = 2.842020e-02
+  2 KSP residual norm ||r||_B = 2.716816e-02
+  3 KSP residual norm ||r||_B = 2.317206e-02
+  4 KSP residual norm ||r||_B = 1.752127e-02
+  5 KSP residual norm ||r||_B = 1.339593e-02
+  6 KSP residual norm ||r||_B = 1.147218e-02
+  7 KSP residual norm ||r||_B = 5.920160e-03
+  8 KSP residual norm ||r||_B = 2.623705e-03
+  9 KSP residual norm ||r||_B = 1.104980e-03
+ 10 KSP residual norm ||r||_B = 5.253487e-04
+ 11 KSP residual norm ||r||_B = 2.618763e-04
+ 12 KSP residual norm ||r||_B = 1.489597e-04
+ 13 KSP residual norm ||r||_B = 1.202205e-04
+ 14 KSP residual norm ||r||_B = 7.201475e-05
+ 15 KSP residual norm ||r||_B = 3.204428e-05
+ 16 KSP residual norm ||r||_B = 2.566912e-05
+ 17 KSP residual norm ||r||_B = 2.284125e-05
+ 18 KSP residual norm ||r||_B = 1.357469e-05
+ 19 KSP residual norm ||r||_B = 7.639710e-06
+ 20 KSP residual norm ||r||_B = 2.819878e-06
+ 21 KSP residual norm ||r||_B = 9.477610e-07
+ 22 KSP residual norm ||r||_B = 4.657508e-07
+ 23 KSP residual norm ||r||_B = 2.719200e-07
+ 24 KSP residual norm ||r||_B = 1.273390e-07
+ 25 KSP residual norm ||r||_B = 4.939176e-08
+ 26 KSP residual norm ||r||_B = 2.400063e-08
+ 27 KSP residual norm ||r||_B = 1.143074e-08
+ 28 KSP residual norm ||r||_B = 3.966918e-09
+ 29 KSP residual norm ||r||_B = 2.019812e-09
+ 30 KSP residual norm ||r||_B = 1.810949e-09
+ 31 KSP residual norm ||r||_B = 1.078019e-09
+ 32 KSP residual norm ||r||_B = 4.535688e-10
+ 33 KSP residual norm ||r||_B = 1.848627e-10
+ 34 KSP residual norm ||r||_B = 6.996407e-11
+ 35 KSP residual norm ||r||_B = 2.157517e-11
+ 36 KSP residual norm ||r||_B = 7.346249e-12
+ 37 KSP residual norm ||r||_B = 2.795121e-12
+ 38 KSP residual norm ||r||_B = 1.084002e-12
+PCG solver converged in 38 iterations (avg. reduction factor: 5.359e-01)
+ Field energy H = 9.865e-15 J
+
+Completed 0 iterations of adaptive mesh refinement (AMR):
+ Indicator norm = 2.220e-01, global unknowns = 83356
+ Max. iterations = 0, tol. = 1.000e-02
+
+Estimated peak per-rank memory usage is: Min. 272.9M, Max. 272.9M, Avg. 272.9M, Total 272.9M
+Estimated peak per-node memory usage is: Min. 272.9M, Max. 272.9M, Avg. 272.9M, Total 272.9M
+
+Elapsed Time Report (s)           Min.        Max.        Avg.
+==============================================================
+Initialization                   0.065       0.065       0.065
+  Mesh Preprocessing             0.194       0.194       0.194
+Operator Construction            0.111       0.111       0.111
+Linear Solve                     0.227       0.227       0.227
+  Setup                          0.496       0.496       0.496
+  Preconditioner                 1.877       1.877       1.877
+  Coarse Solve                   0.168       0.168       0.168
+Estimation                       0.008       0.008       0.008
+  Construction                   0.358       0.358       0.358
+  Solve                          0.836       0.836       0.836
+Postprocessing                   0.025       0.025       0.025
+Disk IO                          0.105       0.105       0.105
+--------------------------------------------------------------
+Total                            4.495       4.495       4.495
+
+Peak Memory                   Per-Node       Total   Total HWM
+==============================================================
+Initialization                    1.6M        1.6M        1.6M
+  Mesh Preprocessing             14.4M       14.4M       16.0M
+Operator Construction            43.8M       43.8M       59.8M
+Linear Solve                    656.0K      656.0K       60.4M
+  Setup                          53.8M       53.8M      114.2M
+  Preconditioner                  4.1M        4.1M      118.4M
+  Coarse Solve                    2.7M        2.7M      121.0M
+Estimation                       20.3M       20.3M      141.3M
+  Construction                   61.8M       61.8M      203.1M
+  Solve                          18.6M       18.6M      221.8M
+Postprocessing                   20.5M       20.5M      242.2M
+Disk IO                          13.1M       13.1M      255.3M
+--------------------------------------------------------------
+Total                           265.2M      265.2M      265.2M
+

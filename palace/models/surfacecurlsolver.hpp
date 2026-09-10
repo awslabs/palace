@@ -4,7 +4,6 @@
 #ifndef PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP
 #define PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP
 
-#include <memory>
 #include <vector>
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
@@ -23,15 +22,15 @@ class CurlCurlOperator;
 template <ProblemType T>
 class PostOperator;
 
-// Solve 2D surface curl problem for flux loop initial condition
-Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
-                               const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-                               int flux_loop_idx,
+// Build the curl-free cut cohomology generator (±Φ across a cut through the hole centroid)
+// used as the London shifted-penalty drive a_h, on the 3D ND space (see
+// BuildCutCohomologyGenerator).
+Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
+                               const FiniteElementSpace &nd_fespace,
                                PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
 
-void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
-                             const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-                             int flux_loop_idx,
+void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
+                             const FiniteElementSpace &nd_fespace,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
                              Vector &result);
 

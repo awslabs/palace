@@ -9,6 +9,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/superconductorsheetoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
@@ -113,7 +114,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
 
 DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const MaterialOperator &mat_op,
-                                       const FiniteElementSpace &fespace)
+                                       const FiniteElementSpace &fespace,
+                                       const SuperconductorSheetOperator *sc_sheet_op)
 {
   const auto map_type = fespace.GetFEColl().GetMapType(fespace.Dimension());
   if (map_type == mfem::FiniteElement::VALUE)
@@ -152,6 +154,18 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                              mat_op.GetCurlCurlInvPermeability());
       BilinearForm m(fespace);
       m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+      // Add the kinetic sheet term so AᵀM_mag·A = 2·E_mag includes the London kinetic
+      // inductance, yielding total (geometric + kinetic) inductance. The coefficient must
+      // outlive PartialAssemble(), which stores a pointer to it.
+      MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+      if (sc_sheet_op && !sc_sheet_op->empty())
+      {
+        sc_sheet_op->AddStiffnessBdrCoefficients(1.0, fbr);
+        if (!fbr.empty())
+        {
+          m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+        }
+      }
       M_mag = m.PartialAssemble();
       H.SetSize(M_mag->Height());
       H.UseDevice(true);

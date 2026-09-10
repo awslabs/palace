@@ -110,6 +110,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   CurlCurlOperator curlcurl_op(iodata, mesh);
   auto K = curlcurl_op.GetStiffnessMatrix();
+  // Preconditioner-only gauge shift for the London path (see GetPreconditionerMatrix).
+  // Non-null only when a London flux film is present and LondonPCShift > 0; null otherwise,
+  // so K preconditions itself.
+  auto P_london = curlcurl_op.GetPreconditionerMatrix();
   const auto &Curl = curlcurl_op.GetCurlMatrix();
   SaveMetadata(curlcurl_op.GetNDSpaces());
 
@@ -135,7 +139,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (bound_op != &op)
     {
-      ksp.SetOperators(op, op);
+      // For the base operator on the London path, precondition with the gauge-shifted
+      // matrix P_london (SPD) while the Krylov solver still uses the true operator op. All
+      // other operators (screened current-port steps) precondition with themselves.
+      if (P_london && &op == K.get())
+      {
+        ksp.SetOperators(op, *P_london);
+      }
+      else
+      {
+        ksp.SetOperators(op, op);
+      }
       bound_op = &op;
     }
   };
@@ -149,16 +163,40 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
-  MFEM_VERIFY(
-      n_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
-          !iodata.model.refinement.nonconformal,
-      "Flux loop excitation is only supported with conformal adaptation or no adaptation!");
+  // A London loop's drive a_h is built directly on the 3D ND space and is
+  // nonconformal-safe. Only the legacy 2D submesh path needs global edge indexing, which NC
+  // meshes lack.
+  {
+    int n_submesh_flux_steps = 0;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+    {
+      n_submesh_flux_steps += !curlcurl_op.IsLondonFluxLoop(idx);
+    }
+    MFEM_VERIFY(
+        n_submesh_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
+            !iodata.model.refinement.nonconformal,
+        "Non-London flux loop excitation is only supported with conformal adaptation "
+        "or no adaptation!");
+  }
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
+  // Scratch vectors for the London range-space (two-solve) flux constraint: particular
+  // solution A_p, fluxoid mode A_h, and its RHS c. Unused for pure-PEC loops and current
+  // steps.
+  Vector A_p_london(Curl.Width()), A_h_london(Curl.Width()), RHS_c_london(Curl.Width());
+  A_p_london.UseDevice(true);
+  A_h_london.UseDevice(true);
+  RHS_c_london.UseDevice(true);
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
   std::vector<double> Phi_inc(n_step);
+
+  // Per London flux step, the drive b = M_sheet·a_h (london_rhs) and a_h (london_ah); empty
+  // for pure-PEC loops and current steps. Used to correct AᵀM_mag A to the shifted-penalty
+  // energy in PostprocessTerminals, on both the diagonal and the London-London
+  // off-diagonals.
+  std::vector<Vector> london_rhs(n_step), london_ah(n_step);
 
   // Magnetic flux linked through each current port's element apertures during each flux
   // excitation, used to recover the current-flux mutual inductance in a mixed simulation.
@@ -178,6 +216,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
+  solve_converged_ = true;
+  // Total London kinetic penalty energy S(A_t − a_h) summed over flux loops this solve. A
+  // stiff (λ→0) penalty that the linear solve cannot resolve on a refined mesh makes this
+  // spike; comparing against the previous adaptation iteration flags the under-resolution.
+  double london_kinetic = 0.0;
 
   // Unified loop over all excitation sources (current and flux loops).
   if (n_current_steps > 0 && n_flux_steps > 0)
@@ -289,8 +332,98 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
       // Solve 3D magnetostatic problem (flux loops use the base operator).
       set_operator(*K);
-      ksp.Mult(RHS, A[step]);
+
+      if (curlcurl_op.IsLondonFluxLoop(idx))
+      {
+        // London flux film: range-space (two-solve) solution of the bordered
+        // flux-constrained system. RHS holds the shifted-penalty drive b = M_sheet·a_h,
+        // boundary_values holds a_h. Solve A_p = K⁻¹b and the fluxoid mode A_h = K⁻¹c, then
+        // A = A_p + α·A_h with α = (Φ − cᵀA_p)/(cᵀA_h) enforcing the exact hole flux cᵀA =
+        // Φ at all λ. The scalar constraint pins only the loop integral, so the near-hole
+        // current is free to crowd.
+        MFEM_ASSERT(A_p_london.Size() == RHS.Size(),
+                    "London scratch vector size mismatch!");
+        // Zero the scratch vectors before each solve. Magnetostatics defaults to a nonzero
+        // initial guess (iodata.cpp), and these vectors are reused across flux steps; a
+        // stale guess carrying a gradient/near-null-space component intermittently stalls
+        // CG on the gauge-singular operator K = K_cc + M_sheet (the fluxoid RHS c = Curlᵀf
+        // is marginally conditioned), producing a garbage A_h whose bad energy is injected
+        // via α·A_h. A clean zero start makes both solves robust and
+        // partition-/roundoff-independent.
+        A_p_london = 0.0;
+        ksp.Mult(RHS, A_p_london);
+        if (!ksp.GetConverged())
+        {
+          // Return unconverged so SolveEstimateMarkRefine can halt adaptation and keep the
+          // last converged iteration. Bail before postprocessing so no unreliable
+          // inductance is written; the initial-solve check downstream still fails loud with
+          // no fallback.
+          Mpi::Warning("London solve A_p = K⁻¹b did not converge for flux loop {:d}!\n",
+                       idx);
+          solve_converged_ = false;
+          return {indicator, curlcurl_op.GlobalTrueVSize()};
+        }
+        curlcurl_op.GetFluxConstraintVector(idx, RHS_c_london);
+        A_h_london = 0.0;
+        ksp.Mult(RHS_c_london, A_h_london);
+        if (!ksp.GetConverged())
+        {
+          Mpi::Warning("London solve A_h = K⁻¹c did not converge for flux loop {:d}!\n",
+                       idx);
+          solve_converged_ = false;
+          return {indicator, curlcurl_op.GlobalTrueVSize()};
+        }
+        double phi_p = curlcurl_op.MeasureLondonHoleFlux(idx, A_p_london);
+        double phi_h = curlcurl_op.MeasureLondonHoleFlux(idx, A_h_london);
+        MFEM_VERIFY(
+            std::abs(phi_h) > 1.0e-30,
+            "London fluxoid mode carries ~zero hole flux; cannot enforce constraint!");
+        double alpha = (data.GetExcitationFlux() - phi_p) / phi_h;
+        A[step] = A_p_london;
+        A[step].Add(alpha, A_h_london);
+
+        // Accumulate the kinetic penalty energy S(A_t − a_h) = (A − a_h)ᵀ M_sheet (A −
+        // a_h), formed directly (not via the cancellation-prone S(A,A) − 2S(A,a_h) +
+        // S(a_h,a_h)) so it is trustworthy even when the stiff-penalty solve is
+        // under-resolved.
+        Vector d(A[step]), msd(A[step].Size());
+        msd.UseDevice(true);
+        d -= boundary_values;
+        curlcurl_op.ApplySheetMass(d, msd);
+        london_kinetic += linalg::Dot(curlcurl_op.GetComm(), d, msd);
+        Phi_inc[step] = data.GetExcitationFlux();  // Exact via the flux constraint.
+
+        // Retain b and a_h for the cross-energy correction in PostprocessTerminals.
+        london_rhs[step] = RHS;
+        london_ah[step] = boundary_values;
+      }
+      else
+      {
+        ksp.Mult(RHS, A[step]);
+      }
     }
+  }
+
+  // Guard against a stiff (λ→0) London penalty the linear solve cannot resolve on a refined
+  // mesh: the kinetic energy S(A_t − a_h) then jumps far above the previous adaptation
+  // iteration and the extracted inductance collapses. Flag it (before postprocessing writes
+  // an unreliable result) so SolveEstimateMarkRefine halts AMR and keeps the last converged
+  // iteration. A converging solve grows this energy at most mildly between iterations.
+  constexpr double london_kinetic_growth = 20.0;
+  if (prev_london_kinetic_ > 0.0 &&
+      london_kinetic > london_kinetic_growth * prev_london_kinetic_)
+  {
+    Mpi::Warning(
+        curlcurl_op.GetComm(),
+        "London kinetic energy jumped {:.2e}x after refinement ({:.3e} -> {:.3e}); "
+        "the stiff-penalty solve is under-resolved!\n",
+        london_kinetic / prev_london_kinetic_, prev_london_kinetic_, london_kinetic);
+    solve_converged_ = false;
+    return {indicator, curlcurl_op.GlobalTrueVSize()};
+  }
+  if (london_kinetic > 0.0)
+  {
+    prev_london_kinetic_ = london_kinetic;
   }
 
   // Pass 2: postprocess in canonical step order so output is independent of solve order.
@@ -350,7 +483,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
-                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux);
+                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux,
+                       london_rhs, london_ah);
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
@@ -359,7 +493,8 @@ void MagnetostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
-    const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux) const
+    const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux,
+    const std::vector<Vector> &london_rhs, const std::vector<Vector> &london_ah) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -440,6 +575,24 @@ void MagnetostaticSolver::PostprocessTerminals(
 
   // Compute cross-energy matrix and diagonals. Off-diagonals are only meaningful between
   // reciprocal (Open-Open) port pairs; other pairs are left as NaN.
+  //
+  // London shift correction. M_mag gives AᵀM_mag A = 2W + S(A,A), but the physical London
+  // energy is Ẽ_ij = 2W(A_i,A_j) + S(A_i − a_h_i, A_j − a_h_j), so each London-London pair
+  // needs
+  //   Δ_ij = −Dot(A_i,b_j) − Dot(A_j,b_i) + Dot(a_h_i,b_j),   b = M_sheet·a_h.
+  // Zero unless both steps carry a London drive (pure-PEC loops and current steps store
+  // nothing).
+  auto london_correction = [&](int i, int j) -> double
+  {
+    if (london_rhs[i].Size() == 0 || london_rhs[j].Size() == 0)
+    {
+      return 0.0;
+    }
+    return -linalg::Dot<Vector>(post_op.GetComm(), A[i], london_rhs[j]) -
+           linalg::Dot<Vector>(post_op.GetComm(), A[j], london_rhs[i]) +
+           linalg::Dot<Vector>(post_op.GetComm(), london_ah[i], london_rhs[j]);
+  };
+
   mfem::DenseMatrix cross_energy(n);
   cross_energy = nan;
   for (int i = 0; i < n; i++)
@@ -449,6 +602,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     A_gf.SetFromTrueDofs(A[i]);
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
+    cross_energy(i, i) += london_correction(i, i);
 
     // Off-diagonal cross-energies (only for reciprocal Open-Open pairs).
     for (int j = i + 1; j < n; j++)
@@ -459,7 +613,7 @@ void MagnetostaticSolver::PostprocessTerminals(
       }
       A_gf.SetFromTrueDofs(A[j]);
       cross_energy(i, j) = cross_energy(j, i) =
-          linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
+          linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) + london_correction(i, j);
     }
   }
 

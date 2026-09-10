@@ -432,6 +432,26 @@ public:
   RationalImpedanceData(const json &boundary);
 };
 
+struct SuperconductorData
+{
+public:
+  // London penetration depth λ and film thickness d, in mesh length units. These define the
+  // kinetic sheet inductance of a thin-film superconductor modeled as a 2D sheet:
+  //     L_ksq = mu0 * lambda^2 / d   [H/square].
+  double lambda_L = 0.0;
+  double thickness = 0.0;
+
+  // Kinetic sheet inductance L_ksq [H/sq], specified directly as an alternative to (λ, d).
+  // Exactly one of {(λ, d), Ls} must be provided.
+  double Ls = 0.0;
+
+  // List of boundary attributes for this superconductor sheet.
+  std::vector<int> attributes = {};
+
+  SuperconductorData() = default;
+  SuperconductorData(const json &boundary);
+};
+
 struct LumpedPortData
 {
 public:
@@ -761,7 +781,7 @@ struct FluxLoopData
 {
 public:
   // List of boundary attributes for the metal surface.
-  std::vector<int> fluxloop_pec = {};
+  std::vector<int> film_attributes = {};
 
   // List of boundary attributes for holes (one per hole).
   std::vector<int> hole_attributes = {};
@@ -774,6 +794,11 @@ public:
 
   // Regularization parameter for curl-curl system stability.
   double regularization = 1e-6;
+
+  // Effective λ⊥ [mesh units] for a film listed in FilmAttributes but not declared a
+  // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet, solved by
+  // the two-solve).
+  double pec_lperp = 1.0e-4;
 
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
@@ -796,6 +821,7 @@ public:
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   std::vector<RationalImpedanceData> rational_impedance = {};
+  std::vector<SuperconductorData> superconductor = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
@@ -1112,6 +1138,20 @@ public:
   // problems.
   int ams_singular_op = -1;
 
+  // Preconditioner-only gauge shift for the London (superconductor sheet) magnetostatic
+  // operator. When a London flux film is present the shifted-penalty operator K̃ =
+  // A_curlcurl
+  // + (1/L_ksq) M_sheet has a residual 1-D gradient null space (film-constant potential),
+  // which stalls/diverges AMS in parallel. This adds london_pc_shift · (1/µ) ∫|A|² as a
+  // volume mass to the PRECONDITIONER matrix ONLY (the actual operator, solution and
+  // extracted inductance are unchanged), lifting all gradient modes so AMS is SPD-solvable.
+  // Applied only when a London sheet term is present; ignored otherwise. Default 1e-1: on
+  // finer meshes a smaller shift (1e-2) leaves the second (harmonic) range-space solve
+  // intermittently divergent in parallel (reduction factor >1, run-to-run non-deterministic
+  // via non-associative MPI reductions); 1e-1 stabilizes it and, being preconditioner-only,
+  // leaves the extracted inductance bit-identical while converging in fewer iterations.
+  double london_pc_shift = 1.0e-1;
+
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
   // Typically use this when the operator is positive definite.
   int amg_agg_coarsen = -1;
@@ -1209,6 +1249,7 @@ void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
+void Nondimensionalize(const Units &units, SuperconductorData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);

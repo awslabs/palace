@@ -43,18 +43,26 @@
     {
       "Attributes": [2, 3, 4, 5, 6, 7]
     },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],       // shared London film carrying both holes
+        "PenetrationDepth": 0.4, // λ (μm); L_ksq = μ₀ λ² / d
+        "Thickness": 0.1         // d (μm)
+      }
+    ],
     "FluxLoop":
     [
       {
         "Index": 1,
-        "FluxLoopPEC": [8],
+        "FilmAttributes": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0], // nondimensional flux-loop excitation amplitude
         "Direction": [0.0, 0.0, 1.0]
       },
       {
         "Index": 2,
-        "FluxLoopPEC": [8],
+        "FilmAttributes": [8],
         "HoleAttributes": [10],
         "FluxAmounts": [1.0], // nondimensional flux-loop excitation amplitude
         "Direction": [0.0, 0.0, 1.0]
