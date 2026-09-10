@@ -47,8 +47,8 @@ Whether a film screens perfectly or penetrates is set by how its attribute is de
     shifted London sheet penalty
 
     ```math
-    \tfrac{1}{2}\int_\Sigma \frac{1}{L_\square}\,\lvert \mathbf{A}_t - \mathbf{a}_h\rvert^2\,dS,
-    \qquad L_\square = \frac{\mu_0 \lambda^2}{d},
+    \tfrac{1}{2}\int_\Sigma \frac{1}{L_{\mathrm{ksq}}}\,\lvert \mathbf{A}_t - \mathbf{a}_h\rvert^2\,dS,
+    \qquad L_{\mathrm{ksq}} = \frac{\mu_0 \lambda^2}{d},
     ```
 
     where ``\lambda`` (`"PenetrationDepth"`) is the penetration depth and ``d``
@@ -197,13 +197,13 @@ The fields have the following meaning:
   - `"Direction"`: surface normal direction for flux orientation.
   - `"Superconductor"`: the same film attribute, with penetration depth ``\lambda`` and
     thickness ``d`` (both in ``\mu\text{m}``) setting the sheet inductance
-    ``L_\square = \mu_0\lambda^2/d``.
+    ``L_{\mathrm{ksq}} = \mu_0\lambda^2/d``.
 
 Sweeping ``\lambda`` at fixed ``d = 0.1\,\mu\text{m}`` shows the kinetic inductance adding to the
 geometric baseline as the film penetration grows, and the ``\lambda\to0`` value reproducing the
 perfect-conductor limit:
 
-| ``\lambda`` (μm) | ``L_\square = \lambda^2/d`` | ``L`` (pH) |
+| ``\lambda`` (μm) | ``L_{\mathrm{ksq}} = \lambda^2/d`` | ``L`` (pH) |
 |:---:|:---:|:---:|
 | ``0`` (PEC) | ``0`` | ``2.853`` |
 | ``0.1`` | ``0.1`` | ``3.288`` |
