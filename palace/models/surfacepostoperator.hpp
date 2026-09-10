@@ -19,6 +19,8 @@ class GridFunction;
 class IoData;
 class MaterialOperator;
 class EdgeDistanceTree;
+class InterfaceOwnershipPartition;
+class OwnershipQuadrature;
 
 namespace config
 {
@@ -92,6 +94,10 @@ private:
     bool localize_edge_energy;
     bool save_local_edge_energy;
     std::array<double, 3> edge_frame_normal;
+    std::shared_ptr<const InterfaceOwnershipPartition> ownership;
+    std::shared_ptr<const OwnershipQuadrature> ownership_rule;
+    int ownership_slot;
+    int ownership_quadrature_order;
     std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
@@ -135,8 +141,8 @@ private:
   };
   mutable std::vector<LocalVolumeEdgeEnergyCache> local_volume_edge_energy_cache;
 
-  double GetLocalSurfaceIntegral(mfem::Coefficient &f,
-                                 const mfem::Array<int> &attr_marker) const;
+  double GetLocalSurfaceIntegral(mfem::Coefficient &f, const mfem::Array<int> &attr_marker,
+                                 int quadrature_order = 0) const;
   const LocalVolumeEdgeEnergyCache &
   GetLocalVolumeEdgeElectricFieldEnergies(const InterfaceDielectricData &data,
                                           const GridFunction &E) const;

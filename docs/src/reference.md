@@ -720,6 +720,43 @@ zero-thickness PEC sheets used for thin-metal simulations. The recovery is a vol
 L2 projection and its boundary trace is not controlled for the singular thin-sheet
 field.
 
+### Experimental quadrature-point interface ownership
+
+Electrostatic interface postprocessing can opt into a geometric slot partition using
+`OwnershipDataFile`, `OwnershipGroup`, `OwnershipSlot`, and
+`OwnershipQuadratureOrder`. Specify all four fields and an explicit MA, MS, or SA
+`Type`. This changes surface integration, not the potential solve, FEM order, raw AMR,
+or physical mesh. The existing attribute-only behavior is unchanged when omitted.
+
+The CSV header is
+`Group,Conductor,Slot,Role,Radius,X0,Y0,Z0,X1,Y1,Z1`. Coordinates and radius are in
+mesh units and are scaled with the mesh during nondimensionalization. Each group has
+one process plane and radius. `Signature` rows contain the already-extended finite
+segments used for slot selection. Optional `Boundary` rows describe the actual
+polygonal physical perimeter: within three radii they select the nearest conductor
+first, followed by its nearest signature slot (the SA ownership rule); farther away,
+all signature segments compete. Ties use the smallest physical label, independent of
+CSV row order. Curved boundaries must not be silently exported as straight chords.
+
+Configure every slot of a group on the same boundary attributes, with the same
+interface type, thickness, permittivity, flux-recovery mode, and quadrature order.
+Incomplete or duplicate slot sets fail. Different process layers require distinct
+groups and appropriately separated physical attributes. The experimental exporter
+currently handles single-plane polygonal signatures and rejects unsupported inputs.
+
+`OwnershipQuadratureOrder` controls integration accuracy, **not** FEM order. The
+implementation uses positive Gauss-product surface rules (symmetrized Duffy rules on
+triangles), preserving positive-semidefinite Gram matrices and sample-wise partition
+conservation. The discontinuous ownership indicator still requires quadrature
+convergence checks. Agreement between orders is not a rigorous continuum error bound.
+For response matrices the selected ownership also applies to `Q_total_ij` and the
+localized surface `Q_ij`. Ownership does not partition localized volume diagnostics;
+use `SaveLocalEdgeEnergy: false` when enabling `LocalizeEdgeEnergy` for matrix output.
+
+This path does not by itself qualify a library, establish convergence of the PDE
+field, or prove stability of the assembled domain correction. It is separate from
+the global-device mortar coupling.
+
 ### Local fabrication response matrices
 
 An electrostatic fabrication-resolved coupon can be driven by a set of

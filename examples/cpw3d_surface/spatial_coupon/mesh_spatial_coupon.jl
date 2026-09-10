@@ -7,6 +7,12 @@ import Gmsh: gmsh
 using DelimitedFiles
 using LinearAlgebra
 
+function signature_integer(value, name)
+    value isa Real && isfinite(value) && value==round(value) ||
+        error("Spatial signature $name must be an integer")
+    return Int(value)
+end
+
 function read_edges(path)
     data, header = readdlm(path, ',', header=true)
     data = ndims(data) == 1 ? reshape(data, 1, :) : data
@@ -36,8 +42,8 @@ function read_edges(path)
         push!(
             edges,
             (
-                slot=Int(round(data[row, columns["Slot"]])),
-                conductor=Int(round(data[row, columns["Conductor"]])),
+                slot=signature_integer(data[row, columns["Slot"]], "Slot"),
+                conductor=signature_integer(data[row, columns["Conductor"]], "Conductor"),
                 point=(
                     Float64(data[row, columns["Px"]]),
                     Float64(data[row, columns["Py"]]),
@@ -53,24 +59,31 @@ function read_edges(path)
                     Float64(data[row, columns["Ty"]]),
                     Float64(data[row, columns["Tz"]])
                 ),
-                normal_sign=sign(Float64(data[row, columns["Nz"]])),
+                normal_sign=Float64(data[row, columns["Nz"]]),
                 interval=(
                     Float64(data[row, columns["S0"]]),
                     Float64(data[row, columns["S1"]])
                 ),
-                vertex_arm=Bool(round(Int, data[row, columns["VertexArm"]]))
+                vertex_arm=Bool(signature_integer(data[row, columns["VertexArm"]], "VertexArm"))
             )
         )
     end
     isempty(edges) && error("Spatial signature contains no edges")
-    all(edge.slot >= 0 && edge.conductor > 0 for edge in edges) ||
-        error("Spatial signature has invalid slot or conductor labels")
+    all(0 <= edge.slot < 10 && 0 < edge.conductor < 100 for edge in edges) ||
+        error("Spatial signature requires slots 0:9 and conductor labels 1:99")
+    all(all(isfinite, (edge.point...,edge.gap...,edge.tangent...,edge.interval...,
+                      edge.normal_sign)) && edge.interval[1]<=edge.interval[2] &&
+        (edge.vertex_arm || edge.interval[1]<edge.interval[2]) for edge in edges) ||
+        error("Spatial signature contains non-finite values or invalid intervals")
+    all(abs(norm(edge.gap)-1)<1e-6 && abs(norm(edge.tangent)-1)<1e-6 &&
+        abs(dot(edge.gap,edge.tangent))<1e-6 for edge in edges) ||
+        error("Spatial signature requires orthonormal gap/tangent frames")
     all(
         abs(edge.gap[3]) < 1.0e-8 &&
             abs(edge.tangent[3]) < 1.0e-8 &&
-            abs(edge.normal_sign) == 1 for edge in edges
+            abs(abs(edge.normal_sign)-1) < 1.0e-8 for edge in edges
     ) || error("Spatial coupon requires parallel or antiparallel process planes")
-    return edges
+    return [merge(edge,(normal_sign=sign(edge.normal_sign),)) for edge in edges]
 end
 
 function read_mask(path)
@@ -148,13 +161,7 @@ function read_boundary(path)
             error("Invalid plan-view boundary loop $loop_index")
         push!(
             loops,
-            (
-                conductor=conductor,
-                plane=plane,
-                hole=hole,
-                points=points,
-                classes=classes
-            )
+            (conductor=conductor, plane=plane, hole=hole, points=points, classes=classes)
         )
     end
     isempty(loops) && error("Plan-view boundary contains no loops")
@@ -288,10 +295,8 @@ end
 function fitted_arc_run(points, point_indices, edge_indices, circle, tolerance)
     circle === nothing && return nothing
     radial = [
-        (
-            points[index][1] - circle.center[1],
-            points[index][2] - circle.center[2]
-        ) for index in point_indices
+        (points[index][1] - circle.center[1], points[index][2] - circle.center[2]) for
+        index in point_indices
     ]
     angle_steps = [
         atan(
@@ -305,9 +310,12 @@ function fitted_arc_run(points, point_indices, edge_indices, circle, tolerance)
     all(sign(angle) == orientation for angle in angle_steps if angle != 0.0) ||
         return nothing
     residual = maximum(
-        abs(hypot(points[index][1] - circle.center[1],
-                  points[index][2] - circle.center[2]) - circle.radius) for
-        index in point_indices
+        abs(
+            hypot(
+                points[index][1] - circle.center[1],
+                points[index][2] - circle.center[2]
+            ) - circle.radius
+        ) for index in point_indices
     )
     residual <= max(64tolerance, 2.0e-7 * circle.radius) || return nothing
     return (
@@ -333,10 +341,8 @@ function circular_arc_runs(points, tolerance)
     compatible(first, second) =
         first !== nothing &&
         second !== nothing &&
-        hypot(
-            first.center[1] - second.center[1],
-            first.center[2] - second.center[2]
-        ) <= max(32tolerance, 1.0e-7 * max(first.radius, second.radius)) &&
+        hypot(first.center[1] - second.center[1], first.center[2] - second.center[2]) <=
+        max(32tolerance, 1.0e-7 * max(first.radius, second.radius)) &&
         abs(first.radius - second.radius) <=
         max(32tolerance, 1.0e-7 * max(first.radius, second.radius))
 
@@ -367,7 +373,7 @@ function circular_arc_runs(points, tolerance)
         compatible_pairs[mod1(seed - 1, length(points))] && continue
         pair_count = 1
         while pair_count < length(points) &&
-              compatible_pairs[mod1(seed + pair_count, length(points))]
+            compatible_pairs[mod1(seed + pair_count, length(points))]
             pair_count += 1
         end
         triple_count = pair_count + 1
@@ -376,12 +382,8 @@ function circular_arc_runs(points, tolerance)
         # rejects accidental co-circular closure vertices without affecting the
         # process-rounded chains, which are exported at substantially higher resolution.
         edge_count >= 4 || continue
-        point_indices = [
-            mod1(seed + step, length(points)) for step = 0:(triple_count + 1)
-        ]
-        edge_indices = [
-            mod1(seed + step, length(points)) for step = 0:triple_count
-        ]
+        point_indices = [mod1(seed + step, length(points)) for step = 0:(triple_count + 1)]
+        edge_indices = [mod1(seed + step, length(points)) for step = 0:triple_count]
         circle = circle_through(
             points[first(point_indices)],
             points[point_indices[cld(length(point_indices), 2)]],
@@ -395,23 +397,19 @@ function circular_arc_runs(points, tolerance)
 end
 
 function polygon_wire(occ, points, z)
-    tolerance = 1.0e-9 * max(
-        maximum(point[1] for point in points) - minimum(point[1] for point in points),
-        maximum(point[2] for point in points) - minimum(point[2] for point in points),
-        1.0
-    )
+    tolerance =
+        1.0e-9 * max(
+            maximum(point[1] for point in points) - minimum(point[1] for point in points),
+            maximum(point[2] for point in points) - minimum(point[2] for point in points),
+            1.0
+        )
     runs = circular_arc_runs(points, tolerance)
     projected = collect(points)
     for run in runs, index in run.point_indices[2:(end - 1)]
-        radial = (
-            points[index][1] - run.center[1],
-            points[index][2] - run.center[2]
-        )
+        radial = (points[index][1] - run.center[1], points[index][2] - run.center[2])
         scale = run.radius / hypot(radial...)
-        projected[index] = (
-            run.center[1] + scale * radial[1],
-            run.center[2] + scale * radial[2]
-        )
+        projected[index] =
+            (run.center[1] + scale * radial[1], run.center[2] + scale * radial[2])
     end
     tags = [occ.addPoint(point[1], point[2], z) for point in projected]
     curve_for_edge = Dict{Int, Int32}()
@@ -419,20 +417,14 @@ function polygon_wire(occ, points, z)
     for run in runs
         any(covered[run.edge_indices]) && continue
         parts = max(1, ceil(Int, run.angle / (0.5 * pi)))
-        split = unique(
-            round.(
-                Int,
-                range(1, length(run.point_indices), length=parts + 1)
-            )
-        )
+        split = unique(round.(Int, range(1, length(run.point_indices), length=parts + 1)))
         center = occ.addPoint(run.center[1], run.center[2], z)
         for (first, second) in zip(split, split[2:end])
-            curve_for_edge[run.edge_indices[first]] =
-                occ.addCircleArc(
-                    tags[run.point_indices[first]],
-                    center,
-                    tags[run.point_indices[second]]
-                )
+            curve_for_edge[run.edge_indices[first]] = occ.addCircleArc(
+                tags[run.point_indices[first]],
+                center,
+                tags[run.point_indices[second]]
+            )
         end
         covered[run.edge_indices] .= true
     end
@@ -449,8 +441,18 @@ end
 
 cross2d(first, second) = first[1] * second[2] - first[2] * second[1]
 
+function loop_orientation(points)
+    area2=sum(points[i][1]*points[mod1(i+1,length(points))][2]-
+              points[mod1(i+1,length(points))][1]*points[i][2] for i in eachindex(points))
+    area2!=0 || error("Degenerate plan-view loop")
+    return sign(area2)
+end
+
 function offset_loop_points(loop, distance, tolerance)
-    distance == 0.0 && return loop.points
+    abs(distance)<=tolerance && return loop.points
+    isempty(circular_arc_runs(loop.points,tolerance)) ||
+        error("Nonzero offsets of curved plan-view boundaries require exact curved-offset support")
+    metal_side=loop_orientation(loop.points)*(loop.hole ? -1.0 : 1.0)
     shifted = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
     for index in eachindex(loop.points)
         first = loop.points[index]
@@ -460,13 +462,11 @@ function offset_loop_points(loop, distance, tolerance)
         segment_length > tolerance ||
             error("Plan-view boundary contains a zero-length segment")
         shift = loop.classes[index] == "Physical" ? distance : 0.0
-        normal = (-direction[2] / segment_length, direction[1] / segment_length)
+        normal = (-metal_side*direction[2] / segment_length,
+                   metal_side*direction[1] / segment_length)
         push!(
             shifted,
-            (
-                (first[1] + shift * normal[1], first[2] + shift * normal[2]),
-                direction
-            )
+            ((first[1] + shift * normal[1], first[2] + shift * normal[2]), direction)
         )
     end
     points = NTuple{2, Float64}[]
@@ -476,17 +476,14 @@ function offset_loop_points(loop, distance, tolerance)
         denominator = cross2d(previous[2], current[2])
         abs(denominator) > tolerance ||
             error("Plan-view taper has a singular boundary vertex")
-        offset = (
-            current[1][1] - previous[1][1],
-            current[1][2] - previous[1][2]
-        )
+        offset = (current[1][1] - previous[1][1], current[1][2] - previous[1][2])
         coordinate = cross2d(offset, current[2]) / denominator
         point = (
             previous[1][1] + coordinate * previous[2][1],
             previous[1][2] + coordinate * previous[2][2]
         )
         hypot(point[1] - loop.points[index][1], point[2] - loop.points[index][2]) <=
-            8.0 * max(abs(distance), tolerance) ||
+        8.0 * max(abs(distance), tolerance) ||
             error("Plan-view taper produces an unresolved miter")
         push!(points, point)
     end
@@ -502,19 +499,58 @@ function loft_polygon(occ, bottom_points, top_points, z0, z1)
     return volumes
 end
 
-function loft_mask_offsets(
-    occ,
-    loops,
-    z0,
-    z1,
-    bottom_offset,
-    top_offset,
-    tolerance
-)
+function offset_hole_points(loop,distance,tolerance)
+    distance>=-tolerance && return offset_loop_points(loop,distance,tolerance)
+    isempty(circular_arc_runs(loop.points,tolerance)) ||
+        error("Shrinking a curved fabrication hole requires exact curved-offset support")
+    points=copy(loop.points)
+    orientation=loop_orientation(points)
+    # Convex hole erosion is an intersection of inward-offset half-planes. It
+    # may vanish: intersecting offset lines alone would incorrectly reopen a
+    # reflected polygon after collapse. Nonconvex topology changes fail closed.
+    for i in eachindex(points)
+        a,b,c=points[i],points[mod1(i+1,length(points))],points[mod1(i+2,length(points))]
+        orientation*cross2d((b[1]-a[1],b[2]-a[2]),(c[1]-b[1],c[2]-b[2]))>=-tolerance ||
+            error("Shrinking a nonconvex fabrication hole requires topology-aware offset support")
+    end
+    clipped=copy(points)
+    for i in eachindex(points)
+        loop.classes[i]=="Physical" || continue
+        a,b=points[i],points[mod1(i+1,length(points))]
+        direction=(b[1]-a[1],b[2]-a[2]);edge_length=hypot(direction...)
+        normal=(-orientation*direction[2]/edge_length,orientation*direction[1]/edge_length)
+        signed(p)=normal[1]*(p[1]-a[1])+normal[2]*(p[2]-a[2])+distance
+        result=NTuple{2,Float64}[]
+        isempty(clipped) && return result
+        for j in eachindex(clipped)
+            p,q=clipped[j],clipped[mod1(j+1,Base.length(clipped))]
+            dp,dq=signed(p),signed(q)
+            dp>=-tolerance && push!(result,p)
+            if (dp>=-tolerance)!=(dq>=-tolerance)
+                t=dp/(dp-dq)
+                push!(result,(p[1]+t*(q[1]-p[1]),p[2]+t*(q[2]-p[2])))
+            end
+        end
+        clipped=result
+    end
+    cleaned=NTuple{2,Float64}[]
+    for p in clipped
+        (isempty(cleaned) || hypot(p[1]-cleaned[end][1],p[2]-cleaned[end][2])>tolerance) && push!(cleaned,p)
+    end
+    if Base.length(cleaned)>1 && hypot(cleaned[1][1]-cleaned[end][1],cleaned[1][2]-cleaned[end][2])<=tolerance
+        pop!(cleaned)
+    end
+    Base.length(cleaned)>=3 || return NTuple{2,Float64}[]
+    area2=sum(cross2d(cleaned[i],cleaned[mod1(i+1,Base.length(cleaned))]) for i in eachindex(cleaned))
+    return abs(area2)>tolerance^2 ? cleaned : NTuple{2,Float64}[]
+end
+
+function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolerance)
     outers = [loop for loop in loops if !loop.hole]
     holes = [loop for loop in loops if loop.hole]
     isempty(outers) && error("Plan-view mask has no exterior loop")
     result = Tuple{Int32, Int32}[]
+    hole_owners=zeros(Int,length(holes))
     for outer in outers
         volume = loft_polygon(
             occ,
@@ -524,17 +560,18 @@ function loft_mask_offsets(
             z1
         )
         cutters = Tuple{Int32, Int32}[]
-        for hole in holes
+        for (index,hole) in enumerate(holes)
+            hole.conductor==outer.conductor && abs(hole.plane-outer.plane)<=tolerance || continue
             point_in_polygon(hole.points[1], outer.points, tolerance) || continue
+            hole_owners[index]+=1
+            bottom_hole=offset_hole_points(hole,bottom_offset,tolerance)
+            top_hole=offset_hole_points(hole,top_offset,tolerance)
+            isempty(bottom_hole) && isempty(top_hole) && continue
+            isempty(bottom_hole)==isempty(top_hole) ||
+                error("Fabrication hole collapses across loft height; unsupported topology change")
             append!(
                 cutters,
-                loft_polygon(
-                    occ,
-                    offset_loop_points(hole, bottom_offset, tolerance),
-                    offset_loop_points(hole, top_offset, tolerance),
-                    z0,
-                    z1
-                )
+                loft_polygon(occ,bottom_hole,top_hole,z0,z1)
             )
         end
         if !isempty(cutters)
@@ -543,6 +580,7 @@ function loft_mask_offsets(
         end
         append!(result, volume)
     end
+    all(==(1),hole_owners) || error("Every fabrication hole must belong to exactly one exterior conductor/layer loop")
     return fuse_all(occ, result)
 end
 
@@ -551,34 +589,24 @@ function loft_mask(occ, loops, z0, z1, pullback, tolerance)
 end
 
 function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance)
-    volumes = Tuple{Int32, Int32}[]
+    expanded_volumes = Tuple{Int32, Int32}[]
+    retained_volumes = Tuple{Int32, Int32}[]
     width = 3radius
     for conductor in sort!(unique(loop.conductor for loop in loops))
         conductor_loops = [loop for loop in loops if loop.conductor == conductor]
-        expanded = loft_mask_offsets(
-            occ,
-            conductor_loops,
-            z0,
-            z1,
-            -width,
-            -width,
-            tolerance
-        )
-        retained = loft_mask_offsets(
-            occ,
-            conductor_loops,
-            z0,
-            z1,
-            0.0,
-            -pullback,
-            tolerance
-        )
-        strip, _ = occ.cut(expanded, retained)
-        strip = [(dim, tag) for (dim, tag) in strip if dim == 3]
-        isempty(strip) && error("Classified boundary strip produced no volume")
-        append!(volumes, strip)
+        append!(expanded_volumes,
+                loft_mask_offsets(occ, conductor_loops, z0, z1, -width, -width, tolerance))
+        append!(retained_volumes,
+                loft_mask_offsets(occ, conductor_loops, z0, z1, 0.0, -pullback, tolerance))
     end
-    return fuse_all(occ, volumes)
+    # A conductor's etch collar must not remove substrate beneath another conductor.
+    # Subtract the complete retained mask after combining the expanded collars.
+    expanded = fuse_all(occ, expanded_volumes)
+    retained = fuse_all(occ, retained_volumes)
+    strip, _ = occ.cut(expanded, retained)
+    strip = [(dim, tag) for (dim, tag) in strip if dim == 3]
+    isempty(strip) && error("Classified boundary strip produced no volume")
+    return fuse_all(occ, strip)
 end
 
 function loft_strip(occ, edge, radius, side, z0, z1, pullback)
@@ -595,6 +623,27 @@ function extruded_strip(occ, edge, radius, side, z0, dz)
     return [
         (dim, tag) for (dim, tag) in occ.extrude([(2, surface)], 0.0, 0.0, dz) if dim == 3
     ]
+end
+
+function planar_mask_surfaces(occ, loops, tolerance)
+    surfaces = Tuple{Int32,Int32}[]
+    holes=[loop for loop in loops if loop.hole]
+    owners=zeros(Int,length(holes))
+    for outer in loops
+        outer.hole && continue
+        wires = [polygon_wire(occ, outer.points, outer.plane)]
+        for (i,hole) in enumerate(holes)
+            hole.conductor == outer.conductor &&
+                abs(hole.plane - outer.plane) <= tolerance || continue
+            point_in_polygon(hole.points[1], outer.points, tolerance) || continue
+            owners[i]+=1
+            push!(wires, polygon_wire(occ, hole.points, hole.plane))
+        end
+        push!(surfaces, (2, occ.addPlaneSurface(wires)))
+    end
+    all(==(1),owners) || error("Every mask hole must belong to exactly one exterior loop of its conductor/layer")
+    isempty(surfaces) && error("Planar mask has no exterior surfaces")
+    return surfaces
 end
 
 function mask_prism(occ, facets, z0, dz)
@@ -643,19 +692,23 @@ function boundary_curves(volumes)
     )
 end
 
+function curve_lies_on_plane(curve,z,tolerance)
+    lower,upper=gmsh.model.getParametrizationBounds(1,curve)
+    parameters=[lower[1],(lower[1]+upper[1])/2,upper[1]]
+    values=gmsh.model.getValue(1,curve,parameters)
+    # OCC bounding boxes have scale-independent padding: test the curve itself.
+    return all(abs(values[3i]-z)<=tolerance for i in 1:3)
+end
+
 function fillet_plane_edges(occ, volumes, radius, z, tolerance)
     radius <= 0.0 && return volumes
-    curves = Int32[]
-    for curve in boundary_curves(volumes)
-        _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(1, curve)
-        if abs(zmin - z) < tolerance && abs(zmax - z) < tolerance
-            push!(curves, curve)
-        end
-    end
-    isempty(curves) && return volumes
+    curves = [curve for curve in boundary_curves(volumes) if
+              curve_lies_on_plane(curve,z,tolerance)]
+    isempty(curves) && error("Requested rounding found no curves on process plane $z")
     rounded = occ.fillet(Int32[tag for (dim, tag) in volumes if dim == 3], curves, [radius])
     result = [(dim, tag) for (dim, tag) in rounded if dim == 3]
-    return isempty(result) ? volumes : result
+    isempty(result) && error("Requested rounding produced no solid")
+    return result
 end
 
 function point_segment_distance(point, first, second)
@@ -663,15 +716,12 @@ function point_segment_distance(point, first, second)
     length_squared = direction[1]^2 + direction[2]^2
     length_squared > 0.0 || return hypot(point[1] - first[1], point[2] - first[2])
     coordinate = clamp(
-        ((point[1] - first[1]) * direction[1] +
-         (point[2] - first[2]) * direction[2]) / length_squared,
+        ((point[1] - first[1]) * direction[1] + (point[2] - first[2]) * direction[2]) /
+        length_squared,
         0.0,
         1.0
     )
-    closest = (
-        first[1] + coordinate * direction[1],
-        first[2] + coordinate * direction[2]
-    )
+    closest = (first[1] + coordinate * direction[1], first[2] + coordinate * direction[2])
     return hypot(point[1] - closest[1], point[2] - closest[2])
 end
 
@@ -681,8 +731,7 @@ function physical_segments(loops, offset, tolerance)
         points = offset_loop_points(loop, offset, tolerance)
         covered = falses(length(points))
         for run in circular_arc_runs(points, tolerance)
-            all(loop.classes[index] == "Physical" for index in run.edge_indices) ||
-                continue
+            all(loop.classes[index] == "Physical" for index in run.edge_indices) || continue
             push!(
                 primitives,
                 (
@@ -713,22 +762,18 @@ function physical_segments(loops, offset, tolerance)
 end
 
 function directed_angle(first, second, orientation)
-    angle = orientation * atan(cross2d(first, second), first[1] * second[1] +
-                                                       first[2] * second[2])
+    angle =
+        orientation *
+        atan(cross2d(first, second), first[1] * second[1] + first[2] * second[2])
     return mod(angle, 2pi)
 end
 
 function point_primitive_distance(point, primitive, tolerance)
     primitive.kind == :line &&
         return point_segment_distance(point, primitive.first, primitive.last)
-    radial = (
-        point[1] - primitive.center[1],
-        point[2] - primitive.center[2]
-    )
-    start = (
-        primitive.first[1] - primitive.center[1],
-        primitive.first[2] - primitive.center[2]
-    )
+    radial = (point[1] - primitive.center[1], point[2] - primitive.center[2])
+    start =
+        (primitive.first[1] - primitive.center[1], primitive.first[2] - primitive.center[2])
     angle = directed_angle(start, radial, primitive.orientation)
     angle_tolerance = tolerance / max(primitive.radius, tolerance)
     if angle <= primitive.angle + angle_tolerance
@@ -753,18 +798,18 @@ function fillet_physical_edges(occ, volumes, radius, z, primitives, tolerance)
     gmsh.model.occ.synchronize()
     curves = Int32[]
     for curve in boundary_curves(volumes)
-        _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(1, curve)
-        abs(zmin - z) < tolerance && abs(zmax - z) < tolerance || continue
+        curve_lies_on_plane(curve,z,tolerance) || continue
         point = point_on_curve(curve)
         any(
             point_primitive_distance(point, primitive, tolerance) <= 10tolerance for
             primitive in primitives
         ) && push!(curves, curve)
     end
-    isempty(curves) && return volumes
+    isempty(curves) && error("Requested physical-edge rounding found no curves on plane $z")
     rounded = occ.fillet(Int32[tag for (dim, tag) in volumes if dim == 3], curves, [radius])
     result = [(dim, tag) for (dim, tag) in rounded if dim == 3]
-    return isempty(result) ? volumes : result
+    isempty(result) && error("Requested physical-edge rounding produced no solid")
+    return result
 end
 
 function coupon_bounds(edges, radius, metal_thickness, overetch)
@@ -862,14 +907,23 @@ end
 function segment_distance(edge, point, radius)
     first, second = extended_interval(edge, radius)
     delta = (point[1] - edge.point[1], point[2] - edge.point[2], point[3] - edge.point[3])
-    coordinate =
-        clamp(delta[1] * edge.tangent[1] + delta[2] * edge.tangent[2], first, second)
+    tangent_norm2=sum(value^2 for value in edge.tangent)
+    tangent_norm2>0 || error("Zero-length edge tangent")
+    coordinate = clamp(sum(delta[i]*edge.tangent[i] for i in 1:3)/tangent_norm2,
+                       first,second)
     closest = add(edge.point, scale(coordinate, edge.tangent))
     return sqrt(sum((point[index] - closest[index])^2 for index = 1:3))
 end
 
 function nearest_edge(edges, point, radius)
-    return edges[argmin(segment_distance(edge, point, radius) for edge in edges)]
+    isempty(edges) && error("Cannot assign ownership without edges")
+    distances=[segment_distance(edge,point,radius) for edge in edges]
+    best=minimum(distances)
+    # At a bisector prefer a stable physical label, not input row order. Slot ties
+    # have identical output ownership and require no coordinate-dependent rule.
+    tied=[i for i in eachindex(edges) if distances[i]<=best+1e-12max(radius,1.)]
+    index=tied[argmin((edges[i].conductor,edges[i].slot) for i in tied)]
+    return edges[index]
 end
 
 const METAL_SLOT_STRIDE = 100
@@ -895,6 +949,11 @@ end
 
 function point_in_metal(edge, point, radius, tolerance, facets)
     abs(point[3] - edge.point[3]) <= tolerance || return false
+    # An exact mask is the conductor geometry, not merely a clipping filter for a
+    # finite collection of edge strips. Interior metal can extend beyond those strips.
+    if !isempty(facets)
+        return point_in_mask(facets, point, edge.conductor, edge.point[3], tolerance)
+    end
     delta = (point[1] - edge.point[1], point[2] - edge.point[2], point[3] - edge.point[3])
     longitudinal = delta[1] * edge.tangent[1] + delta[2] * edge.tangent[2]
     transverse = delta[1] * edge.gap[1] + delta[2] * edge.gap[2]
@@ -928,6 +987,63 @@ function coplanar_surfaces(surfaces::Vector{Int32}, tolerance::Float64)
     return false
 end
 
+function matching_trace_lines(occ, path, lower, upper, tolerance; mode="all")
+    data, header = readdlm(path, ',', header=true)
+    names = vec(String.(header)); columns = Dict(name=>i for (i,name) in enumerate(names))
+    all(haskey(columns,key) for key in ("x","y","z","triangle")) ||
+        error("Matching trace must have x,y,z,triangle columns")
+    triangles = Dict{Int,Vector{NTuple{3,Float64}}}()
+    for row in axes(data,1)
+        p = ntuple(d->Float64(data[row,columns[("x","y","z")[d]]]),3)
+        all(isfinite,p) || error("Non-finite trace coordinate")
+        p = ntuple(d->abs(p[d]-lower[d])<tolerance ? lower[d] :
+                      abs(p[d]-upper[d])<tolerance ? upper[d] : p[d],3)
+        index=Int(data[row,columns["triangle"]])
+        index>0 || error("Matching trace triangle indices must be positive")
+        push!(get!(triangles,index,NTuple{3,Float64}[]),p)
+    end
+    all(length(tri)==3 for tri in Base.values(triangles)) ||
+        error("Matching trace triangle needs three vertices")
+    lines=Tuple{Int32,Int32}[]
+    if mode == "levels"
+        levels=sort!(unique(p[3] for tri in Base.values(triangles) for p in tri))
+        for z in levels
+            lower[3]+tolerance<z<upper[3]-tolerance || continue
+            ring=[(lower[1],lower[2],z),(upper[1],lower[2],z),
+                  (upper[1],upper[2],z),(lower[1],upper[2],z)]
+            tags=[occ.addPoint(p...) for p in ring]
+            for i in 1:4
+                push!(lines,(1,occ.addLine(tags[i],tags[mod1(i+1,4)])))
+            end
+        end
+        println("Matching-trace level constraints: $(length(lines)) segments")
+        return lines
+    end
+    mode in ("all","sides") || error("Unknown matching trace constraint mode")
+    points=Dict{NTuple{3,Float64},Int32}()
+    seen=Set{Tuple{NTuple{3,Float64},NTuple{3,Float64}}}()
+    skipped=0
+    for tri in Base.values(triangles)
+        length(tri)==3 || error("Matching trace triangle needs three vertices")
+        for (a,b) in ((tri[1],tri[2]),(tri[2],tri[3]),(tri[3],tri[1]))
+            key = isless(a,b) ? (a,b) : (b,a)
+            key in seen && continue
+            push!(seen,key)
+            dimensions = mode == "sides" ? (1:2) : (1:3)
+            if !any((a[d]==lower[d] && b[d]==lower[d]) ||
+                    (a[d]==upper[d] && b[d]==upper[d]) for d in dimensions)
+                skipped+=1;continue
+            end
+            sum((a[d]-b[d])^2 for d in 1:3)>tolerance^2 || continue
+            pa=get!(points,a) do;occ.addPoint(a...);end
+            pb=get!(points,b) do;occ.addPoint(b...);end
+            push!(lines,(1,occ.addLine(pa,pb)))
+        end
+    end
+    println("Matching-trace constraints: boundary segments=$(length(lines)), off-box segments=$skipped")
+    return lines
+end
+
 function generate_spatial_coupon(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
@@ -948,6 +1064,12 @@ function generate_spatial_coupon(;
     max_nodes::Int           = 500_000,
     max_elements::Int        = 2_000_000,
     mesh_order::Int          = 1,
+    mesh_control::Union{Nothing, Function}=nothing,
+    mesh_postprocess::Union{Nothing, Function}=nothing,
+    optimize_volume::Bool=true,
+    matching_trace::Union{Nothing,String}=nothing,
+    matching_trace_mode::String="all",
+    geometry_only::Bool=false,
     filename::String
 )
     radius > 0.0 || error("radius must be positive")
@@ -972,9 +1094,14 @@ function generate_spatial_coupon(;
     max_elements > 0 || error("maximum element budget must be positive")
 
     edges = read_edges(signature)
+    if length(unique(edge.slot for edge in edges)) > 1 &&
+       mesh_postprocess === nothing && !geometry_only
+        error("Multi-slot tetrahedral coupons require an explicit surface-partition postprocessor; whole-CAD-face labeling is not sufficient")
+    end
     facets = read_mask(mask)
     boundary_loops = read_boundary(boundary)
-    isempty(boundary_loops) || !isempty(facets) ||
+    isempty(boundary_loops) ||
+        !isempty(facets) ||
         error("A classified plan-view boundary requires the corresponding mask facets")
     lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
     tolerance = 1.0e-7 * radius
@@ -1030,8 +1157,8 @@ function generate_spatial_coupon(;
         end
         if fabricated && overetch > 0.0
             layer_loops = [
-                loop for loop in boundary_loops if
-                abs(loop.plane - layer.plane) <= tolerance
+                loop for
+                loop in boundary_loops if abs(loop.plane - layer.plane) <= tolerance
             ]
             trenches = if isempty(boundary_loops)
                 result = Tuple{Int32, Int32}[]
@@ -1051,8 +1178,9 @@ function generate_spatial_coupon(;
                 end
                 fuse_all(occ, result)
             else
-                isempty(layer_loops) &&
-                    error("Plan-view boundary is missing fabrication layer $(layer.plane)")
+                isempty(layer_loops) && error(
+                    "Plan-view boundary is missing fabrication layer $(layer.plane)"
+                )
                 boundary_strips(
                     occ,
                     layer_loops,
@@ -1077,11 +1205,7 @@ function generate_spatial_coupon(;
                     trenches,
                     trench_rounding,
                     layer.plane - layer.sign * overetch,
-                    physical_segments(
-                        layer_loops,
-                        -pullback_trench,
-                        tolerance
-                    ),
+                    physical_segments(layer_loops, -pullback_trench, tolerance),
                     tolerance
                 )
             end
@@ -1108,8 +1232,7 @@ function generate_spatial_coupon(;
                     isempty(conductor_facets) &&
                     error("Plan-view mask is missing conductor $conductor")
                 conductor_loops = [
-                    loop for loop in boundary_loops if
-                    loop.conductor == conductor &&
+                    loop for loop in boundary_loops if loop.conductor == conductor &&
                     abs(loop.plane - layer.plane) <= tolerance
                 ]
                 conductor_metal = if isempty(boundary_loops)
@@ -1129,13 +1252,7 @@ function generate_spatial_coupon(;
                         )
                     end
                     result = fuse_all(occ, result)
-                    apply_plan_view_mask(
-                        occ,
-                        result,
-                        conductor_facets,
-                        lower,
-                        upper
-                    )
+                    apply_plan_view_mask(occ, result, conductor_facets, lower, upper)
                 else
                     isempty(conductor_loops) &&
                         error("Plan-view boundary is missing conductor $conductor")
@@ -1181,20 +1298,24 @@ function generate_spatial_coupon(;
         depth = upper[3] - lower[3]
         for conductor in sort!(unique(edge.conductor for edge in edges))
             conductor_edges = [edge for edge in edges if edge.conductor == conductor]
-            conductor_tools = Tuple{Int32, Int32}[]
-            for edge in conductor_edges
-                append!(
-                    conductor_tools,
-                    extruded_strip(occ, edge, radius, -1.0, lower[3], depth)
-                )
-            end
-            conductor_tools = fuse_all(occ, conductor_tools)
             conductor_facets = [facet for facet in facets if facet.conductor == conductor]
-            !isempty(facets) &&
-                isempty(conductor_facets) &&
-                error("Plan-view mask is missing conductor $conductor")
-            conductor_tools =
-                apply_plan_view_mask(occ, conductor_tools, conductor_facets, lower, upper)
+            conductor_loops = [loop for loop in boundary_loops if loop.conductor == conductor]
+            conductor_tools = if !isempty(conductor_loops)
+                # Thin metal is a sheet, not a full-height volume partition. Supplying
+                # surface tools avoids artificial vertical seams throughout the bulk.
+                planar_mask_surfaces(occ, conductor_loops, tolerance)
+            elseif !isempty(conductor_facets)
+                faces = [(Int32(2), occ.addPlaneSurface([
+                    polygon_wire(occ, facet.points, facet.plane)])) for facet in conductor_facets]
+                fuse_all(occ, faces)
+            else
+                isempty(facets) || error("Plan-view mask is missing conductor $conductor")
+                result = Tuple{Int32, Int32}[]
+                for edge in conductor_edges
+                    append!(result, extruded_strip(occ, edge, radius, -1.0, lower[3], depth))
+                end
+                fuse_all(occ, result)
+            end
             append!(tools, conductor_tools)
         end
         domains, domain_map = occ.fragment(vcat(substrates, vacuum), tools)
@@ -1203,6 +1324,19 @@ function generate_spatial_coupon(;
             domain_map[(length(substrates) + 1):(length(substrates) + length(vacuum))] |>
             Iterators.flatten |>
             collect
+    end
+    if matching_trace !== nothing
+        trace_tools = matching_trace_lines(occ, matching_trace, lower, upper, tolerance;
+                                          mode=matching_trace_mode)
+        old_domains = [(dim,tag) for (dim,tag) in domains if dim==3]
+        old_substrate = Set(substrate_seed); old_vacuum = Set(vacuum_seed)
+        domains, trace_map = occ.fragment(old_domains, trace_tools)
+        substrate_seed = Tuple{Int32,Int32}[]; vacuum_seed = Tuple{Int32,Int32}[]
+        for (i,domain) in enumerate(old_domains)
+            descendants = [(dim,tag) for (dim,tag) in trace_map[i] if dim==3]
+            domain in old_substrate && append!(substrate_seed, descendants)
+            domain in old_vacuum && append!(vacuum_seed, descendants)
+        end
     end
     occ.synchronize()
 
@@ -1373,8 +1507,18 @@ function generate_spatial_coupon(;
     ]
         gmsh.option.setNumber(name, value)
     end
+    if mesh_control !== nothing
+        mesh_control(feature_curves, boundary_groups, lower, upper)
+    end
+    if geometry_only
+        return gmsh.finalize()
+    end
     gmsh.model.mesh.generate(3)
-    if lc_tangent == 0.0
+    # Reject oversized linear meshes before allocating their high-order nodes.
+    _, linear_tags, _ = gmsh.model.mesh.getElements(3)
+    sum(length(tags) for tags in linear_tags) <= max_elements ||
+        error("Linear spatial coupon exceeds element budget before order elevation")
+    if lc_tangent == 0.0 && optimize_volume
         gmsh.model.mesh.optimize("Netgen")
     end
     gmsh.model.mesh.setOrder(mesh_order)
@@ -1401,6 +1545,14 @@ function generate_spatial_coupon(;
             error("High-order spatial coupon contains a nonpositive Jacobian")
         println("High-order mesh minimum scaled Jacobian: $minimum_jacobian")
     end
+    all_volume_tags=reduce(vcat,gmsh.model.mesh.getElements(3)[2];init=UInt64[])
+    minimum_signed_inverse_condition=minimum(
+        gmsh.model.mesh.getElementQualities(all_volume_tags,"minSICN"))
+    minimum_signed_inverse_condition>1e-10 ||
+        error("Spatial coupon has invalid or near-singular elements: minSICN=$minimum_signed_inverse_condition")
+    if mesh_postprocess !== nothing
+        mesh_postprocess(edges, boundary_loops, radius)
+    end
     gmsh.write(filename)
     metadata_path = filename * ".metadata.json"
     open(metadata_path, "w") do stream
@@ -1409,13 +1561,14 @@ function generate_spatial_coupon(;
         println(stream, "  \"MetalSurfacePartition\": \"InterfaceSlotAndConductor\",")
         println(stream, "  \"NodeCount\": $node_count,")
         println(stream, "  \"VolumeElementCount\": $element_count,")
+        println(stream, "  \"MinimumSignedInverseCondition\": $minimum_signed_inverse_condition,")
         println(stream, "  \"FineSize\": $lc_fine,")
         println(stream, "  \"TangentialSize\": $lc_tangent,")
         println(stream, "  \"FarSize\": $lc_far,")
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
         println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
-        println(stream, "  \"Algorithm3D\": 1,")
+        println(stream, "  \"Algorithm3D\": $(Int(gmsh.option.getNumber("Mesh.Algorithm3D"))),")
         println(stream, "  \"MeshOrder\": $mesh_order")
         println(stream, "}")
     end

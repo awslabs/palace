@@ -652,6 +652,11 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
       dielectric.value("EdgeDistanceSmoothing", edge_distance_smoothing);
   localize_edge_energy = dielectric.value("LocalizeEdgeEnergy", localize_edge_energy);
   save_local_edge_energy = dielectric.value("SaveLocalEdgeEnergy", save_local_edge_energy);
+  ownership_data_file = dielectric.value("OwnershipDataFile", ownership_data_file);
+  ownership_group = dielectric.value("OwnershipGroup", ownership_group);
+  ownership_slot = dielectric.value("OwnershipSlot", ownership_slot);
+  ownership_quadrature_order =
+      dielectric.value("OwnershipQuadratureOrder", ownership_quadrature_order);
   if (auto it = dielectric.find("EdgeFrameNormal"); it != dielectric.end())
   {
     edge_frame_normal = it->get<std::array<double, 3>>();
@@ -668,6 +673,28 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
         it->value("CoreIndicatorWeight", edge_refinement->core_indicator_weight);
   }
   type = dielectric.value("Type", type);
+  const bool ownership_enabled = !ownership_data_file.empty();
+  const bool ownership_requested = dielectric.contains("OwnershipDataFile") ||
+                                   dielectric.contains("OwnershipGroup") ||
+                                   dielectric.contains("OwnershipSlot") ||
+                                   dielectric.contains("OwnershipQuadratureOrder");
+  MFEM_VERIFY(!ownership_requested ||
+                  (ownership_enabled && dielectric.contains("OwnershipDataFile") &&
+                   dielectric.contains("OwnershipGroup") &&
+                   dielectric.contains("OwnershipSlot") &&
+                   dielectric.contains("OwnershipQuadratureOrder")),
+              "All interface ownership fields must be present and the data file nonempty!");
+  MFEM_VERIFY(ownership_enabled == (ownership_group >= 0) &&
+                  ownership_enabled == (ownership_slot >= 0) &&
+                  ownership_enabled == (ownership_quadrature_order > 0),
+              "Interface dielectric quadrature ownership requires \"OwnershipDataFile\", "
+              "\"OwnershipGroup\", \"OwnershipSlot\", and "
+              "\"OwnershipQuadratureOrder\" together!");
+  MFEM_VERIFY(!ownership_enabled || ownership_quadrature_order <= 100,
+              "Interface dielectric \"OwnershipQuadratureOrder\" must lie in [1, 100]!");
+  MFEM_VERIFY(!ownership_enabled || type != InterfaceDielectric::DEFAULT,
+              "Interface dielectric quadrature ownership requires an explicit MA, MS, or "
+              "SA interface type!");
   MFEM_VERIFY(!automatic_edges || edge_attributes.empty(),
               "Interface dielectric \"AutomaticEdges\" cannot be combined with "
               "\"EdgeAttributes\"!");
@@ -1999,6 +2026,7 @@ void Nondimensionalize(const Units &units, SurfaceFluxData &data)
 
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
 {
+  data.ownership_coordinate_scale = units.GetMeshLengthRelativeScale();
   data.t /= units.GetMeshLengthRelativeScale();
   std::transform(data.edge_distances.begin(), data.edge_distances.end(),
                  data.edge_distances.begin(), LengthScaler(units));

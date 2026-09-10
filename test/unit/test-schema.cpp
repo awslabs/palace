@@ -340,6 +340,37 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Interface ownership is explicit and complete")
+  {
+    json dielectric = {
+        {"Index", 1},          {"Attributes", {4}},  {"Thickness", .002},
+        {"Permittivity", 4.0}, {"Type", "SA"},       {"OwnershipDataFile", "ownership.csv"},
+        {"OwnershipGroup", 0}, {"OwnershipSlot", 0}, {"OwnershipQuadratureOrder", 20}};
+    CHECK(ValidateConfig(dielectric, "Dielectric").empty());
+    for (const auto *key : {"OwnershipDataFile", "OwnershipGroup", "OwnershipSlot",
+                            "OwnershipQuadratureOrder", "Type"})
+    {
+      auto bad = dielectric;
+      bad.erase(key);
+      CHECK(!ValidateConfig(bad, "Dielectric").empty());
+    }
+    auto bad = dielectric;
+    bad["OwnershipDataFile"] = "";
+    CHECK(!ValidateConfig(bad, "Dielectric").empty());
+    bad = dielectric;
+    bad["OwnershipGroup"] = -1;
+    CHECK(!ValidateConfig(bad, "Dielectric").empty());
+    bad = dielectric;
+    bad["OwnershipSlot"] = 0.5;
+    CHECK(!ValidateConfig(bad, "Dielectric").empty());
+    bad = dielectric;
+    bad["OwnershipQuadratureOrder"] = 101;
+    CHECK(!ValidateConfig(bad, "Dielectric").empty());
+    bad = dielectric;
+    bad["Type"] = "Default";
+    CHECK(!ValidateConfig(bad, "Dielectric").empty());
+  }
+
   SECTION("Dielectric edge diagnostics require attributes and distances together")
   {
     json dielectric = {{"Index", 1},

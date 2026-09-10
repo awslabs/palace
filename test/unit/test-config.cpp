@@ -902,6 +902,53 @@ TEST_CASE("Config interface dielectric edge frame", "[config][Serial]")
   CHECK_THROWS(config::InterfaceDielectricData(dielectric));
 }
 
+TEST_CASE("Config interface dielectric quadrature ownership", "[config][Serial]")
+{
+  json dielectric = {{"Attributes", {1}},
+                     {"Type", "SA"},
+                     {"Thickness", 2.0e-3},
+                     {"Permittivity", 4.0},
+                     {"OwnershipDataFile", "ownership.csv"},
+                     {"OwnershipGroup", 0},
+                     {"OwnershipSlot", 2},
+                     {"OwnershipQuadratureOrder", 20}};
+  const config::InterfaceDielectricData data(dielectric);
+  CHECK(data.ownership_data_file == "ownership.csv");
+  CHECK(data.ownership_group == 0);
+  CHECK(data.ownership_slot == 2);
+  CHECK(data.ownership_quadrature_order == 20);
+
+  for (const auto *key : {"OwnershipGroup", "OwnershipSlot", "OwnershipQuadratureOrder"})
+  {
+    auto missing = dielectric;
+    missing.erase(key);
+    CHECK_THROWS(config::InterfaceDielectricData(missing));
+  }
+  dielectric["OwnershipQuadratureOrder"] = 101;
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric["OwnershipQuadratureOrder"] = 20;
+  dielectric["Type"] = "Default";
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric["Type"] = "SA";
+  dielectric["Index"] = 1;
+  json input = {{"Problem", {{"Type", "Electrostatic"}}},
+                {"Model", {{"Mesh", "unused.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                {"Boundaries",
+                 {{"Ground", {{"Attributes", {2}}}},
+                  {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+                  {"Postprocessing", {{"Dielectric", {dielectric}}}}}},
+                {"Solver", {{"Electrostatic", {{"Save", 0}}}}}};
+  IoData parsed(input, false);
+  const auto concrete = IoData::ConcretizeDefaults(parsed, input);
+  const auto &entry = concrete["Boundaries"]["Postprocessing"]["Dielectric"][0];
+  for (const auto *key :
+       {"OwnershipDataFile", "OwnershipGroup", "OwnershipSlot", "OwnershipQuadratureOrder"})
+  {
+    CHECK(entry.at(key) == dielectric.at(key));
+  }
+}
+
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
   using namespace Catch::Matchers;
@@ -1845,8 +1892,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("Boundaries.Periodic missing keys: " << json(per_gaps).dump());
     CHECK(per_gaps.empty());
 
+    // Ownership is an opt-in, all-fields-together partition; inactive defaults
+    // must not be synthesized into an otherwise unpartitioned interface.
     auto dielectric_gaps = SchemaCoverageGaps(
-        "/$defs/Dielectric", config["Boundaries"]["Postprocessing"]["Dielectric"][0]);
+        "/$defs/Dielectric", config["Boundaries"]["Postprocessing"]["Dielectric"][0],
+        /*skip=*/
+        {"OwnershipDataFile", "OwnershipGroup", "OwnershipSlot",
+         "OwnershipQuadratureOrder"});
     INFO("Boundaries.Postprocessing.Dielectric[] missing keys: "
          << json(dielectric_gaps).dump());
     CHECK(dielectric_gaps.empty());

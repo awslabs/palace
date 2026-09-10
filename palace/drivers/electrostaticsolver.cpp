@@ -232,6 +232,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto response_archive = ResponseArchiveDirectory();
   const bool archive_reduce_only = EnvironmentFlag("PALACE_RESPONSE_REDUCE_ONLY");
   const bool archive_stream_only = EnvironmentFlag("PALACE_RESPONSE_ARCHIVE_ONLY");
+  const bool response_source_timing = EnvironmentFlag("PALACE_RESPONSE_SOURCE_TIMING");
   const bool archive_recycle_initial_guess =
       archive_stream_only && EnvironmentFlag("PALACE_RESPONSE_RECYCLE_INITIAL_GUESS");
   MFEM_VERIFY(!archive_stream_only ||
@@ -293,11 +294,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   long long int corrected_linear_iterations = 0;
   Vector previous_archive_solution;
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  GradFluxErrorEstimator estimator(
-      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+  // Archive reduction never recovers a field. A streaming worker needs this operator
+  // only for requested flux recovery, not AMR estimation. Avoid building the otherwise
+  // unused RT hierarchy, which can exceed the memory of the electrostatic solve itself.
+  std::unique_ptr<GradFluxErrorEstimator<Vector>> estimator;
+  if (!archive_reduce_only &&
+      (!archive_stream_only || post_op.NeedsRecoveredElectricFlux()))
+  {
+    estimator = std::make_unique<GradFluxErrorEstimator<Vector>>(
+        laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+        iodata.solver.linear.estimator_mg);
+  }
   ErrorIndicator indicator;
 
   if (archive_reduce_only)
@@ -317,6 +325,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto t0 = Timer::Now();
   for (const auto &[idx, data] : laplace_op.GetSources())
   {
+    const auto source_start = Timer::Now();
+    double source_solve_seconds = 0.0;
+    long long source_iterations = 0;
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, n_step,
                idx, Timer::Duration(Timer::Now() - t0).count());
 
@@ -352,9 +363,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       const auto solves_before = ksp.NumTotalMult();
       const auto iterations_before = ksp.NumTotalMultIterations();
+      const auto solve_start = Timer::Now();
       ksp.Mult(RHS, V[step]);
+      source_solve_seconds = Timer::Duration(Timer::Now() - solve_start).count();
+      source_iterations = ksp.NumTotalMultIterations() - iterations_before;
       raw_linear_solves += ksp.NumTotalMult() - solves_before;
       raw_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
+      MFEM_VERIFY(!archive_stream_only || ksp.GetConverged(),
+                  "Refusing to archive an unconverged response source " << idx << "!");
     }
 
     // Start Post-processing.
@@ -369,7 +385,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (post_op.NeedsRecoveredElectricFlux())
     {
       Mpi::Print(" Recovering electric flux for interface postprocessing\n");
-      estimator.RecoverFlux(E, D);
+      estimator->RecoverFlux(E, D);
       post_op.SetRecoveredElectricFlux(D);
       if (!D_basis.empty())
       {
@@ -392,7 +408,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         previous_archive_solution = V[step];
       }
-      V[step].SetSize(0);
+      // SetSize(0) retains MFEM's allocated capacity; Destroy releases the completed
+      // field so storage cannot grow with the source count.
+      V[step].Destroy();
+      if (response_source_timing)
+      {
+        double times[2] = {source_solve_seconds,
+                           Timer::Duration(Timer::Now() - source_start).count()};
+        Mpi::GlobalMax(2, times, laplace_op.GetComm());
+        Mpi::Print("Response source timing: index={}, iterations={}, solve_seconds={:.9e}, "
+                   "total_seconds={:.9e}\n",
+                   idx, source_iterations, times[0], times[1]);
+      }
       step++;
       continue;
     }
@@ -516,7 +543,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {
             D_corrected.SetSize(laplace_op.GetRTSpace().GetTrueVSize());
             D_corrected.UseDevice(true);
-            estimator.RecoverFlux(E_corrected, D_corrected);
+            estimator->RecoverFlux(E_corrected, D_corrected);
             D_corrected_ptr = &D_corrected;
           }
 
@@ -557,11 +584,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print(" Updating solution error estimates\n");
     if (post_op.NeedsRecoveredElectricFlux())
     {
-      estimator.AddErrorIndicator(E, D, total_domain_energy, indicator);
+      estimator->AddErrorIndicator(E, D, total_domain_energy, indicator);
     }
     else
     {
-      estimator.AddErrorIndicator(E, total_domain_energy, indicator);
+      estimator->AddErrorIndicator(E, total_domain_energy, indicator);
     }
 
     // Next terminal.

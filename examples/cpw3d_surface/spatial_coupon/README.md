@@ -79,7 +79,12 @@ deleted after reduction.
 `mesh_spatial_coupon_swept.jl` is the explicit swept-mesh implementation for
 fabrication-resolved spatial response coupons. It is separate from
 `mesh_spatial_coupon.jl`, whose field-based anisotropic tetrahedral mode remains
-experimental.
+experimental. See [graded mesh qualification](graded-mesh-qualification.md) for
+configurable process geometry, generality scouts, supported/unsupported cases,
+and the provisional engineering versus strict accuracy profiles. The focused
+[matched volume-growth benchmark](matched-volume-growth-benchmark.md) and its
+[measured mesh results](mesh-growth-results-20260910.md) track DOFs, conditioning,
+source timings, memory, and accuracy without changing the integration method.
 
 ## Straight-edge swept milestone
 

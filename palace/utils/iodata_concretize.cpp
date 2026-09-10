@@ -568,6 +568,11 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
             ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
                                    {"LossTan", it->second.tandelta}});
             Concretize(j_entry, "FluxRecovery", it->second.flux_recovery);
+            if (!it->second.ownership_data_file.empty())
+            {
+              Concretize(j_entry, "OwnershipQuadratureOrder",
+                         it->second.ownership_quadrature_order);
+            }
             if (!it->second.edge_distances.empty())
             {
               Concretize(j_entry, "AutomaticEdges", it->second.automatic_edges);

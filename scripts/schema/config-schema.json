@@ -1890,6 +1890,27 @@
           "description": "Write the per-segment localized edge energies to `surface-Q-edge-local.csv`. Disable this for response-matrix coupon generation when localized energies are needed internally but the potentially large ordinary per-source table is not needed.",
           "default": true
         },
+        "OwnershipDataFile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CSV defining polygonal interface ownership as Group,Conductor,Slot,Role,Radius,X0,Y0,Z0,X1,Y1,Z1 in mesh units. Signature rows give already-extended ownership segments. Optional Boundary rows select the nearest physical conductor first within 3*Radius (SA rule). Every slot of a group must be configured on the same attributes with the same quadrature order. This opt-in electrostatic postprocessing path requires all ownership fields together."
+        },
+        "OwnershipGroup": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ownership group selected from OwnershipDataFile. Use distinct groups for process layers and conductor-restricted metal surfaces. A group with Boundary rows uses conductor-first selection."
+        },
+        "OwnershipSlot": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ownership slot selected from the nearest-segment partition in OwnershipGroup."
+        },
+        "OwnershipQuadratureOrder": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Boundary integration order for the discontinuous quadrature-point ownership mask. Convergence with this order must be checked."
+        },
         "EdgeFrameNormal": {
           "type": "array",
           "description": "Normal defining the positive and negative sides and the polarization frame for manual localized edge diagnostics. With `AutomaticEdges`, this is an optional fallback for materially ambiguous surfaces. The positive direction should point from the substrate or process side toward air or vacuum.",
@@ -1910,6 +1931,27 @@
         }
       },
       "dependencies": {
+        "OwnershipDataFile": {
+          "required": ["OwnershipGroup", "OwnershipSlot", "OwnershipQuadratureOrder", "Type"],
+          "properties": {
+            "Type": {"enum": ["MA", "MS", "SA"]}
+          }
+        },
+        "OwnershipGroup": [
+          "OwnershipDataFile",
+          "OwnershipSlot",
+          "OwnershipQuadratureOrder"
+        ],
+        "OwnershipSlot": [
+          "OwnershipDataFile",
+          "OwnershipGroup",
+          "OwnershipQuadratureOrder"
+        ],
+        "OwnershipQuadratureOrder": [
+          "OwnershipDataFile",
+          "OwnershipGroup",
+          "OwnershipSlot"
+        ],
         "EdgeAttributes": [
           "EdgeDistances"
         ],

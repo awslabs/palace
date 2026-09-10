@@ -1,0 +1,29 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Distances/sizes are in mesh units (um for the coupon process harness).
+# Surface sizing is fixed independently by the mesh_graded_tet_experiment CLI.
+MaxElements = 5000000
+MaxNodes = 1500000
+OptimizeVolume = true
+
+[[Variants]]
+Name = "baseline"
+NearGrowth = 1.0
+FarGrowth = 1.0
+TransitionDistance = 0.03
+MaximumSize = 0.25
+
+[[Variants]]
+Name = "fast-bulk"
+NearGrowth = 1.0
+FarGrowth = 2.0
+TransitionDistance = 0.04
+MaximumSize = 0.5
+
+[[Variants]]
+Name = "protected-edges"
+NearGrowth = 0.5
+FarGrowth = 2.0
+TransitionDistance = 0.02
+MaximumSize = 0.5

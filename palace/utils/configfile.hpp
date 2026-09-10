@@ -719,6 +719,15 @@ public:
   // air or vacuum.
   std::optional<std::array<double, 3>> edge_frame_normal = std::nullopt;
 
+  // Optional quadrature-point ownership partition for this interface. Coordinates in the
+  // CSV file are in mesh units; Group and Slot select one exhaustive nearest-segment cell.
+  std::string ownership_data_file = {};
+  int ownership_group = -1;
+  int ownership_slot = -1;
+  int ownership_quadrature_order = 0;
+  // Internal conversion from CSV mesh coordinates to nondimensional coordinates.
+  double ownership_coordinate_scale = 1.0;
+
   // Whether to evaluate normal electric flux using a recovered H(div) field. This is not
   // supported for cracked internal boundaries.
   bool flux_recovery = false;

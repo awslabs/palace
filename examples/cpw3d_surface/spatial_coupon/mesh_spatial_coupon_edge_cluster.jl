@@ -414,7 +414,8 @@ function triangle_phase(
     fabrication_primitives,
     plane,
     radius,
-    tolerance
+    tolerance;
+    etch_full_gap=false
 )
     point = triangle_centroid(triangle, coordinates)
     conductor = plan_conductor(facets, point, plane, tolerance)
@@ -424,7 +425,7 @@ function triangle_phase(
         primitive in fabrication_primitives
     ]
     nearest = argmin(distances)
-    return distances[nearest] <= 3radius + tolerance ?
+    return etch_full_gap || distances[nearest] <= 3radius + tolerance ?
            (:trench, fabrication_primitives[nearest].conductor) :
            (:ordinary, 0)
 end
@@ -537,7 +538,8 @@ function add_discrete_edge_cluster_mesh!(
     overetch,
     max_nodes,
     max_elements,
-    mesh_order
+    mesh_order;
+    etch_full_gap=false
 )
     tolerance = 1.0e-8 * radius
     plane = edges[1].point[3]
@@ -564,7 +566,8 @@ function add_discrete_edge_cluster_mesh!(
             plan.fabrication_primitives,
             plane,
             radius,
-            tolerance
+            tolerance;
+            etch_full_gap=etch_full_gap
         ) for triangle in plan.triangles
     ]
     substrate_connectivity = UInt64[]
@@ -607,6 +610,20 @@ function add_discrete_edge_cluster_mesh!(
         "Edge-cluster coupon exceeds linear element budget: " *
         "$linear_element_count > $max_elements"
     )
+
+    # Do not register nodes inside removed metal cells. They belong to no field
+    # element and Gmsh drops them on serialization, which otherwise changes the
+    # linear-mesh node count (and wastes memory before writing).
+    used_nodes=Set(substrate_connectivity)
+    union!(used_nodes,vacuum_connectivity)
+    keep=findall(tag->tag in used_nodes,node_tags)
+    node_tags=node_tags[keep]
+    used_coordinates=Float64[]
+    sizehint!(used_coordinates,3length(keep))
+    for i in keep, d in 1:3
+        push!(used_coordinates,coordinates[3i-3+d])
+    end
+    coordinates=used_coordinates
 
     substrate_entity = gmsh.model.addDiscreteEntity(3, 1)
     vacuum_entity = gmsh.model.addDiscreteEntity(3, 2)
@@ -876,6 +893,7 @@ function write_edge_cluster_metadata(
         println(stream, "  \"SweptVolumeElementCount\": $(evidence.volume_count),")
         println(stream, "  \"TransitionVolumeElementCount\": $(evidence.volume_count),")
         println(stream, "  \"InputEdgeCount\": $edge_count,")
+        println(stream, "  \"EtchFullGap\": $(hasproperty(evidence,:etch_full_gap) && evidence.etch_full_gap),")
         println(stream, "  \"FineSize\": $lc_normal,")
         println(stream, "  \"NormalSize\": $lc_normal,")
         println(stream, "  \"TangentialSize\": $lc_tangent,")
@@ -947,7 +965,8 @@ function generate_masked_edge_cluster_coupon(;
     max_nodes::Int,
     max_elements::Int,
     mesh_order::Int,
-    filename::String
+    filename::String,
+    etch_full_gap::Bool=false
 )
     abs(sidewall_angle - 90.0) <= 1.0e-12 || error(
         "Masked edge-cluster transition meshing requires 90 degree sidewalls"
@@ -1043,7 +1062,8 @@ function generate_masked_edge_cluster_coupon(;
             overetch,
             max_nodes,
             max_elements,
-            mesh_order
+            mesh_order;
+            etch_full_gap=etch_full_gap
         )
         mkpath(dirname(filename))
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
@@ -1082,6 +1102,7 @@ function generate_masked_edge_cluster_coupon(;
             evidence,
             (
                 minimum_jacobian=written_jacobian,
+                etch_full_gap=etch_full_gap,
                 volume_element_types=sort!([
                     gmsh.model.mesh.getElementProperties(element_type)[1] for
                     element_type in written_types

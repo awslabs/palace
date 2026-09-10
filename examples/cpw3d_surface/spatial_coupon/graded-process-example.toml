@@ -1,0 +1,12 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Geometry dimensions are in micrometres. These are process inputs, not meshing
+# tolerances or solution order. Legacy defaults match this process.
+Units = "um"
+Radius = 2.0
+MetalThickness = 0.1
+Overetch = 0.05
+SidewallAngle = 90.0
+TopRounding = 0.0
+TrenchRounding = 0.0

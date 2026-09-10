@@ -7,7 +7,10 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <fstream>
+#include <limits>
 #include <set>
+#include <sstream>
 #include <tuple>
 #include <utility>
 #include "fem/gridfunction.hpp"
@@ -18,8 +21,10 @@
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/geodata.hpp"
+#include "utils/interfaceownership.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
+#include "utils/ownershipquadrature.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
@@ -94,6 +99,29 @@ double EdgeDistanceWindowWeight(double distance, double distance_min, double dis
   return std::max(0.0, EdgeDistanceOutsideWeight(distance, distance_min, smoothing) -
                            EdgeDistanceOutsideWeight(distance, distance_max, smoothing));
 }
+
+class OwnershipCoefficient : public mfem::Coefficient
+{
+private:
+  std::unique_ptr<mfem::Coefficient> coefficient;
+  std::shared_ptr<const InterfaceOwnershipPartition> ownership;
+  int slot;
+
+public:
+  OwnershipCoefficient(std::unique_ptr<mfem::Coefficient> coefficient_,
+                       std::shared_ptr<const InterfaceOwnershipPartition> ownership_,
+                       int slot_)
+    : coefficient(std::move(coefficient_)), ownership(std::move(ownership_)), slot(slot_)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    return ownership->SelectSlot(point) == slot ? coefficient->Eval(T, ip) : 0.0;
+  }
+};
 
 class EdgeDistanceCoefficient : public mfem::Coefficient
 {
@@ -204,6 +232,16 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   localize_edge_energy = data.localize_edge_energy;
   save_local_edge_energy = data.save_local_edge_energy;
   edge_frame_normal = data.edge_frame_normal.value_or(std::array<double, 3>{});
+  ownership_slot = data.ownership_slot;
+  if (!data.ownership_data_file.empty())
+  {
+    ownership = std::make_shared<InterfaceOwnershipPartition>(
+        data.ownership_data_file, data.ownership_group, data.ownership_coordinate_scale);
+    MFEM_VERIFY(ownership->Slots().count(ownership_slot),
+                "Interface ownership group does not contain the selected slot!");
+    ownership_rule = std::make_shared<OwnershipQuadrature>(data.ownership_quadrature_order);
+  }
+  ownership_quadrature_order = data.ownership_quadrature_order;
   flux_recovery = data.flux_recovery;
 
   // Calculate surface dielectric loss according to the formulas from J. Wenner et al.,
@@ -241,26 +279,36 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
   MFEM_VERIFY(!flux_recovery || recovered_flux,
               "Interface dielectric flux recovery was requested but no recovered electric "
               "flux was supplied!");
+  std::unique_ptr<mfem::Coefficient> coefficient;
   switch (type)
   {
     case InterfaceDielectric::DEFAULT:
-      return std::make_unique<RestrictedCoefficient<
+      coefficient = std::make_unique<RestrictedCoefficient<
           InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>>(
           attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+      break;
     case InterfaceDielectric::MA:
-      return std::make_unique<
+      coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(
           attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+      break;
     case InterfaceDielectric::MS:
-      return std::make_unique<
+      coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(
           attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+      break;
     case InterfaceDielectric::SA:
-      return std::make_unique<
+      coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(
           attr_list, E, mat_op, t, epsilon, recovered_flux, component);
+      break;
   }
-  return {};  // For compiler warning
+  if (ownership)
+  {
+    return std::make_unique<OwnershipCoefficient>(std::move(coefficient), ownership,
+                                                  ownership_slot);
+  }
+  return coefficient;
 }
 
 SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
@@ -350,8 +398,20 @@ SurfacePostOperator::SurfacePostOperator(
                 "Automatic metal edge extraction requires complete boundary data!");
     metal_edges = ExtractMetalEdgeGeometry(mesh, *boundaries);
   }
+  using OwnershipKey = std::tuple<std::string, int, InterfaceDielectric, std::vector<int>,
+                                  double, double, bool>;
+  struct OwnershipCoverage
+  {
+    std::set<int> expected, configured;
+    int order;
+  };
+  std::map<OwnershipKey, OwnershipCoverage> ownership_coverage;
   for (const auto &[idx, data] : postpro.dielectric)
   {
+    MFEM_VERIFY(data.ownership_data_file.empty() ||
+                    problem_type == ProblemType::ELECTROSTATIC,
+                "Quadrature ownership is currently implemented for electrostatic "
+                "postprocessing only!");
     MFEM_VERIFY(
         !data.flux_recovery || !cracked_attributes ||
             std::none_of(
@@ -362,6 +422,31 @@ SurfacePostOperator::SurfacePostOperator(
         "boundaries: the volume L2 projection does not provide a controlled normal trace "
         "on a zero-thickness PEC surface!");
     auto it = eps_surfs.try_emplace(idx, data, bdr_attr_marker).first;
+    if (it->second.ownership)
+    {
+      MFEM_VERIFY(!data.attributes.empty(),
+                  "Ownership partition requires boundary attributes!");
+      MFEM_VERIFY(
+          std::all_of(
+              data.attributes.begin(), data.attributes.end(), [&](int a)
+              { return a > 0 && a <= bdr_attr_marker.Size() && bdr_attr_marker[a - 1]; }),
+          "Ownership partition references an absent boundary attribute!");
+      const OwnershipKey key{data.ownership_data_file,
+                             data.ownership_group,
+                             data.type,
+                             data.attributes,
+                             data.t,
+                             data.epsilon_r,
+                             data.flux_recovery};
+      auto [coverage, inserted] = ownership_coverage.try_emplace(
+          key, OwnershipCoverage{
+                   it->second.ownership->Slots(), {}, data.ownership_quadrature_order});
+      MFEM_VERIFY(
+          coverage->second.order == data.ownership_quadrature_order,
+          "All slots of one ownership partition must use the same quadrature order!");
+      MFEM_VERIFY(coverage->second.configured.insert(data.ownership_slot).second,
+                  "Duplicate slot in an interface ownership partition!");
+    }
     if (data.edge_distances.empty())
     {
       continue;
@@ -423,6 +508,12 @@ SurfacePostOperator::SurfacePostOperator(
       }
       it->second.edge_distance_tree = tree_it->second;
     }
+  }
+  for (const auto &[key, coverage] : ownership_coverage)
+  {
+    MFEM_VERIFY(
+        coverage.configured == coverage.expected,
+        "Incomplete interface ownership partition: every file slot must be configured!");
   }
   if (automatic_geometry && !*automatic_geometry && new_automatic_geometry &&
       !new_automatic_geometry->automatic_edge_distance_trees.empty())
@@ -531,7 +622,8 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridF
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
   auto f = it->second.GetCoefficient(E, D, mat_op);
-  double dot = GetLocalSurfaceIntegral(*f, attr_marker);
+  double dot =
+      GetLocalSurfaceIntegral(*f, attr_marker, it->second.ownership_quadrature_order);
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
 }
@@ -564,8 +656,10 @@ SurfacePostOperator::GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFu
                                     mfem::infinity(), data.edge_distance_smoothing);
     EdgeDistanceCoefficient annulus(*coefficient, *data.edge_distance_tree, distance,
                                     2.0 * distance, data.edge_distance_smoothing);
-    local_energy[2 * i] = GetLocalSurfaceIntegral(outside, attr_marker);
-    local_energy[2 * i + 1] = GetLocalSurfaceIntegral(annulus, attr_marker);
+    local_energy[2 * i] =
+        GetLocalSurfaceIntegral(outside, attr_marker, data.ownership_quadrature_order);
+    local_energy[2 * i + 1] =
+        GetLocalSurfaceIntegral(annulus, attr_marker, data.ownership_quadrature_order);
   }
   Mpi::GlobalSum(static_cast<int>(local_energy.size()), local_energy.data(), E.GetComm());
   for (std::size_t i = 0; i < data.edge_distances.size(); i++)
@@ -610,7 +704,8 @@ SurfacePostOperator::GetInterfaceOuterElectricFieldEnergies(const std::set<int> 
     const double distance = data.edge_distances.back();
     EdgeDistanceCoefficient outside(*coefficient, *data.edge_distance_tree, distance,
                                     mfem::infinity(), data.edge_distance_smoothing);
-    local_energies.push_back(GetLocalSurfaceIntegral(outside, attr_marker));
+    local_energies.push_back(
+        GetLocalSurfaceIntegral(outside, attr_marker, data.ownership_quadrature_order));
     energies.emplace(idx, InterfaceEdgeEnergy{distance, 0.0, 0.0});
   }
   Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
@@ -648,6 +743,9 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
   {
     return {};
   }
+  MFEM_VERIFY(
+      !data.ownership || !include_volume,
+      "Quadrature ownership partitions surfaces, not localized volume diagnostics!");
 
   const auto &mesh = *h1_fespace.GetParMesh();
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -682,12 +780,18 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
     auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(be);
     const auto *fe = h1_fespace.GetBE(be);
     const auto &ir =
-        mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+        data.ownership_rule
+            ? data.ownership_rule->Get(fe->GetGeomType())
+            : mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
     for (int q = 0; q < ir.GetNPoints(); q++)
     {
       const auto &ip = ir.IntPoint(q);
       T->SetIntPoint(&ip);
       T->Transform(ip, point);
+      if (data.ownership && data.ownership->SelectSlot(point) != data.ownership_slot)
+      {
+        continue;
+      }
       const auto nearest = data.edge_distance_tree->Nearest(point);
       const double distance = std::sqrt(nearest.distance_squared);
       const double vertex_distance =
@@ -847,14 +951,22 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
     auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(be);
     const auto *fe = h1_fespace.GetBE(be);
     const auto &ir =
-        mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+        data.ownership_rule
+            ? data.ownership_rule->Get(fe->GetGeomType())
+            : mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
     for (int q = 0; q < ir.GetNPoints(); q++)
     {
       const auto &ip = ir.IntPoint(q);
       T->SetIntPoint(&ip);
       T->Transform(ip, point);
+      if (data.ownership && data.ownership->SelectSlot(point) != data.ownership_slot)
+      {
+        continue;
+      }
       const auto nearest = data.edge_distance_tree->Nearest(point);
       distances.push_back(std::sqrt(nearest.distance_squared));
+      MFEM_VERIFY(!data.ownership || ip.weight >= 0.0,
+                  "Ownership matrix quadrature requires nonnegative weights!");
       weights.push_back(ip.weight * T->Weight());
       for (const auto &evaluator : evaluators)
       {
@@ -1118,11 +1230,36 @@ void SurfacePostOperator::ResetInterfaceLocalEdgeEnergyCache() const
   local_volume_edge_energy_cache.clear();
 }
 
-double
-SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
-                                             const mfem::Array<int> &attr_marker) const
+double SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
+                                                    const mfem::Array<int> &attr_marker,
+                                                    int quadrature_order) const
 {
   // Integrate the coefficient over the boundary attributes making up this surface index.
+  if (quadrature_order > 0)
+  {
+    const OwnershipQuadrature rules(quadrature_order);
+    auto &mesh = *h1_fespace.GetParMesh();
+    double integral = 0.0;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      const auto &rule = rules.Get(h1_fespace.GetBE(be)->GetGeomType());
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &point = rule.IntPoint(q);
+        MFEM_VERIFY(point.weight >= 0.0,
+                    "Ownership quadrature requires nonnegative weights!");
+        T->SetIntPoint(&point);
+        integral += point.weight * T->Weight() * f.Eval(*T, point);
+      }
+    }
+    return integral;
+  }
   mfem::LinearForm s(&h1_fespace);
   s.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
                           const_cast<mfem::Array<int> &>(attr_marker));
