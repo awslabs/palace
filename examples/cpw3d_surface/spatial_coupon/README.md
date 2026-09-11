@@ -1,3 +1,6 @@
+<!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Spatial coupon meshers
 
 ## Exact blockwise response matrices
@@ -94,6 +97,16 @@ serialized geometry/connectivity, quality, grouped physical-family areas,
 expected attributes, and SHA-bound partition certificates. MSH 2.2 is
 intentional: it is the format consumed by the Palace/MFEM reader used by these
 campaigns.
+
+The [graded-library campaign notes](graded-library-campaign-20260910.md) record
+full-scale source-contract checks and remaining qualification gates. Retained
+artificial etch collars can be exported with `export_etch_footprint.jl` and
+supplied explicitly using `--etch-boundary`; this preserves their actual planar
+footprint rather than changing process geometry during a mesh comparison.
+`audit_trace_continuity.py` detects side/cap T-junction jumps, and
+`repair_triangle_trace_caps.py` writes separate corrected traces while recording
+that the source functions changed. Such repairs require matched controls and
+must not be presented as byte-identical source migration.
 
 ## Straight-edge swept milestone
 

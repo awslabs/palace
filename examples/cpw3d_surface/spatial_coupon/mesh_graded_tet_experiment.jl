@@ -113,6 +113,14 @@ function main()
         isempty(expected_interfaces) && error("Empty expected interface set")
         deleteat!(args,interfaces_flag:interfaces_flag+1)
     end
+    etch_boundary = nothing
+    etch_flag = findfirst(==("--etch-boundary"), args)
+    if etch_flag !== nothing
+        etch_flag < length(args) || error("Missing retained etch-boundary CSV")
+        etch_boundary = abspath(args[etch_flag + 1])
+        isfile(etch_boundary) || error("Retained etch-boundary CSV does not exist")
+        deleteat!(args, etch_flag:etch_flag + 1)
+    end
     matching_trace = nothing
     trace_flag = findfirst(==("--matching-trace"), args)
     if trace_flag !== nothing
@@ -308,6 +316,7 @@ function main()
             println(f,"h=min($far,$fine+$growth*exact_distance_to_supported_CAD_curves)")
             println(f,"physical_segments=$(length(segments)) circular_arcs=$(length(GRADING_ARCS)) conic_arcs=$(length(GRADING_CONICS)) algorithm3d=$algorithm3d surface_algorithm=$surface_algorithm threads=1")
             println(f,"matching_trace=$matching_trace mode=$(get(ENV,"TET_TRACE_CONSTRAINT_MODE","all"))")
+            println(f,"etch_boundary=$etch_boundary sha256=$(etch_boundary===nothing ? "none" : bytes2hex(sha256(read(etch_boundary))))")
             println(f,"cap_size=$(GRADING_CAP_SIZE[]) slot_refinement_points=$(length(SLOT_REFINEMENT_POINTS)) slot_minimum_size=$slot_minimum")
             println(f,"surface_boundary_layer_width=$layer_width hxt_quality_target=$hxt_quality")
             println(f,"edge_tangent_size=$(GRADING_TANGENT[]) (0 means fully isotropic sizing)")
@@ -369,6 +378,7 @@ function main()
     try
         generate_spatial_coupon(signature=joinpath(root,"mesh-signature.csv"),
         mask=joinpath(root,"plan-view-mask.csv"),boundary=joinpath(root,"plan-view-boundary.csv"),
+        etch_boundary=etch_boundary,
         fabricated=kind=="fabricated",radius=radius,metal_thickness=thickness,overetch=etch,
         sidewall_angle=Float64(process["SidewallAngle"]),
         top_rounding=Float64(process["TopRounding"]),

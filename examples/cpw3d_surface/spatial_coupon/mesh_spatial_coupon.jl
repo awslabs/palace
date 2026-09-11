@@ -1048,6 +1048,7 @@ function generate_spatial_coupon(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
     boundary::Union{Nothing, String}=nothing,
+    etch_boundary::Union{Nothing, String}=nothing,
     fabricated::Bool,
     radius::Float64          = 2.0,
     metal_thickness::Float64 = 0.1,
@@ -1109,6 +1110,12 @@ function generate_spatial_coupon(;
     validate_plan_view_geometry(edges, radius, tolerance, facets)
     layers = layer_groups(edges, tolerance)
     pullback_metal = metal_thickness / tan(deg2rad(sidewall_angle))
+    etch_loops = etch_boundary === nothing ? nothing : read_boundary(etch_boundary)
+    if etch_loops !== nothing
+        fabricated && sidewall_angle == 90.0 && top_rounding == 0.0 &&
+            trench_rounding == 0.0 || error("Explicit etch footprints require sharp vertical fabricated geometry")
+        isempty(etch_loops) && error("Empty explicit etch footprint")
+    end
     pullback_trench = overetch > 0.0 ? overetch / tan(deg2rad(sidewall_angle)) : 0.0
 
     gmsh.initialize()
@@ -1160,7 +1167,13 @@ function generate_spatial_coupon(;
                 loop for
                 loop in boundary_loops if abs(loop.plane - layer.plane) <= tolerance
             ]
-            trenches = if isempty(boundary_loops)
+            trenches = if etch_loops !== nothing
+                footprint = [loop for loop in etch_loops
+                             if abs(loop.plane - layer.plane) <= tolerance]
+                isempty(footprint) && error("Explicit etch footprint is missing a process layer")
+                loft_mask(occ, footprint, layer.plane,
+                          layer.plane - layer.sign * overetch, 0.0, tolerance)
+            elseif isempty(boundary_loops)
                 result = Tuple{Int32, Int32}[]
                 for edge in layer.edges
                     append!(

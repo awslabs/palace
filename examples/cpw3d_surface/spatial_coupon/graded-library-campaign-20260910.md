@@ -120,6 +120,18 @@ it must not be hidden by aggregating ordinary and recessed interfaces. The large
 09 reference's serial quadrature audit hit its 180-second guard; 09/10 reference
 checks remain incomplete, not passed by inference.
 
+The 07 mismatch was subsequently reconciled with an explicit retained etch
+footprint. `export_etch_footprint.jl` extracts the actual recessed floor boundary
+from the old mesh, verifies its planar geometry/area, and removes only collinear
+vertices. Passing this derived input via `--etch-boundary` reproduced **all**
+07 material volumes and per-attribute areas within 8e-14 relative. The original
+mesh, artificial-collar geometry and 100 nm/50 nm process are unchanged. This
+opt-in compatibility input supports only sharp vertical fabrication; the default
+CAD offset policy is not silently changed for other callers. The subsequent complete
+comparison passed **all 12** spatial thin/fabricated CAD candidates against the
+retained material/conductor/interface-family measures, with worst relative
+difference 1.43e-10. Slot partitions are not certified by that family-level check.
+
 Acceptance still requires full original-dimensional matrices, fabricated
 MA/MS/SA accuracy, domain defect checks, strict transmon preflight, and a device
 smoke comparison. These pilots are not a replacement for full-basis generation.
