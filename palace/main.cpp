@@ -179,7 +179,8 @@ int main(int argc, char *argv[])
         "  -dry-run, --dry-run           Parse configuration file for errors and exit\n"
         "  --surface-response-preflight  Classify process-library coverage without "
         "solving\n"
-        "  --mesh-statistics             Report post-preprocessing H1 size without solving\n\n",
+        "  --mesh-statistics             Report post-preprocessing H1 size without "
+        "solving\n\n",
         executable_path.substr(executable_path.find_last_of('/') + 1));
   };
   for (int i = 1; i < argc; i++)

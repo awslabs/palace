@@ -126,8 +126,7 @@ void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   Mpi::Print(comm, "\n");
 }
 
-void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads,
-                       const char *git_tag)
+void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 {
   auto solver = MakeSolver(iodata, Mpi::Root(comm), Mpi::Size(comm), omp_threads, git_tag);
   MFEM_VERIFY(solver, "Unknown problem type in mesh statistics!");
