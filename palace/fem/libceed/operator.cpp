@@ -563,9 +563,12 @@ public:
                         std::unique_ptr<Operator> &&packed,
                         std::unique_ptr<ComplexWrapperOperator> &&remainder)
     : ComplexWrapperOperator(std::move(Ar), std::move(Ai)), packed(std::move(packed)),
-      remainder(std::move(remainder)), input(2 * width), output(2 * height),
-      input_view(input, 0, width), output_view(output, 0, height)
+      remainder(std::move(remainder)), input(2 * width), output(2 * height)
   {
+    input.UseDevice(true);
+    output.UseDevice(true);
+    input_view.MakeRef(input, 0, width);
+    output_view.MakeRef(output, 0, height);
   }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override
@@ -582,7 +585,8 @@ public:
                 "Invalid dimensions for packed complex application!");
     if (a != std::complex<double>{0.0})
     {
-      // The inherited AddMult applies the original real operators directly.
+      // LocalOperator() and CreateComplexOperator() expose AddMult to local callers.
+      // The inherited real-scale path requests unsupported negative CEED coefficients.
       y.AXPY(a, Apply(x));
     }
   }
@@ -671,6 +675,8 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   }
   // Keep every unmatched child exactly once. In particular, differing real/imaginary
   // boundary terms must not disable fusion of compatible domain contributions.
+  // These private remainders are only applied forward, so their transpose composites
+  // intentionally stay empty. Transposes use the retained original operators.
   std::unique_ptr<palace::Operator> remainder_parts[2];
   for (int part = 0; part < 2; part++)
   {

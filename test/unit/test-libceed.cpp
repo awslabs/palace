@@ -1814,8 +1814,8 @@ void CheckPackedActions(const ComplexOperator &actual, const ComplexOperator &re
   }
   if (inherited)
   {
-    // These operations retain the original real/imaginary operators. Check them once,
-    // independently of the forward-kernel/remainder cases.
+    // These operations retain the original real/imaginary operators. Check representative
+    // spaces and geometries, including the true-dof diagonal used by multigrid smoothers.
     {
       INFO("transpose application");
       reference.MultTranspose(x, expected);
@@ -1936,21 +1936,39 @@ TEST_CASE("libCEED packed complex QData application",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, mesh_file, order, curl, boundary, nested] =
-      GENERATE(table<const char *, const char *, int, bool, bool, bool>(
-          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false,
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric] =
+      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool>(
+          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
             false},
            {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
-            false},
+            false, false},
            {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false},
+            false, false},
            {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
-            true}}));
+            true, false},
+           {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
+            true, false, false, true},
+           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false},
+           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false},
+           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false}}));
   CAPTURE(name);
-  const bool inherited = curl && !boundary && !nested;
+  // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
+  // therefore exercises forward application only.
+  const bool inherited = !nested && !nonsymmetric;
   PackedIntegrationSettings settings(order);
-  auto mesh = Initialize(Mpi::World(),
-                         std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+  auto mesh = [mesh_file = mesh_file]()
+  {
+    if (mesh_file)
+    {
+      return Initialize(Mpi::World(),
+                        std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+    }
+    // The mixed Fichera mesh has no pyramids. Use low-order elements on a small
+    // generated mesh, with enough elements for every MPI rank and no AMR.
+    auto smesh =
+        mfem::Mesh::MakeCartesian3D(Mpi::Size(Mpi::World()), 1, 1, mfem::Element::PYRAMID);
+    return Mesh(Mpi::World(), smesh);
+  }();
   std::unique_ptr<mfem::FiniteElementCollection> fec;
   if (curl)
   {
@@ -1966,6 +1984,25 @@ TEST_CASE("libCEED packed complex QData application",
   auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
   auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  if (nonsymmetric)
+  {
+    // Unequal off-diagonal entries expose tensor-index transposition in both the
+    // complex mass action and the shared real curl action.
+    for (auto *coeff : {&real_mass, &imag_mass, &real_curl})
+    {
+      mfem::DenseTensor values(coeff->GetMaterialProperties());
+      for (int k = 0; k < values.SizeK(); k++)
+      {
+        values(0, 1, k) = 0.7;
+        values(1, 0, k) = -0.4;
+        values(0, 2, k) = -0.2;
+        values(2, 0, k) = 0.5;
+        values(1, 2, k) = 0.3;
+        values(2, 1, k) = -0.8;
+      }
+      *coeff = MaterialPropertyCoefficient(coeff->GetAttributeToMaterial(), values);
+    }
+  }
   real_mass *= -0.71;
   imag_mass *= 0.19;
   real_curl *= 1.37;
@@ -1993,6 +2030,21 @@ TEST_CASE("libCEED packed complex QData application",
   auto *original_real = real.get();
   auto *original_imag = imag.get();
   auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  if (mesh_file && std::string(mesh_file) == "fichera-mixed-p2.mesh" &&
+      Mpi::Size(Mpi::World()) == 1)
+  {
+    // Each volume geometry contributes a compatible pair to the same composite,
+    // exercising multiple iterations of the pairing loop, including prism bases.
+    for (auto *op : {real.get(), imag.get()})
+    {
+      CeedInt count;
+      REQUIRE(CeedOperatorCompositeGetNumSub((*op)[0], &count) == 0);
+      REQUIRE(count == 3);
+    }
+    REQUIRE(mesh.Get().HasGeometry(mfem::Geometry::TETRAHEDRON));
+    REQUIRE(mesh.Get().HasGeometry(mfem::Geometry::CUBE));
+    REQUIRE(mesh.Get().HasGeometry(mfem::Geometry::PRISM));
+  }
   if (nested)
   {
     // One small nested composite suffices: it must survive as a remainder alongside
@@ -2012,16 +2064,16 @@ TEST_CASE("libCEED packed complex QData application",
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
   // Establish activation without exposing the private implementation or its decomposition.
   REQUIRE_FALSE(IsOriginalComplexWrapper(*actual));
-  if (inherited)
+  if (mesh_file && std::string(mesh_file) == "fichera-tet.mesh" && !nested)
   {
-    // Verify that this test really exercises ND face transformations, not just signs.
+    // Verify both restriction clone paths: ND face transformations and RT signs.
     Ceed ceed = ceed::internal::GetCeedObjects()[0];
     const auto &geom = mesh.GetCeedGeomFactorData(ceed).at(mfem::Geometry::TETRAHEDRON);
     CeedRestrictionType type;
     REQUIRE(CeedElemRestrictionGetType(fespace.GetCeedElemRestriction(
                                            ceed, mfem::Geometry::TETRAHEDRON, geom.indices),
                                        &type) == 0);
-    REQUIRE(type == CEED_RESTRICTION_CURL_ORIENTED);
+    REQUIRE(type == (curl ? CEED_RESTRICTION_CURL_ORIENTED : CEED_RESTRICTION_ORIENTED));
   }
   CheckPackedActions(*actual, reference, inherited);
   if (!curl)
@@ -2089,7 +2141,7 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
     ref_imag->SetEssentialTrueDofs(essential, Operator::DIAG_ZERO);
   }
   ComplexWrapperOperator reference(&ref_real, ref_imag.get());
-  CheckPackedActions(*fine, reference);
+  CheckPackedActions(*fine, reference, lossy && !real_pc);
   ComplexParOperator borrowed(ref_local.Real(), ref_local.Imag(), fespace);
   borrowed.SetEssentialTrueDofs(essential, Operator::DIAG_ONE);
   REQUIRE(IsOriginalComplexWrapper(borrowed.LocalOperator()));
@@ -2114,6 +2166,10 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
 TEST_CASE("libCEED packed complex unsupported input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
   const auto [name, qdata, h1_space, tensor, scaled, real_only] =
       GENERATE(table<const char *, bool, bool, bool, bool, bool>(
           {{"Unassembled quadrature data", false, false, false, false, false},
