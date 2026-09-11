@@ -1938,7 +1938,8 @@ TEST_CASE("libCEED packed complex QData application",
   }
   const auto [name, mesh_file, order, curl, boundary, nested] =
       GENERATE(table<const char *, const char *, int, bool, bool, bool>(
-          {{"Mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false},
+          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false,
+            false},
            {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
             false},
            {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
@@ -1950,8 +1951,16 @@ TEST_CASE("libCEED packed complex QData application",
   PackedIntegrationSettings settings(order);
   auto mesh = Initialize(Mpi::World(),
                          std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
-  mfem::ND_FECollection fec(order, 3);
-  FiniteElementSpace fespace(mesh, &fec);
+  std::unique_ptr<mfem::FiniteElementCollection> fec;
+  if (curl)
+  {
+    fec = std::make_unique<mfem::ND_FECollection>(order, 3);
+  }
+  else
+  {
+    fec = std::make_unique<mfem::RT_FECollection>(order - 1, 3);
+  }
+  FiniteElementSpace fespace(mesh, fec.get());
   auto real_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
