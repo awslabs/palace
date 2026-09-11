@@ -1449,7 +1449,9 @@ inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
     for (int n = 0; n < ncmesh.GetNumNodes(); n++)
     {
       const auto &node = ncmesh.GetNode(n);
-      if (node.HasVertex())
+      // Nodes beyond the ghost layer still have vertex references but retain a negative
+      // vert_index (e.g. -4). Only numbered local and ghost vertices belong in this map.
+      if (node.HasVertex() && node.vert_index >= 0)
       {
         gi[node.vert_index] = n;
       }

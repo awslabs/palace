@@ -229,6 +229,17 @@ TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
   // master through its NCMesh MeshId rather than indexing ParMesh with Slave::master.
   if (Mpi::Size(submesh.GetComm()) > 1)
   {
+    // Nodes beyond the ghost layer may have vertex references without a valid vertex
+    // index. They must be skipped while retaining numbered ghost vertices for masters.
+    int unnumbered_vertices = 0;
+    for (int n = 0; n < par_mesh->ncmesh->GetNumNodes(); n++)
+    {
+      const auto &node = par_mesh->ncmesh->GetNode(n);
+      unnumbered_vertices += node.HasVertex() && node.vert_index < 0;
+    }
+    Mpi::GlobalSum(1, &unnumbered_vertices, submesh.GetComm());
+    REQUIRE(unnumbered_vertices > 0);
+
     int nonlocal_master_edges = 0;
     const auto &edge_list = par_mesh->ncmesh->GetEdgeList();
     mfem::Array<int> edges, orientations;
