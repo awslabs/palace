@@ -1,0 +1,17 @@
+diff --git a/repos/spack_repo/builtin/packages/libceed/package.py b/repos/spack_repo/builtin/packages/libceed/package.py
+index 16c1c073a89..ca1369a72ae 100644
+--- a/repos/spack_repo/builtin/packages/libceed/package.py
++++ b/repos/spack_repo/builtin/packages/libceed/package.py
+@@ -124,6 +124,12 @@ def common_make_opts(self):
+             if spec.satisfies("@:0.7") and "avx" in self.spec.target:
+                 makeopts.append("AVX=1")
+
++        elif spec.satisfies("@0.13:"):
++            # Spack does not supply release optimization for Makefile packages.
++            # Let libCEED detect the remaining compiler-specific flags.
++            opt = "-g" if spec.satisfies("+debug") else "-O3"
++            makeopts += ["OPT=%s $(MARCHFLAG) $(OPT.$(CC_VENDOR)) $(OMP_SIMD_FLAG)" % opt]
++
+         if spec.satisfies("@0.4:"):
+             if spec.satisfies("+cuda"):
+                 makeopts += ["CUDA_DIR=%s" % spec["cuda"].prefix]
