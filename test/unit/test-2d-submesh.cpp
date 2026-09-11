@@ -220,7 +220,9 @@ TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
   surface_attrs.Append(14);
   auto submesh = mfem::ParSubMesh::CreateFromBoundary(*par_mesh, surface_attrs);
   REQUIRE(submesh.Nonconforming());
-  REQUIRE(submesh.GetNE() > 0);
+  int global_elements = submesh.GetNE();
+  Mpi::GlobalSum(1, &global_elements, submesh.GetComm());
+  REQUIRE(global_elements > 0);
 
   // On two ranks this fixture includes a local slave whose master is not a locally
   // addressable ParMesh edge. Keep that case explicit: the remapper must resolve the
