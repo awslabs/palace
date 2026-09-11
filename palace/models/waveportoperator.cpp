@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "waveportoperator.hpp"
+#include <algorithm>
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "linalg/amg.hpp"
@@ -48,62 +49,23 @@ using namespace std::complex_literals;
 namespace
 {
 
-void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n,
-                          mfem::ParGridFunction &port_E0t, mfem::ParGridFunction &port_E0n,
-                          mfem::ParTransferMap &port_nd_transfer,
-                          mfem::ParTransferMap &port_h1_transfer,
+void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
+                          mfem::ParFiniteElementSpace &port_h1_fespace,
                           const mfem::Array<int> &dbc_attr,
                           mfem::Array<int> &port_nd_dbc_tdof_list,
                           mfem::Array<int> &port_h1_dbc_tdof_list)
 {
-  auto &nd_fespace = *E0t.ParFESpace();
-  auto &h1_fespace = *E0n.ParFESpace();
-  auto &port_nd_fespace = *port_E0t.ParFESpace();
-  auto &port_h1_fespace = *port_E0n.ParFESpace();
-  const auto &mesh = *nd_fespace.GetParMesh();
+  const auto &port_mesh = *port_nd_fespace.GetParMesh();
 
-  mfem::Array<int> dbc_marker, nd_dbc_tdof_list, h1_dbc_tdof_list;
-  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, dbc_attr,
-                     dbc_marker);
-  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
-
-  Vector tE0t(nd_fespace.GetTrueVSize()), tE0n(h1_fespace.GetTrueVSize());
-  tE0t.UseDevice(true);
-  tE0n.UseDevice(true);
-  tE0t = 0.0;
-  tE0n = 0.0;
-  linalg::SetSubVector(tE0t, nd_dbc_tdof_list, 1.0);
-  linalg::SetSubVector(tE0n, h1_dbc_tdof_list, 1.0);
-  E0t.SetFromTrueDofs(tE0t);
-  E0n.SetFromTrueDofs(tE0n);
-  port_nd_transfer.Transfer(E0t, port_E0t);
-  port_h1_transfer.Transfer(E0n, port_E0n);
-
-  Vector port_tE0t(port_nd_fespace.GetTrueVSize()),
-      port_tE0n(port_h1_fespace.GetTrueVSize());
-  port_tE0t.UseDevice(true);
-  port_tE0n.UseDevice(true);
-  port_E0t.ParallelProject(port_tE0t);
-  port_E0n.ParallelProject(port_tE0n);
-  {
-    const auto *h_port_tE0t = port_tE0t.HostRead();
-    const auto *h_port_tE0n = port_tE0n.HostRead();
-    for (int i = 0; i < port_tE0t.Size(); i++)
-    {
-      if (h_port_tE0t[i] != 0.0)
-      {
-        port_nd_dbc_tdof_list.Append(i);
-      }
-    }
-    for (int i = 0; i < port_tE0n.Size(); i++)
-    {
-      if (h_port_tE0n[i] != 0.0)
-      {
-        port_h1_dbc_tdof_list.Append(i);
-      }
-    }
-  }
+  // Parent and extracted-surface master/slave relations differ on NC meshes, so
+  // transferring a parent boundary marker can constrain interior port DoFs. Extract the
+  // essential DoFs directly from the remapped port boundary instead.
+  const int max_bdr_attr =
+      std::max(mesh::GetMaxBdrAttribute(port_mesh), dbc_attr.Size() ? dbc_attr.Max() : 0);
+  mfem::Array<int> dbc_marker;
+  mesh::AttrToMarker(max_bdr_attr, dbc_attr, dbc_marker);
+  port_nd_fespace.GetEssentialTrueDofs(dbc_marker, port_nd_dbc_tdof_list);
+  port_h1_fespace.GetEssentialTrueDofs(dbc_marker, port_h1_dbc_tdof_list);
 }
 
 void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
@@ -435,15 +397,13 @@ WavePortData::WavePortData(const config::WavePortData &data,
   port_nd_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_nd_fec.get());
   port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
 
-  GridFunction E0t(nd_fespace), E0n(h1_fespace);
+  GridFunction E0t(nd_fespace);
   port_E0t = std::make_unique<GridFunction>(*port_nd_fespace, true);
   port_E0n = std::make_unique<GridFunction>(*port_h1_fespace, true);
   port_E = std::make_unique<GridFunction>(*port_nd_fespace, true);
 
   port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
       mfem::ParSubMesh::CreateTransferMap(E0t.Real(), port_E0t->Real()));
-  port_h1_transfer = std::make_unique<mfem::ParTransferMap>(
-      mfem::ParSubMesh::CreateTransferMap(E0n.Real(), port_E0n->Real()));
 
   // Remap submesh attributes so that domain elements get the adjacent volume element
   // attribute (matching material definitions) and boundary edges get the adjacent boundary
@@ -488,9 +448,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // Extract Dirichlet BC true dofs for the port FE spaces.
   {
     mfem::Array<int> port_nd_dbc_tdof_list, port_h1_dbc_tdof_list;
-    GetEssentialTrueDofs(E0t.Real(), E0n.Real(), port_E0t->Real(), port_E0n->Real(),
-                         *port_nd_transfer, *port_h1_transfer, dbc_attr,
-                         port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
+    GetEssentialTrueDofs(*port_E0t->Real().ParFESpace(), *port_E0n->Real().ParFESpace(),
+                         dbc_attr, port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
     int nd_tdof_offset = port_nd_fespace->GetTrueVSize();
     port_dbc_tdof_list.Reserve(port_nd_dbc_tdof_list.Size() + port_h1_dbc_tdof_list.Size());
     for (auto tdof : port_nd_dbc_tdof_list)
@@ -604,22 +563,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
     voltage_n_samples = data.n_samples;
 
-    // Set up reverse transfer map (port submesh → parent mesh) and a parent-mesh
-    // GridFunction to receive the transferred mode field. This enables computing line
-    // integrals of the port mode E-field via GSLIB on the 3D parent mesh, since GSLIB
-    // requires SpaceDim == Dim and cannot work directly on the 2D-embedded port submesh.
-    parent_E0t = std::make_unique<GridFunction>(nd_fespace, true);
-    port_nd_transfer_reverse = std::make_unique<mfem::ParTransferMap>(
-        mfem::ParSubMesh::CreateTransferMap(port_E0t->Real(), parent_E0t->Real()));
+    SetUpExcitationVoltagePath();
 
 #if defined(MFEM_USE_GSLIB)
-    // Build the GSLIB point locator on the (fixed) parent mesh once here.
-    // GetExcitationVoltage reuses it for every line integral instead of rebuilding the
-    // spatial hash per call — the dominant cost when the mode is evaluated at many
-    // frequencies (e.g. synthesis fit).
-    auto &parent_mesh = *parent_E0t->Real().FESpace()->GetMesh();
-    voltage_gslib_op =
-        std::make_unique<mfem::FindPointsGSLIB>(parent_E0t->Real().ParFESpace()->GetComm());
+    auto &parent_mesh = *nd_fespace.GetParMesh();
+    voltage_gslib_op = std::make_unique<mfem::FindPointsGSLIB>(parent_mesh.GetComm());
     fem::SetupInterpolator(*voltage_gslib_op, parent_mesh);
 #endif
   }
@@ -636,6 +584,126 @@ WavePortData::~WavePortData()
   if (port_comm != MPI_COMM_NULL)
   {
     MPI_Comm_free(&port_comm);
+  }
+}
+
+void WavePortData::SetUpExcitationVoltagePath()
+{
+  auto &port_submesh = static_cast<mfem::ParSubMesh &>(port_mesh->Get());
+  MFEM_VERIFY(port_submesh.Dimension() == 2 && port_submesh.SpaceDimension() == 3,
+              "Wave port VoltagePath requires a two-dimensional surface in 3D!");
+  for (const auto &point : voltage_path)
+  {
+    MFEM_VERIFY(point.Size() == 3,
+                "Wave port VoltagePath points must be three-dimensional!");
+  }
+
+  // Use one physical point on the port to define its plane. All ranks need identical query
+  // coordinates for ParMesh::FindPoints, so broadcast it from the first rank that owns the
+  // port. Projecting the configured path onto this plane matches the previous flattened
+  // representation without introducing a second mesh or finite element space.
+  mfem::Vector plane_point(3);
+  plane_point = 0.0;
+  if (Mpi::Rank(port_submesh.GetComm()) == port_root)
+  {
+    MFEM_VERIFY(port_submesh.GetNE() > 0, "Wave port root has no local surface elements!");
+    auto *transformation = port_submesh.GetElementTransformation(0);
+    const auto &center = mfem::Geometries.GetCenter(transformation->GetGeometryType());
+    transformation->Transform(center, plane_point);
+  }
+  Mpi::Broadcast(3, plane_point.HostReadWrite(), port_root, port_submesh.GetComm());
+
+  std::vector<mfem::Vector> projected_path;
+  projected_path.reserve(voltage_path.size());
+  for (const auto &point : voltage_path)
+  {
+    mfem::Vector projected(point);
+    mfem::Vector offset(point);
+    offset -= plane_point;
+    projected.Add(-(offset * port_normal), port_normal);
+    projected_path.push_back(std::move(projected));
+  }
+
+  const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, voltage_n_samples);
+  const int points_per_segment = rule.GetNPoints();
+  const int num_segments = static_cast<int>(projected_path.size()) - 1;
+  const int num_points = num_segments * points_per_segment;
+  mfem::DenseMatrix points(3, num_points);
+  std::vector<std::array<double, 3>> weighted_tangents(num_points);
+  int point_index = 0;
+  for (int segment = 0; segment < num_segments; segment++)
+  {
+    mfem::Vector tangent(projected_path[segment + 1]);
+    tangent -= projected_path[segment];
+    MFEM_VERIFY(tangent.Norml2() > 0.0,
+                "Wave port VoltagePath must contain nonzero tangential segments!");
+    for (int i = 0; i < points_per_segment; i++, point_index++)
+    {
+      const auto &ip = rule.IntPoint(i);
+      for (int d = 0; d < 3; d++)
+      {
+        points(d, point_index) = projected_path[segment](d) + ip.x * tangent(d);
+        weighted_tangents[point_index][d] = ip.weight * tangent(d);
+      }
+    }
+  }
+
+  // Point location is performed once for the fixed port/path. Check every local element
+  // rather than relying on Mesh::FindPoints, whose nearest-element search is documented as
+  // not completely reliable. If a point lies on a partition boundary, use the lowest-rank
+  // owner so its contribution is counted exactly once.
+  mfem::Array<int> elements(num_points);
+  mfem::Array<mfem::IntegrationPoint> reference_points(num_points);
+  elements = -1;
+  mfem::InverseElementTransformation inverse;
+  mfem::Vector physical_point(3);
+  for (int i = 0; i < num_points; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      physical_point[d] = points(d, i);
+    }
+    for (int element = 0; element < port_submesh.GetNE(); element++)
+    {
+      inverse.SetTransformation(*port_submesh.GetElementTransformation(element));
+      if (inverse.Transform(physical_point, reference_points[i]) ==
+          mfem::InverseElementTransformation::Inside)
+      {
+        elements[i] = element;
+        break;
+      }
+    }
+  }
+
+  const int rank = Mpi::Rank(port_submesh.GetComm());
+  const int size = Mpi::Size(port_submesh.GetComm());
+  std::vector<int> owners(num_points);
+  for (int i = 0; i < num_points; i++)
+  {
+    owners[i] = elements[i] >= 0 ? rank : size;
+  }
+  Mpi::GlobalMin(num_points, owners.data(), port_submesh.GetComm());
+  int found = 0;
+  for (int i = 0; i < num_points; i++)
+  {
+    found += owners[i] < size;
+    if (owners[i] != rank)
+    {
+      elements[i] = owners[i] < size ? -2 : -1;
+    }
+  }
+  MFEM_VERIFY(found == num_points,
+              "Could not locate all WavePort VoltagePath quadrature points on the port "
+                  << "surface (found " << found << "/" << num_points << ")!");
+
+  voltage_samples.clear();
+  voltage_samples.reserve(num_points);
+  for (int i = 0; i < num_points; i++)
+  {
+    if (elements[i] >= 0)
+    {
+      voltage_samples.push_back({elements[i], reference_points[i], weighted_tangents[i]});
+    }
   }
 }
 
@@ -1040,31 +1108,25 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
   {
     return 0.0;
   }
-  // Transfer the port mode tangential E-field from the 2D port submesh back to the 3D
-  // parent mesh, then compute the line integral along the voltage path using GSLIB
-  // interpolation. Zero the parent field first since SubMeshToParent only writes the
-  // mapped DOFs (boundary face DOFs corresponding to the port submesh).
-  *parent_E0t = 0.0;
-  port_nd_transfer_reverse->Transfer(port_E0t->Real(), parent_E0t->Real());
-  port_nd_transfer_reverse->Transfer(port_E0t->Imag(), parent_E0t->Imag());
-  std::complex<double> V(0.0, 0.0);
-#if defined(MFEM_USE_GSLIB)
-  // Reuse the cached point locator (Setup once at construction) — the GSLIB spatial hash
-  // depends only on the parent mesh, not the transferred field values. (Line integrals
-  // require GSLIB regardless; the cached locator just avoids rebuilding the hash per call.)
-  for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+
+  // The modal field already lives on the embedded port submesh. Evaluate it directly at
+  // the cached segment quadrature points instead of transferring it to the parent mesh or
+  // copying it into a duplicate flattened finite element space.
+  double voltage_real = 0.0, voltage_imag = 0.0;
+  mfem::Vector field_real(3), field_imag(3);
+  for (const auto &sample : voltage_samples)
   {
-    V.real(V.real() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
-                                               voltage_path[k + 1], parent_E0t->Real(),
-                                               voltage_n_samples));
-    V.imag(V.imag() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
-                                               voltage_path[k + 1], parent_E0t->Imag(),
-                                               voltage_n_samples));
+    port_E0t->Real().GetVectorValue(sample.element, sample.point, field_real);
+    port_E0t->Imag().GetVectorValue(sample.element, sample.point, field_imag);
+    for (int d = 0; d < 3; d++)
+    {
+      voltage_real += sample.weighted_tangent[d] * field_real[d];
+      voltage_imag += sample.weighted_tangent[d] * field_imag[d];
+    }
   }
-#else
-  MFEM_ABORT("Wave port VoltagePath computation requires MFEM_USE_GSLIB!");
-#endif
-  return V;
+  double voltage[2] = {voltage_real, voltage_imag};
+  Mpi::GlobalSum(2, voltage, port_mesh->GetComm());
+  return {voltage[0], voltage[1]};
 }
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const
