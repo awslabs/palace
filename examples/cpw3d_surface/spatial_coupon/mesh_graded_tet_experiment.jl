@@ -13,6 +13,8 @@ const SIZE_CALLBACK_ROOTS = Any[]
 const GRADING_SEGMENTS = NTuple{6,Float64}[]
 const GRADING_ARCS = GradingArc[]
 const GRADING_CONICS = GradingConic[]
+const GRADING_TRACE_SEGMENTS = NTuple{6,Float64}[]
+const GRADING_TRACE_SIZE = Ref(0.0)
 const GRADING_FINE = Ref(0.002)
 const GRADING_FAR = Ref(0.5)
 const GRADING_GROWTH = Ref(1.0)
@@ -63,6 +65,14 @@ function exact_grading_callback(dim,tag,x,y,z,lc,data)::Cdouble
     if GRADING_CAP_SIZE[] > 0
         distance=min(abs(z-GRADING_CAP_Z[][1]),abs(z-GRADING_CAP_Z[][2]))
         size=min(size,GRADING_CAP_SIZE[]+0.5distance)
+    end
+    if GRADING_TRACE_SIZE[] > 0
+        trace_distance2 = Inf
+        for segment in GRADING_TRACE_SEGMENTS
+            trace_distance2 = min(trace_distance2,
+                                  grading_segment_distance2((x,y,z),segment))
+        end
+        size = min(size, GRADING_TRACE_SIZE[] + 0.5sqrt(trace_distance2))
     end
     SLOT_SIZE_TREE[]===nothing || (size=query_size_point(SLOT_SIZE_TREE[],(x,y,z),size))
     return size
@@ -127,6 +137,32 @@ function main()
         trace_flag < length(args) || error("Missing matching-trace path")
         matching_trace = abspath(args[trace_flag+1])
         deleteat!(args,trace_flag:(trace_flag+1))
+    end
+    GRADING_TRACE_SIZE[] = parse(Float64, get(ENV,"TET_TRACE_SIZE","0"))
+    isfinite(GRADING_TRACE_SIZE[]) && GRADING_TRACE_SIZE[] >= 0 || error("Invalid trace size")
+    empty!(GRADING_TRACE_SEGMENTS)
+    if GRADING_TRACE_SIZE[] > 0
+        matching_trace !== nothing || error("Trace grading requires an explicit matching trace")
+        trace_data, trace_header = readdlm(matching_trace, ',', header=true)
+        columns = Dict(name=>i for (i,name) in enumerate(vec(String.(trace_header))))
+        trace_triangles = Dict{Int,Vector{NTuple{3,Float64}}}()
+        for row in axes(trace_data,1)
+            point = ntuple(d->Float64(trace_data[row,columns[("x","y","z")[d]]]),3)
+            all(isfinite,point) || error("Non-finite trace grading coordinate")
+            push!(get!(trace_triangles,Int(trace_data[row,columns["triangle"]]),NTuple{3,Float64}[]),point)
+        end
+        seen = Set{Tuple{NTuple{3,Float64},NTuple{3,Float64}}}()
+        for triangle in values(trace_triangles)
+            length(triangle)==3 || error("Malformed trace triangle")
+            for i in 1:3
+                a,b = triangle[i],triangle[mod1(i+1,3)]
+                key = isless(a,b) ? (a,b) : (b,a)
+                key in seen && continue
+                push!(seen,key)
+                sum((a[d]-b[d])^2 for d in 1:3)>0 || error("Zero-length trace segment")
+                push!(GRADING_TRACE_SEGMENTS,(a...,b...))
+            end
+        end
     end
     slot_refine_path = get(ENV,"TET_SLOT_REFINEMENT_POINTS","")
     empty!(SLOT_REFINEMENT_POINTS)
@@ -235,7 +271,8 @@ function main()
         gmsh.model.mesh.field.add("MathEval",999)
         gmsh.model.mesh.field.setString(999,"F",string(far))
         gmsh.model.mesh.field.setAsBackgroundMesh(999)
-        gmsh.option.setNumber("Mesh.MeshSizeMin",min(fine,slot_minimum))
+        gmsh.option.setNumber("Mesh.MeshSizeMin",min(fine,slot_minimum,
+            GRADING_TRACE_SIZE[]>0 ? GRADING_TRACE_SIZE[] : fine))
         gmsh.option.setNumber("General.Verbosity", parse(Int, get(ENV,"TET_VERBOSITY","4")))
         gmsh.option.setNumber("General.NumThreads",1)
         gmsh.option.setNumber("Mesh.MaxNumThreads1D",1)
@@ -316,6 +353,7 @@ function main()
             println(f,"h=min($far,$fine+$growth*exact_distance_to_supported_CAD_curves)")
             println(f,"physical_segments=$(length(segments)) circular_arcs=$(length(GRADING_ARCS)) conic_arcs=$(length(GRADING_CONICS)) algorithm3d=$algorithm3d surface_algorithm=$surface_algorithm threads=1")
             println(f,"matching_trace=$matching_trace mode=$(get(ENV,"TET_TRACE_CONSTRAINT_MODE","all"))")
+            println(f,"matching_trace_size=$(GRADING_TRACE_SIZE[]) matching_trace_segments=$(length(GRADING_TRACE_SEGMENTS))")
             println(f,"etch_boundary=$etch_boundary sha256=$(etch_boundary===nothing ? "none" : bytes2hex(sha256(read(etch_boundary))))")
             println(f,"cap_size=$(GRADING_CAP_SIZE[]) slot_refinement_points=$(length(SLOT_REFINEMENT_POINTS)) slot_minimum_size=$slot_minimum")
             println(f,"surface_boundary_layer_width=$layer_width hxt_quality_target=$hxt_quality")

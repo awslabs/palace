@@ -107,9 +107,11 @@ use. It is **not** a full-library speedup or an accuracy pass. The domain
 submatrix differs by 1.541% Frobenius and 15.10% worst energy. Source 130's
 individual discrepancy fell from 8.83% to 0.0344% after correcting the cap
 functions, but the sharp source 128 remains sensitive to discretization.
-Job 41651 repeats these seven active sources at p5 on both meshes to distinguish
-reference p4 uncertainty from candidate error. Production orders are not changed
-by that diagnostic.
+Job 41651 repeated these seven active sources at p5 on both meshes. The prism
+and tet pilots completed in 668.98 s and 400.55 s respectively. However, source
+128 changed by **+6.10%** on the prism and **-2.17%** on the tet from p4 to p5;
+source 32 changed by -2.50% / +0.759%. Neither is a converged reference for these
+sharp sources. Production orders are not changed by that diagnostic.
 
 All 12 spatial CAD candidates were constructed. Against the retained mesh,
 material/family geometry checks passed for cases 05/06/08 and thin 07. Fabricated
@@ -131,6 +133,26 @@ CAD offset policy is not silently changed for other callers. The subsequent comp
 comparison passed **all 12** spatial thin/fabricated CAD candidates against the
 retained material/conductor/interface-family measures, with worst relative
 difference 1.43e-10. Slot partitions are not certified by that family-level check.
+
+## Remaining matching-boundary geometry discrepancy
+
+A further candidate conforms to the corrected cap triangles and adds local
+10 nm grading around their trace edges, independently of the 2 nm physical-edge
+size. It generated 3,372,568 tets in 156.7 seconds, but its maximum kappa was 3542
+and it still reported **seven off-box trace segments**. No PDE generation was
+launched on that candidate.
+
+For example, the declared trace connects `(2, -8, -0.05)` to
+`(6, -7, -0.05)` across a corner of the actual rectangular matching box
+`[-8,6] x [-8,8]`. The segment lies on neither side face. The corner `(6,-8)` is
+missing from the retained perimeter nodes. Cap continuity alone does not repair
+this mismatch between the declared trace surface and the coupon boundary.
+
+The retained inputs therefore cannot simply be copied while claiming an exact,
+mesh-independent replacement trace space. A corrected boundary needs explicit
+corner geometry, with either added basis nodes or a supported constrained lift.
+That is a source/basis-contract change and must be distinguished from pure
+meshing acceleration and compared using matched corrected controls.
 
 Acceptance still requires full original-dimensional matrices, fabricated
 MA/MS/SA accuracy, domain defect checks, strict transmon preflight, and a device

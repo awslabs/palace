@@ -131,7 +131,8 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
             frozen_surface_fingerprint()==surface || error("Clearing the volume altered the boundary mesh")
             GRADING_VOLUME_PROFILE[]=profile
             fill!(GRADING_QUERY_COUNTS,0)
-            gmsh.option.setNumber("Mesh.MeshSizeMin",min(fine,profile.minimum_size))
+            gmsh.option.setNumber("Mesh.MeshSizeMin",min(fine,profile.minimum_size,
+                GRADING_TRACE_SIZE[]>0 ? GRADING_TRACE_SIZE[] : fine))
             gmsh.option.setNumber("Mesh.MeshSizeMax",max(GRADING_FAR[],profile.maximum_size))
             started=time()
             println("Volume variant $name: $profile");flush(stdout)

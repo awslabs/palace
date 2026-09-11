@@ -328,6 +328,21 @@ end
     @test exact_grading_callback(3,0,.5,.10,0.,1.,C_NULL) ≈ .102
 end
 
+@testset "Matching trace refinement remains local in 3D" begin
+    empty!(GRADING_SEGMENTS);push!(GRADING_SEGMENTS,(10.,0.,0.,11.,0.,0.))
+    empty!(GRADING_ARCS);empty!(GRADING_CONICS)
+    SLOT_SIZE_TREE[]=nothing;GRADING_CAP_SIZE[]=0.;GRADING_TANGENT[]=0.
+    GRADING_FINE[]=.002;GRADING_FAR[]=.5;GRADING_GROWTH[]=1.
+    GRADING_VOLUME_PROFILE[]=nothing
+    empty!(GRADING_TRACE_SEGMENTS);push!(GRADING_TRACE_SEGMENTS,(0.,0.,0.,1.,0.,0.))
+    GRADING_TRACE_SIZE[]=.01
+    @test exact_grading_callback(2,0,.5,0.,0.,1.,C_NULL) ≈ .01
+    @test exact_grading_callback(3,0,.5,0.,.04,1.,C_NULL) ≈ .03
+    @test exact_grading_callback(3,0,.5,0.,2.,1.,C_NULL) == .5
+    GRADING_TRACE_SIZE[]=0.;empty!(GRADING_TRACE_SEGMENTS)
+    @test exact_grading_callback(3,0,.5,0.,.04,1.,C_NULL) == .5
+end
+
 @testset "Named ARM-compatible size callback" begin
     empty!(GRADING_SEGMENTS);push!(GRADING_SEGMENTS,(0.,0.,0.,10.,0.,0.))
     empty!(GRADING_HORIZONTAL_CURVES);GRADING_TANGENT[]=0.
