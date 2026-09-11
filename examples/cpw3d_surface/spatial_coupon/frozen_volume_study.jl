@@ -40,8 +40,41 @@ function frozen_surface_fingerprint()
                 "Nodes"=>length(used),"Attributes"=>sort!(attributes))
 end
 
+# Reconstruct the same material shells from a saved surface without rerunning
+# expensive surface meshing. The surface file remains a Gmsh 2.2 checkpoint.
+function restore_frozen_surface(resume)
+    Set(keys(resume))==Set(["Mesh","SHA256"]) || error("Invalid ResumeSurface settings")
+    path=String(resume["Mesh"])
+    bytes2hex(sha256(read(path)))==resume["SHA256"] || error("Saved surface hash mismatch")
+    shells=[(Int(volume),[Int(tag) for (_,tag) in gmsh.model.getBoundary([(3,volume)],false,true,false)])
+            for (_,volume) in gmsh.model.getEntities(3)]
+    materials=[(Int(attribute),Int.(gmsh.model.getEntitiesForPhysicalGroup(3,attribute)))
+               for (_,attribute) in gmsh.model.getPhysicalGroups(3)]
+    gmsh.clear()
+    gmsh.open(path)
+    isempty(gmsh.model.getEntities(3)) || error("ResumeSurface must contain only the saved boundary")
+    surfaces=Set(Int(tag) for (_,tag) in gmsh.model.getEntities(2))
+    Set(abs(tag) for (_,shell) in shells for tag in shell)==surfaces ||
+        error("Saved surface entities differ from the regenerated CAD shells")
+    for (volume,shell) in shells
+        loop=gmsh.model.geo.addSurfaceLoop(shell)
+        gmsh.model.geo.addVolume([loop],volume)
+    end
+    gmsh.model.geo.synchronize()
+    for (attribute,volumes) in materials
+        gmsh.model.addPhysicalGroup(3,volumes,attribute)
+    end
+    callback=@cfunction(exact_grading_callback,Cdouble,(Cint,Cint,Cdouble,Cdouble,Cdouble,Cdouble,Ptr{Cvoid}))
+    push!(SIZE_CALLBACK_ROOTS,callback)
+    ierr=Ref{Cint}()
+    ccall((:gmshModelMeshSetSizeCallback,gmsh.lib),Cvoid,
+          (Ptr{Cvoid},Ptr{Cvoid},Ptr{Cint}),callback,C_NULL,ierr)
+    ierr[]==0 || error(gmsh.logger.getLastError())
+    return nothing
+end
+
 function run_frozen_volume_study(settings,output,lower,upper,fine)
-    Set(keys(settings))<=Set(["Variants","MaxElements","MaxNodes","OptimizeVolume"]) ||
+    Set(keys(settings))<=Set(["Variants","MaxElements","MaxNodes","OptimizeVolume","ResumeSurface"]) ||
         error("Unknown volume-study setting")
     variants=get(settings,"Variants",nothing)
     variants isa Vector && !isempty(variants) || error("Volume study requires Variants")
@@ -71,13 +104,18 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
     end
     gmsh.option.setNumber("Mesh.Renumber",0)
     started=time()
-    gmsh.model.mesh.generate(2)
+    if haskey(settings,"ResumeSurface")
+        restore_frozen_surface(settings["ResumeSurface"])
+    else
+        gmsh.model.mesh.generate(2)
+    end
     surface_seconds=time()-started
     surface=frozen_surface_fingerprint()
     gmsh.write(splitext(output)[1]*"-surface.msh")
     report=Dict{String,Any}("Scope"=>"Fixed-surface volume mesh comparison; no accuracy qualification",
         "Boundary"=>surface,"Lower"=>collect(lower),"Upper"=>collect(upper),
         "SurfaceSeconds"=>surface_seconds,"GeometryOrder"=>1,
+        "ResumedSurface"=>haskey(settings,"ResumeSurface"),
         "SurfaceSizing"=>Dict("MinimumSize"=>fine,"MaximumSize"=>GRADING_FAR[],
                               "Growth"=>GRADING_GROWTH[],"TangentialEdgeSize"=>GRADING_TANGENT[]),
         "GmshVersion"=>gmsh.option.getString("General.Version"),"Variants"=>Dict{String,Any}[])
@@ -103,7 +141,9 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
             types==[4] || error("Volume study produced non-tetrahedral elements")
             elements=sum(length,element_tags)
             nodes=length(gmsh.model.mesh.getNodes()[1])
-            elements<=maximum_elements && nodes<=maximum_nodes || error("Volume study exceeded its mesh budget")
+            println("Volume counts before optimization: elements=$elements nodes=$nodes");flush(stdout)
+            elements<=maximum_elements && nodes<=maximum_nodes ||
+                error("Volume study exceeded its mesh budget: elements=$elements/$maximum_elements nodes=$nodes/$maximum_nodes")
             frozen_surface_fingerprint()==surface || error("Volume mesher changed an input boundary triangle/node")
             optimize && gmsh.model.mesh.optimize("Netgen")
             frozen_surface_fingerprint()==surface || error("Volume optimization changed the fixed boundary")

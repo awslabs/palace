@@ -176,6 +176,37 @@ function main()
         gmsh.write(output)
         output_sha256 = file_sha256(output)
         certificate = output * ".interface-partition.csv.elements.csv"
+        gmsh.clear()
+        gmsh.open(output)
+        canonical_node_geometry == canonical_nodes() || error("Serialized node geometry changed")
+        canonical_volume_geometry == canonical_elements(3) || error("Serialized volume geometry/connectivity changed")
+        canonical_surface_geometry == canonical_elements(2) || error("Serialized surface geometry/connectivity changed")
+        check_measures(before_measures, grouped_surface_measures())
+        serialized_volume_tags = collect(keys(dimension_elements(3)))
+        after_quality = minimum(gmsh.model.mesh.getElementQualities(serialized_volume_tags, "minSICN"))
+        abs(after_quality - before_quality) <= 1e-14 || error("Serialized volume quality changed")
+        # MSH 2.2 renumbering also affects the diagnostic certificate: bind it to
+        # actual serialized element/node IDs, not the pre-write in-memory IDs.
+        serialized_coordinates = node_coordinates()
+        coordinate_to_node = Dict(point => node for (node, point) in serialized_coordinates)
+        length(coordinate_to_node) == length(serialized_coordinates) || error("Duplicate coordinates")
+        serialized_faces = Dict(Tuple(sort(nodes)) => element
+                                for (element, (_, nodes)) in surface_elements())
+        temporary_certificate = certificate * ".tmp"
+        open(certificate) do source
+            open(temporary_certificate, "w") do target
+                println(target, readline(source))
+                for line in eachline(source)
+                    fields = split(line, ',')
+                    length(fields) == 6 || error("Invalid partition certificate row")
+                    nodes = [coordinate_to_node[before_nodes[parse(UInt64, field)]]
+                             for field in fields[4:6]]
+                    element = serialized_faces[Tuple(sort(nodes))]
+                    println(target, join((element, fields[2], fields[3], nodes...), ','))
+                end
+            end
+        end
+        mv(temporary_certificate, certificate; force = true)
         open(output * ".partition-certificate.toml", "w") do stream
             TOML.print(stream, Dict(
                 "Version" => 1,
@@ -189,15 +220,6 @@ function main()
                 "Fabricated" => kind == "fabricated"
             ); sorted = true)
         end
-        gmsh.clear()
-        gmsh.open(output)
-        canonical_node_geometry == canonical_nodes() || error("Serialized node geometry changed")
-        canonical_volume_geometry == canonical_elements(3) || error("Serialized volume geometry/connectivity changed")
-        canonical_surface_geometry == canonical_elements(2) || error("Serialized surface geometry/connectivity changed")
-        check_measures(before_measures, grouped_surface_measures())
-        serialized_volume_tags = collect(keys(dimension_elements(3)))
-        after_quality = minimum(gmsh.model.mesh.getElementQualities(serialized_volume_tags, "minSICN"))
-        abs(after_quality - before_quality) <= 1e-14 || error("Serialized volume quality changed")
         metadata = Dict(
             "Version" => 2,
             "Method" => "Exact element-wise interface ownership after frozen-surface volume generation",
@@ -214,7 +236,7 @@ function main()
             "SerializedRoundTripVerified" => true,
             "MinimumSignedInverseCondition" => after_quality,
             "MaximumGroupedPhysicalFamilyAreaDifference" => measure_difference,
-            "ExpectedInterfaceAttributes" => expected === nothing ? nothing : sort!(collect(expected)),
+            "ExpectedInterfaceAttributes" => expected === nothing ? Int[] : sort!(collect(expected)),
             "ActualInterfaceAttributes" => sort!(collect(actual))
         )
         open(output * ".relabel.toml", "w") do stream

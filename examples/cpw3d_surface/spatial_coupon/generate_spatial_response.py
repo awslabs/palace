@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Generate response inputs for endpoint, junction, and spatial-edge coupons."""
 
 import argparse
@@ -528,19 +531,33 @@ def cap_ring(triangles, points, offset, size, reverse):
             signed_area = first[0] * second[1] - first[1] * second[0]
             if signed_area <= area_tolerance:
                 continue
+            # An ear's diagonal must not skip another boundary vertex. In
+            # particular, greedily clipping the last non-collinear corner can
+            # leave a whole collinear chain with no incident cap triangles.
+            # Its nodal hats would then jump between side and cap faces.
+            diagonal = points[following, :2] - points[previous, :2]
+            diagonal_squared = float(diagonal @ diagonal)
+            skipped_vertex = False
+            for other in remaining:
+                if other in (previous, current, following):
+                    continue
+                relative = points[other, :2] - points[previous, :2]
+                cross = diagonal[0] * relative[1] - diagonal[1] * relative[0]
+                projection = float(relative @ diagonal)
+                if (abs(cross) <= area_tolerance and
+                        -area_tolerance <= projection <= diagonal_squared + area_tolerance):
+                    skipped_vertex = True
+                    break
+            if skipped_vertex:
+                continue
             triangle = (previous, current, following)
             triangles.append(tuple(reversed(triangle)) if reverse else triangle)
             remaining.pop(position)
             break
         else:
-            polygon = points[remaining, :2]
-            twice_area = np.sum(
-                polygon[:, 0] * np.roll(polygon[:, 1], -1)
-                - polygon[:, 1] * np.roll(polygon[:, 0], -1)
+            raise ValueError(
+                "Unable to triangulate matching-surface cap without dropping boundary nodes"
             )
-            if abs(twice_area) <= 2.0 * area_tolerance:
-                break
-            raise ValueError("Unable to triangulate matching-surface cap")
 
 
 def build_matching_surface(

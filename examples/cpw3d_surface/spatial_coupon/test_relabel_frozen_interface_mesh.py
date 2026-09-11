@@ -3,6 +3,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -108,6 +109,21 @@ class FrozenInterfaceRelabelTest(unittest.TestCase):
                 text=True,
                 env=environment,
             )
+            surface = root / "family-surface.msh"
+            resume = root / "resume.toml"
+            resume.write_text(study.read_text() + '\n[ResumeSurface]\nMesh = "' +
+                              str(surface) + '"\nSHA256 = "' +
+                              hashlib.sha256(surface.read_bytes()).hexdigest() + '"\n')
+            subprocess.run(
+                [*common, str(root / "resumed.msh"), "1", "0.05", "0.4", "--process",
+                 str(root / "process.toml"), "--volume-study", str(resume),
+                 "--reference-measures", str(geometry) + ".cad-measures.csv"],
+                check=True, capture_output=True, text=True, env=environment,
+            )
+            first = tomllib.loads((root / "family.msh.volume-study.toml").read_text())
+            second = tomllib.loads((root / "resumed.msh.volume-study.toml").read_text())
+            self.assertEqual(first["Boundary"], second["Boundary"])
+            self.assertTrue(second["ResumedSurface"])
             expected = root / "expected.csv"
             expected.write_text(
                 "dimension,attribute,measure\n"
@@ -142,6 +158,14 @@ class FrozenInterfaceRelabelTest(unittest.TestCase):
             self.assertTrue(metadata["SerializedRoundTripVerified"])
             certificate = tomllib.loads((Path(str(output) + ".partition-certificate.toml")).read_text())
             self.assertEqual(certificate["MeshSHA256"], metadata["OutputSHA256"])
+            # A SHA binding alone cannot catch stale pre-serialization element IDs.
+            # The downstream diagnostic tagger validates every certificate key.
+            subprocess.run(
+                [self.julia, f"--project={self.project}",
+                 str(ROOT / "tag_partition_uncertainty.jl"), str(output),
+                 str(root / "diagnostic.msh")],
+                check=True, capture_output=True, text=True, env=environment,
+            )
 
 
 if __name__ == "__main__":
