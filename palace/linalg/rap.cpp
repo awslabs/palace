@@ -398,8 +398,8 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
                                        bool test_restrict)
   : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
     data_A((dAr != nullptr || dAi != nullptr)
-               ? std::make_unique<ComplexWrapperOperator>(std::move(dAr), std::move(dAi))
-               : std::make_unique<ComplexWrapperOperator>(pAr, pAi)),
+               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi))
+               : ceed::CreateComplexOperator(pAr, pAi)),
     A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
     use_R(test_restrict), diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
     RAPr(A->Real()
