@@ -4,7 +4,6 @@
 #ifndef PALACE_LIBCEED_OPERATOR_HPP
 #define PALACE_LIBCEED_OPERATOR_HPP
 
-#include <atomic>
 #include <memory>
 #include <vector>
 #include "fem/libceed/ceed.hpp"
@@ -37,7 +36,6 @@ protected:
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
   mutable Vector temp;
-  std::atomic<std::size_t> application_revision{0};
 
 public:
   Operator(int h, int w);
@@ -53,17 +51,9 @@ public:
 
   void DestroyAssemblyData() const;
 
-  void SetDofMultiplicity(Vector &&mult)
-  {
-    dof_multiplicity = std::move(mult);
-    application_revision.fetch_add(1, std::memory_order_relaxed);
-  }
+  void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
 
   bool HasDofMultiplicity() const { return dof_multiplicity.Size() > 0; }
-  auto ApplicationRevision() const
-  {
-    return application_revision.load(std::memory_order_relaxed);
-  }
 
   void AssembleDiagonal(Vector &diag) const override;
 
@@ -90,52 +80,14 @@ public:
   }
 };
 
-// CPU application of compatible QData-assembled complex volume terms.
-// The original real/imaginary operators remain owned/referenced by the base class for
-// diagonal, transpose, full assembly, and coarsening. Unmatched leaves use the original
-// four-real-application formulation.
-class PackedComplexOperator final : public ComplexWrapperOperator
-{
-private:
-  struct Data;
-  std::unique_ptr<Data> data;
-
-  bool CanApplyPacked() const;
-  static std::unique_ptr<Data> Build(const palace::Operator *Ar,
-                                     const palace::Operator *Ai);
-  PackedComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
-                        std::unique_ptr<palace::Operator> &&Ai,
-                        std::unique_ptr<Data> &&data);
-  PackedComplexOperator(const palace::Operator *Ar, const palace::Operator *Ai,
-                        std::unique_ptr<Data> &&data);
-
-  friend std::unique_ptr<ComplexWrapperOperator>
-  CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
-                        std::unique_ptr<palace::Operator> &&Ai);
-  friend std::unique_ptr<ComplexWrapperOperator>
-  CreateComplexOperator(const palace::Operator *Ar, const palace::Operator *Ai);
-
-public:
-  ~PackedComplexOperator() override;
-
-  std::size_t NumFusedPairs() const;
-  std::size_t NumRemainderTerms() const;
-
-  void Mult(const ComplexVector &x, ComplexVector &y) const override;
-  void AddMult(const ComplexVector &x, ComplexVector &y,
-               std::complex<double> a = 1.0) const override;
-};
-
-// Fall back to ComplexWrapperOperator when there are no compatible pairs, including
-// real-only operators, GPU/multiple contexts, tensor bases, and unassembled QData.
-// Borrowed operators must outlive the result, as for ComplexWrapperOperator. Changes
-// through Operator's mutators invalidate packing; passive QData values remain shared.
-// Structural changes through raw CEED handles require rebuilding the wrapper.
+// Wrap finalized, owned real/imaginary operators, packing compatible QData-assembled
+// volume terms on CPU. Other terms and unsupported operators keep their original action.
+// The inputs must remain structurally unchanged and unrescaled after ownership transfer,
+// including through retained aliases or raw CEED handles. Passive QData values remain
+// shared and may be updated. Borrowed operators should use ComplexWrapperOperator.
 std::unique_ptr<ComplexWrapperOperator>
 CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
                       std::unique_ptr<palace::Operator> &&Ai);
-std::unique_ptr<ComplexWrapperOperator> CreateComplexOperator(const palace::Operator *Ar,
-                                                              const palace::Operator *Ai);
 
 // Assemble a ceed::Operator as a CSR matrix.
 std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &op,

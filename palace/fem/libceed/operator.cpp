@@ -7,6 +7,7 @@
 #include <limits>
 #include <numeric>
 #include <typeinfo>
+#include <utility>
 #include <ceed/backend.h>
 #include <mfem.hpp>
 #include <mfem/general/forall.hpp>
@@ -88,7 +89,6 @@ void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
     PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(op_t[id], sub_op_t));
     PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op_t));
   }
-  application_revision.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Operator::Finalize()
@@ -305,10 +305,15 @@ bool FieldMatches(Ceed ceed, CeedQFunctionField field, CeedInt size, CeedEvalMod
 std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int size)
 {
   // Selection relies on the names and field layouts of Palace's assembled apply kernels.
-  bool at_points, composite;
+  bool composite;
   PalaceCeedCall(ceed, CeedOperatorIsComposite(op, &composite));
+  if (composite)
+  {
+    return {};
+  }
+  bool at_points;
   PalaceCeedCall(ceed, CeedOperatorIsAtPoints(op, &at_points));
-  if (composite || at_points || !SameContext(ceed, CeedOperatorReturnCeed(op)))
+  if (at_points || !SameContext(ceed, CeedOperatorReturnCeed(op)))
   {
     return {};
   }
@@ -316,6 +321,10 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   PalaceCeedCall(ceed, CeedOperatorGetQFunction(op, &qf.value));
   const char *name;
   PalaceCeedCall(ceed, CeedQFunctionGetKernelName(qf.value, &name));
+  if (!name)
+  {
+    return {};
+  }
   const bool curl = std::strcmp(name, "f_apply_33") == 0;
   if (!curl && std::strcmp(name, "f_apply_3") != 0)
   {
@@ -366,7 +375,7 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   }
   bool tensor;
   CeedFESpace space;
-  CeedInt dim, components, qcomponents, rcomponents, rnodes, block;
+  CeedInt dim, components, qcomponents, rcomponents, block;
   CeedSize length, in_length, out_length;
   CeedRestrictionType type;
   PalaceCeedCall(ceed, CeedBasisIsTensor(basis, &tensor));
@@ -379,16 +388,14 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
       ceed, CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &qcomponents));
   PalaceCeedCall(ceed, CeedElemRestrictionGetType(restriction, &type));
   PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(restriction, &rcomponents));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(restriction, &rnodes));
   PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(restriction, &leaf->elements));
   PalaceCeedCall(ceed, CeedElemRestrictionGetBlockSize(restriction, &block));
   PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(restriction, &length));
   PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op, &in_length, &out_length));
   if (tensor || dim != 3 || components != 1 || qcomponents != 3 || rcomponents != 1 ||
       (space != CEED_FE_SPACE_HCURL && space != CEED_FE_SPACE_HDIV) ||
-      (curl && space != CEED_FE_SPACE_HCURL) || rnodes != leaf->nodes || block != 1 ||
-      leaf->elements <= 0 || leaf->qpts <= 0 || length != size || in_length != size ||
-      out_length != size ||
+      (curl && space != CEED_FE_SPACE_HCURL) || block != 1 || leaf->elements <= 0 ||
+      leaf->qpts <= 0 || length != size || in_length != size || out_length != size ||
       (type != CEED_RESTRICTION_STANDARD && type != CEED_RESTRICTION_ORIENTED &&
        type != CEED_RESTRICTION_CURL_ORIENTED))
   {
@@ -413,48 +420,9 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   {
     return {};
   }
-  CeedInt qe, qn, qc;
-  CeedSize qlength, vlength;
-  PalaceCeedCall(ceed, CeedElemRestrictionGetType(qr, &type));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(qr, &qe));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(qr, &qn));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(qr, &qc));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(qr, &qlength));
-  PalaceCeedCall(ceed, CeedVectorGetLength(qv, &vlength));
-  if (type != CEED_RESTRICTION_STRIDED || qe != leaf->elements || qn != leaf->qpts ||
-      qc != (curl ? 18 : 9) || qlength != static_cast<CeedSize>(qe) * qn * qc ||
-      vlength != qlength)
-  {
-    return {};
-  }
+  // The original finalized operator validates basis/restriction dimensions and passive
+  // QData storage. Reuse that QData field unchanged in the packed operator.
   return leaf;
-}
-
-bool CollectPackedLeaves(Ceed ceed, CeedOperator op, std::vector<CeedOperator> &leaves)
-{
-  bool composite;
-  PalaceCeedCall(ceed, CeedOperatorIsComposite(op, &composite));
-  if (!composite)
-  {
-    if (leaves.size() == CEED_COMPOSITE_MAX)
-    {
-      return false;
-    }
-    leaves.push_back(op);  // Borrowed until the original wrapper takes ownership.
-    return true;
-  }
-  CeedInt count;
-  CeedOperator *sub;
-  PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op, &count));
-  PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op, &sub));
-  for (CeedInt j = 0; j < count; j++)
-  {
-    if (!CollectPackedLeaves(ceed, sub[j], leaves))
-    {
-      return false;
-    }
-  }
-  return true;
 }
 
 void ClonePackedRestriction(Ceed ceed, const PackedLeaf &leaf, int size,
@@ -524,7 +492,7 @@ void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
 }
 
 void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, int size,
-                   CeedOperator composite)
+                   Operator &packed)
 {
   ScopedRestriction restriction;
   ScopedBasis basis;
@@ -562,28 +530,70 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
     }
   }
   PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
-  PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(composite, op.value));
+  packed.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
-}  // namespace
-
-struct PackedComplexOperator::Data
+// Keep the original operators for diagonal, transpose, full assembly, and coarsening.
+// Only forward applications use the packed composite and any unmatched remainder.
+class PackedComplexOperator final : public ComplexWrapperOperator
 {
-  ScopedContext ceed;
-  ScopedOperator packed;
-  ScopedVector x, y;
+private:
+  std::unique_ptr<Operator> packed;
   std::unique_ptr<ComplexWrapperOperator> remainder;
-  mutable ComplexVector temp;
-  std::size_t pairs = 0, remainder_terms = 0;
-  const Operator *source[2] = {};
-  std::size_t revision[2] = {};
+  mutable Vector input, output;
+  mutable ComplexVector input_view, output_view;
+
+  const ComplexVector &Apply(const ComplexVector &x) const
+  {
+    input_view = x;
+    packed->Mult(input, output);
+    if (remainder)
+    {
+      // The packed application has consumed input, so its storage can hold the
+      // remainder without allocating another complex work vector.
+      remainder->Mult(x, input_view);
+      output_view.AXPY(1.0, input_view);
+    }
+    return output_view;
+  }
+
+public:
+  PackedComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
+                        std::unique_ptr<palace::Operator> &&Ai,
+                        std::unique_ptr<Operator> &&packed,
+                        std::unique_ptr<ComplexWrapperOperator> &&remainder)
+    : ComplexWrapperOperator(std::move(Ar), std::move(Ai)), packed(std::move(packed)),
+      remainder(std::move(remainder)), input(2 * width), output(2 * height),
+      input_view(input, 0, width), output_view(output, 0, height)
+  {
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    MFEM_ASSERT(x.Size() == width && y.Size() == height,
+                "Invalid dimensions for packed complex application!");
+    y = Apply(x);
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               std::complex<double> a) const override
+  {
+    MFEM_ASSERT(x.Size() == width && y.Size() == height,
+                "Invalid dimensions for packed complex application!");
+    if (a != std::complex<double>{0.0})
+    {
+      // The inherited AddMult applies the original real operators directly.
+      y.AXPY(a, Apply(x));
+    }
+  }
 };
 
-std::unique_ptr<PackedComplexOperator::Data>
-PackedComplexOperator::Build(const palace::Operator *Ar, const palace::Operator *Ai)
+std::unique_ptr<ComplexWrapperOperator>
+PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
+                    std::unique_ptr<palace::Operator> &Ai)
 {
-  const auto *real = dynamic_cast<const Operator *>(Ar);
-  const auto *imag = dynamic_cast<const Operator *>(Ai);
+  const auto *real = dynamic_cast<const Operator *>(Ar.get());
+  const auto *imag = dynamic_cast<const Operator *>(Ai.get());
   if (!real || !imag || internal::NumCeeds() != 1 || utils::GetMaxThreads() > 1 ||
       utils::InParallel() || mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ||
       real->Size() != 1 || imag->Size() != 1 || real->HasDofMultiplicity() ||
@@ -611,23 +621,27 @@ PackedComplexOperator::Build(const palace::Operator *Ar, const palace::Operator 
     return {};
   }
   const int size = real->Width();
-  std::vector<CeedOperator> leaves[2];
-  if (!CollectPackedLeaves(ceed, (*real)[0], leaves[0]) ||
-      !CollectPackedLeaves(ceed, (*imag)[0], leaves[1]))
+  // Palace assembly produces direct composite children. Nested composites remain
+  // unmatched; preserving them as children also preserves libCEED's composite limits.
+  CeedInt count[2];
+  CeedOperator *children[2];
+  for (int part = 0; part < 2; part++)
   {
-    return {};  // Do not exceed the cap when flattening either packed or remainder terms.
+    auto op = part == 0 ? (*real)[0] : (*imag)[0];
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op, &count[part]));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op, &children[part]));
   }
   std::vector<std::unique_ptr<PackedLeaf>> fields[2];
   std::vector<bool> matched[2];
   for (int part = 0; part < 2; part++)
   {
-    matched[part].resize(leaves[part].size(), false);
-    for (auto leaf : leaves[part])
+    matched[part].resize(count[part], false);
+    for (CeedInt j = 0; j < count[part]; j++)
     {
-      fields[part].push_back(InspectPackedLeaf(ceed, leaf, size));
+      fields[part].push_back(InspectPackedLeaf(ceed, children[part][j], size));
     }
   }
-  std::unique_ptr<Data> data;
+  std::unique_ptr<Operator> packed;
   for (std::size_t r = 0; r < fields[0].size(); r++)
   {
     if (!fields[0][r])
@@ -642,29 +656,26 @@ PackedComplexOperator::Build(const palace::Operator *Ar, const palace::Operator 
       {
         continue;
       }
-      if (!data)
+      if (!packed)
       {
-        data = std::make_unique<Data>();
-        PalaceCeedCall(ceed, CeedReferenceCopy(ceed, &data->ceed.value));
-        PalaceCeedCall(ceed, CeedOperatorCreateComposite(ceed, &data->packed.value));
+        packed = std::make_unique<Operator>(2 * size, 2 * size);
       }
-      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, data->packed.value);
+      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, *packed);
       matched[0][r] = matched[1][i] = true;
-      data->pairs++;
       break;
     }
   }
-  if (!data)
+  if (!packed)
   {
     return {};  // This also handles ranks with no local volume terms.
   }
-  // Keep every unmatched leaf exactly once. In particular, differing real/imaginary
+  // Keep every unmatched child exactly once. In particular, differing real/imaginary
   // boundary terms must not disable fusion of compatible domain contributions.
   std::unique_ptr<palace::Operator> remainder_parts[2];
   for (int part = 0; part < 2; part++)
   {
     std::unique_ptr<Operator> remainder;
-    for (std::size_t j = 0; j < leaves[part].size(); j++)
+    for (CeedInt j = 0; j < count[part]; j++)
     {
       if (!matched[part][j])
       {
@@ -673,9 +684,8 @@ PackedComplexOperator::Build(const palace::Operator *Ar, const palace::Operator 
           remainder = std::make_unique<Operator>(size, size);
         }
         CeedOperator copy = nullptr;
-        PalaceCeedCall(ceed, CeedOperatorReferenceCopy(leaves[part][j], &copy));
+        PalaceCeedCall(ceed, CeedOperatorReferenceCopy(children[part][j], &copy));
         remainder->AddSubOperator(copy);
-        data->remainder_terms++;
       }
     }
     if (remainder)
@@ -684,134 +694,29 @@ PackedComplexOperator::Build(const palace::Operator *Ar, const palace::Operator 
       remainder_parts[part] = std::move(remainder);
     }
   }
+  std::unique_ptr<ComplexWrapperOperator> remainder;
   if (remainder_parts[0] || remainder_parts[1])
   {
-    data->remainder = std::make_unique<ComplexWrapperOperator>(
-        std::move(remainder_parts[0]), std::move(remainder_parts[1]));
+    remainder = std::make_unique<ComplexWrapperOperator>(std::move(remainder_parts[0]),
+                                                         std::move(remainder_parts[1]));
   }
-  PalaceCeedCall(ceed, CeedOperatorCheckReady(data->packed.value));
-  PalaceCeedCall(ceed,
-                 CeedVectorCreate(ceed, 2 * static_cast<CeedSize>(size), &data->x.value));
-  PalaceCeedCall(ceed,
-                 CeedVectorCreate(ceed, 2 * static_cast<CeedSize>(size), &data->y.value));
-  data->source[0] = real;
-  data->source[1] = imag;
-  data->revision[0] = real->ApplicationRevision();
-  data->revision[1] = imag->ApplicationRevision();
-  return data;
+  packed->Finalize();
+  return std::make_unique<PackedComplexOperator>(std::move(Ar), std::move(Ai),
+                                                 std::move(packed), std::move(remainder));
 }
 
-PackedComplexOperator::PackedComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
-                                             std::unique_ptr<palace::Operator> &&Ai,
-                                             std::unique_ptr<Data> &&data)
-  : ComplexWrapperOperator(std::move(Ar), std::move(Ai)), data(std::move(data))
-{
-}
-
-PackedComplexOperator::PackedComplexOperator(const palace::Operator *Ar,
-                                             const palace::Operator *Ai,
-                                             std::unique_ptr<Data> &&data)
-  : ComplexWrapperOperator(Ar, Ai), data(std::move(data))
-{
-}
-
-PackedComplexOperator::~PackedComplexOperator() = default;
-
-bool PackedComplexOperator::CanApplyPacked() const
-{
-  return data->revision[0] == data->source[0]->ApplicationRevision() &&
-         data->revision[1] == data->source[1]->ApplicationRevision();
-}
-
-std::size_t PackedComplexOperator::NumFusedPairs() const
-{
-  return CanApplyPacked() ? data->pairs : 0;
-}
-
-std::size_t PackedComplexOperator::NumRemainderTerms() const
-{
-  return data->remainder_terms;
-}
-
-void PackedComplexOperator::Mult(const ComplexVector &x, ComplexVector &y) const
-{
-  MFEM_ASSERT(x.Size() == width && y.Size() == height,
-              "Invalid dimensions for PackedComplexOperator::Mult!");
-  if (!CanApplyPacked())
-  {
-    ComplexWrapperOperator::Mult(x, y);
-    return;
-  }
-  Ceed ceed = data->ceed.value;
-  CeedScalar *packed_x;
-  const std::size_t bytes = static_cast<std::size_t>(width) * sizeof(CeedScalar);
-  PalaceCeedCall(ceed, CeedVectorGetArrayWrite(data->x.value, CEED_MEM_HOST, &packed_x));
-  std::memcpy(packed_x, x.Real().HostRead(), bytes);
-  std::memcpy(packed_x + width, x.Imag().HostRead(), bytes);
-  PalaceCeedCall(ceed, CeedVectorRestoreArray(data->x.value, &packed_x));
-  PalaceCeedCall(ceed, CeedVectorSetValue(data->y.value, 0.0));
-  PalaceCeedCall(ceed, CeedOperatorApplyAdd(data->packed.value, data->x.value,
-                                            data->y.value, CEED_REQUEST_IMMEDIATE));
-  if (data->remainder)
-  {
-    data->remainder->Mult(x, y);
-  }
-  const CeedScalar *packed_y;
-  PalaceCeedCall(ceed, CeedVectorGetArrayRead(data->y.value, CEED_MEM_HOST, &packed_y));
-  if (data->remainder)
-  {
-    auto *yr = y.Real().HostReadWrite();
-    auto *yi = y.Imag().HostReadWrite();
-    for (int j = 0; j < height; j++)
-    {
-      yr[j] += packed_y[j];
-      yi[j] += packed_y[j + height];
-    }
-  }
-  else
-  {
-    std::memcpy(y.Real().HostWrite(), packed_y, bytes);
-    std::memcpy(y.Imag().HostWrite(), packed_y + height, bytes);
-  }
-  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(data->y.value, &packed_y));
-}
-
-void PackedComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
-                                    std::complex<double> a) const
-{
-  if (a != std::complex<double>{0.0})
-  {
-    // Stay on the packed path, also for non-unit complex coefficients. The real CEED
-    // operators only support AddMult with coefficient one.
-    data->temp.SetSize(height);
-    Mult(x, data->temp);
-    y.AXPY(a, data->temp);
-  }
-}
+}  // namespace
 
 std::unique_ptr<ComplexWrapperOperator>
 CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
                       std::unique_ptr<palace::Operator> &&Ai)
 {
-  auto data = PackedComplexOperator::Build(Ar.get(), Ai.get());
-  if (data)
+  auto packed = PackComplexOperator(Ar, Ai);
+  if (packed)
   {
-    return std::unique_ptr<ComplexWrapperOperator>(
-        new PackedComplexOperator(std::move(Ar), std::move(Ai), std::move(data)));
+    return packed;
   }
   return std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
-}
-
-std::unique_ptr<ComplexWrapperOperator> CreateComplexOperator(const palace::Operator *Ar,
-                                                              const palace::Operator *Ai)
-{
-  auto data = PackedComplexOperator::Build(Ar, Ai);
-  if (data)
-  {
-    return std::unique_ptr<ComplexWrapperOperator>(
-        new PackedComplexOperator(Ar, Ai, std::move(data)));
-  }
-  return std::make_unique<ComplexWrapperOperator>(Ar, Ai);
 }
 
 namespace
