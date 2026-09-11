@@ -247,8 +247,9 @@ void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) cons
 namespace
 {
 
-// Reference-counted metadata must be destroyed even when a match is rejected.
-// Keep ownership local while inspecting each operator.
+// Scope the references acquired while inspecting or constructing CEED objects across
+// every rejection path. Fields and composites retain their own references when objects
+// are installed, so releasing these temporary handles leaves the originals intact.
 template <typename T, int (*Destroy)(T *)>
 struct ScopedCeed
 {
@@ -304,7 +305,9 @@ bool FieldMatches(Ceed ceed, CeedQFunctionField field, CeedInt size, CeedEvalMod
 
 std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int size)
 {
-  // Selection relies on the names and field layouts of Palace's assembled apply kernels.
+  // Recognize QData-assembled, non-tensor 3D H(curl)/H(div) volume kernels. Names
+  // identify candidates; the field and restriction checks below establish the layout
+  // assumed by the packed kernels. Unsupported leaves remain in the original action.
   bool composite;
   PalaceCeedCall(ceed, CeedOperatorIsComposite(op, &composite));
   if (composite)
@@ -373,6 +376,9 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
       return {};
     }
   }
+  // One FE field already interpolates to three physical components. Packing adds a
+  // second copy for the imaginary coefficients. The restriction clone paths below
+  // support unblocked offset maps, including signs and H(curl) orientation transforms.
   bool tensor;
   CeedFESpace space;
   CeedInt dim, components, qcomponents, rcomponents, block;
@@ -420,11 +426,15 @@ std::unique_ptr<PackedLeaf> InspectPackedLeaf(Ceed ceed, CeedOperator op, int si
   {
     return {};
   }
-  // The original finalized operator validates basis/restriction dimensions and passive
-  // QData storage. Reuse that QData field unchanged in the packed operator.
+  // Finalization of the original operator is a caller precondition and validates
+  // basis/restriction dimensions and passive QData storage. Reuse the QData vector
+  // and its restriction, so in-place value updates remain visible to both operators.
   return leaf;
 }
 
+// The second component starts size entries after the first in the L-vector, giving
+// [Re(x) | Im(x)] with the same element offsets and orientations for both parts.
+// Copy those maps before restoring the borrowed arrays from the original restriction.
 void ClonePackedRestriction(Ceed ceed, const PackedLeaf &leaf, int size,
                             CeedElemRestriction *packed)
 {
@@ -466,6 +476,9 @@ void ClonePackedRestriction(Ceed ceed, const PackedLeaf &leaf, int size,
   PalaceCeedCall(ceed, CeedElemRestrictionRestoreOffsets(original, &offsets));
 }
 
+// Two copies of the vector basis interpolate the real/imaginary coefficient blocks
+// into [physical component][Re/Im][Q] order. This gives six Q-length blocks:
+// Re(u_x), Im(u_x), Re(u_y), Im(u_y), Re(u_z), Im(u_z).
 void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
 {
   auto original = leaf.active.basis.value;
@@ -500,6 +513,9 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   ScopedOperator op;
   ClonePackedRestriction(ceed, real, size, &restriction.value);
   ClonePackedBasis(ceed, real, &basis.value);
+  // Both kernels implement complex mass. Only f_apply_complex_33 adds curl-curl,
+  // with a real tensor acting independently on Re(x) and Im(x). The pairing loop
+  // must therefore leave imaginary curl leaves in the remainder.
   PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
                            ceed, 1, real.curl ? f_apply_complex_33 : f_apply_complex_3,
                            real.curl ? PalaceQFunctionRelativePath(f_apply_complex_33_loc)
@@ -533,24 +549,28 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   packed.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
-// Keep the original operators for diagonal, transpose, full assembly, and coarsening.
-// Only forward applications use the packed composite and any unmatched remainder.
+// The base owns the finalized originals for diagonal, transpose, full assembly, and
+// coarsening. Only forward applications use the packed composite and its remainder.
 class PackedComplexOperator final : public ComplexWrapperOperator
 {
 private:
   std::unique_ptr<Operator> packed;
   std::unique_ptr<ComplexWrapperOperator> remainder;
+  // Persistent L-vectors back the real/imaginary views. Forward calls overwrite this
+  // scratch, so applications on the same instance must not overlap.
   mutable Vector input, output;
   mutable ComplexVector input_view, output_view;
 
   const ComplexVector &Apply(const ComplexVector &x) const
   {
+    // Stage x before touching the caller's output. Mult/AddMult consume the private
+    // result only after both actions finish, including when their x and y alias.
     input_view = x;
     packed->Mult(input, output);
     if (remainder)
     {
-      // The packed application has consumed input, so its storage can hold the
-      // remainder without allocating another complex work vector.
+      // The packed action has finished reading input. Reuse it for the remainder,
+      // which still reads the caller's x; output stays separate until accumulation.
       remainder->Mult(x, input_view);
       output_view.AXPY(1.0, input_view);
     }
@@ -565,6 +585,8 @@ public:
     : ComplexWrapperOperator(std::move(Ar), std::move(Ai)), packed(std::move(packed)),
       remainder(std::move(remainder)), input(2 * width), output(2 * height)
   {
+    // Set the owning buffers' memory policy before MakeRef allocates storage and
+    // creates the real/imaginary aliases.
     input.UseDevice(true);
     output.UseDevice(true);
     input_view.MakeRef(input, 0, width);
@@ -592,10 +614,18 @@ public:
   }
 };
 
+// Apply compatible terms of (Ar + i Ai)x through shared two-component restriction
+// and basis work for the real and imaginary parts, avoiding separate wrapper
+// applications. The packed QFunctions preserve the original mass/curl algebra.
 std::unique_ptr<ComplexWrapperOperator>
 PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
                     std::unique_ptr<palace::Operator> &Ai)
 {
+  // Require one host CEED context and one OpenMP thread per MPI process;
+  // utils::InParallel() checks for an active OpenMP region.
+  // Equal square spaces let the remainder reuse input storage; doubled dimensions
+  // must fit int. Multiplicity scaling acts outside the CEED children and would be
+  // lost by packing.
   const auto *real = dynamic_cast<const Operator *>(Ar.get());
   const auto *imag = dynamic_cast<const Operator *>(Ai.get());
   if (!real || !imag || internal::NumCeeds() != 1 || utils::GetMaxThreads() > 1 ||
@@ -625,8 +655,9 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
     return {};
   }
   const int size = real->Width();
-  // Palace assembly produces direct composite children. Nested composites remain
-  // unmatched; preserving them as children also preserves libCEED's composite limits.
+  // Pair only direct children of Palace's composites. Keep unmatched nested
+  // composites intact in the remainder rather than flattening them, preserving
+  // their action and libCEED's composite size limits.
   CeedInt count[2];
   CeedOperator *children[2];
   for (int part = 0; part < 2; part++)
@@ -645,6 +676,9 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
       fields[part].push_back(InspectPackedLeaf(ceed, children[part][j], size));
     }
   }
+  // A FiniteElementSpace caches basis/restriction handles per context and geometry.
+  // Requiring both identities ties each pair to the same quadrature, element ordering,
+  // and orientation maps. Separately constructed equivalents remain unmatched.
   std::unique_ptr<Operator> packed;
   for (std::size_t r = 0; r < fields[0].size(); r++)
   {
@@ -713,6 +747,10 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
 
 }  // namespace
 
+// Construction fixes the child pairing and clones active basis/restriction data.
+// Ownership transfer requires finalized operators whose structure and outer scaling
+// stay unchanged; values in the shared passive QData vectors may still be updated.
+// A rejected packing attempt leaves ownership intact for the ordinary wrapper.
 std::unique_ptr<ComplexWrapperOperator>
 CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
                       std::unique_ptr<palace::Operator> &&Ai)
