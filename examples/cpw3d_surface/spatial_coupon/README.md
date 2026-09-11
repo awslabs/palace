@@ -108,6 +108,14 @@ footprint rather than changing process geometry during a mesh comparison.
 that the source functions changed. Such repairs require matched controls and
 must not be presented as byte-identical source migration.
 
+The [corrected full-generation workflow](graded-library-generation-20260911.md)
+completes missing box corners without dropping retained basis degrees of freedom.
+It freezes the source/config contracts, gates mesh jobs before response jobs,
+reserves shared archive space, and validates complete matrices before publication.
+`palace --mesh-statistics CONFIG` reports H1 size after actual mesh preprocessing
+(including internal-boundary cracking), so archive budgets do not rely on raw
+mesh counts.
+
 ## Straight-edge swept milestone
 
 The straight-edge branch accepts one continuing edge without a plan-view mask.

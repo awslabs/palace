@@ -344,6 +344,9 @@ int main(int argc, char **argv)
         {"Fabricated", fab},
         {"CoordinateUnits", "input mesh units (um for study inputs)"},
         {"Elements", mesh.GetNE()},
+        {"Vertices", mesh.GetNV()},
+        {"Edges", mesh.GetNEdges()},
+        {"Faces", mesh.GetNFaces()},
         {"LoadSeconds", loaded},
         {"KappaDefinition", "MFEM GetElementJacobian at reference center, "
                             "perfect-reference normalization, sigma_max/sigma_min"},

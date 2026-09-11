@@ -3,9 +3,11 @@
 
 #include "driver.hpp"
 
+#include <fstream>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/basesolver.hpp"
 #include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
@@ -122,6 +124,38 @@ void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   solver->SaveMetadata(peak_mem);
   solver->SaveMetadata(peak_node_mem);
   Mpi::Print(comm, "\n");
+}
+
+void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads,
+                       const char *git_tag)
+{
+  auto solver = MakeSolver(iodata, Mpi::Root(comm), Mpi::Size(comm), omp_threads, git_tag);
+  MFEM_VERIFY(solver, "Unknown problem type in mesh statistics!");
+  auto mesh = LoadMesh(iodata, comm, *solver);
+  MFEM_VERIFY(!mesh.empty(), "Mesh statistics preprocessing produced no mesh!");
+  mfem::H1_FECollection collection(iodata.solver.order, mesh.back()->Dimension());
+  mfem::ParFiniteElementSpace space(&mesh.back()->Get(), &collection);
+  const auto dofs = space.GlobalTrueVSize();
+  const auto elements = mesh.back()->Get().GetGlobalNE();
+  if (Mpi::Root(comm))
+  {
+    const nlohmann::json data = {
+        {"Version", 1},
+        {"Scope", "Configured mesh after normal preprocessing and initial refinement"},
+        {"Mesh", iodata.model.mesh},
+        {"Order", iodata.solver.order},
+        {"Ranks", Mpi::Size(comm)},
+        {"GlobalElements", elements},
+        {"H1TrueDOFs", dofs},
+        {"CrackInternalBoundaryElements", iodata.model.crack_bdr_elements},
+        {"RefineCrackElements", iodata.model.refine_crack_elements}};
+    const auto path = fs::path(iodata.problem.output) / "mesh-statistics.json";
+    std::ofstream output(path);
+    MFEM_VERIFY(output, "Cannot open mesh-statistics output!");
+    output << data.dump(2) << '\n';
+    MFEM_VERIFY(output.good(), "Failed writing mesh-statistics output!");
+    Mpi::Print(comm, "Post-preprocessing H1 DOFs: {}, elements: {}\n", dofs, elements);
+  }
 }
 
 }  // namespace palace

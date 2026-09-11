@@ -28,6 +28,11 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag = n
 void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
                                  const char *git_tag = nullptr);
 
+// Load through the normal preprocessing path (including internal-boundary cracking)
+// and report the resulting global H1 size without constructing a PDE operator.
+void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads,
+                       const char *git_tag = nullptr);
+
 }  // namespace palace
 
 #endif  // PALACE_DRIVER_HPP

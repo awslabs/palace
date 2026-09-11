@@ -437,6 +437,10 @@ def matching_perimeter_coordinates(
         np.arange(ring_size, dtype=float) * perimeter / ring_size
     )
     tolerance = 1.0e-10 * max(width, height)
+    # Uniform perimeter samples do not in general hit a non-square box's
+    # corners. Omitting a corner makes side triangles cut through the volume.
+    corners = (0.0, width, width + height, 2.0 * width + height)
+    coordinates.extend(corners)
     pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
     for facet in facets:
         for point in facet["Points"]:
@@ -492,7 +496,10 @@ def matching_perimeter_coordinates(
                     rectangle_perimeter_coordinate(bounds, value, tolerance)
                     for value in intersections
                 )
-    coordinates = sorted(value % perimeter for value in coordinates)
+    coordinates = [value % perimeter for value in coordinates]
+    coordinates = [next((corner for corner in corners if abs(value - corner) <= tolerance), value)
+                   for value in coordinates]
+    coordinates = sorted(coordinates)
     unique = []
     for coordinate in coordinates:
         if not unique or coordinate - unique[-1] > tolerance:

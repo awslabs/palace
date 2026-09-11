@@ -167,6 +167,7 @@ int main(int argc, char *argv[])
   std::vector<std::string_view> argv_sv(argv, argv + argc);
   bool dryrun = false;
   bool surface_response_preflight = false;
+  bool mesh_statistics = false;
   auto Help = [executable_path = argv_sv[0], &world_comm]()
   {
     Mpi::Print(
@@ -177,7 +178,8 @@ int main(int argc, char *argv[])
         "  --version                     Show version information and exit\n"
         "  -dry-run, --dry-run           Parse configuration file for errors and exit\n"
         "  --surface-response-preflight  Classify process-library coverage without "
-        "solving\n\n",
+        "solving\n"
+        "  --mesh-statistics             Report post-preprocessing H1 size without solving\n\n",
         executable_path.substr(executable_path.find_last_of('/') + 1));
   };
   for (int i = 1; i < argc; i++)
@@ -204,6 +206,16 @@ int main(int argc, char *argv[])
       surface_response_preflight = true;
       continue;
     }
+    if (argv_i == "--mesh-statistics")
+    {
+      mesh_statistics = true;
+      continue;
+    }
+  }
+  if (surface_response_preflight && mesh_statistics)
+  {
+    Mpi::Print(world_comm, "Error: Select only one mesh inspection mode!\n\n");
+    return 1;
   }
   if (argc < 2)
   {
@@ -214,11 +226,12 @@ int main(int argc, char *argv[])
 
   // Palace-only execution modes must not remain in argv when PETSc/SLEPc parses command
   // line options, otherwise they are reported as unused solver options at shutdown.
-  if (surface_response_preflight)
+  if (surface_response_preflight || mesh_statistics)
   {
     for (int i = 1; i < argc; i++)
     {
-      if (std::string_view(argv[i]) == "--surface-response-preflight")
+      if (std::string_view(argv[i]) == "--surface-response-preflight" ||
+          std::string_view(argv[i]) == "--mesh-statistics")
       {
         std::move(argv + i + 1, argv + argc, argv + i);
         argc--;
@@ -300,7 +313,11 @@ int main(int argc, char *argv[])
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
-  if (surface_response_preflight)
+  if (mesh_statistics)
+  {
+    palace::RunMeshStatistics(iodata, world_comm, omp_threads, GetPalaceGitTag());
+  }
+  else if (surface_response_preflight)
   {
     palace::RunSurfaceResponsePreflight(iodata, world_comm, omp_threads, GetPalaceGitTag());
   }
