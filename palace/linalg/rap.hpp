@@ -153,7 +153,9 @@ private:
 
 public:
   // Construct the complex-valued parallel operator from the separate real and imaginary
-  // parts, inheriting ownership of the local operator.
+  // parts, inheriting ownership of the local operator. Owned CEED operators may be
+  // specialized: finalize them before construction and keep their structure and
+  // multiplicity unchanged afterward. Their passive QData values may still be updated.
   ComplexParOperator(std::unique_ptr<Operator> &&Ar, std::unique_ptr<Operator> &&Ai,
                      const FiniteElementSpace &trial_fespace,
                      const FiniteElementSpace &test_fespace, bool test_restrict);

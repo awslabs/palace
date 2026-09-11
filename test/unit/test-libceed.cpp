@@ -1,22 +1,32 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <typeinfo>
+#include <ceed/backend.h>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/interfaces/catch_interfaces_config.hpp>
+#include <catch2/internal/catch_context.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
+#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
+#include "utils/omp.hpp"
+#include "utils/units.hpp"
 
 extern int benchmark_ref_levels;
 extern int benchmark_order;
@@ -1701,6 +1711,640 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
                            { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
+}
+
+namespace
+{
+
+struct PackedIntegrationSettings
+{
+  int threshold = BilinearForm::pa_order_threshold;
+  int order = fem::DefaultIntegrationOrder::p_trial;
+  bool jac = fem::DefaultIntegrationOrder::q_order_jac;
+  int pk = fem::DefaultIntegrationOrder::q_order_extra_pk;
+  int qk = fem::DefaultIntegrationOrder::q_order_extra_qk;
+
+  explicit PackedIntegrationSettings(int p)
+  {
+    fem::DefaultIntegrationOrder::p_trial = p;
+    fem::DefaultIntegrationOrder::q_order_jac = true;
+    fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+    fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  }
+  ~PackedIntegrationSettings()
+  {
+    BilinearForm::pa_order_threshold = threshold;
+    fem::DefaultIntegrationOrder::p_trial = order;
+    fem::DefaultIntegrationOrder::q_order_jac = jac;
+    fem::DefaultIntegrationOrder::q_order_extra_pk = pk;
+    fem::DefaultIntegrationOrder::q_order_extra_qk = qk;
+  }
+};
+
+bool PackedTestBackend()
+{
+  if (ceed::internal::NumCeeds() != 1 || utils::GetMaxThreads() > 1 ||
+      mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    return false;
+  }
+  const char *resource;
+  CeedMemType mem;
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  REQUIRE(CeedGetResource(ceed, &resource) == 0);
+  REQUIRE(CeedGetPreferredMemType(ceed, &mem) == 0);
+  return mem == CEED_MEM_HOST && std::string(resource).find("/cpu/") == 0;
+}
+
+bool IsOriginalComplexWrapper(const ComplexOperator &op)
+{
+  return typeid(op) == typeid(ComplexWrapperOperator);
+}
+
+void CheckPackedResult(const ComplexVector &actual, const ComplexVector &expected)
+{
+  REQUIRE(actual.Size() == expected.Size());
+  constexpr double tol = 5.0e-13;
+  for (int part = 0; part < 2; part++)
+  {
+    const auto *a = (part == 0 ? actual.Real() : actual.Imag()).HostRead();
+    const auto *b = (part == 0 ? expected.Real() : expected.Imag()).HostRead();
+    double error2 = 0.0, norm2 = 0.0, error_max = 0.0, ref_max = 0.0;
+    bool finite = true;
+    for (int j = 0; j < actual.Size(); j++)
+    {
+      finite = finite && std::isfinite(a[j]) && std::isfinite(b[j]);
+      const double delta = a[j] - b[j];
+      error2 += delta * delta;
+      norm2 += b[j] * b[j];
+      error_max = std::max(error_max, std::abs(delta));
+      ref_max = std::max(ref_max, std::abs(b[j]));
+    }
+    CAPTURE(part, error2, norm2, error_max, ref_max);
+    REQUIRE(finite);
+    REQUIRE(error2 <= tol * tol * norm2);
+    REQUIRE(error_max <= tol * ref_max);
+  }
+}
+
+void CheckPackedActions(const ComplexOperator &actual, const ComplexOperator &reference,
+                        bool inherited = false)
+{
+  ComplexVector x(actual.Width()), y(actual.Height()), expected(actual.Height()),
+      action(actual.Height()), initial(actual.Height());
+  x.Real().Randomize(17);
+  x.Imag().Randomize(53);
+  initial.Real().Randomize(29);
+  initial.Imag().Randomize(97);
+  {
+    INFO("forward application");
+    reference.Mult(x, action);
+    actual.Mult(x, y);
+    CheckPackedResult(y, action);
+  }
+  {
+    INFO("scaled AddMult application");
+    const std::complex<double> a{-0.7, 0.23};
+    y = initial;
+    expected = initial;
+    expected.AXPY(a, action);
+    actual.AddMult(x, y, a);
+    CheckPackedResult(y, expected);
+  }
+  if (inherited)
+  {
+    // These operations retain the original real/imaginary operators. Check representative
+    // spaces and geometries, including the true-dof diagonal used by multigrid smoothers.
+    {
+      INFO("transpose application");
+      reference.MultTranspose(x, expected);
+      actual.MultTranspose(x, y);
+      CheckPackedResult(y, expected);
+    }
+    {
+      INFO("adjoint application");
+      reference.MultHermitianTranspose(x, expected);
+      actual.MultHermitianTranspose(x, y);
+      CheckPackedResult(y, expected);
+    }
+    {
+      INFO("diagonal assembly");
+      reference.AssembleDiagonal(expected);
+      actual.AssembleDiagonal(y);
+      CheckPackedResult(y, expected);
+    }
+    for (auto a : {std::complex<double>{1.0}, std::complex<double>{0.0}})
+    {
+      y = initial;
+      expected = initial;
+      expected.AXPY(a, action);
+      CAPTURE(a);
+      actual.AddMult(x, y, a);
+      CheckPackedResult(y, expected);
+    }
+  }
+}
+
+void ScalePackedTestQData(const ceed::Operator &op, double scale)
+{
+  CeedOperator *leaves;
+  CeedInt count;
+  REQUIRE(CeedOperatorCompositeGetNumSub(op[0], &count) == 0);
+  REQUIRE(CeedOperatorCompositeGetSubList(op[0], &leaves) == 0);
+  for (CeedInt j = 0; j < count; j++)
+  {
+    CeedOperatorField field;
+    CeedVector qdata = nullptr;
+    REQUIRE(CeedOperatorGetFieldByName(leaves[j], "q_data", &field) == 0);
+    REQUIRE(CeedOperatorFieldGetVector(field, &qdata) == 0);
+    REQUIRE(CeedVectorScale(qdata, scale) == 0);
+    REQUIRE(CeedVectorDestroy(&qdata) == 0);
+  }
+}
+
+struct ComplexPreconditionerFixture
+{
+  PackedIntegrationSettings settings;
+  config::SolverData solver;
+  config::DomainData domains;
+  config::BoundaryData boundaries;
+  Units units{1.0, 1.0};
+  std::vector<std::unique_ptr<Mesh>> meshes;
+
+  ComplexPreconditionerFixture(int order, bool amr, int ref_levels = 0) : settings(order)
+  {
+    // Coaxial-example dielectric, with an unshifted complex fine operator.
+    REQUIRE_FALSE(solver.linear.pc_mat_real);
+    solver.order = order;
+    solver.pa_order_threshold = 2;
+    solver.linear.mg_max_levels = order;
+    solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+    solver.linear.pc_mat_shifted = 0;
+    BilinearForm::pa_order_threshold = solver.pa_order_threshold;
+    fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+
+    auto smesh = mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::TETRAHEDRON);
+    smesh.EnsureNodes();
+    while (smesh.GetNE() < Mpi::Size(Mpi::World()))
+    {
+      smesh.UniformRefinement();
+    }
+    for (int l = 0; l < ref_levels; l++)
+    {
+      smesh.UniformRefinement();
+    }
+    if (amr)
+    {
+      smesh.EnsureNCMesh(true);
+      mfem::Array<int> refine(1);
+      refine[0] = 0;
+      smesh.GeneralRefinement(refine);
+    }
+    meshes.push_back(std::make_unique<Mesh>(Mpi::World(), smesh));
+    config::MaterialData material;
+    material.attributes = {1};
+    material.epsilon_r = 2.08;
+    material.tandelta = 4.0e-4;
+    domains.attributes = {1};
+    domains.materials = {material};
+    boundaries.pec.attributes = {1};
+    boundaries.farfield.attributes = {2};
+  }
+
+  auto MakeSpace()
+  {
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, meshes);
+  }
+};
+
+auto AssembleComplexPreconditioner(SpaceOperator &space)
+{
+  constexpr double omega = 2.0;
+  return space.GetPreconditionerMatrix<ComplexOperator>(
+      std::complex<double>{1.0}, std::complex<double>{0.0, omega},
+      std::complex<double>{-omega * omega}, omega);
+}
+
+}  // namespace
+
+TEST_CASE("libCEED packed complex QData application",
+          "[libCEED][ComplexPacked][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric] =
+      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool>(
+          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
+            false},
+           {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
+            false, false},
+           {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
+            false, false},
+           {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
+            true, false},
+           {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
+            true, false, false, true},
+           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false},
+           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false},
+           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false}}));
+  CAPTURE(name);
+  // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
+  // therefore exercises forward application only.
+  const bool inherited = !nested && !nonsymmetric;
+  PackedIntegrationSettings settings(order);
+  auto mesh = [mesh_file = mesh_file]()
+  {
+    if (mesh_file)
+    {
+      return Initialize(Mpi::World(),
+                        std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+    }
+    // The mixed Fichera mesh has no pyramids. Use low-order elements on a small
+    // generated mesh, with enough elements for every MPI rank and no AMR.
+    auto smesh =
+        mfem::Mesh::MakeCartesian3D(Mpi::Size(Mpi::World()), 1, 1, mfem::Element::PYRAMID);
+    return Mesh(Mpi::World(), smesh);
+  }();
+  std::unique_ptr<mfem::FiniteElementCollection> fec;
+  if (curl)
+  {
+    fec = std::make_unique<mfem::ND_FECollection>(order, 3);
+  }
+  else
+  {
+    fec = std::make_unique<mfem::RT_FECollection>(order - 1, 3);
+  }
+  FiniteElementSpace fespace(mesh, fec.get());
+  auto real_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
+  auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  if (nonsymmetric)
+  {
+    // Unequal off-diagonal entries expose tensor-index transposition in both the
+    // complex mass action and the shared real curl action.
+    for (auto *coeff : {&real_mass, &imag_mass, &real_curl})
+    {
+      mfem::DenseTensor values(coeff->GetMaterialProperties());
+      for (int k = 0; k < values.SizeK(); k++)
+      {
+        values(0, 1, k) = 0.7;
+        values(1, 0, k) = -0.4;
+        values(0, 2, k) = -0.2;
+        values(2, 0, k) = 0.5;
+        values(1, 2, k) = 0.3;
+        values(2, 1, k) = -0.8;
+      }
+      *coeff = MaterialPropertyCoefficient(coeff->GetAttributeToMaterial(), values);
+    }
+  }
+  real_mass *= -0.71;
+  imag_mass *= 0.19;
+  real_curl *= 1.37;
+  bdr_mass *= -0.23;
+  BilinearForm ar(fespace), ai(fespace);
+  if (curl)
+  {
+    ar.AddDomainIntegrator<CurlCurlMassIntegrator>(real_curl, real_mass);
+  }
+  else
+  {
+    ar.AddDomainIntegrator<VectorFEMassIntegrator>(real_mass);
+  }
+  ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_mass);
+  if (boundary)
+  {
+    // Deliberately unmatched real/imaginary boundary field layouts.
+    ar.AddBoundaryIntegrator<VectorFEMassIntegrator>(bdr_mass);
+    ai.AddBoundaryIntegrator<CurlCurlMassIntegrator>(bdr_curl, bdr_mass);
+  }
+  ar.AssembleQuadratureData();
+  ai.AssembleQuadratureData();
+  auto real = ar.PartialAssemble();
+  auto imag = ai.PartialAssemble();
+  auto *original_real = real.get();
+  auto *original_imag = imag.get();
+  auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  if (mesh_file && std::string(mesh_file) == "fichera-mixed-p2.mesh" &&
+      Mpi::Size(Mpi::World()) == 1)
+  {
+    // Each volume geometry contributes a compatible pair to the same composite,
+    // exercising multiple iterations of the pairing loop, including prism bases.
+    for (auto *op : {real.get(), imag.get()})
+    {
+      CeedInt count;
+      REQUIRE(CeedOperatorCompositeGetNumSub((*op)[0], &count) == 0);
+      REQUIRE(count == 3);
+    }
+    REQUIRE(mesh.Get().HasGeometry(mfem::Geometry::TETRAHEDRON));
+    REQUIRE(mesh.Get().HasGeometry(mfem::Geometry::CUBE));
+    REQUIRE(mesh.Get().HasGeometry(mfem::Geometry::PRISM));
+  }
+  if (nested)
+  {
+    // One small nested composite suffices: it must survive as a remainder alongside
+    // the compatible direct volume pair. Finish construction before transferring ownership.
+    auto AddNestedRemainder = [&](ceed::Operator &op)
+    {
+      auto remainder = ai.PartialAssemble();
+      CeedOperator sub = nullptr;
+      REQUIRE(CeedOperatorReferenceCopy((*remainder)[0], &sub) == 0);
+      op.AddSubOperator(sub);
+      op.Finalize();
+    };
+    AddNestedRemainder(*real);
+    AddNestedRemainder(*ref_real);
+  }
+  ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
+  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
+  // Establish activation without exposing the private implementation or its decomposition.
+  REQUIRE_FALSE(IsOriginalComplexWrapper(*actual));
+  if (mesh_file && std::string(mesh_file) == "fichera-tet.mesh" && !nested)
+  {
+    // Verify both restriction clone paths: ND face transformations and RT signs.
+    Ceed ceed = ceed::internal::GetCeedObjects()[0];
+    const auto &geom = mesh.GetCeedGeomFactorData(ceed).at(mfem::Geometry::TETRAHEDRON);
+    CeedRestrictionType type;
+    REQUIRE(CeedElemRestrictionGetType(fespace.GetCeedElemRestriction(
+                                           ceed, mfem::Geometry::TETRAHEDRON, geom.indices),
+                                       &type) == 0);
+    REQUIRE(type == (curl ? CEED_RESTRICTION_CURL_ORIENTED : CEED_RESTRICTION_ORIENTED));
+  }
+  CheckPackedActions(*actual, reference, inherited);
+  if (!curl)
+  {
+    // Only passive values change; the owned inputs remain structurally immutable.
+    ScalePackedTestQData(*original_real, -1.13);
+    ScalePackedTestQData(*original_imag, 0.79);
+    ScalePackedTestQData(*ref_real, -1.13);
+    ScalePackedTestQData(*ref_imag, 0.79);
+    CheckPackedActions(*actual, reference);
+  }
+}
+
+TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
+          "[libCEED][ComplexPacked][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
+  const auto [name, amr, lossy, real_pc] = GENERATE(table<const char *, bool, bool, bool>(
+      {{"Conforming lossy complex preconditioner", false, true, false},
+       {"Nonconforming lossy complex preconditioner", true, true, false},
+       {"Conforming lossless volume with absorbing boundary", false, false, false},
+       {"Conforming real-only preconditioner", false, true, true}}));
+  CAPTURE(name);
+  ComplexPreconditionerFixture fixture(3, amr);
+  fixture.domains.materials[0].tandelta = lossy ? 4.0e-4 : 0.0;
+  fixture.solver.linear.pc_mat_real = real_pc;
+  auto space = fixture.MakeSpace();
+  auto pc = AssembleComplexPreconditioner(*space);
+  const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(pc.get());
+  REQUIRE(mg);
+  REQUIRE(mg->GetNumLevels() == 3);
+  const auto *fine = dynamic_cast<const ComplexParOperator *>(&mg->GetFinestOperator());
+  const auto *coarse = dynamic_cast<const ComplexParOperator *>(&mg->GetOperatorAtLevel(0));
+  REQUIRE(fine);
+  REQUIRE(coarse);
+  REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
+  REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  const auto &aux =
+      dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
+  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
+  const auto &local = fine->LocalOperator();
+  REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+  // Assemble independent reference operators and exercise the unchanged borrowed RAP
+  // constructor. Numerical agreement is checked against separate real ParOperators below.
+  auto ref_pc = AssembleComplexPreconditioner(*space);
+  const auto &ref_mg = dynamic_cast<const ComplexMultigridOperator &>(*ref_pc);
+  const auto &ref_local =
+      dynamic_cast<const ComplexParOperator &>(ref_mg.GetFinestOperator()).LocalOperator();
+  ComplexWrapperOperator local_reference(ref_local.Real(), ref_local.Imag());
+  CheckPackedActions(local, local_reference);
+
+  // Compare the RAP action, including PEC elimination and nonconforming/MPI maps,
+  // against separate real/imaginary ParOperators (the existing four-real reference).
+  const auto &fespace = space->GetNDSpace();
+  ParOperator ref_real(*ref_local.Real(), fespace);
+  std::unique_ptr<ParOperator> ref_imag;
+  const auto &essential = space->GetNDDbcTDofLists().back();
+  ref_real.SetEssentialTrueDofs(essential, Operator::DIAG_ONE);
+  if (ref_local.Imag())
+  {
+    ref_imag = std::make_unique<ParOperator>(*ref_local.Imag(), fespace);
+    ref_imag->SetEssentialTrueDofs(essential, Operator::DIAG_ZERO);
+  }
+  ComplexWrapperOperator reference(&ref_real, ref_imag.get());
+  CheckPackedActions(*fine, reference, lossy && !real_pc);
+  ComplexParOperator borrowed(ref_local.Real(), ref_local.Imag(), fespace);
+  borrowed.SetEssentialTrueDofs(essential, Operator::DIAG_ONE);
+  REQUIRE(IsOriginalComplexWrapper(borrowed.LocalOperator()));
+  CheckPackedActions(borrowed, reference);
+
+  // Main K/C/M remain unassembled-QData operators inside weighted SumOperators.
+  if (lossy && !real_pc && !amr)
+  {
+    auto K = space->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space->GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A = space->GetSystemMatrix<ComplexOperator>(
+        std::complex<double>{1.0}, std::complex<double>{0.0, 2.0},
+        std::complex<double>{-4.0}, K.get(), C.get(), M.get(), nullptr);
+    const auto *system = dynamic_cast<const ComplexParOperator *>(A.get());
+    REQUIRE(system);
+    REQUIRE(dynamic_cast<const SumOperator *>(system->LocalOperator().Real()));
+    REQUIRE(IsOriginalComplexWrapper(system->LocalOperator()));
+  }
+}
+
+TEST_CASE("libCEED packed complex unsupported input fallbacks",
+          "[libCEED][ComplexPacked][Serial][Parallel]")
+{
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
+  const auto [name, qdata, h1_space, tensor, scaled, real_only] =
+      GENERATE(table<const char *, bool, bool, bool, bool, bool>(
+          {{"Unassembled quadrature data", false, false, false, false, false},
+           {"Tensor H1 basis", true, true, true, false, false},
+           {"Non-tensor H1 basis", true, true, false, false, false},
+           {"Input with dof multiplicity", true, false, false, true, false},
+           {"Real-only input", true, false, false, false, true}}));
+  CAPTURE(name);
+  PackedIntegrationSettings settings(3);
+  const char *file = tensor ? "/mesh/fichera-hex.mesh" : "/mesh/fichera-tet.mesh";
+  auto mesh = Initialize(Mpi::World(), std::string(PALACE_TEST_DATA_DIR) + file, 0, false);
+  mfem::ND_FECollection nd(3, 3);
+  mfem::H1_FECollection h1(3, 3);
+  FiniteElementSpace fespace(mesh, h1_space
+                                       ? static_cast<mfem::FiniteElementCollection *>(&h1)
+                                       : static_cast<mfem::FiniteElementCollection *>(&nd));
+  auto coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  BilinearForm ar(fespace), ai(fespace);
+  if (h1_space)
+  {
+    ar.AddDomainIntegrator<DiffusionIntegrator>(coeff);
+    ai.AddDomainIntegrator<DiffusionIntegrator>(coeff);
+  }
+  else
+  {
+    ar.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+    ai.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+  }
+  if (qdata)
+  {
+    ar.AssembleQuadratureData();
+    ai.AssembleQuadratureData();
+  }
+  auto real = ar.PartialAssemble(), imag = ai.PartialAssemble();
+  auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  if (scaled)
+  {
+    for (auto *op : {real.get(), ref_real.get()})
+    {
+      Vector multiplicity(fespace.GetVSize());
+      multiplicity = 0.63;
+      op->SetDofMultiplicity(std::move(multiplicity));
+    }
+  }
+  if (real_only)
+  {
+    imag.reset();
+    ref_imag.reset();
+  }
+  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
+  REQUIRE(IsOriginalComplexWrapper(*actual));
+  ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
+  CheckPackedActions(*actual, reference);
+}
+
+TEST_CASE("libCEED packed complex empty local operators",
+          "[libCEED][ComplexPacked][Serial][Parallel]")
+{
+  for (const int size : {0, 7})
+  {
+    auto real = std::make_unique<ceed::SymmetricOperator>(size, size);
+    auto imag = std::make_unique<ceed::SymmetricOperator>(size, size);
+    real->Finalize();
+    imag->Finalize();
+    auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
+    REQUIRE(IsOriginalComplexWrapper(*actual));
+    ComplexVector x(size), result(size), expected(size);
+    x = std::complex<double>{0.7, -0.2};
+    expected = 0.0;
+    actual->Mult(x, result);
+    CheckPackedResult(result, expected);
+  }
+}
+
+// Opt in with "[ComplexPreconditionerBenchmark]" or "[Benchmark]". Orders 2/3/4
+// run on a 768-tet mesh with one rank; --benchmark-ref-levels adds refinements.
+// One rank keeps both volume and absorbing-boundary terms in the timed operator.
+TEST_CASE("CPU complex preconditioner benchmark",
+          "[.][libCEED][Benchmark][ComplexPreconditionerBenchmark][Serial]")
+{
+  const auto *config = Catch::getCurrentContext().getConfig();
+  const auto &selectors = config->getTestsOrTags();
+  const bool requested = std::any_of(
+      selectors.begin(), selectors.end(),
+      [](const std::string &selector)
+      {
+        return selector.find("[ComplexPreconditionerBenchmark]") != std::string::npos ||
+               selector.find("[Benchmark]") != std::string::npos;
+      });
+  // The runner adds [Serial]/[Parallel], which also selects hidden tests. Respect
+  // CTest's --skip-benchmarks before any setup, and require opt-in.
+  if (config->skipBenchmarks() || !requested)
+  {
+    SKIP("Select [ComplexPreconditionerBenchmark] explicitly to run timing");
+  }
+  if (!PackedTestBackend())
+  {
+    SKIP("Packed application requires one CPU CEED context and one thread");
+  }
+  if (Mpi::Size(Mpi::World()) != 1)
+  {
+    SKIP("The local preconditioner benchmark requires one MPI rank");
+  }
+  const int order = GENERATE(2, 3, 4);
+  const bool boundary = GENERATE(false, true);
+  DYNAMIC_SECTION("p" << order << (boundary ? " with absorbing boundary" : " volume only"))
+  {
+    REQUIRE(benchmark_ref_levels >= 0);
+    const auto comm = Mpi::World();
+    ComplexPreconditionerFixture fixture(order, false, 2 + benchmark_ref_levels);
+    if (!boundary)
+    {
+      fixture.boundaries.farfield.attributes.clear();
+    }
+    auto space = fixture.MakeSpace();
+    Mpi::Barrier(comm);
+    const double start = MPI_Wtime();
+    auto pc = AssembleComplexPreconditioner(*space);
+    double setup_time = MPI_Wtime() - start;
+    Mpi::GlobalMax(1, &setup_time, comm);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(pc.get());
+    REQUIRE(mg);
+    const auto *fine = dynamic_cast<const ComplexParOperator *>(&mg->GetFinestOperator());
+    REQUIRE(fine);
+    const auto &local = fine->LocalOperator();
+    REQUIRE_FALSE(IsOriginalComplexWrapper(local));
+
+    // Borrow the exact assembled real/imaginary inputs owned by the production
+    // preconditioner to compare with the original four-real application.
+    ComplexWrapperOperator local_reference(local.Real(), local.Imag());
+    CheckPackedActions(local, local_reference);
+
+    int elements = fixture.meshes.back()->GetNE();
+    Mpi::GlobalSum(1, &elements, comm);
+    const auto global_dofs = space->GetNDSpace().GlobalTrueVSize();
+    if (Mpi::Root(comm))
+    {
+      WARN("Complex preconditioner: p = "
+           << order << ", absorbing boundary = " << boundary
+           << ", MPI ranks = " << Mpi::Size(comm) << ", global elements = " << elements
+           << ", global true dofs = " << global_dofs
+           << ", root local dofs = " << local.Height()
+           << "\nProduction hierarchy setup (all levels, including packing) = "
+           << 1.0e3 * setup_time << " ms");
+      ComplexVector x(local.Width()), y(local.Height()), y_ref(local.Height());
+      x.Real().Randomize(17);
+      x.Imag().Randomize(53);
+      // A complex scale selects the original wrapper's generic Mult/AXPY path.
+      // Its real-only scale path requests negative real CEED AddMult coefficients,
+      // which ceed::Operator does not support.
+      const std::complex<double> scale{-0.7, 0.23};
+      BENCHMARK("Local Mult (original borrowed wrapper)")
+      {
+        local_reference.Mult(x, y_ref);
+        return y_ref.Size();
+      };
+      BENCHMARK("Local Mult (owned packed wrapper, including copies)")
+      {
+        local.Mult(x, y);
+        return y.Size();
+      };
+      y_ref = 0.0;
+      BENCHMARK("Local AddMult (original borrowed wrapper, complex scale)")
+      {
+        local_reference.AddMult(x, y_ref, scale);
+        return y_ref.Size();
+      };
+      y = 0.0;
+      BENCHMARK("Local AddMult (owned packed wrapper, complex scale, including copies)")
+      {
+        local.AddMult(x, y, scale);
+        return y.Size();
+      };
+    }
+    Mpi::Barrier(comm);
   }
 }
 
