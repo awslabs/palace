@@ -1,0 +1,1 @@
+genhtml coverage_filtered.info --output-directory coverage_html --title 'Palace Coverage Report' --show-details --legend --ignore-errors inconsistent
