@@ -155,8 +155,19 @@ int main()
     set(${_petsc_test_diagnostic} "" PARENT_SCOPE)
   else()
     if(PETSC_TEST_COMPILED)
-      set(PETSC_TEST_DIAGNOSTIC
-          "Exited with code ${PETSC_TEST_EXITCODE}\n${PETSC_TEST_OUTPUT}")
+      if(PETSC_TEST_EXITCODE MATCHES "^PLEASE_FILL_OUT-")
+        string(CONCAT PETSC_TEST_DIAGNOSTIC
+               "The PETSc test program compiled, but CMake did not run it while "
+               "cross-compiling. Set CMAKE_CROSSCOMPILING_EMULATOR or provide the "
+               "try_run cache results requested above.")
+      elseif(PETSC_TEST_EXITCODE STREQUAL "FAILED_TO_RUN")
+        string(CONCAT PETSC_TEST_DIAGNOSTIC
+               "The PETSc test program compiled, but CMake could not execute it.\n"
+               "${PETSC_TEST_OUTPUT}")
+      else()
+        set(PETSC_TEST_DIAGNOSTIC
+            "Exited with code ${PETSC_TEST_EXITCODE}\n${PETSC_TEST_OUTPUT}")
+      endif()
     else()
       set(PETSC_TEST_DIAGNOSTIC "Compile output:\n${PETSC_TEST_COMPILE_OUTPUT}")
     endif()
@@ -266,8 +277,19 @@ int main()
     set(${_slepc_test_diagnostic} "" PARENT_SCOPE)
   else()
     if(SLEPC_TEST_COMPILED)
-      set(SLEPC_TEST_DIAGNOSTIC
-          "Exited with code ${SLEPC_TEST_EXITCODE}\n${SLEPC_TEST_OUTPUT}")
+      if(SLEPC_TEST_EXITCODE MATCHES "^PLEASE_FILL_OUT-")
+        string(CONCAT SLEPC_TEST_DIAGNOSTIC
+               "The SLEPc test program compiled, but CMake did not run it while "
+               "cross-compiling. Set CMAKE_CROSSCOMPILING_EMULATOR or provide the "
+               "try_run cache results requested above.")
+      elseif(SLEPC_TEST_EXITCODE STREQUAL "FAILED_TO_RUN")
+        string(CONCAT SLEPC_TEST_DIAGNOSTIC
+               "The SLEPc test program compiled, but CMake could not execute it.\n"
+               "${SLEPC_TEST_OUTPUT}")
+      else()
+        set(SLEPC_TEST_DIAGNOSTIC
+            "Exited with code ${SLEPC_TEST_EXITCODE}\n${SLEPC_TEST_OUTPUT}")
+      endif()
     else()
       set(SLEPC_TEST_DIAGNOSTIC "Compile output:\n${SLEPC_TEST_COMPILE_OUTPUT}")
     endif()
