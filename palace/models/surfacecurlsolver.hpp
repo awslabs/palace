@@ -5,6 +5,7 @@
 #define PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP
 
 #include <memory>
+#include <vector>
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
 
@@ -33,6 +34,13 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
                              int flux_loop_idx,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
                              Vector &result);
+
+// Integrate the magnetic flux density B ⋅ n over the given boundary attributes, with the
+// surface normal oriented according to flux_direction. Returns the global (summed) flux.
+double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
+                                 const std::vector<int> &attributes, const Mesh &mesh,
+                                 const MaterialOperator &mat_op,
+                                 const mfem::Vector &flux_direction, MPI_Comm comm);
 
 void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
                             const std::vector<int> &hole_attributes,

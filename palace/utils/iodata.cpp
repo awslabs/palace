@@ -271,6 +271,42 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 
 void IoData::CheckConfiguration()
 {
+  // Mixed current/flux inductance extraction has one complete-matrix contract: every
+  // parallel current element supplies its oriented aperture, and every current port remains
+  // open during the flux excitations. Reject partial or silently overridden configurations
+  // before any operator is constructed.
+  const bool mixed_magnetostatic = problem.type == ProblemType::MAGNETOSTATIC &&
+                                   !boundaries.current.empty() &&
+                                   !boundaries.fluxloop.empty();
+  const InactivePortMode global_inactive_mode = solver.magnetostatic.inactive_port_mode;
+  for (const auto &[idx, data] : boundaries.current)
+  {
+    for (std::size_t e = 0; e < data.elements.size(); e++)
+    {
+      if (mixed_magnetostatic)
+      {
+        MFEM_VERIFY(data.elements[e].aperture.has_value(),
+                    "Mixed SurfaceCurrent/FluxLoop magnetostatic extraction requires an "
+                    "\"Aperture\" for element "
+                        << e << " of SurfaceCurrent index " << idx << "!");
+      }
+      else
+      {
+        MFEM_VERIFY(!data.elements[e].aperture.has_value(),
+                    "SurfaceCurrent \"Aperture\" is only valid for a magnetostatic "
+                    "simulation combining SurfaceCurrent and FluxLoop excitations!");
+      }
+    }
+    if (mixed_magnetostatic)
+    {
+      const auto inactive_mode = data.inactive_port_mode.value_or(global_inactive_mode);
+      MFEM_VERIFY(inactive_mode == InactivePortMode::OPEN,
+                  "Mixed SurfaceCurrent/FluxLoop magnetostatic extraction requires "
+                  "SurfaceCurrent index "
+                      << idx << " to use \"InactiveMode\": \"Open\"!");
+    }
+  }
+
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)

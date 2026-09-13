@@ -3,7 +3,9 @@
 
 #include <complex>
 #include <memory>
+#include <type_traits>
 #include <vector>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -17,6 +19,105 @@
 using namespace palace;
 using namespace Catch::Matchers;
 using namespace Catch;
+
+namespace
+{
+
+struct CountingWeightOperator
+{
+  mfem::DenseMatrix matrix;
+  mutable int applications = 0;
+
+  explicit CountingWeightOperator(int n) : matrix(n)
+  {
+    matrix = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      matrix(i, i) = 2.0 + i;
+      if (i > 0)
+      {
+        matrix(i, i - 1) = matrix(i - 1, i) = 0.25;
+      }
+    }
+  }
+
+  void Mult(const Vector &x, Vector &y) const
+  {
+    applications++;
+    matrix.Mult(x, y);
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const
+  {
+    applications++;
+    matrix.Mult(x.Real(), y.Real());
+    matrix.Mult(x.Imag(), y.Imag());
+  }
+};
+
+}  // namespace
+
+TEMPLATE_TEST_CASE("Weighted CGS reuses the weight application within each pass",
+                   "[orthog][Serial][Parallel]", Vector, ComplexVector)
+{
+  using VecType = TestType;
+  using ScalarType =
+      std::conditional_t<std::is_same_v<VecType, Vector>, double, std::complex<double>>;
+  const auto m = GENERATE(std::size_t{0}, std::size_t{1}, std::size_t{4});
+  const bool refine = GENERATE(false, true);
+  const auto comm = Mpi::World();
+  constexpr int n = 6;
+  CountingWeightOperator W(n);
+  VecType reference_work(n), work;
+  auto dot = [&W, &reference_work](const VecType &x, const VecType &y)
+  {
+    W.Mult(x, reference_work);
+    return linalg::LocalDot(reference_work, y);
+  };
+
+  std::vector<VecType> V;
+  V.reserve(m + 1);
+  std::vector<ScalarType> H(m), H_ref(m);
+  for (std::size_t j = 0; j <= m; j++)
+  {
+    auto &v = V.emplace_back(n);
+    const auto seed = 314159 + 17 * Mpi::Rank(comm) + 2 * j;
+    if constexpr (std::is_same_v<VecType, Vector>)
+    {
+      v.Randomize(seed);
+    }
+    else
+    {
+      v.Real().Randomize(seed);
+      v.Imag().Randomize(seed + 1);
+    }
+    if (j < m)
+    {
+      linalg::OrthogonalizeColumnMGS(comm, V, v, H.data(), j, dot);
+      auto norm_sq = dot(v, v);
+      Mpi::GlobalSum(1, &norm_sq, comm);
+      v *= 1.0 / std::sqrt(std::abs(norm_sq));
+    }
+  }
+
+  // Match the PROM use case, where the vector being orthogonalized is V.back().
+  auto &w = V.back();
+  VecType expected(w);
+  linalg::OrthogonalizeColumnCGS(comm, V, expected, H_ref.data(), m, refine, dot);
+  W.applications = 0;
+  linalg::OrthogonalizeColumnWeightedCGS(comm, V, w, H.data(), m, W, work, refine);
+  CHECK(W.applications == (m == 0 ? 0 : (refine ? 2 : 1)));
+
+  for (std::size_t j = 0; j < m; j++)
+  {
+    CHECK_THAT(std::abs(H[j] - H_ref[j]), WithinAbs(0.0, 1.0e-13));
+    auto projection = dot(w, V[j]);
+    Mpi::GlobalSum(1, &projection, comm);
+    CHECK_THAT(std::abs(projection), WithinAbs(0.0, 1.0e-12));
+  }
+  expected.Add(-1.0, w);
+  CHECK_THAT(linalg::Norml2(comm, expected), WithinAbs(0.0, 1.0e-13));
+}
 
 class RealWeightedInnerProduct
 {
@@ -68,39 +169,10 @@ public:
   }
 };
 
-// Wapper class to make iteration over orthogonalization methods easy.
-class orthogonalize_wrapper
-{
-public:
-  Orthogonalization orthgo_type;
-
-  orthogonalize_wrapper(Orthogonalization orthgo_type_) : orthgo_type(orthgo_type_) {}
-
-  template <typename VecType, typename ScalarType,
-            typename InnerProductW = linalg::IdentityInnerProduct>
-  void operator()(MPI_Comm comm, const std::vector<VecType> &V, VecType &w, ScalarType *H,
-                  std::size_t m, const InnerProductW &dot_op = {}) const
-  {
-    switch (orthgo_type)
-    {
-      case Orthogonalization::MGS:
-        linalg::OrthogonalizeColumnMGS(comm, V, w, H, m, dot_op);
-        break;
-      case Orthogonalization::CGS:
-        linalg::OrthogonalizeColumnCGS(comm, V, w, H, m, false, dot_op);
-        break;
-      case Orthogonalization::CGS2:
-        linalg::OrthogonalizeColumnCGS(comm, V, w, H, m, true, dot_op);
-        break;
-    }
-  }
-};
-
 TEST_CASE("OrthogonalizeColumn - Real Empty", "[orthog][Serial][Parallel][GPU]")
 {
-  auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS2));
+  auto orthog_type =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
 
   int mpi_rank = Mpi::Rank(Mpi::World());
 
@@ -114,7 +186,7 @@ TEST_CASE("OrthogonalizeColumn - Real Empty", "[orthog][Serial][Parallel][GPU]")
   Vector w_orig = w;  // Copy for comparison
 
   double H[1];  // Not used when m = 0
-  orthogonalize_fn(Mpi::World(), V, w, H, 0);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H, 0);
 
   // Vector should remain unchanged
   CHECK_THAT(w, RangeEquals(w_orig));
@@ -122,9 +194,8 @@ TEST_CASE("OrthogonalizeColumn - Real Empty", "[orthog][Serial][Parallel][GPU]")
 
 TEST_CASE("OrthogonalizeColumn Parameterized - Real 1", "[orthog][Serial][Parallel]")
 {
-  auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS2));
+  auto orthog_type =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
 
   int mpi_rank = Mpi::Rank(Mpi::World());
   int mpi_size = Mpi::Size(Mpi::World());
@@ -146,7 +217,7 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 1", "[orthog][Serial][Parall
   auto &w = V.at(mpi_size);
   w.Randomize();
 
-  orthogonalize_fn(Mpi::World(), V, w, H.data(), mpi_size);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H.data(), mpi_size);
 
   // We should have zeroed out the value at "mpi_rank"
   CHECK_THAT(w[mpi_rank], WithinAbs(0.0, 1e-12));
@@ -163,9 +234,8 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 1", "[orthog][Serial][Parall
 // incorrect host syncing in set-up.
 TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parallel]")
 {
-  auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS2));
+  auto orthog_type =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
 
   int mpi_rank = Mpi::Rank(Mpi::World());
   int mpi_size = Mpi::Size(Mpi::World());
@@ -196,7 +266,7 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parall
 
   // [0, 1, 0, 0] on all ranks
   V[1][1] = 1.0;
-  orthogonalize_fn(Mpi::World(), V, V[1], H.data(), 1);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, V[1], H.data(), 1);
 
   // Should be exact in double as multiply by zero. OrthogonalizeColumn does not
   // normalize.
@@ -213,7 +283,7 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parall
   auto d_v = w.Write();
   mfem::forall(w.Size(), [=] MFEM_HOST_DEVICE(int i) { d_v[i] = mpi_rank + i; });
 
-  orthogonalize_fn(Mpi::World(), V, w, H.data(), 2);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H.data(), 2);
 
   // Check orthogonality
   auto dot0 = linalg::Dot(Mpi::World(), w, V[0]);
@@ -233,9 +303,8 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parall
 
 TEST_CASE("OrthogonalizeColumn Parameterized - Complex 1", "[orthog][Serial][Parallel]")
 {
-  auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS2));
+  auto orthog_type =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
 
   int mpi_rank = Mpi::Rank(Mpi::World());
   int mpi_size = Mpi::Size(Mpi::World());
@@ -259,7 +328,7 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Complex 1", "[orthog][Serial][Par
   w.Real().Randomize();
   w.Imag().Randomize();
 
-  orthogonalize_fn(Mpi::World(), V, w, H.data(), mpi_size);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H.data(), mpi_size);
 
   // We should have zeroed out the value at "mpi_rank"
   CHECK_THAT(w.Real()[mpi_rank], WithinAbs(0.0, 1e-12));
@@ -275,9 +344,8 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Complex 1", "[orthog][Serial][Par
 
 TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
 {
-  auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS2));
+  auto orthog_type =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
 
   mfem::DenseMatrix W(3, 3);
   W = 0.0;
@@ -307,7 +375,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
   std::vector<double> H(2, 0.0);
 
   RealWeightedInnerProduct weight_op{std::make_shared<mfem::DenseMatrix>(W)};
-  orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H.data(), 2, weight_op);
 
   // Check orthogonality with respect to weight matrix
   Vector WVj(3);  // Temporary workspace
@@ -322,9 +390,8 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
 
 TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
 {
-  auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS),
-                                   orthogonalize_wrapper(Orthogonalization::CGS2));
+  auto orthog_type =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
 
   mfem::DenseMatrix W(3, 3);
   W = 0.0;
@@ -355,7 +422,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
   std::vector<std::complex<double>> H(2, 0.0);
 
   RealWeightedInnerProduct weight_op{std::make_shared<mfem::DenseMatrix>(W)};
-  orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
+  linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H.data(), 2, weight_op);
 
   auto W_wrap = ComplexWrapperOperator(&W, nullptr);
 

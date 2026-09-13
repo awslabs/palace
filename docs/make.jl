@@ -69,7 +69,9 @@ makedocs(
         prettyurls=true,
         sidebar_sitename=false,
         collapselevel=2,
-        assets=["assets/favicon.ico", "assets/config.css"]
+        assets=["assets/favicon.ico", "assets/config.css"],
+        # Auto-generated from the JSON schema, so exempt from the page size limit.
+        size_threshold_ignore=["config/reference.md"]
     ),
     sitename="Palace",
     authors="The Palace Developers and Maintainers, palace-maint@amazon.com",

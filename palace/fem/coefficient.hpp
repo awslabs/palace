@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_COEFFICIENT_HPP
 #define PALACE_FEM_COEFFICIENT_HPP
 
+#include <cmath>
 #include <complex>
 #include <memory>
 #include <utility>
@@ -169,7 +170,7 @@ private:
   const MaterialOperator &mat_op;
   bool two_sided;
   const mfem::Vector &x0;
-  const mfem::Vector *ref_dir;  // Optional reference direction for field alignment
+  const mfem::Vector *ref_dir;  // Optional reference direction for normal orientation
 
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
@@ -258,8 +259,15 @@ public:
     {
       if (ref_dir && Type == SurfaceFlux::MAGNETIC)
       {
-        // For magnetic flux with reference direction, orient based on field alignment
-        return VU * (*ref_dir);
+        // The reference direction selects the sign of the geometric normal; it is not a
+        // projection axis for the field. This preserves the B ⋅ n surface-flux magnitude
+        // for tilted and curved surfaces.
+        const double alignment = normal * (*ref_dir);
+        MFEM_VERIFY(
+            std::abs(alignment) > 1.0e-12 * ref_dir->Norml2(),
+            "Surface flux reference direction is tangent to the surface and cannot orient "
+            "its normal!");
+        return (alignment < 0.0) ? -flux : flux;
       }
       else
       {

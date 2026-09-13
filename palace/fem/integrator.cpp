@@ -33,8 +33,18 @@ int DefaultIntegrationOrder::Get(const mfem::ElementTransformation &T)
 int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom)
 {
   MFEM_VERIFY(mesh.GetNodes(), "The mesh has no nodal FE space!");
+  const auto *fec = mesh.GetNodalFESpace()->FEColl();
+  const mfem::FiniteElement *fe = fec->FiniteElementForGeometry(geom);
+  if (!fe)
+  {
+    // Periodic meshes use a discontinuous nodal space so that identified vertices can
+    // retain distinct physical coordinates. Such collections only provide lower-
+    // dimensional mesh geometry through their trace finite elements.
+    fe = fec->TraceFiniteElementForGeometry(geom);
+  }
+  MFEM_VERIFY(fe, "Unable to get mesh finite element for geometry " << geom << "!");
   mfem::IsoparametricTransformation T;
-  T.SetFE(mesh.GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
+  T.SetFE(fe);
   return Get(T);
 }
 

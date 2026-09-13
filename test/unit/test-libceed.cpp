@@ -5,12 +5,14 @@
 #include <sstream>
 #include <string>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/basis.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "models/materialoperator.hpp"
@@ -392,6 +394,36 @@ void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOpera
                       double scaling = 1.0)
 {
   TestCeedOperator(op_test, op_ref, true, true, scaling);
+}
+
+// Quadrature data assembly splits an integrator into a build QFunction, which writes the
+// per-quadrature-point tensor into a cache, and a generic apply QFunction which consumes
+// it. The two must agree on how that cache is laid out: a wrong block offset in a build
+// QFunction silently corrupts one block and leaves another zero. Compare against the same
+// integrator applied without cached quadrature data, which shares the coefficient and
+// geometry code paths but none of the layout logic.
+template <typename T>
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
+                            T AddIntegrators)
+{
+  BilinearForm a_test(fespace), a_ref(fespace);
+  AddIntegrators(a_test);
+  AddIntegrators(a_ref);
+  a_test.AssembleQuadratureData();
+  auto op_test = a_test.PartialAssemble();
+  auto op_ref = a_ref.PartialAssemble();
+
+  // Guard against vacuously comparing two empty operators.
+  Vector x(op_ref->Width()), y_ref(op_ref->Height());
+  x.UseDevice(true);
+  y_ref.UseDevice(true);
+  x.Randomize(1);
+  op_ref->Mult(x, y_ref);
+  double norm_ref = y_ref * y_ref;
+  Mpi::GlobalSum(1, &norm_ref, comm);
+  REQUIRE(norm_ref > 0.0);
+
+  TestCeedOperatorMult(*op_test, *op_ref, false);
 }
 
 template <typename T1, typename T2, typename T3>
@@ -1442,7 +1474,117 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   Mpi::Barrier(comm);
 }
 
+void CheckMfemFixedBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &points,
+                         bool check_gradient)
+{
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  CeedBasis basis;
+  // The arbitrary target rule is tabulated once at setup. Apply then uses the ordinary
+  // fixed basis API, exactly as mapped face/subface operators do.
+  ceed::InitBasisFromRule(fe, points, 1, ceed, &basis);
+
+  const int num_nodes = fe.GetDof();
+  const int num_points = points.GetNPoints();
+  const int value_dim = fe.GetRangeType() == mfem::FiniteElement::VECTOR ? fe.GetDim() : 1;
+  CeedVector u, v;
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, num_nodes, &u));
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, value_dim * num_points, &v));
+
+  mfem::Vector u_values(num_nodes);
+  for (int i = 0; i < num_nodes; i++)
+  {
+    u_values(i) = 0.25 * (i + 1) - 0.1 * (i % 3);
+  }
+  PalaceCeedCall(
+      ceed, CeedVectorSetArray(u, CEED_MEM_HOST, CEED_COPY_VALUES, u_values.GetData()));
+  PalaceCeedCall(ceed, CeedBasisApply(basis, 1, CEED_NOTRANSPOSE, CEED_EVAL_INTERP, u, v));
+
+  const CeedScalar *values;
+  PalaceCeedCall(ceed, CeedVectorGetArrayRead(v, CEED_MEM_HOST, &values));
+  mfem::Vector shape(num_nodes);
+  mfem::DenseMatrix vshape(num_nodes, fe.GetDim());
+  for (int q = 0; q < num_points; q++)
+  {
+    if (value_dim == 1)
+    {
+      fe.CalcShape(points.IntPoint(q), shape);
+      CHECK(values[q] == Catch::Approx(shape * u_values).epsilon(1.0e-11).margin(1.0e-13));
+    }
+    else
+    {
+      fe.CalcVShape(points.IntPoint(q), vshape);
+      for (int d = 0; d < value_dim; d++)
+      {
+        mfem::Vector column(vshape.GetColumn(d), num_nodes);
+        CHECK(values[d * num_points + q] ==
+              Catch::Approx(column * u_values).epsilon(1.0e-11).margin(1.0e-13));
+      }
+    }
+  }
+  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(v, &values));
+
+  if (check_gradient)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, fe.GetDim() * num_points, &v));
+    PalaceCeedCall(ceed, CeedBasisApply(basis, 1, CEED_NOTRANSPOSE, CEED_EVAL_GRAD, u, v));
+    PalaceCeedCall(ceed, CeedVectorGetArrayRead(v, CEED_MEM_HOST, &values));
+    mfem::DenseMatrix dshape(num_nodes, fe.GetDim());
+    for (int q = 0; q < num_points; q++)
+    {
+      fe.CalcDShape(points.IntPoint(q), dshape);
+      for (int d = 0; d < fe.GetDim(); d++)
+      {
+        mfem::Vector column(dshape.GetColumn(d), num_nodes);
+        CHECK(values[d * num_points + q] ==
+              Catch::Approx(column * u_values).epsilon(1.0e-11).margin(1.0e-13));
+      }
+    }
+    PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(v, &values));
+  }
+
+  PalaceCeedCall(ceed, CeedVectorDestroy(&u));
+  PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&basis));
+}
+
 }  // namespace
+
+TEST_CASE("MFEM fixed arbitrary-rule bases", "[libCEED][Serial][Parallel][GPU]")
+{
+  SECTION("Rational pyramid H1")
+  {
+    mfem::LinearPyramidFiniteElement fe;
+    mfem::IntegrationRule points(3);
+    points.IntPoint(0).Set3(0.10, 0.10, 0.50);
+    points.IntPoint(1).Set3(0.20, 0.15, 0.30);
+    points.IntPoint(2).Set3(0.05, 0.20, 0.60);
+    for (int q = 0; q < points.GetNPoints(); q++)
+    {
+      points.IntPoint(q).weight = 1.0;
+    }
+    CheckMfemFixedBasis(fe, points, true);
+  }
+
+  SECTION("Square full-rank wedge Hcurl and Hdiv")
+  {
+    for (int order : {1, 2})
+    {
+      mfem::ND_WedgeElement nd_fe(order);
+      mfem::RT_WedgeElement rt_fe(order - 1);
+      mfem::IntegrationRule points(3);
+      points.IntPoint(0).Set3(0.20, 0.10, 0.25);
+      points.IntPoint(1).Set3(0.40, 0.20, 0.75);
+      points.IntPoint(2).Set3(0.10, 0.30, 0.50);
+      for (int q = 0; q < points.GetNPoints(); q++)
+      {
+        points.IntPoint(q).weight = 1.0;
+      }
+      CheckMfemFixedBasis(nd_fe, points, false);
+      CheckMfemFixedBasis(rt_fe, points, false);
+    }
+  }
+}
 
 TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel]")
 {
@@ -1489,6 +1631,77 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
   auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
                          0, false, order, true);
+}
+
+// SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
+// configures when running on CPU, including the boundary terms contributed by absorbing and
+// impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
+// particular, a boundary curl-curl + mass term on a 3D mesh selects the 32 QFunctions,
+// which no other test exercises.
+TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
+{
+  auto mesh_file =
+      GENERATE("star-quad.mesh", "star-tri.mesh", "fichera-hex.mesh", "fichera-tet.mesh");
+  auto order = GENERATE(1, 2);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh =
+      Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+  const int dim = mesh.Dimension();
+
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  INFO("Mesh: " << mesh_file << "\nOrder: " << order);
+
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto Q_bdr = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  auto MQ_bdr = BuildCoefficient(mesh, true, CoeffType::Matrix);
+
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::H1_FECollection h1_fec(order, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+
+  SECTION("Domain Curl-Curl + Mass")
+  {
+    // The curl coefficient is scalar wherever the curl itself is scalar-valued (Dim < 3).
+    TestCeedQuadratureData(comm, nd_fespace,
+                           [&](BilinearForm &a)
+                           {
+                             if (dim < 3)
+                             {
+                               a.AddDomainIntegrator<CurlCurlMassIntegrator>(Q, MQ);
+                             }
+                             else
+                             {
+                               a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+                             }
+                           });
+  }
+  if (dim == 3)
+  {
+    SECTION("Boundary Curl-Curl + Mass")
+    {
+      // A second-order absorbing boundary fills both coefficients, so
+      // AddConfiguredIntegrators builds this integrator on the boundary.
+      TestCeedQuadratureData(
+          comm, nd_fespace, [&](BilinearForm &a)
+          { a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(Q_bdr, MQ_bdr); });
+    }
+  }
+  SECTION("Boundary Mass")
+  {
+    TestCeedQuadratureData(comm, nd_fespace, [&](BilinearForm &a)
+                           { a.AddBoundaryIntegrator<VectorFEMassIntegrator>(MQ_bdr); });
+  }
+  SECTION("Auxiliary Diffusion")
+  {
+    TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
