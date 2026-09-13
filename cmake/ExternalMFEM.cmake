@@ -128,12 +128,7 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
-  if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(APPEND MFEM_OPTIONS
-      "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
-      "-DCUDA_ARCH=${CMAKE_CUDA_ARCHITECTURES}"
-    )
-  endif()
+  palace_append_cuda_architectures(MFEM_OPTIONS)
 else()
   list(APPEND MFEM_OPTIONS
     "-DMFEM_USE_CUDA=NO"

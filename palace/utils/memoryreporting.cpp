@@ -52,7 +52,7 @@ long GetCurrentMemory()
   {
     if (line.compare(0, 6, "VmRSS:") == 0)
     {
-      // Value is in kB.
+      // Value is in kilobytes.
       return std::stol(line.substr(6)) * 1024;
     }
   }
@@ -76,7 +76,7 @@ long GetPeakMemory()
     // macOS reports ru_maxrss in bytes.
     return usage.ru_maxrss;
 #else
-    // Linux reports ru_maxrss in kB.
+    // Linux reports ru_maxrss in kilobytes.
     return usage.ru_maxrss * 1024;
 #endif
   }
@@ -85,23 +85,23 @@ long GetPeakMemory()
 
 std::string FormatBytes(double bytes)
 {
-  constexpr double kB = 1024.0;
-  constexpr double MB = kB * 1024.0;
-  constexpr double GB = MB * 1024.0;
-  constexpr double TB = GB * 1024.0;
-  if (bytes >= TB)
+  constexpr double kilobyte = 1024.0;
+  constexpr double megabyte = kilobyte * 1024.0;
+  constexpr double gigabyte = megabyte * 1024.0;
+  constexpr double terabyte = gigabyte * 1024.0;
+  if (bytes >= terabyte)
   {
-    return fmt::format("{:.1f}T", bytes / TB);
+    return fmt::format("{:.1f}T", bytes / terabyte);
   }
-  if (bytes >= GB)
+  if (bytes >= gigabyte)
   {
-    return fmt::format("{:.1f}G", bytes / GB);
+    return fmt::format("{:.1f}G", bytes / gigabyte);
   }
-  if (bytes >= MB)
+  if (bytes >= megabyte)
   {
-    return fmt::format("{:.1f}M", bytes / MB);
+    return fmt::format("{:.1f}M", bytes / megabyte);
   }
-  return fmt::format("{:.1f}K", bytes / kB);
+  return fmt::format("{:.1f}K", bytes / kilobyte);
 }
 
 namespace

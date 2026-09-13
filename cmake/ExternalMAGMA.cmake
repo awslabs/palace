@@ -45,8 +45,8 @@ if(PALACE_WITH_CUDA)
     string(REPLACE ";" " " MAGMA_CUDA_ARCH "${MAGMA_CUDA_ARCH}")
     list(APPEND MAGMA_OPTIONS
       "-DGPU_TARGET=${MAGMA_CUDA_ARCH}"
-      "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
     )
+    palace_append_cuda_architectures(MAGMA_OPTIONS)
     set(MAKE_GENERATE_INC "${MAKE_GENERATE_INC}GPU_TARGET = ${MAGMA_CUDA_ARCH}\\n")
   endif()
 endif()

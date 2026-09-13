@@ -103,13 +103,13 @@ Automated source code formatting is performed using
 [`clang-format`](https://clang.llvm.org/docs/ClangFormat.html). Run:
 
 ```bash
-./scripts/format_source
+./scripts/format-source
 ```
 
 in the repository root directory to automatically use `clang-format` to format `C++` source
 as well as [`JuliaFormatter.jl`](https://github.com/domluna/JuliaFormatter.jl) for Julia and
 Markdown files. The script can be viewed
-[in the repository](https://github.com/awslabs/palace/blob/main/scripts/format_source).
+[in the repository](https://github.com/awslabs/palace/blob/main/scripts/format-source).
 
 The following conventions also apply:
 
@@ -145,10 +145,10 @@ A JSON format [configuration file](../config/config.md), for example named
 `config.json`, can be validated against the provided Schema using:
 
 ```bash
-./scripts/validate_config config.json
+./scripts/validate-config config.json
 ```
 
-[This script](https://github.com/awslabs/palace/blob/main/scripts/validate_config) uses
+[This script](https://github.com/awslabs/palace/blob/main/scripts/validate-config) uses
 Julia's [`JSONSchema.jl`](https://github.com/fredo-dedup/JSONSchema.jl) and the Schema
 provided in [`scripts/schema/`](https://github.com/awslabs/palace/blob/main/scripts/schema)
 to parse the configuration file and check that the fields are correctly specified. This
@@ -236,6 +236,7 @@ documentation build generates this table from that file.
 | Schema version | First *Palace* release | Notes                              |
 |:--------------:|:----------------------:|:---------------------------------- |
 | `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
+| `1-6-0`        | `0.18.0`               |                                    |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
@@ -324,9 +325,21 @@ objects may be created for local timing purposes, but these will not count towar
 reported at the end of a log file or in the metadata JSON.
 
 For each *Palace* simulation, a table of timing statistics is printed out before the program
-terminates. The minimum, maximum, and average times across all MPI processes are included in
-the table. Timer categories are exclusive, they do not overlap. The categories for breaking
-down the total simulation time are:
+terminates. The Min., Max., and Avg. columns are reductions across MPI ranks (useful for
+spotting load imbalance). They are not statistics over repeated calls of a given block.
+
+Timer categories are exclusive: only one is active at a time, and they do not overlap.
+Indentation in the table groups related categories, but it is not a parent/child sum. An
+unindented row is the remainder: time spent in that category that was not captured by any
+of the indented rows beneath it. Adding a remainder to its indented neighbors recovers the
+total time for that group. For example, `Estimation + Construction + Solve` is the full
+error-estimation cost; a large `Estimation` remainder means work outside estimator
+construction and solve. Those remainder rows are meant to be small in a good breakdown,
+since they are the leftover after calling out the informative sub-pieces.
+
+The (average) rows in the table should add up to the Total line at the bottom.
+
+The categories for breaking down the total simulation time are:
 
 ```
 Initialization                  // < Time spent parsing the configuration file,

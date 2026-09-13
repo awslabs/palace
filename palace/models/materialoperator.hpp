@@ -192,6 +192,10 @@ public:
 
   bool empty() const { return mat_coeff.TotalSize() == 0; }
 
+  // Mathematically exact zero: empty storage is zero, otherwise every stored scalar must
+  // compare exactly equal to zero. This deliberately has no tolerance.
+  bool IsExactlyZero() const;
+
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   const auto &GetMaterialProperties() const { return mat_coeff; }
 

@@ -1,0 +1,49 @@
+diff --git a/repos/spack_repo/builtin/packages/libxsmm/package.py b/repos/spack_repo/builtin/packages/libxsmm/package.py
+index 87ab30f42e..215ff0479c 100644
+--- a/repos/spack_repo/builtin/packages/libxsmm/package.py
++++ b/repos/spack_repo/builtin/packages/libxsmm/package.py
+@@ -155,13 +155,13 @@ class MakefileBuilder(makefile.MakefileBuilder):
+     def build(self, pkg, spec, prefix):
+         # include symbols by default
+         make_args = [
+-            "CC={0}".format(spack_cc),
+-            "CXX={0}".format(spack_cxx),
+-            "FC={0}".format(spack_fc),
+-            "PREFIX=%s" % prefix,
++            f"CC={spack_cc}",
++            f"CXX={spack_cxx}",
++            f"FC={spack_fc}",
++            f"PREFIX={prefix}",
+         ]
+         if spec.satisfies("@1.17-cp2k"):
+-            make_args += ["WRAP={0}".format(spec.variants["wrap"].value)]
++            make_args += [f"WRAP={spec.variants['wrap'].value}"]
+
+         # JIT (AVX and later) makes MNK, M, N, or K spec. superfluous
+         # make_args += ['MNK=1 4 5 6 8 9 13 16 17 22 23 24 26 32']
+@@ -173,7 +173,7 @@ class MakefileBuilder(makefile.MakefileBuilder):
+
+         blas_val = spec.variants["blas"].value
+         if blas_val != "default":
+-            make_args += ["BLAS={0}".format(blas_val)]
++            make_args += [f"BLAS={blas_val}"]
+
+         if spec.satisfies("+large_jit_buffer"):
+             make_args += ["CODE_BUF_MAXSIZE=262144"]
+@@ -195,5 +195,16 @@ class MakefileBuilder(makefile.MakefileBuilder):
+         # always install libraries
+         install_tree("lib", prefix.lib)
+
++        # On macOS the Makefile build bakes the build-tree path into each
++        # dylib's install name (LC_ID_DYLIB), so consumers record a
++        # spack-stage path that disappears after install and fail at load
++        # time with "Library not loaded". Rewrite the id to the final
++        # location. (No-op on Linux, which uses sonames + rpaths.)
++        if spec.satisfies("platform=darwin +shared"):
++            for lib in glob(join_path(prefix.lib, "libxsmm*.dylib")):
++                if not os.path.islink(lib):
++                    install_name_tool = which("install_name_tool")
++                    install_name_tool("-id", lib, lib)
++
+         if spec.satisfies("+header-only"):
+             install_tree("src", prefix.src)

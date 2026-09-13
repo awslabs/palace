@@ -4,6 +4,11 @@
       "schema_version": "1-0-0",
       "first_palace_release": "0.17.0",
       "notes": "First explicitly-versioned schema."
+    },
+    {
+      "schema_version": "1-6-0",
+      "first_palace_release": "0.18.0",
+      "notes": ""
     }
   ]
 }

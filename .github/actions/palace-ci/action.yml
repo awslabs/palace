@@ -27,6 +27,10 @@ inputs:
     description: 'Spack git ref to use (e.g. develop, releases/v1.2)'
     required: false
     default: 'releases/v1.2'
+  spack-packages-commit:
+    description: 'spack-packages commit used by the builtin Spack repository'
+    required: false
+    default: 'c3b260e171988c0ef05220174e8ada7efdbd6499'
   test-cases:
     description: 'Test cases: "default", "long", or space-separated list'
     required: false
@@ -45,6 +49,7 @@ runs:
         # Defaults to the pinned Spack 1.2 release series (see the action's
         # input default); the lookahead workflow overrides this with `develop`.
         spack-version: ${{ inputs.spack-version }}
+        spack-packages-commit: ${{ inputs.spack-packages-commit }}
         # LLVM 19 because it is the latest supported by CUDA 12.9
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
@@ -407,4 +412,3 @@ runs:
       shell: bash
       run: |
         cat /tmp/timing.log
-

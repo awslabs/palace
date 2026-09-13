@@ -299,6 +299,12 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
         av = std::abs(av);
         rv = std::abs(rv);
       }
+      // NaN-vs-NaN (undefined reciprocity entries, e.g. Short-port off-diagonals) is a
+      // match; Catch's matchers would otherwise reject any NaN operand.
+      if (std::isnan(av) && std::isnan(rv))
+      {
+        continue;
+      }
       INFO("row " << r + 1 << " column '" << r_col.header_text << "'");
       CHECK_THAT(av, Catch::Matchers::WithinRel(rv, opts.rtol) ||
                          Catch::Matchers::WithinAbs(rv, opts.atol));

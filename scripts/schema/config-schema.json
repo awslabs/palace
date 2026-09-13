@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-5-0",
+  "$id": "urn:palace:schema:1-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -942,14 +942,16 @@
           "type": "array",
           "items": { "type": "number" },
           "minItems": 1,
-          "description": "Real polynomial coefficients of the numerator N(s) of the rational surface impedance per square Zs(s) = N(s)/D(s), with s = iω, ordered from highest to lowest degree. The roots of N are the zeros of Zs. SI units (s in rad/s, Zs in Ω/sq); only the ratio N/D is physical."
+          "contains": { "not": { "const": 0 } },
+          "description": "Real polynomial coefficients of the numerator N(s) of the rational surface impedance per square Zs(s) = N(s)/D(s), with s = iω, ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of N are the zeros of Zs. SI units (s in rad/s, Zs in Ω/sq); only the ratio N/D is physical."
         },
         "Denominator":
         {
           "type": "array",
           "items": { "type": "number" },
           "minItems": 1,
-          "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. The roots of D are the poles of Zs."
+          "contains": { "not": { "const": 0 } },
+          "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of D are the poles of Zs."
         }
       }
     },
@@ -1219,6 +1221,65 @@
         }
       }
     },
+    "SurfaceCurrentAperture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes",
+        "Direction"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes tiling the surface spanning this current element's loop."
+        },
+        "Direction": {
+          "description": "Cartesian reference direction defining the positive orientation of the aperture surface. Axis-aligned directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Alternatively, specify a nonzero 3-element array, e.g. `[0.0, 0.0, 1.0]`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        }
+      }
+    },
+    "SurfaceCurrentElement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes",
+        "Direction"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for this surface current element."
+        },
+        "Direction": {
+          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system for this element's `\"Direction\"` vector.",
+          "default": "Cartesian"
+        },
+        "Aperture": {
+          "$ref": "#/$defs/SurfaceCurrentAperture",
+          "description": "Oriented spanning surface used to measure this element's linked magnetic flux in mixed surface-current/flux-loop magnetostatic extraction."
+        }
+      }
+    },
     "WavePort": {
       "type": "object",
       "additionalProperties": false,
@@ -1418,7 +1479,8 @@
       "additionalProperties": false,
       "required": [
         "Index",
-        "Attributes"
+        "Attributes",
+        "Direction"
       ],
       "properties": {
         "Index": {
@@ -1449,6 +1511,10 @@
         "InactiveMode": {
           "$ref": "#/$defs/InactivePortMode",
           "description": "Overrides [`/Solver/Magnetostatic/InactivePorts`](@ref config-solver-magnetostatic) for this port, controlling how it is treated when inactive during a magnetostatic inductance sweep. If unset, the global value is used."
+        },
+        "Aperture": {
+          "$ref": "#/$defs/SurfaceCurrentAperture",
+          "description": "Oriented spanning surface used to measure this element's linked magnetic flux in mixed surface-current/flux-loop magnetostatic extraction. Required when both `\"SurfaceCurrent\"` and `\"FluxLoop\"` excitations are present."
         }
       }
     },
@@ -1467,27 +1533,12 @@
         },
         "Elements": {
           "type": "array",
-          "description": "Sub-elements for a multielement surface current source. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source.",
+          "description": "Sub-elements for a multielement surface current source. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source, and each element owns its oriented aperture for mixed surface-current/flux-loop extraction.",
+          "minItems": 1,
           "additionalItems": false,
           "items": {
-            "$ref": "#/$defs/Element"
+            "$ref": "#/$defs/SurfaceCurrentElement"
           }
-        },
-        "Direction": {
-          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PortDirection"
-            },
-            {
-              "$ref": "#/$defs/Vector3"
-            }
-          ]
-        },
-        "CoordinateSystem": {
-          "$ref": "#/$defs/CoordinateSystem",
-          "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
-          "default": "Cartesian"
         },
         "InactiveMode": {
           "$ref": "#/$defs/InactivePortMode",

@@ -43,6 +43,30 @@ inline void AbortOnNodeFilesystemError(MPI_Comm comm, const std::string &operati
 
 }  // namespace internal
 
+// Apply a filesystem operation on the global root and propagate any error collectively so
+// other ranks do not continue into a mismatched MPI control path.
+template <typename Func>
+inline void ApplyOnRootFilesystem(MPI_Comm comm, const std::string &operation, Func &&func)
+{
+  std::string local_error;
+  if (Mpi::Root(comm))
+  {
+    try
+    {
+      func();
+    }
+    catch (const std::exception &e)
+    {
+      local_error = e.what();
+    }
+    catch (...)
+    {
+      local_error = "Unknown filesystem error";
+    }
+  }
+  internal::AbortOnNodeFilesystemError(comm, operation, local_error);
+}
+
 // Apply an operation once to each node's view of the filesystem. The global root runs
 // first so that shared filesystems are updated before the remaining node roots inspect
 // them. Filesystem exceptions are reported only after every rank has completed the same
@@ -86,6 +110,34 @@ inline void ApplyOnEachNodeFilesystem(MPI_Comm comm, const std::string &operatio
   internal::AbortOnNodeFilesystemError(comm, operation, local_error);
 }
 
+// Apply a non-idempotent operation exactly once to each distinct filesystem view. The
+// global root attempts the claim first; later node roots sharing its NFS/SMB mount observe
+// the claim and skip the operation, while roots with node-local storage each acquire their
+// own claim. Directory creation is a portable atomic create-if-absent operation, avoiding
+// platform-specific file-lock APIs. The caller must first create the claim's parent
+// directory on every filesystem view.
+template <typename Func>
+inline void ApplyOnceOnEachNodeFilesystem(MPI_Comm comm, const fs::path &claim_path,
+                                          const std::string &operation,
+                                          Func &&operation_func)
+{
+  ApplyOnEachNodeFilesystem(comm, "Removing stale claims for " + operation,
+                            [&]() { fs::remove_all(claim_path); });
+
+  ApplyOnEachNodeFilesystem(comm, operation,
+                            [&]()
+                            {
+                              const bool acquired_claim = fs::create_directory(claim_path);
+                              if (acquired_claim)
+                              {
+                                operation_func();
+                              }
+                            });
+
+  ApplyOnEachNodeFilesystem(comm, "Cleaning up " + operation,
+                            [&]() { fs::remove_all(claim_path); });
+}
+
 // Ensure an output directory exists on every node's filesystem. This is
 // node-local-filesystem aware: on a shared filesystem only the global root creates the
 // directory (all other creations hit an already-existing directory harmlessly), while on
@@ -121,6 +173,35 @@ inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
   ApplyOnEachNodeFilesystem(comm,
                             fmt::format("Removing previous output \"{}\"", dir.string()),
                             [&]() { fs::remove_all(dir); });
+}
+
+// Replace a root-written output file without following a symlink left by SaveIteration.
+// The postprocessing directory is Palace-owned, so any existing file, directory, or
+// symlink at the path can be removed. Open and write failures are propagated collectively
+// to keep all ranks on the same MPI control path.
+template <typename Func>
+inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func)
+{
+  BlockTimer bt(Timer::IO);
+  ApplyOnRootFilesystem(
+      comm, fmt::format("Writing output file \"{}\"", path.string()),
+      [&]()
+      {
+        fs::remove_all(path);
+        std::ofstream stream(path);
+        if (!stream.is_open())
+        {
+          throw fs::filesystem_error("Could not open output file", path,
+                                     std::make_error_code(std::errc::io_error));
+        }
+        write_func(stream);
+        stream.close();
+        if (stream.fail())
+        {
+          throw fs::filesystem_error("Could not write output file", path,
+                                     std::make_error_code(std::errc::io_error));
+        }
+      });
 }
 
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)

@@ -30,6 +30,7 @@ class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
 class SurfaceConductivityOperator;
+class SurfaceFunctional;
 class SurfaceRationalImpedanceOperator;
 class SurfaceImpedanceOperator;
 class Units;
@@ -103,6 +104,10 @@ private:
   // postprocessing.
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
+
+  // libCEED surface functional for port power computation, replacing per-call boundary
+  // LinearForm assembly in the legacy path when supported.
+  mutable std::unique_ptr<SurfaceFunctional> power_func;
 
   // Voltage path for line integral (optional, for impedance postprocessing).
   std::vector<mfem::Vector> voltage_path;
