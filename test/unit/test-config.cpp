@@ -1116,6 +1116,31 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
   }
 
+  SECTION("RAS selects a nonsymmetric Krylov method")
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", "RAS"}, {"RASFillLevel", 2}}}}}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.type == LinearSolver::RAS);
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::GMRES);
+    CHECK(iodata.solver.linear.ras_fill_level == 2);
+
+    auto invalid_config = config;
+    invalid_config["Solver"]["Linear"]["KSPType"] = "CG";
+    CHECK_THROWS_WITH(
+        IoData(invalid_config, false),
+        Catch::Matchers::ContainsSubstring("RAS preconditioner requires GMRES or FGMRES"));
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "RAS");
+    CHECK(config["Solver"]["Linear"]["KSPType"].get<std::string>() == "GMRES");
+    CHECK(config["Solver"]["Linear"]["RASFillLevel"].get<int>() == 2);
+  }
+
   SECTION("User-specified values survive concretization")
   {
     json config = {
