@@ -94,6 +94,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"AMSSingularOperator", static_cast<bool>(linear.ams_singular_op)},
                 {"AMGAggressiveCoarsening", static_cast<bool>(linear.amg_agg_coarsen)},
                 {"AMSMaxIts", linear.ams_max_it},
+                {"RASFillLevel", linear.ras_fill_level},
                 {"DivFreeTol", linear.divfree_tol},
                 {"DivFreeMaxIts", linear.divfree_max_it},
                 {"EstimatorTol", linear.estimator_tol},

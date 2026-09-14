@@ -488,10 +488,15 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.krylov_solver == KrylovSolver::DEFAULT)
   {
-    // Problems with SPD operators use CG by default, else GMRES.
-    if (problem.type == ProblemType::ELECTROSTATIC ||
-        problem.type == ProblemType::MAGNETOSTATIC ||
-        problem.type == ProblemType::TRANSIENT)
+    // RAS is nonsymmetric and requires a nonsymmetric Krylov method. Otherwise, problems
+    // with SPD operators use CG and all remaining problems use GMRES.
+    if (solver.linear.type == LinearSolver::RAS)
+    {
+      solver.linear.krylov_solver = KrylovSolver::GMRES;
+    }
+    else if (problem.type == ProblemType::ELECTROSTATIC ||
+             problem.type == ProblemType::MAGNETOSTATIC ||
+             problem.type == ProblemType::TRANSIENT)
     {
       solver.linear.krylov_solver = KrylovSolver::CG;
     }
@@ -500,6 +505,10 @@ void IoData::CheckConfiguration()
       solver.linear.krylov_solver = KrylovSolver::GMRES;
     }
   }
+  MFEM_VERIFY(solver.linear.type != LinearSolver::RAS ||
+                  solver.linear.krylov_solver == KrylovSolver::GMRES ||
+                  solver.linear.krylov_solver == KrylovSolver::FGMRES,
+              "The nonsymmetric RAS preconditioner requires GMRES or FGMRES!");
   if (solver.linear.max_size < 0)
   {
     solver.linear.max_size = solver.linear.max_it;

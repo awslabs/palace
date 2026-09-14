@@ -11,6 +11,7 @@
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
+#include "linalg/ras.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
@@ -154,6 +155,9 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(
           linear, coarse_solver ? 1 : linear.mg_cycle_it, linear.mg_smooth_it,
           linear.amg_agg_coarsen, print);
+      break;
+    case LinearSolver::RAS:
+      pc = MakeWrapperSolver<OperType, RasSolver>(linear, linear.ras_fill_level, print);
       break;
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)

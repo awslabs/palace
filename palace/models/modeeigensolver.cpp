@@ -17,6 +17,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/ras.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
@@ -730,7 +731,7 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(
 
 void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 {
-  // GMRES iterative solver preconditioned with a sparse direct solver.
+  // GMRES iterative solver with an assembled-matrix preconditioner.
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, verbose);
   gmres->SetInitialGuess(false);
   gmres->SetRelTol(linear.tol);
@@ -738,8 +739,9 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
   gmres->SetRestartDim(linear.max_size);
   gmres->EnableTimer();
 
-  // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for
-  // the combined ND+H1 block system, so fall back to a sparse direct solver.
+  // Select the assembled-matrix preconditioner. Multigrid (AMS, BoomerAMG) is not
+  // applicable for the combined ND+H1 block system, so fall back to a sparse direct
+  // solver for those choices. RAS can operate on the assembled block system directly.
   LinearSolver pc_type = linear.type;
   if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||
       pc_type == LinearSolver::BOOMER_AMG)
@@ -814,6 +816,10 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
                                                linear.strumpack_lr_tol, true, verbose - 1);
 #endif
         }
+        else if (pc_type == LinearSolver::RAS)
+        {
+          return std::make_unique<RasSolver>(linear.ras_fill_level, verbose - 1);
+        }
         else if (pc_type == LinearSolver::CUDSS)
         {
 #if defined(MFEM_USE_CUDSS)
@@ -824,7 +830,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         MFEM_ABORT("Unsupported linear solver type for boundary mode solver!");
         return {};
       }());
-  pc->SetSaveAssembled(false);
+  pc->SetSaveAssembled(pc_type == LinearSolver::RAS);
   pc->SetDropSmallEntries(false);
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
@@ -874,6 +880,10 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
                                               linear.amg_agg_coarsen, print),
             true, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
+      case LinearSolver::RAS:
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<RasSolver>(linear.ras_fill_level, print), true,
+            linear.complex_coarse_solve, linear.drop_small_entries, linear.reorder_reuse);
       case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(

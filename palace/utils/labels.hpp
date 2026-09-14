@@ -120,6 +120,7 @@ enum class LinearSolver : char
   DEFAULT,
   AMS,
   BOOMER_AMG,
+  RAS,
   MUMPS,
   SUPERLU,
   STRUMPACK,

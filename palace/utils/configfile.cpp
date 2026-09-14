@@ -1447,6 +1447,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
+  ras_fill_level = linear.value("RASFillLevel", ras_fill_level);
 
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);

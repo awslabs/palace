@@ -1119,6 +1119,9 @@ public:
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
 
+  // Fill level for ILU(k) subdomain solves in the RAS preconditioner.
+  int ras_fill_level = 1;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 

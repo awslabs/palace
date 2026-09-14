@@ -2189,6 +2189,10 @@
           "description": "Use the Hypre BoomerAMG preconditioner."
         },
         {
+          "const": "RAS",
+          "description": "Use Hypre's one-level restricted additive Schwarz domain decomposition preconditioner with ILU(k) subdomain solves. RAS requires GMRES or FGMRES and is currently available only for CPU execution."
+        },
+        {
           "const": "MUMPS",
           "description": "Use the MUMPS sparse direct solver."
         },
@@ -3025,6 +3029,12 @@
           "type": "integer",
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
+        },
+        "RASFillLevel": {
+          "type": "integer",
+          "description": "ILU(k) fill level for the local subdomain solves used by the RAS preconditioner.",
+          "minimum": 0,
+          "default": 1
         },
         "DivFreeTol": {
           "type": "number",
