@@ -1,0 +1,60 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro/electrostatic_ras"
+  },
+  "Model": {
+    "Mesh": "mesh/cavity2d.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permittivity": 2.08
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "Ground": {
+      "Attributes": [
+        3
+      ]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [
+          2
+        ]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 3,
+    "Device": "CPU",
+    "Electrostatic": {
+      "Save": 1
+    },
+    "Linear": {
+      "Type": "RAS",
+      "KSPType": "GMRES",
+      "RASFillLevel": 1,
+      "Tol": 1e-08,
+      "MaxIts": 100
+    }
+  }
+}

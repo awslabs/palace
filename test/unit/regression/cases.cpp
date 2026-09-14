@@ -631,6 +631,21 @@ TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
                                   "magnetostatic", opts);
 }
 
+// RAS is a one-level ILU-based method. It is exercised on the electrostatic (H1, SPD)
+// system, where it converges. It is deliberately not exercised on the magnetostatic
+// curl-curl system: that operator has a gradient nullspace and ILU-based RAS stalls on it
+// (see the domain decomposition documentation).
+TEST_CASE("cavity2d_electrostatic_ras", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-10;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = palace::test::SolverOverridePolicy::UseConfigured;
+  palace::test::RunRegressionCase("cavity2d", "cavity2d_electrostatic_ras.json",
+                                  "electrostatic_ras", opts);
+}
+
 TEST_CASE("cavity2d_transient", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

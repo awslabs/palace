@@ -32,6 +32,7 @@ interface.
   therefore not expected to remain constant as the number of subdomains increases.
 - RAS currently supports CPU execution only. Palace builds GPU hypre without the unified
   memory required by hypre's RAS-ILU implementation.
-- AMS remains the recommended default for magnetostatic curl-curl systems, particularly
-  when the operator has a gradient nullspace. RAS is an opt-in alternative and a baseline
-  for future two-level domain decomposition methods.
+- AMS remains the recommended choice for magnetostatic curl-curl systems. RAS is **not**
+  suitable there: when the curl-curl operator has a gradient nullspace, ILU-based RAS
+  stalls and the Krylov solver fails to converge, producing incorrect results. Use RAS for
+  well-posed positive-definite systems such as electrostatics.
