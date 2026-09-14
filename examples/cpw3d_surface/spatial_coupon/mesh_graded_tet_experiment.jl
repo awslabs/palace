@@ -7,6 +7,8 @@ include(joinpath(@__DIR__, "mesh_spatial_coupon.jl"))
 include(joinpath(@__DIR__, "label_interface_patches.jl"))
 include(joinpath(@__DIR__, "graded_curve_distance.jl"))
 include(joinpath(@__DIR__, "graded_size_points.jl"))
+include(joinpath(@__DIR__, "graded_trace_size.jl"))
+include(joinpath(@__DIR__, "surface_ribbon_constraints.jl"))
 using TOML
 using SHA
 const SIZE_CALLBACK_ROOTS = Any[]
@@ -15,18 +17,58 @@ const GRADING_ARCS = GradingArc[]
 const GRADING_CONICS = GradingConic[]
 const GRADING_TRACE_SEGMENTS = NTuple{6,Float64}[]
 const GRADING_TRACE_SIZE = Ref(0.0)
+const GRADING_TRACE_SEGMENT_SIZES = Float64[]
+const GRADING_TRACE_RELATIVE_SIZE = Ref(0.0)
+const GRADING_TRACE_MINIMUM = Ref(0.0)
+const GRADING_TRACE_SIZE_SCOPE = Ref(:off)
+const GRADING_TRACE_CONSTRAINT_MODE = Ref("all")
+const GRADING_TRACE_SURFACE_GROWTH = Ref(4.0)
+const GRADING_MATCHING_SURFACES = Set{Cint}()
+const GRADING_RIBBON_ASPECT = Ref(1.0)
+const GRADING_RIBBON_ROWS = Ref(0)
+const GRADING_RIBBON_ISOTROPIC_SEGMENTS = NTuple{6,Float64}[]
 const GRADING_FINE = Ref(0.002)
 const GRADING_FAR = Ref(0.5)
 const GRADING_GROWTH = Ref(1.0)
-const GRADING_VOLUME_PROFILE = Ref{Union{Nothing,NamedTuple}}(nothing)
+struct VolumeGradingProfile
+    minimum_size::Float64
+    near_growth::Float64
+    far_growth::Float64
+    transition_distance::Float64
+    maximum_size::Float64
+    trace_near_growth::Float64
+    trace_far_growth::Float64
+    trace_transition_distance::Float64
+end
+function VolumeGradingProfile(profile::NamedTuple)
+    return VolumeGradingProfile(get(profile,:minimum_size,NaN),profile.near_growth,
+        profile.far_growth,profile.transition_distance,profile.maximum_size,
+        get(profile,:trace_near_growth,0.5),get(profile,:trace_far_growth,0.5),
+        get(profile,:trace_transition_distance,0.03))
+end
+Base.convert(::Type{VolumeGradingProfile}, profile::NamedTuple) = VolumeGradingProfile(profile)
+Base.convert(::Type{Union{Nothing,VolumeGradingProfile}}, profile::NamedTuple) = VolumeGradingProfile(profile)
+const GRADING_VOLUME_PROFILE = Ref{Union{Nothing,VolumeGradingProfile}}(nothing)
 const GRADING_QUERY_COUNTS = zeros(Int,5) # dimensions -1 through 3
 
 function volume_grading_size(distance,fine,profile)
-    minimum_size=hasproperty(profile,:minimum_size) ? profile.minimum_size : fine
+    minimum_size=hasproperty(profile,:minimum_size) && !isnan(profile.minimum_size) ? profile.minimum_size : fine
     return min(profile.maximum_size,
                minimum_size+profile.near_growth*min(distance,profile.transition_distance)+
                profile.far_growth*max(0.,distance-profile.transition_distance))
 end
+
+function trace_grading_size(distance, minimum_size, profile=nothing)
+    profile === nothing && return minimum_size + 0.5distance
+    near = hasproperty(profile, :trace_near_growth) ? profile.trace_near_growth : 0.5
+    far = hasproperty(profile, :trace_far_growth) ? profile.trace_far_growth : 0.5
+    near == far && return minimum_size + near * distance
+    transition = hasproperty(profile, :trace_transition_distance) ?
+                 profile.trace_transition_distance : 0.03
+    return minimum_size + near * min(distance, transition) +
+           far * max(0.0, distance - transition)
+end
+
 const GRADING_TANGENT = Ref(0.0)
 const GRADING_HORIZONTAL_CURVES = Dict{Cint,NTuple{6,Float64}}()
 const SLOT_REFINEMENT_POINTS = NTuple{4,Float64}[]
@@ -61,28 +103,76 @@ function exact_grading_callback(dim,tag,x,y,z,lc,data)::Cdouble
     size=dim==3 && GRADING_VOLUME_PROFILE[]!==nothing ?
          volume_grading_size(distance,GRADING_FINE[],GRADING_VOLUME_PROFILE[]) :
          min(GRADING_FAR[],GRADING_FINE[]+GRADING_GROWTH[]*distance)
+    if dim in (1,2) && GRADING_RIBBON_ASPECT[] > 1
+        size = min(GRADING_FAR[], GRADING_RIBBON_ASPECT[] * GRADING_FINE[] +
+                                GRADING_GROWTH[] * distance)
+        # Do not stretch true 3D corners: endpoints and vertical process edges
+        # retain the isotropic restriction. This uses local geometry, not axes
+        # chosen from a particular plan-view mask or edge count.
+        isotropic_distance2 = Inf
+        for segment in GRADING_SEGMENTS
+            for offset in (0,3)
+                isotropic_distance2 = min(isotropic_distance2,
+                    (x-segment[1+offset])^2+(y-segment[2+offset])^2+(z-segment[3+offset])^2)
+            end
+            if abs(segment[6]-segment[3]) > 1e-10
+                isotropic_distance2 = min(isotropic_distance2,
+                    grading_segment_distance2((x,y,z),segment))
+            end
+        end
+        for segment in GRADING_RIBBON_ISOTROPIC_SEGMENTS
+            isotropic_distance2 = min(isotropic_distance2,
+                grading_segment_distance2((x,y,z),segment))
+        end
+        size = min(size, GRADING_FINE[] + GRADING_GROWTH[] * sqrt(isotropic_distance2))
+    end
     tangent_override === nothing || (size=tangent_override)
     if GRADING_CAP_SIZE[] > 0
         distance=min(abs(z-GRADING_CAP_Z[][1]),abs(z-GRADING_CAP_Z[][2]))
         size=min(size,GRADING_CAP_SIZE[]+0.5distance)
     end
-    if GRADING_TRACE_SIZE[] > 0
-        trace_distance2 = Inf
-        for segment in GRADING_TRACE_SEGMENTS
-            trace_distance2 = min(trace_distance2,
-                                  grading_segment_distance2((x,y,z),segment))
+    scope = GRADING_TRACE_SIZE_SCOPE[]
+    # Dim 1 is deliberately untouched by scoped sizing, even on matching curves.
+    # Shared boundary conformity can still affect the resulting mesh (not this field).
+    trace_surface = scope in (:matching,:matching_and_volume) &&
+                    dim == 2 && Cint(tag) in GRADING_MATCHING_SURFACES
+    trace_volume = dim == 3 && scope == :matching_and_volume
+    trace_legacy = scope == :legacy_global
+    if GRADING_TRACE_SIZE[] > 0 && (trace_surface || trace_volume || trace_legacy)
+        if isempty(GRADING_TRACE_SEGMENT_SIZES)
+            trace_distance2 = Inf
+            for segment in GRADING_TRACE_SEGMENTS
+                trace_distance2 = min(trace_distance2,
+                                      grading_segment_distance2((x,y,z),segment))
+            end
+            distance = sqrt(trace_distance2)
+            trace_size = trace_volume ?
+                         trace_grading_size(distance,GRADING_TRACE_SIZE[],GRADING_VOLUME_PROFILE[]) :
+                         GRADING_TRACE_SIZE[] + (trace_legacy ? 0.5 : GRADING_TRACE_SURFACE_GROWTH[]) * distance
+            size = min(size,trace_size)
+        else
+            for index in eachindex(GRADING_TRACE_SEGMENTS)
+                segment = GRADING_TRACE_SEGMENTS[index]
+                minimum_size = GRADING_TRACE_SEGMENT_SIZES[index]
+                distance = sqrt(grading_segment_distance2((x,y,z),segment))
+                trace_size = trace_volume ?
+                             trace_grading_size(distance,minimum_size,GRADING_VOLUME_PROFILE[]) :
+                             minimum_size + (trace_legacy ? 0.5 : GRADING_TRACE_SURFACE_GROWTH[]) * distance
+                size = min(size,trace_size)
+            end
         end
-        size = min(size, GRADING_TRACE_SIZE[] + 0.5sqrt(trace_distance2))
     end
     SLOT_SIZE_TREE[]===nothing || (size=query_size_point(SLOT_SIZE_TREE[],(x,y,z),size))
     return size
 end
 
+# Supplying source geometry for validation is distinct from imprinting CAD lines.
+trace_constraints_applied(path, mode) = path !== nothing && mode != "none"
+
 function main()
     get(ENV,"TET_ANISOTROPIC_SURFACE","0") in ("0","1") ||
         error("TET_ANISOTROPIC_SURFACE must be 0 or 1")
-    get(ENV,"TET_TRACE_CONSTRAINT_MODE","all") in ("all","levels","sides") ||
-        error("Unsupported trace constraint mode")
+    trace_policy = trace_size_policy()
     geometry_only = "--geometry-only" in ARGS
     element_slots = "--element-interface-slots" in ARGS
     args = filter(arg -> arg != "--geometry-only" && arg != "--element-interface-slots", ARGS)
@@ -96,6 +186,12 @@ function main()
         element_slots && error("Frozen-boundary volume studies retain CAD family labels; do not relabel between variants")
     end
     GRADING_VOLUME_PROFILE[]=nothing
+    GRADING_RIBBON_ASPECT[] = parse(Float64,get(ENV,"TET_SURFACE_RIBBON_ASPECT","1"))
+    ribbon_rows = parse(Int,get(ENV,"TET_SURFACE_RIBBON_ROWS","0"))
+    GRADING_RIBBON_ROWS[] = ribbon_rows
+    isfinite(GRADING_RIBBON_ASPECT[]) && 1<=GRADING_RIBBON_ASPECT[]<=8 && 0<=ribbon_rows<=8 ||
+        error("Invalid bounded ribbon scout settings")
+    GRADING_RIBBON_ASPECT[]==1 || ribbon_rows>0 || error("Tangential ribbon sizing requires explicit rows")
     process=Dict("Units"=>"um", "Radius"=>2.0, "MetalThickness"=>0.1,
                  "Overetch"=>0.05, "SidewallAngle"=>90.0, "TopRounding"=>0.0,
                  "TrenchRounding"=>0.0)
@@ -138,31 +234,27 @@ function main()
         matching_trace = abspath(args[trace_flag+1])
         deleteat!(args,trace_flag:(trace_flag+1))
     end
-    GRADING_TRACE_SIZE[] = parse(Float64, get(ENV,"TET_TRACE_SIZE","0"))
-    isfinite(GRADING_TRACE_SIZE[]) && GRADING_TRACE_SIZE[] >= 0 || error("Invalid trace size")
+    GRADING_TRACE_SIZE[] = trace_policy.maximum_size
+    GRADING_TRACE_SIZE_SCOPE[] = trace_policy.scope
+    GRADING_TRACE_CONSTRAINT_MODE[] = trace_policy.mode
+    trace_scope = replace(string(trace_policy.scope),"_"=>"-")
+    GRADING_TRACE_SURFACE_GROWTH[] = trace_policy.surface_growth
+    GRADING_TRACE_RELATIVE_SIZE[] = trace_policy.relative_size
     empty!(GRADING_TRACE_SEGMENTS)
+    empty!(GRADING_TRACE_SEGMENT_SIZES)
+    GRADING_TRACE_MINIMUM[] = GRADING_TRACE_SIZE[]
     if GRADING_TRACE_SIZE[] > 0
         matching_trace !== nothing || error("Trace grading requires an explicit matching trace")
-        trace_data, trace_header = readdlm(matching_trace, ',', header=true)
-        columns = Dict(name=>i for (i,name) in enumerate(vec(String.(trace_header))))
-        trace_triangles = Dict{Int,Vector{NTuple{3,Float64}}}()
-        for row in axes(trace_data,1)
-            point = ntuple(d->Float64(trace_data[row,columns[("x","y","z")[d]]]),3)
-            all(isfinite,point) || error("Non-finite trace grading coordinate")
-            push!(get!(trace_triangles,Int(trace_data[row,columns["triangle"]]),NTuple{3,Float64}[]),point)
+        trace_triangles = read_matching_trace_triangles(matching_trace)
+        segments, sizes = trace_segment_sizes(trace_triangles, GRADING_TRACE_SIZE[],
+                                              GRADING_TRACE_RELATIVE_SIZE[];
+                                              mode=trace_policy.mode,
+                                              legacy=trace_policy.scope == :legacy_global)
+        append!(GRADING_TRACE_SEGMENTS, segments)
+        if GRADING_TRACE_RELATIVE_SIZE[] > 0
+            append!(GRADING_TRACE_SEGMENT_SIZES, sizes)
         end
-        seen = Set{Tuple{NTuple{3,Float64},NTuple{3,Float64}}}()
-        for triangle in values(trace_triangles)
-            length(triangle)==3 || error("Malformed trace triangle")
-            for i in 1:3
-                a,b = triangle[i],triangle[mod1(i+1,3)]
-                key = isless(a,b) ? (a,b) : (b,a)
-                key in seen && continue
-                push!(seen,key)
-                sum((a[d]-b[d])^2 for d in 1:3)>0 || error("Zero-length trace segment")
-                push!(GRADING_TRACE_SEGMENTS,(a...,b...))
-            end
-        end
+        GRADING_TRACE_MINIMUM[] = minimum(sizes)
     end
     slot_refine_path = get(ENV,"TET_SLOT_REFINEMENT_POINTS","")
     empty!(SLOT_REFINEMENT_POINTS)
@@ -194,10 +286,32 @@ function main()
     slot_minimum=parse(Float64,get(ENV,"TET_SLOT_MINIMUM_SIZE",string(fine)))
     isfinite(slot_minimum) && 0<slot_minimum<=fine || error("Invalid slot-refinement minimum size")
     far=length(args)>=6 ? parse(Float64,args[6]) : 0.5
+    if ribbon_rows>0
+        process["SidewallAngle"]==90 && process["TopRounding"]==0 && process["TrenchRounding"]==0 ||
+            error("Surface ribbon scout requires sharp vertical fabrication")
+    end
     all(isfinite, (growth,fine,far)) && growth>0 && fine>0 && far>fine || error("invalid size parameters")
     isfile(output) && error("Refuse to overwrite an existing mesh")
     mkpath(dirname(output))
-    function controls(curves,boundary_groups,lower,upper)
+    ribbon_primitives = NamedTuple[]
+    if ribbon_rows>0
+        ribbon_edges=read_edges(joinpath(root,"mesh-signature.csv"))
+        for loop in read_boundary(joinpath(root,"plan-view-boundary.csv"))
+            edge=first(e for e in ribbon_edges if e.conductor==loop.conductor && abs(e.point[3]-loop.plane)<=1e-9radius)
+            lo,hi=minmax(loop.plane-edge.normal_sign*etch,loop.plane+edge.normal_sign*thickness)
+            for p in physical_segments([loop],0.,1e-9radius)
+                push!(ribbon_primitives,(;p...,lower=lo,upper=hi))
+            end
+        end
+    end
+    function controls(curves,boundary_groups,matching_surfaces,lower,upper)
+        # Physical-interface groups must never be mistaken for matching entities.
+        physical_surfaces = Set(tag for tags in values(boundary_groups) for tag in tags)
+        isempty(intersect(physical_surfaces,Set(matching_surfaces))) ||
+            error("Matching and physical interface surface tags overlap")
+        empty!(GRADING_MATCHING_SURFACES)
+        union!(GRADING_MATCHING_SURFACES,Cint.(matching_surfaces))
+        isempty(GRADING_MATCHING_SURFACES) && error("No matching surfaces for trace-size restriction")
         # Preserve callback roots for the complete native meshing call; the generated
         # Julia Gmsh binding does not retain the closure CFunction after returning.
         segments=NTuple{6,Float64}[]
@@ -210,6 +324,8 @@ function main()
         GRADING_TANGENT[] = parse(Float64, get(ENV, "TET_EDGE_TANGENT_SIZE", "0"))
         isfinite(GRADING_TANGENT[]) || error("Non-finite tangential size")
         GRADING_TANGENT[] == 0 || GRADING_TANGENT[] >= fine || error("Tangential size is smaller than minimum size")
+        ribbon_rows==0 || GRADING_TANGENT[]==0 || error("Do not combine curve-only tangent overrides with surface ribbons")
+        ribbon_rows==0 || get(ENV,"TET_ANISOTROPIC_SURFACE","0")=="0" || error("Do not combine BAMG handoff and surface ribbons")
         for curve in curves
             bounds=gmsh.model.getParametrizationBounds(1,curve)
             lo,hi=bounds[1][1],bounds[2][1]
@@ -255,12 +371,26 @@ function main()
         end
         isempty(segments) && isempty(GRADING_ARCS) && isempty(GRADING_CONICS) && error("No feature curves")
         empty!(GRADING_SEGMENTS);append!(GRADING_SEGMENTS,segments)
+        empty!(GRADING_RIBBON_ISOTROPIC_SEGMENTS)
+        if ribbon_rows>0
+            for segment in segments
+                center=((segment[1]+segment[4])/2,(segment[2]+segment[5])/2)
+                z=(segment[3]+segment[6])/2
+                distance=minimum((point_primitive_distance(center,p,1e-9radius) for p in ribbon_primitives
+                                  if p.lower-1e-9radius<=z<=p.upper+1e-9radius);init=Inf)
+                # Artificial etch-truncation edges have no mask-derived ribbons.
+                # Do not coarsen their transverse mesh merely by changing A.
+                if abs(segment[6]-segment[3])>1e-10 || distance>1e-8radius
+                    push!(GRADING_RIBBON_ISOTROPIC_SEGMENTS,segment)
+                end
+            end
+        end
         GRADING_FINE[]=fine;GRADING_FAR[]=far;GRADING_GROWTH[]=growth
         # Unit checks include segment interiors: avoid sampled-distance aliasing on
         # long edges with a 2 nm target size.
         for s in segments
             size=exact_grading_callback(2,0,(s[1]+s[4])/2,(s[2]+s[5])/2,(s[3]+s[6])/2,far,C_NULL)
-            @assert 0<size<=fine+1e-10 # Optional partition hints may request a smaller size.
+            @assert 0<size<=GRADING_RIBBON_ASPECT[]*fine+1e-10 # Rows constrain the transverse mesh scale.
         end
         callback=@cfunction(exact_grading_callback,Cdouble,(Cint,Cint,Cdouble,Cdouble,Cdouble,Cdouble,Ptr{Cvoid}))
         push!(SIZE_CALLBACK_ROOTS,callback)
@@ -272,7 +402,7 @@ function main()
         gmsh.model.mesh.field.setString(999,"F",string(far))
         gmsh.model.mesh.field.setAsBackgroundMesh(999)
         gmsh.option.setNumber("Mesh.MeshSizeMin",min(fine,slot_minimum,
-            GRADING_TRACE_SIZE[]>0 ? GRADING_TRACE_SIZE[] : fine))
+            GRADING_TRACE_SIZE[]>0 ? GRADING_TRACE_MINIMUM[] : fine))
         gmsh.option.setNumber("General.Verbosity", parse(Int, get(ENV,"TET_VERBOSITY","4")))
         gmsh.option.setNumber("General.NumThreads",1)
         gmsh.option.setNumber("Mesh.MaxNumThreads1D",1)
@@ -290,6 +420,7 @@ function main()
         gmsh.option.setNumber("Mesh.RecombineAll",0)
         layer_width = parse(Float64, get(ENV, "TET_SURFACE_LAYER_WIDTH", "0"))
         isfinite(layer_width) && layer_width >= 0 || error("Invalid surface-layer width")
+        ribbon_rows==0 || layer_width==0 || error("Do not combine BoundaryLayer fields and surface ribbons")
         if layer_width > 0
             gmsh.model.mesh.field.add("BoundaryLayer", 998)
             gmsh.model.mesh.field.setNumbers(998,"CurvesList",Float64.(curves))
@@ -353,11 +484,13 @@ function main()
             println(f,"h=min($far,$fine+$growth*exact_distance_to_supported_CAD_curves)")
             println(f,"physical_segments=$(length(segments)) circular_arcs=$(length(GRADING_ARCS)) conic_arcs=$(length(GRADING_CONICS)) algorithm3d=$algorithm3d surface_algorithm=$surface_algorithm threads=1")
             println(f,"matching_trace=$matching_trace mode=$(get(ENV,"TET_TRACE_CONSTRAINT_MODE","all"))")
-            println(f,"matching_trace_size=$(GRADING_TRACE_SIZE[]) matching_trace_segments=$(length(GRADING_TRACE_SEGMENTS))")
+            println(f,"matching_trace_size=$(GRADING_TRACE_SIZE[]) matching_trace_segments=$(length(GRADING_TRACE_SEGMENTS)) scope=$trace_scope")
+            println(f,"matching_trace_relative_size=$(GRADING_TRACE_RELATIVE_SIZE[]) minimum_trace_size=$(GRADING_TRACE_MINIMUM[]) surface_growth=$(GRADING_TRACE_SURFACE_GROWTH[])")
             println(f,"etch_boundary=$etch_boundary sha256=$(etch_boundary===nothing ? "none" : bytes2hex(sha256(read(etch_boundary))))")
             println(f,"cap_size=$(GRADING_CAP_SIZE[]) slot_refinement_points=$(length(SLOT_REFINEMENT_POINTS)) slot_minimum_size=$slot_minimum")
             println(f,"surface_boundary_layer_width=$layer_width hxt_quality_target=$hxt_quality")
-            println(f,"edge_tangent_size=$(GRADING_TANGENT[]) (0 means fully isotropic sizing)")
+            println(f,"edge_tangent_size=$(GRADING_TANGENT[]) (0 means no curve-only override)")
+            println(f,"surface_ribbon_rows=$ribbon_rows surface_ribbon_aspect=$(GRADING_RIBBON_ASPECT[]) isotropic_nonribbon_segments=$(length(GRADING_RIBBON_ISOTROPIC_SEGMENTS))")
             println(f,"conic_distance_model_bound=$(maximum((c.distance_error for c in GRADING_CONICS);init=0.))")
             println(f,"gmsh_version=$(gmsh.option.getString("General.Version"))")
             println(f,"lower=$lower upper=$upper")
@@ -413,6 +546,9 @@ function main()
         end
     end
     postprocess = element_slots ? relabel_and_check : nothing
+    ribbons = ribbon_rows==0 ? nothing :
+        (occ,loops,planes,tolerance)->surface_ribbon_lines(occ,loops,planes,kind=="fabricated",
+            thickness,etch,fine,ribbon_rows,tolerance)
     try
         generate_spatial_coupon(signature=joinpath(root,"mesh-signature.csv"),
         mask=joinpath(root,"plan-view-mask.csv"),boundary=joinpath(root,"plan-view-boundary.csv"),
@@ -423,10 +559,10 @@ function main()
         trench_rounding=Float64(process["TrenchRounding"]),lc_fine=fine,
         lc_tangent=0.,lc_far=far,process_core_width=0.4radius,process_fine_width=0.,
         process_grading_power=1.,max_nodes=10_000_000,max_elements=5_000_000,
-        mesh_order=geometry_order,mesh_control=controls,mesh_postprocess=postprocess,
+        mesh_order=geometry_order,mesh_control=controls,surface_constraints=ribbons,mesh_postprocess=postprocess,
         optimize_volume=get(ENV,"TET_ANISOTROPIC_SURFACE","0")!="1",
         geometry_only=geometry_only || volume_study!==nothing,matching_trace=matching_trace,
-        matching_trace_mode=get(ENV,"TET_TRACE_CONSTRAINT_MODE","all"),filename=output)
+        matching_trace_mode=trace_policy.mode,filename=output)
     finally
         gmsh.isInitialized() != 0 && gmsh.finalize()
     end
@@ -435,7 +571,7 @@ function main()
         metadata = read(metadata_path, String)
         trace_mode=get(ENV,"TET_TRACE_CONSTRAINT_MODE","all")
         metadata = replace(metadata, "\"Version\": 1," =>
-            "\"Version\": 1,\n  \"Experimental3DGrading\": true,\n  \"AnisotropicSurfaceMeshing\": $(get(ENV,"TET_ANISOTROPIC_SURFACE","0")=="1"),\n  \"SurfaceMeshingAlgorithm\": $(get(ENV,"TET_ANISOTROPIC_SURFACE","0")=="1" ? 7 : parse(Int,get(ENV,"TET_SURFACE_ALGORITHM","6"))),\n  \"MatchingTraceConstraints\": $(matching_trace !== nothing),\n  \"TraceConstraintMode\": \"$trace_mode\",\n  \"CapSize\": $(GRADING_CAP_SIZE[]),\n  \"SlotRefinementPoints\": $(length(SLOT_REFINEMENT_POINTS)),\n  \"SlotMinimumSize\": $slot_minimum,\n  \"ElementInterfaceSlots\": $element_slots,\n  \"InterfacePartitionQualified\": false,\n  \"ExpectedInterfaceAttributes\": $(expected_interfaces===nothing ? "null" : "["*join(sort!(collect(expected_interfaces)),",")*"]"),\n  \"Growth\": $growth,\n  \"HXTQualityTarget\": $(parse(Float64,get(ENV,"TET_HXT_QUALITY","0.3"))),\n  \"VolumeMeshingAlgorithm\": $(parse(Int,get(ENV,"TET_ALGORITHM3D","10"))),\n  \"EdgeCurveTangentialSize\": $(GRADING_TANGENT[]),\n  \"NormalLayerEnforced\": false,\n  \"NetgenOptimization\": $(get(ENV,"TET_ANISOTROPIC_SURFACE","0")!="1"),")
+            "\"Version\": 1,\n  \"Experimental3DGrading\": true,\n  \"AnisotropicSurfaceMeshing\": $(get(ENV,"TET_ANISOTROPIC_SURFACE","0")=="1"),\n  \"SurfaceMeshingAlgorithm\": $(get(ENV,"TET_ANISOTROPIC_SURFACE","0")=="1" ? 7 : parse(Int,get(ENV,"TET_SURFACE_ALGORITHM","6"))),\n  \"MatchingTraceSupplied\": $(matching_trace !== nothing),\n  \"MatchingTraceConstraints\": $(trace_constraints_applied(matching_trace, trace_mode)),\n  \"TraceConstraintMode\": \"$trace_mode\",\n  \"TraceSize\": $(GRADING_TRACE_SIZE[]),\n  \"TraceSizeScope\": \"$trace_scope\",\n  \"TraceRelativeSize\": $(GRADING_TRACE_RELATIVE_SIZE[]),\n  \"TraceSurfaceGrowth\": $(GRADING_TRACE_SURFACE_GROWTH[]),\n  \"CapSize\": $(GRADING_CAP_SIZE[]),\n  \"SlotRefinementPoints\": $(length(SLOT_REFINEMENT_POINTS)),\n  \"SlotMinimumSize\": $slot_minimum,\n  \"ElementInterfaceSlots\": $element_slots,\n  \"InterfacePartitionQualified\": false,\n  \"ExpectedInterfaceAttributes\": $(expected_interfaces===nothing ? "null" : "["*join(sort!(collect(expected_interfaces)),",")*"]"),\n  \"Growth\": $growth,\n  \"HXTQualityTarget\": $(parse(Float64,get(ENV,"TET_HXT_QUALITY","0.3"))),\n  \"VolumeMeshingAlgorithm\": $(parse(Int,get(ENV,"TET_ALGORITHM3D","10"))),\n  \"EdgeCurveTangentialSize\": $(GRADING_TANGENT[]),\n  \"NormalLayerEnforced\": false,\n  \"NetgenOptimization\": $(get(ENV,"TET_ANISOTROPIC_SURFACE","0")!="1"),")
         write(metadata_path, metadata)
         if element_slots
             certificate=output*".interface-partition.csv.elements.csv"

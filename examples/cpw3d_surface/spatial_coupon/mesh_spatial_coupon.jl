@@ -886,6 +886,39 @@ function point_on_surface(tag)
     coordinate = collect(center)
     gmsh.model.isInside(2, tag, coordinate) > 0 && return center
 
+    # A trimmed annulus or a thin ribbon can miss every point of a uniform UV
+    # grid. Probe inward from real boundary curves at a scale derived from the
+    # face area/perimeter, testing both orientations instead of assuming winding.
+    curves = [curve for (dim,curve) in gmsh.model.getBoundary([(2,tag)],false,false,false)
+              if dim==1]
+    perimeter = sum(gmsh.model.occ.getMass(1,curve) for curve in curves)
+    area = gmsh.model.occ.getMass(2,tag)
+    area>0 && perimeter>0 || error("Degenerate trimmed surface $tag")
+    width = area/perimeter
+    for curve in curves
+        lo,hi = gmsh.model.getParametrizationBounds(1,curve)
+        for fraction in (.5,.25,.75)
+            parameter = [lo[1]+fraction*(hi[1]-lo[1])]
+            boundary = gmsh.model.getValue(1,curve,parameter)
+            tangent = gmsh.model.getDerivative(1,curve,parameter)
+            norm(tangent)>0 || continue
+            uv = gmsh.model.getParametrization(2,tag,boundary)
+            normal = gmsh.model.getNormal(tag,uv)
+            inward = cross(normal,tangent)
+            norm(inward)>0 || continue
+            inward/=norm(inward)
+            for factor in (.25,.1,.5,.01), side in (-1.,1.)
+                distance = factor*width
+                candidate = boundary+side*distance*inward
+                parameter2 = gmsh.model.getParametrization(2,tag,candidate)
+                gmsh.model.isInside(2,tag,parameter2,true)>0 || continue
+                value = gmsh.model.getValue(2,tag,parameter2)
+                norm(value-candidate)<=0.5distance && norm(value-boundary)>=0.5distance || continue
+                return Tuple(value)
+            end
+        end
+    end
+
     lower, upper = gmsh.model.getParametrizationBounds(2, tag)
     length(lower) == 2 && length(upper) == 2 ||
         error("Unexpected surface parametrization for surface $tag")
@@ -975,35 +1008,71 @@ end
 
 function coplanar_surfaces(surfaces::Vector{Int32}, tolerance::Float64)
     length(surfaces) >= 2 || return false
-    boxes = [gmsh.model.getBoundingBox(2, surface) for surface in surfaces]
-    for axis in 1:3
-        if all(abs(box[axis + 3] - box[axis]) <= tolerance for box in boxes)
-            coordinate = boxes[1][axis]
-            if all(abs(box[axis] - coordinate) <= tolerance for box in boxes)
-                return true
-            end
+    all(gmsh.model.getType(2, surface) == "Plane" for surface in surfaces) || return false
+    # OCC bounding boxes have geometric padding, so their nominally zero width
+    # need not be below a nanometre-scale tolerance. Test the surfaces themselves.
+    origin = collect(gmsh.model.occ.getCenterOfMass(2, first(surfaces)))
+    uv = gmsh.model.getParametrization(2, first(surfaces), origin)
+    normal = gmsh.model.getNormal(first(surfaces), uv)
+    for surface in surfaces
+        center = collect(gmsh.model.occ.getCenterOfMass(2, surface))
+        abs(dot(normal, center-origin)) <= tolerance || return false
+        lo, hi = gmsh.model.getParametrizationBounds(2, surface)
+        for a in (.2, .5, .8), b in (.2, .5, .8)
+            parameter = [lo[1]+a*(hi[1]-lo[1]), lo[2]+b*(hi[2]-lo[2])]
+            point = gmsh.model.getValue(2, surface, parameter)
+            direction = gmsh.model.getNormal(surface, parameter)
+            abs(dot(normal, point-origin)) <= tolerance || return false
+            abs(dot(normal, direction)) >= 1-1e-10 || return false
         end
     end
-    return false
+    return true
 end
 
-function matching_trace_lines(occ, path, lower, upper, tolerance; mode="all")
+# Validate before selecting any CAD/sizing subset, including the diagnostic `none`.
+# This is local triangle validity, not complete-box coverage or FEM trace accuracy.
+function trace_triangle_areas(triangles)
+    isempty(triangles) && error("Empty trace geometry")
+    areas = Dict{Int,Float64}()
+    for (index, triangle) in triangles
+        index isa Integer && index > 0 || error("Trace triangle indices must be positive integers")
+        length(triangle) == 3 || error("Trace triangle needs three vertices")
+        all(p -> length(p) == 3 && all(isfinite, p), triangle) ||
+            error("Trace vertices must have three finite coordinates")
+        a, b, c = triangle
+        ab = ntuple(d -> b[d] - a[d], 3)
+        ac = ntuple(d -> c[d] - a[d], 3)
+        area2 = norm(cross(collect(ab), collect(ac)))
+        isfinite(area2) && area2 > 0 || error("Degenerate trace triangle")
+        areas[index] = area2
+    end
+    return areas
+end
+
+function read_matching_trace_triangles(path)
     data, header = readdlm(path, ',', header=true)
     names = vec(String.(header)); columns = Dict(name=>i for (i,name) in enumerate(names))
+    length(columns) == length(names) || error("Duplicate matching trace columns")
     all(haskey(columns,key) for key in ("x","y","z","triangle")) ||
         error("Matching trace must have x,y,z,triangle columns")
     triangles = Dict{Int,Vector{NTuple{3,Float64}}}()
     for row in axes(data,1)
         p = ntuple(d->Float64(data[row,columns[("x","y","z")[d]]]),3)
-        all(isfinite,p) || error("Non-finite trace coordinate")
-        p = ntuple(d->abs(p[d]-lower[d])<tolerance ? lower[d] :
-                      abs(p[d]-upper[d])<tolerance ? upper[d] : p[d],3)
-        index=Int(data[row,columns["triangle"]])
-        index>0 || error("Matching trace triangle indices must be positive")
+        index = signature_integer(data[row,columns["triangle"]], "trace triangle")
         push!(get!(triangles,index,NTuple{3,Float64}[]),p)
     end
-    all(length(tri)==3 for tri in Base.values(triangles)) ||
-        error("Matching trace triangle needs three vertices")
+    trace_triangle_areas(triangles)
+    return triangles
+end
+
+function matching_trace_lines(occ, path, lower, upper, tolerance; mode="all")
+    mode in ("all","sides","levels","none") || error("Unknown matching trace constraint mode")
+    source = read_matching_trace_triangles(path)
+    mode == "none" && return Tuple{Int32,Int32}[]
+    triangles = Dict(index => [ntuple(d->abs(p[d]-lower[d])<tolerance ? lower[d] :
+        abs(p[d]-upper[d])<tolerance ? upper[d] : p[d],3) for p in triangle]
+        for (index,triangle) in source)
+    trace_triangle_areas(triangles)
     lines=Tuple{Int32,Int32}[]
     if mode == "levels"
         levels=sort!(unique(p[3] for tri in Base.values(triangles) for p in tri))
@@ -1066,6 +1135,7 @@ function generate_spatial_coupon(;
     max_elements::Int        = 2_000_000,
     mesh_order::Int          = 1,
     mesh_control::Union{Nothing, Function}=nothing,
+    surface_constraints::Union{Nothing, Function}=nothing,
     mesh_postprocess::Union{Nothing, Function}=nothing,
     optimize_volume::Bool=true,
     matching_trace::Union{Nothing,String}=nothing,
@@ -1073,6 +1143,8 @@ function generate_spatial_coupon(;
     geometry_only::Bool=false,
     filename::String
 )
+    matching_trace_mode in ("all","sides","levels","none") ||
+        error("Unknown matching trace constraint mode")
     radius > 0.0 || error("radius must be positive")
     metal_thickness > 0.0 || error("metal thickness must be positive")
     0.0 <= overetch < radius || error("overetch must lie in [0, radius)")
@@ -1338,9 +1410,13 @@ function generate_spatial_coupon(;
             Iterators.flatten |>
             collect
     end
-    if matching_trace !== nothing
-        trace_tools = matching_trace_lines(occ, matching_trace, lower, upper, tolerance;
-                                          mode=matching_trace_mode)
+    surface_tools = surface_constraints === nothing ? Tuple{Int32,Int32}[] :
+        surface_constraints(occ, boundary_loops, [(layer.plane,layer.sign) for layer in layers], tolerance)
+    trace_tools = matching_trace === nothing ? Tuple{Int32,Int32}[] :
+        matching_trace_lines(occ, matching_trace, lower, upper, tolerance;
+                             mode=matching_trace_mode)
+    append!(trace_tools,surface_tools)
+    if !isempty(trace_tools)
         old_domains = [(dim,tag) for (dim,tag) in domains if dim==3]
         old_substrate = Set(substrate_seed); old_vacuum = Set(vacuum_seed)
         domains, trace_map = occ.fragment(old_domains, trace_tools)
@@ -1521,7 +1597,8 @@ function generate_spatial_coupon(;
         gmsh.option.setNumber(name, value)
     end
     if mesh_control !== nothing
-        mesh_control(feature_curves, boundary_groups, lower, upper)
+        # All controls receive matching entity tags separately from physical interfaces.
+        mesh_control(feature_curves, boundary_groups, matching, lower, upper)
     end
     if geometry_only
         return gmsh.finalize()

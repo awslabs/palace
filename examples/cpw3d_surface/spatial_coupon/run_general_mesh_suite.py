@@ -144,7 +144,8 @@ def run(args):
     tools=args.root/"tools"
     tools.mkdir()
     sources=["mesh_graded_tet_experiment.jl", "frozen_volume_study.jl", "mesh_spatial_coupon.jl",
-             "graded_curve_distance.jl", "graded_size_points.jl", "interface_ownership.jl", "ownership_bernstein.jl",
+             "graded_curve_distance.jl", "graded_size_points.jl", "graded_trace_size.jl",
+             "surface_ribbon_constraints.jl", "interface_ownership.jl", "ownership_bernstein.jl",
              "label_interface_patches.jl", "run_bounded_mesher.py",
              "run_general_mesh_suite.py", "audit_mesh_measures.cpp"]
     for name in sources:

@@ -1,0 +1,20 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Experimental density policy. The surface/trace targets are explicit CLI/env
+# inputs; these controls coarsen only the 3D volume. Not a qualification profile.
+MaxElements = 12000000
+MaxNodes = 3500000
+OptimizeVolume = false
+RepairInvalidVolume = true
+
+[[Variants]]
+Name = "protected-growth"
+MinimumSize = 0.002
+NearGrowth = 0.5
+FarGrowth = 2.0
+TransitionDistance = 0.03
+MaximumSize = 0.5
+TraceNearGrowth = 0.5
+TraceFarGrowth = 2.0
+TraceTransitionDistance = 0.03

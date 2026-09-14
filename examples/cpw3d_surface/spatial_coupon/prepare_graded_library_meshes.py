@@ -167,9 +167,8 @@ def main():
             str(root),
             kind,
         ]
-        trace_arguments = []
-        if arguments.matching_trace != "none":
-            trace_arguments = ["--matching-trace", str(trace_path)]
+        # Even the no-CAD-line diagnostic validates the immutable trace geometry.
+        trace_arguments = ["--matching-trace", str(trace_path)]
         geometry_command = [
             *common,
             str(geometry),
@@ -241,6 +240,8 @@ def main():
         "Tools": str(tools),
         "JuliaProject": str(arguments.julia_project.resolve()),
         "MatchingTraceMode": arguments.matching_trace,
+        "TraceSizing": {"TraceSize": 0.0, "TraceSizeScope": "off",
+                        "TraceRelativeSize": 0.0, "TraceSurfaceGrowth": 4.0},
         "MeshFormat": "Gmsh 2.2 binary",
         "Scope": "Six retained spatial models; original sources, orders, and solver settings are immutable.",
         "Cases": records,
@@ -254,7 +255,11 @@ def main():
         "TET_SURFACE_ALGORITHM": "5",
         "TET_ALGORITHM3D": "10",
         "TET_HXT_QUALITY": "0.1",
-        "TET_TRACE_CONSTRAINT_MODE": arguments.matching_trace if arguments.matching_trace != "none" else "all",
+        "TET_TRACE_CONSTRAINT_MODE": arguments.matching_trace,
+        "TET_TRACE_SIZE": "0",
+        "TET_TRACE_SIZE_SCOPE": "off",
+        "TET_TRACE_RELATIVE_SIZE": "0",
+        "TET_TRACE_SURFACE_GROWTH": "4",
         "TET_VERBOSITY": "3",
     }
     lines = ["#!/bin/bash", "set -euo pipefail"]

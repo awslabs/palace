@@ -116,6 +116,85 @@ reserves shared archive space, and validates complete matrices before publicatio
 (including internal-boundary cracking), so archive budgets do not rely on raw
 mesh counts.
 
+## Trace-sizing safety policy (experimental tetrahedral mesher)
+
+Trace **source data**, CAD break-line constraints, and scalar mesh sizing are separate
+contracts. None of the controls below removes or rewrites any source `TraceMesh` triangle,
+node, basis DOF, or prescribed value. They do not change `p`, tolerances, materials, or
+physical geometry. Keeping a CSV byte-identical does **not** imply its piecewise function
+is represented exactly by the resulting FEM trace space.
+
+`mesh_graded_tet_experiment.jl` defaults to `TET_TRACE_SIZE=0` and
+`TET_TRACE_SIZE_SCOPE=off`: the physical-interface distance sizing remains available
+without extra trace-driven scalar refinement. A positive size is rejected unless both
+scope and `TET_TRACE_CONSTRAINT_MODE` are explicitly selected. Lengths are in micrometres.
+
+| `TET_TRACE_SIZE_SCOPE` | Where the extra scalar trace size applies |
+| --- | --- |
+| `off` | Nowhere; requires size zero and relative size zero. |
+| `matching` | Only dim=2 queries whose CAD entity tags are in the matching-surface set. |
+| `matching-and-volume` | Those matching surfaces plus dim=3 queries, explicitly opting into volume grading. |
+| `legacy-global` | Historical replay only: all dimensions/entities, including physical surfaces, from **every** triangle edge regardless of CAD mode. |
+
+In the two scoped modes, dim=1 curves (including matching curves), dim=0 points,
+unknown-dimension queries, and physical-interface surfaces receive no trace sizing.
+The existing physical-interface field and any separately selected non-trace controls
+remain in effect. Shared conforming boundaries may still affect the generated mesh;
+unchanged callback values are not a promise of identical mesh connectivity or counts.
+No anisotropy is introduced by these scalar policies.
+
+The explicit shared CAD/sizing mode is `all` (all triangle edges on box surfaces), `sides`
+(side-face edges only), or `levels` (interior horizontal box rings only). These are
+meshing subsets, never source-basis reductions. `levels` does not retain every prescribed
+break line, and uses the maximum trace target on each ring. `none` creates no CAD trace
+lines and is permitted only with scalar sizing off; the supplied trace geometry is
+still validated, without creating/fragmenting CAD entities for it. Local triangle
+validity is checked before selection in every mode; complete box coverage and source
+continuity remain separate gates.
+
+A **physical-only diagnostic** can use the following environment with the usual
+mesher arguments, including `--matching-trace /path/to/unchanged/basis-0001.csv`:
+
+```sh
+export TET_TRACE_SIZE=0 TET_TRACE_SIZE_SCOPE=off TET_TRACE_RELATIVE_SIZE=0
+export TET_TRACE_CONSTRAINT_MODE=none
+```
+
+For an explicitly unqualified matching-only scout, select e.g.
+`TET_TRACE_SIZE=0.01 TET_TRACE_SIZE_SCOPE=matching TET_TRACE_CONSTRAINT_MODE=levels`.
+`TET_TRACE_SURFACE_GROWTH` defaults to 4 for scoped policies; volume growth uses the
+existing trace volume profile (default 0.5). `TET_TRACE_RELATIVE_SIZE=0` requests the
+fixed maximum target. Positive relative sizing in `all`/`sides` caps each edge target
+by that edge's opposite altitude times the relative factor. This is only a geometric
+heuristic: long edges of skinny triangles can still demand tiny isotropic sizes.
+Per-edge altitude alone neither resolves the accuracy question nor cures the cost.
+
+To replay the old global behavior, explicitly select `legacy-global`, a positive size,
+and the historical CAD mode. It intentionally ignores that mode when choosing scalar
+segments, assigns each triangle's **minimum** altitude to all three edges for relative
+sizing, and uses growth 0.5 in all dimensions (independent of volume trace profiles).
+A different `TET_TRACE_SURFACE_GROWTH` is rejected for this replay policy. This preserves
+the old pathological far-cap/diagonal refinement; it is not an accuracy recommendation.
+
+New `prepare_graded_library_campaign.py` invocations require `--trace-size-scope`
+(`--trace-size` is also needed for a positive policy), in addition to `--trace-mode`.
+Optional `--trace-relative-size` and `--trace-surface-growth` are recorded. An old
+manifest with positive `TraceSize` but no `TraceSizeScope` fails **before cache reuse or
+jobs**; it is not silently migrated. Use a fresh, explicitly chosen recipe, never edit
+retained campaign artifacts to bypass this failure. All trace controls and helper code
+are recipe-bound; the runner excludes inherited `TET_*` overrides. The separate
+`prepare_graded_library_meshes.py` retains its no-scalar-sizing baseline explicitly in
+its plan/runner, with an explicit CAD-mode choice. Choosing a diagnostic policy does not
+qualify it for production.
+
+Outstanding gates, before accepting any diagnostic/scoped mesh for a library:
+complete immutable source contract and box coverage/continuity; actual FEM boundary
+projection/interpolation error for the full trace basis; achieved interface-normal
+resolution and acceptable Jacobians; processed H1 DOFs; and complete matched domain
+and per-interface response/energy matrices at unchanged order, tolerance, materials,
+and geometry. Mesh size, unchanged source bytes, and local altitude are not substitutes.
+No new PDE accuracy result is claimed here.
+
 ## Straight-edge swept milestone
 
 The straight-edge branch accepts one continuing edge without a plan-view mask.

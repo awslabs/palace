@@ -12,6 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 from run_graded_library_case import save
+from run_graded_library_mesh import trace_policy_environment
 
 
 def active_jobs():
@@ -32,6 +33,11 @@ def main():
     keys=set(args.keys.split(',')) if args.keys else None
     selected=[c for c in manifest['Cases'] if keys is None or c['Key'] in keys]
     if keys and keys!={c['Key'] for c in selected}:raise ValueError('Unknown case key')
+    # Reject ambiguous spatial recipes before scheduler access, lock creation or
+    # a single qsub; worker-side checks alone would waste a queued allocation.
+    if args.phase in ('meshes','responses','all'):
+        for case in selected:
+            if case['MeshRequired']:trace_policy_environment(case)
     metadata=root/'audit/device-preflight/surface-response-requirements.json'
     if not json.loads(metadata.read_text())['Complete']:raise ValueError('Strict metadata preflight incomplete')
     with (root/'submit.lock').open('a') as lock:

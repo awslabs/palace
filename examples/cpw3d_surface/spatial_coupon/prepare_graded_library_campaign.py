@@ -9,6 +9,7 @@ import hashlib
 import json
 import shutil
 from pathlib import Path
+from run_graded_library_mesh import trace_policy_environment
 
 
 def sha(path):
@@ -31,9 +32,20 @@ def main():
     parser.add_argument('--python',required=True)
     parser.add_argument('--julia-project',required=True)
     parser.add_argument('--etch-footprints',type=Path,help='JSON map from case key to retained footprint CSV')
-    parser.add_argument('--trace-mode',choices=('all','levels'),required=True)
+    parser.add_argument('--trace-mode',choices=('all','sides','levels','none'),required=True)
+    parser.add_argument('--trace-size-scope',choices=('off','matching','matching-and-volume','legacy-global'),required=True,
+                        help='Explicit unqualified diagnostic or historical replay policy; no production default')
+    parser.add_argument('--trace-size',type=float,default=0.)
+    parser.add_argument('--trace-relative-size',type=float,default=0.)
+    parser.add_argument('--trace-surface-growth',type=float)
     parser.add_argument('--mesh-statistics-binary',type=Path,required=True)
     args=parser.parse_args()
+    trace_settings={'TraceSize':args.trace_size,'TraceSizeScope':args.trace_size_scope,
+                    'TraceConstraintMode':args.trace_mode,'TraceRelativeSize':args.trace_relative_size,
+                    'TraceSurfaceGrowth':args.trace_surface_growth if args.trace_surface_growth is not None
+                                         else (.5 if args.trace_size_scope=='legacy-global' else 4.)}
+    try:trace_policy_environment(trace_settings)
+    except ValueError as error:parser.error(str(error))
     footprints=json.loads(args.etch_footprints.read_text()) if args.etch_footprints else {}
     root=args.root.resolve();ref=json.loads(args.reference_manifest.read_text())
     if (root/'campaign.json').exists():parser.error('Refuse to overwrite campaign')
@@ -74,8 +86,8 @@ def main():
                       ReferenceSurface=str(root/'reference-library'/old_model[field+'SurfaceMatrix']),
                       DestinationDomain=str(new/old_model[field+'Matrix']),
                       DestinationSurface=str(new/old_model[field+'SurfaceMatrix']),
-                      SurfaceSize=.002 if kind=='thin' else .0005,TraceSize=.01,
-                      SurfaceAlgorithm=5,TraceConstraintMode=args.trace_mode,
+                      SurfaceSize=.002 if kind=='thin' else .0005,
+                      SurfaceAlgorithm=5,**trace_settings,
                       MeshStatisticsBinary=str(args.mesh_statistics_binary.resolve()),
                       MeshStatisticsBinarySHA256=sha(args.mesh_statistics_binary),
                       WorkerSHA256=sha(d/'worker.json'),ReducerSHA256=sha(d/'reducer.json'))

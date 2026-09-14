@@ -34,6 +34,30 @@ class MeshMeasuresTest(unittest.TestCase):
         self.assertAlmostEqual(result["MaterialVolumes"]["1"], 1/6)
         self.assertAlmostEqual(result["BoundaryAreas"]["1"], 1.5+math.sqrt(3)/2)
         self.assertLess(result["MaximumRelativeQuadratureDifference"], 1e-12)
+        bound = result["FrozenSurfaceElementLowerBound"]
+        self.assertEqual(bound["BoundaryTriangles"], 4)
+        self.assertEqual(bound["TwoSidedInterfaceTriangles"], 0)
+        self.assertEqual(bound["CutVolumeComponents"], 1)
+        self.assertEqual(bound["MinimumTetrahedra"], 1)
+
+    def test_internal_interface_counts_both_sides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mesh = root / "two.mesh"
+            mesh.write_text(
+                "MFEM mesh v1.0\ndimension\n3\nelements\n2\n1 4 0 1 2 3\n2 4 0 2 1 4\n"
+                "boundary\n7\n3 2 0 1 2\n1 2 0 3 1\n1 2 1 3 2\n1 2 2 3 0\n"
+                "1 2 0 1 4\n1 2 1 2 4\n1 2 2 0 4\n"
+                "vertices\n5\n3\n0 0 0\n1 0 0\n0 1 0\n0 0 1\n0 0 -1\n"
+            )
+            output = root / "result.json"
+            subprocess.run([BINARY, str(mesh), str(output)], check=True,
+                           capture_output=True, text=True, timeout=15)
+            bound = json.loads(output.read_text())["FrozenSurfaceElementLowerBound"]
+            self.assertEqual(bound["BoundaryTriangles"], 7)
+            self.assertEqual(bound["TwoSidedInterfaceTriangles"], 1)
+            self.assertEqual(bound["CutVolumeComponents"], 2)
+            self.assertEqual(bound["MinimumTetrahedra"], 2)
 
     def test_missing_exterior_face_is_rejected(self):
         status, _ = self.run_mesh(["1 2 0 2 1", "1 2 0 1 3", "1 2 0 3 2"])

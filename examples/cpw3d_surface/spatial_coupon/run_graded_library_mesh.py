@@ -6,6 +6,7 @@
 import csv
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -53,27 +54,67 @@ def compare_geometry(reference,actual):
     return worst
 
 
+def trace_policy_environment(case):
+    """Validate before cache lookup/jobs; never infer a policy from historical size."""
+    scope=case.get('TraceSizeScope','off')
+    mode=case.get('TraceConstraintMode','all')
+    size=case.get('TraceSize',0.)
+    relative=case.get('TraceRelativeSize',0.)
+    growth=case.get('TraceSurfaceGrowth',.5 if scope=='legacy-global' else 4.)
+    if scope not in ('off','matching','matching-and-volume','legacy-global'):
+        raise ValueError('Invalid TraceSizeScope')
+    if mode not in ('all','sides','levels','none'):
+        raise ValueError('Invalid TraceConstraintMode')
+    for name,value in (('TraceSize',size),('TraceRelativeSize',relative),('TraceSurfaceGrowth',growth)):
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value<0:
+            raise ValueError('Invalid '+name)
+    if size>0 and (scope=='off' or 'TraceSizeScope' not in case):
+        raise ValueError('Positive TraceSize requires explicit TraceSizeScope; choose a fresh diagnostic or replay recipe')
+    if size==0 and scope!='off':raise ValueError('TraceSizeScope requires positive TraceSize')
+    if size>0 and 'TraceConstraintMode' not in case:
+        raise ValueError('Positive TraceSize requires explicit TraceConstraintMode')
+    if mode=='none' and scope!='off':raise ValueError('TraceConstraintMode none requires TraceSizeScope off')
+    if relative>0 and size==0:raise ValueError('TraceRelativeSize requires positive TraceSize')
+    if growth<=0:raise ValueError('Invalid TraceSurfaceGrowth')
+    if scope=='legacy-global' and growth!=.5:raise ValueError('Legacy-global replay requires TraceSurfaceGrowth 0.5')
+    return {'TET_TRACE_SIZE':str(size),'TET_TRACE_SIZE_SCOPE':scope,'TET_TRACE_CONSTRAINT_MODE':mode,
+            'TET_TRACE_RELATIVE_SIZE':str(relative),'TET_TRACE_SURFACE_GROWTH':str(growth)}
+
+
 def mesh_recipe(root,case):
+    policy=trace_policy_environment(case)
     inputs=Path(case['InputDirectory']);tools=Path(root)/'tools'
     files=[inputs/name for name in ('mesh-signature.csv','plan-view-mask.csv','plan-view-boundary.csv','process.toml')]
     files.append(inputs/'traces/basis-0001.csv')
     if case.get('EtchBoundary'):files.append(Path(case['EtchBoundary']))
     if case.get('MeshStatisticsBinary'):files.append(Path(case['MeshStatisticsBinary']))
     files.extend(tools/name for name in ('run_graded_library_mesh.py','mesh_spatial_coupon.jl','mesh_graded_tet_experiment.jl',
-        'frozen_volume_study.jl','graded_curve_distance.jl','graded_size_points.jl','interface_ownership.jl',
+        'frozen_volume_study.jl','graded_curve_distance.jl','graded_size_points.jl','graded_trace_size.jl',
+        'surface_ribbon_constraints.jl','interface_ownership.jl',
         'ownership_bernstein.jl','label_interface_patches.jl','relabel_frozen_interface_mesh.jl'))
     return {'Files':{str(path):sha(path) for path in files},
-            'Settings':{name:case.get(name) for name in ('Kind','SurfaceSize','TraceSize','SurfaceAlgorithm','TraceConstraintMode')},
+            'Settings':{name:case.get(name) for name in ('Kind','SurfaceSize','SurfaceAlgorithm')},
+            'TraceSizing':policy,
             'Volume':{'MinimumSize':.002,'NearGrowth':.5,'FarGrowth':2.,'TransitionDistance':.03,'MaximumSize':.5,'OptimizeVolume':False},
             'MeshFormat':'2.2 binary'}
+
+
+def mesh_environment(case):
+    # A recipe must not inherit unrecorded meshing controls from the shell.
+    env={k:v for k,v in os.environ.items() if not k.startswith('TET_')}
+    env.update(trace_policy_environment(case))
+    env.update(TET_GEOMETRY_ORDER='1',TET_SURFACE_ALGORITHM=str(case['SurfaceAlgorithm']),TET_ALGORITHM3D='10',
+               TET_HXT_QUALITY='.1',TET_CAP_SIZE='0',TET_SURFACE_RIBBON_ROWS='0',
+               TET_SURFACE_RIBBON_ASPECT='1',TET_VERBOSITY='3',JULIA_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
+    return env
 
 
 def main():
     root=Path(sys.argv[1]).resolve();key=sys.argv[2]
     manifest=json.loads((root/'campaign.json').read_text());case=next(c for c in manifest['Cases'] if c['Key']==key)
     if not case['MeshRequired']:raise ValueError('Not a graded mesh case')
-    directory=Path(case['Mesh']).parent;directory.mkdir(parents=True,exist_ok=True)
     recipe=mesh_recipe(root,case)
+    directory=Path(case['Mesh']).parent;directory.mkdir(parents=True,exist_ok=True)
     status_path=directory/'mesh-state.json'
     if status_path.exists():
         old=json.loads(status_path.read_text())
@@ -82,10 +123,8 @@ def main():
         raise RuntimeError('Partial mesh stages retained; use a separate recovery attempt')
     status={'Case':key,'State':'Running','StartUTC':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'Stages':[], 'Recipe':recipe}
     save(status_path,status);started=time.monotonic()
-    tools=root/'tools';inputs=Path(case['InputDirectory']);env=dict(os.environ)
-    env.update(TET_GEOMETRY_ORDER='1',TET_SURFACE_ALGORITHM=str(case['SurfaceAlgorithm']),TET_ALGORITHM3D='10',
-               TET_HXT_QUALITY='.1',TET_TRACE_CONSTRAINT_MODE=case.get('TraceConstraintMode','all'),TET_TRACE_SIZE=str(case['TraceSize']),
-               TET_CAP_SIZE='0',TET_VERBOSITY='3',JULIA_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
+    tools=root/'tools';inputs=Path(case['InputDirectory'])
+    env=mesh_environment(case)
     julia=['julia','--startup-file=no','--project='+manifest['JuliaProject']]
     base=[*julia,str(tools/'mesh_graded_tet_experiment.jl'),str(inputs),case['Kind']]
     arguments=['1',str(case['SurfaceSize']),'.5','--process',str(inputs/'process.toml'),

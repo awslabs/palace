@@ -74,7 +74,7 @@ function restore_frozen_surface(resume)
 end
 
 function run_frozen_volume_study(settings,output,lower,upper,fine)
-    Set(keys(settings))<=Set(["Variants","MaxElements","MaxNodes","OptimizeVolume","ResumeSurface"]) ||
+    Set(keys(settings))<=Set(["Variants","MaxElements","MaxNodes","OptimizeVolume","RepairInvalidVolume","ResumeSurface"]) ||
         error("Unknown volume-study setting")
     variants=get(settings,"Variants",nothing)
     variants isa Vector && !isempty(variants) || error("Volume study requires Variants")
@@ -82,11 +82,14 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
     maximum_nodes=get(settings,"MaxNodes",1_500_000)
     maximum_elements>0 && maximum_nodes>0 || error("Invalid volume-study mesh budget")
     optimize=get(settings,"OptimizeVolume",true)
+    repair_invalid=get(settings,"RepairInvalidVolume",false)
+    optimize isa Bool && repair_invalid isa Bool || error("Volume optimization flags must be boolean")
     names=String[]
     profiles=NamedTuple[]
     for variant in variants
         required=Set(["Name","NearGrowth","FarGrowth","TransitionDistance","MaximumSize"])
-        required<=Set(keys(variant)) && Set(keys(variant))<=union(required,Set(["MinimumSize"])) ||
+        optional=Set(["MinimumSize","TraceNearGrowth","TraceFarGrowth","TraceTransitionDistance"])
+        required<=Set(keys(variant)) && Set(keys(variant))<=union(required,optional) ||
             error("Invalid volume variant keys")
         name=String(variant["Name"])
         occursin(r"^[A-Za-z0-9_-]+$",name) || error("Unsafe volume variant name")
@@ -95,8 +98,13 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
                  far_growth=Float64(variant["FarGrowth"]),
                  transition_distance=Float64(variant["TransitionDistance"]),
                  maximum_size=Float64(variant["MaximumSize"]),
-                 minimum_size=Float64(get(variant,"MinimumSize",fine)))
+                 minimum_size=Float64(get(variant,"MinimumSize",fine)),
+                 trace_near_growth=Float64(get(variant,"TraceNearGrowth",0.5)),
+                 trace_far_growth=Float64(get(variant,"TraceFarGrowth",0.5)),
+                 trace_transition_distance=Float64(get(variant,"TraceTransitionDistance",0.03)))
         all(isfinite,values(profile)) && profile.near_growth>0 && profile.far_growth>0 &&
+            profile.trace_near_growth>0 && profile.trace_far_growth>0 &&
+            profile.trace_transition_distance>=0 &&
             profile.transition_distance>=0 && 0<profile.minimum_size<=profile.maximum_size || error("Invalid volume grading profile")
         filename=splitext(output)[1]*"-"*name*".msh"
         isfile(filename) && error("Refuse to overwrite volume candidate")
@@ -117,7 +125,14 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
         "SurfaceSeconds"=>surface_seconds,"GeometryOrder"=>1,
         "ResumedSurface"=>haskey(settings,"ResumeSurface"),
         "SurfaceSizing"=>Dict("MinimumSize"=>fine,"MaximumSize"=>GRADING_FAR[],
-                              "Growth"=>GRADING_GROWTH[],"TangentialEdgeSize"=>GRADING_TANGENT[]),
+                              "Growth"=>GRADING_GROWTH[],"TangentialEdgeSize"=>GRADING_TANGENT[],
+                              "TraceMinimumSize"=>GRADING_TRACE_MINIMUM[],
+                              "TraceMaximumTargetSize"=>GRADING_TRACE_SIZE[],
+                              "TraceRelativeSize"=>GRADING_TRACE_RELATIVE_SIZE[],
+                               "TraceSizeScope"=>replace(string(GRADING_TRACE_SIZE_SCOPE[]),"_"=>"-"),
+                               "TraceConstraintMode"=>GRADING_TRACE_CONSTRAINT_MODE[],
+                               "TraceSurfaceGrowth"=>GRADING_TRACE_SURFACE_GROWTH[],
+                              "RibbonRows"=>GRADING_RIBBON_ROWS[],"RibbonAspect"=>GRADING_RIBBON_ASPECT[]),
         "GmshVersion"=>gmsh.option.getString("General.Version"),"Variants"=>Dict{String,Any}[])
     report_path=output*".volume-study.toml"
     function save_report()
@@ -132,7 +147,7 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
             GRADING_VOLUME_PROFILE[]=profile
             fill!(GRADING_QUERY_COUNTS,0)
             gmsh.option.setNumber("Mesh.MeshSizeMin",min(fine,profile.minimum_size,
-                GRADING_TRACE_SIZE[]>0 ? GRADING_TRACE_SIZE[] : fine))
+                GRADING_TRACE_SIZE[]>0 ? GRADING_TRACE_MINIMUM[] : fine))
             gmsh.option.setNumber("Mesh.MeshSizeMax",max(GRADING_FAR[],profile.maximum_size))
             started=time()
             println("Volume variant $name: $profile");flush(stdout)
@@ -146,7 +161,9 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
             elements<=maximum_elements && nodes<=maximum_nodes ||
                 error("Volume study exceeded its mesh budget: elements=$elements/$maximum_elements nodes=$nodes/$maximum_nodes")
             frozen_surface_fingerprint()==surface || error("Volume mesher changed an input boundary triangle/node")
-            optimize && gmsh.model.mesh.optimize("Netgen")
+            before_quality=minimum(gmsh.model.mesh.getElementQualities(reduce(vcat,gmsh.model.mesh.getElements(3)[2]),"minSICN"))
+            repair_applied=repair_invalid && !optimize && before_quality<=1e-10
+            (optimize || repair_applied) && gmsh.model.mesh.optimize("Netgen")
             frozen_surface_fingerprint()==surface || error("Volume optimization changed the fixed boundary")
             elements=sum(length,gmsh.model.mesh.getElements(3)[2])
             nodes=length(gmsh.model.mesh.getNodes()[1])
@@ -159,10 +176,14 @@ function run_frozen_volume_study(settings,output,lower,upper,fine)
             entry=Dict{String,Any}("Name"=>name,"Mesh"=>filename,"MeshSHA256"=>bytes2hex(sha256(read(filename))),
                 "Elements"=>elements,"Nodes"=>nodes,"VolumeGenerationSeconds"=>generated-started,
                 "VolumeTotalSeconds"=>time()-started,"MinimumSICN"=>minimum(quality),
+                "BeforeOptimizationMinimumSICN"=>before_quality,"InvalidVolumeRepairApplied"=>repair_applied,
                 "BoundarySHA256"=>surface["SHA256"],"SizeQueryCounts"=>copy(GRADING_QUERY_COUNTS),
                 "NearGrowth"=>profile.near_growth,"FarGrowth"=>profile.far_growth,
                 "TransitionDistance"=>profile.transition_distance,"MaximumSize"=>profile.maximum_size,
-                "MinimumVolumeSize"=>profile.minimum_size)
+                "MinimumVolumeSize"=>profile.minimum_size,
+                "TraceNearGrowth"=>profile.trace_near_growth,
+                "TraceFarGrowth"=>profile.trace_far_growth,
+                "TraceTransitionDistance"=>profile.trace_transition_distance)
             push!(report["Variants"],entry);save_report()
             println("Completed $name: $elements tets, $nodes nodes; boundary unchanged");flush(stdout)
         end

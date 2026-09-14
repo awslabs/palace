@@ -328,19 +328,71 @@ end
     @test exact_grading_callback(3,0,.5,.10,0.,1.,C_NULL) ≈ .102
 end
 
-@testset "Matching trace refinement remains local in 3D" begin
-    empty!(GRADING_SEGMENTS);push!(GRADING_SEGMENTS,(10.,0.,0.,11.,0.,0.))
-    empty!(GRADING_ARCS);empty!(GRADING_CONICS)
-    SLOT_SIZE_TREE[]=nothing;GRADING_CAP_SIZE[]=0.;GRADING_TANGENT[]=0.
-    GRADING_FINE[]=.002;GRADING_FAR[]=.5;GRADING_GROWTH[]=1.
+@testset "Coplanar seam detection ignores OCC padding and frame" begin
+    gmsh.initialize()
+    try
+        a=gmsh.model.occ.addRectangle(0.,0.,0.,1.,1.)
+        b=gmsh.model.occ.addRectangle(1.,0.,0.,1.,1.)
+        c=gmsh.model.occ.addRectangle(0.,0.,.1,1.,1.)
+        gmsh.model.occ.synchronize()
+        @test coplanar_surfaces(Int32[a,b],1e-10)
+        @test !coplanar_surfaces(Int32[a,c],1e-10)
+        gmsh.model.occ.rotate([(2,a),(2,b)],0.,0.,0.,1.,1.,1.,.37)
+        gmsh.model.occ.synchronize()
+        @test coplanar_surfaces(Int32[a,b],1e-10)
+        @test !coplanar_surfaces(Int32[a,c],1e-10)
+        outer=gmsh.model.occ.addRectangle(4.,0.,0.,1.,1.)
+        inner=gmsh.model.occ.addRectangle(4.00001,.00001,0.,.99998,.99998)
+        ring,_=gmsh.model.occ.cut([(2,outer)],[(2,inner)])
+        gmsh.model.occ.synchronize()
+        face=only(tag for (dim,tag) in ring if dim==2)
+        point=point_on_surface(face)
+        @test gmsh.model.isInside(2,face,collect(point))>0
+    finally
+        gmsh.finalize()
+    end
+    @test ribbon_distances(.005,3) ≈ [.005,.0125,.02375]
+    @test_throws ErrorException ribbon_distances(.005,3;ratio=1.)
+end
+
+@testset "Trace sizing uses geometric heuristics, not accuracy bounds" begin
+    triangles=Dict(1=>[(0.,0.,0.),(1.,0.,0.),(0.,.1,0.)],
+                   2=>[(0.,0.,0.),(0.,.1,0.),(-1.,1.,0.)])
+    segments,sizes=trace_segment_sizes(triangles,.05,.2)
+    @test length(segments)==length(sizes)==5
+    @test all(0 .< sizes .<= .05)
+    @test minimum(sizes)<.02
+    _,legacy=trace_segment_sizes(triangles,.01,0.)
+    @test all(==(.01),legacy)
+    # A rigid coordinate change must not alter the requested metric scales.
+    moved=Dict(i=>[(2p[2]+3.,-2p[1]-1.,2p[3]+4.) for p in tri] for (i,tri) in triangles)
+    _,scaled=trace_segment_sizes(moved,.1,.2)
+    @test sort(scaled) ≈ 2sort(sizes)
+    @test_throws ErrorException trace_segment_sizes(Dict(1=>[(0.,0.,0.),(1.,0.,0.),(2.,0.,0.)]),.01,.2)
+end
+
+
+function adaptive_callback_allocations()
+    return @allocated for _ in 1:1000
+        exact_grading_callback(Cint(2),Cint(0),.2,.01,0.,1.,C_NULL)
+    end
+end
+
+@testset "Native sizing callback does not allocate per query" begin
+    empty!(GRADING_SEGMENTS);push!(GRADING_SEGMENTS,(0.,0.,0.,1.,0.,0.))
+    empty!(GRADING_TRACE_SEGMENTS);push!(GRADING_TRACE_SEGMENTS,(0.,0.,1.,1.,0.,1.))
+    empty!(GRADING_TRACE_SEGMENT_SIZES);push!(GRADING_TRACE_SEGMENT_SIZES,.05)
+    GRADING_TRACE_SIZE[]=.05
+    GRADING_TRACE_SIZE_SCOPE[]=:matching
+    empty!(GRADING_MATCHING_SURFACES);push!(GRADING_MATCHING_SURFACES,Cint(0))
+    GRADING_VOLUME_PROFILE[]=(minimum_size=.002,near_growth=.5,far_growth=2.,
+        transition_distance=.03,maximum_size=.5,trace_near_growth=.5,
+        trace_far_growth=2.,trace_transition_distance=.03)
+    adaptive_callback_allocations()
+    @test adaptive_callback_allocations()==0
     GRADING_VOLUME_PROFILE[]=nothing
-    empty!(GRADING_TRACE_SEGMENTS);push!(GRADING_TRACE_SEGMENTS,(0.,0.,0.,1.,0.,0.))
-    GRADING_TRACE_SIZE[]=.01
-    @test exact_grading_callback(2,0,.5,0.,0.,1.,C_NULL) ≈ .01
-    @test exact_grading_callback(3,0,.5,0.,.04,1.,C_NULL) ≈ .03
-    @test exact_grading_callback(3,0,.5,0.,2.,1.,C_NULL) == .5
-    GRADING_TRACE_SIZE[]=0.;empty!(GRADING_TRACE_SEGMENTS)
-    @test exact_grading_callback(3,0,.5,0.,.04,1.,C_NULL) == .5
+    GRADING_TRACE_SIZE[]=0.;empty!(GRADING_TRACE_SEGMENTS);empty!(GRADING_TRACE_SEGMENT_SIZES)
+    GRADING_TRACE_SIZE_SCOPE[]=:off;empty!(GRADING_MATCHING_SURFACES)
 end
 
 @testset "Named ARM-compatible size callback" begin

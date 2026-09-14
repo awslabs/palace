@@ -146,6 +146,7 @@ def run(args):
     tools=args.root/'tools';tools.mkdir()
     names=['mesh_spatial_coupon.jl','mesh_graded_tet_experiment.jl','frozen_volume_study.jl','label_interface_patches.jl',
            'interface_ownership.jl','ownership_bernstein.jl','graded_curve_distance.jl','graded_size_points.jl',
+           'graded_trace_size.jl','surface_ribbon_constraints.jl',
            'tag_partition_uncertainty.jl','run_bounded_mesher.py','run_partition_refinement.py']
     for name in names:shutil.copy2(HERE/name,tools/name)
     summary={"Version":1,"Scope":"Fixed-FE-field partition bounds and independent convergence observations",

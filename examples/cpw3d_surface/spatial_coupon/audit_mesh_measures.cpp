@@ -7,6 +7,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 #include <mfem.hpp>
@@ -24,8 +25,8 @@ Measures Integrate(mfem::Mesh &mesh, int order)
     {
       auto *T = dimension == 3 ? mesh.GetElementTransformation(i)
                                : mesh.GetBdrElementTransformation(i);
-      auto geometry = dimension == 3 ? mesh.GetElementBaseGeometry(i)
-                                     : mesh.GetBdrElementGeometry(i);
+      auto geometry =
+          dimension == 3 ? mesh.GetElementBaseGeometry(i) : mesh.GetBdrElementGeometry(i);
       int attribute = dimension == 3 ? mesh.GetAttribute(i) : mesh.GetBdrAttribute(i);
       const auto &rule = mfem::IntRules.Get(geometry, order);
       double measure = 0.0;
@@ -66,6 +67,18 @@ int main(int argc, char **argv)
       throw std::runtime_error("Duplicate physical assignment of a mesh face");
     }
   }
+  std::vector<int> component(mesh.GetNE());
+  std::iota(component.begin(), component.end(), 0);
+  auto Find = [&](int element)
+  {
+    while (component[element] != element)
+    {
+      component[element] = component[component[element]];
+      element = component[element];
+    }
+    return element;
+  };
+  long long interior_physical_faces = 0;
   for (int face = 0; face < mesh.GetNFaces(); face++)
   {
     int first, second;
@@ -75,10 +88,39 @@ int main(int argc, char **argv)
     {
       throw std::runtime_error("Missing exterior or material-interface boundary face");
     }
+    if (second >= 0 && boundary_count[face])
+    {
+      interior_physical_faces++;
+    }
+    else if (second >= 0)
+    {
+      component[Find(first)] = Find(second);
+    }
   }
   const auto coarse = Integrate(mesh, 4), fine = Integrate(mesh, 8);
-  nlohmann::json result = {{"Mesh", argv[1]}, {"QuadratureOrders", {4, 8}},
-                           {"BoundaryCoverageChecked", true}};
+  nlohmann::json result = {
+      {"Mesh", argv[1]}, {"QuadratureOrders", {4, 8}}, {"BoundaryCoverageChecked", true}};
+  bool all_tetrahedra = true;
+  long long component_count = 0;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    all_tetrahedra &= mesh.GetElementBaseGeometry(element) == mfem::Geometry::TETRAHEDRON;
+    component_count += Find(element) == element;
+  }
+  if (all_tetrahedra)
+  {
+    // Cutting the S physical/matching faces yields C connected volume components.
+    // I of those faces are two-sided. Since 4T = S + I + 2F and F >= T - C,
+    // every conforming tetrahedral replacement of this same shell needs
+    // T >= ceil((S + I) / 2) - C. This is a necessary bound, not achievability.
+    const long long shell_incidence = mesh.GetNBE() + interior_physical_faces;
+    result["FrozenSurfaceElementLowerBound"] = {
+        {"BoundaryTriangles", mesh.GetNBE()},
+        {"TwoSidedInterfaceTriangles", interior_physical_faces},
+        {"CutVolumeComponents", component_count},
+        {"MinimumTetrahedra", (shell_incidence + 1) / 2 - component_count},
+        {"Scope", "Necessary count bound with every physical/matching triangle preserved"}};
+  }
   double difference = 0.0;
   for (const auto &[key, measure] : fine)
   {

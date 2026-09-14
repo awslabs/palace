@@ -114,9 +114,20 @@ class PrepareGradedLibraryMeshesTest(unittest.TestCase):
                 self.assertEqual(case["SourceContract"]["Linear"]["Tol"], 1e-8)
                 self.assertEqual(case["ExpectedInterfaceAttributes"], [3000, 3100, 4001, 5001, 6001])
                 self.assertEqual(case["SourceContract"]["Sources"][0]["SHA256"], sha(trace))
+                self.assertIn("--matching-trace", case["GeometryCommand"])
+                self.assertIn("--matching-trace", case["VolumeCommand"])
+                copied_trace = Path(case["GeometryCommand"][case["GeometryCommand"].index("--matching-trace") + 1])
+                self.assertEqual(copied_trace.read_bytes(), trace.read_bytes())
             runner = (output / "generate-meshes.sh").read_text()
             self.assertIn("run_bounded_mesher.py", runner)
             self.assertIn("TET_GEOMETRY_ORDER=1", runner)
+            self.assertEqual(plan["TraceSizing"], {"TraceSize": 0.0, "TraceSizeScope": "off",
+                                                 "TraceRelativeSize": 0.0, "TraceSurfaceGrowth": 4.0})
+            self.assertIn("TET_TRACE_CONSTRAINT_MODE=none", runner)
+            self.assertIn("TET_TRACE_SIZE=0", runner)
+            self.assertIn("TET_TRACE_SIZE_SCOPE=off", runner)
+            self.assertIn("TET_TRACE_RELATIVE_SIZE=0", runner)
+            self.assertIn("TET_TRACE_SURFACE_GROWTH=4", runner)
             self.assertIn("--memory-gib 110", runner)
 
 
