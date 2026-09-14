@@ -53,6 +53,13 @@ public:
                 bool use_mg);
 
   void Mult(const VecType &x, VecType &y) const;
+
+  // Recovery CG uses the preconditioned residual norm, not the Euclidean norm.
+  bool GetConverged() const { return ksp->GetConverged(); }
+  int GetTotalIterations() const { return ksp->NumTotalMultIterations(); }
+  double GetFinalRelativeResidual() const { return ksp->GetFinalRelativeResidual(); }
+  double GetInitialResidual() const { return ksp->GetInitialResidual(); }
+  double GetFinalResidual() const { return ksp->GetFinalResidual(); }
 };
 
 // Forward declarations for friend access.
@@ -94,6 +101,8 @@ public:
 
   // Recover D = epsilon E in the H(div)-conforming flux space.
   void RecoverFlux(const VecType &E, VecType &D) const;
+
+  const FluxProjector<VecType> &GetFluxProjector() const { return projector; }
 };
 
 // Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H

@@ -24,6 +24,10 @@ class Array;
 namespace palace
 {
 
+// Called before creating any output; the experimental reader must never reuse output.
+void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm,
+                                    bool check_output = true);
+
 class ErrorIndicator;
 class LaplaceOperator;
 class Mesh;
@@ -53,6 +57,9 @@ private:
                                          const Operator &Grad,
                                          const std::filesystem::path &archive,
                                          int block_size) const;
+
+  ErrorIndicator EstimateArchivedFields(LaplaceOperator &laplace_op, const Operator &K,
+                                        const std::filesystem::path &archive) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

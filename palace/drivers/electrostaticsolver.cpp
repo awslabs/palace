@@ -4,7 +4,9 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
@@ -17,6 +19,8 @@
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -24,6 +28,7 @@
 #include <iomanip>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 
@@ -118,7 +123,7 @@ void WriteArchivedVector(const std::filesystem::path &directory, int source,
 }
 
 Vector ReadArchivedVector(const std::filesystem::path &directory, int source,
-                          ArchivedField field, MPI_Comm comm)
+                          ArchivedField field, MPI_Comm comm, int expected_size = -1)
 {
   const int rank = Mpi::Rank(comm);
   const int size = Mpi::Size(comm);
@@ -135,20 +140,626 @@ Vector ReadArchivedVector(const std::filesystem::path &directory, int source,
   ReadArchiveValue(stream, stored_rank);
   ReadArchiveValue(stream, stored_size);
   ReadArchiveValue(stream, local_size);
-  MFEM_VERIFY(
-      stream && magic == response_archive_magic && version == response_archive_version &&
-          stored_field == static_cast<std::uint32_t>(field) && stored_source == source &&
-          stored_rank == rank && stored_size == size && local_size >= 0,
-      "Invalid response archive header in \"" << path.string() << "\"!");
+  MFEM_VERIFY(stream && magic == response_archive_magic &&
+                  version == response_archive_version &&
+                  stored_field == static_cast<std::uint32_t>(field) &&
+                  stored_source == source && stored_rank == rank && stored_size == size &&
+                  local_size >= 0 && local_size <= std::numeric_limits<int>::max() &&
+                  (expected_size < 0 || local_size == expected_size),
+              "Invalid response archive header in \"" << path.string() << "\"!");
   Vector vector(static_cast<int>(local_size));
   stream.read(reinterpret_cast<char *>(vector.HostWrite()), local_size * sizeof(double));
   MFEM_VERIFY(stream && stream.peek() == std::ifstream::traits_type::eof(),
               "Invalid response archive payload in \"" << path.string() << "\"!");
+  if (expected_size >= 0)
+  {
+    for (int i = 0; i < vector.Size(); i++)
+    {
+      MFEM_VERIFY(std::isfinite(vector.HostRead()[i]),
+                  "Nonfinite archived potential in " << path.string());
+    }
+  }
   vector.UseDevice(true);
   return vector;
 }
 
 }  // namespace
+
+void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
+{
+  if (!EnvironmentFlag("PALACE_RESPONSE_ESTIMATE_ONLY"))
+  {
+    return;
+  }
+  for (const char *flag :
+       {"PALACE_RESPONSE_ARCHIVE_ONLY", "PALACE_RESPONSE_REDUCE_ONLY",
+        "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "PALACE_RESPONSE_BLOCK_SIZE"})
+  {
+    MFEM_VERIFY(!std::getenv(flag), "Archive estimation conflicts with " << flag);
+  }
+  const auto archive = ResponseArchiveDirectory();
+  MFEM_VERIFY(archive && std::filesystem::is_directory(*archive),
+              "Archive estimation requires an existing PALACE_RESPONSE_ARCHIVE_DIR!");
+  MFEM_VERIFY(std::getenv("PALACE_RESPONSE_ESTIMATE_REQUEST"),
+              "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
+  MFEM_VERIFY(iodata.problem.type == ProblemType::ELECTROSTATIC &&
+                  !iodata.boundaries.prescribed_potential.empty() &&
+                  !iodata.solver.electrostatic.response_correction &&
+                  iodata.model.refinement.max_it == 0,
+              "Archive estimation requires prescribed electrostatics, no response "
+              "correction and no AMR!");
+  MFEM_VERIFY(!iodata.model.export_prerefined_mesh,
+              "Archive estimation rejects ExportPrerefinedMesh!");
+  MFEM_VERIFY(iodata.model.partitioning.empty(),
+              "Archive estimation does not support Partitioning!");
+  for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
+  {
+    MFEM_VERIFY(!data.edge_refinement,
+                "Archive estimation does not support geometry-driven edge refinement!");
+    MFEM_VERIFY(data.ownership_data_file.empty(),
+                "Archive estimation does not support OwnershipDataFile!");
+  }
+  const auto output = std::filesystem::weakly_canonical(iodata.problem.output);
+  auto Disjoint = [&](const std::filesystem::path &input)
+  {
+    const auto resolved = std::filesystem::weakly_canonical(input);
+    auto Contains = [](const auto &parent, const auto &child)
+    {
+      auto p = parent.begin(), c = child.begin();
+      for (; p != parent.end() && c != child.end() && *p == *c; ++p, ++c)
+      {
+      }
+      return p == parent.end();
+    };
+    MFEM_VERIFY(!Contains(output, resolved) && !Contains(resolved, output),
+                "Archive estimate output overlaps input " << input.string());
+  };
+  Disjoint(*archive);
+  Disjoint(iodata.model.mesh);
+  Disjoint(std::getenv("PALACE_RESPONSE_ESTIMATE_REQUEST"));
+  for (const auto &[idx, data] : iodata.boundaries.prescribed_potential)
+  {
+    Disjoint(data.data_file);
+  }
+  if (check_output)
+  {
+    MFEM_VERIFY(!std::filesystem::exists(output),
+                "Archive estimate output directory must not already exist!");
+    // Every rank must finish the read-only preflight before root creates the output.
+    Mpi::Barrier(comm);
+  }
+}
+
+ErrorIndicator
+ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const Operator &K,
+                                            const std::filesystem::path &archive) const
+{
+  using json = nlohmann::json;
+  using VT = Units::ValueType;
+  const auto comm = laplace_op.GetComm();
+  const auto &Grad = laplace_op.GetGradMatrix();
+  std::ifstream request_stream(std::getenv("PALACE_RESPONSE_ESTIMATE_REQUEST"));
+  MFEM_VERIFY(request_stream, "Cannot read archive estimate request!");
+  const auto request = json::parse(request_stream);
+  MFEM_VERIFY(request.at("Version") == 1, "Unsupported archive estimate request version!");
+  const auto source_ids = request.at("SourceIds").get<std::vector<int>>();
+  std::vector<int> configured_ids;
+  for (const auto &[idx, data] : laplace_op.GetSources())
+  {
+    configured_ids.push_back(idx);
+  }
+  MFEM_VERIFY(source_ids == configured_ids,
+              "Estimate request SourceIds must exactly match the ordered configuration!");
+  const auto zero_ids = request.at("ZeroTraceIndices").get<std::vector<int>>();
+  for (int idx : zero_ids)
+  {
+    MFEM_VERIFY(std::find(source_ids.begin(), source_ids.end(), idx) != source_ids.end(),
+                "Unknown constrained source!");
+  }
+  const auto &cases = request.at("Excitations");
+  MFEM_VERIFY(cases.is_array() && !cases.empty(), "No archive excitations requested!");
+  const auto &validation = request.at("Validation");
+  const double rtol = validation.at("RelResidualTol");
+  const double atol = validation.at("AbsResidualTol");
+  const double bc_volts = validation.at("BCAbsTolV");
+  const double energy_floor = validation.at("MinEnergyJ");
+  const double cancellation_floor = validation.at("MinCancellationRatio");
+  for (double value : {rtol, atol, bc_volts, energy_floor, cancellation_floor})
+  {
+    MFEM_VERIFY(std::isfinite(value) && value >= 0.0, "Invalid diagnostic tolerance!");
+  }
+  MFEM_VERIFY(energy_floor > 0.0 && cancellation_floor > 0.0 && cancellation_floor < 1.0,
+              "MinEnergyJ must be positive and MinCancellationRatio must be in (0,1)!");
+  const double voltage_scale = iodata.units.GetScaleFactor<VT::VOLTAGE>();
+  const double energy_scale = iodata.units.GetScaleFactor<VT::ENERGY>();
+  const double bc_tol = bc_volts / voltage_scale;
+  MFEM_VERIFY(std::isfinite(voltage_scale) && voltage_scale > 0.0 &&
+                  std::isfinite(energy_scale) && energy_scale > 0.0 &&
+                  std::isfinite(bc_tol),
+              "Invalid diagnostic unit scales!");
+  const bool localize = request.at("WriteElementIndicators").get<bool>();
+  std::vector<int> quadrature_extras;
+  if (request.contains("SurfaceQuadratureExtras"))
+  {
+    const auto &extras = request.at("SurfaceQuadratureExtras");
+    MFEM_VERIFY(extras.is_array() && !extras.empty() && extras.front() == 0,
+                "SurfaceQuadratureExtras must be an array starting at zero!");
+    for (const auto &value : extras)
+    {
+      MFEM_VERIFY(value.is_number_integer() && value >= 0 && value <= 12,
+                  "SurfaceQuadratureExtras must contain integer orders in [0,12]!");
+      const int extra = value.get<int>();
+      MFEM_VERIFY(quadrature_extras.empty() || extra > quadrature_extras.back(),
+                  "SurfaceQuadratureExtras must be sorted and unique!");
+      quadrature_extras.push_back(extra);
+    }
+  }
+  const auto &linear = iodata.solver.linear;
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op, nullptr,
+                                                   &surface_post_geometry);
+  GradFluxErrorEstimator<Vector> estimator(
+      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+      linear.estimator_tol, linear.estimator_max_it, 0, linear.estimator_mg);
+  json report = {
+      {"Version", 1},
+      {"Status", "incomplete"},
+      {"Request", request},
+      {"SampleCount", 0},
+      {"PDESolves", 0},
+      {"Ranks", Mpi::Size(comm)},
+      {"Order", iodata.solver.order},
+      {"GlobalH1TrueDofs", laplace_op.GlobalTrueVSize()},
+      {"GlobalNDTrueDofs", laplace_op.GetNDSpace().GlobalTrueVSize()},
+      {"GlobalRTTrueDofs", laplace_op.GetRTSpace().GlobalTrueVSize()},
+      {"VoltageScaleV", voltage_scale},
+      {"EnergyScaleJ", energy_scale},
+      {"BCAbsTolInternal", bc_tol},
+      {"ResidualNorm", "Euclidean true-dof norm of eliminated K V - RHS"},
+      {"BoundaryMismatch",
+       "essential true-dof max versus imposed discrete BC; not ideal P1 error"},
+      {"IndicatorDefinition",
+       "eta_raw^2 = integral |sqrt(eps) E - invsqrt(eps) D|^2; eta = eta_raw/sqrt(2 U)"},
+      {"Interpretation",
+       "volume energy-norm heuristic, not a boundary or interface error bound"},
+      {"Recovery",
+       {{"RelTol", linear.estimator_tol},
+        {"AbsTol", std::numeric_limits<double>::epsilon()},
+        {"MaxIts", linear.estimator_max_it},
+        {"Multigrid", linear.estimator_mg},
+        {"ResidualNorm", "preconditioned CG norm"}}},
+      {"Checks", json::array()},
+      {"Excitations", json::array()}};
+  auto Save = [&]()
+  {
+    for (const auto &value : report.flatten())
+    {
+      MFEM_VERIFY(!value.is_number_float() || std::isfinite(value.get<double>()),
+                  "Nonfinite diagnostic report value!");
+    }
+    if (root)
+    {
+      std::ofstream stream(post_dir / "archive-estimates.json");
+      stream << report.dump(2) << '\n';
+      MFEM_VERIFY(stream, "Cannot write archive diagnostic report!");
+    }
+  };
+  // One small rank-layout record per rank, never a replicated mesh.
+  {
+    // A rank-local diagnostic fingerprint, not an independent historical archive hash.
+    // FNV-1a hashes native-endian geometry bytes and the ordered FE dof maps. The launcher
+    // separately records cryptographic hashes of the mesh, executable and these records.
+    auto Fingerprint = [&](const FiniteElementSpace &space)
+    {
+      std::uint64_t hash = 14695981039346656037ULL;
+      auto Add = [&](const auto &value)
+      {
+        const auto *bytes = reinterpret_cast<const unsigned char *>(&value);
+        for (std::size_t i = 0; i < sizeof(value); i++)
+        {
+          hash = (hash ^ bytes[i]) * 1099511628211ULL;
+        }
+      };
+      const auto &mesh = space.GetMesh().Get();
+      Add(Mpi::Rank(comm));
+      Add(Mpi::Size(comm));
+      Add(space.GetVSize());
+      Add(space.GetTrueVSize());
+      Add(space.GetMaxElementOrder());
+      for (int i = 0; i < mesh.GetNV(); i++)
+      {
+        for (int j = 0; j < mesh.SpaceDimension(); j++)
+        {
+          Add(mesh.GetVertex(i)[j]);
+        }
+      }
+      if (const auto *nodes = mesh.GetNodes())
+      {
+        for (int i = 0; i < nodes->Size(); i++)
+        {
+          Add(nodes->HostRead()[i]);
+        }
+      }
+      mfem::Array<int> dofs, vertices;
+      for (int i = 0; i < mesh.GetNE(); i++)
+      {
+        Add(mesh.GetAttribute(i));
+        Add(mesh.GetElementBaseGeometry(i));
+        mesh.GetElementVertices(i, vertices);
+        for (int v : vertices)
+        {
+          Add(v);
+        }
+        space.Get().GetElementDofs(i, dofs);
+        for (int dof : dofs)
+        {
+          Add(dof);
+        }
+      }
+      for (int i = 0; i < space.GetVSize(); i++)
+      {
+        Add(space.Get().GetLocalTDofNumber(i));
+      }
+      return fmt::format("{:016x}", hash);
+    };
+    std::ofstream layout(post_dir /
+                         fmt::format("archive-layout-rank-{:06d}.json", Mpi::Rank(comm)));
+    layout << json({{"Rank", Mpi::Rank(comm)},
+                    {"H1TrueDofs", Grad.Width()},
+                    {"H1LayoutFNV1a64", Fingerprint(laplace_op.GetH1Space())},
+                    {"NDLayoutFNV1a64", Fingerprint(laplace_op.GetNDSpace())},
+                    {"RTLayoutFNV1a64", Fingerprint(laplace_op.GetRTSpace())},
+                    {"NDTrueDofs", Grad.Height()},
+                    {"RTTrueDofs", laplace_op.GetRTSpace().GetTrueVSize()},
+                    {"LocalElements", laplace_op.GetMesh().GetNE()}})
+                  .dump(2)
+           << '\n';
+    MFEM_VERIFY(layout, "Cannot write archive rank layout!");
+  }
+  auto Finite = [&](const Vector &v)
+  {
+    int finite = 1;
+    const auto *values = v.HostRead();
+    for (int i = 0; i < v.Size(); i++)
+    {
+      finite = finite && std::isfinite(values[i]);
+    }
+    Mpi::GlobalMin(1, &finite, comm);
+    MFEM_VERIFY(finite, "Nonfinite diagnostic vector!");
+  };
+  // Classify owned true DOFs once. Ground wins at trace/ground intersections, exactly
+  // as in the existing prescribed-potential projection; no projection is changed here.
+  auto &h1 = laplace_op.GetH1Space().Get();
+  const int max_attr = h1.GetParMesh()->bdr_attributes.Max();
+  mfem::Array<int> matching_marker(max_attr), ground_marker(max_attr);
+  matching_marker = 0;
+  ground_marker = 0;
+  for (const auto &[idx, data] : iodata.boundaries.prescribed_potential)
+  {
+    for (int attr : data.attributes)
+    {
+      if (attr > 0 && attr <= max_attr)
+      {
+        matching_marker[attr - 1] = 1;
+      }
+    }
+  }
+  for (int attr : iodata.boundaries.pec.attributes)
+  {
+    if (attr > 0 && attr <= max_attr)
+    {
+      ground_marker[attr - 1] = 1;
+    }
+  }
+  mfem::Array<int> matching_dofs, ground_dofs;
+  h1.GetEssentialTrueDofs(matching_marker, matching_dofs);
+  h1.GetEssentialTrueDofs(ground_marker, ground_dofs);
+  std::vector<int> category(Grad.Width(), 0);
+  for (int dof : matching_dofs)
+  {
+    category[dof] = 1;
+  }
+  for (int dof : ground_dofs)
+  {
+    category[dof] = category[dof] == 1 ? 3 : 2;
+  }
+  long long boundary_counts[3] = {0, 0, 0};
+  for (int tag : category)
+  {
+    if (tag > 0)
+    {
+      boundary_counts[tag - 1]++;
+    }
+  }
+  Mpi::GlobalSum(3, boundary_counts, comm);
+  report["BoundaryCategories"] = {
+      {"MatchingOnlyTrueDofs", boundary_counts[0]},
+      {"PhysicalGroundTrueDofs", boundary_counts[1] + boundary_counts[2]},
+      {"IntersectionTrueDofs", boundary_counts[2]},
+      {"Precedence",
+       "physical ground includes intersections; matching-only excludes them"}};
+  Vector residual(Grad.Width());
+  auto Check =
+      [&](const Vector &v, const Vector &bc, const Vector &rhs, const std::string &label)
+  {
+    Finite(v);
+    Finite(bc);
+    Finite(rhs);
+    K.Mult(v, residual);
+    residual -= rhs;
+    Finite(residual);
+    double mismatch = 0.0;
+    double boundary_max[3] = {0.0, 0.0, 0.0};
+    for (int dof : laplace_op.GetDbcTDofList())
+    {
+      const double error = std::abs(v.HostRead()[dof] - bc.HostRead()[dof]);
+      mismatch = std::max(mismatch, error);
+      const int tag = category[dof];
+      if (tag > 0)
+      {
+        boundary_max[tag - 1] = std::max(boundary_max[tag - 1], error);
+      }
+    }
+    Mpi::GlobalMax(1, &mismatch, comm);
+    Mpi::GlobalMax(3, boundary_max, comm);
+    const double norm = linalg::Norml2(comm, residual);
+    const double rhs_norm = linalg::Norml2(comm, rhs);
+    const double threshold = atol + rtol * rhs_norm;
+    const bool pass = std::isfinite(norm) && std::isfinite(rhs_norm) &&
+                      std::isfinite(threshold) && norm <= threshold && mismatch <= bc_tol;
+    report["Checks"].push_back(
+        {{"Label", label},
+         {"ResidualNorm", norm},
+         {"RHSNorm", rhs_norm},
+         {"ResidualThreshold", threshold},
+         {"RelativeResidual", rhs_norm > 0.0 ? json(norm / rhs_norm) : json(nullptr)},
+         {"BCMaxInternal", mismatch},
+         {"BCMaxV", mismatch * voltage_scale},
+         {"MatchingOnlyBCMaxV",
+          boundary_counts[0] > 0 ? json(boundary_max[0] * voltage_scale) : json(nullptr)},
+         {"PhysicalGroundBCMaxV",
+          boundary_counts[1] + boundary_counts[2] > 0
+              ? json(std::max(boundary_max[1], boundary_max[2]) * voltage_scale)
+              : json(nullptr)},
+         {"IntersectionBCMaxV",
+          boundary_counts[2] > 0 ? json(boundary_max[2] * voltage_scale) : json(nullptr)},
+         {"NearZeroRHS", rhs_norm <= atol},
+         {"Passed", pass}});
+    Save();
+    MFEM_VERIFY(pass, "Archive field validation failed for "
+                          << label << ": residual=" << norm << " (limit=" << threshold
+                          << "), BC mismatch=" << mismatch * voltage_scale << " V");
+  };
+  ErrorIndicator aggregate;
+  Vector v(Grad.Width()), bc(Grad.Width()), rhs(Grad.Width());
+  Vector source_bc, source_rhs, e(Grad.Height()), d(laplace_op.GetRTSpace().GetTrueVSize());
+  std::set<std::string> names;
+  int case_number = 0;
+  for (const auto &excitation : cases)
+  {
+    const std::string name = excitation.at("Name");
+    MFEM_VERIFY(!name.empty() && names.insert(name).second,
+                "Duplicate/empty excitation name!");
+    const auto coefficients = excitation.at("Coefficients").get<std::vector<double>>();
+    MFEM_VERIFY(coefficients.size() == source_ids.size(), "Incomplete coefficient table!");
+    v = bc = rhs = 0.0;
+    double constituent_norm_sum = 0.0;
+    for (std::size_t i = 0; i < source_ids.size(); i++)
+    {
+      const double c = coefficients[i];
+      const int source = source_ids[i];
+      MFEM_VERIFY(std::isfinite(c), "Nonfinite excitation coefficient!");
+      MFEM_VERIFY(c == 0.0 ||
+                      std::find(zero_ids.begin(), zero_ids.end(), source) == zero_ids.end(),
+                  "Nonzero coefficient on constrained source " << source);
+      if (c == 0.0)
+      {
+        continue;  // No magnitude cutoff: every nonzero coefficient is retained.
+      }
+      auto field =
+          ReadArchivedVector(archive, source, ArchivedField::POTENTIAL, comm, Grad.Width());
+      laplace_op.GetExcitationVector(source, K, source_bc, source_rhs);
+      Check(field, source_bc, source_rhs, fmt::format("{}:source-{}", name, source));
+      constituent_norm_sum += std::abs(c) * linalg::Norml2(comm, field);
+      v.Add(c, field);
+      bc.Add(c, source_bc);
+      rhs.Add(c, source_rhs);
+    }
+    Check(v, bc, rhs, name);
+    e = 0.0;
+    Grad.AddMult(v, e, -1.0);
+    Finite(e);
+    const auto &projector = estimator.GetFluxProjector();
+    const int iterations_before = projector.GetTotalIterations();
+    estimator.RecoverFlux(e, d);
+    Finite(d);
+    const auto energies = post_op.GetElectrostaticEnergies(v, e, &d);
+    const double energy_j = energies.domain * energy_scale;
+    MFEM_VERIFY(std::isfinite(energy_j) && energy_j >= 0.0, "Invalid domain energy!");
+    // Et=0 requests the unnormalized integral from the existing estimator, including for
+    // a genuinely zero solution. No division by tiny energy is performed here.
+    ErrorIndicator raw;
+    estimator.AddErrorIndicator(e, d, 0.0, raw);
+    Finite(raw.Local());
+    const double raw_norm = raw.Norml2(comm);
+    const double raw_j = raw_norm * std::sqrt(energy_scale);
+    const bool normalized = energy_j > energy_floor;
+    const double solution_norm = linalg::Norml2(comm, v);
+    const double cancellation =
+        constituent_norm_sum > 0.0 ? solution_norm / constituent_norm_sum : 0.0;
+    const double recovery_residual = projector.GetFinalRelativeResidual();
+    MFEM_VERIFY(std::isfinite(raw_j) && std::isfinite(cancellation) &&
+                    std::isfinite(recovery_residual),
+                "Nonfinite diagnostic output!");
+    json result = {
+        {"Name", name},
+        {"SampleCount", 1},
+        {"Status", projector.GetConverged() ? "measured" : "recovery_unconverged"},
+        {"EnergyJ", energy_j},
+        {"EnergyInternal", energies.domain},
+        {"EtaRawSqrtJ", raw_j},
+        {"NormalizationSqrtJ", std::sqrt(2.0 * energy_j)},
+        {"Eta",
+         normalized ? json(raw_norm / std::sqrt(2.0 * energies.domain)) : json(nullptr)},
+        {"NormalizationStatus",
+         normalized ? "defined_above_requested_floor" : "zero_or_small_energy"},
+        {"CoefficientCancellationRatio", cancellation},
+        {"CancellationStatus",
+         constituent_norm_sum == 0.0
+             ? "zero_input"
+             : (cancellation < cancellation_floor ? "strong_cancellation"
+                                                  : "above_requested_floor")},
+        {"NormalizationUsable",
+         normalized && cancellation >= cancellation_floor && projector.GetConverged()},
+        {"RecoveryInitialResidual", projector.GetInitialResidual()},
+        {"RecoveryFinalResidual", projector.GetFinalResidual()},
+        {"RecoveryConverged", projector.GetConverged()},
+        {"RecoveryIterations", projector.GetTotalIterations() - iterations_before},
+        {"RecoveryRelativeResidual", recovery_residual},
+        {"Interfaces", json::array()},
+        {"InterfaceResponses", json::array()},
+        {"SurfaceUsesRecoveredFlux", post_op.NeedsRecoveredElectricFlux()}};
+    // Reuse exactly the response-matrix integrator, with a single field (no scalar
+    // indicator superposition). Supply recovered flux only when the observable uses it.
+    const std::vector<Vector> electric_fields{e};
+    const std::vector<Vector> recovered_fields = post_op.NeedsRecoveredElectricFlux()
+                                                     ? std::vector<Vector>{d}
+                                                     : std::vector<Vector>{};
+    auto ResponseJSON = [&](const auto &matrices)
+    {
+      json entries_json = json::array();
+      for (const auto &[idx, entries] : matrices)
+      {
+        for (const auto &entry : entries)
+        {
+          for (double value :
+               {entry.energy_inside(0, 0), entry.energy_inside_normal(0, 0),
+                entry.energy_inside_tangential(0, 0), entry.energy_total(0, 0),
+                entry.energy_total_normal(0, 0), entry.energy_total_tangential(0, 0)})
+          {
+            MFEM_VERIFY(std::isfinite(value * energy_scale) && value >= 0.0,
+                        "Invalid polarization-resolved diagonal interface energy!");
+          }
+          entries_json.push_back(
+              {{"Index", idx},
+               {"DistanceM", iodata.units.Dimensionalize<VT::LENGTH>(entry.distance)},
+               {"InsideJ", entry.energy_inside(0, 0) * energy_scale},
+               {"InsideNormalJ", entry.energy_inside_normal(0, 0) * energy_scale},
+               {"InsideTangentialJ", entry.energy_inside_tangential(0, 0) * energy_scale},
+               {"TotalJ", entry.energy_total(0, 0) * energy_scale},
+               {"TotalNormalJ", entry.energy_total_normal(0, 0) * energy_scale},
+               {"TotalTangentialJ", entry.energy_total_tangential(0, 0) * energy_scale}});
+        }
+      }
+      return entries_json;
+    };
+    const auto responses = post_op.GetInterfaceElectricFieldEnergyMatrices(
+        electric_fields, recovered_fields.empty() ? nullptr : &recovered_fields);
+    result["InterfaceResponses"] = ResponseJSON(responses);
+    if (!quadrature_extras.empty())
+    {
+      using Q = fem::DefaultIntegrationOrder;
+      const std::array<int, 4> original{Q::p_trial, Q::q_order_jac, Q::q_order_extra_pk,
+                                        Q::q_order_extra_qk};
+      result["SurfaceQuadratureControls"] = {
+          {"TrialOrder", original[0]},
+          {"JacobianOrderIncluded", bool(original[1])},
+          {"BaseExtraPk", original[2]},
+          {"BaseExtraQk", original[3]},
+          {"FieldStatus", "same fixed E/D as primary evaluation"}};
+      result["SurfaceQuadratureSweeps"] = json::array();
+      json local_rules = json::array();
+      for (int extra : quadrature_extras)
+      {
+        std::vector<SurfacePostOperator::InterfaceQuadratureRule> rules;
+        const auto matrices = post_op.GetInterfaceElectricFieldEnergyMatrices(
+            electric_fields, recovered_fields.empty() ? nullptr : &recovered_fields, extra,
+            &rules);
+        result["SurfaceQuadratureSweeps"].push_back(
+            {{"ExtraOrder", extra},
+             {"Status", "measured"},
+             {"InterfaceResponses", ResponseJSON(matrices)}});
+        for (const auto &r : rules)
+        {
+          local_rules.push_back({{"ExtraOrder", extra},
+                                 {"Interface", r.interface_index},
+                                 {"Geometry", r.geometry},
+                                 {"RequestedOrder", r.requested_order},
+                                 {"ActualRuleOrder", r.actual_order},
+                                 {"PointCount", r.points},
+                                 {"LocalFaces", r.local_faces},
+                                 {"MinimumReferenceWeight", r.minimum_weight},
+                                 {"OwnershipRule", r.ownership_rule}});
+        }
+      }
+      MFEM_VERIFY(
+          (original == std::array<int, 4>{Q::p_trial, Q::q_order_jac, Q::q_order_extra_pk,
+                                          Q::q_order_extra_qk}),
+          "Surface-only sweep modified global quadrature defaults!");
+      std::ofstream rules_file(
+          post_dir / fmt::format("archive-quadrature-case-{:04d}-rank-{:06d}.json",
+                                 case_number, Mpi::Rank(comm)));
+      rules_file << local_rules.dump(2) << '\n';
+      MFEM_VERIFY(rules_file, "Cannot write surface quadrature rule evidence!");
+    }
+    for (const auto &[idx, surface] : energies.interfaces)
+    {
+      const double value = surface.energy * energy_scale;
+      MFEM_VERIFY(std::isfinite(value), "Nonfinite interface energy!");
+      json entry = {{"Index", idx}, {"EnergyJ", value}, {"Windows", json::array()}};
+      for (const auto &window : surface.edge_energies)
+      {
+        const double inside = (surface.energy - window.energy_outside) * energy_scale;
+        const double outside = window.energy_outside * energy_scale;
+        MFEM_VERIFY(std::isfinite(inside) && std::isfinite(outside),
+                    "Nonfinite window energy!");
+        entry["Windows"].push_back(
+            {{"DistanceM", iodata.units.Dimensionalize<VT::LENGTH>(window.distance)},
+             {"InsideJ", inside},
+             {"OutsideJ", outside}});
+      }
+      result["Interfaces"].push_back(entry);
+    }
+    if (localize)
+    {
+      const auto filename = fmt::format("archive-elements-case-{:04d}-rank-{:06d}.csv",
+                                        case_number, Mpi::Rank(comm));
+      std::ofstream elements(post_dir / filename);
+      elements
+          << "local_element,attribute,center_x_m,center_y_m,center_z_m,eta_raw_squared_J\n"
+          << std::setprecision(17);
+      auto &local_mesh = laplace_op.GetH1Space().GetMesh().Get();
+      mfem::Vector center(local_mesh.SpaceDimension());
+      for (int i = 0; i < raw.Local().Size(); i++)
+      {
+        local_mesh.GetElementCenter(i, center);
+        const double eta = raw.Local().HostRead()[i];
+        const double eta_squared_j = eta * eta * energy_scale;
+        MFEM_VERIFY(std::isfinite(eta_squared_j), "Nonfinite localized indicator!");
+        elements << i << ',' << local_mesh.GetAttribute(i);
+        for (int j = 0; j < 3; j++)
+        {
+          const double coordinate =
+              j < center.Size() ? iodata.units.Dimensionalize<VT::LENGTH>(center[j]) : 0.0;
+          MFEM_VERIFY(std::isfinite(coordinate), "Nonfinite element center!");
+          elements << ',' << coordinate;
+        }
+        elements << ',' << eta_squared_j << '\n';
+      }
+      MFEM_VERIFY(elements, "Cannot write localized archive indicators!");
+    }
+    aggregate.AddIndicator(raw.Local());
+    report["Excitations"].push_back(result);
+    report["SampleCount"] = ++case_number;
+    Save();
+  }
+  report["Status"] = "complete";
+  Save();
+  Mpi::Print("\nArchive diagnostics: {:d} measured excitations; no PDE solves. "
+             "Returned aggregate is unnormalized; use per-excitation JSON, not the AMR "
+             "summary, for normalized indicators.\n",
+             case_number);
+  return aggregate;
+}
 
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -160,6 +771,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   LaplaceOperator laplace_op(iodata, mesh);
   auto K = laplace_op.GetStiffnessMatrix();
+  if (EnvironmentFlag("PALACE_RESPONSE_ESTIMATE_ONLY"))
+  {
+    ValidateArchiveEstimateOptions(iodata, laplace_op.GetComm(), false);
+    SaveMetadata(laplace_op.GetH1Spaces());
+    auto indicator = EstimateArchivedFields(laplace_op, *K, *ResponseArchiveDirectory());
+    SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
+    return {std::move(indicator), laplace_op.GlobalTrueVSize()};
+  }
   const auto *response_config = iodata.solver.electrostatic.response_correction
                                     ? &*iodata.solver.electrostatic.response_correction
                                     : nullptr;

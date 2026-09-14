@@ -67,6 +67,8 @@ public:
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
   bool GetConverged() const { return ksp->GetConverged(); }
+  double GetInitialResidual() const { return ksp->GetInitialRes(); }
+  double GetFinalResidual() const { return ksp->GetFinalRes(); }
   double GetFinalRelativeResidual() const
   {
     return ksp->GetInitialRes() > 0.0 ? ksp->GetFinalRes() / ksp->GetInitialRes() : 0.0;

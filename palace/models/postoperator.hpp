@@ -739,8 +739,10 @@ public:
   // Batch aggregate interface response matrices for electrostatic basis fields. Grid
   // functions are materialized once and reused for one quadrature traversal per interface.
   template <ProblemType U = solver_t>
-  auto GetInterfaceElectricFieldEnergyMatrices(const std::vector<Vector> &e,
-                                               const std::vector<Vector> *d = nullptr)
+  auto GetInterfaceElectricFieldEnergyMatrices(
+      const std::vector<Vector> &e, const std::vector<Vector> *d = nullptr,
+      int quadrature_extra = 0,
+      std::vector<SurfacePostOperator::InterfaceQuadratureRule> *quadrature_rules = nullptr)
       -> std::enable_if_t<
           U == ProblemType::ELECTROSTATIC,
           std::map<int, std::vector<SurfacePostOperator::InterfaceResponseMatrix>>>
@@ -777,7 +779,8 @@ public:
         d_grid.push_back(std::move(flux));
       }
     }
-    return surf_post_op.GetInterfaceElectricFieldEnergyMatrices(e_ptr, d_ptr);
+    return surf_post_op.GetInterfaceElectricFieldEnergyMatrices(
+        e_ptr, d_ptr, quadrature_extra, quadrature_rules);
   }
 
   // Whether impedance/voltage postprocessing is configured (mode analysis).

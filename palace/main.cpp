@@ -12,6 +12,7 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "driver.hpp"
+#include "drivers/electrostaticsolver.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
@@ -273,6 +274,7 @@ int main(int argc, char *argv[])
   PrintPalaceBanner(world_comm);
   auto config = IoData::ParseAndValidate(argv[argc - 1]);
   IoData iodata(config, false);
+  ValidateArchiveEstimateOptions(iodata, world_comm);
   MakeOutputFolder(iodata, world_comm);
 
   // Write the resolved configuration to the output directory so users have a complete

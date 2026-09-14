@@ -919,8 +919,13 @@ template <InterfaceDielectric Type>
 std::vector<SurfacePostOperator::InterfaceResponseMatrix>
 SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
     const InterfaceDielectricData &data, const std::vector<const GridFunction *> &E,
-    const std::vector<const GridFunction *> &D) const
+    const std::vector<const GridFunction *> &D, int interface_index, int quadrature_extra,
+    std::vector<InterfaceQuadratureRule> *quadrature_rules) const
 {
+  MFEM_VERIFY(quadrature_extra >= 0 && quadrature_extra <= 12,
+              "Surface quadrature extra order must be in [0,12]!");
+  MFEM_VERIFY(quadrature_extra == 0 || !data.ownership_rule,
+              "Surface quadrature override is unsupported with an ownership rule!");
   MFEM_VERIFY(!E.empty() && (D.empty() || D.size() == E.size()),
               "Invalid batched interface response fields!");
   MFEM_VERIFY(!data.flux_recovery || !D.empty(),
@@ -950,10 +955,42 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
     }
     auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(be);
     const auto *fe = h1_fespace.GetBE(be);
-    const auto &ir =
-        data.ownership_rule
-            ? data.ownership_rule->Get(fe->GetGeomType())
-            : mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+    const int requested =
+        data.ownership_rule ? -1 : fem::DefaultIntegrationOrder::Get(*T) + quadrature_extra;
+    const auto &ir = data.ownership_rule ? data.ownership_rule->Get(fe->GetGeomType())
+                                         : mfem::IntRules.Get(fe->GetGeomType(), requested);
+    if (quadrature_extra > 0 || quadrature_rules)
+    {
+      double minimum_weight = std::numeric_limits<double>::infinity();
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        minimum_weight = std::min(minimum_weight, ir.IntPoint(q).weight);
+        MFEM_VERIFY(std::isfinite(ir.IntPoint(q).weight) && ir.IntPoint(q).weight > 0.0,
+                    "Nonpositive surface matrix quadrature weight for geometry "
+                        << fe->GetGeomType() << ", requested order " << requested
+                        << "; no rule substitution is permitted!");
+      }
+      if (quadrature_rules)
+      {
+        auto found = std::find_if(quadrature_rules->begin(), quadrature_rules->end(),
+                                  [&](const auto &r)
+                                  {
+                                    return r.interface_index == interface_index &&
+                                           r.geometry == fe->GetGeomType() &&
+                                           r.requested_order == requested;
+                                  });
+        if (found == quadrature_rules->end())
+        {
+          quadrature_rules->push_back({interface_index, fe->GetGeomType(), requested,
+                                       ir.GetOrder(), ir.GetNPoints(), 1, minimum_weight,
+                                       bool(data.ownership_rule)});
+        }
+        else
+        {
+          found->local_faces++;
+        }
+      }
+    }
     for (int q = 0; q < ir.GetNPoints(); q++)
     {
       const auto &ip = ir.IntPoint(q);
@@ -967,7 +1004,11 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
       distances.push_back(std::sqrt(nearest.distance_squared));
       MFEM_VERIFY(!data.ownership || ip.weight >= 0.0,
                   "Ownership matrix quadrature requires nonnegative weights!");
-      weights.push_back(ip.weight * T->Weight());
+      const double weight = ip.weight * T->Weight();
+      MFEM_VERIFY(!(quadrature_extra > 0 || quadrature_rules) ||
+                      (std::isfinite(weight) && weight > 0.0),
+                  "Invalid physical surface quadrature weight!");
+      weights.push_back(weight);
       for (const auto &evaluator : evaluators)
       {
         evaluator->EvalEnergyField(*T, ip, field);
@@ -1050,8 +1091,8 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
 
 std::map<int, std::vector<SurfacePostOperator::InterfaceResponseMatrix>>
 SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices(
-    const std::vector<const GridFunction *> &E,
-    const std::vector<const GridFunction *> &D) const
+    const std::vector<const GridFunction *> &E, const std::vector<const GridFunction *> &D,
+    int quadrature_extra, std::vector<InterfaceQuadratureRule> *quadrature_rules) const
 {
   std::map<int, std::vector<InterfaceResponseMatrix>> result;
   for (const auto &[idx, data] : eps_surfs)
@@ -1065,22 +1106,22 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices(
       case InterfaceDielectric::DEFAULT:
         result.emplace(
             idx, GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::DEFAULT>(
-                     data, E, D));
+                     data, E, D, idx, quadrature_extra, quadrature_rules));
         break;
       case InterfaceDielectric::MA:
         result.emplace(idx,
                        GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::MA>(
-                           data, E, D));
+                           data, E, D, idx, quadrature_extra, quadrature_rules));
         break;
       case InterfaceDielectric::MS:
         result.emplace(idx,
                        GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::MS>(
-                           data, E, D));
+                           data, E, D, idx, quadrature_extra, quadrature_rules));
         break;
       case InterfaceDielectric::SA:
         result.emplace(idx,
                        GetInterfaceElectricFieldEnergyMatricesImpl<InterfaceDielectric::SA>(
-                           data, E, D));
+                           data, E, D, idx, quadrature_extra, quadrature_rules));
         break;
     }
   }

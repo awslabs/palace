@@ -51,6 +51,14 @@ private:
 class SurfacePostOperator
 {
 public:
+  struct InterfaceQuadratureRule
+  {
+    int interface_index, geometry, requested_order, actual_order, points;
+    long long local_faces;
+    double minimum_weight;
+    bool ownership_rule;
+  };
+
   struct InterfaceResponseMatrix
   {
     double distance;
@@ -150,7 +158,8 @@ private:
   template <InterfaceDielectric Type>
   std::vector<InterfaceResponseMatrix> GetInterfaceElectricFieldEnergyMatricesImpl(
       const InterfaceDielectricData &data, const std::vector<const GridFunction *> &E,
-      const std::vector<const GridFunction *> &D) const;
+      const std::vector<const GridFunction *> &D, int interface_index, int quadrature_extra,
+      std::vector<InterfaceQuadratureRule> *quadrature_rules) const;
 
 public:
   struct InterfaceEdgeEnergy
@@ -231,11 +240,14 @@ public:
 
   // Assemble aggregate interface response matrices for many real basis fields in one
   // quadrature pass per interface. This avoids reevaluating the surface postprocessor for
-  // every pair of basis fields.
+  // every pair of basis fields. Diagnostic extra order affects only this local surface
+  // rule selection (never global assembly defaults). Optional rule usage is rank-local;
+  // diagnostic rules must have strictly positive weights. Ownership overrides are rejected.
   std::map<int, std::vector<InterfaceResponseMatrix>>
   GetInterfaceElectricFieldEnergyMatrices(
       const std::vector<const GridFunction *> &E,
-      const std::vector<const GridFunction *> &D = {}) const;
+      const std::vector<const GridFunction *> &D = {}, int quadrature_extra = 0,
+      std::vector<InterfaceQuadratureRule> *quadrature_rules = nullptr) const;
 
   std::size_t GetNInterfaceEdgeEntries() const;
   std::size_t GetNInterfaceLocalEdgeEntries() const;
