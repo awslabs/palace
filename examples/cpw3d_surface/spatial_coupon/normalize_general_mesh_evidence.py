@@ -7,8 +7,9 @@ import argparse
 import json
 from pathlib import Path
 
+from canonical_mesh_build import validate_build_record
 from general_mesh_manifest import canonical_sha256, sha256, validate_manifest
-from mesh_stage_contract import STAGE_ORDER, validate_stage_dag
+from mesh_stage_contract import CANONICAL_STAGE_ORDER, STAGE_ORDER, validate_stage_dag
 
 
 REQUIRED_AUDITS = ("bounded-run", "mesh-topology-quality", "mesh-complexity",
@@ -125,8 +126,22 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                     reports != record.get("BoundedStages")):
                 raise ValueError("Bounded stage DAG differs from its producer record")
     bounded = records_by_kind["bounded-run"]["BoundedStages"]
+    placement = bounded["proper-rigid-publication"]
+    canonical_record_path = Path(placement["Inputs"]["canonical-build-record"]["Path"])
+    canonical_record = json.loads(canonical_record_path.read_text())
+    canonical_tools = {
+        f"{stage}/{role}": digest
+        for stage in CANONICAL_STAGE_ORDER
+        for role, digest in manifest["StageToolSHA256"][stage].items()}
+    validate_build_record(canonical_record, inputs, manifest["Gates"], canonical_tools)
+    evidence["CanonicalBuildId"] = canonical_record["CanonicalBuildId"]
+    evidence["CanonicalBuildSHA256"] = canonical_record["CanonicalBuildSHA256"]
+    evidence["CanonicalBuildRecord"] = _binding(canonical_record_path, output)
+    evidence["CanonicalArtifactSHA256"] = {
+        name: item["SHA256"] for name, item in
+        canonical_record["CanonicalArtifacts"].items()}
     topology = records_by_kind["mesh-topology-quality"]
-    publication = bounded["final-gmsh-publication"]["Artifacts"]
+    publication = bounded["proper-rigid-publication"]["Artifacts"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
             topology.get("OwnershipReportSHA256") !=

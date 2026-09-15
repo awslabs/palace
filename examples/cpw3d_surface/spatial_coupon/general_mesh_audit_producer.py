@@ -18,7 +18,8 @@ import numpy as np
 from audit_edge_metric_mesh import analyze, blocks, directional_widths
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
-from mesh_stage_contract import STAGE_ORDER, sha256 as stage_sha256, validate_stage_dag
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, PLACEMENT_STAGE_ORDER, STAGE_ORDER,
+                                 sha256 as stage_sha256, validate_stage_dag)
 from semantic_mesh_contract import load_semantic_contract
 
 
@@ -491,6 +492,13 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
         if not len(points):
             return points
         return (np.column_stack((points, np.ones(len(points)))) @ matrix.T)[:, :3]
+    reference_mesh = read_mesh(reference_mesh_path)
+    transformed_reference = meshio.Mesh(
+        (np.column_stack((reference_mesh.points, np.ones(len(reference_mesh.points)))) @
+         matrix.T)[:, :3],
+        [(cell.type, cell.data.copy()) for cell in reference_mesh.cells],
+        point_data=reference_mesh.point_data, cell_data=reference_mesh.cell_data,
+        field_data=reference_mesh.field_data)
     actual = {"ActualVolumeMaterials": [
                   {"Attribute": int(value),
                    "Material": report["PhysicalVolumeNames"][int(value)]}
@@ -505,7 +513,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "SubdivisionNeighborhoods": _point_aspects(mesh, transformed(subdivision_points)),
               "CutNeighborhoods": _point_aspects(mesh, transformed(cut_points)),
               "ProtectedSurfaces": _protected_surface_report(
-                  read_mesh(reference_mesh_path), mesh, contract),
+                  transformed_reference, mesh, contract),
               "AchievedAnisotropy": {"Samples": samples["Cells"],
                                      "NormalTarget": transformed_recipe["NormalSize"],
                                      "TangentialP50": percentiles[1][0],
@@ -615,43 +623,60 @@ def _physical_covariance_report(identity, transformed, contract, matrix):
 
 def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
                    transform, contract_path, stage_reports, tolerance=1e-10):
-    mesh, identity = read_mesh(mesh_path), read_mesh(identity_mesh_path)
+    mesh = read_mesh(mesh_path)
     matrix = np.asarray(transform, dtype=float).reshape(4, 4)
     reports, _ = validate_stage_dag(stage_reports, mesh_path)
-    seed = read_mesh(reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"])
-    identity_seed_path = Path(identity_seed_mesh_path)
-    identity_seed = read_mesh(identity_seed_path)
-    homogeneous = np.column_stack((identity_seed.points, np.ones(len(identity_seed.points))))
+    publication = reports["proper-rigid-publication"]
+    receipt = json.loads(Path(publication["Artifacts"]["transform-receipt"]["Path"]).read_text())
+    canonical_path = Path(publication["Inputs"]["canonical-candidate-mesh"]["Path"])
+    canonical = read_mesh(canonical_path)
+    homogeneous = np.column_stack((canonical.points, np.ones(len(canonical.points))))
     expected = (homogeneous @ matrix.T)[:, :3]
-    if seed.points.shape != expected.shape:
-        raise ValueError("Transformed source seed point count differs from identity")
-    error = float(np.max(np.linalg.norm(seed.points - expected, axis=1)))
-    if error > tolerance:
-        raise ValueError("Source seed does not apply the declared transform")
+    if mesh.points.shape != expected.shape:
+        raise ValueError("Rigidly published point count differs from canonical candidate")
+    error = float(np.max(np.linalg.norm(mesh.points - expected, axis=1)))
+    if error > tolerance or receipt.get("MaximumCoordinateError", math.inf) > tolerance:
+        raise ValueError("Final candidate does not apply the declared proper rigid transform")
     for kind in ("triangle", "tetra"):
-        cells, refs = blocks(seed, kind)
-        identity_cells, identity_refs = blocks(identity_seed, kind)
-        if not np.array_equal(cells, identity_cells) or not np.array_equal(refs, identity_refs):
-            raise ValueError("Transformed source seed topology/labels differ from identity")
+        cells, refs = blocks(mesh, kind)
+        canonical_cells, canonical_refs = blocks(canonical, kind)
+        if not np.array_equal(cells, canonical_cells) or not np.array_equal(refs, canonical_refs):
+            raise ValueError("Rigid publication changed exact connectivity or labels")
     contract = load_semantic_contract(contract_path)
-    base["IdentityMeshPath"] = str(Path(identity_mesh_path).resolve())
-    base["IdentityMeshSHA256"] = sha256(identity_mesh_path)
-    base["IdentitySeedMeshPath"] = str(Path(identity_seed_path).resolve())
-    base["IdentitySeedMeshSHA256"] = sha256(identity_seed_path)
+    base["IdentityMeshPath"] = str(canonical_path.resolve())
+    base["IdentityMeshSHA256"] = sha256(canonical_path)
+    # Retain the field name for normalized-schema compatibility; the canonical
+    # source-local seed is shared rather than rebuilt per placement.
+    canonical_seed = Path(reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"])
+    base["IdentitySeedMeshPath"] = str(canonical_seed.resolve())
+    base["IdentitySeedMeshSHA256"] = sha256(canonical_seed)
     base["TransformMaximumCoordinateError"] = error
     base["TransformVerified"] = True
+    base["TransformReceiptSHA256"] = sha256(
+        publication["Artifacts"]["transform-receipt"]["Path"])
     base["Measurements"] = {"PhysicalCovariance": _physical_covariance_report(
-        identity, mesh, contract, matrix)}
+        canonical, mesh, contract, matrix)}
     return base
 
 
 def bounded_record(base, mesh_path, stage_reports):
     reports, digests = validate_stage_dag(stage_reports, mesh_path)
+    canonical = [reports[name] for name in CANONICAL_STAGE_ORDER]
+    placement = [reports[name] for name in PLACEMENT_STAGE_ORDER]
+    canonical_resources = {
+        "Seconds": sum(report["Seconds"] for report in canonical),
+        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"] for report in canonical) / 2**30}
+    placement_resources = {
+        "Seconds": sum(report["Seconds"] for report in placement),
+        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"] for report in placement) / 2**30}
     base["Measurements"] = {"Resources": {
         "ExitCode": 0,
-        "Seconds": sum(report["Seconds"] for report in reports.values()),
-        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"] for report in reports.values()) / 2**30,
-        "Elements": len(blocks(read_mesh(mesh_path), "tetra")[0])}}
+        "Seconds": canonical_resources["Seconds"] + placement_resources["Seconds"],
+        "PeakRSSGiB": max(canonical_resources["PeakRSSGiB"],
+                           placement_resources["PeakRSSGiB"]),
+        "Elements": len(blocks(read_mesh(mesh_path), "tetra")[0]),
+        "CanonicalBuild": canonical_resources,
+        "PlacementPublication": placement_resources}}
     base["BoundedStages"] = reports
     base["BoundedStageRecords"] = [
         {"Stage": stage, "Path": str(Path(stage_reports[stage]).resolve()),
@@ -674,7 +699,7 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     elif kind == "mesh-topology-quality":
         reports, _ = validate_stage_dag(stage_reports, mesh)
         reference = reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
-        publication = reports["final-gmsh-publication"]["Artifacts"]
+        publication = reports["proper-rigid-publication"]["Artifacts"]
         ownership = publication["ownership-partition"]["Path"]
         quadrature = publication["ownership-quadrature-partition"]["Path"]
         record = topology_record(base, mesh, contract, recipe, process, signature,

@@ -11,7 +11,9 @@ from pathlib import Path
 
 from audit_edge_metric_mesh import analyze
 from mesh_array_io import read_mesh
-from mesh_stage_contract import STAGE_ORDER, validate_stage_dag
+from canonical_mesh_build import same_canonical_build, validate_build_record
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, PLACEMENT_STAGE_ORDER, STAGE_ORDER,
+                                 validate_stage_dag)
 from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
                                     validate_feature_topology)
 
@@ -202,7 +204,7 @@ def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
     # Recover reference and ownership paths from the independently validated
     # embedded stage bindings.
     reference = bounded["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
-    publication = bounded["final-gmsh-publication"]["Artifacts"]
+    publication = bounded["proper-rigid-publication"]["Artifacts"]
     ownership = publication["ownership-partition"]["Path"]
     quadrature = publication["ownership-quadrature-partition"]["Path"]
     topology = topology_record(dict(base), mesh_path, source_paths["SemanticContract"],
@@ -218,7 +220,7 @@ def _validate_source_transformation(reports, binding, source_paths):
     """Independently validate source-transform inputs, outputs, and metric linkage."""
     from transform_coupon_source_contract import (
         transform_semantic_contract, transformed_supports, validate_rigid_transform)
-    stage = reports["source-transformation"]
+    stage = reports["canonical-source-validation"]
     role_names = {"source-semantic-contract": "SemanticContract",
                   "source-signature": "Signature", "source-boundary": "Boundary",
                   "source-mask": "Mask"}
@@ -229,11 +231,12 @@ def _validate_source_transformation(reports, binding, source_paths):
     transform = json.loads(transform_path.read_text())
     if isinstance(transform, dict):
         transform = transform.get("Transform")
-    if transform != binding["Transform"]:
-        raise ValueError("source-transform canonical transform differs from variant")
+    identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    if transform != identity:
+        raise ValueError("canonical source validation is not source-local identity")
     matrix = validate_rigid_transform(transform)
-    semantic_path = Path(stage["Artifacts"]["transformed-semantic-contract"]["Path"])
-    supports_path = Path(stage["Artifacts"]["transformed-supports"]["Path"])
+    semantic_path = Path(stage["Artifacts"]["canonical-semantic-contract"]["Path"])
+    supports_path = Path(stage["Artifacts"]["canonical-supports"]["Path"])
     source_semantic = json.loads(Path(source_paths["SemanticContract"]).read_text())
     transform_sha256 = sha256(transform_path)
     semantic_sha256 = sha256(source_paths["SemanticContract"])
@@ -253,15 +256,43 @@ def _validate_source_transformation(reports, binding, source_paths):
     metric = reports["metric-preparation"]
     recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
     recipe = json.loads(recipe_path.read_text())
-    metric_semantic = Path(metric["Inputs"]["transformed-semantic-contract"]["Path"])
-    metric_supports = Path(metric["Inputs"]["transformed-supports"]["Path"])
+    metric_semantic = Path(metric["Inputs"]["canonical-semantic-contract"]["Path"])
+    metric_supports = Path(metric["Inputs"]["canonical-supports"]["Path"])
     if (metric_semantic.resolve() != semantic_path.resolve() or
             metric_supports.resolve() != supports_path.resolve() or
             recipe.get("TransformedSupportsArtifact") != str(supports_path.resolve()) or
             recipe.get("TransformedSupportsSHA256") != sha256(supports_path) or
             recipe.get("SemanticContract") != actual_semantic or
             recipe.get("TransformedSupports") != actual_supports):
-        raise ValueError("metric recipe did not consume the reconstructed transformed supports")
+        raise ValueError("metric recipe did not consume the reconstructed canonical supports")
+
+    placement = reports["proper-rigid-publication"]
+    placement_roles = {"source-semantic-contract": "SemanticContract",
+                       "source-signature": "Signature", "source-boundary": "Boundary",
+                       "source-mask": "Mask", "source-process": "Process"}
+    if any(placement["Inputs"][name]["SHA256"] != binding["InputSHA256"][role]
+           for name, role in placement_roles.items()):
+        raise ValueError("placement publication source differs from immutable source")
+    placement_transform = Path(placement["Inputs"]["placement-transform"]["Path"])
+    placement_value = json.loads(placement_transform.read_text())
+    if isinstance(placement_value, dict):
+        placement_value = placement_value.get("Transform")
+    if placement_value != binding["Transform"]:
+        raise ValueError("placement transform file differs from the bound variant")
+    placement_matrix = validate_rigid_transform(binding["Transform"])
+    expected_semantic = transform_semantic_contract(source_semantic, placement_matrix)
+    expected_semantic["SourceSemanticContractSHA256"] = semantic_sha256
+    expected_semantic["CanonicalTransformSHA256"] = sha256(placement_transform)
+    expected_supports = transformed_supports(
+        Path(source_paths["Signature"]).parent, placement_matrix,
+        signature=source_paths["Signature"], boundary=source_paths["Boundary"],
+        mask=source_paths["Mask"], transform_sha256=sha256(placement_transform),
+        semantic_sha256=semantic_sha256)
+    final_semantic = json.loads(Path(placement["Artifacts"]
+        ["transformed-semantic-contract"]["Path"]).read_text())
+    final_supports = json.loads(Path(placement["Artifacts"]["transformed-supports"]["Path"]).read_text())
+    if final_semantic != expected_semantic or final_supports != expected_supports:
+        raise ValueError("published semantic/support objects differ from independent reconstruction")
 
 
 def _validate_bound_records(evidence_path, evidence, binding, source_paths):
@@ -285,6 +316,7 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
         "variant-transform": {},
     }
     records_by_kind = {}
+    canonical_stage_digests, placement_stage_digests = set(), set()
     for item in records:
         path = _check_artifact(evidence_path.parent, item, "audit record")
         digest = item["SHA256"]
@@ -336,11 +368,30 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
                 raise ValueError("bounded stage DAG differs from its bound producer output")
             if digests & stage_digests:
                 raise ValueError("bounded stage and audit artifacts must be content-distinct")
+            canonical_stage_digests = {
+                sha256(stage["Path"]) for stage in stage_items
+                if stage["Stage"] in CANONICAL_STAGE_ORDER}
+            placement_stage_digests = stage_digests - canonical_stage_digests
             digests.update(stage_digests)
     bounded = records_by_kind["bounded-run"]["BoundedStages"]
+    placement = bounded["proper-rigid-publication"]
+    canonical_record_path = Path(placement["Inputs"]["canonical-build-record"]["Path"])
+    canonical_record = json.loads(canonical_record_path.read_text())
+    canonical_tools = {
+        f"{stage}/{role}": digest
+        for stage in CANONICAL_STAGE_ORDER
+        for role, digest in binding["StageToolSHA256"][stage].items()}
+    validate_build_record(canonical_record, binding["InputSHA256"], binding["Gates"],
+                          canonical_tools)
+    if (evidence.get("CanonicalBuildId") != canonical_record["CanonicalBuildId"] or
+            evidence.get("CanonicalBuildSHA256") != canonical_record["CanonicalBuildSHA256"] or
+            evidence.get("CanonicalArtifactSHA256") != {
+                name: item["SHA256"] for name, item in
+                canonical_record["CanonicalArtifacts"].items()}):
+        raise ValueError("variant canonical-build reference differs from bound build")
     _validate_source_transformation(bounded, binding, source_paths)
     topology = records_by_kind["mesh-topology-quality"]
-    publication = bounded["final-gmsh-publication"]["Artifacts"]
+    publication = bounded["proper-rigid-publication"]["Artifacts"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
             topology.get("OwnershipReportSHA256") !=
@@ -373,14 +424,26 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     if measurements.get("PhysicalCovariance") != recomputed_physical:
         raise ValueError("physical covariance differs from independent normalization")
     resources = measurements.get("Resources", {})
+    canonical_reports = [bounded[name] for name in CANONICAL_STAGE_ORDER]
+    placement_reports = [bounded[name] for name in PLACEMENT_STAGE_ORDER]
+    expected_canonical = {
+        "Seconds": sum(report["Seconds"] for report in canonical_reports),
+        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"]
+                          for report in canonical_reports) / 2**30}
+    expected_placement = {
+        "Seconds": sum(report["Seconds"] for report in placement_reports),
+        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"]
+                          for report in placement_reports) / 2**30}
     expected_resources = {
         "ExitCode": 0,
-        "Seconds": sum(report["Seconds"] for report in bounded.values()),
-        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"]
-                          for report in bounded.values()) / 2**30,
+        "Seconds": expected_canonical["Seconds"] + expected_placement["Seconds"],
+        "PeakRSSGiB": max(expected_canonical["PeakRSSGiB"],
+                           expected_placement["PeakRSSGiB"]),
+        "CanonicalBuild": expected_canonical,
+        "PlacementPublication": expected_placement,
     }
     if any(resources.get(key) != value for key, value in expected_resources.items()):
-        raise ValueError("resource measurements differ from bounded stage reports")
+        raise ValueError("canonical/placement resource measurements differ from stage reports")
 
     required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
@@ -393,7 +456,9 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     for section, value in measurements.items():
         if evidence.get(section) != value:
             raise ValueError("normalized measurements differ from bound producer records")
-    return digests - {evidence["Mesh"]["SHA256"]}
+    variant_digests = (digests - canonical_stage_digests -
+                       {evidence["Mesh"]["SHA256"]})
+    return variant_digests, canonical_stage_digests, canonical_record
 
 
 def audit_manifest_evidence(evidence, gates, contract, binding):
@@ -509,10 +574,17 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         failures.append("mesh-quality-jacobian")
     resources = evidence.get("Resources", {})
     resource_names = ("Seconds", "PeakRSSGiB", "Elements")
-    if (resources.get("ExitCode") != 0 or
+    canonical_resources = resources.get("CanonicalBuild", {})
+    placement_resources = resources.get("PlacementPublication", {})
+    separated = all(_finite_number(item.get(name), nonnegative=True)
+                    for item in (canonical_resources, placement_resources)
+                    for name in ("Seconds", "PeakRSSGiB"))
+    if (resources.get("ExitCode") != 0 or not separated or
             any(not _finite_number(resources.get(name), nonnegative=True) for name in resource_names) or
-            resources.get("Seconds", math.inf) > gates["MaximumSeconds"] or
-            resources.get("PeakRSSGiB", math.inf) > gates["MaximumRSSGiB"] or
+            canonical_resources.get("Seconds", math.inf) > gates["MaximumSeconds"] or
+            canonical_resources.get("PeakRSSGiB", math.inf) > gates["MaximumRSSGiB"] or
+            placement_resources.get("Seconds", math.inf) > gates["MaximumSeconds"] or
+            placement_resources.get("PeakRSSGiB", math.inf) > gates["MaximumRSSGiB"] or
             resources.get("Elements", math.inf) > gates["MaximumElements"]):
         failures.append("bounded-resources")
     complexity = evidence.get("Complexity", {})
@@ -669,7 +741,8 @@ def run_manifest(args):
     if args.audit_root is None:
         raise ValueError("--audit-root is required unless --preflight-only is used")
 
-    evidence_by_key, used_audits, used_meshes = {}, set(), set()
+    evidence_by_key, used_variant_audits, used_meshes = {}, set(), set()
+    canonical_reuse = {}
     for case, record in zip(manifest["Cases"], records):
         record["VariantResults"] = []
         hashes, _, contract = sources[case["Id"]]
@@ -683,7 +756,8 @@ def run_manifest(args):
                            "Transform": variant["Transform"],
                            "TransformSHA256": canonical_sha256(variant["Transform"]),
                            "InputSHA256": hashes, "ToolSHA256": tool_hashes,
-                           "StageToolSHA256": manifest["StageToolSHA256"]}
+                           "StageToolSHA256": manifest["StageToolSHA256"],
+                           "Gates": manifest["Gates"]}
                 failures = audit_manifest_evidence(evidence, manifest["Gates"], contract, binding)
                 mesh_path = _check_artifact(path.parent, evidence.get("Mesh"), "audited mesh")
                 _validate_mesh(mesh_path, contract)
@@ -691,10 +765,20 @@ def run_manifest(args):
                 if mesh_digest in used_meshes:
                     raise ValueError("audited meshes must be content-distinct per matrix entry")
                 used_meshes.add(mesh_digest)
-                record_digests = _validate_bound_records(path, evidence, binding, sources[case["Id"]][1])
-                if used_audits & record_digests:
-                    raise ValueError("audit records must be content-distinct per matrix entry")
-                used_audits.update(record_digests)
+                variant_digests, canonical_digests, canonical_record = _validate_bound_records(
+                    path, evidence, binding, sources[case["Id"]][1])
+                if used_variant_audits & variant_digests:
+                    raise ValueError("variant audit/placement records must be content-distinct")
+                used_variant_audits.update(variant_digests)
+                build_id = canonical_record["CanonicalBuildId"]
+                previous = canonical_reuse.get(build_id)
+                if previous is None:
+                    if any(canonical_digests & item[1] for item in canonical_reuse.values()):
+                        raise ValueError("canonical stages were reused under a different cache key")
+                    canonical_reuse[build_id] = (canonical_record, canonical_digests)
+                elif (not same_canonical_build(previous[0], canonical_record) or
+                      previous[1] != canonical_digests):
+                    raise ValueError("shared canonical stages require exact cache key and hashes")
                 result.update({"AuditEvidence": str(path), "GateFailures": failures,
                                "Passed": not failures})
                 evidence_by_key[(case["Id"], variant_id)] = evidence
