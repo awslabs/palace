@@ -70,6 +70,16 @@
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
       "SHA256": "902c9c82a27357dbb4ab4e32f34c0201390cf27fd65eee8007ea3df49e7e37a1"
+    },
+    {
+      "Name": "transform_coupon_source_contract.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/transform_coupon_source_contract.py",
+      "SHA256": "0077184fd0d79a512a2b681d8351a55b6047379857e61fca3a12d3e569517a53"
+    },
+    {
+      "Name": "label_interface_patches.jl",
+      "Path": "examples/cpw3d_surface/spatial_coupon/label_interface_patches.jl",
+      "SHA256": "c95bec14ad1b2ef862ab3ee4ec18d7c38fcc6f215c237c76d4778769b7f5c65d"
     }
   ],
   "ScalingComparisons": [
@@ -1403,7 +1413,7 @@
   "StageToolSHA256": {
     "seed-generation": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "mesher": "aa10c1b3076cf630fad480ad2681ab7a1ac478668fefcffa6584d50eeff8e64f"
+      "mesher": "6d9a4c60b98cb7193563e38d83dbfc8186e5c1916a9b20b8f0dfd17d9b7d58f3"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -1419,7 +1429,7 @@
     },
     "final-gmsh-publication": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "publisher": "6c189925459dbf3351840c0b722c9cb5d589a28def2c72d7eb65add069e95692"
+      "publisher": "cb0c714b493c21ac62bc54edecf36de41b038f4ebfd08a4b7efd435226347c67"
     }
   }
 }

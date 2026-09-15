@@ -7,7 +7,8 @@ include(joinpath(@__DIR__,"interface_ownership.jl"))
 # slots are reassigned. Sampling disagreement remains a diagnostic; the separate
 # Lipschitz certificate bounds ownership over each complete geometric element.
 function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0,
-                                 fabricated=false,metal_thickness=0.1,overetch=0.05)
+                                 fabricated=false,metal_thickness=0.1,overetch=0.05,
+                                 ownership_coordinates=identity)
     ownership=build_interface_ownership(edges,loops,radius;fabricated=fabricated,
                                         metal_thickness=metal_thickness,overetch=overetch)
     classify=ownership.classify
@@ -37,7 +38,8 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
                     nodes=collect(enodes[(i-1)*nnode+1:i*nnode])
                     points=[coords[node] for node in nodes]
                     center=ntuple(d->sum(points[j][d] for j in 1:3)/3,3)
-                    target=classify(attribute,center)
+                    ownership_center=ownership_coordinates(center)
+                    target=classify(attribute,ownership_center)
                     ab=[points[2][d]-points[1][d] for d in 1:3]
                     ac=[points[3][d]-points[1][d] for d in 1:3]
                     corner_area=norm(cross(ab,ac))/2
@@ -47,11 +49,13 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
                     areas[target]=get(areas,target,0.)+area
                     counts[target]=get(counts,target,0)+1
                     samples=[ntuple(d->0.8p[d]+0.2center[d],3) for p in points[1:3]]
-                    if any(classify(attribute,p)!=target for p in samples)
+                    if any(classify(attribute,ownership_coordinates(p))!=target for p in samples)
                         ambiguous[target]=get(ambiguous,target,0.)+area
                     end
                     hull=interface_triangle_hull(points)
-                    certified=hull!==nothing && ownership.certify(attribute,center,hull)
+                    ownership_hull = hull === nothing ? nothing : ownership_coordinates.(hull)
+                    certified=ownership_hull!==nothing &&
+                              ownership.certify(attribute,ownership_center,ownership_hull)
                     push!(certificates,(etag,target,certified,Tuple(nodes[1:3])))
                     if !certified
                         unresolved_area[target]=get(unresolved_area,target,0.)+area

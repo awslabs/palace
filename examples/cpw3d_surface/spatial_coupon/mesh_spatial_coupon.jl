@@ -171,6 +171,58 @@ end
 add(a, b) = ntuple(i -> a[i] + b[i], 3)
 scale(value, vector) = ntuple(i -> value * vector[i], 3)
 
+const IDENTITY_RIGID_TRANSFORM = Float64[
+    1 0 0 0;
+    0 1 0 0;
+    0 0 1 0;
+    0 0 0 1
+]
+
+function rigid_transform(values::AbstractVector{<:Real})
+    length(values) == 16 || error("Rigid transform must contain 16 row-major values")
+    matrix = Matrix(reshape(Float64.(values), 4, 4)')
+    all(isfinite, matrix) || error("Rigid transform contains a non-finite value")
+    isapprox(matrix[4, :], [0.0, 0.0, 0.0, 1.0]; atol=1.0e-12, rtol=0.0) ||
+        error("Rigid transform must have homogeneous last row [0, 0, 0, 1]")
+    rotation = matrix[1:3, 1:3]
+    isapprox(rotation' * rotation, Matrix{Float64}(I, 3, 3); atol=1.0e-12, rtol=0.0) ||
+        error("Rigid transform rotation must be orthogonal")
+    isapprox(det(rotation), 1.0; atol=1.0e-12, rtol=0.0) ||
+        error("Rigid transform must preserve orientation")
+    return matrix
+end
+
+function parse_rigid_transform(value::String)
+    fields = split(value, ',')
+    length(fields) == 16 || error("Rigid transform must be 16 comma-separated values")
+    return rigid_transform(parse.(Float64, fields))
+end
+
+function transform_point(matrix, point)
+    value = matrix * [point[1], point[2], point[3], 1.0]
+    return (value[1], value[2], value[3])
+end
+
+function transform_vector(matrix, vector)
+    value = matrix[1:3, 1:3] * collect(vector)
+    return (value[1], value[2], value[3])
+end
+
+function inverse_transform_point(matrix, point)
+    rotation = matrix[1:3, 1:3]
+    value = rotation' * (collect(point) - matrix[1:3, 4])
+    return (value[1], value[2], value[3])
+end
+
+function transform_edge_contract(edge, matrix)
+    return merge(edge, (
+        point=transform_point(matrix, edge.point),
+        gap=transform_vector(matrix, edge.gap),
+        tangent=transform_vector(matrix, edge.tangent),
+        process_normal=transform_vector(matrix, (0.0, 0.0, edge.normal_sign))
+    ))
+end
+
 function extended_interval(edge, radius)
     first, second = edge.interval
     extension = 2radius
@@ -1141,6 +1193,7 @@ function generate_spatial_coupon(;
     matching_trace::Union{Nothing,String}=nothing,
     matching_trace_mode::String="all",
     geometry_only::Bool=false,
+    transform::Matrix{Float64}=copy(IDENTITY_RIGID_TRANSFORM),
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -1165,6 +1218,7 @@ function generate_spatial_coupon(;
     process_grading_power > 0.0 || error("process grading power must be positive")
     max_nodes > 0 || error("maximum node budget must be positive")
     max_elements > 0 || error("maximum element budget must be positive")
+    transform = rigid_transform(vec(transform'))
 
     edges = read_edges(signature)
     if length(unique(edge.slot for edge in edges)) > 1 &&
@@ -1612,6 +1666,12 @@ function generate_spatial_coupon(;
         gmsh.model.mesh.optimize("Netgen")
     end
     gmsh.model.mesh.setOrder(mesh_order)
+    if transform != IDENTITY_RIGID_TRANSFORM
+        connectivity = gmsh.model.mesh.getElements()
+        gmsh.model.mesh.affineTransform(vec(transform'))
+        connectivity == gmsh.model.mesh.getElements() ||
+            error("Rigid transform changed mesh connectivity")
+    end
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
     node_count = length(node_tags)
@@ -1641,7 +1701,8 @@ function generate_spatial_coupon(;
     minimum_signed_inverse_condition>1e-10 ||
         error("Spatial coupon has invalid or near-singular elements: minSICN=$minimum_signed_inverse_condition")
     if mesh_postprocess !== nothing
-        mesh_postprocess(edges, boundary_loops, radius)
+        transformed_edges = [transform_edge_contract(edge, transform) for edge in edges]
+        mesh_postprocess(transformed_edges, boundary_loops, radius)
     end
     gmsh.write(filename)
     metadata_path = filename * ".metadata.json"
@@ -1658,6 +1719,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
         println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
+        println(stream, "  \"RigidTransform\": [$(join(vec(transform'), ", "))],")
         println(stream, "  \"Algorithm3D\": $(Int(gmsh.option.getNumber("Mesh.Algorithm3D"))),")
         println(stream, "  \"MeshOrder\": $mesh_order")
         println(stream, "}")
@@ -1698,7 +1760,8 @@ function parse_options(args)
         "--process-grading-power" => ("process_grading_power", Float64),
         "--max-nodes" => ("max_nodes", Int),
         "--max-elements" => ("max_elements", Int),
-        "--mesh-order" => ("mesh_order", Int)
+        "--mesh-order" => ("mesh_order", Int),
+        "--rigid-transform" => ("transform", Matrix{Float64})
     )
     index = 4
     while index <= length(args)
@@ -1706,8 +1769,13 @@ function parse_options(args)
         haskey(names, flag) || error("Unknown option: $flag")
         index < length(args) || error("Missing value for option: $flag")
         name, type = names[flag]
-        options[name] =
-            type === String ? abspath(args[index + 1]) : parse(type, args[index + 1])
+        options[name] = if type === String
+            abspath(args[index + 1])
+        elseif type === Matrix{Float64}
+            parse_rigid_transform(args[index + 1])
+        else
+            parse(type, args[index + 1])
+        end
         index += 2
     end
     return options
@@ -1735,6 +1803,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         process_grading_power = get(options, "process_grading_power", 1.7),
         max_nodes       = get(options, "max_nodes", 500_000),
         max_elements    = get(options, "max_elements", 2_000_000),
-        mesh_order      = get(options, "mesh_order", 1)
+        mesh_order      = get(options, "mesh_order", 1),
+        transform       = get(options, "transform", copy(IDENTITY_RIGID_TRANSFORM))
     )
 end

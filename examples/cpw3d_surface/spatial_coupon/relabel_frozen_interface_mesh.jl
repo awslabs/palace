@@ -106,18 +106,29 @@ function check_measures(before, after)
 end
 
 function main()
-    length(ARGS) in (4, 6) ||
-        error("signature_directory thin|fabricated input.msh output.msh [--expected-measures measures.csv]")
+    length(ARGS) >= 4 && iseven(length(ARGS)) ||
+        error("signature_directory thin|fabricated input.msh output.msh [--expected-measures measures.csv] [--rigid-transform MATRIX]")
     root, input, output = abspath.((ARGS[1], ARGS[3], ARGS[4]))
     kind = ARGS[2]
     kind in ("thin", "fabricated") || error("Kind must be thin or fabricated")
     isfile(input) || error("Input mesh does not exist")
     isfile(output) && error("Refuse to overwrite output mesh")
     expected_path = nothing
-    if length(ARGS) == 6
-        ARGS[5] == "--expected-measures" || error("Unknown option $(ARGS[5])")
-        expected_path = abspath(ARGS[6])
-        isfile(expected_path) || error("Expected-measures file does not exist")
+    transform = copy(IDENTITY_RIGID_TRANSFORM)
+    index = 5
+    while index <= length(ARGS)
+        option, value = ARGS[index], ARGS[index + 1]
+        if option == "--expected-measures"
+            expected_path === nothing || error("Duplicate --expected-measures option")
+            expected_path = abspath(value)
+            isfile(expected_path) || error("Expected-measures file does not exist")
+        elseif option == "--rigid-transform"
+            transform == IDENTITY_RIGID_TRANSFORM || error("Duplicate --rigid-transform option")
+            transform = parse_rigid_transform(value)
+        else
+            error("Unknown option $option")
+        end
+        index += 2
     end
     process_path = joinpath(root, "process.toml")
     process = TOML.parsefile(process_path)
@@ -157,7 +168,8 @@ function main()
             minimum_size = 0.0,
             fabricated = kind == "fabricated",
             metal_thickness = thickness,
-            overetch = overetch
+            overetch = overetch,
+            ownership_coordinates = point -> inverse_transform_point(transform, point)
         )
         before_nodes == node_coordinates() || error("Node coordinates or IDs changed")
         before_volume == dimension_elements(3) || error("Volume connectivity changed")
@@ -217,7 +229,8 @@ function main()
                 "SignatureSHA256" => file_sha256(joinpath(root, "mesh-signature.csv")),
                 "BoundarySHA256" => file_sha256(joinpath(root, "plan-view-boundary.csv")),
                 "Radius" => radius,
-                "Fabricated" => kind == "fabricated"
+                "Fabricated" => kind == "fabricated",
+                "RigidTransform" => vec(transform')
             ); sorted = true)
         end
         metadata = Dict(
@@ -237,7 +250,8 @@ function main()
             "MinimumSignedInverseCondition" => after_quality,
             "MaximumGroupedPhysicalFamilyAreaDifference" => measure_difference,
             "ExpectedInterfaceAttributes" => expected === nothing ? Int[] : sort!(collect(expected)),
-            "ActualInterfaceAttributes" => sort!(collect(actual))
+            "ActualInterfaceAttributes" => sort!(collect(actual)),
+            "RigidTransform" => vec(transform')
         )
         open(output * ".relabel.toml", "w") do stream
             TOML.print(stream, metadata; sorted = true)
