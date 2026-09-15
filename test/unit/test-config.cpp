@@ -1141,6 +1141,32 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["RASFillLevel"].get<int>() == 2);
   }
 
+  SECTION("BDDC is accepted for magnetostatics and rejected elsewhere")
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", "BDDC"}}}}}};
+
+#if defined(PALACE_WITH_SLEPC)
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.type == LinearSolver::BDDC);
+    // BDDC is symmetric, so the SPD default of CG is retained.
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
+
+    auto driven = config;
+    driven["Problem"]["Type"] = "Driven";
+    driven["Solver"]["Driven"] = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
+    CHECK_THROWS_WITH(IoData(driven, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "BDDC preconditioner currently supports only electrostatic"));
+#else
+    CHECK_THROWS_WITH(IoData(config, false), Catch::Matchers::ContainsSubstring(
+                                                 "not built with PETSc/SLEPc support"));
+#endif
+  }
+
   SECTION("User-specified values survive concretization")
   {
     json config = {
