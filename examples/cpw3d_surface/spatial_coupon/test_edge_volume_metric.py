@@ -3,6 +3,7 @@
 import unittest
 import numpy as np
 from edge_volume_metric import volume_metric, intersect_metrics, feature_chains, surface_features
+from prepare_edge_metric_scout import budget_aware_far_policy
 
 class EdgeVolumeMetricTest(unittest.TestCase):
     def test_two_transverse_directions_and_corner_recovery(self):
@@ -97,6 +98,24 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         np.testing.assert_allclose(new[4],np.eye(3))
         with self.assertRaises(ValueError):volume_metric(p,s,corners,.0005,.05,1.,protected_distance=-1)
         with self.assertRaises(ValueError):volume_metric(p,s,corners,.0005,.05,1.,far_growth=0)
+
+    def test_generic_budget_policy_coarsens_only_far_field_for_small_and_loaded_cases(self):
+        small=budget_aware_far_policy(100,1000,.4,1.)
+        loaded=budget_aware_far_policy(500,1000,.4,1.)
+        self.assertEqual(small['Pressure'],1.)
+        self.assertGreater(loaded['Pressure'],1.)
+        self.assertEqual(small['UnaffectedTargets'],loaded['UnaffectedTargets'])
+        points=np.array([[0.,.01,0.],[0.,.1,0.],[0.,2.,0.]])
+        segments=[[-1.,0.,0.,1.,0.,0.]]
+        corners=[[-1.,0.,0.],[1.,0.,0.]]
+        base=volume_metric(points,segments,corners,.005,.05,small['EffectiveFarSize'],
+                           protected_distance=.03,
+                           far_growth=small['EffectiveFarGrowth'])
+        coarse=volume_metric(points,segments,corners,.005,.05,loaded['EffectiveFarSize'],
+                             protected_distance=.03,
+                             far_growth=loaded['EffectiveFarGrowth'])
+        np.testing.assert_allclose(coarse[0],base[0],rtol=0.,atol=1e-10)
+        self.assertTrue(np.all(np.linalg.eigvalsh(base[1:]-coarse[1:])>=-1e-8))
 
     def test_bad_controls_fail_closed(self):
         for controls in ((0,.1,1),(.1,.01,1),(.1,2,1)):

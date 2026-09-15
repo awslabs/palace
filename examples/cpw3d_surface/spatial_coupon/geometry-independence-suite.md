@@ -160,7 +160,8 @@ $PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
   --tool "runtime=$PYTHON" --tool "metric-preparer=$PREPARE" -- \
   "$PYTHON" "$PREPARE" "$ATTEMPT/seed.msh" "$ATTEMPT/metric" \
   --normal 0.025 --tangent 0.1 --far 0.16 --protected-distance 0.05 \
-  --protect-surface 0.05 --semantic-contract "$ATTEMPT/transformed-semantic-contract.json" \
+  --protect-surface 0.05 --maximum-elements 4000000 \
+  --semantic-contract "$ATTEMPT/transformed-semantic-contract.json" \
   --transformed-supports "$ATTEMPT/transformed-source-supports.json"
 
 $PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
@@ -189,6 +190,7 @@ $PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
   --input "restored-mesh=$ATTEMPT/restored.msh" \
   --artifact "candidate-mesh=$ATTEMPT/candidate.msh" \
   --artifact "ownership-partition=$ATTEMPT/candidate.msh.interface-partition.csv" \
+  --artifact "ownership-quadrature-partition=$ATTEMPT/candidate.msh.interface-partition.csv.quadrature.csv" \
   --tool "runtime=$JULIA" --tool "publisher=$PUBLISH" -- \
   "$JULIA" --startup-file=no --project=test/examples "$PUBLISH" \
   "$SOURCE" fabricated "$ATTEMPT/restored.msh" "$ATTEMPT/candidate.msh"

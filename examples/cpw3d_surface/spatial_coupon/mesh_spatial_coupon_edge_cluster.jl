@@ -430,6 +430,48 @@ function triangle_phase(
            (:ordinary, 0)
 end
 
+function audit_source_plan_phases(
+    signature,
+    mask,
+    boundary;
+    radius,
+    metal_thickness,
+    overetch,
+    lc_normal,
+    lc_tangent,
+    lc_far,
+    process_core_width,
+    normal_growth_ratio
+)
+    # This audit stops at immutable source geometry plus the declared process
+    # rule.  It never generates a volume mesh and never reads observed labels.
+    edges = read_edges(signature)
+    facets = read_mask(mask)
+    loops = read_boundary(boundary)
+    lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
+    initialized = false
+    try
+        gmsh.initialize()
+        initialized = true
+        gmsh.option.setNumber("General.Verbosity", 0)
+        plan = planar_mesh_with_transition_rows(
+            edges, facets, loops, lower, upper, radius, lc_normal, lc_tangent,
+            lc_far, process_core_width, normal_growth_ratio,
+            "source_plan_phase_audit")
+        plane = edges[1].point[3]
+        tolerance = 1.0e-8 * radius
+        phases = [triangle_phase(
+            triangle, plan.coordinates, facets, plan.fabrication_primitives,
+            plane, radius, tolerance; etch_full_gap=false)
+                  for triangle in plan.triangles]
+        return Dict(phase => count(record -> record[1] == phase, phases)
+                    for phase in (:metal, :trench, :ordinary))
+    finally
+        initialized && gmsh.finalize()
+    end
+end
+
+
 function interval_material(fabricated, phase, zmid, plane, metal_thickness, overetch)
     if !fabricated
         return zmid < plane ? :substrate : :vacuum

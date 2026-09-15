@@ -202,11 +202,12 @@ def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
     # Recover reference and ownership paths from the independently validated
     # embedded stage bindings.
     reference = bounded["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
-    ownership = bounded["final-gmsh-publication"]["Artifacts"][
-        "ownership-partition"]["Path"]
+    publication = bounded["final-gmsh-publication"]["Artifacts"]
+    ownership = publication["ownership-partition"]["Path"]
+    quadrature = publication["ownership-quadrature-partition"]["Path"]
     topology = topology_record(dict(base), mesh_path, source_paths["SemanticContract"],
         source_paths["MeshRecipe"], source_paths["Process"], source_paths["Signature"],
-        reference, ownership)["Measurements"]
+        reference, ownership, quadrature)["Measurements"]
     complexity = complexity_record(dict(base), mesh_path, source_paths["SemanticContract"],
                                    source_paths["MeshRecipe"])["Measurements"]
     invariants = invariants_record(dict(base), mesh_path)["Measurements"]
@@ -244,9 +245,23 @@ def _validate_source_transformation(reports, binding, source_paths):
         signature=source_paths["Signature"], boundary=source_paths["Boundary"],
         mask=source_paths["Mask"], transform_sha256=transform_sha256,
         semantic_sha256=semantic_sha256)
-    if (json.loads(semantic_path.read_text()) != expected_semantic or
-            json.loads(supports_path.read_text()) != expected_supports):
+    actual_semantic = json.loads(semantic_path.read_text())
+    actual_supports = json.loads(supports_path.read_text())
+    if actual_semantic != expected_semantic or actual_supports != expected_supports:
         raise ValueError("transformed semantic/support artifact differs from source transform")
+
+    metric = reports["metric-preparation"]
+    recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
+    recipe = json.loads(recipe_path.read_text())
+    metric_semantic = Path(metric["Inputs"]["transformed-semantic-contract"]["Path"])
+    metric_supports = Path(metric["Inputs"]["transformed-supports"]["Path"])
+    if (metric_semantic.resolve() != semantic_path.resolve() or
+            metric_supports.resolve() != supports_path.resolve() or
+            recipe.get("TransformedSupportsArtifact") != str(supports_path.resolve()) or
+            recipe.get("TransformedSupportsSHA256") != sha256(supports_path) or
+            recipe.get("SemanticContract") != actual_semantic or
+            recipe.get("TransformedSupports") != actual_supports):
+        raise ValueError("metric recipe did not consume the reconstructed transformed supports")
 
 
 def _validate_bound_records(evidence_path, evidence, binding, source_paths):
@@ -325,10 +340,13 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     bounded = records_by_kind["bounded-run"]["BoundedStages"]
     _validate_source_transformation(bounded, binding, source_paths)
     topology = records_by_kind["mesh-topology-quality"]
+    publication = bounded["final-gmsh-publication"]["Artifacts"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
             topology.get("OwnershipReportSHA256") !=
-            bounded["final-gmsh-publication"]["Artifacts"]["ownership-partition"]["SHA256"]):
+            publication["ownership-partition"]["SHA256"] or
+            topology.get("OwnershipQuadratureSHA256") !=
+            publication["ownership-quadrature-partition"]["SHA256"]):
         raise ValueError("topology audit does not bind staged reference/ownership artifacts")
     mesh_path = _artifact_path(evidence_path.parent, evidence["Mesh"])
     recomputed = _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded)
@@ -423,6 +441,10 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
             response_ownership.get("Exhaustive") is not True or
             response_ownership.get("RelativeClosureError", float("inf")) >
             response_ownership.get("ClosureTolerance", -1.0) or
+            response_ownership.get("OwnerPartitionRelativeClosure", float("inf")) > 1e-12 or
+            response_ownership.get("NoDuplicateOrMissingOwners") is not True or
+            response_ownership.get("ExpectedOwnerAttributes") !=
+            response_ownership.get("OwnerAttributes") or
             diagnostics.get("AuthoritativeForResponseOwnership") is not False):
         failures.append("ownership-exhaustive-closure")
     expected_corners = _transform_points(contract["SemanticCorners"], binding["Transform"])

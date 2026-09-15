@@ -10,6 +10,7 @@ from restore_planar_metric_mesh import (
     _movement_basis,
     _quality_repair,
     _tetra_quality,
+    _transactional_quality_commit,
     restore_in_source_frame,
 )
 
@@ -112,6 +113,24 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
         self.assertEqual(report["QualityDisplacementBoundUm"], .01875)
         self.assertEqual(report["MaximumSupportConstraintError"], 0.)
         self.assertEqual(report["QualityRepairVertices"], 3)
+
+    def test_rejected_overlapping_move_rolls_back_against_original_global_floors(self):
+        points = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.],
+                           [0., 0., -1.]])
+        tetrahedra = np.array([[0, 1, 2, 3], [0, 2, 1, 4]])
+        original = points.copy()
+        floor = np.minimum(_tetra_quality(original, tetrahedra)[0], .5)
+        candidate = points.copy()
+        candidate[0] = [.99, .99, .99] # degrades/inverts shared incident cells
+        accepted, _, _ = _transactional_quality_commit(
+            points, candidate, np.array([0]), tetrahedra, np.array([0, 1]), floor)
+        self.assertFalse(accepted)
+        np.testing.assert_array_equal(points, original)
+        improving = points.copy(); improving[0] = [.01, .01, 0.]
+        accepted, _, _ = _transactional_quality_commit(
+            points, improving, np.array([0]), tetrahedra, np.array([0, 1]), floor)
+        self.assertTrue(accepted)
+        np.testing.assert_array_equal(points[1:], original[1:])
 
     def test_cumulative_bound_when_vertices_are_repaired_in_multiple_passes(self):
         points = np.array([[0., 0., 0.], [0., 0., .05], [.05, 0., 0.],

@@ -35,7 +35,8 @@ STAGE_OUTPUTS = {
                            "restoration-recipe"},
     "native-adaptation-mmg": {"adapted-mesh"},
     "label-restoration": {"source-local-restored-mesh", "restored-mesh"},
-    "final-gmsh-publication": {"candidate-mesh", "ownership-partition"},
+    "final-gmsh-publication": {"candidate-mesh", "ownership-partition",
+                               "ownership-quadrature-partition"},
 }
 STAGE_PRIMARY_TOOL = {
     "source-transformation": "source-transformer",
@@ -89,6 +90,21 @@ def _first_interpreter_script(command, primary):
             continue
         return index
     return None
+
+
+def _resolved_argument(argument, base):
+    path = Path(argument)
+    return (path if path.is_absolute() else base / path).resolve()
+
+
+def _require_path_option(command, option, expected, working_directory=None):
+    """Require one option whose path resolves to the bound stage input."""
+    positions = [index for index, value in enumerate(command) if value == option]
+    if len(positions) != 1 or positions[0] + 1 >= len(command):
+        raise ValueError(f"Stage command must provide exactly one {option}")
+    base = Path(working_directory or Path.cwd())
+    if _resolved_argument(command[positions[0] + 1], base) != Path(expected).resolve():
+        raise ValueError(f"Stage command {option} differs from its bound input")
 
 
 def validate_tool_invocation(stage, command, tools, working_directory=None):
@@ -164,6 +180,13 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
             raise ValueError(f"Stage tool binding changed: {stage}/{role}")
     validate_tool_invocation(stage, report["Command"],
                              {role: item["Path"] for role, item in tools.items()},
+                             report.get("WorkingDirectory"))
+    if stage == "metric-preparation":
+        _require_path_option(report["Command"], "--semantic-contract",
+                             report["Inputs"]["transformed-semantic-contract"]["Path"],
+                             report.get("WorkingDirectory"))
+        _require_path_option(report["Command"], "--transformed-supports",
+                             report["Inputs"]["transformed-supports"]["Path"],
                              report.get("WorkingDirectory"))
     return report
 

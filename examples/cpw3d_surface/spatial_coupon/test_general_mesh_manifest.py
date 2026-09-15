@@ -21,9 +21,11 @@ from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
                                          _footprint_boundary_distance,
                                          _global_diagonal_bands,
                                          _normalized_footprint_boundary,
+                                         _ownership_report,
                                          _protected_surface_report,
                                          produce as produce_audit)
-from general_mesh_manifest import (_physical_comparison_failures, run_manifest, sha256,
+from general_mesh_manifest import (_physical_comparison_failures,
+                                   _validate_source_transformation, run_manifest, sha256,
                                    validate_manifest)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import validate_tool_invocation
@@ -180,6 +182,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 restored = root / f"{stem}-restored.msh"
                 mesh = root / f"{stem}.msh"
                 ownership = root / f"{stem}-ownership.csv"
+                ownership_quadrature = root / f"{stem}-ownership.quadrature.csv"
                 stage_reports = {}
                 def launch(stage, inputs, artifacts, tools, command):
                     log = root / f"{stem}-{stage}.log"
@@ -224,7 +227,9 @@ class GeneralMeshManifestTest(unittest.TestCase):
                        [sys.executable, str(STAGER), "metric", str(seed), str(metric),
                         "--mmg-seed", str(mmg_seed), "--pins", str(pins),
                         "--fixed-triangles", str(fixed_triangles),
-                        "--recipe", str(restoration_recipe)])
+                        "--recipe", str(restoration_recipe),
+                        "--semantic-contract", str(transformed_semantic),
+                        "--transformed-supports", str(transformed_supports)])
                 adapter = root / "tiny-native-adapter"
                 if not adapter.exists():
                     shutil.copyfile(STAGER, adapter); adapter.chmod(0o755)
@@ -245,10 +250,12 @@ class GeneralMeshManifestTest(unittest.TestCase):
                         "--recipe", str(restoration_recipe),
                         "--source-local-output", str(local_restored)])
                 launch("final-gmsh-publication", {"restored-mesh": restored},
-                       {"candidate-mesh": mesh, "ownership-partition": ownership},
+                       {"candidate-mesh": mesh, "ownership-partition": ownership,
+                        "ownership-quadrature-partition": ownership_quadrature},
                        {"runtime": sys.executable, "publisher": STAGER},
                        [sys.executable, str(STAGER), "publish", str(restored), str(mesh),
-                        "--ownership", str(ownership)])
+                        "--ownership", str(ownership),
+                        "--ownership-quadrature", str(ownership_quadrature)])
                 if identity_mesh is None:
                     identity_mesh = mesh
                     identity_seed_mesh = seed
@@ -399,6 +406,65 @@ class GeneralMeshManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize(manifest_path, "base", "identity", root / f"{stem}.msh",
                           same_record, root / "raw-as-own-audit.json")
+
+    def test_metric_recipe_must_consume_exact_reconstructed_supports(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            case = manifest["Cases"][0]
+            source_paths = {role: root / case["Id"] / item["Name"]
+                            for role, item in case["Source"]["Files"].items()}
+            reports = {stage: json.loads((root / f"base--identity-{stage}.log.json").read_text())
+                       for stage in __import__("mesh_stage_contract").STAGE_ORDER}
+            binding = {"Transform": IDENTITY,
+                       "InputSHA256": {role: item["SHA256"]
+                                       for role, item in case["Source"]["Files"].items()}}
+            _validate_source_transformation(reports, binding, source_paths)
+            recipe_path = Path(reports["metric-preparation"]["Artifacts"]
+                               ["restoration-recipe"]["Path"])
+            original = json.loads(recipe_path.read_text())
+            mutations = {
+                "omitted": lambda value: value.pop("TransformedSupports"),
+                "alternate-path": lambda value: value.__setitem__(
+                    "TransformedSupportsArtifact", str(root / "alternate.json")),
+                "tampered": lambda value: value["TransformedSupports"]["Edges"][0]
+                    ["Point"].__setitem__(0, 123.0),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(name=name):
+                    candidate = copy.deepcopy(original); mutate(candidate)
+                    recipe_path.write_text(json.dumps(candidate))
+                    with self.assertRaisesRegex(ValueError, "did not consume"):
+                        _validate_source_transformation(reports, binding, source_paths)
+            recipe_path.write_text(json.dumps(original))
+
+    def test_quadrature_partition_rejects_changed_missing_and_duplicate_owner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            summary = root / "ownership.csv"
+            header = ("attribute,elements,ambiguous_fraction,unresolved_elements,"
+                      "unresolved_fraction,quadrature_rule,quadrature_order,"
+                      "quadrature_points,quadrature_whole_measure,quadrature_owned_measure,"
+                      "quadrature_relative_closure,quadrature_closure_tolerance,"
+                      "quadrature_unmatched,quadrature_overlaps,quadrature_positive_weights\n")
+            suffix = ",1,0,0,0,Gauss4,4,8,3,3,0,1e-12,0,0,1\n"
+            summary.write_text(header + "2" + suffix + "3" + suffix)
+            quadrature = root / "quadrature.csv"
+            contract = {"CutSurfaceRoles": ["matching"], "BoundaryLabels": [
+                {"Attribute": 1, "Role": "matching"},
+                {"Attribute": 2, "Role": "slot-0"},
+                {"Attribute": 3, "Role": "slot-1"}]}
+            quadrature.write_text("attribute,measure\n2,2\n3,1\n")
+            report = _ownership_report(summary, quadrature, contract)
+            self.assertEqual(report["ResponseOwnership"]["OwnerAttributes"], [2, 3])
+            for name, value in {
+                    "changed": "attribute,measure\n2,2\n4,1\n",
+                    "missing": "attribute,measure\n2,3\n",
+                    "duplicate": "attribute,measure\n2,2\n2,1\n"}.items():
+                with self.subTest(name=name):
+                    quadrature.write_text(value)
+                    with self.assertRaises(ValueError):
+                        _ownership_report(summary, quadrature, contract)
 
     def test_non_native_primary_tool_must_be_first_executed_script(self):
         tools = {"runtime": sys.executable, "metric-preparer": STAGER}

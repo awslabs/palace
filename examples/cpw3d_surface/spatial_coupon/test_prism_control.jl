@@ -40,3 +40,26 @@ end
         gmsh.finalize()
     end
 end
+
+@testset "Ten-edge immutable source has no ordinary fabricated support" begin
+    source = joinpath(@__DIR__, "testdata", "ten-edge-6791f1c84123")
+    process = read(joinpath(source, "process-library.json"), String)
+    source_number(name) = parse(Float64, only(match(
+        Regex("\\\"$name\\\"\\s*:\\s*([0-9.eE+-]+)"), process).captures))
+    phases = audit_source_plan_phases(
+        joinpath(source, "mesh-signature.csv"),
+        joinpath(source, "plan-view-mask.csv"),
+        joinpath(source, "plan-view-boundary.csv");
+        radius=2.0,
+        metal_thickness=source_number("MetalThickness"),
+        overetch=source_number("OveretchDepth"),
+        lc_normal=0.025,
+        lc_tangent=0.1,
+        lc_far=0.16,
+        process_core_width=0.2,
+        normal_growth_ratio=1.4
+    )
+    @test phases[:metal] > 0
+    @test phases[:trench] > 0
+    @test phases[:ordinary] == 0 # Therefore attributes 3000/3001 cannot be emitted.
+end

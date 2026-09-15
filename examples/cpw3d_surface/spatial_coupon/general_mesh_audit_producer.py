@@ -360,7 +360,13 @@ def _protected_surface_report(reference, candidate, contract):
             "PatchCount": len(right), "ByPlaneSupport": by_patch}
 
 
-def _ownership_report(path):
+def _expected_response_owner_attributes(contract):
+    cut_roles = set(contract["CutSurfaceRoles"])
+    return sorted(item["Attribute"] for item in contract["BoundaryLabels"]
+                  if item["Role"] not in cut_roles)
+
+
+def _ownership_report(path, quadrature_path, contract):
     with Path(path).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     required = {"attribute", "elements", "ambiguous_fraction", "unresolved_elements",
@@ -384,6 +390,25 @@ def _ownership_report(path):
     unmatched = int(summary["quadrature_unmatched"])
     overlaps = int(summary["quadrature_overlaps"])
     positive = bool(int(summary["quadrature_positive_weights"]))
+    with Path(quadrature_path).open(newline="") as stream:
+        quadrature = list(csv.DictReader(stream))
+    if (not quadrature or set(quadrature[0]) != {"attribute", "measure"} or
+            any(set(row) != {"attribute", "measure"} for row in quadrature)):
+        raise ValueError("Quadrature ownership partition is incomplete")
+    attributes = [int(row["attribute"]) for row in quadrature]
+    measures = [float(row["measure"]) for row in quadrature]
+    expected = _expected_response_owner_attributes(contract)
+    if (attributes != expected or len(attributes) != len(set(attributes)) or
+            any(not math.isfinite(value) or value <= 0 for value in measures)):
+        raise ValueError("Quadrature owner labels/measures differ from semantic contract")
+    quadrature_owned = math.fsum(measures)
+    whole = float(summary["quadrature_whole_measure"])
+    owned = float(summary["quadrature_owned_measure"])
+    partition_closure = abs(quadrature_owned - whole) / max(abs(whole), 1e-300)
+    if (not math.isfinite(whole) or whole <= 0 or not math.isfinite(owned) or owned <= 0 or
+            abs(quadrature_owned - owned) > 1e-12 * max(abs(owned), 1e-300) or
+            partition_closure > 1e-12):
+        raise ValueError("Quadrature owner partition does not close")
     return {
         "PhysicalSurfaceCoverage": {
             "InterfaceElements": sum(int(row["elements"]) for row in rows),
@@ -396,7 +421,11 @@ def _ownership_report(path):
             "WholeMeasure": float(summary["quadrature_whole_measure"]),
             "OwnedMeasure": float(summary["quadrature_owned_measure"]),
             "RelativeClosureError": closure, "ClosureTolerance": tolerance,
-            "Exhaustive": positive and unmatched == 0 and overlaps == 0 and closure <= tolerance},
+            "ExpectedOwnerAttributes": expected, "OwnerAttributes": attributes,
+            "OwnerMeasures": measures, "OwnerPartitionRelativeClosure": partition_closure,
+            "NoDuplicateOrMissingOwners": attributes == expected,
+            "Exhaustive": (positive and unmatched == 0 and overlaps == 0 and
+                           closure <= tolerance and partition_closure <= 1e-12)},
         "WholeElementAmbiguityDiagnostics": {
             "AmbiguousRows": sum(float(row["ambiguous_fraction"]) > 0 for row in rows),
             "UnresolvedElements": sum(int(row["unresolved_elements"]) for row in rows),
@@ -420,7 +449,7 @@ def _signature_segments(path):
 
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
-                    corner_tolerance=1e-8):
+                    ownership_quadrature_path, corner_tolerance=1e-8):
     mesh = read_mesh(mesh_path)
     contract = load_semantic_contract(contract_path)
     report, _ = analyze(mesh, contract, require_material_names=True)
@@ -469,7 +498,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "ActualBoundaryAttributes": actual_boundary_attributes,
               "ActualAdjacency": {str(value): report["BoundaryAdjacency"][value]
                                   for value in actual_boundary_attributes},
-              "OwnershipClosure": _ownership_report(ownership_report_path),
+              "OwnershipClosure": _ownership_report(
+                  ownership_report_path, ownership_quadrature_path, contract),
               "ActualSemanticCorners": transformed_corners.tolist(),
               "CornerNeighborhoods": _point_aspects(mesh, transformed_corners),
               "SubdivisionNeighborhoods": _point_aspects(mesh, transformed(subdivision_points)),
@@ -489,6 +519,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     base["Topology"] = report
     base["ReferenceMeshSHA256"] = sha256(reference_mesh_path)
     base["OwnershipReportSHA256"] = sha256(ownership_report_path)
+    base["OwnershipQuadratureSHA256"] = sha256(ownership_quadrature_path)
     return base
 
 
@@ -643,10 +674,11 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     elif kind == "mesh-topology-quality":
         reports, _ = validate_stage_dag(stage_reports, mesh)
         reference = reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
-        ownership = reports["final-gmsh-publication"]["Artifacts"][
-            "ownership-partition"]["Path"]
+        publication = reports["final-gmsh-publication"]["Artifacts"]
+        ownership = publication["ownership-partition"]["Path"]
+        quadrature = publication["ownership-quadrature-partition"]["Path"]
         record = topology_record(base, mesh, contract, recipe, process, signature,
-                                 reference, ownership)
+                                 reference, ownership, quadrature)
         record["Dependencies"] = {"SemanticContract": sha256(contract),
                                   "MeshRecipe": sha256(recipe), "Process": sha256(process),
                                   "Signature": sha256(signature)}

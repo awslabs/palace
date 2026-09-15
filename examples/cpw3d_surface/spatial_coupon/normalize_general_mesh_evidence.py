@@ -126,10 +126,13 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                 raise ValueError("Bounded stage DAG differs from its producer record")
     bounded = records_by_kind["bounded-run"]["BoundedStages"]
     topology = records_by_kind["mesh-topology-quality"]
+    publication = bounded["final-gmsh-publication"]["Artifacts"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
             topology.get("OwnershipReportSHA256") !=
-            bounded["final-gmsh-publication"]["Artifacts"]["ownership-partition"]["SHA256"]):
+            publication["ownership-partition"]["SHA256"] or
+            topology.get("OwnershipQuadratureSHA256") !=
+            publication["ownership-quadrature-partition"]["SHA256"]):
         raise ValueError("Topology measurements do not bind the staged reference/ownership outputs")
     required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",

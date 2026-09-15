@@ -31,6 +31,9 @@ def main():
     parser.add_argument("--fixed-triangles", type=Path)
     parser.add_argument("--ownership", type=Path)
     parser.add_argument("--source-local-output", type=Path)
+    parser.add_argument("--semantic-contract", type=Path)
+    parser.add_argument("--transformed-supports", type=Path)
+    parser.add_argument("--ownership-quadrature", type=Path)
     args = parser.parse_args()
     if args.stage == "metric":
         if (args.mmg_seed is None or args.pins is None or args.recipe is None or
@@ -41,7 +44,14 @@ def main():
         rewrite(args.source, args.mmg_seed, False)
         args.pins.write_text("1\n")
         args.fixed_triangles.write_text("1\n")
-        args.recipe.write_text(json.dumps({"SeedSHA256": digest(args.source)}) + "\n")
+        if args.semantic_contract is None or args.transformed_supports is None:
+            parser.error("metric requires transformed semantic/support inputs")
+        args.recipe.write_text(json.dumps({
+            "SeedSHA256": digest(args.source),
+            "SemanticContract": json.loads(args.semantic_contract.read_text()),
+            "TransformedSupportsArtifact": str(args.transformed_supports.resolve()),
+            "TransformedSupportsSHA256": digest(args.transformed_supports),
+            "TransformedSupports": json.loads(args.transformed_supports.read_text())}) + "\n")
     elif args.stage == "adapt":
         if (args.metric is None or not args.metric.is_file() or
                 args.pins is None or not args.pins.is_file() or
@@ -55,8 +65,8 @@ def main():
         rewrite(args.source, args.source_local_output, False)
         rewrite(args.source, args.output, False)
     else:
-        if args.ownership is None:
-            parser.error("publish requires --ownership")
+        if args.ownership is None or args.ownership_quadrature is None:
+            parser.error("publish requires ownership and quadrature ownership")
         rewrite(args.source, args.output, True)
         header = (
             "attribute,elements,area,ambiguous_area,ambiguous_fraction,"
@@ -69,6 +79,7 @@ def main():
         args.ownership.write_text(
             header + "1,7,1,0,0,0,0,0" + suffix +
             "2,3,1,0,0,0,0,0" + suffix + "3,1,1,0,0,0,0,0" + suffix)
+        args.ownership_quadrature.write_text("attribute,measure\n2,2\n3,1\n")
 
 
 if __name__ == "__main__":

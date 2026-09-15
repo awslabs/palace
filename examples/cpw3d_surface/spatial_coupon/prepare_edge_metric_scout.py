@@ -106,8 +106,34 @@ def cluster_planar_supports(attributes, normals, points, tolerance=1e-7):
     return np.asarray(planes), patch
 
 
+def budget_aware_far_policy(seed_elements, maximum_elements, far_size, far_growth):
+    """Coarsen only the far field when the seed consumes the adaptation budget.
+
+    The policy is geometry/model agnostic.  A seed may use at most 35% of the
+    final budget without pressure; above that point the far-size ceiling and
+    post-protection growth increase continuously with the square root of load.
+    Normal, tangent, semantic-corner, trace, and protected-band targets are not
+    inputs and therefore cannot be changed by this policy.
+    """
+    values = (seed_elements, maximum_elements, far_size, far_growth)
+    if (not all(np.isfinite(values)) or seed_elements <= 0 or
+            maximum_elements <= 0 or far_size <= 0 or far_growth <= 0):
+        raise ValueError('Invalid far-field budget controls')
+    seed_fraction = float(seed_elements) / float(maximum_elements)
+    pressure = max(1.0, np.sqrt(seed_fraction / 0.35))
+    return {'Name': 'seed-fraction-far-field-v1',
+            'MaximumElements': int(maximum_elements),
+            'SeedElements': int(seed_elements), 'SeedBudgetFraction': seed_fraction,
+            'Pressure': float(pressure), 'RequestedFarSize': float(far_size),
+            'EffectiveFarSize': float(far_size * pressure),
+            'RequestedFarGrowth': float(far_growth),
+            'EffectiveFarGrowth': float(far_growth * pressure),
+            'UnaffectedTargets': ['normal', 'tangent', 'semantic-corner',
+                                  'trace', 'protected-band']}
+
+
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
-            semantic_contract=None, transformed_supports=None):
+            semantic_contract=None, transformed_supports=None, maximum_elements=None):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
         raise ValueError('Invalid grading/protection controls')
     path=Path(path)
@@ -119,6 +145,12 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     triangle_refs=np.concatenate([r for c,r in zip(mesh.cells,refs) if c.type=='triangle'])
     tetrahedra=np.concatenate([c.data for c in mesh.cells if c.type=='tetra'])
     tetrahedron_refs=np.concatenate([r for c,r in zip(mesh.cells,refs) if c.type=='tetra'])
+    if maximum_elements is None:
+        maximum_elements = max(len(tetrahedra), 1)
+    far_policy=budget_aware_far_policy(
+        len(tetrahedra),maximum_elements,far,far_growth)
+    effective_far=far_policy['EffectiveFarSize']
+    effective_far_growth=far_policy['EffectiveFarGrowth']
     if semantic_contract is None:
         raise ValueError('A frozen semantic contract is required')
     if set(triangle_refs)!=boundary_attributes(semantic_contract):
@@ -172,16 +204,19 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     np.savetxt(path/'fixed-triangles.txt',np.flatnonzero(fixed)+1,fmt='%d')
     with (path/'metric.f64').open('wb') as f:
         for start in range(0,len(mesh.points),100000):
-            metric=volume_metric(mesh.points[start:start+100000],segments,corners,normal,tangent,far,
-                                 protected_distance=protected_distance,far_growth=far_growth,
+            metric=volume_metric(mesh.points[start:start+100000],segments,corners,normal,tangent,effective_far,
+                                 protected_distance=protected_distance,far_growth=effective_far_growth,
                                  isotropic_corners=semantic_corners,isotropy_radius=tangent)
             if np.any(np.linalg.eigvalsh(metric)<=0):raise ValueError('Metric is not SPD')
             # Native C API order, explicitly NOT the Medit .sol file order.
             metric[:,[0,0,0,1,1,2],[0,1,2,1,2,2]].astype('<f8').tofile(f)
     recipe={'Scope':'Native MMG straight/sharp fabricated diagnostic; no solver qualification',
-            'NormalSize':normal,'TangentialSize':tangent,'FarSize':far,
-            'RadialGrowth':1.,'CornerGrowth':.25,'ProtectedDistance':protected_distance,
-            'FarGrowth':far_growth,'SurfaceProtectionRadius':protect_surface,'FixedSurfaceTriangles':int(fixed.sum()),
+            'NormalSize':normal,'TangentialSize':tangent,'FarSize':effective_far,
+            'RequestedFarSize':far,'RadialGrowth':1.,'CornerGrowth':.25,
+            'ProtectedDistance':protected_distance,
+            'FarGrowth':effective_far_growth,'RequestedFarGrowth':far_growth,
+            'FarFieldBudgetPolicy':far_policy,
+            'SurfaceProtectionRadius':protect_surface,'FixedSurfaceTriangles':int(fixed.sum()),
             'CornerIsotropyRadius':tangent,
             'MetricOrder':['m11','m12','m13','m22','m23','m33'],
             'Nodes':len(mesh.points),'Tetrahedra':len(tetrahedra),'SurfaceTriangles':len(triangles),
@@ -200,6 +235,8 @@ def main():
     p.add_argument('--normal',type=float,required=True);p.add_argument('--tangent',type=float,required=True);p.add_argument('--far',type=float,required=True)
     p.add_argument('--protected-distance',type=float,default=0.);p.add_argument('--far-growth',type=float,default=1.)
     p.add_argument('--protect-surface',type=float,default=0.)
+    p.add_argument('--maximum-elements',type=int,required=True,
+                   help='frozen final-element budget used only by the generic far-field policy')
     contract=p.add_mutually_exclusive_group(required=True)
     contract.add_argument('--semantic-contract',type=Path)
     contract.add_argument('--simple-sharp-contract',action='store_true',
@@ -213,11 +250,13 @@ def main():
               else simple_sharp_contract())
     supports=(json.loads(a.transformed_supports.read_text()) if a.transformed_supports else None)
     r=prepare(m,a.output,a.normal,a.tangent,a.far,
-        a.protected_distance,a.far_growth,a.protect_surface,semantic,supports)
+        a.protected_distance,a.far_growth,a.protect_surface,semantic,supports,
+        a.maximum_elements)
     r['SeedArtifact']=str(a.mesh.resolve());r['SeedArtifactSHA256']=sha(a.mesh)
     if a.transformed_supports:
         r['TransformedSupportsArtifact']=str(a.transformed_supports.resolve())
         r['TransformedSupportsSHA256']=sha(a.transformed_supports)
+        r['TransformedSupports']=supports
     if a.mesh.suffix=='.toml':
         import tomllib
         data=tomllib.loads(a.mesh.read_text())

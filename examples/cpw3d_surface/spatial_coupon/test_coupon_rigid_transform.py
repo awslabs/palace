@@ -22,6 +22,7 @@ if str(HERE) not in sys.path:
 import meshio
 import numpy as np
 
+from general_mesh_audit_producer import _ownership_report
 from prepare_edge_metric_scout import cluster_planar_supports, validate_transformed_supports
 from transform_coupon_source_contract import (
     transform_semantic_contract, transform_vector, transformed_supports,
@@ -249,9 +250,37 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             self.assertEqual(int(summary["quadrature_overlaps"]), 0)
             self.assertLessEqual(float(summary["quadrature_relative_closure"]),
                                  float(summary["quadrature_closure_tolerance"]))
+            semantic = json.loads(MULTISLOT["semantic"].read_text())
+            expected_owners = sorted(item["Attribute"] for item in semantic["BoundaryLabels"]
+                                     if item["Role"] not in semantic["CutSurfaceRoles"])
+            self.assertEqual([int(row["attribute"]) for row in local_quadrature],
+                             expected_owners)
+            ownership_audit = _ownership_report(
+                root / "multislot-local-ownership.csv",
+                root / "multislot-local-ownership.csv.quadrature.csv", semantic)
+            self.assertEqual(ownership_audit["ResponseOwnership"]["OwnerAttributes"],
+                             expected_owners)
+            self.assertLessEqual(ownership_audit["ResponseOwnership"]
+                                 ["OwnerPartitionRelativeClosure"], 1e-12)
             owned_measure = sum(float(row["measure"]) for row in local_quadrature)
             self.assertAlmostEqual(owned_measure,
                                    float(summary["quadrature_whole_measure"]), places=11)
+            quadrature_path = root / "multislot-local-ownership.csv.quadrature.csv"
+            original_quadrature = quadrature_path.read_text()
+            bad_rows = list(local_quadrature)
+            for name, rows in (
+                    ("changed", [*bad_rows[:-1], {**bad_rows[-1], "attribute": "9999"}]),
+                    ("missing", bad_rows[:-1]),
+                    ("duplicate", [*bad_rows[:-1], {**bad_rows[-1],
+                                                     "attribute": bad_rows[0]["attribute"]}])):
+                with self.subTest(owner_mutation=name):
+                    with quadrature_path.open("w", newline="") as stream:
+                        writer = csv.DictWriter(stream, fieldnames=["attribute", "measure"])
+                        writer.writeheader(); writer.writerows(rows)
+                    with self.assertRaises(ValueError):
+                        _ownership_report(root / "multislot-local-ownership.csv",
+                                          quadrature_path, semantic)
+            quadrature_path.write_text(original_quadrature)
             # Whole-element ambiguity is preserved as a non-authoritative diagnostic;
             # it is not response ownership and must not drop or duplicate a triangle.
             self.assertGreater(sum(int(row["unresolved_elements"])
