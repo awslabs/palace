@@ -13,8 +13,11 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
+import numpy as np
+
 from audit_edge_metric_mesh import analyze
-from general_mesh_audit_producer import KINDS, produce as produce_audit
+from general_mesh_audit_producer import (KINDS, _protected_surface_report,
+                                         produce as produce_audit)
 from general_mesh_manifest import run_manifest, sha256, validate_manifest
 from mesh_array_io import read_mesh
 from normalize_general_mesh_evidence import normalize
@@ -106,6 +109,17 @@ class GeneralMeshManifestTest(unittest.TestCase):
                       "MaximumRSSGiB": 1, "MaximumElements": 1000},
             "Tools": [{"Name": name, "Path": str(path), "SHA256": sha256(path)}
                       for name, path in tools],
+            "StageToolSHA256": {
+                "seed-generation": {"runtime": sha256(sys.executable),
+                                    "mesher": sha256(MESHER)},
+                "metric-preparation": {"runtime": sha256(sys.executable),
+                                       "metric-preparer": sha256(STAGER)},
+                "native-adaptation-mmg": {"runtime": sha256(STAGER),
+                                          "adapter-mmg": sha256(STAGER)},
+                "label-restoration": {"runtime": sha256(sys.executable),
+                                      "label-restorer": sha256(STAGER)},
+                "final-gmsh-publication": {"runtime": sha256(sys.executable),
+                                           "publisher": sha256(STAGER)}},
             "ScalingComparisons": [
                 {"Id": "subdivision", "Kind": "cad-subdivision-sensitivity",
                  "Reference": ["base", "identity"], "Compared": ["subdivided", "identity"],
@@ -171,12 +185,15 @@ class GeneralMeshManifestTest(unittest.TestCase):
                         "--mmg-seed", str(mmg_seed), "--pins", str(pins),
                         "--fixed-triangles", str(fixed_triangles),
                         "--recipe", str(restoration_recipe)])
+                adapter = root / "tiny-native-adapter"
+                if not adapter.exists():
+                    shutil.copyfile(STAGER, adapter); adapter.chmod(0o755)
                 launch("native-adaptation-mmg",
                        {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
                         "fixed-triangles": fixed_triangles},
                        {"adapted-mesh": adapted},
-                       {"runtime": sys.executable, "adapter-mmg": STAGER},
-                       [sys.executable, str(STAGER), "adapt", str(mmg_seed), str(adapted),
+                       {"runtime": adapter, "adapter-mmg": adapter},
+                       [str(adapter), "adapt", str(mmg_seed), str(adapted),
                         "--metric", str(metric), "--pins", str(pins),
                         "--fixed-triangles", str(fixed_triangles)])
                 launch("label-restoration", {"adapted-mesh": adapted,
@@ -350,7 +367,34 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  sys.executable, str(MESHER), str(root / "unused")],
                 capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("every frozen stage tool must appear", result.stderr)
+            self.assertIn("Native adapter must be both runtime and adapter-mmg", result.stderr)
+
+    def test_preexisting_stage_output_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); output = root / "seed.msh"
+            output.write_text("preexisting")
+            result = subprocess.run(
+                [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
+                 "--log", str(root / "seed.log"), "--stage", "seed-generation",
+                 "--artifact", f"seed-mesh={output}",
+                 "--tool", f"runtime={sys.executable}", "--tool", f"mesher={MESHER}",
+                 "--", sys.executable, str(MESHER), str(output), str(root / "missing")],
+                capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("stage output must be absent", result.stderr)
+
+    def test_same_area_displaced_protected_support_is_detected(self):
+        import meshio
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            reference = read_mesh(root / "base--identity-seed.msh")
+            moved = read_mesh(root / "base--identity.msh")
+            moved.points += np.array([0.01, 0.0, 0.0])
+            contract = json.loads((root / "base/semantic.json").read_text())
+            result = _protected_surface_report(reference, moved, contract)
+            self.assertGreater(result["MaximumSupportVertexDistance"], 0)
+            self.assertFalse(result["PlaneSupportsMatch"])
 
     def test_measured_semantic_gates_reject_bound_failures(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -430,9 +474,24 @@ class GeneralMeshManifestTest(unittest.TestCase):
 
     def test_actual_spatial_coupon_output_uses_frozen_material_identity(self):
         mesh = os.environ.get("ACTUAL_SPATIAL_COUPON_MESH")
-        if not mesh or not Path(mesh).is_file():
-            self.skipTest("ACTUAL_SPATIAL_COUPON_MESH is not available")
-        contract = HERE / "testdata/four-edge-9d2cb9bbb3fe/semantic-contract.json"
+        stage_report = os.environ.get("ACTUAL_SPATIAL_COUPON_STAGE_REPORT")
+        required = os.environ.get("REQUIRE_ACTUAL_SPATIAL_COUPON", "0") == "1"
+        if not mesh or not stage_report:
+            if required:
+                self.fail("qualification requires a fresh mesh and seed-stage report")
+            self.skipTest("actual four-edge producer qualification was not requested")
+        mesh, stage_report = Path(mesh), Path(stage_report)
+        source = HERE / "testdata/four-edge-9d2cb9bbb3fe"
+        from mesh_stage_contract import validate_stage_report
+        bounded = validate_stage_report(json.loads(stage_report.read_text()), "seed-generation")
+        self.assertEqual(bounded["Artifacts"]["seed-mesh"]["SHA256"], sha256(mesh))
+        self.assertEqual(Path(bounded["Tools"]["mesher"]["Path"]),
+                         (HERE / "mesh_spatial_coupon.jl").resolve())
+        command = bounded["Command"]
+        for name in ("mesh-signature.csv", "plan-view-mask.csv", "plan-view-boundary.csv"):
+            path = (source / name).resolve()
+            self.assertIn(str(path), [str(Path(item).resolve()) for item in command])
+        contract = source / "semantic-contract.json"
         report, _ = analyze(read_mesh(mesh), json.loads(contract.read_text()),
                             require_material_names=True)
         self.assertEqual(report["PhysicalVolumeNames"], {1: "substrate", 2: "vacuum"})

@@ -24,12 +24,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "aa04aab33fed799b770b7add84afc7ab640c37579766b4e8bdf5963bac90ec69"
+      "SHA256": "554e446a0083d0e7e346aeb4a757c2f2c34596f0ed6cb34c8b4814baef5ee29d"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "45615969fbc252aedc3d847c9b216608cf4537c6642e8b99a0abaf29e9b55d8c"
+      "SHA256": "9b8caddb47e63579faeb9d65e211610e83360e57b6726def726b7ddf0d766bbd"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -59,17 +59,17 @@
     {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "511d60309c9146e55ab53eeeeb4ad48c4ce07ade8dd66f0a94a16c3f945071d5"
+      "SHA256": "8215473f534e9e83475456c4d7b0ed865ce513a734a2bc66e193a68dd1d3667f"
     },
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "c9245761126b68166d928145c86d3fd3578b0eb342f018497f03973e2dc78494"
+      "SHA256": "f79001d3f55b1fa2f45bb1978e779ca0b154a72bd11e0e2e91cae031cd2ea5ee"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "d514d051dab72a9ef0a68030ee454e95dd54ac4de43273093ed55b88f9181e71"
+      "SHA256": "39da7e5c44d1c85e395eaf6d439b5ab3161c8c6773cf190fc1981e984f4f9649"
     }
   ],
   "ScalingComparisons": [
@@ -1399,5 +1399,27 @@
       },
       "Provenance": "Generated only from run_general_mesh_suite.py fixture source under the repository Apache-2.0 license; no field archive"
     }
-  ]
+  ],
+  "StageToolSHA256": {
+    "seed-generation": {
+      "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "mesher": "aa10c1b3076cf630fad480ad2681ab7a1ac478668fefcffa6584d50eeff8e64f"
+    },
+    "metric-preparation": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "metric-preparer": "059e1d1769860c4f69fa7d5144483c345ee297a0c4ca0e0b6a93d579fc955a26"
+    },
+    "native-adaptation-mmg": {
+      "runtime": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",
+      "adapter-mmg": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed"
+    },
+    "label-restoration": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "label-restorer": "6ab7eb90a78acef2a1a867d122f3046213aa368c5a6087436115c3fee33767b5"
+    },
+    "final-gmsh-publication": {
+      "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "publisher": "6c189925459dbf3351840c0b722c9cb5d589a28def2c72d7eb65add069e95692"
+    }
+  }
 }

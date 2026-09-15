@@ -126,6 +126,15 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
             path = repository / tool["Path"]
             if not path.is_file() or sha256(path) != digest:
                 raise ValueError(f"frozen tool hash mismatch: {name}")
+    stage_tools = manifest.get("StageToolSHA256")
+    from mesh_stage_contract import STAGE_TOOLS
+    if (not isinstance(stage_tools, dict) or set(stage_tools) != set(STAGE_ORDER) or
+            any(not isinstance(stage_tools[stage], dict) or
+                set(stage_tools[stage]) != STAGE_TOOLS[stage] or
+                any(not isinstance(value, str) or len(value) != 64
+                    for value in stage_tools[stage].values())
+                for stage in STAGE_ORDER)):
+        raise ValueError("Manifest must freeze every stage tool digest")
     matrix = set()
     comparison_kinds = set()
     for case in manifest["Cases"]:
@@ -179,7 +188,26 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     return repository, tool_hashes, matrix
 
 
-def _validate_bound_records(evidence_path, evidence, binding):
+def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
+    """Rerun the frozen producer implementation instead of trusting record JSON."""
+    from general_mesh_audit_producer import (bounded_record, complexity_record,
+                                             invariants_record, topology_record)
+    base = {"Transform": binding["Transform"]}
+    # Recover reference and ownership paths from the independently validated
+    # embedded stage bindings.
+    reference = bounded["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
+    ownership = bounded["final-gmsh-publication"]["Artifacts"][
+        "ownership-partition"]["Path"]
+    topology = topology_record(dict(base), mesh_path, source_paths["SemanticContract"],
+        source_paths["MeshRecipe"], source_paths["Process"], source_paths["Signature"],
+        reference, ownership)["Measurements"]
+    complexity = complexity_record(dict(base), mesh_path, source_paths["SemanticContract"],
+                                   source_paths["MeshRecipe"])["Measurements"]
+    invariants = invariants_record(dict(base), mesh_path)["Measurements"]
+    return {**topology, **complexity, **invariants}
+
+
+def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     records = evidence.get("AuditRecords")
     required = {"bounded-run", "mesh-topology-quality", "mesh-complexity",
                 "mesh-invariants", "variant-transform"}
@@ -242,7 +270,8 @@ def _validate_bound_records(evidence_path, evidence, binding):
             reports, stage_digests = validate_stage_dag(
                 {stage["Stage"]: Path(stage["Path"]) for stage in stage_items},
                 _artifact_path(evidence_path.parent, evidence["Mesh"]),
-                "run_bounded_mesher.py", binding["ToolSHA256"]["run_bounded_mesher.py"])
+                "run_bounded_mesher.py", binding["ToolSHA256"]["run_bounded_mesher.py"],
+                binding["StageToolSHA256"])
             if (reports != record.get("BoundedStages") or
                     sorted(stage_digests) != record.get("StageRecordSHA256")):
                 raise ValueError("bounded stage DAG differs from its bound producer output")
@@ -256,6 +285,26 @@ def _validate_bound_records(evidence_path, evidence, binding):
             topology.get("OwnershipReportSHA256") !=
             bounded["final-gmsh-publication"]["Artifacts"]["ownership-partition"]["SHA256"]):
         raise ValueError("topology audit does not bind staged reference/ownership artifacts")
+    mesh_path = _artifact_path(evidence_path.parent, evidence["Mesh"])
+    recomputed = _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded)
+    recorded_mesh_measurements = {
+        key: value for key, value in measurements.items()
+        if key not in {"Resources"}
+    }
+    # Variant-transform has no measurement section. Resources are independently
+    # derived from the validated stage reports and parsed final tetrahedra below.
+    if recomputed != recorded_mesh_measurements:
+        raise ValueError("audit measurements differ from an independent producer rerun")
+    resources = measurements.get("Resources", {})
+    expected_resources = {
+        "ExitCode": 0,
+        "Seconds": sum(report["Seconds"] for report in bounded.values()),
+        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"]
+                          for report in bounded.values()) / 2**30,
+    }
+    if any(resources.get(key) != value for key, value in expected_resources.items()):
+        raise ValueError("resource measurements differ from bounded stage reports")
+
     required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
                          "CornerNeighborhoods", "SubdivisionNeighborhoods", "CutNeighborhoods",
@@ -280,6 +329,7 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         "SemanticContractSHA256": binding["InputSHA256"]["SemanticContract"],
         "RecipeSHA256": binding["InputSHA256"]["MeshRecipe"],
         "ToolSHA256": binding["ToolSHA256"],
+        "StageToolSHA256": binding["StageToolSHA256"],
     }
     if evidence.get("Version") != 3 or any(evidence.get(key) != value
                                             for key, value in required_binding.items()):
@@ -334,12 +384,16 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
                                  minimum=gates["MinimumNoncornerAspect"])):
         failures.append("semantic-corner-and-endpoint-anisotropy")
     protected = evidence.get("ProtectedSurfaces", {})
-    if (not protected.get("Actual") or
+    if (not protected.get("Actual") or protected.get("PlaneSupportsMatch") is not True or
             sorted(protected.get("Actual", [])) != sorted(contract["ProtectedSupports"]) or
             not _finite_number(protected.get("MaximumRelativeMeasureError"),
                                nonnegative=True) or
             protected.get("MaximumRelativeMeasureError", math.inf) >
-            gates["MaximumProtectedMeasureError"]):
+            gates["MaximumProtectedMeasureError"] or
+            not _finite_number(protected.get("MaximumSupportVertexDistance"),
+                               nonnegative=True) or
+            protected.get("MaximumSupportVertexDistance", math.inf) >
+            gates["CornerTolerance"]):
         failures.append("protected-surfaces")
 
     widths = evidence.get("AchievedAnisotropy", {})
@@ -472,7 +526,8 @@ def run_manifest(args):
                 binding = {"CaseId": case["Id"], "Variant": variant_id,
                            "Transform": variant["Transform"],
                            "TransformSHA256": canonical_sha256(variant["Transform"]),
-                           "InputSHA256": hashes, "ToolSHA256": tool_hashes}
+                           "InputSHA256": hashes, "ToolSHA256": tool_hashes,
+                           "StageToolSHA256": manifest["StageToolSHA256"]}
                 failures = audit_manifest_evidence(evidence, manifest["Gates"], contract, binding)
                 mesh_path = _check_artifact(path.parent, evidence.get("Mesh"), "audited mesh")
                 _validate_mesh(mesh_path, contract)
@@ -480,7 +535,7 @@ def run_manifest(args):
                 if mesh_digest in used_meshes:
                     raise ValueError("audited meshes must be content-distinct per matrix entry")
                 used_meshes.add(mesh_digest)
-                record_digests = _validate_bound_records(path, evidence, binding)
+                record_digests = _validate_bound_records(path, evidence, binding, sources[case["Id"]][1])
                 if used_audits & record_digests:
                     raise ValueError("audit records must be content-distinct per matrix entry")
                 used_audits.update(record_digests)

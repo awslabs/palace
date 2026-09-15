@@ -138,19 +138,49 @@ def _protected_surface_report(reference, candidate, contract):
     protected_attributes = {item["Attribute"]: item["Role"]
                             for item in contract["BoundaryLabels"]
                             if item.get("Protected") is True}
-    def areas(report):
-        result = {attribute: 0.0 for attribute in protected_attributes}
-        for key, value in report["PlanarPatchAreas"].items():
-            attribute = int(float(key.split()[0]))
-            if attribute in result:
-                result[attribute] += value
+
+    def patches(mesh, report):
+        triangles, labels = blocks(mesh, "triangle")
+        result = {}
+        for key, area in report["PlanarPatchAreas"].items():
+            values = tuple(float(value) for value in key.split())
+            attribute, plane = int(values[0]), values[1:]
+            if attribute not in protected_attributes:
+                continue
+            xyz = mesh.points[triangles[labels == attribute]]
+            cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
+            normals = cross / np.linalg.norm(cross, axis=1)[:, None]
+            pivot = np.argmax(abs(normals), axis=1)
+            normals *= np.sign(normals[np.arange(len(normals)), pivot])[:, None]
+            triangle_planes = np.round(np.column_stack(
+                (normals, np.einsum("ij,ij->i", normals, xyz[:, 0]))), 8)
+            triangle_planes[triangle_planes == 0] = 0.0
+            selected = xyz[np.all(triangle_planes == np.asarray(plane), axis=1)]
+            vertices = np.unique(selected.reshape(-1, 3), axis=0)
+            result[(protected_attributes[attribute], plane)] = (float(area), vertices)
         return result
-    left, right = areas(before), areas(after)
-    errors = {protected_attributes[key]: abs(right[key] - value) / max(abs(value), 1e-300)
-              for key, value in left.items()}
-    return {"Actual": sorted(protected_attributes.values()),
-            "MaximumRelativeMeasureError": max(errors.values(), default=0.0),
-            "RelativeMeasureErrorByRole": errors}
+
+    left, right = patches(reference, before), patches(candidate, after)
+    if left.keys() != right.keys():
+        return {"Actual": sorted(protected_attributes.values()),
+                "PlaneSupportsMatch": False, "MaximumRelativeMeasureError": math.inf,
+                "MaximumSupportVertexDistance": math.inf, "PatchCount": len(right)}
+    area_errors, distances, by_patch = [], [], {}
+    for key in left:
+        left_area, left_vertices = left[key]
+        right_area, right_vertices = right[key]
+        area_error = abs(right_area - left_area) / max(abs(left_area), 1e-300)
+        distance = max(
+            np.max(np.min(np.linalg.norm(left_vertices[:, None] - right_vertices, axis=2), axis=1)),
+            np.max(np.min(np.linalg.norm(right_vertices[:, None] - left_vertices, axis=2), axis=1)))
+        area_errors.append(float(area_error)); distances.append(float(distance))
+        by_patch[f"{key[0]} {' '.join(map(str, key[1]))}"] = {
+            "RelativeMeasureError": float(area_error),
+            "SupportVertexDistance": float(distance)}
+    return {"Actual": sorted(protected_attributes.values()), "PlaneSupportsMatch": True,
+            "MaximumRelativeMeasureError": max(area_errors, default=0.0),
+            "MaximumSupportVertexDistance": max(distances, default=0.0),
+            "PatchCount": len(right), "ByPlaneSupport": by_patch}
 
 
 def _ownership_report(path):

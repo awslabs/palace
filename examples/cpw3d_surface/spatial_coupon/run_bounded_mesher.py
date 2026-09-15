@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from mesh_stage_contract import (STAGE_INPUTS, STAGE_OUTPUTS, STAGE_TOOLS, binding,
-                                 sha256)
+                                 sha256, validate_tool_invocation)
 
 
 def tree_rss(root):
@@ -91,12 +91,14 @@ def main():
         if set(tools) != STAGE_TOOLS[args.stage] or any(not path.is_file()
                                                          for path in tools.values()):
             parser.error("stage tool roles must name every required existing tool")
-        command_paths = {Path(value).resolve() for value in command
-                         if isinstance(value, str) and Path(value).is_file()}
-        if not set(tools.values()) <= command_paths:
-            parser.error("every frozen stage tool must appear in the executed command")
+        try:
+            validate_tool_invocation(args.stage, command, tools)
+        except ValueError as error:
+            parser.error(str(error))
         if any(not path.is_file() for path in inputs.values()):
             parser.error("every declared stage input must exist before execution")
+        if any(path.exists() for path in artifacts.values()):
+            parser.error("every declared stage output must be absent before execution")
     if args.log.exists():
         parser.error("refusing to overwrite an experiment log")
     args.log.parent.mkdir(parents=True, exist_ok=True)

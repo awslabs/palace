@@ -32,6 +32,31 @@ STAGE_OUTPUTS = {
     "label-restoration": {"restored-mesh"},
     "final-gmsh-publication": {"candidate-mesh", "ownership-partition"},
 }
+STAGE_PRIMARY_TOOL = {
+    "seed-generation": "mesher",
+    "metric-preparation": "metric-preparer",
+    "native-adaptation-mmg": "adapter-mmg",
+    "label-restoration": "label-restorer",
+    "final-gmsh-publication": "publisher",
+}
+
+
+def validate_tool_invocation(stage, command, tools):
+    """Require the declared runtime and stage tool in executable/script positions."""
+    resolved = [str(Path(value).resolve()) for value in command]
+    runtime = str(Path(tools["runtime"]).resolve())
+    primary = str(Path(tools[STAGE_PRIMARY_TOOL[stage]]).resolve())
+    if resolved[0] != runtime:
+        raise ValueError(f"Stage runtime is not argv[0]: {stage}")
+    if stage == "native-adaptation-mmg":
+        if primary != runtime:
+            raise ValueError("Native adapter must be both runtime and adapter-mmg")
+        return
+    # Interpreter options are not files.  The primary script must be the first
+    # existing file argument after the runtime, rather than an unused trailing arg.
+    first_file = next((value for value in resolved[1:] if Path(value).is_file()), None)
+    if first_file != primary:
+        raise ValueError(f"Stage tool is not in the executed script position: {stage}")
 
 
 def sha256(path):
@@ -59,7 +84,8 @@ def _validate_bindings(items, expected, description):
             raise ValueError(f"{description} binding changed: {name}")
 
 
-def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=None):
+def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=None,
+                          expected_tool_sha256=None):
     if (report.get("Version") != 3 or report.get("Stage") != stage or
             report.get("ReturnCode") != 0 or report.get("StopReason") is not None or
             not isinstance(report.get("Command"), list) or not report["Command"] or
@@ -74,26 +100,29 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
     tools = report.get("Tools")
     if not isinstance(tools, dict) or set(tools) != STAGE_TOOLS[stage]:
         raise ValueError(f"Stage tools are incomplete: {stage}")
-    command_paths = {str(Path(value).resolve()) for value in report["Command"]
-                     if isinstance(value, str) and Path(value).is_file()}
     for role, item in tools.items():
         if (not isinstance(item, dict) or not item.get("Path") or
                 not item.get("SHA256") or not Path(item["Path"]).is_file() or
                 sha256(item["Path"]) != item["SHA256"] or
-                str(Path(item["Path"]).resolve()) not in command_paths):
-            raise ValueError(f"Stage tool was not invoked: {stage}/{role}")
+                (expected_tool_sha256 is not None and
+                 item["SHA256"] != expected_tool_sha256.get(role))):
+            raise ValueError(f"Stage tool binding changed: {stage}/{role}")
+    validate_tool_invocation(stage, report["Command"],
+                             {role: item["Path"] for role, item in tools.items()})
     return report
 
 
-def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sha256=None):
+def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sha256=None,
+                       expected_tool_sha256=None):
     if set(report_paths) != set(STAGE_ORDER):
         raise ValueError("Exactly one report for every bounded mesh stage is required")
     reports = {}
     report_digests = set()
     for stage in STAGE_ORDER:
         path = Path(report_paths[stage])
-        report = validate_stage_report(json.loads(path.read_text()), stage,
-                                       launcher_name, launcher_sha256)
+        report = validate_stage_report(
+            json.loads(path.read_text()), stage, launcher_name, launcher_sha256,
+            None if expected_tool_sha256 is None else expected_tool_sha256[stage])
         digest = sha256(path)
         if digest in report_digests:
             raise ValueError("Bounded stage reports must be content-distinct")

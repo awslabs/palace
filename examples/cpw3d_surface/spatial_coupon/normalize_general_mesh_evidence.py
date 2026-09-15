@@ -62,6 +62,7 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                 "ProcessSHA256": inputs["Process"],
                 "SemanticContractSHA256": inputs["SemanticContract"],
                 "RecipeSHA256": inputs["MeshRecipe"], "ToolSHA256": tools,
+                "StageToolSHA256": manifest["StageToolSHA256"],
                 "Mesh": _binding(mesh_path, output), "AuditRecords": []}
     measurements = {}
     record_hashes = {mesh_digest}
@@ -117,7 +118,8 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                     {item.get("Stage") for item in stage_items} != set(STAGE_ORDER)):
                 raise ValueError("Bounded stage records are incomplete")
             stage_paths = {item["Stage"]: Path(item["Path"]) for item in stage_items}
-            reports, stage_digests = validate_stage_dag(stage_paths, mesh_path)
+            reports, stage_digests = validate_stage_dag(
+                stage_paths, mesh_path, expected_tool_sha256=manifest["StageToolSHA256"])
             if (sorted(stage_digests) != record.get("StageRecordSHA256") or
                     reports != record.get("BoundedStages")):
                 raise ValueError("Bounded stage DAG differs from its producer record")
