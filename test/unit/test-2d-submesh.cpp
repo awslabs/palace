@@ -208,6 +208,100 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
   }
 }
 
+TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
+          "[geodata][Serial][Parallel]")
+{
+  auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/mesh/nc-boundary-submesh.mesh";
+  mfem::Mesh serial_mesh(mesh_path.c_str(), 1, 1, true);
+  REQUIRE(serial_mesh.Nonconforming());
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
+
+  mfem::Array<int> surface_attrs;
+  surface_attrs.Append(14);
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(*par_mesh, surface_attrs);
+  REQUIRE(submesh.Nonconforming());
+  int global_elements = submesh.GetNE();
+  Mpi::GlobalSum(1, &global_elements, submesh.GetComm());
+  REQUIRE(global_elements > 0);
+
+  // On two ranks this fixture includes a local slave whose master is not a locally
+  // addressable ParMesh edge. Keep that case explicit: the remapper must resolve the
+  // master through its NCMesh MeshId rather than indexing ParMesh with Slave::master.
+  if (Mpi::Size(submesh.GetComm()) > 1)
+  {
+    // Nodes beyond the ghost layer may have vertex references without a valid vertex
+    // index. They must be skipped while retaining numbered ghost vertices for masters.
+    int unnumbered_vertices = 0;
+    for (int n = 0; n < par_mesh->ncmesh->GetNumNodes(); n++)
+    {
+      const auto &node = par_mesh->ncmesh->GetNode(n);
+      unnumbered_vertices += node.HasVertex() && node.vert_index < 0;
+    }
+    Mpi::GlobalSum(1, &unnumbered_vertices, submesh.GetComm());
+    REQUIRE(unnumbered_vertices > 0);
+
+    int nonlocal_master_edges = 0;
+    const auto &edge_list = par_mesh->ncmesh->GetEdgeList();
+    mfem::Array<int> edges, orientations;
+    for (int be = 0; be < par_mesh->GetNBE(); be++)
+    {
+      par_mesh->GetBdrElementEdges(be, edges, orientations);
+      for (int edge : edges)
+      {
+        const auto id_and_type = edge_list.GetMeshIdAndType(edge);
+        if (id_and_type.type != mfem::NCMesh::NCList::MeshIdType::SLAVE)
+        {
+          continue;
+        }
+        const auto *slave = static_cast<const mfem::NCMesh::Slave *>(id_and_type.id);
+        const auto master = edge_list.GetMeshIdAndType(slave->master);
+        REQUIRE(master.id != nullptr);
+        nonlocal_master_edges += slave->master >= par_mesh->GetNEdges();
+      }
+    }
+    Mpi::GlobalSum(1, &nonlocal_master_edges, submesh.GetComm());
+    REQUIRE(nonlocal_master_edges > 0);
+  }
+
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+  mfem::H1_FECollection parent_fec(1, 3), submesh_fec(1, 2);
+  mfem::ParFiniteElementSpace parent_fes(par_mesh.get(), &parent_fec);
+  mfem::ParFiniteElementSpace submesh_fes(&submesh, &submesh_fec);
+  mfem::ParGridFunction parent_marker_field(&parent_fes),
+      submesh_marker_field(&submesh_fes);
+  auto transfer =
+      mfem::ParSubMesh::CreateTransferMap(parent_marker_field, submesh_marker_field);
+  mfem::Array<int> attr4, parent_essential, direct_essential;
+  attr4.Append(4);
+  mfem::Array<int> parent_marker, submesh_marker;
+  mesh::AttrToMarker(par_mesh->bdr_attributes.Max(), attr4, parent_marker);
+  mesh::AttrToMarker(submesh.bdr_attributes.Max(), attr4, submesh_marker);
+  parent_fes.GetEssentialTrueDofs(parent_marker, parent_essential);
+  submesh_fes.GetEssentialTrueDofs(submesh_marker, direct_essential);
+  mfem::Vector parent_true(parent_fes.GetTrueVSize());
+  parent_true = 0.0;
+  for (int tdof : parent_essential)
+  {
+    parent_true[tdof] = 1.0;
+  }
+  parent_marker_field.SetFromTrueDofs(parent_true);
+  transfer.Transfer(parent_marker_field, submesh_marker_field);
+  mfem::Vector transferred_true(submesh_fes.GetTrueVSize());
+  submesh_marker_field.ParallelProject(transferred_true);
+  int transferred_essential = 0;
+  for (int i = 0; i < transferred_true.Size(); i++)
+  {
+    transferred_essential += transferred_true[i] != 0.0;
+  }
+  // Parent-marker transfer over-constrains two interior H1 DoFs on this NC surface.
+  // Essential DoFs must instead be extracted directly from the remapped submesh boundary.
+  int direct_essential_count = direct_essential.Size();
+  Mpi::GlobalSum(1, &direct_essential_count, submesh.GetComm());
+  Mpi::GlobalSum(1, &transferred_essential, submesh.GetComm());
+  CHECK(direct_essential_count == 6);
+  CHECK(transferred_essential == 8);
+}
+
 TEST_CASE("Tangent frame from SubMesh extraction", "[geodata][Serial]")
 {
   // Build a simple 3D mesh, extract each face with mfem::SubMesh::CreateFromBoundary,
