@@ -68,13 +68,22 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     meshio.write(path/'seed.mesh',inputs,file_format='medit')
     np.savetxt(path/'pins.txt',pins+1,fmt='%d')
     fixed=np.isin(triangle_refs,list(cut_surface_attributes(semantic_contract)))
+    diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1)
+        for i,j in ((0,1),(1,2),(2,0))]),axis=0)
     if protect_surface>0:
         distance=np.full(len(mesh.points),np.inf)
         for segment in segments:distance=np.minimum(distance,segment_distances(mesh.points,segment)[0])
-        diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1) for i,j in ((0,1),(1,2),(2,0))]),axis=0)
         # Distance is 1-Lipschitz. This lower bound protects every triangle that
-        # could intersect the band, rather than relying only on its centroid.
+        # could intersect the anisotropic edge band, rather than relying only on
+        # its centroid.
         fixed |= distance[triangles].min(axis=1)-diameter <= protect_surface
+    corner_distance=np.full(len(mesh.points),np.inf)
+    for corner in semantic_corners:
+        corner_distance=np.minimum(corner_distance,np.linalg.norm(mesh.points-corner,axis=1))
+    # Local semantic isotropy requires surface remeshing too.  Permit inserted
+    # vertices only in the same tangentially-scaled balls used by the SPD
+    # metric; matching and edge-band triangles remain frozen everywhere else.
+    fixed &= corner_distance[triangles].min(axis=1)-diameter > tangent
     np.savetxt(path/'fixed-triangles.txt',np.flatnonzero(fixed)+1,fmt='%d')
     with (path/'metric.f64').open('wb') as f:
         for start in range(0,len(mesh.points),100000):
