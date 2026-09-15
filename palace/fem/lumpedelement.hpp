@@ -49,6 +49,7 @@ public:
 
   double GetGeometryLength() const override { return l; }
   double GetGeometryWidth() const override { return w; }
+  const mfem::Vector &GetDirection() const { return direction; }
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeCoefficient(double coeff = 1.0) const override;
@@ -72,6 +73,8 @@ public:
 
   double GetGeometryLength() const override { return std::log(r_outer / r_inner); }
   double GetGeometryWidth() const override { return 2.0 * M_PI; }
+  double GetDirection() const { return direction; }
+  const mfem::Vector &GetOrigin() const { return origin; }
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeCoefficient(double coeff = 1.0) const override;

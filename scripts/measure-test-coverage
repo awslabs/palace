@@ -182,14 +182,15 @@ detect_compiler_type() {
     fi
 }
 
-# Return "--ignore-errors inconsistent" if the installed lcov supports it (>= 2.0),
-# or empty string otherwise. The "inconsistent" error type was added in lcov 2.0.
+# Return coverage inconsistency flags for lcov >= 2.0, or empty string otherwise.
+# Catch2 template-test macros can produce conflicting function end lines, which
+# lcov 2.0 reports as "mismatch". The "inconsistent" error type was added in lcov 2.0.
 lcov_ignore_inconsistent() {
     local version
     version=$(lcov --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
     local major="${version%%.*}"
     if [[ "$major" -ge 2 ]] 2>/dev/null; then
-        echo "--ignore-errors inconsistent"
+        echo "--ignore-errors inconsistent,mismatch"
     fi
 }
 
@@ -293,7 +294,7 @@ generate_gcc_coverage() {
     # compiled functions. This can lead to minor inconsistencies in the coverage
     # files. These are not fatal, and ignoring them still produces good reports.
     # For this reason, most `lcov` commands have the `--ignore-errors
-    # inconsistent` flag (lcov >= 2.0).
+    # inconsistent,mismatch` flag (lcov >= 2.0).
 
     lcov --capture --directory . $(lcov_ignore_inconsistent) --output-file "$BUILD_DIR/coverage.info"
 }

@@ -1337,6 +1337,7 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   {
     max_size = DefaultEigenSubspaceSize(n);
   }
+  n_post = std::clamp(n_post, 0, n);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "

@@ -6,6 +6,8 @@
 #include <limits>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -148,6 +150,90 @@ TEST_CASE("SpaceOperator retains coarse support while omitting fine exact zeros"
                     [](double value) { return value != 0.0; }));
   CHECK(zero_data.fine_suboperators == 0);
   CHECK(tiny_data.fine_suboperators > 0);
+}
+
+TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators",
+          "[spaceoperator][Serial][Parallel]")
+{
+  const auto element = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const auto comm = Mpi::World();
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, element);
+  serial_mesh.SetCurvature(2);
+  serial_mesh.Transform(
+      [](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        y(0) += 0.05 * x(1) * x(2);
+        y(1) += 0.03 * x(0) * x(0);
+      });
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 3;
+  solver.pa_order_threshold = 2;
+  solver.linear.mg_max_levels = 3;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pc_mat_shifted = 0;
+  BilinearForm::pa_order_threshold = solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.mu_r.s = {1.0, 2.0, 3.0};
+  material.epsilon_r.s = {2.0, 4.0, 5.0};
+  config::DomainData domains;
+  domains.attributes = {1};
+  domains.materials = {material};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::EIGENMODE, units, mesh);
+  auto pc = space_op.GetPreconditionerMatrix<Operator>(1.5, 0.0, 2.0, 0.0);
+  const auto *mg = dynamic_cast<const MultigridOperator *>(pc.get());
+  REQUIRE(mg);
+  REQUIRE(mg->GetNumLevels() == 3);
+
+  const auto &mat = space_op.GetMaterialOp();
+  MaterialPropertyCoefficient curl(mat.GetAttributeToMaterial(),
+                                   mat.GetCurlCurlInvPermeability(), 1.5);
+  MaterialPropertyCoefficient mass(mat.GetAttributeToMaterial(), mat.GetPermittivityAbs(),
+                                   2.0);
+  for (bool auxiliary : {false, true})
+  {
+    const auto &spaces = auxiliary ? space_op.GetH1Spaces() : space_op.GetNDSpaces();
+    for (std::size_t l = 0; l < mg->GetNumLevels(); l++)
+    {
+      const auto &space = spaces.GetFESpaceAtLevel(l);
+      // Independently assemble each level without cached quadrature data. This also
+      // checks reuse of the cached tensors between polynomial levels.
+      BilinearForm form(space);
+      if (auxiliary)
+      {
+        form.AddDomainIntegrator<DiffusionIntegrator>(mass);
+      }
+      else
+      {
+        form.AddDomainIntegrator<CurlCurlMassIntegrator>(curl, mass);
+      }
+      ParOperator reference(form.Assemble(false), space);
+      const auto &actual =
+          auxiliary ? mg->GetAuxiliaryOperatorAtLevel(l) : mg->GetOperatorAtLevel(l);
+      Vector x(space.GetTrueVSize()), expected(x.Size()), result(x.Size());
+      for (int seed : {42, 314159})
+      {
+        x.Randomize(seed + Mpi::Rank(comm));
+        reference.Mult(x, expected);
+        actual.Mult(x, result);
+        result.Add(-1.0, expected);
+        CHECK_THAT(linalg::Norml2(comm, result) / linalg::Norml2(comm, expected),
+                   Catch::Matchers::WithinAbs(0.0, 2.0e-13));
+      }
+    }
+  }
 }
 
 }  // namespace palace

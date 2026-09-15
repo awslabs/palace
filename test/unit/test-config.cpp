@@ -751,6 +751,13 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
+{
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 2}}).n_post == 2);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", 3}}).n_post == 2);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", -1}}).n_post == 0);
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   auto MixedConfig = []()
