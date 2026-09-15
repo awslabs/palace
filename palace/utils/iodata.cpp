@@ -509,6 +509,11 @@ void IoData::CheckConfiguration()
                   solver.linear.krylov_solver == KrylovSolver::GMRES ||
                   solver.linear.krylov_solver == KrylovSolver::FGMRES,
               "The nonsymmetric RAS preconditioner requires GMRES or FGMRES!");
+  MFEM_VERIFY(solver.linear.type != LinearSolver::BDDC ||
+                  problem.type == ProblemType::ELECTROSTATIC ||
+                  problem.type == ProblemType::MAGNETOSTATIC,
+              "The BDDC preconditioner currently supports only electrostatic and "
+              "magnetostatic problems!");
   if (solver.linear.max_size < 0)
   {
     solver.linear.max_size = solver.linear.max_it;
@@ -648,6 +653,11 @@ void IoData::CheckConfiguration()
                              << " eigen solver ARPACK requested but Palace was not built "
                                 "with ARPACK support!");
   }
+#endif
+#if !defined(PALACE_WITH_SLEPC)
+  MFEM_VERIFY(solver.linear.type != LinearSolver::BDDC,
+              "Linear solver BDDC requested but Palace was not built with PETSc/SLEPc "
+              "support!");
 #endif
 #if !defined(MFEM_USE_SUPERLU)
   MFEM_VERIFY(solver.linear.type != LinearSolver::SUPERLU,

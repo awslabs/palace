@@ -2193,6 +2193,10 @@
           "description": "Use Hypre's one-level restricted additive Schwarz domain decomposition preconditioner with ILU(k) subdomain solves. RAS requires GMRES or FGMRES and is currently available only for CPU execution."
         },
         {
+          "const": "BDDC",
+          "description": "Use PETSc's two-level balancing domain decomposition by constraints (BDDC) preconditioner. Requires a Palace build with PETSc/SLEPc support, a conforming mesh, real-valued problems (electrostatic or magnetostatic), and CPU execution."
+        },
+        {
           "const": "MUMPS",
           "description": "Use the MUMPS sparse direct solver."
         },

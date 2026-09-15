@@ -7,6 +7,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/bddc.hpp"
 #include "linalg/cudss.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
@@ -158,6 +159,26 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::RAS:
       pc = MakeWrapperSolver<OperType, RasSolver>(linear, linear.ras_fill_level, print);
+      break;
+    case LinearSolver::BDDC:
+#if defined(PALACE_WITH_SLEPC)
+      if constexpr (std::is_same<OperType, Operator>::value)
+      {
+        // BDDC consumes the unassembled subdomain operator directly, so it is not wrapped
+        // in MfemWrapperSolver. The auxiliary space supplies the discrete gradient for
+        // H(curl) problems.
+        pc = std::make_unique<BddcSolver>(
+            fespaces.GetFESpaceAtLevel(0),
+            aux_fespaces ? &aux_fespaces->GetFESpaceAtLevel(0) : nullptr, print);
+      }
+      else
+      {
+        MFEM_ABORT("BDDC does not yet support complex-valued problems, use another "
+                   "preconditioner for driven or eigenmode simulations!");
+      }
+#else
+      MFEM_ABORT("BDDC requires Palace to be built with PETSc/SLEPc support!");
+#endif
       break;
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)

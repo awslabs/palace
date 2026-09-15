@@ -121,6 +121,7 @@ enum class LinearSolver : char
   AMS,
   BOOMER_AMG,
   RAS,
+  BDDC,
   MUMPS,
   SUPERLU,
   STRUMPACK,
