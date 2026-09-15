@@ -12,6 +12,7 @@ from restore_planar_metric_mesh import (
     DISPLACEMENT_ROUNDOFF_TOLERANCE,
     _bounded_offset,
     _movement_basis,
+    _pinned_vertices,
     _quality_repair,
     _tetra_quality,
     _transactional_quality_commit,
@@ -30,7 +31,7 @@ def _single_tetrahedron_repair_case(apex_height):
         "SemanticContract": {
             "CutSurfaceRoles": ["matching-surface"],
             "BoundaryLabels": [{"Role": "physical-sidewall", "Attribute": 6001}]},
-        "TruePhysicalCorners": [[0., 0., 0.]]}
+        "TruePhysicalCorners": [[0., 0., 0.]], "CornerIsotropyRadius": .1}
     return points, tetrahedra, supports, node_supports, recipe
 
 
@@ -110,7 +111,8 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
                     {"Role": "physical-sidewall", "Attribute": 6001}
                 ]
             },
-            "TruePhysicalCorners": [[0., 0., 0.]]
+            "TruePhysicalCorners": [[0., 0., 0.]],
+            "CornerIsotropyRadius": .1
         }
         before_scaled, before_aspect, _ = _tetra_quality(points, tetrahedra)
         report = _quality_repair(points, tetrahedra, node_supports, supports,
@@ -166,7 +168,8 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
                     {"Role": "physical-sidewall", "Attribute": 6001}
                 ]
             },
-            "TruePhysicalCorners": [[0., 0., 0.]]
+            "TruePhysicalCorners": [[0., 0., 0.]],
+            "CornerIsotropyRadius": .1
         }
         maximum = .01875
 
@@ -247,6 +250,7 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
             report = _quality_repair(points, tetrahedra, node_supports, supports,
                                      recipe, .01, 4., .01875)
         self.assertEqual(report["RejectedCornerRepairs"], 1)
+        self.assertEqual(report["CornerRepairOutcomes"][0]["Outcome"], "rejected")
         self.assertEqual(report["CornerAspectsBefore"], [before])
         self.assertEqual(report["CornerAspectsAfter"], [before])
         self.assertEqual(report["QualityRepairVertices"], 0)
@@ -254,7 +258,104 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
         unpatched = _quality_repair(points, tetrahedra, node_supports, supports,
                                     recipe, .01, 4., .01875)
         self.assertEqual(unpatched["RejectedCornerRepairs"], 0)
+        self.assertEqual(unpatched["CornerRepairOutcomes"][0]["Outcome"], "target-reached")
         self.assertLessEqual(unpatched["CornerAspectsAfter"][0], 3.8 * (1. + 1e-6))
+
+    @staticmethod
+    def _nudging_least_squares(parameter_index, step, calls=1):
+        """Solver stand-in: nudge one parameter on the first `calls` passes, then stall."""
+        remaining = [calls]
+        def nudge(residual, initial, **_):
+            value = np.asarray(initial, dtype=float).copy()
+            if remaining[0] > 0:
+                remaining[0] -= 1
+                value[parameter_index] += step
+            return SimpleNamespace(x=value)
+        return nudge
+
+    def test_corner_result_within_gate_but_above_target_is_committed_and_reported(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0134)
+        before = float(_tetra_quality(points, tetrahedra)[1].max())
+        self.assertGreater(before, 4.)
+        # Active vertices are [1, 2, 3] with 2 + 2 + 3 parameters; index 5 is the
+        # apex y offset.  One nudge lands in (3.8, 4.0]: gate satisfied, target missed.
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares",
+                               self._nudging_least_squares(5, .0006 / .01875)):
+            report = _quality_repair(points, tetrahedra, node_supports, supports,
+                                     recipe, .01, 4., .01875)
+        after = report["CornerAspectsAfter"][0]
+        self.assertGreater(after, 3.8); self.assertLessEqual(after, 4.)
+        self.assertEqual(report["CornerRepairOutcomes"][0]["Outcome"],
+                         "target-missed-gate-satisfied")
+        self.assertEqual(report["CornerRepairsTargetMissedGateSatisfied"], 1)
+        self.assertEqual(report["RejectedCornerRepairs"], 0)
+
+    def test_corner_result_above_gate_is_rejected_and_the_final_gate_reports(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.01)
+        original = points.copy()
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares",
+                               self._nudging_least_squares(5, .0005 / .01875)):
+            with self.assertRaisesRegex(ValueError, "Semantic-corner quality repair failed"):
+                _quality_repair(points, tetrahedra, node_supports, supports,
+                                recipe, .01, 4., .01875)
+        np.testing.assert_array_equal(points, original)
+
+    def test_corner_passes_alternate_one_ring_and_two_ring_inside_the_corner_ball(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0132)
+        points = np.vstack((points, [[.03, .03, .03]]))
+        tetrahedra = np.vstack((tetrahedra, [[1, 2, 3, 4]]))
+        original = points.copy()
+        parameter_counts = []
+
+        def nudge(residual, initial, **_):
+            parameter_counts.append(len(initial))
+            value = np.asarray(initial, dtype=float).copy()
+            value[5] += .0002 / .01875  # apex y offset; same slot in both rings
+            return SimpleNamespace(x=value)
+
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares", nudge):
+            report = _quality_repair(points, tetrahedra, node_supports, supports,
+                                     recipe, .01, 4., .01875)
+        # One ring: vertices 1, 2 (2 dof each) and 3 (3 dof); two ring adds vertex 4.
+        self.assertEqual(parameter_counts, [7, 10, 7, 10])
+        outcome = report["CornerRepairOutcomes"][0]
+        self.assertEqual(outcome["Passes"], 4)
+        self.assertEqual(outcome["Outcome"], "target-missed-gate-satisfied")
+        self.assertLessEqual(report["CornerAspectsAfter"][0], 4.)
+        self.assertLess(report["CornerAspectsAfter"][0], report["CornerAspectsBefore"][0])
+        np.testing.assert_allclose(points[3, 1], original[3, 1] + 4 * .0002)
+        # Vertex 4 at |x| = 0.052 falls outside a 0.051 ball; vertices 1, 2 (0.05) stay.
+        out_of_ball = recipe | {"CornerIsotropyRadius": .051}
+        parameter_counts.clear(); points[:] = original
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares", nudge):
+            _quality_repair(points, tetrahedra, node_supports, supports,
+                            out_of_ball, .01, 4., .01875)
+        self.assertEqual(parameter_counts, [7, 7, 7, 7])
+
+    def test_pinned_vertices_are_matched_natively_and_never_move(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0002)
+        pinned = recipe | {"PinnedVertices": [{"Point": points[3].tolist(),
+                                               "Kind": "reference-turn"}]}
+        self.assertEqual(_pinned_vertices(points, pinned), frozenset({3}))
+        with self.assertRaisesRegex(ValueError, "Pinned vertex is absent"):
+            _pinned_vertices(points, recipe | {"PinnedVertices": [
+                {"Point": [.5, .5, .5], "Kind": "reference-turn"}]})
+        original = points.copy()
+        try:
+            report = _quality_repair(points, tetrahedra, node_supports, supports, pinned,
+                                     .01, 4., .01875, pinned_nodes=frozenset({3}))
+            self.assertEqual(report["PinnedVerticesFixed"], 1)
+        except ValueError as error:
+            self.assertIn("Semantic-corner quality repair failed", str(error))
+        np.testing.assert_array_equal(points[3], original[3])
+        with self.assertRaisesRegex(ValueError, "corner isotropy radius"):
+            _quality_repair(points, tetrahedra, node_supports, supports,
+                            {k: v for k, v in recipe.items() if k != "CornerIsotropyRadius"},
+                            .01, 4., .01875)
 
 
 if __name__ == "__main__":

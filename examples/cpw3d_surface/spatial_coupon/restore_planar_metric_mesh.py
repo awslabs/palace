@@ -12,6 +12,7 @@ from pathlib import Path
 import meshio
 import numpy as np
 from scipy.optimize import least_squares
+from scipy.spatial import cKDTree
 
 from transform_coupon_source_contract import validate_rigid_transform
 
@@ -75,25 +76,42 @@ def _transactional_quality_commit(points,candidate,active,tetrahedra,incident,fl
     return True,degradation,float(determinant.min())
 
 
+def _pinned_vertices(points,recipe,tolerance=1e-10):
+    """Vertices the adapter kept as required vertices, matched on native coordinates."""
+    pinned=np.asarray([item['Point'] for item in recipe.get('PinnedVertices',[])],
+                      dtype=float).reshape(-1,3)
+    if not len(pinned):return frozenset()
+    distance,index=cKDTree(points).query(pinned)
+    if np.any(distance>tolerance):raise ValueError('Pinned vertex is absent after adaptation')
+    return frozenset(map(int,index))
+
+
 def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scaled,
-                    maximum_corner_aspect,maximum_displacement):
+                    maximum_corner_aspect,maximum_displacement,pinned_nodes=frozenset()):
     """Constrained post-adaptation repair on frozen planar CAD supports.
 
     Interior vertices may move freely within a bounded ball. Surface vertices
     remain on their exact support, ridge vertices remain on support
-    intersections, and matching-surface vertices are fixed. Semantic-corner
-    neighborhoods are selected only from the frozen contract.
+    intersections, and matching-surface and pinned vertices are fixed.
+    Semantic-corner neighborhoods are selected only from the frozen contract and
+    repaired in alternating one-ring/two-ring passes inside the corner ball; a
+    multi-pass result is committed as one transaction only when it satisfies the
+    displacement bound, the incident floors and the corner-aspect gate.
     """
     if not (np.isfinite(minimum_scaled) and 0<minimum_scaled<1 and
             np.isfinite(maximum_corner_aspect) and maximum_corner_aspect>1 and
             np.isfinite(maximum_displacement) and maximum_displacement>0):
         raise ValueError('Invalid post-adaptation quality controls')
+    corner_radius=recipe.get('CornerIsotropyRadius')
+    if not isinstance(corner_radius,(int,float)) or not np.isfinite(corner_radius) or corner_radius<=0:
+        raise ValueError('Restoration recipe lacks a valid corner isotropy radius')
     semantic=recipe['SemanticContract']
     cut_roles=set(semantic['CutSurfaceRoles'])
     cut_attributes={item['Attribute'] for item in semantic['BoundaryLabels']
                     if item['Role'] in cut_roles}
     fixed_nodes={node for node,ids in node_supports.items()
                  if any(supports[i]['Attribute'] in cut_attributes for i in ids)}
+    fixed_nodes|=set(pinned_nodes)
 
     original=points.copy();largest_step=0.;corner_before=[];corner_after=[]
     quality_target=2.*minimum_scaled
@@ -105,26 +123,28 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     global_floor=np.minimum(original_scaled,quality_target)
     if np.any(original_determinant<=0):
         raise ValueError('Quality repair received an inverted tetrahedron')
-    rejected_components=0;rejected_corners=0
+    rejected_components=0;rejected_corners=0;target_missed_gate_satisfied=0
 
-    def optimize(cells,active,objective):
-        nonlocal largest_step,rejected_components,rejected_corners
+    def movable(active):
         active=np.asarray(active,dtype=int)
         bases=[_movement_basis(int(node),node_supports,supports,fixed_nodes)
                for node in active]
         selected=[i for i,value in enumerate(bases) if value.shape[1]]
-        active=active[selected];bases=[bases[i] for i in selected]
+        return active[selected],[bases[i] for i in selected]
+
+    def solve(base,cells,active,objective):
+        """Bounded least-squares move of the active vertices from a base state."""
+        active,bases=movable(active)
         if not len(active):raise ValueError('Quality repair has no movable vertices')
         offsets=np.cumsum([0]+[value.shape[1] for value in bases])
         incident=np.flatnonzero(np.any(np.isin(tetrahedra,active),axis=1))
         # Floors come from the original global mesh, not a preceding pass.
         floor=global_floor[incident]
-        local=points[active].copy()
         initial=np.concatenate([
-            directions.T@(local[i]-original[node])/maximum_displacement
-            for i,(node,directions) in enumerate(zip(active,bases))])
+            directions.T@(base[node]-original[node])/maximum_displacement
+            for node,directions in zip(active,bases)])
         def updated(value):
-            candidate=points.copy()
+            candidate=base.copy()
             for i,(node,directions) in enumerate(zip(active,bases)):
                 offset=_bounded_offset(
                     directions,value[offsets[i]:offsets[i+1]],maximum_displacement)
@@ -144,48 +164,70 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             return np.concatenate(result)
         result=least_squares(residual,initial,bounds=(-.75,.75),max_nfev=3000,
                              ftol=1e-11,xtol=1e-11,gtol=1e-11)
-        candidate=updated(result.x)
-        step=np.linalg.norm(candidate[active]-local,axis=1)
-        cumulative=np.linalg.norm(candidate[active]-original[active],axis=1)
+        return updated(result.x)
+
+    def commit(candidate,cells,objective):
+        """Commit a candidate only within the bound, the floors and the corner gate."""
+        nonlocal largest_step,rejected_components,rejected_corners,target_missed_gate_satisfied
+        moved=np.flatnonzero(np.any(candidate!=points,axis=1))
         def rejected():
             # The shared point array is unchanged. Keep searching other
             # components; strict global gates remain final.
-            selected_scaled,selected_aspects,_=_tetra_quality(points,tetrahedra[cells])
-            return float(selected_scaled.min()),float(selected_aspects.max()),False
+            nonlocal rejected_components,rejected_corners
+            if objective=='corner':rejected_corners+=1
+            else:rejected_components+=1
+            return False
+        if not len(moved):return rejected()
+        cumulative=np.linalg.norm(candidate[moved]-original[moved],axis=1)
         if not _within_displacement_bound(cumulative,maximum_displacement):
-            rejected_components+=1
             return rejected()
         if objective=='corner':
-            # A corner result that still misses the target is not a partial
-            # improvement to keep; the corner remains at its original state.
+            # The corner-aspect gate, not the optimizer target, decides whether a
+            # partial improvement may stand; 3.8 remains the objective margin.
             _,candidate_aspects,_=_tetra_quality(candidate,tetrahedra[cells])
+            if float(candidate_aspects.max())>maximum_corner_aspect:return rejected()
             if float(candidate_aspects.max())>corner_target+corner_target_tolerance:
-                rejected_corners+=1
-                return rejected()
+                target_missed_gate_satisfied+=1
+        incident=np.flatnonzero(np.any(np.isin(tetrahedra,moved),axis=1))
+        step=np.linalg.norm(candidate[moved]-points[moved],axis=1)
         accepted,_,_=_transactional_quality_commit(
-            points,candidate,active,tetrahedra,incident,floor)
-        if not accepted:
-            rejected_components+=1
-            return rejected()
+            points,candidate,moved,tetrahedra,incident,global_floor[incident])
+        if not accepted:return rejected()
         largest_step=max(largest_step,float(step.max()))
-        selected_scaled,selected_aspects,_=_tetra_quality(points,tetrahedra[cells])
-        return float(selected_scaled.min()),float(selected_aspects.max()),True
+        return True
 
     corners=np.asarray(recipe['TruePhysicalCorners'],dtype=float).reshape(-1,3)
-    corner_cells=[]
+    corner_cells=[];corner_outcomes=[]
     for corner in corners:
         incident=np.flatnonzero(np.any(
             np.linalg.norm(points[tetrahedra]-corner,axis=2)<=1e-10,axis=1))
         corner_cells.append(incident)
         if not len(incident):raise ValueError('Semantic corner is absent during quality repair')
-        before=_tetra_quality(points,tetrahedra[incident])[1].max()
-        corner_before.append(float(before))
-        if before>corner_target:
-            vertices=np.unique(tetrahedra[incident])
-            vertices=vertices[np.linalg.norm(points[vertices]-corner,axis=1)>1e-10]
-            _,after,_=optimize(incident,vertices,'corner')
-        else:after=float(before)
-        corner_after.append(float(after))
+        before=float(_tetra_quality(points,tetrahedra[incident])[1].max())
+        corner_before.append(before)
+        if before<=corner_target:
+            corner_outcomes.append({'Passes':0,'Outcome':'target-satisfied'});continue
+        one_ring=np.unique(tetrahedra[incident])
+        one_ring=one_ring[np.linalg.norm(points[one_ring]-corner,axis=1)>1e-10]
+        two_ring=np.unique(tetrahedra[np.any(np.isin(tetrahedra,one_ring),axis=1)])
+        two_ring=two_ring[(np.linalg.norm(points[two_ring]-corner,axis=1)>1e-10)&
+                          (np.linalg.norm(points[two_ring]-corner,axis=1)<=corner_radius)]
+        # Alternate one-ring and two-ring passes on a chained candidate; the
+        # candidate is committed once, so no intermediate state can stand alone.
+        candidate=points.copy();achieved=before;passes=0
+        for active in (one_ring,two_ring,one_ring,two_ring):
+            candidate=solve(candidate,incident,active,'corner');passes+=1
+            improved=float(_tetra_quality(candidate,tetrahedra[incident])[1].max())
+            converged=improved<=corner_target+corner_target_tolerance
+            stalled=improved>=achieved-corner_target_tolerance
+            achieved=min(achieved,improved)
+            if converged or stalled:break
+        accepted=commit(candidate,incident,'corner')
+        after=float(_tetra_quality(points,tetrahedra[incident])[1].max())
+        corner_outcomes.append({'Passes':passes,'AchievedAspect':achieved,
+            'Outcome':('rejected' if not accepted else
+                       'target-reached' if after<=corner_target+corner_target_tolerance else
+                       'target-missed-gate-satisfied')})
 
     scaled,_,_= _tetra_quality(points,tetrahedra)
     bad=set(map(int,np.flatnonzero(scaled<quality_target)))
@@ -201,7 +243,8 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
                     vertices.update(map(int,tetrahedra[cell]));changed=True
         components.append(sorted(component))
     for component in components:
-        optimize(np.asarray(component,dtype=int),np.unique(tetrahedra[component]),'scaled')
+        cells=np.asarray(component,dtype=int)
+        commit(solve(points,cells,np.unique(tetrahedra[component]),'scaled'),cells,'scaled')
     final_scaled,_,final_determinant=_tetra_quality(points,tetrahedra)
     corner_after=[float(_tetra_quality(points,tetrahedra[incident])[1].max())
                   for incident in corner_cells]
@@ -222,10 +265,16 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             support_error=max(support_error,abs(float(
                 np.dot(points[node],item['Normal'])-item['Offset'])))
     if support_error>1e-10:raise ValueError('Quality repair moved a protected support')
+    fixed=np.fromiter(fixed_nodes,dtype=int,count=len(fixed_nodes))
+    if fixed.size and np.any(points[fixed]!=original[fixed]):
+        raise ValueError('Quality repair moved a fixed or pinned vertex')
     return {'QualityRepairVertices':int(np.sum(final_displacement>0)),
             'QualityRepairComponents':len(components),
             'RejectedQualityRepairComponents':rejected_components,
             'RejectedCornerRepairs':rejected_corners,
+            'CornerRepairsTargetMissedGateSatisfied':target_missed_gate_satisfied,
+            'CornerRepairOutcomes':corner_outcomes,
+            'PinnedVerticesFixed':len(pinned_nodes),
             'MaximumQualityStepDisplacementUm':largest_step,
             'MaximumFinalQualityDisplacementUm':maximum_final,
             'QualityDisplacementBoundUm':maximum_displacement,
@@ -266,9 +315,12 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
     if any(value is not None for value in controls):
         if any(value is None for value in controls):
             raise ValueError('All post-adaptation quality controls are required together')
+        # Pins are matched on the native adapted coordinates, which the adapter
+        # preserved exactly; projection may still correct them onto their supports.
         quality=_quality_repair(points,tetrahedra,node_supports,supports,recipe,
                                 minimum_scaled,maximum_corner_aspect,
-                                maximum_quality_displacement)
+                                maximum_quality_displacement,
+                                pinned_nodes=_pinned_vertices(mesh.points,recipe))
     cells=[];attributes=[]
     for block,ref in zip(mesh.cells,refs):
         if block.type not in ('tetra','triangle'):continue
@@ -311,6 +363,8 @@ def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None
         if name in local_recipe:
             points=np.asarray(local_recipe[name],dtype=float).reshape(-1,3)
             local_recipe[name]=((points-translation)@rotation).tolist()
+    for item in local_recipe.get('PinnedVertices',[]):
+        item['Point']=((np.asarray(item['Point'],dtype=float)-translation)@rotation).tolist()
     if 'PhysicalSegments' in local_recipe:
         segments=np.asarray(local_recipe['PhysicalSegments'],dtype=float).reshape(-1,2,3)
         local_recipe['PhysicalSegments']=((segments-translation)@rotation).tolist()

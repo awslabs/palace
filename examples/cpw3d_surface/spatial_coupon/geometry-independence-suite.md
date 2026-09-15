@@ -160,10 +160,17 @@ semantic-corner set, the protected supports, or the ownership/covariance audits
 as geometry. Label restoration compares repair displacements to the bound with a
 roundoff-only relative allowance (`DISPLACEMENT_ROUNDOFF_TOLERANCE`, 1e-12) so
 a vertex clamped onto the displacement ball is not misreported as an overshoot;
-any true overshoot and any semantic-corner result that still misses the corner
-target are rejected components (`RejectedQualityRepairComponents`,
-`RejectedCornerRepairs`), never partial commits. The final scaled-Jacobian,
-corner-aspect and displacement gates are unchanged.
+a true overshoot is a rejected component, never an exception. Semantic corners
+are repaired in alternating one-ring/two-ring passes over the non-fixed
+vertices inside the recipe's corner ball (`CornerIsotropyRadius`), chained on
+one candidate that is committed as a single transaction only when it satisfies
+the cumulative displacement bound, the original incident floors and the
+`MaximumCornerAspect` gate; 0.95 x gate stays the optimizer objective, results
+in (target, gate] are committed and counted as
+`CornerRepairsTargetMissedGateSatisfied`, results above the gate are
+`RejectedCornerRepairs`. Pinned vertices (`PinnedVertices`, matched on the
+native adapted coordinates) and matching-surface vertices never move. The
+final scaled-Jacobian, corner-aspect and displacement gates are unchanged.
 
 Native adaptation must be launched through `run_native_mmg_adaptation.py`.
 There is no caller-provided hmax: the wrapper reads
