@@ -40,13 +40,26 @@ def _base(kind, case, variant, mesh, input_hashes, transform, command):
             "Producer": _producer()}
 
 
-def _global_diagonal_bands(mesh, physical_segments):
+def _global_diagonal_bands(mesh, physical_segments, normal_size):
+    """Find long, narrow short-edge bands on one planar labeled support.
+
+    A connected set spanning several orthogonal supports is not a geometric
+    band: its bounding-box diagonal has no source meaning.  Components are
+    therefore formed independently on the exact labeled planes.  The short
+    scale is also bounded by twice the audited transverse target, so ordinary
+    coarse-surface triangulation cannot masquerade as propagated trace sizing.
+    """
     triangles, labels = blocks(mesh, "triangle")
     xyz = mesh.points[triangles]
     normals = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
     normals /= np.linalg.norm(normals, axis=1)[:, None]
-    owners_by_edge = {}
-    all_lengths = []
+    pivot = np.argmax(abs(normals), axis=1)
+    normals *= np.sign(normals[np.arange(len(normals)), pivot])[:, None]
+    planes = np.round(np.column_stack(
+        (normals, np.einsum("ij,ij->i", normals, xyz[:, 0]))), 8)
+    planes[planes == 0] = 0.0
+    _, patch = np.unique(np.column_stack((labels, planes)), axis=0, return_inverse=True)
+    owners_by_edge, all_lengths = {}, []
     for owner, triangle in enumerate(triangles):
         for a, b in ((triangle[0], triangle[1]), (triangle[1], triangle[2]),
                      (triangle[2], triangle[0])):
@@ -54,48 +67,64 @@ def _global_diagonal_bands(mesh, physical_segments):
             owners_by_edge.setdefault(edge, []).append(owner)
             all_lengths.append(np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]]))
     median = float(np.median(all_lengths))
-    short = []
+    threshold = min(.6 * median, 2.0 * float(normal_size))
+    short_by_patch = {}
     for edge, owners in owners_by_edge.items():
         length = np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]])
-        if (len(owners) == 2 and labels[owners[0]] == labels[owners[1]] and
-                abs(np.dot(normals[owners[0]], normals[owners[1]])) > 1 - 1e-10 and
-                length < .6 * median):
-            short.append(edge)
-    adjacency = {}
-    for first, last in short:
-        adjacency.setdefault(first, set()).add(last)
-        adjacency.setdefault(last, set()).add(first)
+        if len(owners) == 2 and patch[owners[0]] == patch[owners[1]] and length < threshold:
+            short_by_patch.setdefault(int(patch[owners[0]]), []).append(edge)
     segments = np.asarray(physical_segments, dtype=float).reshape(-1, 2, 3)
-    bands = 0
-    visited = set()
-    surface_diameter = max(float(np.linalg.norm(np.ptp(mesh.points[triangles], axis=(0, 1)))),
-                           1e-300)
-    for start in adjacency:
-        if start in visited:
-            continue
-        stack = [start]; component = set()
-        while stack:
-            vertex = stack.pop()
-            if vertex in component:
+    bands, components = 0, []
+    for patch_id, short in short_by_patch.items():
+        adjacency = {}
+        for first, last in short:
+            adjacency.setdefault(first, set()).add(last)
+            adjacency.setdefault(last, set()).add(first)
+        patch_vertices = np.unique(triangles[patch == patch_id])
+        surface_diameter = max(float(np.linalg.norm(
+            np.ptp(mesh.points[patch_vertices], axis=0))), 1e-300)
+        visited = set()
+        for start in adjacency:
+            if start in visited:
                 continue
-            component.add(vertex); visited.add(vertex)
-            stack.extend(adjacency.get(vertex, ()))
-        points = mesh.points[list(component)]
-        span = float(np.linalg.norm(np.ptp(points, axis=0)))
-        if span <= .5 * surface_diameter:
-            continue
-        direction = points[np.argmax(np.linalg.norm(points - points[0], axis=1))] - points[0]
-        direction /= np.linalg.norm(direction)
-        aligned = False
-        for segment in segments:
-            tangent = segment[1] - segment[0]
-            tangent /= np.linalg.norm(tangent)
-            if abs(np.dot(direction, tangent)) > 1 - 1e-6:
-                aligned = True
-                break
-        bands += int(not aligned)
-    return {"GlobalDiagonalBands": bands, "ShortInternalEdges": len(short),
-            "MedianSurfaceEdgeLength": median}
+            stack = [start]; component = set()
+            while stack:
+                vertex = stack.pop()
+                if vertex in component:
+                    continue
+                component.add(vertex); visited.add(vertex)
+                stack.extend(adjacency.get(vertex, ()))
+            points = mesh.points[list(component)]
+            centered = points - points.mean(axis=0)
+            _, singular, axes = np.linalg.svd(centered, full_matrices=False)
+            projection = centered @ axes[0]
+            first, last = int(np.argmin(projection)), int(np.argmax(projection))
+            span = float(projection[last] - projection[first])
+            if span <= .5 * surface_diameter:
+                continue
+            width = float(singular[1] / math.sqrt(len(points))) if len(singular) > 1 else 0.0
+            line_like = width <= 2.0 * threshold
+            direction = axes[0]
+            alignment = 0.0
+            for segment in segments:
+                tangent = segment[1] - segment[0]
+                tangent /= np.linalg.norm(tangent)
+                alignment = max(alignment, float(abs(np.dot(direction, tangent))))
+            aligned = alignment > 1 - 1e-6
+            bands += int(line_like and not aligned)
+            owner = int(np.flatnonzero(patch == patch_id)[0])
+            components.append({
+                "Attribute": int(labels[owner]), "Plane": planes[owner].tolist(),
+                "Endpoints": [points[first].tolist(), points[last].tolist()],
+                "Span": span, "RMSWidth": width, "PhysicalSegmentAlignment": alignment,
+                "LineLike": line_like, "AlignedWithPhysicalSegment": aligned,
+                "Vertices": len(component)})
+    return {"GlobalDiagonalBands": bands,
+            "ShortInternalEdges": sum(map(len, short_by_patch.values())),
+            "MedianSurfaceEdgeLength": median, "ShortEdgeThreshold": threshold,
+            "SizeFieldEvidence": {"NormalSize": float(normal_size),
+                                  "MaximumPropagatedShortEdge": 2.0 * float(normal_size)},
+            "LongShortEdgeComponents": components}
 
 
 def _tetra_quality(mesh):
@@ -132,6 +161,37 @@ def _point_aspects(mesh, points):
     return result
 
 
+def _point_to_segments(points, segments):
+    if not len(points) or not len(segments):
+        return math.inf
+    result = 0.0
+    first, vector = segments[:, 0], segments[:, 1] - segments[:, 0]
+    denominator = np.einsum("ij,ij->i", vector, vector)
+    if np.any(denominator <= 0):
+        raise ValueError("Degenerate protected-footprint boundary segment")
+    for start in range(0, len(points), 512):
+        delta = points[start:start + 512, None] - first[None]
+        parameter = np.clip(np.einsum("ijk,jk->ij", delta, vector) / denominator, 0, 1)
+        distance = np.linalg.norm(delta - parameter[..., None] * vector, axis=2)
+        result = max(result, float(np.min(distance, axis=1).max()))
+    return result
+
+
+def _footprint_boundary_distance(left_triangles, right_triangles):
+    """Bidirectional boundary-to-segment distance for two planar PL patches."""
+    def boundary(xyz):
+        points, inverse = np.unique(xyz.reshape(-1, 3), axis=0, return_inverse=True)
+        triangles = inverse.reshape(-1, 3)
+        edges = np.sort(triangles[:, ((0, 1), (1, 2), (2, 0))].reshape(-1, 2), axis=1)
+        unique, count = np.unique(edges, axis=0, return_counts=True)
+        if np.any(count > 2):
+            raise ValueError("Nonmanifold protected planar patch")
+        return points[unique[count == 1]]
+    left, right = boundary(left_triangles), boundary(right_triangles)
+    return max(_point_to_segments(np.unique(left.reshape(-1, 3), axis=0), right),
+               _point_to_segments(np.unique(right.reshape(-1, 3), axis=0), left))
+
+
 def _protected_surface_report(reference, candidate, contract):
     before, _ = analyze(reference, contract, require_material_names=True)
     after, _ = analyze(candidate, contract, require_material_names=True)
@@ -156,8 +216,7 @@ def _protected_surface_report(reference, candidate, contract):
                 (normals, np.einsum("ij,ij->i", normals, xyz[:, 0]))), 8)
             triangle_planes[triangle_planes == 0] = 0.0
             selected = xyz[np.all(triangle_planes == np.asarray(plane), axis=1)]
-            vertices = np.unique(selected.reshape(-1, 3), axis=0)
-            result[(protected_attributes[attribute], plane)] = (float(area), vertices)
+            result[(protected_attributes[attribute], plane)] = (float(area), selected)
         return result
 
     left, right = patches(reference, before), patches(candidate, after)
@@ -167,17 +226,16 @@ def _protected_surface_report(reference, candidate, contract):
                 "MaximumSupportVertexDistance": math.inf, "PatchCount": len(right)}
     area_errors, distances, by_patch = [], [], {}
     for key in left:
-        left_area, left_vertices = left[key]
-        right_area, right_vertices = right[key]
+        left_area, left_triangles = left[key]
+        right_area, right_triangles = right[key]
         area_error = abs(right_area - left_area) / max(abs(left_area), 1e-300)
-        distance = max(
-            np.max(np.min(np.linalg.norm(left_vertices[:, None] - right_vertices, axis=2), axis=1)),
-            np.max(np.min(np.linalg.norm(right_vertices[:, None] - left_vertices, axis=2), axis=1)))
+        distance = _footprint_boundary_distance(left_triangles, right_triangles)
         area_errors.append(float(area_error)); distances.append(float(distance))
         by_patch[f"{key[0]} {' '.join(map(str, key[1]))}"] = {
             "RelativeMeasureError": float(area_error),
             "SupportVertexDistance": float(distance)}
     return {"Actual": sorted(protected_attributes.values()), "PlaneSupportsMatch": True,
+            "Comparison": "bidirectional-boundary-point-to-segment",
             "MaximumRelativeMeasureError": max(area_errors, default=0.0),
             "MaximumSupportVertexDistance": max(distances, default=0.0),
             "PatchCount": len(right), "ByPlaneSupport": by_patch}
@@ -276,7 +334,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                                      "Transverse1P90": percentiles[2][1],
                                      "Transverse2P90": percentiles[2][2]},
               "TraceDiagonal": _global_diagonal_bands(
-                  mesh, transformed_recipe["PhysicalSegments"]),
+                  mesh, transformed_recipe["PhysicalSegments"],
+                  transformed_recipe["NormalSize"]),
               "MeshQuality": _tetra_quality(mesh)}
     base["Measurements"] = actual
     base["Topology"] = report

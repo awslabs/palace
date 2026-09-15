@@ -40,6 +40,12 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         raise ValueError('Seed volume materials differ from the frozen semantic contract')
     features,pins,segments,corners=surface_features(
         mesh.points,triangles,triangle_refs,cut_surface_attributes(semantic_contract))
+    semantic_corners=np.asarray(semantic_contract['SemanticCorners'],dtype=float).reshape(-1,3)
+    # The contract corners are physical plan-view junctions.  Require them to be
+    # represented by the seed instead of silently replacing them with CAD
+    # subdivision, extrusion, or coupon-cut vertices discovered from triangles.
+    nearest=np.min(np.linalg.norm(mesh.points[:,None]-semantic_corners[None],axis=2),axis=0)
+    if np.any(nearest>1e-8):raise ValueError('Semantic corner is absent from the seed mesh')
     xyz=mesh.points[triangles]
     normals=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);normals/=np.linalg.norm(normals,axis=1)[:,None]
     pivot=np.argmax(abs(normals),axis=1);normals*=np.sign(normals[np.arange(len(normals)),pivot])[:,None]
@@ -73,7 +79,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     with (path/'metric.f64').open('wb') as f:
         for start in range(0,len(mesh.points),100000):
             metric=volume_metric(mesh.points[start:start+100000],segments,corners,normal,tangent,far,
-                                 protected_distance=protected_distance,far_growth=far_growth)
+                                 protected_distance=protected_distance,far_growth=far_growth,
+                                 isotropic_corners=semantic_corners,isotropy_radius=tangent)
             if np.any(np.linalg.eigvalsh(metric)<=0):raise ValueError('Metric is not SPD')
             # Native C API order, explicitly NOT the Medit .sol file order.
             metric[:,[0,0,0,1,1,2],[0,1,2,1,2,2]].astype('<f8').tofile(f)
@@ -81,10 +88,12 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'NormalSize':normal,'TangentialSize':tangent,'FarSize':far,
             'RadialGrowth':1.,'CornerGrowth':.25,'ProtectedDistance':protected_distance,
             'FarGrowth':far_growth,'SurfaceProtectionRadius':protect_surface,'FixedSurfaceTriangles':int(fixed.sum()),
+            'CornerIsotropyRadius':tangent,
             'MetricOrder':['m11','m12','m13','m22','m23','m33'],
             'Nodes':len(mesh.points),'Tetrahedra':len(tetrahedra),'SurfaceTriangles':len(triangles),
             'PreservedFeatureEdges':len(features),'PinnedGeometryVertices':len(pins),
-            'PhysicalSegments':segments.tolist(),'TruePhysicalCorners':corners.tolist(),
+            'PhysicalSegments':segments.tolist(),'TruePhysicalCorners':semantic_corners.tolist(),
+            'SurfaceFeatureCorners':corners.tolist(),
             'PlanarSupports':{str(10000+i):{'Attribute':int(row[0]),'Normal':row[1:4].tolist(),'Offset':float(row[4])} for i,row in enumerate(exact_planes)},
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')

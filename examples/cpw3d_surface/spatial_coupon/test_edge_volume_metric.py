@@ -46,6 +46,17 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         single=volume_metric(p,segments[:1],corners,.005,.05,.4)
         np.testing.assert_allclose(duplicate,single,rtol=1e-10,atol=1e-9)
 
+    def test_semantic_isotropy_ball_does_not_blanket_subdivisions_or_cuts(self):
+        segments=[[-1.,0,0,1,0,0]]
+        geometric_corners=[[-1.,0,0],[1.,0,0]]
+        semantic_corners=[[-1.,0,0]]
+        points=np.array([[-1.,0,0],[-.96,0,0],[0.,0,0],[.96,0,0]])
+        metric=volume_metric(points,segments,geometric_corners,.01,.1,.4,
+                             isotropic_corners=semantic_corners,isotropy_radius=.1)
+        np.testing.assert_allclose(metric[:2],np.broadcast_to(np.eye(3)/.01**2,(2,3,3)))
+        np.testing.assert_allclose(metric[2],np.diag([1/.1**2,1/.01**2,1/.01**2]))
+        np.testing.assert_allclose(metric[3],np.diag([1/.02**2,1/.01**2,1/.01**2]))
+
     def test_subdivision_is_not_a_corner_and_cut_endpoints_not_pinned(self):
         p=np.array([[-1.,0,0],[0,0,0],[1,0,0]])
         segments,corners=feature_chains(p,[[0,1],[1,2]],np.array([-1,-2,-2]),np.array([1,2,2]))

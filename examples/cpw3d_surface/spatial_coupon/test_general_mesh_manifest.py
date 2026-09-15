@@ -16,7 +16,8 @@ import unittest
 import numpy as np
 
 from audit_edge_metric_mesh import analyze
-from general_mesh_audit_producer import (KINDS, _protected_surface_report,
+from general_mesh_audit_producer import (KINDS, _footprint_boundary_distance,
+                                         _protected_surface_report,
                                          produce as produce_audit)
 from general_mesh_manifest import run_manifest, sha256, validate_manifest
 from mesh_array_io import read_mesh
@@ -394,7 +395,6 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertIn("stage output must be absent", result.stderr)
 
     def test_same_area_displaced_protected_support_is_detected(self):
-        import meshio
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)
             self.produce_matrix(root, manifest_path, manifest)
@@ -405,6 +405,26 @@ class GeneralMeshManifestTest(unittest.TestCase):
             result = _protected_surface_report(reference, moved, contract)
             self.assertGreater(result["MaximumSupportVertexDistance"], 0)
             self.assertFalse(result["PlaneSupportsMatch"])
+
+    def test_protected_footprint_accepts_refinement_and_rejects_same_area_reshape(self):
+        square = np.array([[[0., 0., 0.], [1., 0., 0.], [1., 1., 0.]],
+                           [[0., 0., 0.], [1., 1., 0.], [0., 1., 0.]]])
+        boundary = np.array([[0., 0., 0.], [.5, 0., 0.], [1., 0., 0.],
+                             [1., .5, 0.], [1., 1., 0.], [.5, 1., 0.],
+                             [0., 1., 0.], [0., .5, 0.]])
+        center = np.array([.5, .5, 0.])
+        refined = np.array([[boundary[i], boundary[(i + 1) % len(boundary)], center]
+                            for i in range(len(boundary))])
+        self.assertLessEqual(_footprint_boundary_distance(square, refined), 1e-15)
+        reshaped_points = np.array([[0., 0., 0.], [1., 0., 0.],
+                                    [1.2, 1., 0.], [.2, 1., 0.]])
+        reshaped = reshaped_points[[[0, 1, 2], [0, 2, 3]]]
+        square_area = np.linalg.norm(np.cross(square[:, 1] - square[:, 0],
+                                               square[:, 2] - square[:, 0]), axis=1).sum() / 2
+        reshaped_area = np.linalg.norm(np.cross(reshaped[:, 1] - reshaped[:, 0],
+                                                 reshaped[:, 2] - reshaped[:, 0]), axis=1).sum() / 2
+        self.assertAlmostEqual(square_area, reshaped_area)
+        self.assertGreater(_footprint_boundary_distance(square, reshaped), .1)
 
     def test_measured_semantic_gates_reject_bound_failures(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -40,18 +40,23 @@ def segment_distances(points,segment):
 
 
 def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
-                  radial_growth=1.,corner_growth=.25,protected_distance=0.,far_growth=None):
+                  radial_growth=1.,corner_growth=.25,protected_distance=0.,far_growth=None,
+                  isotropic_corners=None,isotropy_radius=None):
     points=np.asarray(points,dtype=float);segments=np.asarray(segments,dtype=float).reshape(-1,6)
     corners=np.asarray(corners,dtype=float).reshape(-1,3)
+    isotropic_corners=(corners if isotropic_corners is None else
+                       np.asarray(isotropic_corners,dtype=float).reshape(-1,3))
+    if isotropy_radius is None:isotropy_radius=0.
     if points.ndim!=2 or points.shape[1]!=3 or not np.all(np.isfinite(points)):
         raise ValueError('Expected finite 3D points')
     if far_growth is None:far_growth=radial_growth
     if not np.all(np.isfinite([normal_size,tangent_size,far_size,radial_growth,corner_growth,
-                              protected_distance,far_growth])) or not (
+                              protected_distance,far_growth,isotropy_radius])) or not (
             0<normal_size<=tangent_size<=far_size and radial_growth>0 and corner_growth>0 and
-            protected_distance>=0 and far_growth>0):
+            protected_distance>=0 and far_growth>0 and isotropy_radius>=0):
         raise ValueError('Invalid metric controls')
-    if not len(segments) or not np.all(np.isfinite(segments)) or not np.all(np.isfinite(corners)):
+    if (not len(segments) or not np.all(np.isfinite(segments)) or
+            not np.all(np.isfinite(corners)) or not np.all(np.isfinite(isotropic_corners))):
         raise ValueError('Invalid physical feature geometry')
     dc=np.full(len(points),np.inf)
     for c in corners:dc=np.minimum(dc,np.linalg.norm(points-c,axis=1))
@@ -67,6 +72,17 @@ def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
         candidate=np.eye(3)[None,:,:]/hn[:,None,None]**2 + (
             1/ht**2-1/hn**2)[:,None,None]*np.outer(t,t)
         metric[active]=intersect_metrics(metric[active],candidate)
+    # A semantic junction is isotropic over one tangential target, not only at
+    # one metric node.  This gives MMG a physically scaled ball in which all
+    # incident cells see the same SPD target.  CAD subdivisions and coupon-cut
+    # endpoints are absent because the caller supplies contract junctions only.
+    if isotropy_radius>0 and len(isotropic_corners):
+        semantic_distance=np.full(len(points),np.inf)
+        for corner in isotropic_corners:
+            semantic_distance=np.minimum(semantic_distance,np.linalg.norm(points-corner,axis=1))
+        active=semantic_distance<=isotropy_radius
+        isotropic=np.broadcast_to(np.eye(3)/normal_size**2,(int(active.sum()),3,3))
+        metric[active]=intersect_metrics(metric[active],isotropic)
     return metric
 
 
