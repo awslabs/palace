@@ -1,6 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import spack.deptypes as dt
+from spack.version import GitVersion, StandardVersion, VersionLookupError
+
 from spack_repo.builtin.build_systems.cmake import CMakePackage
 from spack_repo.builtin.build_systems.cuda import CudaPackage
 from spack_repo.builtin.build_systems.rocm import ROCmPackage
@@ -417,6 +420,51 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     depends_on("catch2@3:", type="test")
 
+    @staticmethod
+    def _manifest_version(version):
+        """Return a semantic version without exposing an unresolved Git ref."""
+        if isinstance(version, GitVersion):
+            try:
+                version = version.ref_version
+            except VersionLookupError:
+                return "unknown"
+        return (
+            str(version)
+            if isinstance(version, StandardVersion) and not version.isdevelop()
+            else "unknown"
+        )
+
+    def dependency_manifest(self):
+        """Return the selected link/run dependencies as name=version entries."""
+        entries = []
+
+        def add(label, dependency):
+            entries.append((label, self._manifest_version(dependency.version)))
+
+        for edge in self.spec.edges_to_dependencies(depflag=dt.LINK | dt.RUN):
+            if edge.virtuals:
+                for virtual in edge.virtuals:
+                    # zlib-api is Spack's virtual interface; its public dependency name is zlib.
+                    public_virtual = virtual[:-4] if virtual.endswith("-api") else virtual.upper()
+                    add(f"{public_virtual}/{edge.spec.name}", edge.spec)
+            else:
+                add(edge.spec.name, edge.spec)
+
+        # Eigen is a direct build-only header dependency compiled into Palace. STRUMPACK's
+        # directly linked TPLs are transitive in Spack, so these are the only exceptions to
+        # the direct link/run graph boundary above.
+        for edge in self.spec.edges_to_dependencies(name="eigen", depflag=dt.BUILD):
+            add(edge.spec.name, edge.spec)
+        strumpack_tpls = {"butterflypack", "zfp", "slate", "lapackpp", "blaspp", "ptscotch"}
+        for edge in self.spec.edges_to_dependencies(
+            name="strumpack", depflag=dt.LINK | dt.RUN
+        ):
+            for dependency in edge.spec.traverse(root=False, deptype=("link", "run")):
+                if dependency.name in strumpack_tpls:
+                    add(dependency.name, dependency)
+
+        return "|".join(f"{label}={version}" for label, version in sorted(entries))
+
     def cmake_args(self):
         args = [
             self.define_from_variant("CMAKE_CXX_STANDARD", "cxxstd"),
@@ -437,6 +485,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
+            self.define("PALACE_BUILD_SYSTEM", "Spack"),
+            self.define("PALACE_BUILD_ID", self.spec.dag_hash()),
+            self.define("PALACE_DEPENDENCY_MANIFEST", self.dependency_manifest()),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
             # PROCESSORS accounting (ranks x threads) is exact. Unit [Parallel]
@@ -450,38 +501,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
-
-        # Pass the concrete Spack provenance of each dependency through to
-        # `palace --version`. The short DAG hash distinguishes different
-        # concrete builds of the same nominal version (e.g. develop).
-        dependency_versions = {
-            "STRUMPACK": "strumpack",
-            "arpack_ng": "arpack-ng",
-            "eigen": "eigen",
-            "fmt": "fmt",
-            "gslib": "gslib",
-            "hypre": "hypre",
-            "json": "nlohmann-json",
-            "libCEED": "libceed",
-            "libxsmm": "libxsmm",
-            "magma": "magma",
-            "metis": "metis",
-            "mfem": "mfem",
-            "mumps": "mumps",
-            "parmetis": "parmetis",
-            "petsc": "petsc",
-            "scalapack": "scalapack",
-            "scn": "scnlib",
-            "slepc": "slepc",
-            "sundials": "sundials",
-            "superlu_dist": "superlu-dist",
-        }
-        for cmake_name, spack_name in dependency_versions.items():
-            if spack_name not in self.spec:
-                continue
-            dep = self.spec[spack_name]
-            provenance = f"{dep.version} /{dep.dag_hash(7)}"
-            args.append(self.define(f"PALACE_DEP_{cmake_name}_VERSION", provenance))
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))

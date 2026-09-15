@@ -29,6 +29,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Initialize the project
 project(palace LANGUAGES CXX VERSION 0.18.1)
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildInfo.cmake")
+
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
 set(PALACE_WITH_CUDA OFF CACHE BOOL "Use CUDA for NVIDIA GPU support")
@@ -42,6 +44,8 @@ set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB for high-order field interpolation")
+set(PALACE_WITH_LIBXSMM OFF CACHE BOOL "Build with LIBXSMM backend for libCEED")
+set(PALACE_WITH_MAGMA OFF CACHE BOOL "Build with MAGMA backend for libCEED")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -108,9 +112,12 @@ endif()
 if(PALACE_WITH_CUDA)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
+  palace_add_build_info_dependency("CUDA" "${CUDAToolkit_VERSION}")
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda")
 elseif(PALACE_WITH_HIP)
   enable_language(HIP)
+  # CMAKE_HIP_COMPILER_VERSION identifies the compiler, not the HIP runtime.
+  palace_add_build_info_dependency("HIP" "${hip_VERSION}")
 endif()
 
 # Set a default build type if none was provided
@@ -169,6 +176,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 # Find MPI
 find_package(MPI REQUIRED)
+palace_add_build_info_dependency("MPI implementation" "${MPI_CXX_LIBRARY_VERSION_STRING}")
+palace_add_build_info_dependency("MPI standard" "${MPI_CXX_VERSION}")
 if(PALACE_WITH_ARPACK OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   find_package(MPI REQUIRED COMPONENTS Fortran)
 endif()
@@ -180,32 +189,42 @@ endif()
 
 # Find LAPACK
 find_package(LAPACK REQUIRED)
+palace_add_build_info_dependency("BLAS" "${BLAS_VERSION}")
+palace_add_build_info_dependency("LAPACK" "${LAPACK_VERSION}")
 
 # Find Umpire and Camp (needed when CUDA/HIP is enabled)
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   find_package(umpire REQUIRED CONFIG)
+  palace_add_build_info_dependency("Umpire" "${umpire_VERSION}")
   find_package(camp REQUIRED CONFIG)
+  palace_add_build_info_dependency("camp" "${camp_VERSION}")
 endif()
 
 # Find nlohmann/json
 find_package(nlohmann_json REQUIRED CONFIG)
 message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json_DIR}")
+palace_add_build_info_dependency("nlohmann/json" "${nlohmann_json_VERSION}")
 
 # Find nlohmann/json-schema-validator
 find_package(nlohmann_json_schema_validator REQUIRED CONFIG)
 message(STATUS "Found nlohmann_json_schema_validator: ${nlohmann_json_schema_validator_VERSION} in ${nlohmann_json_schema_validator_DIR}")
+palace_add_build_info_dependency(
+  "nlohmann/json-schema-validator" "${nlohmann_json_schema_validator_VERSION}")
 
 # Find fmt
 find_package(fmt REQUIRED CONFIG)
 message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
+palace_add_build_info_dependency("fmt" "${fmt_VERSION}")
 
 # Find scn
 find_package(scn REQUIRED CONFIG)
 message(STATUS "Found scn: ${scn_VERSION} in ${scn_DIR}")
+palace_add_build_info_dependency("scn" "${scn_VERSION}")
 
 # Find Eigen
 find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
+palace_add_build_info_dependency("Eigen" "${Eigen3_VERSION}")
 
 # Find MFEM (recent MFEM targets link to target Threads::Threads, for some reason)
 find_package(Threads REQUIRED)
@@ -230,7 +249,7 @@ else()
     message(FATAL_ERROR "MFEM not found. Set MFEM_DIR or ensure MFEM is on CMAKE_PREFIX_PATH")
   endif()
 endif()
-
+palace_add_build_info_dependency("MFEM" "${MFEM_VERSION}")
 
 # Find libCEED
 include(PkgConfigHelpers)
@@ -252,6 +271,13 @@ find_libceed_pkgconfig("${LIBCEED_TEST_DEPS}" LIBCEED_TARGET)
 if("${LIBCEED_TARGET}" STREQUAL "")
   message(FATAL_ERROR "libCEED could not be found, be sure to set LIBCEED_DIR")
 endif()
+palace_add_build_info_dependency("libCEED" "${libCEED_VERSION}")
+if(PALACE_WITH_LIBXSMM)
+  palace_add_build_info_dependency("libxsmm" "${LIBXSMM_VERSION}")
+endif()
+if(PALACE_WITH_MAGMA)
+  palace_add_build_info_dependency("MAGMA" "${MAGMA_VERSION}")
+endif()
 
 # Find PETSc and SLEPc
 if(PALACE_WITH_SLEPC)
@@ -267,6 +293,8 @@ if(PALACE_WITH_SLEPC)
   if("${SLEPC_TARGET}" STREQUAL "")
     message(FATAL_ERROR "SLEPc could not be found, be sure to set SLEPC_DIR")
   endif()
+  palace_add_build_info_dependency("PETSc" "${PETSc_VERSION}")
+  palace_add_build_info_dependency("SLEPc" "${SLEPc_VERSION}")
 elseif(NOT PALACE_WITH_ARPACK)
   message(FATAL_ERROR "Build requires at least one of ARPACK or SLEPc dependencies")
 endif()
@@ -278,6 +306,7 @@ if(PALACE_WITH_ARPACK)
   endif()
   find_package(arpackng REQUIRED CONFIG)
   message(STATUS "Found ARPACK: ${arpackng_VERSION} in ${arpackng_DIR}")
+  palace_add_build_info_dependency("ARPACK-NG" "${arpackng_VERSION}")
 elseif(NOT PALACE_WITH_SLEPC)
   message(FATAL_ERROR "Build requires at least one of ARPACK or SLEPc dependencies")
 endif()
@@ -376,24 +405,6 @@ set_property(
 
 # Generate embedded schema header from JSON schema files
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
-
-# Palace version, always available so `palace --version` reports it even in
-# non-Git builds. Git metadata below is optional additional detail.
-set_property(
-  SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_VERSION=\"${PROJECT_VERSION}\""
-)
-
-# Add Git revision information (forces reconfigure when Git status changes)
-include(GetGitDescription)
-git_describe(GIT_COMMIT_ID)
-message(STATUS "Git string: ${GIT_COMMIT_ID}")
-if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_GIT_COMMIT;PALACE_GIT_COMMIT_ID=\"${GIT_COMMIT_ID}\""
-  )
-endif()
 
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)
@@ -497,6 +508,7 @@ if(NOT TARGET METIS::METIS)
 else()
   message(STATUS "Found METIS: ${METIS_VERSION}")
 endif()
+palace_add_build_info_dependency("METIS" "${METIS_VERSION}")
 
 find_package(ParMETIS QUIET)
 if(NOT TARGET ParMETIS::ParMETIS)
@@ -511,6 +523,7 @@ if(NOT TARGET ParMETIS::ParMETIS)
 else()
   message(STATUS "Found ParMETIS: ${ParMETIS_VERSION}")
 endif()
+palace_add_build_info_dependency("ParMETIS" "${ParMETIS_VERSION}")
 
 # Find ScaLAPACK early (needed for MUMPS/STRUMPACK CMake configs)
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
@@ -535,6 +548,7 @@ if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   else()
     message(STATUS "Found ScaLAPACK: SCALAPACK::SCALAPACK target")
   endif()
+  palace_add_build_info_dependency("ScaLAPACK" "${scalapack_VERSION}")
 endif()
 
 # Link ZLIB
@@ -542,6 +556,7 @@ find_package(ZLIB)
 if(ZLIB_FOUND)
   message(STATUS "Found ZLIB: ${ZLIB_VERSION_STRING}")
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC ZLIB::ZLIB)
+  palace_add_build_info_dependency("zlib" "${ZLIB_VERSION_STRING}")
 endif()
 
 # Link HYPRE
@@ -556,6 +571,7 @@ else()
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${HYPRE_LIBRARY})
   target_include_directories(${LIB_TARGET_NAME} PUBLIC ${HYPRE_INCLUDE_DIR})
 endif()
+palace_add_build_info_dependency("HYPRE" "${HYPRE_VERSION}")
 
 # Link SuperLU_DIST
 if(PALACE_WITH_SUPERLU)
@@ -570,6 +586,7 @@ if(PALACE_WITH_SUPERLU)
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${SUPERLU_DIST_LIBRARY})
     target_include_directories(${LIB_TARGET_NAME} PUBLIC ${SUPERLU_DIST_INCLUDE_DIR})
   endif()
+  palace_add_build_info_dependency("SuperLU_DIST" "${superlu_dist_VERSION}")
 endif()
 
 # Link STRUMPACK
@@ -585,6 +602,7 @@ if(PALACE_WITH_STRUMPACK)
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${STRUMPACK_LIBRARY})
     target_include_directories(${LIB_TARGET_NAME} PUBLIC ${STRUMPACK_INCLUDE_DIR})
   endif()
+  palace_add_build_info_dependency("STRUMPACK" "${strumpack_VERSION}")
 
   # STRUMPACK dependencies (ScaLAPACK target created earlier)
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC SCALAPACK::SCALAPACK ${MPI_Fortran_LIBRARIES})
@@ -595,15 +613,43 @@ if(PALACE_WITH_STRUMPACK)
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC
       ButterflyPACK::dbutterflypack ButterflyPACK::zbutterflypack
       ButterflyPACK::sbutterflypack ButterflyPACK::cbutterflypack)
+    palace_add_build_info_dependency("ButterflyPACK" "${ButterflyPACK_VERSION}")
   endif()
 
-  foreach(pkg zfp slate lapackpp blaspp ptscotch)
-    find_package(${pkg} QUIET)
-    if(${pkg}_FOUND)
-      message(STATUS "Found ${pkg}")
-      target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${pkg})
-    endif()
-  endforeach()
+  find_package(zfp QUIET)
+  if(zfp_FOUND)
+    message(STATUS "Found zfp")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC zfp)
+    palace_add_build_info_dependency("ZFP" "${zfp_VERSION}")
+  endif()
+
+  find_package(slate QUIET)
+  if(slate_FOUND)
+    message(STATUS "Found slate")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC slate)
+    palace_add_build_info_dependency("Slate" "${slate_VERSION}")
+  endif()
+
+  find_package(lapackpp QUIET)
+  if(lapackpp_FOUND)
+    message(STATUS "Found lapackpp")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC lapackpp)
+    palace_add_build_info_dependency("LAPACK++" "${lapackpp_VERSION}")
+  endif()
+
+  find_package(blaspp QUIET)
+  if(blaspp_FOUND)
+    message(STATUS "Found blaspp")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC blaspp)
+    palace_add_build_info_dependency("BLAS++" "${blaspp_VERSION}")
+  endif()
+
+  find_package(ptscotch QUIET)
+  if(ptscotch_FOUND)
+    message(STATUS "Found ptscotch")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC ptscotch)
+    palace_add_build_info_dependency("PT-Scotch" "${ptscotch_VERSION}")
+  endif()
 endif()
 
 # Link MUMPS
@@ -623,6 +669,7 @@ if(PALACE_WITH_MUMPS)
       SCALAPACK::SCALAPACK ${MPI_Fortran_LIBRARIES})
     target_include_directories(${LIB_TARGET_NAME} PUBLIC ${MUMPS_INCLUDE_DIR})
   endif()
+  palace_add_build_info_dependency("MUMPS" "${MUMPS_VERSION}")
 endif()
 
 # Link cuDSS
@@ -632,6 +679,7 @@ if(PALACE_WITH_CUDSS)
   message(STATUS "Found cuDSS: ${CUDSS_LIBRARY}")
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${CUDSS_LIBRARY})
   target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CUDSS_INCLUDE_DIR})
+  palace_add_build_info_dependency("cuDSS" "${CUDSS_VERSION}")
 endif()
 
 # Link METIS and ParMETIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
@@ -659,6 +707,7 @@ if(PALACE_WITH_SUNDIALS)
   if(PALACE_WITH_CUDA)
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC SUNDIALS::nveccuda${_sundials_suffix})
   endif()
+  palace_add_build_info_dependency("SUNDIALS" "${SUNDIALS_VERSION}")
 endif()
 
 # Link GSLIB
@@ -666,6 +715,7 @@ if(PALACE_WITH_GSLIB)
   find_library(GSLIB_LIBRARY NAMES gs gslib HINTS ${GSLIB_ROOT}/lib REQUIRED)
   message(STATUS "Found GSLIB: ${GSLIB_LIBRARY}")
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${GSLIB_LIBRARY})
+  palace_add_build_info_dependency("GSLIB" "${GSLIB_VERSION}")
 endif()
 
 target_link_libraries(
@@ -684,60 +734,8 @@ if(PALACE_WITH_GPU_AWARE_MPI)
   )
 endif()
 
-# Report build dependency versions through `palace --version`. For each
-# dependency the version is resolved in order of decreasing authority:
-#   1. PALACE_DEP_<NAME>_VERSION passed in by the producer that knows the
-#      concrete provenance (the superbuild's pinned revision or a Spack recipe
-#      passing its resolved spec).
-#   2. The version number discovered by find_package.
-#   3. As a last resort, the git description of the dependency source tree under
-#      PALACE_EXTERN_SOURCE_DIR (only meaningful for the superbuild layout).
-# Dependencies that resolve to nothing are not reported.
-set(dependency_folders
-  STRUMPACK arpack-ng eigen fmt gslib hypre json libCEED libxsmm magma
-  metis mfem mumps parmetis petsc scalapack scn slepc sundials superlu_dist
-)
-
-# Root of the dependency source trees for the fallback git probe. Passed
-# explicitly by the superbuild rather than assumed relative to the build tree.
-set(PALACE_EXTERN_SOURCE_DIR "${CMAKE_BINARY_DIR}/../extern" CACHE PATH
-  "Directory holding dependency source trees, used to report their versions"
-)
-
-# find_package version numbers, used as a fallback when no git description is
-# available. Folders without an entry here (gslib, libCEED, libxsmm, magma,
-# petsc, slepc) expose no version number at this point and are therefore
-# reported only when built from source.
-set(dep_version_STRUMPACK    "${strumpack_VERSION}")
-set(dep_version_arpack_ng    "${arpackng_VERSION}")
-set(dep_version_eigen        "${Eigen3_VERSION}")
-set(dep_version_fmt          "${fmt_VERSION}")
-set(dep_version_hypre        "${HYPRE_VERSION}")
-set(dep_version_json         "${nlohmann_json_VERSION}")
-set(dep_version_metis        "${METIS_VERSION}")
-set(dep_version_mfem         "${MFEM_VERSION}")
-set(dep_version_mumps        "${MUMPS_VERSION}")
-set(dep_version_parmetis     "${ParMETIS_VERSION}")
-set(dep_version_scalapack    "${scalapack_VERSION}")
-set(dep_version_scn          "${scn_VERSION}")
-set(dep_version_sundials     "${SUNDIALS_VERSION}")
-set(dep_version_superlu_dist "${superlu_dist_VERSION}")
-
-foreach(dep_folder IN LISTS dependency_folders)
-  string(REPLACE "-" "_" dep_name "${dep_folder}")
-  set(dep_info "${PALACE_DEP_${dep_name}_VERSION}")
-  if(dep_info STREQUAL "")
-    set(dep_info "${dep_version_${dep_name}}")
-  endif()
-  if(dep_info STREQUAL "")
-    get_dependency_git_sha("${PALACE_EXTERN_SOURCE_DIR}/${dep_folder}" dep_info)
-  endif()
-  message(DEBUG "Version info for ${dep_folder}: ${dep_info}")
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_DEP_${dep_name}_VERSION=\"${dep_info}\""
-  )
-endforeach()
+# Generate the one build-information interface consumed by the executable.
+palace_configure_build_info(${TARGET_NAME})
 
 # Install target and helper scripts
 install(
