@@ -1666,12 +1666,6 @@ function generate_spatial_coupon(;
         gmsh.model.mesh.optimize("Netgen")
     end
     gmsh.model.mesh.setOrder(mesh_order)
-    if transform != IDENTITY_RIGID_TRANSFORM
-        connectivity = gmsh.model.mesh.getElements()
-        gmsh.model.mesh.affineTransform(vec(transform'))
-        connectivity == gmsh.model.mesh.getElements() ||
-            error("Rigid transform changed mesh connectivity")
-    end
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
     node_count = length(node_tags)
@@ -1701,8 +1695,16 @@ function generate_spatial_coupon(;
     minimum_signed_inverse_condition>1e-10 ||
         error("Spatial coupon has invalid or near-singular elements: minSICN=$minimum_signed_inverse_condition")
     if mesh_postprocess !== nothing
-        transformed_edges = [transform_edge_contract(edge, transform) for edge in edges]
-        mesh_postprocess(transformed_edges, boundary_loops, radius)
+        # Ownership contracts are planar source-local data.  Classify and certify
+        # every interface element in that frame before applying the final rigid
+        # transform; otherwise tilted transforms invalidate the XY/layer queries.
+        mesh_postprocess(edges, boundary_loops, radius)
+    end
+    if transform != IDENTITY_RIGID_TRANSFORM
+        connectivity = gmsh.model.mesh.getElements()
+        gmsh.model.mesh.affineTransform(vec(transform'))
+        connectivity == gmsh.model.mesh.getElements() ||
+            error("Rigid transform changed mesh connectivity")
     end
     gmsh.write(filename)
     metadata_path = filename * ".metadata.json"
@@ -1761,7 +1763,8 @@ function parse_options(args)
         "--max-nodes" => ("max_nodes", Int),
         "--max-elements" => ("max_elements", Int),
         "--mesh-order" => ("mesh_order", Int),
-        "--rigid-transform" => ("transform", Matrix{Float64})
+        "--rigid-transform" => ("transform", Matrix{Float64}),
+        "--interface-ownership-report" => ("interface_ownership_report", String)
     )
     index = 4
     while index <= length(args)
@@ -1783,6 +1786,17 @@ end
 
 if abspath(PROGRAM_FILE) == @__FILE__
     options = parse_options(ARGS)
+    postprocess = nothing
+    if haskey(options, "interface_ownership_report")
+        include(joinpath(@__DIR__, "label_interface_patches.jl"))
+        report = options["interface_ownership_report"]
+        fabricated = options["fabricated"]
+        thickness = get(options, "metal_thickness", 0.1)
+        overetch = get(options, "overetch", 0.05)
+        postprocess = (edges, loops, radius) -> label_interface_patches(
+            edges, loops, radius, report; fabricated=fabricated,
+            metal_thickness=thickness, overetch=overetch)
+    end
     generate_spatial_coupon(;
         signature       = options["signature"],
         mask            = get(options, "mask", nothing),
@@ -1804,6 +1818,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         max_nodes       = get(options, "max_nodes", 500_000),
         max_elements    = get(options, "max_elements", 2_000_000),
         mesh_order      = get(options, "mesh_order", 1),
+        mesh_postprocess = postprocess,
         transform       = get(options, "transform", copy(IDENTITY_RIGID_TRANSFORM))
     )
 end

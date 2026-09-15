@@ -8,9 +8,10 @@ import json
 from pathlib import Path
 
 
-STAGE_ORDER = ("seed-generation", "metric-preparation", "native-adaptation-mmg",
-               "label-restoration", "final-gmsh-publication")
+STAGE_ORDER = ("source-transformation", "seed-generation", "metric-preparation",
+               "native-adaptation-mmg", "label-restoration", "final-gmsh-publication")
 STAGE_TOOLS = {
+    "source-transformation": {"runtime", "source-transformer"},
     "seed-generation": {"runtime", "mesher"},
     "metric-preparation": {"runtime", "metric-preparer"},
     "native-adaptation-mmg": {"runtime", "adapter-mmg"},
@@ -18,21 +19,26 @@ STAGE_TOOLS = {
     "final-gmsh-publication": {"runtime", "publisher"},
 }
 STAGE_INPUTS = {
+    "source-transformation": {"source-semantic-contract", "source-signature",
+                              "source-boundary", "source-mask", "canonical-transform"},
     "seed-generation": set(),
-    "metric-preparation": {"seed-mesh"},
+    "metric-preparation": {"seed-mesh", "transformed-semantic-contract",
+                           "transformed-supports"},
     "native-adaptation-mmg": {"mmg-seed", "metric", "pins", "fixed-triangles"},
     "label-restoration": {"adapted-mesh", "restoration-recipe"},
     "final-gmsh-publication": {"restored-mesh"},
 }
 STAGE_OUTPUTS = {
+    "source-transformation": {"transformed-semantic-contract", "transformed-supports"},
     "seed-generation": {"seed-mesh"},
     "metric-preparation": {"mmg-seed", "metric", "pins", "fixed-triangles",
                            "restoration-recipe"},
     "native-adaptation-mmg": {"adapted-mesh"},
-    "label-restoration": {"restored-mesh"},
+    "label-restoration": {"source-local-restored-mesh", "restored-mesh"},
     "final-gmsh-publication": {"candidate-mesh", "ownership-partition"},
 }
 STAGE_PRIMARY_TOOL = {
+    "source-transformation": "source-transformer",
     "seed-generation": "mesher",
     "metric-preparation": "metric-preparer",
     "native-adaptation-mmg": "adapter-mmg",
@@ -179,6 +185,7 @@ def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sh
         report_digests.add(digest)
         reports[stage] = report
 
+    source = reports["source-transformation"]
     seed = reports["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"]
     metric = reports["metric-preparation"]
     adaptation = reports["native-adaptation-mmg"]
@@ -186,6 +193,10 @@ def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sh
     publication = reports["final-gmsh-publication"]
     links = (
         (metric["Inputs"]["seed-mesh"]["SHA256"], seed),
+        (metric["Inputs"]["transformed-semantic-contract"]["SHA256"],
+         source["Artifacts"]["transformed-semantic-contract"]["SHA256"]),
+        (metric["Inputs"]["transformed-supports"]["SHA256"],
+         source["Artifacts"]["transformed-supports"]["SHA256"]),
         (adaptation["Inputs"]["mmg-seed"]["SHA256"],
          metric["Artifacts"]["mmg-seed"]["SHA256"]),
         (adaptation["Inputs"]["metric"]["SHA256"],

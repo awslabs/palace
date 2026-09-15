@@ -93,7 +93,7 @@ def _is_rigid_transform(transform, tolerance=1e-12):
                                      rotation[1][1] * rotation[2][0]))
     return (all(abs(gram[i][j] - float(i == j)) <= tolerance
                 for i in range(3) for j in range(3)) and
-            abs(abs(determinant) - 1.0) <= tolerance)
+            abs(determinant - 1.0) <= tolerance)
 
 
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
@@ -164,14 +164,20 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         if by_id["identity"] != identity:
             raise ValueError(f"{case['Id']} identity variant is not the identity transform")
         comparison = case.get("TransformComparison")
+        physical_tolerances = (
+            "MaximumRelativeVolumeError", "MaximumRelativeSurfaceMeasureError",
+            "MaximumProtectedSupportHausdorff", "MaximumProtectedMeasureError",
+            "MaximumQualityDistributionRelativeError", "MaximumAnisotropyRelativeError",
+            "MaximumComplexityRatio")
         if (not isinstance(comparison, dict) or comparison.get("Reference") not in variant_ids or
                 comparison.get("Transformed") not in variant_ids or
                 comparison.get("Reference") == comparison.get("Transformed") or
                 by_id.get(comparison.get("Reference")) ==
                 by_id.get(comparison.get("Transformed")) or
-                not _finite_number(comparison.get("MaximumRelativeInvariantError"),
-                                   nonnegative=True)):
-            raise ValueError(f"{case['Id']} has no exact transform comparison pair")
+                any(not _finite_number(comparison.get(name), nonnegative=True)
+                    for name in physical_tolerances) or
+                comparison.get("MaximumComplexityRatio", 0) < 1.0):
+            raise ValueError(f"{case['Id']} has no frozen physical covariance comparison")
     comparisons = manifest.get("ScalingComparisons")
     if not isinstance(comparisons, list) or not comparisons:
         raise ValueError("Manifest must declare scaling comparisons")
@@ -205,6 +211,39 @@ def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
                                    source_paths["MeshRecipe"])["Measurements"]
     invariants = invariants_record(dict(base), mesh_path)["Measurements"]
     return {**topology, **complexity, **invariants}
+
+
+def _validate_source_transformation(reports, binding, source_paths):
+    """Independently validate source-transform inputs, outputs, and metric linkage."""
+    from transform_coupon_source_contract import (
+        transform_semantic_contract, transformed_supports, validate_rigid_transform)
+    stage = reports["source-transformation"]
+    role_names = {"source-semantic-contract": "SemanticContract",
+                  "source-signature": "Signature", "source-boundary": "Boundary",
+                  "source-mask": "Mask"}
+    for stage_name, source_role in role_names.items():
+        if stage["Inputs"][stage_name]["SHA256"] != binding["InputSHA256"][source_role]:
+            raise ValueError("source-transform input differs from immutable source")
+    transform_path = Path(stage["Inputs"]["canonical-transform"]["Path"])
+    transform = json.loads(transform_path.read_text())
+    if isinstance(transform, dict):
+        transform = transform.get("Transform")
+    if transform != binding["Transform"]:
+        raise ValueError("source-transform canonical transform differs from variant")
+    matrix = validate_rigid_transform(transform)
+    semantic_path = Path(stage["Artifacts"]["transformed-semantic-contract"]["Path"])
+    supports_path = Path(stage["Artifacts"]["transformed-supports"]["Path"])
+    source_semantic = json.loads(Path(source_paths["SemanticContract"]).read_text())
+    expected_semantic = transform_semantic_contract(source_semantic, matrix)
+    expected_semantic["SourceSemanticContractSHA256"] = sha256(
+        source_paths["SemanticContract"])
+    expected_supports = transformed_supports(
+        Path(source_paths["Signature"]).parent, matrix,
+        signature=source_paths["Signature"], boundary=source_paths["Boundary"],
+        mask=source_paths["Mask"])
+    if (json.loads(semantic_path.read_text()) != expected_semantic or
+            json.loads(supports_path.read_text()) != expected_supports):
+        raise ValueError("transformed semantic/support artifact differs from source transform")
 
 
 def _validate_bound_records(evidence_path, evidence, binding, source_paths):
@@ -259,6 +298,8 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
         if item["Kind"] == "variant-transform":
             if (record.get("TransformVerified") is not True or
                     evidence.get("IdentityMeshSHA256") != record.get("IdentityMeshSHA256") or
+                    evidence.get("IdentitySeedMeshSHA256") !=
+                    record.get("IdentitySeedMeshSHA256") or
                     evidence.get("TransformMaximumCoordinateError") !=
                     record.get("TransformMaximumCoordinateError")):
                 raise ValueError("variant transform result differs from its bound audit")
@@ -279,6 +320,7 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
                 raise ValueError("bounded stage and audit artifacts must be content-distinct")
             digests.update(stage_digests)
     bounded = records_by_kind["bounded-run"]["BoundedStages"]
+    _validate_source_transformation(bounded, binding, source_paths)
     topology = records_by_kind["mesh-topology-quality"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
@@ -289,12 +331,26 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     recomputed = _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded)
     recorded_mesh_measurements = {
         key: value for key, value in measurements.items()
-        if key not in {"Resources"}
+        if key not in {"Resources", "PhysicalCovariance"}
     }
     # Variant-transform has no measurement section. Resources are independently
     # derived from the validated stage reports and parsed final tetrahedra below.
     if recomputed != recorded_mesh_measurements:
         raise ValueError("audit measurements differ from an independent producer rerun")
+    variant = records_by_kind["variant-transform"]
+    identity_path = Path(variant.get("IdentityMeshPath", ""))
+    identity_seed_path = Path(variant.get("IdentitySeedMeshPath", ""))
+    if (not identity_path.is_file() or sha256(identity_path) !=
+            variant.get("IdentityMeshSHA256") or not identity_seed_path.is_file() or
+            sha256(identity_seed_path) != variant.get("IdentitySeedMeshSHA256")):
+        raise ValueError("variant identity mesh bindings changed")
+    from general_mesh_audit_producer import _physical_covariance_report
+    matrix = __import__("numpy").asarray(binding["Transform"], dtype=float).reshape(4, 4)
+    recomputed_physical = _physical_covariance_report(
+        read_mesh(identity_path), read_mesh(mesh_path),
+        load_semantic_contract(source_paths["SemanticContract"]), matrix)
+    if measurements.get("PhysicalCovariance") != recomputed_physical:
+        raise ValueError("physical covariance differs from independent normalization")
     resources = measurements.get("Resources", {})
     expected_resources = {
         "ExitCode": 0,
@@ -309,7 +365,8 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
                          "CornerNeighborhoods", "SubdivisionNeighborhoods", "CutNeighborhoods",
                          "ProtectedSurfaces", "AchievedAnisotropy", "TraceDiagonal",
-                         "MeshQuality", "Complexity", "ComparisonInvariants"}
+                         "MeshQuality", "Complexity", "ComparisonInvariants",
+                         "PhysicalCovariance"}
     if set(measurements) != required_sections:
         raise ValueError("bound records do not supply the exact measurement schema")
     for section, value in measurements.items():
@@ -410,6 +467,7 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
 
     quality = evidence.get("MeshQuality", {})
     if (not isinstance(quality.get("Samples"), int) or quality.get("Samples", 0) <= 0 or
+            quality.get("PositiveOrientation") is not True or
             not _finite_number(quality.get("MinimumScaledJacobian"), nonnegative=True) or
             quality.get("MinimumScaledJacobian", -1) < gates["MinimumScaledJacobian"] or
             not _finite_number(quality.get("MaximumJacobianCondition"), positive=True) or
@@ -434,12 +492,75 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
     if (not isinstance(invariants, dict) or not invariants or
             any(not _finite_number(value) for value in invariants.values())):
         failures.append("comparison-invariants")
+    physical = evidence.get("PhysicalCovariance", {})
+    if (physical.get("ComparisonFrame") != "SourceLocal" or
+            physical.get("LabelsMaterialsAdjacencyMatch") is not True):
+        failures.append("physical-covariance-contract")
     return failures
 
 
 def _relative_error(a, b):
     scale = max(abs(a), abs(b), 1e-300)
     return abs(a - b) / scale
+
+
+def _physical_comparison_failures(reference_evidence, transformed_evidence, comparison):
+    """Compare final meshes physically; deterministic topology is diagnostic only."""
+    failures = []
+    physical = transformed_evidence.get("PhysicalCovariance", {})
+    if physical.get("LabelsMaterialsAdjacencyMatch") is not True:
+        failures.append("physical labels/material adjacency")
+        return failures
+    left, right = (physical.get(name, {}) for name in
+                   ("ReferenceInvariants", "TransformedInvariants"))
+    if left.keys() != right.keys() or not left:
+        return ["physical measure keys differ"]
+    volume_error = max((_relative_error(left[name], right[name]) for name in left
+                        if name.startswith("Volume:")), default=math.inf)
+    area_error = max((_relative_error(left[name], right[name]) for name in left
+                      if name.startswith("Area:")), default=math.inf)
+    if volume_error > comparison["MaximumRelativeVolumeError"]:
+        failures.append("material volumes")
+    if area_error > comparison["MaximumRelativeSurfaceMeasureError"]:
+        failures.append("boundary surface measures")
+    protected = physical.get("ProtectedSurfaces", {})
+    if (protected.get("PlaneSupportsMatch") is not True or
+            protected.get("TopologyMatches") is not True or
+            protected.get("MaximumSupportVertexDistance", math.inf) >
+            comparison["MaximumProtectedSupportHausdorff"] or
+            protected.get("MaximumRelativeMeasureError", math.inf) >
+            comparison["MaximumProtectedMeasureError"]):
+        failures.append("protected support geometry/topology")
+    qualities = [physical.get(name, {}) for name in
+                 ("ReferenceQuality", "TransformedQuality")]
+    quality_values = []
+    for name in ("ScaledJacobianQuantiles", "JacobianConditionQuantiles"):
+        if (not all(isinstance(item.get(name), list) for item in qualities) or
+                len(qualities[0].get(name, [])) != len(qualities[1].get(name, []))):
+            quality_values = [math.inf]
+            break
+        quality_values.extend(_relative_error(a, b)
+                              for a, b in zip(qualities[0][name], qualities[1][name]))
+    if (not all(item.get("PositiveOrientation") is True for item in qualities) or
+            max(quality_values, default=math.inf) >
+            comparison["MaximumQualityDistributionRelativeError"]):
+        failures.append("orientation/quality distribution")
+    anisotropy_names = ("TangentialP50", "Transverse1P90", "Transverse2P90")
+    anisotropy = [item.get("AchievedAnisotropy", {})
+                  for item in (reference_evidence, transformed_evidence)]
+    anisotropy_error = max((_relative_error(anisotropy[0].get(name, math.inf),
+                                            anisotropy[1].get(name, -math.inf))
+                            for name in anisotropy_names), default=math.inf)
+    if anisotropy_error > comparison["MaximumAnisotropyRelativeError"]:
+        failures.append("local-frame anisotropy")
+    complexity_values = [
+        [item["Complexity"]["H1DOFs"], item["Resources"]["Elements"]]
+        for item in (reference_evidence, transformed_evidence)]
+    complexity_ratio = max(max(a, b) / max(min(a, b), 1)
+                           for a, b in zip(*complexity_values))
+    if complexity_ratio > comparison["MaximumComplexityRatio"]:
+        failures.append("complexity ratio")
+    return failures
 
 
 def run_manifest(args):
@@ -557,21 +678,18 @@ def run_manifest(args):
             continue
         reference_evidence, transformed_evidence = (evidence_by_key[key] for key in keys)
         identity_digest = reference_evidence["Mesh"]["SHA256"]
+        identity_seed_digest = reference_evidence.get("IdentitySeedMeshSHA256")
         coordinate_error = transformed_evidence.get("TransformMaximumCoordinateError")
         if (reference_evidence.get("IdentityMeshSHA256") != identity_digest or
                 transformed_evidence.get("IdentityMeshSHA256") != identity_digest or
+                transformed_evidence.get("IdentitySeedMeshSHA256") != identity_seed_digest or
                 not _finite_number(coordinate_error, nonnegative=True) or
                 coordinate_error > manifest["Gates"]["CornerTolerance"]):
-            comparison_failures.append(case["Id"] + ": transform application")
+            comparison_failures.append(case["Id"] + ": exact source-seed covariance")
             continue
-        left, right = (item["ComparisonInvariants"]
-                       for item in (reference_evidence, transformed_evidence))
-        if left.keys() != right.keys() or not left:
-            comparison_failures.append(case["Id"] + ": invariant keys differ")
-            continue
-        error = max(_relative_error(left[name], right[name]) for name in left)
-        if error > comparison["MaximumRelativeInvariantError"]:
-            comparison_failures.append(case["Id"] + ": rotation covariance")
+        comparison_failures.extend(
+            case["Id"] + ": " + failure for failure in _physical_comparison_failures(
+                reference_evidence, transformed_evidence, comparison))
     scaling_failures = []
     for comparison in manifest["ScalingComparisons"]:
         keys = [tuple(comparison[name]) for name in ("Reference", "Compared")]

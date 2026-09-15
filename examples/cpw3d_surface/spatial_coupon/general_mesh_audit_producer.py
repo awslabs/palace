@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import tomllib
 
+import meshio
 import numpy as np
 
 from audit_edge_metric_mesh import analyze, blocks, directional_widths
@@ -134,16 +135,21 @@ def _tetra_quality(mesh):
     xyz = mesh.points[tetrahedra]
     jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
                          xyz[:, 3] - xyz[:, 0]), axis=2)
+    determinant = np.linalg.det(jacobian)
     singular = np.linalg.svd(jacobian, compute_uv=False)
     condition = singular[:, 0] / singular[:, -1]
     lengths = np.linalg.norm(jacobian, axis=1)
-    scaled = np.abs(np.linalg.det(jacobian)) / np.prod(lengths, axis=1)
+    scaled = np.abs(determinant) / np.prod(lengths, axis=1)
     if (not len(scaled) or not np.all(np.isfinite(condition)) or
             np.any(singular[:, -1] <= 0)):
         raise ValueError("Invalid tetrahedral Jacobian audit")
+    quantiles = (0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0)
     return {"Samples": len(tetrahedra),
+            "PositiveOrientation": bool(np.all(determinant > 0.0)),
             "MinimumScaledJacobian": float(scaled.min()),
-            "MaximumJacobianCondition": float(condition.max())}
+            "MaximumJacobianCondition": float(condition.max()),
+            "ScaledJacobianQuantiles": np.quantile(scaled, quantiles).tolist(),
+            "JacobianConditionQuantiles": np.quantile(condition, quantiles).tolist()}
 
 
 def _point_aspects(mesh, points):
@@ -482,8 +488,7 @@ def complexity_record(base, mesh_path, contract_path, recipe_path):
     return base
 
 
-def invariants_record(base, mesh_path):
-    mesh = read_mesh(mesh_path)
+def _mesh_invariants(mesh):
     tetrahedra, materials = blocks(mesh, "tetra")
     xyz = mesh.points[tetrahedra]
     volume = np.abs(np.linalg.det(np.stack((xyz[:, 1] - xyz[:, 0],
@@ -496,29 +501,87 @@ def invariants_record(base, mesh_path):
               for attr in np.unique(materials)}
     values.update({f"Area:{int(attr)}": float(area[labels == attr].sum())
                    for attr in np.unique(labels)})
-    base["Measurements"] = {"ComparisonInvariants": values}
+    return values
+
+
+def invariants_record(base, mesh_path):
+    base["Measurements"] = {"ComparisonInvariants": _mesh_invariants(read_mesh(mesh_path))}
     return base
 
 
-def variant_record(base, mesh_path, identity_mesh_path, transform, tolerance=1e-10):
+def _inverse_transformed_mesh(mesh, matrix):
+    result = meshio.Mesh(mesh.points.copy(), [(cell.type, cell.data.copy()) for cell in mesh.cells],
+                         point_data=mesh.point_data, cell_data=mesh.cell_data,
+                         field_data=mesh.field_data)
+    result.points = (np.asarray(mesh.points) - matrix[:3, 3]) @ matrix[:3, :3]
+    return result
+
+
+def _physical_covariance_report(identity, transformed, contract, matrix):
+    normalized = _inverse_transformed_mesh(transformed, matrix)
+    left, _ = analyze(identity, contract, require_material_names=True)
+    right, _ = analyze(normalized, contract, require_material_names=True)
+    left_invariants = _mesh_invariants(identity)
+    right_invariants = _mesh_invariants(normalized)
+    left_quality, right_quality = _tetra_quality(identity), _tetra_quality(normalized)
+    deterministic = {"PointCountEqual": len(identity.points) == len(normalized.points)}
+    deterministic["TopologyEqual"] = all(
+        np.array_equal(blocks(identity, kind)[0], blocks(normalized, kind)[0]) and
+        np.array_equal(blocks(identity, kind)[1], blocks(normalized, kind)[1])
+        for kind in ("triangle", "tetra"))
+    deterministic["CoordinateMaximumError"] = None
+    if deterministic["PointCountEqual"]:
+        deterministic["CoordinateMaximumError"] = float(np.max(
+            np.linalg.norm(identity.points - normalized.points, axis=1)))
+    return {
+        "ComparisonFrame": "SourceLocal",
+        "LabelsMaterialsAdjacencyMatch": (
+            left["PhysicalVolumeNames"] == right["PhysicalVolumeNames"] and
+            left["BoundaryAdjacency"] == right["BoundaryAdjacency"] and
+            set(blocks(identity, "triangle")[1]) == set(blocks(normalized, "triangle")[1]) and
+            set(blocks(identity, "tetra")[1]) == set(blocks(normalized, "tetra")[1])),
+        "ProtectedSurfaces": _protected_surface_report(identity, normalized, contract),
+        "ReferenceInvariants": left_invariants,
+        "TransformedInvariants": right_invariants,
+        "ReferenceQuality": left_quality,
+        "TransformedQuality": right_quality,
+        "ReferencePoints": len(identity.points), "TransformedPoints": len(normalized.points),
+        "ReferenceElements": len(blocks(identity, "tetra")[0]),
+        "TransformedElements": len(blocks(normalized, "tetra")[0]),
+        # Diagnostic only: physical acceptance never depends on this subsection.
+        "DeterministicTopologyDiagnostic": deterministic,
+    }
+
+
+def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
+                   transform, contract_path, stage_reports, tolerance=1e-10):
     mesh, identity = read_mesh(mesh_path), read_mesh(identity_mesh_path)
     matrix = np.asarray(transform, dtype=float).reshape(4, 4)
-    homogeneous = np.column_stack((identity.points, np.ones(len(identity.points))))
+    reports, _ = validate_stage_dag(stage_reports, mesh_path)
+    seed = read_mesh(reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"])
+    identity_seed_path = Path(identity_seed_mesh_path)
+    identity_seed = read_mesh(identity_seed_path)
+    homogeneous = np.column_stack((identity_seed.points, np.ones(len(identity_seed.points))))
     expected = (homogeneous @ matrix.T)[:, :3]
-    if mesh.points.shape != expected.shape:
-        raise ValueError("Variant and identity point counts differ")
-    error = float(np.max(np.linalg.norm(mesh.points - expected, axis=1)))
+    if seed.points.shape != expected.shape:
+        raise ValueError("Transformed source seed point count differs from identity")
+    error = float(np.max(np.linalg.norm(seed.points - expected, axis=1)))
     if error > tolerance:
-        raise ValueError("Candidate mesh does not apply the declared transform")
+        raise ValueError("Source seed does not apply the declared transform")
     for kind in ("triangle", "tetra"):
-        cells, refs = blocks(mesh, kind)
-        identity_cells, identity_refs = blocks(identity, kind)
+        cells, refs = blocks(seed, kind)
+        identity_cells, identity_refs = blocks(identity_seed, kind)
         if not np.array_equal(cells, identity_cells) or not np.array_equal(refs, identity_refs):
-            raise ValueError("Variant topology/labels differ from identity")
+            raise ValueError("Transformed source seed topology/labels differ from identity")
+    contract = load_semantic_contract(contract_path)
+    base["IdentityMeshPath"] = str(Path(identity_mesh_path).resolve())
     base["IdentityMeshSHA256"] = sha256(identity_mesh_path)
+    base["IdentitySeedMeshPath"] = str(Path(identity_seed_path).resolve())
+    base["IdentitySeedMeshSHA256"] = sha256(identity_seed_path)
     base["TransformMaximumCoordinateError"] = error
     base["TransformVerified"] = True
-    base["Measurements"] = {}
+    base["Measurements"] = {"PhysicalCovariance": _physical_covariance_report(
+        identity, mesh, contract, matrix)}
     return base
 
 
@@ -539,7 +602,7 @@ def bounded_record(base, mesh_path, stage_reports):
 
 def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
             contract=None, recipe=None, process=None, signature=None, identity_mesh=None,
-            stage_reports=None, command=None):
+            identity_seed_mesh=None, stage_reports=None, command=None):
     if kind not in KINDS:
         raise ValueError("Unknown audit kind")
     inputs = json.loads(Path(inputs_path).read_text())
@@ -565,7 +628,8 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     elif kind == "mesh-invariants":
         record = invariants_record(base, mesh)
     else:
-        record = variant_record(base, mesh, identity_mesh, transform)
+        record = variant_record(base, mesh, identity_mesh, identity_seed_mesh,
+                                transform, contract, stage_reports)
     output = Path(output)
     if output.exists():
         raise ValueError("Audit output must be fresh")
@@ -582,6 +646,7 @@ def main():
     parser.add_argument("--contract", type=Path); parser.add_argument("--recipe", type=Path)
     parser.add_argument("--process", type=Path); parser.add_argument("--signature", type=Path)
     parser.add_argument("--identity-mesh", type=Path)
+    parser.add_argument("--identity-seed-mesh", type=Path)
     parser.add_argument("--stage-report", action="append", default=[], metavar="STAGE=PATH")
     args = parser.parse_args()
     stage_reports = {}
@@ -595,6 +660,7 @@ def main():
     produce(args.kind, args.case, args.variant, args.mesh, args.inputs, args.transform,
             args.output, contract=args.contract, recipe=args.recipe, process=args.process,
             signature=args.signature, identity_mesh=args.identity_mesh,
+            identity_seed_mesh=args.identity_seed_mesh,
             stage_reports=stage_reports, command=sys.argv)
 
 

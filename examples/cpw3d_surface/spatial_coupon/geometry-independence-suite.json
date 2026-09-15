@@ -24,12 +24,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "6c7e16dece0311b6cf6230b0c2f92b2d910ae7acf64625138d3772a4de1dfbd0"
+      "SHA256": "3e883f912eef66906465eeacbe3348724dbe7568a5a3e1cace39d24a281bf40d"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "9b8caddb47e63579faeb9d65e211610e83360e57b6726def726b7ddf0d766bbd"
+      "SHA256": "5b98218f5c5e584939519fd0c2adc77c9e939273ef1c76463badb3de4f66265a"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -64,17 +64,17 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "f975959d71cff6b9d9a8aa73ba0fb5e41adb5fb4953e10e96f8edafa0f716c74"
+      "SHA256": "e3e6b8c710f87badff8e64e6e5cf111b1ebf4fc6622364b67d03564c37c3b4cf"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "902c9c82a27357dbb4ab4e32f34c0201390cf27fd65eee8007ea3df49e7e37a1"
+      "SHA256": "19176ed395ddb8288cec98cc338ba51d7a5a36576cc9b7bdb0cf589d7f8dc424"
     },
     {
       "Name": "transform_coupon_source_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/transform_coupon_source_contract.py",
-      "SHA256": "0077184fd0d79a512a2b681d8351a55b6047379857e61fca3a12d3e569517a53"
+      "SHA256": "6f20630a69f11b4181f1718e01eea8f0de305f118ab8eb71442fa4864132e7a2"
     },
     {
       "Name": "label_interface_patches.jl",
@@ -166,7 +166,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
@@ -270,7 +276,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
@@ -374,7 +386,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
@@ -478,7 +496,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
@@ -582,7 +606,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "../coupon-mesh-inspection-20260911/fabricated-volume/input",
@@ -688,7 +718,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
@@ -814,7 +850,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
@@ -919,7 +961,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/ten-edge-6791f1c84123",
@@ -1044,7 +1092,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/concave-multislot",
@@ -1149,7 +1203,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/hole",
@@ -1254,7 +1314,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/rounded-strip",
@@ -1359,7 +1425,13 @@
       "TransformComparison": {
         "Reference": "identity",
         "Transformed": "rotate-z-0.63",
-        "MaximumRelativeInvariantError": 1e-08
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
       },
       "Source": {
         "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/opposed-layers",
@@ -1413,7 +1485,7 @@
   "StageToolSHA256": {
     "seed-generation": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "mesher": "6d9a4c60b98cb7193563e38d83dbfc8186e5c1916a9b20b8f0dfd17d9b7d58f3"
+      "mesher": "de62cdae7ab27125cf12e2fa29e9e61f4bdf8d083cac5878d8f7db5291c28c78"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -1425,11 +1497,16 @@
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "967473afe3471b3a4c5be4a028d171f4d0750deef984ec0dacf1154cf316f1bf"
+      "label-restorer": "702c1a8e0b5c7444ba16f941472b7183d31349ab01df81003b320f0fd7bef0a2"
     },
     "final-gmsh-publication": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
       "publisher": "cb0c714b493c21ac62bc54edecf36de41b038f4ebfd08a4b7efd435226347c67"
+    },
+    "source-transformation": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "source-transformer": "6f20630a69f11b4181f1718e01eea8f0de305f118ab8eb71442fa4864132e7a2"
     }
-  }
+  },
+  "PhysicalCovarianceToleranceBasis": "Frozen before rerun: exact CAD supports use 1e-8 um/relative; material volume and boundary measure use 5e-4 relative (sub-percent mesh discretization); quality and local anisotropy distribution changes use 0.35 relative; complexity uses a 1.10 ratio. Solver QoI is excluded."
 }

@@ -80,10 +80,13 @@ def _read_rows(path):
         return list(csv.DictReader(stream))
 
 
-def transformed_supports(source, matrix):
+def transformed_supports(source, matrix, *, signature=None, boundary=None, mask=None):
     source = Path(source)
+    signature = Path(signature or source / "mesh-signature.csv")
+    boundary = Path(boundary or source / "plan-view-boundary.csv")
+    mask = Path(mask or source / "plan-view-mask.csv")
     edges = []
-    for row in _read_rows(source / "mesh-signature.csv"):
+    for row in _read_rows(signature):
         point = [float(row[name]) for name in ("Px", "Py", "Pz")]
         gap = [float(row[name]) for name in ("Gx", "Gy", "Gz")]
         tangent = [float(row[name]) for name in ("Tx", "Ty", "Tz")]
@@ -104,27 +107,29 @@ def transformed_supports(source, matrix):
         "Class": row["Class"],
         "Point": transform_point(matrix, [float(row["X"]), float(row["Y"]),
                                             float(row["Plane"])]),
-    } for row in _read_rows(source / "plan-view-boundary.csv")]
+    } for row in _read_rows(boundary)]
     mask = [{
         "Facet": int(row["Facet"]), "Conductor": int(row["Conductor"]),
         "Point": transform_point(matrix, [float(row["X"]), float(row["Y"]),
                                             float(row["Plane"])]),
-    } for row in _read_rows(source / "plan-view-mask.csv")]
+    } for row in _read_rows(mask)]
     return {"Version": 1, "CoordinateSystem": "TransformedGlobal3D",
             "RigidTransform": [value for row in matrix for value in row],
             "Edges": edges, "BoundaryVertices": boundary, "MaskVertices": mask}
 
 
-def write_transformed_contracts(source, transform_path, semantic_output, supports_output):
+def write_transformed_contracts(source, transform_path, semantic_output, supports_output, *,
+                                semantic_input=None, signature=None, boundary=None,
+                                mask=None):
     source = Path(source)
     matrix = read_transform(transform_path)
-    semantic_input = source / "semantic-contract.json"
+    semantic_input = Path(semantic_input or source / "semantic-contract.json")
     contract = transform_semantic_contract(json.loads(semantic_input.read_text()), matrix)
     contract["SourceSemanticContractSHA256"] = hashlib.sha256(
         semantic_input.read_bytes()).hexdigest()
     Path(semantic_output).write_text(json.dumps(contract, indent=2) + "\n")
-    Path(supports_output).write_text(
-        json.dumps(transformed_supports(source, matrix), indent=2) + "\n")
+    Path(supports_output).write_text(json.dumps(transformed_supports(
+        source, matrix, signature=signature, boundary=boundary, mask=mask), indent=2) + "\n")
 
 
 def main():
@@ -133,12 +138,18 @@ def main():
     parser.add_argument("transform", type=Path)
     parser.add_argument("semantic_output", type=Path)
     parser.add_argument("supports_output", type=Path)
+    parser.add_argument("--semantic-input", type=Path)
+    parser.add_argument("--signature", type=Path)
+    parser.add_argument("--boundary", type=Path)
+    parser.add_argument("--mask", type=Path)
     args = parser.parse_args()
     for output in (args.semantic_output, args.supports_output):
         if output.exists():
             parser.error(f"refuse to overwrite output: {output}")
-    write_transformed_contracts(args.source, args.transform,
-                                args.semantic_output, args.supports_output)
+    write_transformed_contracts(
+        args.source, args.transform, args.semantic_output, args.supports_output,
+        semantic_input=args.semantic_input, signature=args.signature,
+        boundary=args.boundary, mask=args.mask)
 
 
 if __name__ == "__main__":

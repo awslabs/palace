@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--recipe", type=Path)
     parser.add_argument("--fixed-triangles", type=Path)
     parser.add_argument("--ownership", type=Path)
+    parser.add_argument("--source-local-output", type=Path)
     args = parser.parse_args()
     if args.stage == "metric":
         if (args.mmg_seed is None or args.pins is None or args.recipe is None or
@@ -48,8 +49,10 @@ def main():
             parser.error("adapt requires metric, pins, and fixed triangles")
         rewrite(args.source, args.output, True)
     elif args.stage == "restore":
-        if args.recipe is None or not args.recipe.is_file():
-            parser.error("restore requires --recipe")
+        if (args.recipe is None or not args.recipe.is_file() or
+                args.source_local_output is None):
+            parser.error("restore requires --recipe and --source-local-output")
+        rewrite(args.source, args.source_local_output, False)
         rewrite(args.source, args.output, False)
     else:
         if args.ownership is None:

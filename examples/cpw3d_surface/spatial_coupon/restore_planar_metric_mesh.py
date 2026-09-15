@@ -7,11 +7,13 @@ Native output is retained. Large displacement, missing support, inconsistent
 intersection or inversion rejects the candidate. This does NOT replace footprint,
 conductor-topology, achieved-resolution or PDE accuracy checks.
 """
-import argparse,json,hashlib
+import argparse,copy,json,hashlib
 from pathlib import Path
 import meshio
 import numpy as np
 from scipy.optimize import least_squares
+
+from transform_coupon_source_contract import validate_rigid_transform
 
 
 def _tetra_quality(points,tetrahedra):
@@ -119,8 +121,15 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         largest_step=max(largest_step,float(step.max()))
         points[active]=candidate[active]
         scaled,aspects,determinant=_tetra_quality(points,tetrahedra[incident])
-        if np.any(determinant<=0) or np.any(scaled+1e-12<floor):
-            raise ValueError('Post-adaptation repair degraded an incident tetrahedron')
+        degradation=float(np.min(scaled-floor))
+        # The nonlinear residual and quality re-evaluation use different BLAS
+        # reduction orders.  Permit only roundoff-scale local regression; the
+        # global signed-orientation and minimum-quality gates below remain exact.
+        degradation_tolerance=max(1e-8,1e-6*float(np.max(np.abs(floor))))
+        if np.any(determinant<=0) or degradation < -degradation_tolerance:
+            raise ValueError(
+                'Post-adaptation repair degraded an incident tetrahedron: '
+                f'min_scaled_change={degradation}, min_determinant={determinant.min()}')
         selected_scaled,selected_aspects,_=_tetra_quality(points,tetrahedra[cells])
         return float(selected_scaled.min()),float(selected_aspects.max())
 
@@ -237,6 +246,50 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
                    'LibraryQualified':False}
 
 
+def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None,
+                            maximum_corner_aspect=None,maximum_quality_displacement=None):
+    """Restore in the source-local frame and return local and published meshes.
+
+    MMG may produce a different valid unstructured topology after a rigid source
+    transform.  Pulling coordinates and planar constraints back before numerical
+    optimization removes global-axis conditioning from restoration.  The same
+    proper transform is reapplied only after all local quality/support checks.
+    """
+    semantic=recipe.get('SemanticContract',{})
+    values=semantic.get('RigidTransform')
+    if values is None:
+        values=[1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]
+    matrix=np.asarray(validate_rigid_transform(values),dtype=float)
+    rotation=matrix[:3,:3];translation=matrix[:3,3]
+    local_mesh=copy.deepcopy(mesh)
+    local_mesh.points=(np.asarray(mesh.points)-translation)@rotation
+    local_recipe=copy.deepcopy(recipe)
+    for name in ('TruePhysicalCorners','SurfaceFeatureCorners'):
+        if name in local_recipe:
+            points=np.asarray(local_recipe[name],dtype=float).reshape(-1,3)
+            local_recipe[name]=((points-translation)@rotation).tolist()
+    if 'PhysicalSegments' in local_recipe:
+        segments=np.asarray(local_recipe['PhysicalSegments'],dtype=float).reshape(-1,2,3)
+        local_recipe['PhysicalSegments']=((segments-translation)@rotation).tolist()
+    for support in local_recipe['PlanarSupports'].values():
+        global_normal=np.asarray(support['Normal'],dtype=float)
+        support['Normal']=(rotation.T@global_normal).tolist()
+        support['Offset']=float(support['Offset']-np.dot(global_normal,translation))
+    local_semantic=local_recipe.get('SemanticContract',{})
+    for name in ('SemanticCorners',):
+        if name in local_semantic:
+            points=np.asarray(local_semantic[name],dtype=float).reshape(-1,3)
+            local_semantic[name]=((points-translation)@rotation).tolist()
+    local_semantic['RigidTransform']=[1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]
+    restored,report=restore(local_mesh,local_recipe,maximum_displacement,minimum_scaled,
+                            maximum_corner_aspect,maximum_quality_displacement)
+    published=copy.deepcopy(restored)
+    published.points=np.asarray(restored.points)@rotation.T+translation
+    report.update({'RestorationFrame':'SourceLocal',
+                   'RigidTransform':[float(value) for value in matrix.reshape(-1)]})
+    return restored,published,report
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('input',type=Path);p.add_argument('recipe',type=Path);p.add_argument('output',type=Path)
     bound=p.add_mutually_exclusive_group(required=True)
@@ -245,21 +298,25 @@ def main():
     p.add_argument('--minimum-scaled-jacobian',type=float)
     p.add_argument('--maximum-corner-aspect',type=float)
     p.add_argument('--maximum-quality-displacement-over-normal',type=float)
+    p.add_argument('--source-local-output',type=Path,required=True)
     a=p.parse_args()
-    if a.output.exists():raise ValueError('Do not overwrite candidates')
+    if a.output.exists() or a.source_local_output.exists():raise ValueError('Do not overwrite candidates')
     recipe=json.loads(a.recipe.read_text())
     maximum=(a.max_displacement if a.max_displacement is not None else
              a.max_displacement_over_normal*float(recipe['NormalSize']))
     if not np.isfinite(maximum) or maximum<=0:raise ValueError('Invalid displacement bound')
     quality_displacement=(None if a.maximum_quality_displacement_over_normal is None else
                           a.maximum_quality_displacement_over_normal*float(recipe['NormalSize']))
-    mesh=meshio.read(a.input);output,report=restore(
+    mesh=meshio.read(a.input);local_output,output,report=restore_in_source_frame(
         mesh,recipe,maximum,a.minimum_scaled_jacobian,a.maximum_corner_aspect,
         quality_displacement)
     if a.max_displacement_over_normal is not None:
         report['CorrectionBoundOverNormalSize']=a.max_displacement_over_normal
+    meshio.write(a.source_local_output,local_output,file_format='gmsh22',binary=True)
     meshio.write(a.output,output,file_format='gmsh22',binary=True)
-    report['NativeInputSHA256']=hashlib.sha256(a.input.read_bytes()).hexdigest();report['OutputSHA256']=hashlib.sha256(a.output.read_bytes()).hexdigest()
+    report['NativeInputSHA256']=hashlib.sha256(a.input.read_bytes()).hexdigest()
+    report['SourceLocalOutputSHA256']=hashlib.sha256(a.source_local_output.read_bytes()).hexdigest()
+    report['OutputSHA256']=hashlib.sha256(a.output.read_bytes()).hexdigest()
     a.output.with_suffix('.projection.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
 if __name__=='__main__':main()

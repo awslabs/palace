@@ -23,7 +23,8 @@ from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
                                          _normalized_footprint_boundary,
                                          _protected_surface_report,
                                          produce as produce_audit)
-from general_mesh_manifest import run_manifest, sha256, validate_manifest
+from general_mesh_manifest import (_physical_comparison_failures, run_manifest, sha256,
+                                   validate_manifest)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import validate_tool_invocation
 from normalize_general_mesh_evidence import normalize
@@ -35,6 +36,7 @@ MESHER = HERE / "testdata" / "tiny_mesh_audit_producer.py"
 AUDITOR = HERE / "general_mesh_audit_producer.py"
 BOUNDED = HERE / "run_bounded_mesher.py"
 STAGER = HERE / "testdata" / "tiny_mesh_stage.py"
+TRANSFORMER = HERE / "transform_coupon_source_contract.py"
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ANGLE = 0.63
 ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
@@ -49,19 +51,22 @@ class GeneralMeshManifestTest(unittest.TestCase):
         with signature.open("w", newline="") as stream:
             writer = csv.writer(stream)
             writer.writerow(["Index", "Slot", "Conductor", "Px", "Py", "Pz",
-                             "Tx", "Ty", "Tz", "S0", "S1"])
+                             "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "Nz", "S0", "S1"])
             for i in range(edges):
                 if name == "subdivided":
                     slot, conductor, y = 0, 1, 0
                 else:
                     slot, conductor, y = i % 2, i // 2 + 1, i
                 writer.writerow([i + 1, slot, conductor, (i + .5) * scale,
-                                 y * scale, 0, 1, 0, 0, -.5 * scale, .5 * scale])
+                                 y * scale, 0, 0, 1, 0, 1, 0, 0, 1,
+                                 -.5 * scale, .5 * scale])
         (directory / "boundary.csv").write_text(
             "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n"
             f"1,1,1,0,0,Physical,{10 * scale},0\n"
             f"1,2,1,0,0,Continuation,{2 * scale},0\n")
-        (directory / "mask.csv").write_text("mask\n")
+        (directory / "mask.csv").write_text(
+            "Facet,Vertex,Conductor,Plane,X,Y\n"
+            f"1,1,1,0,0,0\n1,2,1,0,{10 * scale},0\n1,3,1,0,0,{10 * scale}\n")
         (directory / "process.toml").write_text(
             f'Units = "um"\nMetalThickness = {0.004 * scale}\n')
         recipe = {"Version": 1, "GeometryOrder": 1,
@@ -93,8 +98,13 @@ class GeneralMeshManifestTest(unittest.TestCase):
         return {"Id": name, "Variants": [{"Id": "identity", "Transform": list(IDENTITY)},
                                            {"Id": "rotate-z-0.63", "Transform": list(ROTATION)}],
                 "TransformComparison": {"Reference": "identity",
-                                        "Transformed": "rotate-z-0.63",
-                                        "MaximumRelativeInvariantError": 1e-8},
+                    "Transformed": "rotate-z-0.63", "MaximumRelativeVolumeError": 1e-8,
+                    "MaximumRelativeSurfaceMeasureError": 1e-8,
+                    "MaximumProtectedSupportHausdorff": 1e-8,
+                    "MaximumProtectedMeasureError": 1e-8,
+                    "MaximumQualityDistributionRelativeError": 1e-8,
+                    "MaximumAnisotropyRelativeError": 1e-8,
+                    "MaximumComplexityRatio": 1.01},
                 "Source": {"Directory": name, "SignatureRole": "Signature",
                            "SignatureColumns": ["Index", "Slot", "Conductor"],
                            "Files": files}, "TestScale": scale}
@@ -104,6 +114,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  self.write_case(root, "subdivided", 2, scale=2),
                  self.write_case(root, "six-edge-supplemental", 6, scale=3)]
         tools = [(MESHER.name, MESHER), (STAGER.name, STAGER),
+                 (TRANSFORMER.name, TRANSFORMER),
                  (AUDITOR.name, AUDITOR), (BOUNDED.name, BOUNDED)]
         manifest = {"Version": 2, "RepositoryRoot": ".",
             "Gates": {"CornerTolerance": 1e-8, "MaximumNormalFactor": 2,
@@ -116,6 +127,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
             "Tools": [{"Name": name, "Path": str(path), "SHA256": sha256(path)}
                       for name, path in tools],
             "StageToolSHA256": {
+                "source-transformation": {"runtime": sha256(sys.executable),
+                    "source-transformer": sha256(TRANSFORMER)},
                 "seed-generation": {"runtime": sha256(sys.executable),
                                     "mesher": sha256(MESHER)},
                 "metric-preparation": {"runtime": sha256(sys.executable),
@@ -149,6 +162,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
             inputs_path = directory / "input-hashes.json"
             inputs_path.write_text(json.dumps(inputs))
             identity_mesh = None
+            identity_seed_mesh = None
             for variant in case["Variants"]:
                 variant_id = variant["Id"]; stem = f"{case['Id']}--{variant_id}"
                 transform = directory / f"{variant_id}-transform.json"
@@ -159,7 +173,10 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 pins = root / f"{stem}-pins.txt"
                 fixed_triangles = root / f"{stem}-fixed-triangles.txt"
                 restoration_recipe = root / f"{stem}-restoration-recipe.json"
+                transformed_semantic = root / f"{stem}-transformed-semantic.json"
+                transformed_supports = root / f"{stem}-transformed-supports.json"
                 adapted = root / f"{stem}-adapted.msh"
+                local_restored = root / f"{stem}-source-local-restored.msh"
                 restored = root / f"{stem}-restored.msh"
                 mesh = root / f"{stem}.msh"
                 ownership = root / f"{stem}-ownership.csv"
@@ -178,11 +195,28 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     subprocess.run([*invocation, "--", *command], check=True,
                                    stdout=subprocess.DEVNULL)
                     stage_reports[stage] = log.with_suffix(".log.json")
+                launch("source-transformation", {
+                           "source-semantic-contract": directory / "semantic.json",
+                           "source-signature": directory / "signature.csv",
+                           "source-boundary": directory / "boundary.csv",
+                           "source-mask": directory / "mask.csv",
+                           "canonical-transform": transform},
+                       {"transformed-semantic-contract": transformed_semantic,
+                        "transformed-supports": transformed_supports},
+                       {"runtime": sys.executable, "source-transformer": TRANSFORMER},
+                       [sys.executable, str(TRANSFORMER), str(directory), str(transform),
+                        str(transformed_semantic), str(transformed_supports),
+                        "--semantic-input", str(directory / "semantic.json"),
+                        "--signature", str(directory / "signature.csv"),
+                        "--boundary", str(directory / "boundary.csv"),
+                        "--mask", str(directory / "mask.csv")])
                 launch("seed-generation", {}, {"seed-mesh": seed},
                        {"runtime": sys.executable, "mesher": MESHER},
                        [sys.executable, str(MESHER), str(seed), str(transform),
                         "--scale", str(case["TestScale"])])
-                launch("metric-preparation", {"seed-mesh": seed},
+                launch("metric-preparation", {"seed-mesh": seed,
+                                                "transformed-semantic-contract": transformed_semantic,
+                                                "transformed-supports": transformed_supports},
                        {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
                         "fixed-triangles": fixed_triangles,
                         "restoration-recipe": restoration_recipe},
@@ -204,16 +238,20 @@ class GeneralMeshManifestTest(unittest.TestCase):
                         "--fixed-triangles", str(fixed_triangles)])
                 launch("label-restoration", {"adapted-mesh": adapted,
                                               "restoration-recipe": restoration_recipe},
-                       {"restored-mesh": restored},
+                       {"source-local-restored-mesh": local_restored,
+                        "restored-mesh": restored},
                        {"runtime": sys.executable, "label-restorer": STAGER},
                        [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
-                        "--recipe", str(restoration_recipe)])
+                        "--recipe", str(restoration_recipe),
+                        "--source-local-output", str(local_restored)])
                 launch("final-gmsh-publication", {"restored-mesh": restored},
                        {"candidate-mesh": mesh, "ownership-partition": ownership},
                        {"runtime": sys.executable, "publisher": STAGER},
                        [sys.executable, str(STAGER), "publish", str(restored), str(mesh),
                         "--ownership", str(ownership)])
-                if identity_mesh is None: identity_mesh = mesh
+                if identity_mesh is None:
+                    identity_mesh = mesh
+                    identity_seed_mesh = seed
                 records = {}
                 for kind in KINDS:
                     record = root / f"{stem}-{kind}.json"
@@ -221,7 +259,9 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                   transform, record, contract=directory / "semantic.json",
                                   recipe=directory / "recipe.json", process=directory / "process.toml",
                                   signature=directory / "signature.csv",
-                                  identity_mesh=identity_mesh, stage_reports=stage_reports,
+                                  identity_mesh=identity_mesh,
+                                  identity_seed_mesh=identity_seed_mesh,
+                                  stage_reports=stage_reports,
                                   command=[str(AUDITOR), kind, stem])
                     records[kind] = record
                 normalize(manifest_path, case["Id"], variant_id, mesh, records,
@@ -303,10 +343,15 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.produce_matrix(root, manifest_path, manifest)
             case = manifest["Cases"][0]; directory = root / "base"
             with self.assertRaises(ValueError):
+                reports = {stage: root / f"base--identity-{stage}.log.json"
+                           for stage in __import__("mesh_stage_contract").STAGE_ORDER}
                 produce_audit("variant-transform", "base", "rotate-z-0.63",
                     root / "base--identity.msh", directory / "input-hashes.json",
                     directory / "rotate-z-0.63-transform.json", root / "bad.json",
-                    identity_mesh=root / "base--identity.msh")
+                    contract=directory / "semantic.json",
+                    identity_mesh=root / "base--identity.msh",
+                    identity_seed_mesh=root / "base--identity-seed.msh",
+                    stage_reports=reports)
 
     def test_all_audit_bindings_and_raw_as_own_audit_fail(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -584,19 +629,48 @@ class GeneralMeshManifestTest(unittest.TestCase):
             path.write_text(json.dumps(evidence))
             self.assertFalse(run_manifest(self.args(manifest_path, root / "out", audit=audits)))
 
-    def test_manifest_rejects_identity_as_rotation_and_nonrigid_transform(self):
+    def test_physical_covariance_rejects_transformed_geometry_material_quality_anisotropy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            audits = self.produce_matrix(root, manifest_path, manifest)
+            reference = json.loads((audits / "base--identity.json").read_text())
+            transformed = json.loads((audits / "base--rotate-z-0.63.json").read_text())
+            comparison = manifest["Cases"][0]["TransformComparison"]
+            self.assertEqual(_physical_comparison_failures(
+                reference, transformed, comparison), [])
+            mutations = {
+                "protected support geometry/topology": lambda value: value[
+                    "PhysicalCovariance"]["ProtectedSurfaces"].__setitem__(
+                        "MaximumSupportVertexDistance", 1.0),
+                "physical labels/material adjacency": lambda value: value[
+                    "PhysicalCovariance"].__setitem__("LabelsMaterialsAdjacencyMatch", False),
+                "orientation/quality distribution": lambda value: value[
+                    "PhysicalCovariance"]["TransformedQuality"].__setitem__(
+                        "PositiveOrientation", False),
+                "local-frame anisotropy": lambda value: value[
+                    "AchievedAnisotropy"].__setitem__("TangentialP50", 100.0),
+            }
+            for expected, mutate in mutations.items():
+                with self.subTest(expected=expected):
+                    candidate = copy.deepcopy(transformed); mutate(candidate)
+                    self.assertIn(expected, _physical_comparison_failures(
+                        reference, candidate, comparison))
+
+    def test_manifest_rejects_identity_rotation_nonrigid_and_reflection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)
             manifest["Cases"][0]["Variants"][1]["Transform"] = IDENTITY
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaises(ValueError):
                 validate_manifest(manifest, manifest_path)
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
-            manifest["Cases"][0]["Variants"][1]["Transform"][0] = 2
-            manifest_path.write_text(json.dumps(manifest))
-            with self.assertRaises(ValueError):
-                validate_manifest(manifest, manifest_path)
+        for first_axis in (2, -1):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+                manifest["Cases"][0]["Variants"][1]["Transform"] = list(IDENTITY)
+                manifest["Cases"][0]["Variants"][1]["Transform"][0] = first_axis
+                manifest_path.write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    validate_manifest(manifest, manifest_path)
 
     def test_actual_spatial_coupon_output_uses_frozen_material_identity(self):
         mesh = os.environ.get("ACTUAL_SPATIAL_COUPON_MESH")

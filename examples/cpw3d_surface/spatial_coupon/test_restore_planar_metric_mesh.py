@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 
+import meshio
 import numpy as np
 
 from restore_planar_metric_mesh import (
@@ -9,10 +10,43 @@ from restore_planar_metric_mesh import (
     _movement_basis,
     _quality_repair,
     _tetra_quality,
+    restore_in_source_frame,
 )
 
 
 class PlanarMetricQualityRepairTest(unittest.TestCase):
+    def test_tilted_restoration_is_performed_in_source_local_frame(self):
+        points = np.array([[0., .001, 0.], [0., -.001, .05], [.05, .0005, 0.],
+                           [.01, .02, .01]])
+        cells = [("triangle", np.array([[0, 1, 2]])),
+                 ("tetra", np.array([[0, 1, 2, 3]]))]
+        refs = [np.array([100]), np.array([1])]
+        angle = .47
+        rotation = np.array([[np.cos(angle), 0., np.sin(angle)], [0., 1., 0.],
+                             [-np.sin(angle), 0., np.cos(angle)]])
+        translation = np.array([1.2, -.4, .7])
+        matrix = np.eye(4); matrix[:3, :3] = rotation; matrix[:3, 3] = translation
+        transformed = meshio.Mesh(points @ rotation.T + translation, cells,
+                                  cell_data={"medit:ref": refs})
+        normal = rotation @ np.array([0., 1., 0.])
+        recipe = {
+            "PlanarSupports": {"100": {"Normal": normal.tolist(),
+                "Offset": float(np.dot(normal, translation)), "Attribute": 6001}},
+            "TruePhysicalCorners": [(np.array([0., 0., 0.]) @ rotation.T +
+                                      translation).tolist()],
+            "SemanticContract": {"RigidTransform": matrix.reshape(-1).tolist(),
+                "VolumeMaterials": [{"Attribute": 1, "Material": "vacuum"}],
+                "BoundaryLabels": [{"Attribute": 6001, "Role": "side",
+                                    "AdjacentMaterials": [1]}],
+                "CutSurfaceRoles": []}}
+        local, published, report = restore_in_source_frame(
+            transformed, recipe, .01)
+        self.assertEqual(report["RestorationFrame"], "SourceLocal")
+        self.assertLess(np.max(np.abs(local.points[:3, 1])), 1e-12)
+        np.testing.assert_allclose(published.points,
+                                   local.points @ rotation.T + translation,
+                                   rtol=0., atol=2e-15)
+
     def test_parameterization_bounds_free_surface_and_ridge_vertices(self):
         maximum = .01875
         supports = {

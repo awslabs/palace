@@ -110,6 +110,7 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
             if record.get("TransformVerified") is not True:
                 raise ValueError("Variant transform was not verified")
             evidence["IdentityMeshSHA256"] = record.get("IdentityMeshSHA256")
+            evidence["IdentitySeedMeshSHA256"] = record.get("IdentitySeedMeshSHA256")
             evidence["TransformMaximumCoordinateError"] = record.get(
                 "TransformMaximumCoordinateError")
         elif kind == "bounded-run":
@@ -134,7 +135,8 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
                          "CornerNeighborhoods", "SubdivisionNeighborhoods", "CutNeighborhoods",
                          "ProtectedSurfaces", "AchievedAnisotropy", "TraceDiagonal",
-                         "MeshQuality", "Complexity", "ComparisonInvariants"}
+                         "MeshQuality", "Complexity", "ComparisonInvariants",
+                         "PhysicalCovariance"}
     if set(measurements) != required_sections:
         raise ValueError("Producer records do not supply the exact measurement schema")
     evidence.update(measurements)

@@ -36,6 +36,20 @@ ROTATE_Z = [math.cos(ANGLE), -math.sin(ANGLE), 0.0, 0.0,
             0.0, 0.0, 0.0, 1.0]
 IDENTITY = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+TILT = 0.41
+TILTED_TRANSLATED = [
+    math.cos(TILT) * math.cos(ANGLE), -math.cos(TILT) * math.sin(ANGLE),
+    math.sin(TILT), 1.2,
+    math.sin(ANGLE), math.cos(ANGLE), 0.0, -0.7,
+    -math.sin(TILT) * math.cos(ANGLE), math.sin(TILT) * math.sin(ANGLE),
+    math.cos(TILT), 0.9,
+    0.0, 0.0, 0.0, 1.0]
+MULTISLOT = {
+    "signature": HERE / "testdata/six-edge-cluster-signature.csv",
+    "mask": HERE / "testdata/six-edge-cluster-mask.csv",
+    "boundary": HERE / "testdata/six-edge-cluster-boundary.csv",
+    "semantic": HERE / "testdata/six-edge-semantic.json",
+}
 
 
 class RigidContractTest(unittest.TestCase):
@@ -84,18 +98,24 @@ class RigidProducerIntegrationTest(unittest.TestCase):
         if probe.returncode:
             raise unittest.SkipTest("The test Julia project has no Gmsh dependency")
 
-    def produce(self, root, name, transform=None):
+    def produce(self, root, name, transform=None, source=None, ownership=False):
         output = root / f"{name}.msh"
+        source = source or {
+            "signature": SOURCE / "mesh-signature.csv",
+            "mask": SOURCE / "plan-view-mask.csv",
+            "boundary": SOURCE / "plan-view-boundary.csv"}
         command = [
             self.julia, "--startup-file=no", f"--project={self.project}", str(MESHER),
-            str(SOURCE / "mesh-signature.csv"), "fabricated", str(output),
-            "--mask", str(SOURCE / "plan-view-mask.csv"),
-            "--boundary", str(SOURCE / "plan-view-boundary.csv"),
+            str(source["signature"]), "fabricated", str(output),
+            "--mask", str(source["mask"]),
+            "--boundary", str(source["boundary"]),
             "--radius", "2", "--metal-thickness", "0.1", "--overetch", "0.05",
             "--sidewall-angle", "90", "--top-radius", "0", "--bottom-radius", "0",
             "--lc-fine", "0.2", "--lc-tangent", "0.4", "--lc-far", "0.6",
             "--mesh-order", "1", "--max-nodes", "1000000", "--max-elements", "1000000",
         ]
+        if ownership:
+            command += ["--interface-ownership-report", str(root / f"{name}-ownership.csv")]
         if transform is not None:
             command += ["--rigid-transform", ",".join(format(value, ".17g")
                                                         for value in transform)]
@@ -134,6 +154,34 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             before, after = determinants(left.points), determinants(right.points)
             self.assertTrue(np.all(before * after > 0.0))
             np.testing.assert_allclose(after, before, rtol=2e-12, atol=1e-14)
+
+    def test_multislot_tilted_translation_preserves_exact_slot_conductor_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = self.produce(root, "multislot-local", source=MULTISLOT,
+                                    ownership=True)
+            transformed = self.produce(root, "multislot-transformed", TILTED_TRANSLATED,
+                                       source=MULTISLOT, ownership=True)
+            left, right = meshio.read(baseline), meshio.read(transformed)
+            for first, second in zip(left.cells, right.cells):
+                np.testing.assert_array_equal(first.data, second.data)
+            for first, second in zip(left.cell_data["gmsh:physical"],
+                                     right.cell_data["gmsh:physical"]):
+                np.testing.assert_array_equal(first, second)
+            matrix = np.asarray(TILTED_TRANSLATED).reshape(4, 4)
+            np.testing.assert_allclose(
+                right.points, left.points @ matrix[:3, :3].T + matrix[:3, 3],
+                rtol=0.0, atol=3e-14)
+            expected = {item["Attribute"] for item in
+                        json.loads(MULTISLOT["semantic"].read_text())["BoundaryLabels"]}
+            actual = set(np.concatenate([
+                values for cell, values in zip(right.cells,
+                    right.cell_data["gmsh:physical"]) if cell.type == "triangle"]))
+            # The fixture has no exposed substrate-air patch for the optional
+            # 3000/3001 roles; every geometrically present declared label is exact.
+            self.assertEqual(actual, expected - {3000, 3001})
+            self.assertTrue({5001, 5101, 5002, 5102,
+                             6001, 6101, 6002, 6102} <= actual)
 
     def test_julia_option_rejects_nonrigid_and_singular_matrices(self):
         invalid = (
