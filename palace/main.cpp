@@ -1,7 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -11,6 +10,7 @@
 #include <mpi.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "BuildInfo.hpp"
 #include "driver.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
@@ -29,59 +29,25 @@
 
 using namespace palace;
 
-static const char *GetPalaceGitTag()
-{
-#if defined(PALACE_GIT_COMMIT)
-  static const char *commit = PALACE_GIT_COMMIT_ID;
-#else
-  static const char *commit = "UNKNOWN";
-#endif
-  return commit;
-}
-
 static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
-  Mpi::Print(comm, "Palace version: {}\n", PALACE_VERSION);
-  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+  std::string build_system = buildinfo::build_system;
+  if (buildinfo::build_id[0] != '\0')
   {
-    Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
+    build_system += " /";
+    build_system += buildinfo::build_id;
   }
-  Mpi::Print(comm, "Schema version: {}\n", GetSchemaVersion());
-
-  Mpi::Print(comm, "\nBuild dependencies:\n");
-
-// Print the git description or version number for a dependency. CMake defines
-// PALACE_DEP_<NAME>_VERSION for every dependency; the value is empty for those
-// that were not built, in which case nothing is printed.
-#define X(DEP_NAME)                                                             \
-  if (PALACE_DEP_##DEP_NAME##_VERSION[0] != '\0')                               \
-  {                                                                             \
-    Mpi::Print(comm, "  " #DEP_NAME ": {}\n", PALACE_DEP_##DEP_NAME##_VERSION); \
+  Mpi::Print(comm,
+             "Palace version: {}\n"
+             "Git commit: {}\n"
+             "Schema version: {}\n"
+             "Build system: {}\n"
+             "\nBuild dependencies:\n",
+             buildinfo::version, buildinfo::git_sha, GetSchemaVersion(), build_system);
+  for (const auto &dependency : buildinfo::dependencies)
+  {
+    Mpi::Print(comm, "  {}: {}\n", dependency.name, dependency.version);
   }
-
-  // List of dependencies, matching the folders in palace/CMakeLists.txt.
-  X(STRUMPACK)
-  X(arpack_ng)
-  X(eigen)
-  X(fmt)
-  X(gslib)
-  X(hypre)
-  X(json)
-  X(libCEED)
-  X(libxsmm)
-  X(magma)
-  X(metis)
-  X(mfem)
-  X(mumps)
-  X(parmetis)
-  X(petsc)
-  X(scalapack)
-  X(scn)
-  X(slepc)
-  X(sundials)
-  X(superlu_dist)
-
-#undef X
 }
 
 static const char *GetPalaceCeedJitSourceDir()
@@ -168,9 +134,9 @@ static void PrintPalaceBanner(MPI_Comm comm)
 
 static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Device &device)
 {
-  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+  if (std::string_view(buildinfo::git_sha) != "unavailable")
   {
-    Mpi::Print(comm, "Git changeset ID: {}\n", GetPalaceGitTag());
+    Mpi::Print(comm, "Git changeset ID: {}\n", buildinfo::git_sha);
   }
   Mpi::Print(comm, "Running with {:d} MPI process{}", np, (np > 1) ? "es" : "");
   if (nt > 0)
@@ -313,7 +279,7 @@ int main(int argc, char *argv[])
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
-  palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
+  palace::Run(iodata, world_comm, omp_threads, buildinfo::git_sha);
 
   // Finalize libCEED.
   ceed::Finalize();

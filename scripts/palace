@@ -92,35 +92,33 @@ fi
 
 # Try to find the Palace executable
 PALACE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
-PALACE=$(find $PALACE_DIR -type f -name "palace-*.bin" -o -type l -name "palace-*.bin*" 2> /dev/null)
-if [[ -z "$PALACE" ]]; then
+PALACE_CANDIDATES=()
+while IFS= read -r FILE; do
+    PALACE_CANDIDATES+=("$FILE")
+done < <(find "$PALACE_DIR" \( -type f -o -type l \) -name "palace-*.bin*" -print 2> /dev/null)
+if [[ ${#PALACE_CANDIDATES[@]} -eq 0 ]]; then
     echo "Error: Could not locate Palace executable in \"$PALACE_DIR\""
     exit 1
-elif [[ $(echo "$PALACE" | wc -l) -gt 1 ]]; then
-    TABLE=""
-    while IFS= read -r FILE; do
-        DIR=$(echo $FILE | cut -d "/" -f2)
-        TABLE="  $FILE\n$TABLE"
-    done <<< "$PALACE"
+elif [[ ${#PALACE_CANDIDATES[@]} -gt 1 ]]; then
     echo "Error: Could not locate a single Palace executable in \"$PALACE_DIR\""
     echo "Possible executable files:"
-    printf "$TABLE"
+    printf '  %s\n' "${PALACE_CANDIDATES[@]}"
     exit 1
 fi
+PALACE=${PALACE_CANDIDATES[0]}
 if [[ $(uname -m) == arm* ]] || [[ $(uname -m) == aarch64 ]]; then
     ARCH='arm64'
 else
     ARCH='x86_64'
 fi
-if ! echo $PALACE | grep -q $ARCH; then
+if [[ "$PALACE" != *"$ARCH"* ]]; then
     echo "Error: Palace binary \"$PALACE\" does not match host architecture"
     exit 1
 fi
 
-# Version only queries the binary, so skip the MPI launcher which may be absent
-# on the machine (e.g. a login node) where the version is being checked.
+# Version information does not require a configuration file or MPI launcher.
 if [[ -n "$VERSION" ]]; then
-    exec $PALACE $VERSION
+    exec "$PALACE" "$VERSION"
 fi
 
 # Configure --dry-run

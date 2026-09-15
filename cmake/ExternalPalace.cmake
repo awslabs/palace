@@ -16,6 +16,10 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   endif()
 endif()
 
+if("${PALACE_BUILD_SYSTEM}" STREQUAL "")
+  set(PALACE_BUILD_SYSTEM "CMake superbuild")
+endif()
+
 set(PALACE_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND PALACE_OPTIONS
   "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
@@ -29,6 +33,9 @@ list(APPEND PALACE_OPTIONS
   "-DPALACE_WITH_MUMPS=${PALACE_WITH_MUMPS}"
   "-DPALACE_WITH_CUDSS=${PALACE_WITH_CUDSS}"
   "-DPALACE_WITH_GSLIB=${PALACE_WITH_GSLIB}"
+  "-DPALACE_BUILD_SYSTEM=${PALACE_BUILD_SYSTEM}"
+  "-DPALACE_BUILD_ID=${PALACE_BUILD_ID}"
+  "-DPALACE_DEPENDENCY_MANIFEST=${PALACE_DEPENDENCY_MANIFEST}"
   "-DANALYZE_SOURCES_CLANG_TIDY=${ANALYZE_SOURCES_CLANG_TIDY}"
   "-DANALYZE_SOURCES_CPPCHECK=${ANALYZE_SOURCES_CPPCHECK}"
   "-DPALACE_BUILD_EXTERNAL_DEPS=${PALACE_BUILD_EXTERNAL_DEPS}" # For Catch2
@@ -37,75 +44,19 @@ list(APPEND PALACE_OPTIONS
   "-DPALACE_TESTS_NUMPROC=${PALACE_TESTS_NUMPROC}"
   "-DPALACE_REGRESSION_NUMPROC=${PALACE_REGRESSION_NUMPROC}"
   "-DPALACE_TESTS_OMP_THREADS=${PALACE_TESTS_OMP_THREADS}"
-  # Where the dependency source trees live, for `palace --version` reporting
-  "-DPALACE_EXTERN_SOURCE_DIR=${CMAKE_BINARY_DIR}/extern"
 )
-
-# Pass the pinned dependency revisions to the inner Palace build for
-# `palace --version` reporting, so the source-tree git probe there is only a
-# fallback rather than the normal route. Tarball dependencies (json, fmt, scn,
-# eigen) have no revision here and are covered by the inner find_package
-# versions instead.
+# Without a producer manifest, external dependencies are not a reliable indication that a
+# libCEED backend was selected. Only the bundled superbuild passes these selections through.
 if(PALACE_BUILD_EXTERNAL_DEPS)
   list(APPEND PALACE_OPTIONS
-    "-DPALACE_DEP_metis_VERSION=${EXTERN_METIS_GIT_TAG}"
-    "-DPALACE_DEP_parmetis_VERSION=${EXTERN_PARMETIS_GIT_TAG}"
-    "-DPALACE_DEP_hypre_VERSION=${EXTERN_HYPRE_GIT_TAG}"
-    "-DPALACE_DEP_libCEED_VERSION=${EXTERN_LIBCEED_GIT_TAG}"
-    "-DPALACE_DEP_mfem_VERSION=${EXTERN_MFEM_GIT_TAG}"
-  )
-  if(PALACE_WITH_SUPERLU)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_superlu_dist_VERSION=${EXTERN_SUPERLU_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_scalapack_VERSION=${EXTERN_SCALAPACK_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_MAGMA)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_magma_VERSION=${EXTERN_MAGMA_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_STRUMPACK)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_STRUMPACK_VERSION=${EXTERN_STRUMPACK_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_MUMPS)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_mumps_VERSION=${EXTERN_MUMPS_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_SLEPC)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_petsc_VERSION=${EXTERN_PETSC_GIT_TAG}"
-      "-DPALACE_DEP_slepc_VERSION=${EXTERN_SLEPC_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_ARPACK)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_arpack_ng_VERSION=${EXTERN_ARPACK_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_LIBXSMM)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_libxsmm_VERSION=${EXTERN_LIBXSMM_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_SUNDIALS)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_sundials_VERSION=${EXTERN_SUNDIALS_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_GSLIB)
-    list(APPEND PALACE_OPTIONS
-      "-DPALACE_DEP_gslib_VERSION=${EXTERN_GSLIB_GIT_TAG}"
-    )
-  endif()
+    "-DPALACE_WITH_LIBXSMM=${PALACE_WITH_LIBXSMM}"
+    "-DPALACE_WITH_MAGMA=${PALACE_WITH_MAGMA}")
+else()
+  list(APPEND PALACE_OPTIONS
+    "-DPALACE_WITH_LIBXSMM=OFF"
+    "-DPALACE_WITH_MAGMA=OFF")
 endif()
+
 if(NOT "${MFEM_DIR}" STREQUAL "")
   list(APPEND PALACE_OPTIONS "-DMFEM_DIR=${MFEM_DIR}")
 elseif(PALACE_BUILD_EXTERNAL_DEPS)
