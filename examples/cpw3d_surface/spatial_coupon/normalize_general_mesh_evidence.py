@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from general_mesh_manifest import canonical_sha256, sha256, validate_manifest
+from mesh_stage_contract import STAGE_ORDER, validate_stage_dag
 
 
 REQUIRED_AUDITS = ("bounded-run", "mesh-topology-quality", "mesh-complexity",
@@ -70,13 +71,15 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
             role: inputs[role]
             for role in ("SemanticContract", "MeshRecipe", "Process", "Signature")},
         "mesh-complexity": {
-            role: inputs[role] for role in ("MeshRecipe", "Signature")},
+            role: inputs[role] for role in ("MeshRecipe", "SemanticContract")},
         "mesh-invariants": {},
         "variant-transform": {},
     }
+    records_by_kind = {}
     for kind in REQUIRED_AUDITS:
         path = Path(audit_paths[kind])
         record = json.loads(path.read_text())
+        records_by_kind[kind] = record
         producer = record.get("Producer", {})
         expected = {"Version": 1, "Kind": kind, "CaseId": case_id,
                     "Variant": variant_id, "MeshSHA256": mesh_digest,
@@ -109,25 +112,25 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
             evidence["TransformMaximumCoordinateError"] = record.get(
                 "TransformMaximumCoordinateError")
         elif kind == "bounded-run":
-            bounded = record.get("BoundedLauncher", {})
-            launcher = bounded.get("Producer", {})
-            toolchain = bounded.get("Toolchain", {})
-            toolchain_digests = [item.get("SHA256") for item in toolchain.values()
-                                 if isinstance(item, dict)]
-            if (launcher.get("Name") not in tools or
-                    tools[launcher["Name"]] != launcher.get("SHA256") or
-                    not isinstance(bounded.get("Command"), list) or
-                    not bounded["Command"] or
-                    not isinstance(bounded.get("Environment"), dict) or
-                    set(toolchain) != {"runtime", "mesher", "adaptor", "mmg"} or
-                    len(set(toolchain_digests)) != 4 or
-                    any(not isinstance(item, dict) or not item.get("Path") or
-                        not item.get("SHA256") or not Path(item["Path"]).is_file() or
-                        sha256(item["Path"]) != item["SHA256"]
-                        for item in toolchain.values())):
-                raise ValueError("Bounded launcher toolchain is not frozen")
+            stage_items = record.get("BoundedStageRecords")
+            if (not isinstance(stage_items, list) or len(stage_items) != len(STAGE_ORDER) or
+                    {item.get("Stage") for item in stage_items} != set(STAGE_ORDER)):
+                raise ValueError("Bounded stage records are incomplete")
+            stage_paths = {item["Stage"]: Path(item["Path"]) for item in stage_items}
+            reports, stage_digests = validate_stage_dag(stage_paths, mesh_path)
+            if (sorted(stage_digests) != record.get("StageRecordSHA256") or
+                    reports != record.get("BoundedStages")):
+                raise ValueError("Bounded stage DAG differs from its producer record")
+    bounded = records_by_kind["bounded-run"]["BoundedStages"]
+    topology = records_by_kind["mesh-topology-quality"]
+    if (topology.get("ReferenceMeshSHA256") !=
+            bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
+            topology.get("OwnershipReportSHA256") !=
+            bounded["final-gmsh-publication"]["Artifacts"]["ownership-partition"]["SHA256"]):
+        raise ValueError("Topology measurements do not bind the staged reference/ownership outputs")
     required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
+                         "CornerNeighborhoods", "SubdivisionNeighborhoods", "CutNeighborhoods",
                          "ProtectedSurfaces", "AchievedAnisotropy", "TraceDiagonal",
                          "MeshQuality", "Complexity", "ComparisonInvariants"}
     if set(measurements) != required_sections:

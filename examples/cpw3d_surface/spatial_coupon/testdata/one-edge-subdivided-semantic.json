@@ -66,7 +66,12 @@
   "SemanticCorners": [
     [
       0,
+      -8,
+      0
+    ],
+    [
       0,
+      8,
       0
     ]
   ],
@@ -86,24 +91,25 @@
     "matching-surface"
   ],
   "FeatureTopology": {
-    "PhysicalFeatureCount": 2,
-    "CADSubdivisionCount": 0,
-    "BoundaryPhysicalVertexCount": 5,
-    "BoundaryContinuationVertexCount": 5,
-    "CADSubdivisionEndpoints": [],
-    "CutEndpoints": [
+    "PhysicalFeatureCount": 1,
+    "CADSubdivisionCount": 1,
+    "BoundaryPhysicalVertexCount": 1,
+    "BoundaryContinuationVertexCount": 3,
+    "CADSubdivisionEndpoints": [
       [
-        -2.0,
+        0.0,
         0.0,
         0.0
-      ],
+      ]
+    ],
+    "CutEndpoints": [
       [
-        2.0,
+        0.0,
         -2.0,
         0.0
       ],
       [
-        2.0,
+        0.0,
         2.0,
         0.0
       ]

@@ -10,7 +10,10 @@
     "MaximumJacobianCondition": 1000.0,
     "MaximumSeconds": 1800,
     "MaximumRSSGiB": 8.0,
-    "MaximumElements": 4000000
+    "MaximumElements": 4000000,
+    "MaximumCornerAspect": 4.0,
+    "MinimumNoncornerAspect": 1.5,
+    "MaximumProtectedMeasureError": 1e-08
   },
   "Tools": [
     {
@@ -21,17 +24,17 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "dc601826c21f8ffb8f470a2c74ce11a68b649b956fdb21f423c3552127d53290"
+      "SHA256": "aa04aab33fed799b770b7add84afc7ab640c37579766b4e8bdf5963bac90ec69"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "d6aea0c4793f72718a5836c406135d3740b2ff3cfee32e84f47bbf0410e08901"
+      "SHA256": "45615969fbc252aedc3d847c9b216608cf4537c6642e8b99a0abaf29e9b55d8c"
     },
     {
       "Name": "semantic_mesh_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/semantic_mesh_contract.py",
-      "SHA256": "40368c0d2c3c5faa47451e0de92c0a11fa1bf153b9900282b94399fe5911f11c"
+      "SHA256": "4ca38e58e9baabcdea14011717992f0ea574e723bbaa3b9b67bbee087614596f"
     },
     {
       "Name": "prepare_edge_metric_scout.py",
@@ -41,7 +44,7 @@
     {
       "Name": "audit_edge_metric_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_edge_metric_mesh.py",
-      "SHA256": "34aa37df9926a1452dfd6a9ff32fd151b8f3254208ea9d77e86dad2b9bafa97c"
+      "SHA256": "75502e966dc6bc561cb48bbd17e7b71c631cef024c867d5db1a4d69a1cc68c97"
     },
     {
       "Name": "edge_volume_metric.py",
@@ -56,12 +59,17 @@
     {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "e9834750901d9dbb46e0d40ab8f92e43c7fdc51ecf488218633f9a7b5386fd32"
+      "SHA256": "511d60309c9146e55ab53eeeeb4ad48c4ce07ade8dd66f0a94a16c3f945071d5"
     },
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "7f317e84d0de9f9515439d03ad4aaf2461fc6ef1c25873df581b9ebe7a6f634a"
+      "SHA256": "c9245761126b68166d928145c86d3fd3578b0eb342f018497f03973e2dc78494"
+    },
+    {
+      "Name": "mesh_stage_contract.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
+      "SHA256": "d514d051dab72a9ef0a68030ee454e95dd54ac4de43273093ed55b88f9181e71"
     }
   ],
   "ScalingComparisons": [
@@ -188,7 +196,7 @@
           },
           "SemanticContract": {
             "Name": "one-edge-semantic.json",
-            "SHA256": "9eb13ced3c8f53db7012ec26ecbbfe3ee1e517d4bcb5dccfb5bb319e51ecb055"
+            "SHA256": "0fe1eaec66239564ff224b17df4b270df179f823f7fbb0e90304216e4e45c286"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -291,8 +299,8 @@
             "SHA256": "703ec878cc4c44e5beebcade957735561737e0d9ee9c4257af7360030a35a256"
           },
           "SemanticContract": {
-            "Name": "one-edge-semantic.json",
-            "SHA256": "9eb13ced3c8f53db7012ec26ecbbfe3ee1e517d4bcb5dccfb5bb319e51ecb055"
+            "Name": "one-edge-subdivided-semantic.json",
+            "SHA256": "0ca075723a7d1c9c0380b3a8779453acfc1d05cf95ce0d5e53f49dbf023a841f"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -396,7 +404,7 @@
           },
           "SemanticContract": {
             "Name": "two-edge-transition-semantic.json",
-            "SHA256": "ff7b4b1a5ede4267a1156e7db8be9ea2a347f4d0661b05d2c2617d299ecc5457"
+            "SHA256": "ad785c7c8adef7efdae0aacd2f21a5b6d777a496449d35260a821cbd9d43e0b8"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -500,7 +508,7 @@
           },
           "SemanticContract": {
             "Name": "two-edge-multislot-semantic.json",
-            "SHA256": "0e2007d9043abc93f17daf1d7ff73d3f7804910540891be6a46e12ad36ce1835"
+            "SHA256": "9f43b5a5816bbc54a261d832c21f6364d0294a416106c3d12b8563babeac458a"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -604,7 +612,7 @@
           },
           "SemanticContract": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/three-edge-semantic.json",
-            "SHA256": "bf2a9c90473de2536a42fac83cf4c9a0c71cea41e943a9a47003e741702f2ce2"
+            "SHA256": "1051b1d141746d7083bc7829ee23a40c5693884651e059feda3d977295824da6"
           },
           "MeshRecipe": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
@@ -730,7 +738,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "f97b9757a874dcdeca011e6a6a30e38a04be9cf700cf583f87af19ec1a928edc"
+            "SHA256": "686771fda45a5c1fce819121317cc55de3a3eabc12510350192ea39ff4e522c7"
           },
           "MeshRecipe": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
@@ -836,7 +844,7 @@
           },
           "SemanticContract": {
             "Name": "six-edge-semantic.json",
-            "SHA256": "cff885a5518e165facaa1a70daf974262851f3807c1356e85d291a9356469d3c"
+            "SHA256": "60c50e6f427bd8c66cbc78ad1de6daa5e84f35bdb01c3c7f1945f7cbfc66c743"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -961,7 +969,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "dd1fb3a12ebb6b21fe250bb4a0b476bfbf0d4a7876deb225ae43cbb1e851d0c1"
+            "SHA256": "647a4e4257a2aed63ed01ee9c3e4d1c579b03f37014e6fa52eae64be0486b9c5"
           },
           "MeshRecipe": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
@@ -1066,7 +1074,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "9d25c97abac938f04e16a4cd8933e4fcab1e3ee5928b5113569da06ecbcb5878"
+            "SHA256": "749d77301d5d8c0f4bad3d539c2a88e79141e0e5fcf8e4df2735704898498320"
           },
           "MeshRecipe": {
             "Name": "mesh-recipe.json",
@@ -1171,7 +1179,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "39e8b26db0f9b0d06071be5242b49dfa9ad1a3f07088fbe4aeee26ce5853759f"
+            "SHA256": "1bf357ce9f4884d769dd0325ce7da0837037a43a7fcdf59a2d0676a6d0f1fc10"
           },
           "MeshRecipe": {
             "Name": "mesh-recipe.json",
@@ -1276,7 +1284,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "285c6bfc5c7238d73b36a592c713965d414ea4086c0b5ef75b7c92d0c7cdf4dd"
+            "SHA256": "2d6c5394ec045180583af3379b63eb0776cd0d5fbfb97304683fbc5d0bbb62be"
           },
           "MeshRecipe": {
             "Name": "mesh-recipe.json",
@@ -1381,7 +1389,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "457a85c609f61cb944b103bb6e931168ba1ebb20b516ff8722489d42e39be8bb"
+            "SHA256": "47b97b553bb3f63fa63efaea9e392aa21bd6709916443a5c1978cae77b7d0dab"
           },
           "MeshRecipe": {
             "Name": "mesh-recipe.json",

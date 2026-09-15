@@ -13,18 +13,19 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
+from audit_edge_metric_mesh import analyze
 from general_mesh_audit_producer import KINDS, produce as produce_audit
 from general_mesh_manifest import run_manifest, sha256, validate_manifest
+from mesh_array_io import read_mesh
 from normalize_general_mesh_evidence import normalize
-from semantic_mesh_contract import validate_semantic_contract
+from semantic_mesh_contract import (derive_feature_topology, validate_semantic_contract)
 
 
 HERE = Path(__file__).resolve().parent
 MESHER = HERE / "testdata" / "tiny_mesh_audit_producer.py"
 AUDITOR = HERE / "general_mesh_audit_producer.py"
 BOUNDED = HERE / "run_bounded_mesher.py"
-ADAPTOR = HERE / "audit_edge_metric_mesh.py"
-MMG_FIXTURE = HERE / "mesh_array_io.py"
+STAGER = HERE / "testdata" / "tiny_mesh_stage.py"
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ANGLE = 0.63
 ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
@@ -45,9 +46,12 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     slot, conductor, y = 0, 1, 0
                 else:
                     slot, conductor, y = i % 2, i // 2 + 1, i
-                writer.writerow([i + 1, slot, conductor, i * scale, y * scale, 0,
-                                 1, 0, 0, -i * scale, (2 - i) * scale])
-        (directory / "boundary.csv").write_text("boundary\n")
+                writer.writerow([i + 1, slot, conductor, (i + .5) * scale,
+                                 y * scale, 0, 1, 0, 0, -.5 * scale, .5 * scale])
+        (directory / "boundary.csv").write_text(
+            "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n"
+            f"1,1,1,0,0,Physical,{10 * scale},0\n"
+            f"1,2,1,0,0,Continuation,{2 * scale},0\n")
         (directory / "mask.csv").write_text("mask\n")
         (directory / "process.toml").write_text(
             f'Units = "um"\nMetalThickness = {0.004 * scale}\n')
@@ -61,13 +65,16 @@ class GeneralMeshManifestTest(unittest.TestCase):
                    "Protected": True},
                   {"Attribute": 3, "Role": "interface", "AdjacentMaterials": [1, 7],
                    "Protected": True}]
+        corners = [[10 * scale, 0, 0]]
         contract = {"Version": 1,
-                    "VolumeMaterials": [{"Attribute": 1, "Material": "air"},
-                                        {"Attribute": 7, "Material": "substrate"}],
-                    "BoundaryLabels": labels, "SemanticCorners": [[0, 0, 0]],
+                    "VolumeMaterials": [{"Attribute": 1, "Material": "substrate"},
+                                        {"Attribute": 7, "Material": "vacuum"}],
+                    "BoundaryLabels": labels, "SemanticCorners": corners,
                     "ProtectedSupports": [item["Role"] for item in labels],
                     "MetricSurfaceRoles": ["air-outer", "substrate-outer"],
-                    "CutSurfaceRoles": ["air-outer"], "UnmatchedPolicy": "Error"}
+                    "CutSurfaceRoles": ["air-outer"], "UnmatchedPolicy": "Error",
+                    "FeatureTopology": derive_feature_topology(
+                        signature, directory / "boundary.csv", corners)}
         (directory / "semantic.json").write_text(json.dumps(contract) + "\n")
         names = {"Signature": "signature.csv", "Boundary": "boundary.csv", "Mask": "mask.csv",
                  "Process": "process.toml", "SemanticContract": "semantic.json",
@@ -87,10 +94,14 @@ class GeneralMeshManifestTest(unittest.TestCase):
         cases = [self.write_case(root, "base", 1, scale=1),
                  self.write_case(root, "subdivided", 2, scale=2),
                  self.write_case(root, "six-edge-supplemental", 6, scale=3)]
-        tools = [(MESHER.name, MESHER), (AUDITOR.name, AUDITOR), (BOUNDED.name, BOUNDED)]
+        tools = [(MESHER.name, MESHER), (STAGER.name, STAGER),
+                 (AUDITOR.name, AUDITOR), (BOUNDED.name, BOUNDED)]
         manifest = {"Version": 2, "RepositoryRoot": ".",
             "Gates": {"CornerTolerance": 1e-8, "MaximumNormalFactor": 2,
-                      "MinimumAchievedAspect": 1.5, "MinimumScaledJacobian": .01,
+                      "MinimumAchievedAspect": 1.5, "MaximumCornerAspect": 3,
+                      "MinimumNoncornerAspect": 10,
+                      "MaximumProtectedMeasureError": 1e-12,
+                      "MinimumScaledJacobian": .01,
                       "MaximumJacobianCondition": 100, "MaximumSeconds": 10,
                       "MaximumRSSGiB": 1, "MaximumElements": 1000},
             "Tools": [{"Name": name, "Path": str(path), "SHA256": sha256(path)}
@@ -122,18 +133,63 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 variant_id = variant["Id"]; stem = f"{case['Id']}--{variant_id}"
                 transform = directory / f"{variant_id}-transform.json"
                 transform.write_text(json.dumps(variant["Transform"]))
-                mesh, log = root / f"{stem}.msh", root / f"{stem}.log"
-                command = [sys.executable, str(MESHER), str(mesh), str(transform),
-                           "--scale", str(case["TestScale"])]
-                subprocess.run([sys.executable, str(BOUNDED), "--seconds", "10",
-                                "--memory-gib", "1", "--log", str(log),
-                                "--artifact", str(mesh), "--require-complete-toolchain",
-                                "--tool", f"runtime={sys.executable}",
-                                "--tool", f"mesher={MESHER}",
-                                "--tool", f"adaptor={ADAPTOR}",
-                                "--tool", f"mmg={MMG_FIXTURE}",
-                                "--", *command], check=True,
-                               stdout=subprocess.DEVNULL)
+                seed = root / f"{stem}-seed.msh"
+                metric = root / f"{stem}-metric.json"
+                mmg_seed = root / f"{stem}-mmg-seed.msh"
+                pins = root / f"{stem}-pins.txt"
+                fixed_triangles = root / f"{stem}-fixed-triangles.txt"
+                restoration_recipe = root / f"{stem}-restoration-recipe.json"
+                adapted = root / f"{stem}-adapted.msh"
+                restored = root / f"{stem}-restored.msh"
+                mesh = root / f"{stem}.msh"
+                ownership = root / f"{stem}-ownership.csv"
+                stage_reports = {}
+                def launch(stage, inputs, artifacts, tools, command):
+                    log = root / f"{stem}-{stage}.log"
+                    invocation = [sys.executable, str(BOUNDED), "--seconds", "10",
+                                  "--memory-gib", "1", "--log", str(log),
+                                  "--stage", stage]
+                    for name, path in inputs.items():
+                        invocation += ["--input", f"{name}={path}"]
+                    for name, path in artifacts.items():
+                        invocation += ["--artifact", f"{name}={path}"]
+                    for role, path in tools.items():
+                        invocation += ["--tool", f"{role}={path}"]
+                    subprocess.run([*invocation, "--", *command], check=True,
+                                   stdout=subprocess.DEVNULL)
+                    stage_reports[stage] = log.with_suffix(".log.json")
+                launch("seed-generation", {}, {"seed-mesh": seed},
+                       {"runtime": sys.executable, "mesher": MESHER},
+                       [sys.executable, str(MESHER), str(seed), str(transform),
+                        "--scale", str(case["TestScale"])])
+                launch("metric-preparation", {"seed-mesh": seed},
+                       {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
+                        "fixed-triangles": fixed_triangles,
+                        "restoration-recipe": restoration_recipe},
+                       {"runtime": sys.executable, "metric-preparer": STAGER},
+                       [sys.executable, str(STAGER), "metric", str(seed), str(metric),
+                        "--mmg-seed", str(mmg_seed), "--pins", str(pins),
+                        "--fixed-triangles", str(fixed_triangles),
+                        "--recipe", str(restoration_recipe)])
+                launch("native-adaptation-mmg",
+                       {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
+                        "fixed-triangles": fixed_triangles},
+                       {"adapted-mesh": adapted},
+                       {"runtime": sys.executable, "adapter-mmg": STAGER},
+                       [sys.executable, str(STAGER), "adapt", str(mmg_seed), str(adapted),
+                        "--metric", str(metric), "--pins", str(pins),
+                        "--fixed-triangles", str(fixed_triangles)])
+                launch("label-restoration", {"adapted-mesh": adapted,
+                                              "restoration-recipe": restoration_recipe},
+                       {"restored-mesh": restored},
+                       {"runtime": sys.executable, "label-restorer": STAGER},
+                       [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
+                        "--recipe", str(restoration_recipe)])
+                launch("final-gmsh-publication", {"restored-mesh": restored},
+                       {"candidate-mesh": mesh, "ownership-partition": ownership},
+                       {"runtime": sys.executable, "publisher": STAGER},
+                       [sys.executable, str(STAGER), "publish", str(restored), str(mesh),
+                        "--ownership", str(ownership)])
                 if identity_mesh is None: identity_mesh = mesh
                 records = {}
                 for kind in KINDS:
@@ -142,15 +198,14 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                   transform, record, contract=directory / "semantic.json",
                                   recipe=directory / "recipe.json", process=directory / "process.toml",
                                   signature=directory / "signature.csv",
-                                  identity_mesh=identity_mesh,
-                                  bounded_report=log.with_suffix(".log.json"),
+                                  identity_mesh=identity_mesh, stage_reports=stage_reports,
                                   command=[str(AUDITOR), kind, stem])
                     records[kind] = record
                 normalize(manifest_path, case["Id"], variant_id, mesh, records,
                           audits / f"{stem}.json")
         return audits
 
-    def test_real_gmsh_producer_chain_accepts_complete_matrix(self):
+    def test_staged_gmsh_evidence_accepts_complete_fixture_matrix(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)
             audits = self.produce_matrix(root, manifest_path, manifest)
@@ -258,10 +313,11 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                   root / f"normalized-{name}.json")
             bounded_source = json.loads(records["bounded-run"].read_text())
             for name, mutate in {
-                    "launcher-command": lambda value: value["BoundedLauncher"].__setitem__(
-                        "Command", []),
-                    "toolchain-digest": lambda value: value["BoundedLauncher"]["Toolchain"][
-                        "mmg"].__setitem__("SHA256", "0" * 64)}.items():
+                    "stage-command": lambda value: value["BoundedStages"][
+                        "native-adaptation-mmg"].__setitem__("Command", []),
+                    "uninvolved-adapter": lambda value: value["BoundedStages"][
+                        "native-adaptation-mmg"]["Tools"]["adapter-mmg"].__setitem__(
+                            "Path", str(MESHER))}.items():
                 with self.subTest(name=name):
                     record = copy.deepcopy(bounded_source); mutate(record)
                     path = root / f"mutated-{name}.json"
@@ -275,6 +331,64 @@ class GeneralMeshManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize(manifest_path, "base", "identity", root / f"{stem}.msh",
                           same_record, root / "raw-as-own-audit.json")
+
+    def test_uninvoked_adapter_mmg_stage_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            seed = root / "seed"; seed.write_text("seed")
+            metric = root / "metric"; metric.write_text("metric")
+            pins = root / "pins"; pins.write_text("pins")
+            fixed = root / "fixed"; fixed.write_text("fixed")
+            result = subprocess.run(
+                [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
+                 "--log", str(root / "bad.log"), "--stage", "native-adaptation-mmg",
+                 "--input", f"mmg-seed={seed}", "--input", f"metric={metric}",
+                 "--input", f"pins={pins}", "--input", f"fixed-triangles={fixed}",
+                 "--artifact", f"adapted-mesh={root / 'adapted.msh'}",
+                 "--tool", f"runtime={sys.executable}",
+                 "--tool", f"adapter-mmg={STAGER}", "--",
+                 sys.executable, str(MESHER), str(root / "unused")],
+                capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("every frozen stage tool must appear", result.stderr)
+
+    def test_measured_semantic_gates_reject_bound_failures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            audits = self.produce_matrix(root, manifest_path, manifest)
+            evidence_path = audits / "subdivided--identity.json"
+            original_evidence = json.loads(evidence_path.read_text())
+            item = next(value for value in original_evidence["AuditRecords"]
+                        if value["Kind"] == "mesh-topology-quality")
+            record_path = Path(item["Path"])
+            if not record_path.is_absolute(): record_path = audits / record_path
+            original_record = json.loads(record_path.read_text())
+            mutations = {
+                "corner-under-resolution": lambda value: value["CornerNeighborhoods"][0].__setitem__(
+                    "MaximumAspect", 1000),
+                "subdivision-isotropy": lambda value: value["SubdivisionNeighborhoods"][0].__setitem__(
+                    "MaximumAspect", 1),
+                "altered-protected-support": lambda value: value["ProtectedSurfaces"].__setitem__(
+                    "MaximumRelativeMeasureError", .5),
+                "unresolved-ownership": lambda value: value["OwnershipClosure"].__setitem__(
+                    "Unmatched", 1),
+                "short-edge-diagonal-band": lambda value: value["TraceDiagonal"].__setitem__(
+                    "GlobalDiagonalBands", 1),
+            }
+            for index, (name, mutate) in enumerate(mutations.items()):
+                with self.subTest(name=name):
+                    evidence = copy.deepcopy(original_evidence)
+                    record = copy.deepcopy(original_record)
+                    mutate(evidence); mutate(record["Measurements"])
+                    record_path.write_text(json.dumps(record))
+                    record_item = next(value for value in evidence["AuditRecords"]
+                                       if value["Kind"] == "mesh-topology-quality")
+                    record_item["SHA256"] = sha256(record_path)
+                    evidence_path.write_text(json.dumps(evidence))
+                    self.assertFalse(run_manifest(self.args(
+                        manifest_path, root / f"semantic-failure-{index}", audit=audits)))
+            record_path.write_text(json.dumps(original_record))
+            evidence_path.write_text(json.dumps(original_evidence))
 
     def test_normalized_measurement_tampering_and_negative_resources_fail(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -314,6 +428,22 @@ class GeneralMeshManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_manifest(manifest, manifest_path)
 
+    def test_actual_spatial_coupon_output_uses_frozen_material_identity(self):
+        mesh = os.environ.get("ACTUAL_SPATIAL_COUPON_MESH")
+        if not mesh or not Path(mesh).is_file():
+            self.skipTest("ACTUAL_SPATIAL_COUPON_MESH is not available")
+        contract = HERE / "testdata/four-edge-9d2cb9bbb3fe/semantic-contract.json"
+        report, _ = analyze(read_mesh(mesh), json.loads(contract.read_text()),
+                            require_material_names=True)
+        self.assertEqual(report["PhysicalVolumeNames"], {1: "substrate", 2: "vacuum"})
+        self.assertEqual(report["BoundaryAdjacency"][5001], [1])
+        self.assertEqual(report["BoundaryAdjacency"][6001], [2])
+        wrong = json.loads(contract.read_text())
+        wrong["VolumeMaterials"][0]["Material"] = "vacuum"
+        wrong["VolumeMaterials"][1]["Material"] = "substrate"
+        with self.assertRaises(ValueError):
+            analyze(read_mesh(mesh), wrong, require_material_names=True)
+
     def test_remote_verified_contracts_match_source_model_and_physical_corners(self):
         manifest = json.loads((HERE / "geometry-independence-suite.json").read_text())
         for case_id, expected_model, expected_edges in (
@@ -340,12 +470,23 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                      float(row["Plane"])]
                                     for row in boundary if row["Class"] == "Physical"]
                 self.assertEqual(contract["SemanticCorners"], expected_corners)
+                materials = {item["Attribute"]: item["Material"]
+                             for item in contract["VolumeMaterials"]}
+                self.assertEqual(materials, {1: "substrate", 2: "vacuum"})
                 pairs = {(int(row["Slot"]), int(row["Conductor"]))
                          for row in signature}
                 roles = {item["Role"] for item in contract["BoundaryLabels"]}
                 for slot, conductor in pairs:
                     self.assertIn(f"conductor-{conductor}-slot-{slot}-ms", roles)
                     self.assertIn(f"conductor-{conductor}-slot-{slot}-ma", roles)
+                for item in contract["BoundaryLabels"]:
+                    if item["Role"].endswith("-ms"):
+                        self.assertEqual(item["AdjacentMaterials"], [1])
+                    if item["Role"].endswith("-ma"):
+                        self.assertEqual(item["AdjacentMaterials"], [2])
+        producer = (HERE / "mesh_spatial_coupon.jl").read_text()
+        self.assertIn('addPhysicalGroup(3, substrate_tags, 1, "substrate")', producer)
+        self.assertIn('addPhysicalGroup(3, vacuum_tags, 2, "vacuum")', producer)
 
     def test_omitted_variant_and_checked_in_preflight_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -371,6 +512,31 @@ class GeneralMeshManifestTest(unittest.TestCase):
 
 
 class SemanticContractTest(unittest.TestCase):
+    def test_finite_segments_distinguish_subdivision_from_separated_collinear_features(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            signature = root / "signature.csv"
+            boundary = root / "boundary.csv"
+            boundary.write_text(
+                "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n"
+                "1,1,1,0,0,Physical,0,0\n"
+                "1,2,1,0,0,Continuation,3,0\n")
+            header = "Index,Slot,Conductor,Px,Py,Pz,Tx,Ty,Tz,S0,S1\n"
+            signature.write_text(header +
+                "1,0,1,.5,0,0,1,0,0,-.5,.5\n"
+                "2,0,1,2.5,0,0,1,0,0,-.5,.5\n")
+            separated = derive_feature_topology(signature, boundary, [[10, 0, 0]])
+            self.assertEqual(separated["PhysicalFeatureCount"], 2)
+            self.assertEqual(separated["CADSubdivisionCount"], 0)
+            self.assertEqual(separated["BoundaryContinuationVertexCount"], 1)
+            signature.write_text(header +
+                "1,0,1,.5,0,0,1,0,0,-.5,.5\n"
+                "2,0,1,1.5,0,0,1,0,0,-.5,.5\n")
+            subdivided = derive_feature_topology(signature, boundary, [[10, 0, 0]])
+            self.assertEqual(subdivided["PhysicalFeatureCount"], 1)
+            self.assertEqual(subdivided["CADSubdivisionCount"], 1)
+            self.assertEqual(subdivided["CADSubdivisionEndpoints"], [[1.0, 0.0, 0.0]])
+
     def test_vacuous_contract_is_rejected(self):
         with self.assertRaises(ValueError):
             validate_semantic_contract({"Version": 1, "VolumeMaterials": [],

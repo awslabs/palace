@@ -3,19 +3,37 @@
   "VolumeMaterials": [
     {
       "Attribute": 1,
-      "Material": "vacuum"
+      "Material": "substrate"
     },
     {
       "Attribute": 2,
-      "Material": "substrate"
+      "Material": "vacuum"
     }
   ],
   "BoundaryLabels": [
     {
       "Attribute": 1,
-      "Role": "outer",
+      "Role": "matching-surface",
       "AdjacentMaterials": [
-        1
+        1,
+        2
+      ],
+      "Protected": true,
+      "AdjacentMaterialSets": [
+        [
+          1
+        ],
+        [
+          2
+        ]
+      ]
+    },
+    {
+      "Attribute": 3000,
+      "Role": "substrate-vacuum-slot-0",
+      "AdjacentMaterials": [
+        1,
+        2
       ],
       "Protected": true
     },
@@ -58,7 +76,8 @@
     ]
   ],
   "ProtectedSupports": [
-    "outer",
+    "matching-surface",
+    "substrate-vacuum-slot-0",
     "matching-slot-0",
     "conductor-1-slot-0-ms",
     "conductor-1-slot-0-ma"
@@ -69,6 +88,45 @@
   ],
   "UnmatchedPolicy": "Error",
   "CutSurfaceRoles": [
-    "outer"
-  ]
+    "matching-surface"
+  ],
+  "FeatureTopology": {
+    "PhysicalFeatureCount": 8,
+    "CADSubdivisionCount": 0,
+    "BoundaryPhysicalVertexCount": 8,
+    "BoundaryContinuationVertexCount": 0,
+    "CADSubdivisionEndpoints": [],
+    "CutEndpoints": [
+      [
+        -0.8,
+        -0.8,
+        0.0
+      ],
+      [
+        -0.8,
+        0.8,
+        0.0
+      ],
+      [
+        -0.3,
+        0.3,
+        0.0
+      ],
+      [
+        0.3,
+        -0.3,
+        0.0
+      ],
+      [
+        0.8,
+        -0.8,
+        0.0
+      ],
+      [
+        0.8,
+        0.8,
+        0.0
+      ]
+    ]
+  }
 }

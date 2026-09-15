@@ -18,8 +18,11 @@ from semantic_mesh_contract import (boundary_adjacency, boundary_attributes,
 
 def blocks(mesh,kind):
     key='gmsh:physical' if 'gmsh:physical' in mesh.cell_data else 'medit:ref'
-    return (np.concatenate([c.data for c in mesh.cells if c.type==kind]),
-            np.concatenate([a for c,a in zip(mesh.cells,mesh.cell_data[key]) if c.type==kind]))
+    width=3 if kind=='triangle' else 4 if kind=='tetra' else None
+    selected=[(c.data[:,:width],a) for c,a in zip(mesh.cells,mesh.cell_data[key])
+              if c.type==kind or c.type.startswith(kind)]
+    if not selected:raise ValueError('Mesh lacks '+kind+' elements')
+    return (np.concatenate([c for c,_ in selected]),np.concatenate([a for _,a in selected]))
 
 
 def boundary_component_counts(triangles,labels,metal_attributes):
@@ -37,10 +40,24 @@ def boundary_component_counts(triangles,labels,metal_attributes):
     return int(connected_components(graph,directed=False,return_labels=False))
 
 
-def analyze(mesh,contract):
+def physical_names(mesh,dimension):
+    result={}
+    for name,value in mesh.field_data.items():
+        tag,dim=map(int,value[:2])
+        if dim==dimension:
+            if tag in result:raise ValueError('Duplicate physical-name attribute')
+            result[tag]=name
+    return result
+
+
+def analyze(mesh,contract,require_material_names=False):
     t,material=blocks(mesh,'tetra');b,labels=blocks(mesh,'triangle');p=mesh.points
     if set(material)!=volume_attributes(contract):
         raise ValueError('Volume materials differ from the frozen semantic contract')
+    names=physical_names(mesh,3)
+    expected_names={item['Attribute']:item['Material'] for item in contract['VolumeMaterials']}
+    if require_material_names and names!=expected_names:
+        raise ValueError('Physical volume names differ from the frozen semantic contract')
     if set(labels)!=boundary_attributes(contract):
         raise ValueError('Boundary labels differ from the frozen semantic contract')
     xyz=p[t];signed=np.einsum('ij,ij->i',np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]),xyz[:,3]-xyz[:,0])/6
@@ -61,12 +78,15 @@ def analyze(mesh,contract):
         raise ValueError('Missing/duplicate boundary faces')
     required=np.flatnonzero((count==1)|(low!=high))
     if not np.array_equal(np.sort(ids),required):raise ValueError('Boundary/interface coverage mismatch')
-    expected_adjacency=boundary_adjacency(contract)
+    expected_adjacency=boundary_adjacency(contract);actual_adjacency={}
     for attr in np.unique(labels):
+        observed=set()
         for f in ids[labels==attr]:
             actual={int(low[f])} if count[f]==1 else {int(low[f]),int(high[f])}
-            if actual!=expected_adjacency[int(attr)]:
+            if actual not in expected_adjacency[int(attr)]:
                 raise ValueError('Incorrect material adjacency for '+str(attr))
+            observed.update(actual)
+        actual_adjacency[int(attr)]=sorted(observed)
     adjacency=start[(count==2)&(low==high)]
     u,v=owner[adjacency],owner[adjacency+1]
     graph=coo_matrix((np.ones(len(u)),(u,v)),shape=(len(t),len(t))).tocsr()
@@ -81,6 +101,7 @@ def analyze(mesh,contract):
     unique_planes,index=np.unique(planes,axis=0,return_inverse=True)
     plane_areas=np.bincount(index,weights=twice/2)
     return {'Tetrahedra':len(t),'SurfaceTriangles':len(b),'MaterialVolumes':volume,
+            'PhysicalVolumeNames':names,'BoundaryAdjacency':actual_adjacency,
             'MaterialComponents':component_counts,
             'MetalSurfaceComponents':boundary_component_counts(
                 b,labels,metric_surface_attributes(contract)),

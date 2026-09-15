@@ -45,7 +45,15 @@ def restore(mesh,recipe,maximum_displacement):
             attributes.append(ref)
         else:attributes.append(np.array([supports[int(r)]['Attribute'] for r in ref]))
         cells.append((block.type,block.data))
-    output=meshio.Mesh(points,cells,cell_data={'gmsh:physical':attributes,'gmsh:geometrical':attributes})
+    semantic=recipe.get('SemanticContract')
+    if not isinstance(semantic,dict):raise ValueError('Restoration recipe lacks semantic contract')
+    field_data={item['Material']:np.array([item['Attribute'],3],dtype=int)
+                for item in semantic['VolumeMaterials']}
+    field_data.update({('matching_surface' if item['Attribute']==1 else f"surface_{item['Attribute']}"):
+                       np.array([item['Attribute'],2],dtype=int)
+                       for item in semantic['BoundaryLabels']})
+    output=meshio.Mesh(points,cells,cell_data={'gmsh:physical':attributes,'gmsh:geometrical':attributes},
+                       field_data=field_data)
     return output,{'MaximumCorrectionUm':largest,'CorrectionBoundUm':maximum_displacement,
                    'MovedBoundaryVertices':moved,'PlanarSupports':len(supports),'LibraryQualified':False}
 

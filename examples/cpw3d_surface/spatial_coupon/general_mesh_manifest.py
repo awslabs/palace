@@ -11,7 +11,9 @@ from pathlib import Path
 
 from audit_edge_metric_mesh import analyze
 from mesh_array_io import read_mesh
-from semantic_mesh_contract import REQUIRED_ROLES, load_semantic_contract
+from mesh_stage_contract import STAGE_ORDER, validate_stage_dag
+from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
+                                    validate_feature_topology)
 
 
 def sha256(path):
@@ -43,7 +45,7 @@ def _check_artifact(base, item, description):
 
 def _validate_mesh(path, contract):
     try:
-        analyze(read_mesh(path), contract)
+        analyze(read_mesh(path), contract, require_material_names=True)
     except SystemExit as error:
         raise ValueError("audited mesh is not a readable Gmsh mesh") from error
 
@@ -104,8 +106,10 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         raise ValueError("Manifest case identifiers must be nonempty and unique")
     gates = manifest.get("Gates", {})
     required_gates = ("CornerTolerance", "MaximumNormalFactor", "MinimumAchievedAspect",
-                      "MinimumScaledJacobian", "MaximumJacobianCondition",
-                      "MaximumSeconds", "MaximumRSSGiB", "MaximumElements")
+                      "MaximumCornerAspect", "MinimumNoncornerAspect",
+                      "MaximumProtectedMeasureError", "MinimumScaledJacobian",
+                      "MaximumJacobianCondition", "MaximumSeconds", "MaximumRSSGiB",
+                      "MaximumElements")
     if any(not _finite_number(gates.get(name), nonnegative=True) for name in required_gates):
         raise ValueError("Manifest has missing or invalid mesh gates")
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
@@ -191,10 +195,11 @@ def _validate_bound_records(evidence_path, evidence, binding):
             for role in ("SemanticContract", "MeshRecipe", "Process", "Signature")},
         "mesh-complexity": {
             role: binding["InputSHA256"][role]
-            for role in ("MeshRecipe", "Signature")},
+            for role in ("MeshRecipe", "SemanticContract")},
         "mesh-invariants": {},
         "variant-transform": {},
     }
+    records_by_kind = {}
     for item in records:
         path = _check_artifact(evidence_path.parent, item, "audit record")
         digest = item["SHA256"]
@@ -202,6 +207,7 @@ def _validate_bound_records(evidence_path, evidence, binding):
             raise ValueError("audit records must be content-distinct")
         digests.add(digest)
         record = json.loads(path.read_text())
+        records_by_kind[item["Kind"]] = record
         expected = {"Version": 1, "Kind": item["Kind"],
                     "CaseId": binding["CaseId"], "Variant": binding["Variant"],
                     "MeshSHA256": evidence["Mesh"]["SHA256"],
@@ -229,27 +235,30 @@ def _validate_bound_records(evidence_path, evidence, binding):
                     record.get("TransformMaximumCoordinateError")):
                 raise ValueError("variant transform result differs from its bound audit")
         if item["Kind"] == "bounded-run":
-            launcher = record.get("BoundedLauncher", {})
-            launcher_producer = launcher.get("Producer", {})
-            toolchain = launcher.get("Toolchain", {})
-            toolchain_digests = [item.get("SHA256") for item in toolchain.values()
-                                 if isinstance(item, dict)]
-            if (launcher_producer.get("Name") not in binding["ToolSHA256"] or
-                    binding["ToolSHA256"][launcher_producer["Name"]] !=
-                    launcher_producer.get("SHA256") or
-                    not isinstance(launcher.get("Command"), list) or
-                    not launcher["Command"] or
-                    not isinstance(launcher.get("Environment"), dict) or
-                    evidence["Mesh"]["SHA256"] not in launcher.get("Artifacts", {}).values() or
-                    set(toolchain) != {"runtime", "mesher", "adaptor", "mmg"} or
-                    len(set(toolchain_digests)) != 4 or
-                    any(not isinstance(item, dict) or not item.get("Path") or
-                        not item.get("SHA256") or not Path(item["Path"]).is_file() or
-                        sha256(item["Path"]) != item["SHA256"]
-                        for item in toolchain.values())):
-                raise ValueError("bounded launcher does not bind this mesh/toolchain")
+            stage_items = record.get("BoundedStageRecords")
+            if (not isinstance(stage_items, list) or len(stage_items) != len(STAGE_ORDER) or
+                    {stage.get("Stage") for stage in stage_items} != set(STAGE_ORDER)):
+                raise ValueError("bounded stage records are incomplete")
+            reports, stage_digests = validate_stage_dag(
+                {stage["Stage"]: Path(stage["Path"]) for stage in stage_items},
+                _artifact_path(evidence_path.parent, evidence["Mesh"]),
+                "run_bounded_mesher.py", binding["ToolSHA256"]["run_bounded_mesher.py"])
+            if (reports != record.get("BoundedStages") or
+                    sorted(stage_digests) != record.get("StageRecordSHA256")):
+                raise ValueError("bounded stage DAG differs from its bound producer output")
+            if digests & stage_digests:
+                raise ValueError("bounded stage and audit artifacts must be content-distinct")
+            digests.update(stage_digests)
+    bounded = records_by_kind["bounded-run"]["BoundedStages"]
+    topology = records_by_kind["mesh-topology-quality"]
+    if (topology.get("ReferenceMeshSHA256") !=
+            bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
+            topology.get("OwnershipReportSHA256") !=
+            bounded["final-gmsh-publication"]["Artifacts"]["ownership-partition"]["SHA256"]):
+        raise ValueError("topology audit does not bind staged reference/ownership artifacts")
     required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
+                         "CornerNeighborhoods", "SubdivisionNeighborhoods", "CutNeighborhoods",
                          "ProtectedSurfaces", "AchievedAnisotropy", "TraceDiagonal",
                          "MeshQuality", "Complexity", "ComparisonInvariants"}
     if set(measurements) != required_sections:
@@ -301,10 +310,36 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
     if not _same_points(expected_corners, evidence.get("ActualSemanticCorners"),
                         float(gates["CornerTolerance"])):
         failures.append("semantic-corners")
+    def neighborhood_failure(name, expected, maximum=None, minimum=None):
+        values = evidence.get(name)
+        if not isinstance(values, list) or len(values) != len(expected):
+            return True
+        if not expected:
+            return False
+        if not _same_points(expected, [item.get("Point") for item in values],
+                            float(gates["CornerTolerance"])):
+            return True
+        aspects = [item.get("MaximumAspect") for item in values]
+        return (any(not _finite_number(value, positive=True) for value in aspects) or
+                (maximum is not None and any(value > maximum for value in aspects)) or
+                (minimum is not None and any(value < minimum for value in aspects)))
+    topology = contract["FeatureTopology"]
+    subdivisions = _transform_points(topology["CADSubdivisionEndpoints"], binding["Transform"])
+    cuts = _transform_points(topology["CutEndpoints"], binding["Transform"])
+    if (neighborhood_failure("CornerNeighborhoods", expected_corners,
+                             maximum=gates["MaximumCornerAspect"]) or
+            neighborhood_failure("SubdivisionNeighborhoods", subdivisions,
+                                 minimum=gates["MinimumNoncornerAspect"]) or
+            neighborhood_failure("CutNeighborhoods", cuts,
+                                 minimum=gates["MinimumNoncornerAspect"])):
+        failures.append("semantic-corner-and-endpoint-anisotropy")
     protected = evidence.get("ProtectedSurfaces", {})
     if (not protected.get("Actual") or
             sorted(protected.get("Actual", [])) != sorted(contract["ProtectedSupports"]) or
-            protected.get("Changed") != 0):
+            not _finite_number(protected.get("MaximumRelativeMeasureError"),
+                               nonnegative=True) or
+            protected.get("MaximumRelativeMeasureError", math.inf) >
+            gates["MaximumProtectedMeasureError"]):
         failures.append("protected-surfaces")
 
     widths = evidence.get("AchievedAnisotropy", {})
@@ -395,6 +430,7 @@ def run_manifest(args):
                     raise ValueError(f"immutable {role} hash mismatch")
                 hashes[role], paths[role] = expected, path
             contract = load_semantic_contract(paths["SemanticContract"])
+            validate_feature_topology(contract, paths["Signature"], paths["Boundary"])
             signature_role = source["SignatureRole"]
             with paths[signature_role].open(newline="") as stream:
                 rows = list(csv.DictReader(stream))

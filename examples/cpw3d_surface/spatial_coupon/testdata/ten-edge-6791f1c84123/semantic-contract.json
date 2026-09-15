@@ -8,19 +8,46 @@
   "VolumeMaterials": [
     {
       "Attribute": 1,
-      "Material": "vacuum"
+      "Material": "substrate"
     },
     {
       "Attribute": 2,
-      "Material": "substrate"
+      "Material": "vacuum"
     }
   ],
   "BoundaryLabels": [
     {
       "Attribute": 1,
-      "Role": "outer",
+      "Role": "matching-surface",
       "AdjacentMaterials": [
-        1
+        1,
+        2
+      ],
+      "Protected": true,
+      "AdjacentMaterialSets": [
+        [
+          1
+        ],
+        [
+          2
+        ]
+      ]
+    },
+    {
+      "Attribute": 3000,
+      "Role": "substrate-vacuum-slot-0",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 3001,
+      "Role": "substrate-vacuum-slot-1",
+      "AdjacentMaterials": [
+        1,
+        2
       ],
       "Protected": true
     },
@@ -160,7 +187,9 @@
     ]
   ],
   "ProtectedSupports": [
-    "outer",
+    "matching-surface",
+    "substrate-vacuum-slot-0",
+    "substrate-vacuum-slot-1",
     "matching-slot-0",
     "matching-slot-1",
     "conductor-1-slot-0-ms",
@@ -184,6 +213,65 @@
   ],
   "UnmatchedPolicy": "Error",
   "CutSurfaceRoles": [
-    "outer"
-  ]
+    "matching-surface"
+  ],
+  "FeatureTopology": {
+    "PhysicalFeatureCount": 10,
+    "CADSubdivisionCount": 0,
+    "BoundaryPhysicalVertexCount": 10,
+    "BoundaryContinuationVertexCount": 6,
+    "CADSubdivisionEndpoints": [],
+    "CutEndpoints": [
+      [
+        -6.5,
+        -2.6,
+        0.0
+      ],
+      [
+        -6.5,
+        2.4,
+        0.0
+      ],
+      [
+        -5.75,
+        -0.6,
+        0.0
+      ],
+      [
+        -5.75,
+        0.4,
+        0.0
+      ],
+      [
+        -1.3571428571,
+        -0.6,
+        0.0
+      ],
+      [
+        -1.3571428571,
+        0.4,
+        0.0
+      ],
+      [
+        3.8333333333,
+        -0.6,
+        0.0
+      ],
+      [
+        3.8333333333,
+        0.4,
+        0.0
+      ],
+      [
+        5.5,
+        -2.6,
+        0.0
+      ],
+      [
+        5.5,
+        2.4,
+        0.0
+      ]
+    ]
+  }
 }

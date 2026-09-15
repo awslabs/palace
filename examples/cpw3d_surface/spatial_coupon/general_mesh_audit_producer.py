@@ -17,8 +17,8 @@ import numpy as np
 from audit_edge_metric_mesh import analyze, blocks, directional_widths
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
+from mesh_stage_contract import STAGE_ORDER, sha256 as stage_sha256, validate_stage_dag
 from semantic_mesh_contract import load_semantic_contract
-from run_bounded_mesher import REQUIRED_TOOLCHAIN_ROLES
 
 
 KINDS = ("bounded-run", "mesh-topology-quality", "mesh-complexity",
@@ -40,24 +40,62 @@ def _base(kind, case, variant, mesh, input_hashes, transform, command):
             "Producer": _producer()}
 
 
-def _global_diagonal_bands(mesh):
+def _global_diagonal_bands(mesh, physical_segments):
     triangles, labels = blocks(mesh, "triangle")
     xyz = mesh.points[triangles]
     normals = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
     normals /= np.linalg.norm(normals, axis=1)[:, None]
-    edges = {}
+    owners_by_edge = {}
+    all_lengths = []
     for owner, triangle in enumerate(triangles):
         for a, b in ((triangle[0], triangle[1]), (triangle[1], triangle[2]),
                      (triangle[2], triangle[0])):
-            edges.setdefault(tuple(sorted((int(a), int(b)))), []).append(owner)
-    diameter = np.linalg.norm(np.ptp(mesh.points, axis=0))
-    bands = 0
-    for edge, owners in edges.items():
+            edge = tuple(sorted((int(a), int(b))))
+            owners_by_edge.setdefault(edge, []).append(owner)
+            all_lengths.append(np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]]))
+    median = float(np.median(all_lengths))
+    short = []
+    for edge, owners in owners_by_edge.items():
+        length = np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]])
         if (len(owners) == 2 and labels[owners[0]] == labels[owners[1]] and
                 abs(np.dot(normals[owners[0]], normals[owners[1]])) > 1 - 1e-10 and
-                np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]]) > .5 * diameter):
-            bands += 1
-    return bands
+                length < .6 * median):
+            short.append(edge)
+    adjacency = {}
+    for first, last in short:
+        adjacency.setdefault(first, set()).add(last)
+        adjacency.setdefault(last, set()).add(first)
+    segments = np.asarray(physical_segments, dtype=float).reshape(-1, 2, 3)
+    bands = 0
+    visited = set()
+    surface_diameter = max(float(np.linalg.norm(np.ptp(mesh.points[triangles], axis=(0, 1)))),
+                           1e-300)
+    for start in adjacency:
+        if start in visited:
+            continue
+        stack = [start]; component = set()
+        while stack:
+            vertex = stack.pop()
+            if vertex in component:
+                continue
+            component.add(vertex); visited.add(vertex)
+            stack.extend(adjacency.get(vertex, ()))
+        points = mesh.points[list(component)]
+        span = float(np.linalg.norm(np.ptp(points, axis=0)))
+        if span <= .5 * surface_diameter:
+            continue
+        direction = points[np.argmax(np.linalg.norm(points - points[0], axis=1))] - points[0]
+        direction /= np.linalg.norm(direction)
+        aligned = False
+        for segment in segments:
+            tangent = segment[1] - segment[0]
+            tangent /= np.linalg.norm(tangent)
+            if abs(np.dot(direction, tangent)) > 1 - 1e-6:
+                aligned = True
+                break
+        bands += int(not aligned)
+    return {"GlobalDiagonalBands": bands, "ShortInternalEdges": len(short),
+            "MedianSurfaceEdgeLength": median}
 
 
 def _tetra_quality(mesh):
@@ -77,6 +115,58 @@ def _tetra_quality(mesh):
             "MaximumJacobianCondition": float(condition.max())}
 
 
+def _point_aspects(mesh, points):
+    tetrahedra, _ = blocks(mesh, "tetra")
+    xyz = mesh.points[tetrahedra]
+    centers = xyz.mean(axis=1)
+    jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
+                         xyz[:, 3] - xyz[:, 0]), axis=2)
+    singular = np.linalg.svd(jacobian, compute_uv=False)
+    aspects = singular[:, 0] / singular[:, -1]
+    result = []
+    for point in np.asarray(points, dtype=float).reshape(-1, 3):
+        incident = np.flatnonzero(np.any(np.linalg.norm(xyz - point, axis=2) <= 1e-10, axis=1))
+        selected = incident if len(incident) else [int(np.argmin(np.linalg.norm(centers-point, axis=1)))]
+        result.append({"Point": point.tolist(), "MaximumAspect": float(aspects[selected].max()),
+                       "Cells": int(len(selected))})
+    return result
+
+
+def _protected_surface_report(reference, candidate, contract):
+    before, _ = analyze(reference, contract, require_material_names=True)
+    after, _ = analyze(candidate, contract, require_material_names=True)
+    protected_attributes = {item["Attribute"]: item["Role"]
+                            for item in contract["BoundaryLabels"]
+                            if item.get("Protected") is True}
+    def areas(report):
+        result = {attribute: 0.0 for attribute in protected_attributes}
+        for key, value in report["PlanarPatchAreas"].items():
+            attribute = int(float(key.split()[0]))
+            if attribute in result:
+                result[attribute] += value
+        return result
+    left, right = areas(before), areas(after)
+    errors = {protected_attributes[key]: abs(right[key] - value) / max(abs(value), 1e-300)
+              for key, value in left.items()}
+    return {"Actual": sorted(protected_attributes.values()),
+            "MaximumRelativeMeasureError": max(errors.values(), default=0.0),
+            "RelativeMeasureErrorByRole": errors}
+
+
+def _ownership_report(path):
+    with Path(path).open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    required = {"attribute", "elements", "ambiguous_fraction", "unresolved_elements",
+                "unresolved_fraction"}
+    if not rows or not required <= set(rows[0]):
+        raise ValueError("Ownership partition report is incomplete")
+    unresolved = sum(int(row["unresolved_elements"]) for row in rows)
+    ambiguous = sum(float(row["ambiguous_fraction"]) > 0 for row in rows)
+    return {"UnmatchedPolicy": "Error", "Unmatched": unresolved,
+            "Overlaps": ambiguous, "Exhaustive": unresolved == 0 and ambiguous == 0,
+            "PartitionRows": len(rows)}
+
+
 def _signature_segments(path):
     with Path(path).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
@@ -93,10 +183,11 @@ def _signature_segments(path):
 
 
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
-                    signature_path, corner_tolerance=1e-8):
+                    signature_path, reference_mesh_path, ownership_report_path,
+                    corner_tolerance=1e-8):
     mesh = read_mesh(mesh_path)
     contract = load_semantic_contract(contract_path)
-    report, _ = analyze(mesh, contract)
+    report, _ = analyze(mesh, contract, require_material_names=True)
     points = np.asarray(mesh.points)
     matrix = np.asarray(base["Transform"], dtype=float).reshape(4, 4)
     corners = np.asarray(contract["SemanticCorners"], dtype=float)
@@ -126,37 +217,41 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     percentiles = samples["WidthsTangentialTransverse1Transverse2"]
     _, material_attributes = blocks(mesh, "tetra")
     _, boundary_attributes = blocks(mesh, "triangle")
-    material_by_attribute = {item["Attribute"]: item["Material"]
-                             for item in contract["VolumeMaterials"]}
-    boundary_by_attribute = {item["Attribute"]: item
-                             for item in contract["BoundaryLabels"]}
     actual_boundary_attributes = sorted(int(value)
                                         for value in np.unique(boundary_attributes))
+    topology = contract["FeatureTopology"]
+    subdivision_points = np.asarray(topology["CADSubdivisionEndpoints"], dtype=float).reshape(-1, 3)
+    cut_points = np.asarray(topology["CutEndpoints"], dtype=float).reshape(-1, 3)
+    def transformed(points):
+        if not len(points):
+            return points
+        return (np.column_stack((points, np.ones(len(points)))) @ matrix.T)[:, :3]
     actual = {"ActualVolumeMaterials": [
                   {"Attribute": int(value),
-                   "Material": material_by_attribute[int(value)]}
+                   "Material": report["PhysicalVolumeNames"][int(value)]}
                   for value in sorted(np.unique(material_attributes))],
               "ActualBoundaryAttributes": actual_boundary_attributes,
-              "ActualAdjacency": {
-                  str(value): boundary_by_attribute[value]["AdjacentMaterials"]
-                  for value in actual_boundary_attributes},
-              "OwnershipClosure": {"UnmatchedPolicy": contract["UnmatchedPolicy"],
-                                   "Unmatched": 0, "Overlaps": 0, "Exhaustive": True},
+              "ActualAdjacency": {str(value): report["BoundaryAdjacency"][value]
+                                  for value in actual_boundary_attributes},
+              "OwnershipClosure": _ownership_report(ownership_report_path),
               "ActualSemanticCorners": transformed_corners.tolist(),
-              "ProtectedSurfaces": {
-                  "Actual": [boundary_by_attribute[value]["Role"]
-                             for value in actual_boundary_attributes
-                             if boundary_by_attribute[value].get("Protected") is True],
-                  "Changed": 0},
+              "CornerNeighborhoods": _point_aspects(mesh, transformed_corners),
+              "SubdivisionNeighborhoods": _point_aspects(mesh, transformed(subdivision_points)),
+              "CutNeighborhoods": _point_aspects(mesh, transformed(cut_points)),
+              "ProtectedSurfaces": _protected_surface_report(
+                  read_mesh(reference_mesh_path), mesh, contract),
               "AchievedAnisotropy": {"Samples": samples["Cells"],
                                      "NormalTarget": transformed_recipe["NormalSize"],
                                      "TangentialP50": percentiles[1][0],
                                      "Transverse1P90": percentiles[2][1],
                                      "Transverse2P90": percentiles[2][2]},
-              "TraceDiagonal": {"GlobalDiagonalBands": _global_diagonal_bands(mesh)},
+              "TraceDiagonal": _global_diagonal_bands(
+                  mesh, transformed_recipe["PhysicalSegments"]),
               "MeshQuality": _tetra_quality(mesh)}
     base["Measurements"] = actual
     base["Topology"] = report
+    base["ReferenceMeshSHA256"] = sha256(reference_mesh_path)
+    base["OwnershipReportSHA256"] = sha256(ownership_report_path)
     return base
 
 
@@ -173,35 +268,15 @@ def _simplex_h1_dofs(mesh, order):
             max((order - 1) * (order - 2) * (order - 3) // 6, 0) * len(tetrahedra))
 
 
-def _signature_complexity(path):
-    with Path(path).open(newline="") as stream:
-        rows = list(csv.DictReader(stream))
-    required = {"Slot", "Conductor", "Px", "Py", "Pz", "Tx", "Ty", "Tz"}
-    if not rows or not required <= set(rows[0]):
-        raise ValueError("Signature lacks geometric feature columns")
-    lines = set()
-    for row in rows:
-        point = np.array([float(row[name]) for name in ("Px", "Py", "Pz")])
-        tangent = np.array([float(row[name]) for name in ("Tx", "Ty", "Tz")])
-        tangent /= np.linalg.norm(tangent)
-        pivot = int(np.argmax(np.abs(tangent)))
-        if tangent[pivot] < 0:
-            tangent *= -1
-        offset = point - np.dot(point, tangent) * tangent
-        key = (int(row["Slot"]), int(row["Conductor"]),
-               *np.round(tangent, 10), *np.round(offset, 10))
-        lines.add(key)
-    return len(lines), len(rows)
-
-
-def complexity_record(base, mesh_path, signature_path, recipe_path):
+def complexity_record(base, mesh_path, contract_path, recipe_path):
     mesh = read_mesh(mesh_path)
     recipe = json.loads(Path(recipe_path).read_text())
     order = int(recipe["GeometryOrder"])
-    features, subdivisions = _signature_complexity(signature_path)
+    topology = load_semantic_contract(contract_path)["FeatureTopology"]
     base["Measurements"] = {"Complexity": {
         "H1DOFs": int(_simplex_h1_dofs(mesh, order)),
-        "FeatureCount": features, "CADSubdivisionCount": subdivisions}}
+        "FeatureCount": topology["PhysicalFeatureCount"],
+        "CADSubdivisionCount": topology["CADSubdivisionCount"]}}
     return base
 
 
@@ -245,32 +320,24 @@ def variant_record(base, mesh_path, identity_mesh_path, transform, tolerance=1e-
     return base
 
 
-def bounded_record(base, mesh_path, bounded_path):
-    bounded = json.loads(Path(bounded_path).read_text())
-    mesh_digest = sha256(mesh_path)
-    artifacts = bounded.get("Artifacts", {})
-    toolchain = bounded.get("Toolchain", {})
-    if (bounded.get("Version") != 2 or bounded.get("ReturnCode") != 0 or
-            bounded.get("StopReason") is not None or mesh_digest not in artifacts.values() or
-            not bounded.get("Command") or not isinstance(bounded.get("Environment"), dict) or
-            not bounded.get("Producer") or
-            set(toolchain) != set(REQUIRED_TOOLCHAIN_ROLES) or
-            any(not isinstance(item, dict) or not item.get("Path") or
-                not item.get("SHA256") or not Path(item["Path"]).is_file() or
-                sha256(item["Path"]) != item["SHA256"]
-                for item in toolchain.values())):
-        raise ValueError("Bounded launcher report does not bind a successful complete toolchain")
+def bounded_record(base, mesh_path, stage_reports):
+    reports, digests = validate_stage_dag(stage_reports, mesh_path)
     base["Measurements"] = {"Resources": {
-        "ExitCode": bounded["ReturnCode"], "Seconds": bounded["Seconds"],
-        "PeakRSSGiB": bounded["PeakProcessTreeRSSBytes"] / 2**30,
+        "ExitCode": 0,
+        "Seconds": sum(report["Seconds"] for report in reports.values()),
+        "PeakRSSGiB": max(report["PeakProcessTreeRSSBytes"] for report in reports.values()) / 2**30,
         "Elements": len(blocks(read_mesh(mesh_path), "tetra")[0])}}
-    base["BoundedLauncher"] = bounded
+    base["BoundedStages"] = reports
+    base["BoundedStageRecords"] = [
+        {"Stage": stage, "Path": str(Path(stage_reports[stage]).resolve()),
+         "SHA256": stage_sha256(stage_reports[stage])} for stage in STAGE_ORDER]
+    base["StageRecordSHA256"] = sorted(digests)
     return base
 
 
 def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
             contract=None, recipe=None, process=None, signature=None, identity_mesh=None,
-            bounded_report=None, command=None):
+            stage_reports=None, command=None):
     if kind not in KINDS:
         raise ValueError("Unknown audit kind")
     inputs = json.loads(Path(inputs_path).read_text())
@@ -278,16 +345,21 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     base = _base(kind, case, variant, Path(mesh), inputs, transform,
                  command or [Path(__file__).name, kind])
     if kind == "bounded-run":
-        record = bounded_record(base, mesh, bounded_report)
+        record = bounded_record(base, mesh, stage_reports)
     elif kind == "mesh-topology-quality":
-        record = topology_record(base, mesh, contract, recipe, process, signature)
+        reports, _ = validate_stage_dag(stage_reports, mesh)
+        reference = reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
+        ownership = reports["final-gmsh-publication"]["Artifacts"][
+            "ownership-partition"]["Path"]
+        record = topology_record(base, mesh, contract, recipe, process, signature,
+                                 reference, ownership)
         record["Dependencies"] = {"SemanticContract": sha256(contract),
                                   "MeshRecipe": sha256(recipe), "Process": sha256(process),
                                   "Signature": sha256(signature)}
     elif kind == "mesh-complexity":
-        record = complexity_record(base, mesh, signature, recipe)
+        record = complexity_record(base, mesh, contract, recipe)
         record["Dependencies"] = {"MeshRecipe": sha256(recipe),
-                                  "Signature": sha256(signature)}
+                                  "SemanticContract": sha256(contract)}
     elif kind == "mesh-invariants":
         record = invariants_record(base, mesh)
     else:
@@ -308,12 +380,20 @@ def main():
     parser.add_argument("--contract", type=Path); parser.add_argument("--recipe", type=Path)
     parser.add_argument("--process", type=Path); parser.add_argument("--signature", type=Path)
     parser.add_argument("--identity-mesh", type=Path)
-    parser.add_argument("--bounded-report", type=Path)
+    parser.add_argument("--stage-report", action="append", default=[], metavar="STAGE=PATH")
     args = parser.parse_args()
+    stage_reports = {}
+    for value in args.stage_report:
+        if "=" not in value:
+            parser.error("--stage-report must be STAGE=PATH")
+        stage, value = value.split("=", 1)
+        if stage in stage_reports:
+            parser.error("duplicate stage report")
+        stage_reports[stage] = Path(value)
     produce(args.kind, args.case, args.variant, args.mesh, args.inputs, args.transform,
             args.output, contract=args.contract, recipe=args.recipe, process=args.process,
             signature=args.signature, identity_mesh=args.identity_mesh,
-            bounded_report=args.bounded_report, command=sys.argv)
+            stage_reports=stage_reports, command=sys.argv)
 
 
 if __name__ == "__main__":
