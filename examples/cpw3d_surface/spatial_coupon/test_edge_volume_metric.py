@@ -22,6 +22,16 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         self.assertGreater(np.linalg.eigvalsh(m-b).min(),-1e-12)
         np.testing.assert_allclose(intersect_metrics(m,m),m,atol=1e-12)
 
+    def test_intersection_rejects_invalid_either_operand(self):
+        good=np.eye(3)[None,:,:]
+        invalid=(np.diag([1.,1.,-1.])[None,:,:],
+                 np.array([[[1.,1.,0.],[0.,1.,0.],[0.,0.,1.]]]),
+                 np.array([[[1.,0.,0.],[0.,np.nan,0.],[0.,0.,1.]]]))
+        for bad in invalid:
+            with self.assertRaises(ValueError):intersect_metrics(bad,good)
+            with self.assertRaises(ValueError):intersect_metrics(good,bad)
+        with self.assertRaises(ValueError):intersect_metrics(good,np.eye(2)[None,:,:])
+
     def test_rotation_translation_scale_and_duplicate_sources(self):
         p=np.array([[0.,0.,0.],[.1,.02,.03]])
         segments=np.array([[-1.,0,0,1,0,0],[0,-1,0,0,1,0]])

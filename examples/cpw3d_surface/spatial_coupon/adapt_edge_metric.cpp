@@ -40,11 +40,21 @@ int main(int argc, char **argv)
   {
     return 2;
   }
-  if (std::filesystem::exists(argv[4]) ||
-      std::filesystem::exists(std::string(argv[4]) + ".rejected.meshb"))
+  const std::filesystem::path output_mesh(argv[4]);
+  const std::filesystem::path output_solution = std::string(argv[4]) + ".sol";
+  const std::filesystem::path rejected_mesh = std::string(argv[4]) + ".rejected.meshb";
+  // Keep MMG-recognized suffixes on private outputs. The accepted mesh is promoted last and
+  // is the publication marker; a failed second promotion rolls back the solution.
+  const std::filesystem::path temporary_mesh = std::string(argv[4]) + ".temporary.meshb";
+  const std::filesystem::path temporary_solution = std::string(argv[4]) + ".temporary.sol";
+  for (const auto &path :
+       {output_mesh, output_solution, rejected_mesh, temporary_mesh, temporary_solution})
   {
-    std::cerr << "Refusing to overwrite an adaptation attempt\n";
-    return 2;
+    if (std::filesystem::exists(path))
+    {
+      std::cerr << "Refusing to overwrite an adaptation attempt\n";
+      return 2;
+    }
   }
   MMG5_pMesh mesh = nullptr;
   MMG5_pSol metric = nullptr;
@@ -192,20 +202,36 @@ int main(int argc, char **argv)
     std::cout << "MMG_RESULT=" << result << std::endl;
     if (result == MMG5_SUCCESS)
     {
-      Check(MMG3D_saveMesh(mesh, argv[4]), "save mesh");
-      Check(MMG3D_saveSol(mesh, metric, (std::string(argv[4]) + ".sol").c_str()),
-            "save effective metric");
+      Check(MMG3D_saveMesh(mesh, temporary_mesh.c_str()), "save temporary mesh");
+      Check(MMG3D_saveSol(mesh, metric, temporary_solution.c_str()),
+            "save temporary effective metric");
+      std::filesystem::rename(temporary_solution, output_solution);
+      try
+      {
+        std::filesystem::rename(temporary_mesh, output_mesh);
+      }
+      catch (...)
+      {
+        std::filesystem::remove(output_solution);
+        throw;
+      }
       status = 0;
     }
     else
     {
-      const std::string rejected = std::string(argv[4]) + ".rejected.meshb";
-      MMG3D_saveMesh(mesh, rejected.c_str());
+      MMG3D_saveMesh(mesh, rejected_mesh.c_str());
       std::cerr << "Adaptation rejected; no accepted output\n";
     }
   }
   catch (const std::exception &e)
   {
+    std::error_code error;
+    std::filesystem::remove(temporary_mesh, error);
+    std::filesystem::remove(temporary_solution, error);
+    if (!std::filesystem::exists(output_mesh))
+    {
+      std::filesystem::remove(output_solution, error);
+    }
     std::cerr << e.what() << std::endl;
   }
   if (mesh || metric)

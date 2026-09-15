@@ -12,8 +12,17 @@ import numpy as np
 
 def intersect_metrics(a,b):
     """Deterministic SPD intersection dominating both inputs in Loewner order."""
+    a,b=np.asarray(a,dtype=float),np.asarray(b,dtype=float)
+    if a.shape!=b.shape or a.ndim<2 or a.shape[-2:]!=(3,3):
+        raise ValueError('Metric operands must have matching (..., 3, 3) shapes')
+    for operand in (a,b):
+        if not np.all(np.isfinite(operand)):
+            raise ValueError('Nonfinite input metric')
+        if not np.allclose(operand,operand.swapaxes(-1,-2),rtol=1e-12,atol=1e-14):
+            raise ValueError('Nonsymmetric input metric')
+        if not np.all(np.linalg.eigvalsh(operand)>0):
+            raise ValueError('Nonpositive input metric')
     values,vectors=np.linalg.eigh(a)
-    if not np.all(values>0):raise ValueError('Nonpositive input metric')
     root=(vectors*np.sqrt(values)[...,None,:])@vectors.swapaxes(-1,-2)
     inverse=(vectors/np.sqrt(values)[...,None,:])@vectors.swapaxes(-1,-2)
     relative=inverse@b@inverse
