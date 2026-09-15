@@ -17,6 +17,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Build system
+
+  - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
+    compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
+
 ## [0.18.0] - 2026-09-09
 
 #### New Features
