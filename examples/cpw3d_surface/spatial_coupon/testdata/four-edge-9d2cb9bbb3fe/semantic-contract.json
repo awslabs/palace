@@ -1,0 +1,89 @@
+{
+  "Version": 1,
+  "Derivation": {
+    "ProcessLibrarySHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5",
+    "PlanViewBoundarySHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b",
+    "Rules": "materials and label families follow the frozen spatial-coupon producer; slots/conductors come from Models[0].Edges; semantic corners are plan-view vertices classified Physical"
+  },
+  "VolumeMaterials": [
+    {
+      "Attribute": 1,
+      "Material": "vacuum"
+    },
+    {
+      "Attribute": 2,
+      "Material": "substrate"
+    }
+  ],
+  "BoundaryLabels": [
+    {
+      "Attribute": 1,
+      "Role": "outer",
+      "AdjacentMaterials": [
+        1
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 3100,
+      "Role": "matching-slot-0",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 5001,
+      "Role": "conductor-1-slot-0-ms",
+      "AdjacentMaterials": [
+        1
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 6001,
+      "Role": "conductor-1-slot-0-ma",
+      "AdjacentMaterials": [
+        2
+      ],
+      "Protected": true
+    }
+  ],
+  "SemanticCorners": [
+    [
+      10.0,
+      0.0,
+      0.0
+    ],
+    [
+      2.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      8.0,
+      0.0
+    ],
+    [
+      0.0,
+      -2.0,
+      0.0
+    ]
+  ],
+  "ProtectedSupports": [
+    "outer",
+    "matching-slot-0",
+    "conductor-1-slot-0-ms",
+    "conductor-1-slot-0-ma"
+  ],
+  "MetricSurfaceRoles": [
+    "conductor-1-slot-0-ms",
+    "conductor-1-slot-0-ma"
+  ],
+  "UnmatchedPolicy": "Error",
+  "CutSurfaceRoles": [
+    "outer"
+  ]
+}

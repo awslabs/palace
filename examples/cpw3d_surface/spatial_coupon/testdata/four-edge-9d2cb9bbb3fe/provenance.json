@@ -1,0 +1,39 @@
+{
+  "Version": 1,
+  "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "TargetRepositoryLicense": "LICENSE",
+  "RemoteHost": "soca-green",
+  "RemoteInput": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/07",
+  "CampaignModel": "spatialedgecluster_edgecount-4_9d2cb9bbb3fe",
+  "SignatureRows": 4,
+  "CopiedSourceFiles": [
+    "mesh-signature.csv",
+    "plan-view-boundary.csv",
+    "plan-view-mask.csv",
+    "process.toml",
+    "process-library.json",
+    "basis-contract.json",
+    "trace-vertices.csv",
+    "trace-triangles.csv"
+  ],
+  "ExcludedArtifacts": [
+    "meshes",
+    "fields",
+    "solutions",
+    "response matrices",
+    "source banks"
+  ],
+  "SemanticsReview": {
+    "ProcessLibraryModel": "spatialedgecluster_edgecount-4_9d2cb9bbb3fe",
+    "Topology": "SpatialEdgeCluster",
+    "EdgeCount": 4,
+    "Slots": [
+      0
+    ],
+    "Conductors": [
+      1
+    ],
+    "DerivedSemanticContract": "semantic-contract.json"
+  }
+}

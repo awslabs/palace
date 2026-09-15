@@ -9,6 +9,8 @@ import json
 import math
 from pathlib import Path
 
+from audit_edge_metric_mesh import analyze
+from mesh_array_io import read_mesh
 from semantic_mesh_contract import REQUIRED_ROLES, load_semantic_contract
 
 
@@ -39,6 +41,22 @@ def _check_artifact(base, item, description):
     return path
 
 
+def _validate_mesh(path, contract):
+    try:
+        analyze(read_mesh(path), contract)
+    except SystemExit as error:
+        raise ValueError("audited mesh is not a readable Gmsh mesh") from error
+
+
+def _transform_points(points, transform):
+    result = []
+    for x, y, z in points:
+        value = (x, y, z, 1.0)
+        result.append([sum(transform[4 * row + column] * value[column]
+                           for column in range(4)) for row in range(3)])
+    return result
+
+
 def _same_points(expected, actual, tolerance):
     if not expected or not actual or len(expected) != len(actual):
         return False
@@ -56,6 +74,24 @@ def _same_points(expected, actual, tolerance):
 def _finite_number(value, *, nonnegative=False, positive=False):
     good = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
     return good and (not nonnegative or value >= 0) and (not positive or value > 0)
+
+
+def _is_rigid_transform(transform, tolerance=1e-12):
+    if transform[12:] != [0, 0, 0, 1] and transform[12:] != [0.0, 0.0, 0.0, 1.0]:
+        return False
+    rotation = [[transform[4 * row + column] for column in range(3)]
+                for row in range(3)]
+    gram = [[sum(rotation[k][i] * rotation[k][j] for k in range(3))
+             for j in range(3)] for i in range(3)]
+    determinant = (rotation[0][0] * (rotation[1][1] * rotation[2][2] -
+                                     rotation[1][2] * rotation[2][1]) -
+                   rotation[0][1] * (rotation[1][0] * rotation[2][2] -
+                                     rotation[1][2] * rotation[2][0]) +
+                   rotation[0][2] * (rotation[1][0] * rotation[2][1] -
+                                     rotation[1][1] * rotation[2][0]))
+    return (all(abs(gram[i][j] - float(i == j)) <= tolerance
+                for i in range(3) for j in range(3)) and
+            abs(abs(determinant) - 1.0) <= tolerance)
 
 
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
@@ -103,16 +139,23 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
             if (not isinstance(variant, dict) or not variant.get("Id") or
                     not isinstance(variant.get("Transform"), list) or
                     len(variant["Transform"]) != 16 or
-                    not all(_finite_number(x) for x in variant["Transform"])):
+                    not all(_finite_number(x) for x in variant["Transform"]) or
+                    not _is_rigid_transform(variant["Transform"])):
                 raise ValueError(f"{case['Id']} has an invalid variant transform")
             variant_ids.append(variant["Id"])
             matrix.add((case["Id"], variant["Id"]))
         if len(set(variant_ids)) != len(variant_ids) or "identity" not in variant_ids:
             raise ValueError(f"{case['Id']} variants must be unique and include identity")
+        by_id = {variant["Id"]: variant["Transform"] for variant in variants}
+        identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        if by_id["identity"] != identity:
+            raise ValueError(f"{case['Id']} identity variant is not the identity transform")
         comparison = case.get("TransformComparison")
         if (not isinstance(comparison, dict) or comparison.get("Reference") not in variant_ids or
                 comparison.get("Transformed") not in variant_ids or
                 comparison.get("Reference") == comparison.get("Transformed") or
+                by_id.get(comparison.get("Reference")) ==
+                by_id.get(comparison.get("Transformed")) or
                 not _finite_number(comparison.get("MaximumRelativeInvariantError"),
                                    nonnegative=True)):
             raise ValueError(f"{case['Id']} has no exact transform comparison pair")
@@ -132,6 +175,91 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     return repository, tool_hashes, matrix
 
 
+def _validate_bound_records(evidence_path, evidence, binding):
+    records = evidence.get("AuditRecords")
+    required = {"bounded-run", "mesh-topology-quality", "mesh-complexity",
+                "mesh-invariants", "variant-transform"}
+    if (not isinstance(records, list) or len(records) != len(required) or
+            {item.get("Kind") for item in records} != required):
+        raise ValueError("exactly one record of every required audit kind is required")
+    measurements = {}
+    digests = {evidence["Mesh"]["SHA256"]}
+    expected_dependencies = {
+        "bounded-run": {},
+        "mesh-topology-quality": {
+            role: binding["InputSHA256"][role]
+            for role in ("SemanticContract", "MeshRecipe", "Process", "Signature")},
+        "mesh-complexity": {
+            role: binding["InputSHA256"][role]
+            for role in ("MeshRecipe", "Signature")},
+        "mesh-invariants": {},
+        "variant-transform": {},
+    }
+    for item in records:
+        path = _check_artifact(evidence_path.parent, item, "audit record")
+        digest = item["SHA256"]
+        if digest in digests:
+            raise ValueError("audit records must be content-distinct")
+        digests.add(digest)
+        record = json.loads(path.read_text())
+        expected = {"Version": 1, "Kind": item["Kind"],
+                    "CaseId": binding["CaseId"], "Variant": binding["Variant"],
+                    "MeshSHA256": evidence["Mesh"]["SHA256"],
+                    "InputSHA256": binding["InputSHA256"],
+                    "Transform": binding["Transform"],
+                    "TransformSHA256": binding["TransformSHA256"]}
+        if any(record.get(key) != value for key, value in expected.items()):
+            raise ValueError("audit record has stale or mismatched bindings")
+        producer = record.get("Producer", {})
+        if (producer.get("Name") not in binding["ToolSHA256"] or
+                binding["ToolSHA256"][producer["Name"]] != producer.get("SHA256") or
+                not record.get("Command") or not isinstance(record.get("Environment"), dict)):
+            raise ValueError("audit record producer/command/environment is not frozen")
+        for section, value in record.get("Measurements", {}).items():
+            if section in measurements:
+                raise ValueError("measurement section has multiple producers")
+            measurements[section] = value
+        dependencies = record.get("Dependencies", {})
+        if dependencies != expected_dependencies[item["Kind"]]:
+            raise ValueError("audit record dependencies differ from frozen inputs")
+        if item["Kind"] == "variant-transform":
+            if (record.get("TransformVerified") is not True or
+                    evidence.get("IdentityMeshSHA256") != record.get("IdentityMeshSHA256") or
+                    evidence.get("TransformMaximumCoordinateError") !=
+                    record.get("TransformMaximumCoordinateError")):
+                raise ValueError("variant transform result differs from its bound audit")
+        if item["Kind"] == "bounded-run":
+            launcher = record.get("BoundedLauncher", {})
+            launcher_producer = launcher.get("Producer", {})
+            toolchain = launcher.get("Toolchain", {})
+            toolchain_digests = [item.get("SHA256") for item in toolchain.values()
+                                 if isinstance(item, dict)]
+            if (launcher_producer.get("Name") not in binding["ToolSHA256"] or
+                    binding["ToolSHA256"][launcher_producer["Name"]] !=
+                    launcher_producer.get("SHA256") or
+                    not isinstance(launcher.get("Command"), list) or
+                    not launcher["Command"] or
+                    not isinstance(launcher.get("Environment"), dict) or
+                    evidence["Mesh"]["SHA256"] not in launcher.get("Artifacts", {}).values() or
+                    set(toolchain) != {"runtime", "mesher", "adaptor", "mmg"} or
+                    len(set(toolchain_digests)) != 4 or
+                    any(not isinstance(item, dict) or not item.get("Path") or
+                        not item.get("SHA256") or not Path(item["Path"]).is_file() or
+                        sha256(item["Path"]) != item["SHA256"]
+                        for item in toolchain.values())):
+                raise ValueError("bounded launcher does not bind this mesh/toolchain")
+    required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
+                         "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
+                         "ProtectedSurfaces", "AchievedAnisotropy", "TraceDiagonal",
+                         "MeshQuality", "Complexity", "ComparisonInvariants"}
+    if set(measurements) != required_sections:
+        raise ValueError("bound records do not supply the exact measurement schema")
+    for section, value in measurements.items():
+        if evidence.get(section) != value:
+            raise ValueError("normalized measurements differ from bound producer records")
+    return digests - {evidence["Mesh"]["SHA256"]}
+
+
 def audit_manifest_evidence(evidence, gates, contract, binding):
     """Judge actual measurements against a separately frozen semantic contract."""
     failures = []
@@ -144,7 +272,7 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         "RecipeSHA256": binding["InputSHA256"]["MeshRecipe"],
         "ToolSHA256": binding["ToolSHA256"],
     }
-    if evidence.get("Version") != 2 or any(evidence.get(key) != value
+    if evidence.get("Version") != 3 or any(evidence.get(key) != value
                                             for key, value in required_binding.items()):
         failures.append("provenance-binding")
 
@@ -169,7 +297,8 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
             ownership.get("Unmatched") != 0 or ownership.get("Overlaps") != 0 or
             ownership.get("Exhaustive") is not True):
         failures.append("ownership-exhaustive-closure")
-    if not _same_points(contract["SemanticCorners"], evidence.get("ActualSemanticCorners"),
+    expected_corners = _transform_points(contract["SemanticCorners"], binding["Transform"])
+    if not _same_points(expected_corners, evidence.get("ActualSemanticCorners"),
                         float(gates["CornerTolerance"])):
         failures.append("semantic-corners")
     protected = evidence.get("ProtectedSurfaces", {})
@@ -305,29 +434,20 @@ def run_manifest(args):
             try:
                 evidence = json.loads(path.read_text())
                 binding = {"CaseId": case["Id"], "Variant": variant_id,
+                           "Transform": variant["Transform"],
                            "TransformSHA256": canonical_sha256(variant["Transform"]),
                            "InputSHA256": hashes, "ToolSHA256": tool_hashes}
                 failures = audit_manifest_evidence(evidence, manifest["Gates"], contract, binding)
                 mesh_path = _check_artifact(path.parent, evidence.get("Mesh"), "audited mesh")
-                if mesh_path in used_meshes:
-                    raise ValueError("audited meshes must be independent per matrix entry")
-                used_meshes.add(mesh_path)
-                audit_records = evidence.get("AuditRecords")
-                if not isinstance(audit_records, list) or not audit_records:
-                    raise ValueError("independent audit records are required")
-                resolved = []
-                for item in audit_records:
-                    if item.get("Kind") != "producer-audit":
-                        raise ValueError("audit record kind is not producer-audit")
-                    audit_path = _check_artifact(path.parent, item, "audit record")
-                    audit_data = json.loads(audit_path.read_text())
-                    if (audit_data.get("CaseId") != case["Id"] or
-                            audit_data.get("Variant") != variant_id):
-                        raise ValueError("stale or wrong-case producer audit")
-                    resolved.append(audit_path)
-                if any(item in used_audits for item in resolved):
-                    raise ValueError("audit records must be independent per matrix entry")
-                used_audits.update(resolved)
+                _validate_mesh(mesh_path, contract)
+                mesh_digest = evidence["Mesh"]["SHA256"]
+                if mesh_digest in used_meshes:
+                    raise ValueError("audited meshes must be content-distinct per matrix entry")
+                used_meshes.add(mesh_digest)
+                record_digests = _validate_bound_records(path, evidence, binding)
+                if used_audits & record_digests:
+                    raise ValueError("audit records must be content-distinct per matrix entry")
+                used_audits.update(record_digests)
                 result.update({"AuditEvidence": str(path), "GateFailures": failures,
                                "Passed": not failures})
                 evidence_by_key[(case["Id"], variant_id)] = evidence
@@ -343,7 +463,17 @@ def run_manifest(args):
         if any(key not in evidence_by_key for key in keys):
             comparison_failures.append(case["Id"] + ": missing transform evidence")
             continue
-        left, right = (evidence_by_key[key]["ComparisonInvariants"] for key in keys)
+        reference_evidence, transformed_evidence = (evidence_by_key[key] for key in keys)
+        identity_digest = reference_evidence["Mesh"]["SHA256"]
+        coordinate_error = transformed_evidence.get("TransformMaximumCoordinateError")
+        if (reference_evidence.get("IdentityMeshSHA256") != identity_digest or
+                transformed_evidence.get("IdentityMeshSHA256") != identity_digest or
+                not _finite_number(coordinate_error, nonnegative=True) or
+                coordinate_error > manifest["Gates"]["CornerTolerance"]):
+            comparison_failures.append(case["Id"] + ": transform application")
+            continue
+        left, right = (item["ComparisonInvariants"]
+                       for item in (reference_evidence, transformed_evidence))
         if left.keys() != right.keys() or not left:
             comparison_failures.append(case["Id"] + ": invariant keys differ")
             continue

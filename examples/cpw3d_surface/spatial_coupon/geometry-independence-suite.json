@@ -21,12 +21,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "a6be319fb1152a4565fe470a0c6821cb65777e1a8fb708c691212fc57934da24"
+      "SHA256": "dc601826c21f8ffb8f470a2c74ce11a68b649b956fdb21f423c3552127d53290"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "25e2f5826b78cc30da2cda1260882ec80620eb60f5ad90d40a2e0b458f312e0d"
+      "SHA256": "d6aea0c4793f72718a5836c406135d3740b2ff3cfee32e84f47bbf0410e08901"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -56,7 +56,12 @@
     {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "6d93fdf307c87b07b1d301fdbca9a714f52a7c7120ae2affa29c44a743f797a6"
+      "SHA256": "e9834750901d9dbb46e0d40ab8f92e43c7fdc51ecf488218633f9a7b5386fd32"
+    },
+    {
+      "Name": "general_mesh_audit_producer.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
+      "SHA256": "7f317e84d0de9f9515439d03ad4aaf2461fc6ef1c25873df581b9ebe7a6f634a"
     }
   ],
   "ScalingComparisons": [
@@ -611,10 +616,12 @@
     },
     {
       "Id": "four-edge-9d2cb9bbb3fe",
-      "InventoryStatus": "RequiredRemoteInputUnavailable",
+      "InventoryStatus": "RemoteVerified",
       "Frozen": true,
       "Features": [
-        "4-edge"
+        "4-edge",
+        "single-slot",
+        "single-conductor"
       ],
       "Variants": [
         {
@@ -666,7 +673,7 @@
         "MaximumRelativeInvariantError": 1e-08
       },
       "Source": {
-        "Directory": null,
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
         "SignatureRole": "Signature",
         "SignatureColumns": [
           "Index",
@@ -687,31 +694,51 @@
         "Files": {
           "Signature": {
             "Name": "mesh-signature.csv",
-            "SHA256": null
+            "SHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae"
           },
           "Boundary": {
             "Name": "plan-view-boundary.csv",
-            "SHA256": null
+            "SHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b"
           },
           "Mask": {
             "Name": "plan-view-mask.csv",
-            "SHA256": null
+            "SHA256": "217d15e21136c2e745456835f0aadc626f991e33ee910333b3edfedc43543549"
           },
           "Process": {
             "Name": "process.toml",
-            "SHA256": null
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "81172a499268938d0dcb2d405584f425a3aabbae8ca764469d99e4696bbcde34"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "415150d8a05c317b2d5d319509bda4f30fb07cc0ea5947527814ed0d40db84ac"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "5a8f6332495c504ddab13d3525c323124ec8cf9d38cda481458af23547740d32"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "7aea276ead95ce55562aab2d561b7c6bbdca59690d1c946189bb3f6b7531bb3d"
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": null
+            "SHA256": "f97b9757a874dcdeca011e6a6a30e38a04be9cf700cf583f87af19ec1a928edc"
           },
           "MeshRecipe": {
-            "Name": "mesh-recipe.json",
-            "SHA256": null
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
         }
       },
-      "Provenance": "/data/home/simlap/transmon_library_graded_v2_20260911/reference-library/models/008-spatialedgecluster-edgecount-4-9d2cb9bbb3fe; /data is unavailable on this host and edge count was not inferred"
+      "Provenance": "RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied"
     },
     {
       "Id": "six-edge-cluster",
@@ -820,10 +847,12 @@
     },
     {
       "Id": "ten-edge-6791f1c84123",
-      "InventoryStatus": "RequiredRemoteInputUnavailable",
+      "InventoryStatus": "RemoteVerified",
       "Frozen": true,
       "Features": [
-        "10-edge"
+        "10-edge",
+        "multiple-slots",
+        "multiple-conductors"
       ],
       "Variants": [
         {
@@ -875,7 +904,7 @@
         "MaximumRelativeInvariantError": 1e-08
       },
       "Source": {
-        "Directory": null,
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/ten-edge-6791f1c84123",
         "SignatureRole": "Signature",
         "SignatureColumns": [
           "Index",
@@ -896,31 +925,51 @@
         "Files": {
           "Signature": {
             "Name": "mesh-signature.csv",
-            "SHA256": null
+            "SHA256": "a61b82bb2bb07abee6dedc33e47c7cb3a87eca63a95f49bf468a8ce5db4fafc6"
           },
           "Boundary": {
             "Name": "plan-view-boundary.csv",
-            "SHA256": null
+            "SHA256": "1f82811d304d8f265870999f967461031a41a9edfa362a6240568bc087bb5309"
           },
           "Mask": {
             "Name": "plan-view-mask.csv",
-            "SHA256": null
+            "SHA256": "f71ceed6eefca95e0315908da67416cbdd99686ca93f4f58f1e743d6f4dd811f"
           },
           "Process": {
             "Name": "process.toml",
-            "SHA256": null
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "1d783b43be2133be1454cc015452f1b8074dcaf8a1284b6f5faa119837641758"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "9ad92ff8caf7d34005907c1733176dc508027d111d8b076f786fd3e175a29025"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "626b10c24a4edff26be25eca563adeeded6a214fa7e20876f7d3e4939bda31b8"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "4cc264aa5c7eafc117f33b7c40b7ecedb4a3c70c6ee60238e29e032b041cdd49"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "6c4afb3a0dfabe96b86cfbd0e93c75500b05376bf438af73146fa51b058e033d"
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": null
+            "SHA256": "dd1fb3a12ebb6b21fe250bb4a0b476bfbf0d4a7876deb225ae43cbb1e851d0c1"
           },
           "MeshRecipe": {
-            "Name": "mesh-recipe.json",
-            "SHA256": null
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
         }
       },
-      "Provenance": "/data/home/simlap/transmon_library_graded_v2_20260911/reference-library/models/candidate exact-p5-6791f1c84123 (unverified; must not be relabeled); /data is unavailable on this host and edge count was not inferred"
+      "Provenance": "RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/09; campaign.json maps input 09 to spatialedgecluster_edgecount-10_6791f1c84123; 10 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied"
     },
     {
       "Id": "concave-multislot",

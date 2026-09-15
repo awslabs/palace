@@ -2,53 +2,38 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tiny deterministic producer used to exercise evidence provenance tests."""
+"""Write a real two-material Gmsh mesh for evidence-chain regression tests."""
 import argparse
 import json
 from pathlib import Path
 
-from semantic_mesh_contract import load_semantic_contract
+import meshio
+import numpy as np
 
 
-def produce(contract_path, case, variant, output, mesh, *, dofs=120, features=2,
-            subdivisions=2, invariant=4.0):
-    contract = load_semantic_contract(contract_path)
-    mesh.write_bytes((case + "\n" + variant + "\n").encode())
-    report = {
-        "CaseId": case, "Variant": variant,
-        "ActualVolumeMaterials": contract["VolumeMaterials"],
-        "ActualBoundaryAttributes": [item["Attribute"] for item in contract["BoundaryLabels"]],
-        "ActualAdjacency": {str(item["Attribute"]): item["AdjacentMaterials"]
-                            for item in contract["BoundaryLabels"]},
-        "OwnershipClosure": {"UnmatchedPolicy": "Error", "Unmatched": 0,
-                             "Overlaps": 0, "Exhaustive": True},
-        "ActualSemanticCorners": contract["SemanticCorners"],
-        "ProtectedSurfaces": {"Actual": contract["ProtectedSupports"], "Changed": 0},
-        "AchievedAnisotropy": {"Samples": 8, "NormalTarget": 0.01,
-                               "Transverse1P90": 0.012, "Transverse2P90": 0.013,
-                               "TangentialP50": 0.04},
-        "TraceDiagonal": {"GlobalDiagonalBands": 0},
-        "Resources": {"ExitCode": 0, "Seconds": 0.01, "PeakRSSGiB": 0.01,
-                      "Elements": 12},
-        "MeshQuality": {"Samples": 12, "MinimumScaledJacobian": 0.2,
-                        "MaximumJacobianCondition": 8.0},
-        "Complexity": {"H1DOFs": dofs, "FeatureCount": features,
-                       "CADSubdivisionCount": subdivisions},
-        "ComparisonInvariants": {"Volume": invariant, "ProtectedArea": 2.0},
-    }
-    output.write_text(json.dumps(report, indent=2) + "\n")
-    return report
+def produce(output, transform, scale=1.0):
+    matrix = np.asarray(transform, dtype=float).reshape(4, 4)
+    points = scale * np.array([[0., 0., 0.], [.08, 0., 0.], [0., .001, 0.],
+                               [0., 0., .001], [0., 0., -.001]])
+    homogeneous = np.column_stack((points, np.ones(len(points))))
+    points = (homogeneous @ matrix.T)[:, :3]
+    tetrahedra = np.array([[0, 1, 2, 3], [0, 2, 1, 4]])
+    triangles = np.array([[0, 1, 3], [0, 2, 3], [1, 2, 3],
+                          [0, 2, 4], [0, 1, 4], [2, 1, 4], [0, 1, 2]])
+    mesh = meshio.Mesh(points, [("triangle", triangles), ("tetra", tetrahedra)],
+                       cell_data={"gmsh:physical": [np.array([1, 1, 1, 2, 2, 2, 3]),
+                                                    np.array([1, 7])],
+                                  "gmsh:geometrical": [np.ones(7, dtype=int),
+                                                       np.ones(2, dtype=int)]})
+    meshio.write(output, mesh, file_format="gmsh22", binary=False)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("contract", type=Path)
-    parser.add_argument("case")
-    parser.add_argument("variant")
-    parser.add_argument("output", type=Path)
-    parser.add_argument("mesh", type=Path)
+    parser.add_argument("output", type=Path); parser.add_argument("transform", type=Path)
+    parser.add_argument("--scale", type=float, default=1.0)
     args = parser.parse_args()
-    produce(args.contract, args.case, args.variant, args.output, args.mesh)
+    produce(args.output, json.loads(args.transform.read_text()), args.scale)
 
 
 if __name__ == "__main__":
