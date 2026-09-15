@@ -5,7 +5,6 @@
 #define PALACE_MODELS_SURFACE_FLUX_OPERATOR_HPP
 
 #include <map>
-#include <memory>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/vector.hpp"
@@ -30,9 +29,8 @@ class SurfaceFluxData
 public:
   std::vector<int> hole_attributes;
   std::vector<double> flux_amounts;
-  std::vector<int> fluxloop_pec;
+  std::vector<int> film_attributes;
   std::vector<double> direction;
-  double regularization;
 
 public:
   SurfaceFluxData(const config::FluxLoopData &data);
@@ -43,7 +41,6 @@ class SurfaceFluxOperator
 {
 private:
   std::map<int, SurfaceFluxData> sources;
-  std::unique_ptr<IoData> solver_config_;  // Store only solver configuration
 
   void SetUpBoundaryProperties(const IoData &iodata);
   void PrintBoundaryInfo(const IoData &iodata);

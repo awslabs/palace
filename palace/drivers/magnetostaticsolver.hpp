@@ -31,7 +31,9 @@ private:
                             const SurfaceFluxOperator &surf_flux_op,
                             const std::vector<Vector> &A, const std::vector<double> &I_inc,
                             const std::vector<double> &Phi_inc,
-                            const mfem::DenseMatrix &linked_flux) const;
+                            const mfem::DenseMatrix &linked_flux,
+                            const std::vector<Vector> &london_rhs,
+                            const std::vector<Vector> &london_ah) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

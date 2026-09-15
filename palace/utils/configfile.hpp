@@ -432,6 +432,26 @@ public:
   RationalImpedanceData(const json &boundary);
 };
 
+struct SuperconductorData
+{
+public:
+  // London penetration depth λ and film thickness d, in mesh length units. These define the
+  // kinetic sheet inductance of a thin-film superconductor modeled as a 2D sheet:
+  //     L_ksq = mu0 * lambda^2 / d   [H/square].
+  double lambda_L = 0.0;
+  double thickness = 0.0;
+
+  // Kinetic sheet inductance L_ksq [H/sq], specified directly as an alternative to (λ, d).
+  // Exactly one of {(λ, d), Ls} must be provided.
+  double Ls = 0.0;
+
+  // List of boundary attributes for this superconductor sheet.
+  std::vector<int> attributes = {};
+
+  SuperconductorData() = default;
+  SuperconductorData(const json &boundary);
+};
+
 struct LumpedPortData
 {
 public:
@@ -761,7 +781,7 @@ struct FluxLoopData
 {
 public:
   // List of boundary attributes for the metal surface.
-  std::vector<int> fluxloop_pec = {};
+  std::vector<int> film_attributes = {};
 
   // List of boundary attributes for holes (one per hole).
   std::vector<int> hole_attributes = {};
@@ -772,8 +792,10 @@ public:
   // Direction vector for flux orientation.
   std::array<double, 3> direction = {0.0, 0.0, 1.0};
 
-  // Regularization parameter for curl-curl system stability.
-  double regularization = 1e-6;
+  // Effective λ⊥ [mesh units] for a film listed in FilmAttributes but not declared a
+  // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet, solved by
+  // the two-solve).
+  double pec_lperp = 1.0e-4;
 
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
@@ -796,6 +818,7 @@ public:
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   std::vector<RationalImpedanceData> rational_impedance = {};
+  std::vector<SuperconductorData> superconductor = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
@@ -1112,6 +1135,13 @@ public:
   // problems.
   int ams_singular_op = -1;
 
+  // Preconditioner-only gauge shift for the London magnetostatic operator: adds
+  // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
+  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
+  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
+  // present.
+  double london_pc_shift = 1.0e-1;
+
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
   // Typically use this when the operator is positive definite.
   int amg_agg_coarsen = -1;
@@ -1209,6 +1239,7 @@ void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
+void Nondimensionalize(const Units &units, SuperconductorData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);

@@ -507,7 +507,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                           {"Aperture", {{"Attributes", {7}}, {"Direction", "+Z"}}}}}},
                        {"FluxLoop",
                         {{{"Index", 2},
-                          {"FluxLoopPEC", {8}},
+                          {"FilmAttributes", {8}},
                           {"HoleAttributes", {9}},
                           {"FluxAmounts", {1.0}},
                           {"Direction", "+Z"}}}}};
@@ -773,7 +773,7 @@ TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
                      {"Aperture", {{"Attributes", {5}}, {"Direction", "+Z"}}}}}},
                   {"FluxLoop",
                    {{{"Index", 2},
-                     {"FluxLoopPEC", {6}},
+                     {"FilmAttributes", {6}},
                      {"HoleAttributes", {7}},
                      {"FluxAmounts", {1.0}},
                      {"Direction", "+Z"}}}}}},
