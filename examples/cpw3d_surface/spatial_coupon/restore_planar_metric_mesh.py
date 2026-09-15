@@ -24,6 +24,32 @@ def _tetra_quality(points,tetrahedra):
     return scaled,singular[:,0]/singular[:,-1],determinant
 
 
+def _movement_basis(node,node_supports,supports,fixed_nodes):
+    if node in fixed_nodes:return np.empty((3,0))
+    ids=node_supports.get(node)
+    if not ids:return np.eye(3)
+    normals=np.array([supports[i]['Normal'] for i in ids])
+    _,singular,vectors=np.linalg.svd(normals)
+    rank=int(np.sum(singular>1e-8))
+    return vectors[rank:].T
+
+
+def _bounded_offset(directions,parameters,maximum_displacement):
+    """Map arbitrary basis parameters into the Euclidean displacement ball."""
+    coordinates=np.asarray(parameters,dtype=float)
+    length=float(np.linalg.norm(coordinates))
+    if not np.isfinite(length):raise ValueError('Nonfinite quality-repair displacement')
+    if length>1.:coordinates=coordinates/length
+    offset=maximum_displacement*(directions@coordinates)
+    magnitude=float(np.linalg.norm(offset))
+    if magnitude>maximum_displacement:
+        offset*=maximum_displacement/magnitude
+        magnitude=float(np.linalg.norm(offset))
+    if not np.isfinite(magnitude) or magnitude>maximum_displacement:
+        raise ValueError('Quality-repair displacement exceeds bound')
+    return offset
+
+
 def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scaled,
                     maximum_corner_aspect,maximum_displacement):
     """Constrained post-adaptation repair on frozen planar CAD supports.
@@ -44,23 +70,15 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     fixed_nodes={node for node,ids in node_supports.items()
                  if any(supports[i]['Attribute'] in cut_attributes for i in ids)}
 
-    def basis(node):
-        if node in fixed_nodes:return np.empty((3,0))
-        ids=node_supports.get(node)
-        if not ids:return np.eye(3)
-        normals=np.array([supports[i]['Normal'] for i in ids])
-        _,singular,vectors=np.linalg.svd(normals)
-        rank=int(np.sum(singular>1e-8))
-        return vectors[rank:].T
-
-    original=points.copy();largest=0.;corner_before=[];corner_after=[]
-    moved=set();quality_target=2.*minimum_scaled
+    original=points.copy();largest_step=0.;corner_before=[];corner_after=[]
+    quality_target=2.*minimum_scaled
     corner_target=.95*maximum_corner_aspect
 
     def optimize(cells,active,objective):
-        nonlocal largest
+        nonlocal largest_step
         active=np.asarray(active,dtype=int)
-        bases=[basis(int(node)) for node in active]
+        bases=[_movement_basis(int(node),node_supports,supports,fixed_nodes)
+               for node in active]
         selected=[i for i,value in enumerate(bases) if value.shape[1]]
         active=active[selected];bases=[bases[i] for i in selected]
         if not len(active):raise ValueError('Quality repair has no movable vertices')
@@ -69,11 +87,15 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         baseline,_,_= _tetra_quality(points,tetrahedra[incident])
         floor=np.minimum(baseline,quality_target)
         local=points[active].copy()
+        initial=np.concatenate([
+            directions.T@(local[i]-original[node])/maximum_displacement
+            for i,(node,directions) in enumerate(zip(active,bases))])
         def updated(value):
             candidate=points.copy()
             for i,(node,directions) in enumerate(zip(active,bases)):
-                delta=directions@value[offsets[i]:offsets[i+1]]
-                candidate[node]=local[i]+maximum_displacement*delta
+                offset=_bounded_offset(
+                    directions,value[offsets[i]:offsets[i+1]],maximum_displacement)
+                candidate[node]=original[node]+offset
             return candidate
         def residual(value):
             candidate=updated(value)
@@ -87,12 +109,15 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
                 target_scaled,_,_=_tetra_quality(candidate,tetrahedra[cells])
                 result.insert(0,100.*np.maximum(quality_target-target_scaled,0.))
             return np.concatenate(result)
-        result=least_squares(residual,np.zeros(offsets[-1]),bounds=(-.75,.75),
-                             max_nfev=3000,ftol=1e-11,xtol=1e-11,gtol=1e-11)
+        result=least_squares(residual,initial,bounds=(-.75,.75),max_nfev=3000,
+                             ftol=1e-11,xtol=1e-11,gtol=1e-11)
         candidate=updated(result.x)
-        displacement=np.linalg.norm(candidate[active]-local,axis=1)
-        largest=max(largest,float(displacement.max()))
-        points[active]=candidate[active];moved.update(map(int,active[displacement>0]))
+        step=np.linalg.norm(candidate[active]-local,axis=1)
+        cumulative=np.linalg.norm(candidate[active]-original[active],axis=1)
+        if np.any(~np.isfinite(cumulative)) or np.any(cumulative>maximum_displacement):
+            raise ValueError('Final quality-repair displacement exceeds bound')
+        largest_step=max(largest_step,float(step.max()))
+        points[active]=candidate[active]
         scaled,aspects,determinant=_tetra_quality(points,tetrahedra[incident])
         if np.any(determinant<=0) or np.any(scaled+1e-12<floor):
             raise ValueError('Post-adaptation repair degraded an incident tetrahedron')
@@ -131,6 +156,11 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     for component in components:
         optimize(np.asarray(component,dtype=int),np.unique(tetrahedra[component]),'scaled')
     final_scaled,_,final_determinant=_tetra_quality(points,tetrahedra)
+    final_displacement=np.linalg.norm(points-original,axis=1)
+    if np.any(~np.isfinite(final_displacement)) or np.any(
+            final_displacement>maximum_displacement):
+        raise ValueError('Final quality-repair displacement exceeds bound')
+    maximum_final=float(final_displacement.max())
     if np.any(final_determinant<=0) or final_scaled.min()<minimum_scaled:
         raise ValueError(f'Post-adaptation minimum scaled Jacobian is {final_scaled.min()}')
     # Plane/intersection constraints are algebraic, but recheck explicitly before
@@ -142,8 +172,11 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             support_error=max(support_error,abs(float(
                 np.dot(points[node],item['Normal'])-item['Offset'])))
     if support_error>1e-10:raise ValueError('Quality repair moved a protected support')
-    return {'QualityRepairVertices':len(moved),'QualityRepairComponents':len(components),
-            'MaximumQualityDisplacementUm':largest,
+    return {'QualityRepairVertices':int(np.sum(final_displacement>0)),
+            'QualityRepairComponents':len(components),
+            'MaximumQualityStepDisplacementUm':largest_step,
+            'MaximumFinalQualityDisplacementUm':maximum_final,
+            'QualityDisplacementBoundUm':maximum_displacement,
             'MinimumScaledJacobianBefore':float(_tetra_quality(original,tetrahedra)[0].min()),
             'MinimumScaledJacobianAfter':float(final_scaled.min()),
             'CornerAspectsBefore':corner_before,'CornerAspectsAfter':corner_after,
