@@ -921,10 +921,6 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
   MFEM_VERIFY(hole_attributes.size() == flux_amounts.size(),
               "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
 
-  regularization = fluxloop.value("Regularization", regularization);
-  MFEM_VERIFY(regularization > 0.0,
-              "\"Regularization\" for \"FluxLoop\" boundary must be positive!");
-
   pec_lperp = fluxloop.value("PecPenetrationDepth", pec_lperp);
   MFEM_VERIFY(pec_lperp > 0.0,
               "\"PecPenetrationDepth\" for \"FluxLoop\" boundary must be positive!");

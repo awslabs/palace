@@ -3,7 +3,6 @@
 
 #include "curlcurloperator.hpp"
 
-#include <algorithm>
 #include <set>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"

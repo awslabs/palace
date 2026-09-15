@@ -792,9 +792,6 @@ public:
   // Direction vector for flux orientation.
   std::array<double, 3> direction = {0.0, 0.0, 1.0};
 
-  // Regularization parameter for curl-curl system stability.
-  double regularization = 1e-6;
-
   // Effective λ⊥ [mesh units] for a film listed in FilmAttributes but not declared a
   // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet, solved by
   // the two-solve).
@@ -1138,18 +1135,11 @@ public:
   // problems.
   int ams_singular_op = -1;
 
-  // Preconditioner-only gauge shift for the London (superconductor sheet) magnetostatic
-  // operator. When a London flux film is present the shifted-penalty operator K̃ =
-  // A_curlcurl
-  // + (1/L_ksq) M_sheet has a residual 1-D gradient null space (film-constant potential),
-  // which stalls/diverges AMS in parallel. This adds london_pc_shift · (1/µ) ∫|A|² as a
-  // volume mass to the PRECONDITIONER matrix ONLY (the actual operator, solution and
-  // extracted inductance are unchanged), lifting all gradient modes so AMS is SPD-solvable.
-  // Applied only when a London sheet term is present; ignored otherwise. Default 1e-1: on
-  // finer meshes a smaller shift (1e-2) leaves the second (harmonic) range-space solve
-  // intermittently divergent in parallel (reduction factor >1, run-to-run non-deterministic
-  // via non-associative MPI reductions); 1e-1 stabilizes it and, being preconditioner-only,
-  // leaves the extracted inductance bit-identical while converging in fewer iterations.
+  // Preconditioner-only gauge shift for the London magnetostatic operator: adds
+  // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
+  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
+  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
+  // present.
   double london_pc_shift = 1.0e-1;
 
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).

@@ -1625,12 +1625,6 @@
             }
           ]
         },
-        "Regularization": {
-          "type": "number",
-          "description": "Regularization parameter for the curl-curl system stability on the 2D surface problem.",
-          "exclusiveMinimum": 0.0,
-          "default": 1.0e-6
-        },
         "PecPenetrationDepth": {
           "type": "number",
           "description": "Effective sheet penetration depth λ⊥ [mesh length units] used to model a FilmAttributes film that is not declared a \"Superconductor\" as the λ→0 perfect-screening limit. Smaller values approach an ideal perfect conductor.",
@@ -3061,7 +3055,7 @@
         "LondonPCShift": {
           "type": "number",
           "description": "Preconditioner-only gauge shift for magnetostatic problems with a London (superconductor) sheet term. Adds this multiple of the reluctance-weighted volume mass to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet term is present.",
-          "default": 0.01,
+          "default": 0.1,
           "x-palace-advanced": true
         },
         "AMGAggressiveCoarsening": {

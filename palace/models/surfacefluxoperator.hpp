@@ -31,7 +31,6 @@ public:
   std::vector<double> flux_amounts;
   std::vector<int> film_attributes;
   std::vector<double> direction;
-  double regularization;
 
 public:
   SurfaceFluxData(const config::FluxLoopData &data);

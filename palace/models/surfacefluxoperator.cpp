@@ -12,8 +12,7 @@ namespace palace
 SurfaceFluxData::SurfaceFluxData(const config::FluxLoopData &data)
   : hole_attributes(data.hole_attributes), flux_amounts(data.flux_amounts),
     film_attributes(data.film_attributes),
-    direction(data.direction.begin(), data.direction.end()),
-    regularization(data.regularization)
+    direction(data.direction.begin(), data.direction.end())
 {
 }
 
