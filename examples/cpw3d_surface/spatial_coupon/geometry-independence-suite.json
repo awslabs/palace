@@ -1489,7 +1489,7 @@
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "9f2f77fa073ee600d0bd22f6d804d93c8430ccc56197f44c6a53d8792f5307ec"
+      "metric-preparer": "60cba881f3294f55ee3e9f1241b37bf8a05d3ed24cad673e481babc6afc4744b"
     },
     "native-adaptation-mmg": {
       "runtime": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",
@@ -1501,11 +1501,11 @@
     },
     "final-gmsh-publication": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "publisher": "cb0c714b493c21ac62bc54edecf36de41b038f4ebfd08a4b7efd435226347c67"
+      "publisher": "0ec26a1123bde0b52b30e989537243363431804ffe05aaf68e2f8480b4a27d3d"
     },
     "source-transformation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "source-transformer": "6f20630a69f11b4181f1718e01eea8f0de305f118ab8eb71442fa4864132e7a2"
+      "source-transformer": "7db8024676a18eee9da65770b5d99ea8ce0e1e57f9abd27d52aa2de2049b3f47"
     }
   },
   "PhysicalCovarianceToleranceBasis": "Frozen before rerun: exact CAD supports use 1e-8 um/relative; material volume and boundary measure use 5e-4 relative (sub-percent mesh discretization); quality and local anisotropy distribution changes use 0.35 relative; complexity uses a 1.10 ratio. Solver QoI is excluded."
