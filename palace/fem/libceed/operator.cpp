@@ -505,7 +505,7 @@ void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
 }
 
 void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, int size,
-                   Operator &packed)
+                   Operator &packed, bool transpose = false)
 {
   ScopedRestriction restriction;
   ScopedBasis basis;
@@ -515,12 +515,19 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   ClonePackedBasis(ceed, real, &basis.value);
   // Both kernels implement complex mass. Only f_apply_complex_33 adds curl-curl,
   // with a real tensor acting independently on Re(x) and Im(x). The pairing loop
-  // must therefore leave imaginary curl leaves in the remainder.
-  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                           ceed, 1, real.curl ? f_apply_complex_33 : f_apply_complex_3,
-                           real.curl ? PalaceQFunctionRelativePath(f_apply_complex_33_loc)
-                                     : PalaceQFunctionRelativePath(f_apply_complex_3_loc),
-                           &qf.value));
+  // must therefore leave imaginary curl leaves in the remainder. The transpose
+  // variants apply the Hermitian transpose (index transpose + conjugation) so the
+  // adjoint is correct for nonsymmetric tensors, not just symmetric ones.
+  CeedQFunctionUser kernel =
+      real.curl ? (transpose ? f_apply_complex_33_transpose : f_apply_complex_33)
+                : (transpose ? f_apply_complex_3_transpose : f_apply_complex_3);
+  const char *kernel_loc =
+      real.curl
+          ? (transpose ? PalaceQFunctionRelativePath(f_apply_complex_33_transpose_loc)
+                       : PalaceQFunctionRelativePath(f_apply_complex_33_loc))
+          : (transpose ? PalaceQFunctionRelativePath(f_apply_complex_3_transpose_loc)
+                       : PalaceQFunctionRelativePath(f_apply_complex_3_loc));
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, kernel, kernel_loc, &qf.value));
   PalaceCeedCall(ceed,
                  CeedQFunctionAddInput(qf.value, "qr", real.curl ? 18 : 9, CEED_EVAL_NONE));
   PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "qi", 9, CEED_EVAL_NONE));
@@ -549,12 +556,15 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   packed.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
-// The base owns the finalized originals for diagonal, transpose, full assembly, and
-// coarsening. Only forward applications use the packed composite and its remainder.
+// The base owns the finalized originals for diagonal, full assembly, and coarsening.
+// Forward applications use the packed composite and its remainder; Hermitian-transpose
+// applications use a separate packed transpose composite (with the same remainder,
+// applied via its own Hermitian transpose) so post-smoothing is fused too.
 class PackedComplexOperator final : public ComplexWrapperOperator
 {
 private:
   std::unique_ptr<Operator> packed;
+  std::unique_ptr<Operator> packed_t;
   std::unique_ptr<ComplexWrapperOperator> remainder;
   // Persistent L-vectors back the real/imaginary views. Forward calls overwrite this
   // scratch, so applications on the same instance must not overlap.
@@ -581,13 +591,35 @@ private:
     return output_view;
   }
 
+  const ComplexVector &ApplyHermitianTranspose(const ComplexVector &x) const
+  {
+    // Mirror of Apply for the Hermitian transpose. The packed transpose composite
+    // encodes the index transpose + conjugation in its QData algebra, so it is applied
+    // as a plain real AddMult on the doubled vector. The remainder holds the unmatched
+    // originals; its Hermitian transpose supplies their adjoint (its transpose composite
+    // is intentionally empty).
+    input_view = x;
+    if (remainder)
+    {
+      remainder->MultHermitianTranspose(input_view, output_view);
+      packed_t->AddMult(input, output);
+    }
+    else
+    {
+      packed_t->Mult(input, output);
+    }
+    return output_view;
+  }
+
 public:
   PackedComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
                         std::unique_ptr<palace::Operator> &&Ai,
                         std::unique_ptr<Operator> &&packed,
+                        std::unique_ptr<Operator> &&packed_t,
                         std::unique_ptr<ComplexWrapperOperator> &&remainder)
     : ComplexWrapperOperator(std::move(Ar), std::move(Ai)), packed(std::move(packed)),
-      remainder(std::move(remainder)), input(2 * width), output(2 * height)
+      packed_t(std::move(packed_t)), remainder(std::move(remainder)), input(2 * width),
+      output(2 * height)
   {
     // Set the owning buffers' memory policy before MakeRef allocates storage and
     // creates the real/imaginary aliases.
@@ -614,6 +646,24 @@ public:
       // LocalOperator() and CreateComplexOperator() expose AddMult to local callers.
       // The inherited real-scale path requests unsupported negative CEED coefficients.
       y.AXPY(a, Apply(x));
+    }
+  }
+
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    MFEM_ASSERT(x.Size() == height && y.Size() == width,
+                "Invalid dimensions for packed complex Hermitian transpose!");
+    y = ApplyHermitianTranspose(x);
+  }
+
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 std::complex<double> a) const override
+  {
+    MFEM_ASSERT(x.Size() == height && y.Size() == width,
+                "Invalid dimensions for packed complex Hermitian transpose!");
+    if (a != std::complex<double>{0.0})
+    {
+      y.AXPY(a, ApplyHermitianTranspose(x));
     }
   }
 };
@@ -684,6 +734,7 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   // Requiring both identities ties each pair to the same quadrature, element ordering,
   // and orientation maps. Separately constructed equivalents remain unmatched.
   std::unique_ptr<Operator> packed;
+  std::unique_ptr<Operator> packed_t;
   for (std::size_t r = 0; r < fields[0].size(); r++)
   {
     if (!fields[0][r])
@@ -701,8 +752,10 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
       if (!packed)
       {
         packed = std::make_unique<Operator>(2 * size, 2 * size);
+        packed_t = std::make_unique<Operator>(2 * size, 2 * size);
       }
-      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, *packed);
+      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, *packed, false);
+      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, *packed_t, true);
       matched[0][r] = matched[1][i] = true;
       break;
     }
@@ -713,8 +766,9 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   }
   // Keep every unmatched child exactly once. In particular, differing real/imaginary
   // boundary terms must not disable fusion of compatible domain contributions.
-  // These private remainders are only applied forward, so their transpose composites
-  // intentionally stay empty. Transposes use the retained original operators.
+  // The remainder is a ComplexWrapperOperator over the retained originals; its forward
+  // action feeds Apply and its Hermitian transpose feeds ApplyHermitianTranspose, so
+  // its own libCEED transpose composites stay empty and are never applied directly.
   std::unique_ptr<palace::Operator> remainder_parts[2];
   for (int part = 0; part < 2; part++)
   {
@@ -725,7 +779,12 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
       {
         if (!remainder)
         {
-          remainder = std::make_unique<Operator>(size, size);
+          // A SymmetricOperator aliases its transpose to the forward action, matching
+          // how Palace stores these mass/curl terms (see SymmetricOperator). This makes
+          // the remainder's Hermitian-transpose contribution well-defined without a
+          // separately built transpose composite, consistent with the packed matched
+          // part, whose transpose is the conjugate of a symmetric tensor.
+          remainder = std::make_unique<SymmetricOperator>(size, size);
         }
         CeedOperator copy = nullptr;
         PalaceCeedCall(ceed, CeedOperatorReferenceCopy(children[part][j], &copy));
@@ -745,8 +804,10 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
                                                          std::move(remainder_parts[1]));
   }
   packed->Finalize();
+  packed_t->Finalize();
   return std::make_unique<PackedComplexOperator>(std::move(Ar), std::move(Ai),
-                                                 std::move(packed), std::move(remainder));
+                                                 std::move(packed), std::move(packed_t),
+                                                 std::move(remainder));
 }
 
 }  // namespace

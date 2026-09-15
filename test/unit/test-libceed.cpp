@@ -1812,6 +1812,27 @@ void CheckPackedActions(const ComplexOperator &actual, const ComplexOperator &re
     actual.AddMult(x, y, a);
     CheckPackedResult(y, expected);
   }
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    // Adjoint self-consistency: <A x, y> == <x, A^H y> for random x, y. This validates
+    // the packed Hermitian-transpose action against the (already verified) packed
+    // forward action WITHOUT a separate reference, so it holds for the nonsymmetric
+    // tensor case where the BilinearForm-built reference is symmetrized and cannot serve
+    // as an independent adjoint. Using u.Dot(w) = w^H u:
+    //   <A x, y> = y.Dot(A x)   and   <x, A^H y> = (A^H y).Dot(x).
+    // Restricted to serial: the identity uses the local vector inner product, which
+    // equals the global one only without T-dof partitioning across ranks.
+    INFO("adjoint self-consistency <Ax,y> == <x,A^H y>");
+    ComplexVector yy(actual.Height()), Ax(actual.Height()), AHy(actual.Width());
+    yy.Real().Randomize(61);
+    yy.Imag().Randomize(83);
+    actual.Mult(x, Ax);
+    actual.MultHermitianTranspose(yy, AHy);
+    const std::complex<double> lhs = yy.Dot(Ax);
+    const std::complex<double> rhs = AHy.Dot(x);
+    INFO("lhs = " << lhs << ", rhs = " << rhs);
+    REQUIRE(std::abs(lhs - rhs) <= 1.0e-11 * (1.0 + std::abs(lhs) + std::abs(rhs)));
+  }
   if (inherited)
   {
     // These operations retain the original real/imaginary operators. Check representative
