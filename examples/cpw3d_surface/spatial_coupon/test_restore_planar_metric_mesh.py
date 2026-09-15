@@ -1,18 +1,37 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 import meshio
 import numpy as np
 
+import restore_planar_metric_mesh
 from restore_planar_metric_mesh import (
+    DISPLACEMENT_ROUNDOFF_TOLERANCE,
     _bounded_offset,
     _movement_basis,
     _quality_repair,
     _tetra_quality,
     _transactional_quality_commit,
+    _within_displacement_bound,
     restore_in_source_frame,
 )
+
+
+def _single_tetrahedron_repair_case(apex_height):
+    points = np.array([[0., 0., 0.], [0., 0., .05], [.05, 0., 0.],
+                       [.01, apex_height, .01]])
+    tetrahedra = np.array([[0, 1, 2, 3]])
+    supports = {100: {"Normal": [0., 1., 0.], "Offset": 0., "Attribute": 6001}}
+    node_supports = {0: {100}, 1: {100}, 2: {100}}
+    recipe = {
+        "SemanticContract": {
+            "CutSurfaceRoles": ["matching-surface"],
+            "BoundaryLabels": [{"Role": "physical-sidewall", "Attribute": 6001}]},
+        "TruePhysicalCorners": [[0., 0., 0.]]}
+    return points, tetrahedra, supports, node_supports, recipe
 
 
 class PlanarMetricQualityRepairTest(unittest.TestCase):
@@ -163,6 +182,79 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
                          displacement.max())
         self.assertLessEqual(report["MaximumQualityStepDisplacementUm"], maximum)
         self.assertTrue(np.all(points[:3, 1] == 0.))
+
+    def test_saturated_vertex_roundoff_is_within_bound_but_true_overshoot_is_not(self):
+        bound = .01875
+        saturated = np.nextafter(bound, np.inf)
+        self.assertGreater(saturated, bound)
+        self.assertTrue(_within_displacement_bound([bound, saturated, 0.], bound))
+        self.assertFalse(_within_displacement_bound(
+            [bound * (1. + 10. * DISPLACEMENT_ROUNDOFF_TOLERANCE)], bound))
+        self.assertFalse(_within_displacement_bound([np.nan], bound))
+        self.assertFalse(_within_displacement_bound([np.inf], bound))
+        # A clamped offset lands on the ball; recomputing its magnitude must not raise.
+        directions = np.eye(3)
+        offset = _bounded_offset(directions, np.array([.75, .75, .75]), bound)
+        self.assertLessEqual(np.linalg.norm(offset),
+                             bound * (1. + DISPLACEMENT_ROUNDOFF_TOLERANCE))
+        self.assertGreaterEqual(np.linalg.norm(offset), bound * (1. - 1e-12))
+
+    def test_saturated_corner_repair_does_not_raise_on_the_displacement_ball(self):
+        # A tiny bound forces every movable vertex to saturate on the ball.
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0002)
+        original = points.copy()
+        bound = 1e-4
+        with self.assertRaisesRegex(ValueError, "Semantic-corner quality repair failed"):
+            _quality_repair(points, tetrahedra, node_supports, supports, recipe,
+                            .01, 4., bound)
+        displacement = np.linalg.norm(points - original, axis=1)
+        self.assertTrue(_within_displacement_bound(displacement, bound))
+
+    def test_true_overshoot_is_a_rejected_component_not_an_exception(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0002)
+        original = points.copy()
+        bound = .01875
+
+        def overshooting_offset(directions, parameters, maximum_displacement):
+            return 2. * maximum_displacement * directions[:, 0]
+
+        with mock.patch.object(restore_planar_metric_mesh, "_bounded_offset",
+                               overshooting_offset):
+            with self.assertRaisesRegex(ValueError,
+                                        "Semantic-corner quality repair failed"):
+                _quality_repair(points, tetrahedra, node_supports, supports, recipe,
+                                .01, 4., bound)
+        # Every overshooting candidate was rejected: nothing moved, and the
+        # final corner gate (not the bound check) reported the failure.
+        np.testing.assert_array_equal(points, original)
+
+    def test_corner_result_above_target_is_rejected_not_committed(self):
+        # Initial corner aspect 3.88 is above the 3.8 repair target but within the
+        # 4.0 gate, so a rejected repair still yields a report.
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.014)
+        original = points.copy()
+        before = float(_tetra_quality(points, tetrahedra)[1].max())
+        self.assertGreater(before, 3.8); self.assertLess(before, 4.)
+
+        def stalled_least_squares(residual, initial, **_):
+            return SimpleNamespace(x=np.asarray(initial, dtype=float))
+
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares",
+                               stalled_least_squares):
+            report = _quality_repair(points, tetrahedra, node_supports, supports,
+                                     recipe, .01, 4., .01875)
+        self.assertEqual(report["RejectedCornerRepairs"], 1)
+        self.assertEqual(report["CornerAspectsBefore"], [before])
+        self.assertEqual(report["CornerAspectsAfter"], [before])
+        self.assertEqual(report["QualityRepairVertices"], 0)
+        np.testing.assert_array_equal(points, original)
+        unpatched = _quality_repair(points, tetrahedra, node_supports, supports,
+                                    recipe, .01, 4., .01875)
+        self.assertEqual(unpatched["RejectedCornerRepairs"], 0)
+        self.assertLessEqual(unpatched["CornerAspectsAfter"][0], 3.8 * (1. + 1e-6))
 
 
 if __name__ == "__main__":

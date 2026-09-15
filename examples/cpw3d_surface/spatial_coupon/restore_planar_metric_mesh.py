@@ -15,6 +15,18 @@ from scipy.optimize import least_squares
 
 from transform_coupon_source_contract import validate_rigid_transform
 
+# A vertex saturated on the displacement ball is clamped to exactly the bound;
+# recomputing its displacement from the moved coordinates can then exceed the
+# bound by a few ulps. This relative allowance covers that floating-point
+# roundoff only; it is not a geometric relaxation of the displacement bound.
+DISPLACEMENT_ROUNDOFF_TOLERANCE=1e-12
+
+
+def _within_displacement_bound(displacement,maximum_displacement):
+    displacement=np.asarray(displacement,dtype=float)
+    return bool(np.all(np.isfinite(displacement)) and np.all(
+        displacement<=maximum_displacement*(1.+DISPLACEMENT_ROUNDOFF_TOLERANCE)))
+
 
 def _tetra_quality(points,tetrahedra):
     xyz=points[tetrahedra]
@@ -47,7 +59,7 @@ def _bounded_offset(directions,parameters,maximum_displacement):
     if magnitude>maximum_displacement:
         offset*=maximum_displacement/magnitude
         magnitude=float(np.linalg.norm(offset))
-    if not np.isfinite(magnitude) or magnitude>maximum_displacement:
+    if not _within_displacement_bound(magnitude,maximum_displacement):
         raise ValueError('Quality-repair displacement exceeds bound')
     return offset
 
@@ -86,14 +98,17 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     original=points.copy();largest_step=0.;corner_before=[];corner_after=[]
     quality_target=2.*minimum_scaled
     corner_target=.95*maximum_corner_aspect
+    # Optimizer convergence leaves achieved aspects within roundoff of the
+    # target; use the transactional commit's floor tolerance for that comparison.
+    corner_target_tolerance=max(1e-8,1e-6*corner_target)
     original_scaled,_,original_determinant=_tetra_quality(original,tetrahedra)
     global_floor=np.minimum(original_scaled,quality_target)
     if np.any(original_determinant<=0):
         raise ValueError('Quality repair received an inverted tetrahedron')
-    rejected_components=0
+    rejected_components=0;rejected_corners=0
 
     def optimize(cells,active,objective):
-        nonlocal largest_step,rejected_components
+        nonlocal largest_step,rejected_components,rejected_corners
         active=np.asarray(active,dtype=int)
         bases=[_movement_basis(int(node),node_supports,supports,fixed_nodes)
                for node in active]
@@ -132,16 +147,26 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         candidate=updated(result.x)
         step=np.linalg.norm(candidate[active]-local,axis=1)
         cumulative=np.linalg.norm(candidate[active]-original[active],axis=1)
-        if np.any(~np.isfinite(cumulative)) or np.any(cumulative>maximum_displacement):
-            raise ValueError('Final quality-repair displacement exceeds bound')
+        def rejected():
+            # The shared point array is unchanged. Keep searching other
+            # components; strict global gates remain final.
+            selected_scaled,selected_aspects,_=_tetra_quality(points,tetrahedra[cells])
+            return float(selected_scaled.min()),float(selected_aspects.max()),False
+        if not _within_displacement_bound(cumulative,maximum_displacement):
+            rejected_components+=1
+            return rejected()
+        if objective=='corner':
+            # A corner result that still misses the target is not a partial
+            # improvement to keep; the corner remains at its original state.
+            _,candidate_aspects,_=_tetra_quality(candidate,tetrahedra[cells])
+            if float(candidate_aspects.max())>corner_target+corner_target_tolerance:
+                rejected_corners+=1
+                return rejected()
         accepted,_,_=_transactional_quality_commit(
             points,candidate,active,tetrahedra,incident,floor)
         if not accepted:
-            # The shared point array is unchanged. Keep searching other
-            # components; strict global gates remain final.
             rejected_components+=1
-            selected_scaled,selected_aspects,_=_tetra_quality(points,tetrahedra[cells])
-            return float(selected_scaled.min()),float(selected_aspects.max()),False
+            return rejected()
         largest_step=max(largest_step,float(step.max()))
         selected_scaled,selected_aspects,_=_tetra_quality(points,tetrahedra[cells])
         return float(selected_scaled.min()),float(selected_aspects.max()),True
@@ -183,8 +208,7 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     if any(value>maximum_corner_aspect for value in corner_after):
         raise ValueError(f'Semantic-corner quality repair failed: {max(corner_after)}')
     final_displacement=np.linalg.norm(points-original,axis=1)
-    if np.any(~np.isfinite(final_displacement)) or np.any(
-            final_displacement>maximum_displacement):
+    if not _within_displacement_bound(final_displacement,maximum_displacement):
         raise ValueError('Final quality-repair displacement exceeds bound')
     maximum_final=float(final_displacement.max())
     if np.any(final_determinant<=0) or final_scaled.min()<minimum_scaled:
@@ -201,6 +225,7 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     return {'QualityRepairVertices':int(np.sum(final_displacement>0)),
             'QualityRepairComponents':len(components),
             'RejectedQualityRepairComponents':rejected_components,
+            'RejectedCornerRepairs':rejected_corners,
             'MaximumQualityStepDisplacementUm':largest_step,
             'MaximumFinalQualityDisplacementUm':maximum_final,
             'QualityDisplacementBoundUm':maximum_displacement,

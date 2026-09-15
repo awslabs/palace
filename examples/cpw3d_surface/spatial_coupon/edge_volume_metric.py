@@ -9,6 +9,15 @@ true physical corners, not by mesh/CAD subdivision vertices or box cuts.
 """
 import numpy as np
 
+# Adjacent surface triangles are coplanar when the sine of the angle between
+# their normals and the offset of their vertices from each other's plane,
+# relative to the larger triangle diameter, are both within this dimensionless
+# tolerance. It is a roundoff-scale bound: measured seed noise on exact planes is
+# below 1e-8, and any physical dihedral is orders of magnitude above it. A label
+# change between coplanar triangles is a reference boundary, not a geometric
+# feature, so it must not become a ridge, pin, metric source, or protected band.
+COPLANAR_TOLERANCE=1e-6
+
 
 def intersect_metrics(a,b):
     """Deterministic SPD intersection dominating both inputs in Loewner order."""
@@ -128,8 +137,10 @@ def feature_chains(points,edges,lower,upper,tolerance=1e-8,cut_nodes=None):
 def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     """Feature graph of a conforming piecewise-planar, reference-labeled complex.
 
-    Geometry preservation uses ALL patch junctions. Metric sources exclude box
-    cuts; same-reference coplanar subdivisions never become features.
+    A shared edge is a geometric feature only when its incident triangles are
+    not coplanar within COPLANAR_TOLERANCE, whatever their references: coplanar
+    label seams and coplanar subdivisions never become features. Geometry
+    preservation uses ALL such edges; metric sources exclude box cuts.
     """
     p=np.asarray(points);tri=np.asarray(triangles);refs=np.asarray(references)
     cut_references=set(cut_references)
@@ -138,15 +149,22 @@ def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     xyz=p[tri];n=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);length=np.linalg.norm(n,axis=1)
     if np.any(length<=0):raise ValueError('Degenerate surface triangle')
     n/=length[:,None]
-    pivot=np.argmax(abs(n),axis=1);sign=np.sign(n[np.arange(len(n)),pivot]);n*=sign[:,None]
-    planes=np.column_stack((refs,np.round(n,8),np.round(np.einsum('ij,ij->i',n,xyz[:,0]),8)))
-    _,patch=np.unique(planes,axis=0,return_inverse=True)
+    diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1)
+                              for i,j in ((0,1),(1,2),(2,0))]),axis=0)
     pairs=np.sort(tri[:,[(0,1),(1,2),(2,0)]].reshape(-1,2),axis=1)
-    owner=np.repeat(patch,3)
+    owner=np.repeat(np.arange(len(tri)),3)
     order=np.lexsort((pairs[:,1],pairs[:,0]));pairs=pairs[order];owner=owner[order]
     on_matching=np.repeat(np.isin(refs,list(cut_references)),3)[order]
     start=np.r_[0,np.flatnonzero(np.any(pairs[1:]!=pairs[:-1],axis=1))+1]
-    is_feature=np.minimum.reduceat(owner,start)!=np.maximum.reduceat(owner,start)
+    # Compare every triangle incident to an edge with the first one: the sine
+    # of the normal angle is orientation-free, and the plane offset is scaled
+    # by the local triangle size so the test is dimensionless.
+    first=np.repeat(owner[start],np.diff(np.r_[start,len(owner)]))
+    normal_deviation=np.linalg.norm(np.cross(n[first],n[owner]),axis=1)
+    plane_offset=np.max(abs(np.einsum('ij,ikj->ik',n[first],xyz[owner]-xyz[first][:,:1])),axis=1)
+    plane_offset/=np.maximum(diameter[first],diameter[owner])
+    deviation=np.maximum(normal_deviation,plane_offset)
+    is_feature=np.maximum.reduceat(deviation,start)>COPLANAR_TOLERANCE
     features=pairs[start][is_feature]
     # Use labeled matching support, not a global-axis bounding box. This remains
     # valid for a rigidly rotated coupon and identifies artificial cut endpoints.

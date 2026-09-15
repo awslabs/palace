@@ -138,6 +138,23 @@ hash and every stage-report hash match. Final meshes, transform receipts,
 ownership outputs, and audit records remain per-placement and content-distinct.
 Canonical and placement seconds/RSS are reported separately.
 
+Metric preparation classifies seed surface features by geometry, not by label:
+`edge_volume_metric.surface_features` makes a shared triangle edge a feature
+(MMG ridge, pin at graph turns/junctions, anisotropic `PhysicalSegment`,
+protected band) only when its incident triangles are not coplanar within the
+fixed dimensionless `COPLANAR_TOLERANCE` (sine of the normal angle and plane
+offset relative to the local triangle diameter). A reference change between
+coplanar triangles, such as a slot-ownership split of one plane, remains a
+plain reference boundary that MMG preserves without ridge or corner
+constraints; per-support relabeling and projection in the restorer are
+unchanged. Label restoration compares repair displacements to the bound with a
+roundoff-only relative allowance (`DISPLACEMENT_ROUNDOFF_TOLERANCE`, 1e-12) so
+a vertex clamped onto the displacement ball is not misreported as an overshoot;
+any true overshoot and any semantic-corner result that still misses the corner
+target are rejected components (`RejectedQualityRepairComponents`,
+`RejectedCornerRepairs`), never partial commits. The final scaled-Jacobian,
+corner-aspect and displacement gates are unchanged.
+
 Native adaptation must be launched through `run_native_mmg_adaptation.py`.
 There is no caller-provided hmax: the wrapper reads
 `FarFieldBudgetPolicy.EffectiveFarSize` from the bound restoration recipe,

@@ -88,6 +88,42 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         rm=volume_metric(query@q.T+shift,rs,rc,.005,.05,.4)
         np.testing.assert_allclose(rm,q@m@q.T,rtol=1e-10,atol=1e-8)
 
+    @staticmethod
+    def _boxed_cube(top_center_lift=0.):
+        """Unit cube (6001) inside a matching box (1); top face fanned around a center."""
+        cube=np.array([[x,y,z] for z in (0.,1.) for y in (0.,1.) for x in (0.,1.)])
+        faces=np.array([[0,2,3],[0,3,1],[4,5,7],[4,7,6],[0,1,5],[0,5,4],
+                        [2,6,7],[2,7,3],[0,4,6],[0,6,2],[1,3,7],[1,7,5]])
+        inner=cube-.5;center=np.array([[0.,0.,.5+top_center_lift]])
+        top=np.array([[4,5,8],[5,7,8],[7,6,8],[6,4,8]])  # 8+8: the center point
+        points=np.vstack((4*cube-2,inner,center))
+        tri=np.vstack((faces,faces[np.r_[0,1,4,5,6,7,8,9,10,11]]+8,top+8))
+        refs=np.r_[np.ones(12,dtype=int),np.full(14,6001,dtype=int)]
+        return points,tri,refs
+
+    def test_coplanar_label_seam_is_a_reference_boundary_not_a_feature(self):
+        points,tri,refs=self._boxed_cube()
+        single=surface_features(points,tri,refs,{1})
+        split=refs.copy();split[-2:]=6101  # two of the four coplanar top fans
+        seam=surface_features(points,tri,split,{1})
+        for one,two in zip(single,seam):np.testing.assert_array_equal(one,two)
+        features,pins,segments,corners=seam
+        self.assertEqual(len(features),24);self.assertEqual(len(pins),16)
+        self.assertEqual(len(segments),12);self.assertEqual(len(corners),8)
+        seam_edges={(12,16),(13,16),(14,16),(15,16)}
+        self.assertFalse(seam_edges&set(map(tuple,features)));self.assertNotIn(16,pins)
+
+    def test_near_coplanar_within_tolerance_is_not_a_feature_but_a_dihedral_is(self):
+        base=surface_features(*self._boxed_cube(),{1})
+        within=surface_features(*self._boxed_cube(top_center_lift=1e-8),{1})
+        for one,two in zip(base,within):np.testing.assert_array_equal(one,two)
+        features,pins,segments,corners=surface_features(
+            *self._boxed_cube(top_center_lift=1e-3),{1})
+        self.assertEqual(len(features),28);self.assertIn(16,pins);self.assertEqual(len(pins),17)
+        self.assertEqual(len(segments),16)
+        self.assertTrue(any(np.allclose(c,[0.,0.,.5+1e-3]) for c in corners))
+        self.assertEqual(len(corners),9)
+
     def test_protected_radial_band_keeps_old_metric(self):
         s=[[-1.,0,0,1,0,0]];corners=[[-1.,0,0],[1,0,0]]
         p=np.array([[0.,0,0],[0,.01,0],[0,.03,0],[0,.1,0],[0,2,0]])
