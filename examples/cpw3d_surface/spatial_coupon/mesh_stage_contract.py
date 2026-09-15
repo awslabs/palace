@@ -182,9 +182,7 @@ def _require_runtime_and_script(command, runtime, script, description, working_d
     base = Path(working_directory or Path.cwd())
     runtime, script = str(Path(runtime).resolve()), str(Path(script).resolve())
     def matches(argument, expected):
-        path = Path(argument); resolved = path if path.is_absolute() else base / path
-        return (str(resolved.resolve()) == expected or
-                (not path.is_absolute() and expected.endswith("/" + argument)))
+        return str(_resolved_argument(argument, base)) == expected
     if not isinstance(command, list) or not command or not matches(command[0], runtime):
         raise ValueError(f"{description} runtime is not argv[0]")
     script_position = _first_interpreter_script(command, script)

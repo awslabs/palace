@@ -674,6 +674,29 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 "metric-preparation",
                 [sys.executable, "-B", str(MESHER), str(STAGER)], tools)
 
+    def test_relative_tool_argv_must_resolve_to_the_bound_tool_in_its_working_directory(self):
+        tools = {"runtime": sys.executable, "metric-preparer": STAGER}
+        relative = str(STAGER.relative_to(HERE.parent.parent.parent))
+        validate_tool_invocation(
+            "metric-preparation", [sys.executable, relative], tools,
+            working_directory=HERE.parent.parent.parent)
+        with tempfile.TemporaryDirectory() as temporary:
+            # Same repository-relative spelling, but launched from a directory
+            # holding a different file at that path: the executed script is
+            # not the bound tool even though the suffix matches.
+            copied = Path(temporary) / relative
+            copied.parent.mkdir(parents=True)
+            copied.write_text("print('impostor')\n")
+            with self.assertRaisesRegex(ValueError, "executed script position"):
+                validate_tool_invocation(
+                    "metric-preparation", [sys.executable, relative], tools,
+                    working_directory=temporary)
+            with self.assertRaisesRegex(ValueError, "runtime is not argv"):
+                validate_tool_invocation(
+                    "metric-preparation",
+                    [Path(sys.executable).name, str(STAGER)], tools,
+                    working_directory=temporary)
+
     def test_uninvoked_adapter_mmg_stage_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
