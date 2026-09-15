@@ -24,6 +24,7 @@ from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
                                          _ownership_report,
                                          _protected_surface_report,
                                          produce as produce_audit)
+from canonical_mesh_build import build_record
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, run_manifest, sha256,
                                    validate_manifest)
@@ -38,6 +39,8 @@ MESHER = HERE / "testdata" / "tiny_mesh_audit_producer.py"
 AUDITOR = HERE / "general_mesh_audit_producer.py"
 BOUNDED = HERE / "run_bounded_mesher.py"
 STAGER = HERE / "testdata" / "tiny_mesh_stage.py"
+ADAPTER = HERE / "testdata" / "tiny_native_adapter.py"
+WRAPPER = HERE / "run_native_mmg_adaptation.py"
 TRANSFORMER = HERE / "transform_coupon_source_contract.py"
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ANGLE = 0.63
@@ -129,18 +132,22 @@ class GeneralMeshManifestTest(unittest.TestCase):
             "Tools": [{"Name": name, "Path": str(path), "SHA256": sha256(path)}
                       for name, path in tools],
             "StageToolSHA256": {
-                "source-transformation": {"runtime": sha256(sys.executable),
-                    "source-transformer": sha256(TRANSFORMER)},
+                "canonical-source-validation": {"runtime": sha256(sys.executable),
+                    "source-validator": sha256(TRANSFORMER)},
                 "seed-generation": {"runtime": sha256(sys.executable),
                                     "mesher": sha256(MESHER)},
                 "metric-preparation": {"runtime": sha256(sys.executable),
                                        "metric-preparer": sha256(STAGER)},
-                "native-adaptation-mmg": {"runtime": sha256(STAGER),
-                                          "adapter-mmg": sha256(STAGER)},
+                "native-adaptation-mmg": {"runtime": sha256(sys.executable),
+                    "adaptation-wrapper": sha256(WRAPPER), "adapter-mmg": sha256(ADAPTER)},
                 "label-restoration": {"runtime": sha256(sys.executable),
                                       "label-restorer": sha256(STAGER)},
-                "final-gmsh-publication": {"runtime": sha256(sys.executable),
-                                           "publisher": sha256(STAGER)}},
+                "canonical-gmsh-publication": {"runtime": sha256(sys.executable),
+                                               "publisher": sha256(STAGER)},
+                "proper-rigid-publication": {"runtime": sha256(sys.executable),
+                    "rigid-publisher": sha256(STAGER),
+                    "ownership-runtime": sha256(sys.executable),
+                    "ownership-auditor": sha256(STAGER)}},
             "ScalingComparisons": [
                 {"Id": "subdivision", "Kind": "cad-subdivision-sensitivity",
                  "Reference": ["base", "identity"], "Compared": ["subdivided", "identity"],
@@ -161,115 +168,137 @@ class GeneralMeshManifestTest(unittest.TestCase):
         for case in manifest["Cases"]:
             directory = root / case["Id"]
             inputs = {role: item["SHA256"] for role, item in case["Source"]["Files"].items()}
-            inputs_path = directory / "input-hashes.json"
-            inputs_path.write_text(json.dumps(inputs))
-            identity_mesh = None
-            identity_seed_mesh = None
+            inputs_path = directory / "input-hashes.json"; inputs_path.write_text(json.dumps(inputs))
+            canonical_stem = f"{case['Id']}--canonical"
+            identity_transform = directory / "canonical-identity-transform.json"
+            identity_transform.write_text(json.dumps(IDENTITY))
+            seed = root / f"{canonical_stem}-seed.msh"
+            metric = root / f"{canonical_stem}-metric.json"
+            mmg_seed = root / f"{canonical_stem}-mmg-seed.msh"
+            pins = root / f"{canonical_stem}-pins.txt"
+            fixed = root / f"{canonical_stem}-fixed.txt"
+            recipe = root / f"{canonical_stem}-recipe.json"
+            canonical_semantic = root / f"{canonical_stem}-semantic.json"
+            canonical_supports = root / f"{canonical_stem}-supports.json"
+            adapted = root / f"{canonical_stem}-adapted.msh"
+            adaptation_receipt = root / f"{canonical_stem}-adaptation.json"
+            local_restored = root / f"{canonical_stem}-local-restored.msh"
+            restored = root / f"{canonical_stem}-restored.msh"
+            canonical_mesh = root / f"{canonical_stem}.msh"
+            canonical_ownership = root / f"{canonical_stem}-ownership.csv"
+            canonical_quadrature = root / f"{canonical_stem}-ownership.quadrature.csv"
+            canonical_reports = {}
+            def launch(stem, reports, stage, stage_inputs, artifacts, tools, command):
+                log = root / f"{stem}-{stage}.log"
+                invocation = [sys.executable, str(BOUNDED), "--seconds", "10",
+                              "--memory-gib", "1", "--log", str(log), "--stage", stage]
+                for name, path in stage_inputs.items(): invocation += ["--input", f"{name}={path}"]
+                for name, path in artifacts.items(): invocation += ["--artifact", f"{name}={path}"]
+                for role, path in tools.items(): invocation += ["--tool", f"{role}={path}"]
+                subprocess.run([*invocation, "--", *command], check=True,
+                               stdout=subprocess.DEVNULL)
+                reports[stage] = log.with_suffix(".log.json")
+            launch(canonical_stem, canonical_reports, "canonical-source-validation", {
+                "source-semantic-contract": directory / "semantic.json",
+                "source-signature": directory / "signature.csv",
+                "source-boundary": directory / "boundary.csv",
+                "source-mask": directory / "mask.csv", "canonical-transform": identity_transform},
+                {"canonical-semantic-contract": canonical_semantic,
+                 "canonical-supports": canonical_supports},
+                {"runtime": sys.executable, "source-validator": TRANSFORMER},
+                [sys.executable, str(TRANSFORMER), str(directory), str(identity_transform),
+                 str(canonical_semantic), str(canonical_supports), "--semantic-input",
+                 str(directory / "semantic.json"), "--signature", str(directory / "signature.csv"),
+                 "--boundary", str(directory / "boundary.csv"), "--mask", str(directory / "mask.csv")])
+            launch(canonical_stem, canonical_reports, "seed-generation", {}, {"seed-mesh": seed},
+                {"runtime": sys.executable, "mesher": MESHER},
+                [sys.executable, str(MESHER), str(seed), str(identity_transform),
+                 "--scale", str(case["TestScale"])])
+            launch(canonical_stem, canonical_reports, "metric-preparation",
+                {"seed-mesh": seed, "canonical-semantic-contract": canonical_semantic,
+                 "canonical-supports": canonical_supports},
+                {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
+                 "fixed-triangles": fixed, "restoration-recipe": recipe},
+                {"runtime": sys.executable, "metric-preparer": STAGER},
+                [sys.executable, str(STAGER), "metric", str(seed), str(metric),
+                 "--mmg-seed", str(mmg_seed), "--pins", str(pins), "--fixed-triangles", str(fixed),
+                 "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
+                 "--transformed-supports", str(canonical_supports)])
+            launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
+                {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
+                 "fixed-triangles": fixed, "restoration-recipe": recipe},
+                {"adapted-mesh": adapted, "adaptation-receipt": adaptation_receipt},
+                {"runtime": sys.executable, "adaptation-wrapper": WRAPPER, "adapter-mmg": ADAPTER},
+                [sys.executable, str(WRAPPER), str(mmg_seed), str(metric), str(pins), str(recipe),
+                 str(adapted), str(adaptation_receipt), "--adapter", str(ADAPTER), "--hmin", ".1",
+                 "--hgrad", "1.3", "--fixed-triangles", str(fixed)])
+            launch(canonical_stem, canonical_reports, "label-restoration",
+                {"adapted-mesh": adapted, "restoration-recipe": recipe},
+                {"source-local-restored-mesh": local_restored, "restored-mesh": restored},
+                {"runtime": sys.executable, "label-restorer": STAGER},
+                [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
+                 "--recipe", str(recipe), "--source-local-output", str(local_restored)])
+            launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
+                {"restored-mesh": restored},
+                {"canonical-candidate-mesh": canonical_mesh,
+                 "canonical-ownership-partition": canonical_ownership,
+                 "canonical-ownership-quadrature-partition": canonical_quadrature},
+                {"runtime": sys.executable, "publisher": STAGER},
+                [sys.executable, str(STAGER), "publish", str(restored), str(canonical_mesh),
+                 "--ownership", str(canonical_ownership),
+                 "--ownership-quadrature", str(canonical_quadrature)])
+            canonical_tools = {f"{stage}/{role}": digest for stage in
+                __import__("mesh_stage_contract").CANONICAL_STAGE_ORDER
+                for role, digest in manifest["StageToolSHA256"][stage].items()}
+            artifacts = {"candidate-mesh": {"Path": str(canonical_mesh),
+                                             "SHA256": sha256(canonical_mesh)},
+                         "ownership-partition": {"Path": str(canonical_ownership),
+                                                 "SHA256": sha256(canonical_ownership)},
+                         "ownership-quadrature-partition": {"Path": str(canonical_quadrature),
+                           "SHA256": sha256(canonical_quadrature)}}
+            canonical_record = root / f"{canonical_stem}-build.json"
+            canonical_record.write_text(json.dumps(build_record(
+                inputs, manifest["Gates"], canonical_tools, artifacts)) + "\n")
             for variant in case["Variants"]:
                 variant_id = variant["Id"]; stem = f"{case['Id']}--{variant_id}"
                 transform = directory / f"{variant_id}-transform.json"
                 transform.write_text(json.dumps(variant["Transform"]))
-                seed = root / f"{stem}-seed.msh"
-                metric = root / f"{stem}-metric.json"
-                mmg_seed = root / f"{stem}-mmg-seed.msh"
-                pins = root / f"{stem}-pins.txt"
-                fixed_triangles = root / f"{stem}-fixed-triangles.txt"
-                restoration_recipe = root / f"{stem}-restoration-recipe.json"
-                transformed_semantic = root / f"{stem}-transformed-semantic.json"
-                transformed_supports = root / f"{stem}-transformed-supports.json"
-                adapted = root / f"{stem}-adapted.msh"
-                local_restored = root / f"{stem}-source-local-restored.msh"
-                restored = root / f"{stem}-restored.msh"
-                mesh = root / f"{stem}.msh"
+                mesh = root / f"{stem}.msh"; transformed_semantic = root / f"{stem}-semantic.json"
+                transformed_supports = root / f"{stem}-supports.json"
                 ownership = root / f"{stem}-ownership.csv"
-                ownership_quadrature = root / f"{stem}-ownership.quadrature.csv"
-                stage_reports = {}
-                def launch(stage, inputs, artifacts, tools, command):
-                    log = root / f"{stem}-{stage}.log"
-                    invocation = [sys.executable, str(BOUNDED), "--seconds", "10",
-                                  "--memory-gib", "1", "--log", str(log),
-                                  "--stage", stage]
-                    for name, path in inputs.items():
-                        invocation += ["--input", f"{name}={path}"]
-                    for name, path in artifacts.items():
-                        invocation += ["--artifact", f"{name}={path}"]
-                    for role, path in tools.items():
-                        invocation += ["--tool", f"{role}={path}"]
-                    subprocess.run([*invocation, "--", *command], check=True,
-                                   stdout=subprocess.DEVNULL)
-                    stage_reports[stage] = log.with_suffix(".log.json")
-                launch("source-transformation", {
-                           "source-semantic-contract": directory / "semantic.json",
-                           "source-signature": directory / "signature.csv",
-                           "source-boundary": directory / "boundary.csv",
-                           "source-mask": directory / "mask.csv",
-                           "canonical-transform": transform},
-                       {"transformed-semantic-contract": transformed_semantic,
-                        "transformed-supports": transformed_supports},
-                       {"runtime": sys.executable, "source-transformer": TRANSFORMER},
-                       [sys.executable, str(TRANSFORMER), str(directory), str(transform),
-                        str(transformed_semantic), str(transformed_supports),
-                        "--semantic-input", str(directory / "semantic.json"),
-                        "--signature", str(directory / "signature.csv"),
-                        "--boundary", str(directory / "boundary.csv"),
-                        "--mask", str(directory / "mask.csv")])
-                launch("seed-generation", {}, {"seed-mesh": seed},
-                       {"runtime": sys.executable, "mesher": MESHER},
-                       [sys.executable, str(MESHER), str(seed), str(transform),
-                        "--scale", str(case["TestScale"])])
-                launch("metric-preparation", {"seed-mesh": seed,
-                                                "transformed-semantic-contract": transformed_semantic,
-                                                "transformed-supports": transformed_supports},
-                       {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
-                        "fixed-triangles": fixed_triangles,
-                        "restoration-recipe": restoration_recipe},
-                       {"runtime": sys.executable, "metric-preparer": STAGER},
-                       [sys.executable, str(STAGER), "metric", str(seed), str(metric),
-                        "--mmg-seed", str(mmg_seed), "--pins", str(pins),
-                        "--fixed-triangles", str(fixed_triangles),
-                        "--recipe", str(restoration_recipe),
-                        "--semantic-contract", str(transformed_semantic),
-                        "--transformed-supports", str(transformed_supports)])
-                adapter = root / "tiny-native-adapter"
-                if not adapter.exists():
-                    shutil.copyfile(STAGER, adapter); adapter.chmod(0o755)
-                launch("native-adaptation-mmg",
-                       {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
-                        "fixed-triangles": fixed_triangles},
-                       {"adapted-mesh": adapted},
-                       {"runtime": adapter, "adapter-mmg": adapter},
-                       [str(adapter), "adapt", str(mmg_seed), str(adapted),
-                        "--metric", str(metric), "--pins", str(pins),
-                        "--fixed-triangles", str(fixed_triangles)])
-                launch("label-restoration", {"adapted-mesh": adapted,
-                                              "restoration-recipe": restoration_recipe},
-                       {"source-local-restored-mesh": local_restored,
-                        "restored-mesh": restored},
-                       {"runtime": sys.executable, "label-restorer": STAGER},
-                       [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
-                        "--recipe", str(restoration_recipe),
-                        "--source-local-output", str(local_restored)])
-                launch("final-gmsh-publication", {"restored-mesh": restored},
-                       {"candidate-mesh": mesh, "ownership-partition": ownership,
-                        "ownership-quadrature-partition": ownership_quadrature},
-                       {"runtime": sys.executable, "publisher": STAGER},
-                       [sys.executable, str(STAGER), "publish", str(restored), str(mesh),
-                        "--ownership", str(ownership),
-                        "--ownership-quadrature", str(ownership_quadrature)])
-                if identity_mesh is None:
-                    identity_mesh = mesh
-                    identity_seed_mesh = seed
+                quadrature = root / f"{stem}-ownership.quadrature.csv"
+                receipt = root / f"{stem}-transform-receipt.json"
+                stage_reports = dict(canonical_reports)
+                launch(stem, stage_reports, "proper-rigid-publication", {
+                    "canonical-candidate-mesh": canonical_mesh,
+                    "canonical-build-record": canonical_record, "placement-transform": transform,
+                    "source-semantic-contract": directory / "semantic.json",
+                    "source-signature": directory / "signature.csv",
+                    "source-boundary": directory / "boundary.csv",
+                    "source-mask": directory / "mask.csv", "source-process": directory / "process.toml"},
+                    {"candidate-mesh": mesh, "transformed-semantic-contract": transformed_semantic,
+                     "transformed-supports": transformed_supports, "ownership-partition": ownership,
+                     "ownership-quadrature-partition": quadrature, "transform-receipt": receipt},
+                    {"runtime": sys.executable, "rigid-publisher": STAGER,
+                     "ownership-runtime": sys.executable, "ownership-auditor": STAGER},
+                    [sys.executable, str(STAGER), "rigid", str(canonical_mesh), str(mesh),
+                     "--transform", str(transform), "--source-directory", str(directory),
+                     "--semantic-input", str(directory / "semantic.json"), "--signature",
+                     str(directory / "signature.csv"), "--boundary", str(directory / "boundary.csv"),
+                     "--mask", str(directory / "mask.csv"), "--canonical-build-record",
+                     str(canonical_record), "--transformed-semantic-output", str(transformed_semantic),
+                     "--transformed-supports-output", str(transformed_supports), "--receipt", str(receipt),
+                     "--ownership", str(ownership), "--ownership-quadrature", str(quadrature),
+                     "--ownership-runtime", sys.executable, "--ownership-auditor", str(STAGER)])
                 records = {}
                 for kind in KINDS:
                     record = root / f"{stem}-{kind}.json"
                     produce_audit(kind, case["Id"], variant_id, mesh, inputs_path,
-                                  transform, record, contract=directory / "semantic.json",
-                                  recipe=directory / "recipe.json", process=directory / "process.toml",
-                                  signature=directory / "signature.csv",
-                                  identity_mesh=identity_mesh,
-                                  identity_seed_mesh=identity_seed_mesh,
-                                  stage_reports=stage_reports,
-                                  command=[str(AUDITOR), kind, stem])
+                        transform, record, contract=directory / "semantic.json",
+                        recipe=directory / "recipe.json", process=directory / "process.toml",
+                        signature=directory / "signature.csv", identity_mesh=canonical_mesh,
+                        identity_seed_mesh=seed, stage_reports=stage_reports,
+                        command=[str(AUDITOR), kind, stem])
                     records[kind] = record
                 normalize(manifest_path, case["Id"], variant_id, mesh, records,
                           audits / f"{stem}.json")
@@ -350,14 +379,17 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.produce_matrix(root, manifest_path, manifest)
             case = manifest["Cases"][0]; directory = root / "base"
             with self.assertRaises(ValueError):
-                reports = {stage: root / f"base--identity-{stage}.log.json"
-                           for stage in __import__("mesh_stage_contract").STAGE_ORDER}
+                stage_contract = __import__("mesh_stage_contract")
+                reports = {stage: root / f"base--canonical-{stage}.log.json"
+                           for stage in stage_contract.CANONICAL_STAGE_ORDER}
+                reports["proper-rigid-publication"] = (
+                    root / "base--identity-proper-rigid-publication.log.json")
                 produce_audit("variant-transform", "base", "rotate-z-0.63",
                     root / "base--identity.msh", directory / "input-hashes.json",
                     directory / "rotate-z-0.63-transform.json", root / "bad.json",
                     contract=directory / "semantic.json",
-                    identity_mesh=root / "base--identity.msh",
-                    identity_seed_mesh=root / "base--identity-seed.msh",
+                    identity_mesh=root / "base--canonical.msh",
+                    identity_seed_mesh=root / "base--canonical-seed.msh",
                     stage_reports=reports)
 
     def test_all_audit_bindings_and_raw_as_own_audit_fail(self):
@@ -414,8 +446,11 @@ class GeneralMeshManifestTest(unittest.TestCase):
             case = manifest["Cases"][0]
             source_paths = {role: root / case["Id"] / item["Name"]
                             for role, item in case["Source"]["Files"].items()}
-            reports = {stage: json.loads((root / f"base--identity-{stage}.log.json").read_text())
-                       for stage in __import__("mesh_stage_contract").STAGE_ORDER}
+            stage_contract = __import__("mesh_stage_contract")
+            reports = {stage: json.loads((root / f"base--canonical-{stage}.log.json").read_text())
+                       for stage in stage_contract.CANONICAL_STAGE_ORDER}
+            reports["proper-rigid-publication"] = json.loads(
+                (root / "base--identity-proper-rigid-publication.log.json").read_text())
             binding = {"Transform": IDENTITY,
                        "InputSHA256": {role: item["SHA256"]
                                        for role, item in case["Source"]["Files"].items()}}
@@ -482,18 +517,23 @@ class GeneralMeshManifestTest(unittest.TestCase):
             metric = root / "metric"; metric.write_text("metric")
             pins = root / "pins"; pins.write_text("pins")
             fixed = root / "fixed"; fixed.write_text("fixed")
+            recipe = root / "recipe"; recipe.write_text("{}")
             result = subprocess.run(
                 [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
                  "--log", str(root / "bad.log"), "--stage", "native-adaptation-mmg",
                  "--input", f"mmg-seed={seed}", "--input", f"metric={metric}",
                  "--input", f"pins={pins}", "--input", f"fixed-triangles={fixed}",
+                 "--input", f"restoration-recipe={recipe}",
                  "--artifact", f"adapted-mesh={root / 'adapted.msh'}",
+                 "--artifact", f"adaptation-receipt={root / 'receipt.json'}",
                  "--tool", f"runtime={sys.executable}",
-                 "--tool", f"adapter-mmg={STAGER}", "--",
-                 sys.executable, str(MESHER), str(root / "unused")],
+                 "--tool", f"adaptation-wrapper={WRAPPER}",
+                 "--tool", f"adapter-mmg={ADAPTER}", "--",
+                 sys.executable, str(WRAPPER), str(seed), str(metric), str(pins),
+                 str(recipe), str(root / "adapted.msh"), str(root / "receipt.json")],
                 capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Native adapter must be both runtime and adapter-mmg", result.stderr)
+            self.assertIn("--adapter", result.stderr)
 
     def test_preexisting_stage_output_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -513,7 +553,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)
             self.produce_matrix(root, manifest_path, manifest)
-            reference = read_mesh(root / "base--identity-seed.msh")
+            reference = read_mesh(root / "base--canonical-seed.msh")
             moved = read_mesh(root / "base--identity.msh")
             moved.points += np.array([0.01, 0.0, 0.0])
             contract = json.loads((root / "base/semantic.json").read_text())

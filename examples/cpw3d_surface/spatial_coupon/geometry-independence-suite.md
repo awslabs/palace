@@ -116,87 +116,45 @@ every declared conductor/interface class, and a fixed finite-coefficient
 combination. It remains only a future arbitrary-source seam; no three/six/ten-
 edge physics claim is made.
 
-## Exact next complete mesh-only run
+## Canonical build and mandatory placement publication
 
-Run the identity four-edge chain below from the repository root after setting
-`EDGE_METRIC_ADAPTER_EXE` to the reviewed native `adapt_edge_metric.cpp` build.
-The current host has no such executable, so this command is exact but presently
-blocked before execution. Use a fresh `ATTEMPT` directory.
+Every proper-rigid placement now uses the seven-stage contract in
+`mesh_stage_contract.py`. The first six stages are one reusable source-local
+canonical build: identity source validation, seed generation, metric preparation,
+native MMG adaptation, label restoration, and canonical Gmsh publication. The
+seventh stage, `proper-rigid-publication`, is mandatory even for identity.
 
-```sh
-set -eu
-ATTEMPT=/tmp/coupon-generality-four-edge-complete-v1
-ADAPTER="$EDGE_METRIC_ADAPTER_EXE"
-test ! -e "$ATTEMPT" && test -x "$ADAPTER"
-JULIA=/Users/simlap/.juliaup/bin/julia
-PYTHON=/opt/homebrew/bin/python3
-SOURCE=examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe
-RUN=examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py
-SEEDER=examples/cpw3d_surface/spatial_coupon/mesh_spatial_coupon.jl
-PREPARE=examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py
-RESTORE=examples/cpw3d_surface/spatial_coupon/restore_planar_metric_mesh.py
-PUBLISH=examples/cpw3d_surface/spatial_coupon/relabel_frozen_interface_mesh.jl
-mkdir -p "$ATTEMPT"
+`canonical_mesh_build.py` computes the cache key from all immutable source,
+process, semantic, recipe, gate, canonical-tool, and adapter hashes. Its build
+hash additionally binds every canonical artifact. A placement may share the six
+canonical reports only when both hashes and every canonical artifact hash match.
+Final meshes, transform receipts, ownership outputs, and audit records remain
+per-placement and content-distinct. Canonical and placement seconds/RSS are
+reported separately.
 
-$PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
-  --log "$ATTEMPT/seed.log" --stage seed-generation \
-  --artifact "seed-mesh=$ATTEMPT/seed.msh" \
-  --tool "runtime=$JULIA" --tool "mesher=$SEEDER" -- \
-  "$JULIA" --startup-file=no --project=test/examples "$SEEDER" \
-  "$SOURCE/mesh-signature.csv" fabricated "$ATTEMPT/seed.msh" \
-  --mask "$SOURCE/plan-view-mask.csv" --boundary "$SOURCE/plan-view-boundary.csv" \
-  --radius 2.0 --metal-thickness 0.1 --overetch 0.05 --sidewall-angle 90 \
-  --top-radius 0 --bottom-radius 0 --lc-fine 0.025 --lc-tangent 0.1 \
-  --lc-far 0.16 --mesh-order 1 --max-nodes 4000000 --max-elements 4000000
+Native adaptation must be launched through `run_native_mmg_adaptation.py`.
+There is no caller-provided hmax: the wrapper reads
+`FarFieldBudgetPolicy.EffectiveFarSize` from the bound restoration recipe,
+requires it to equal the recipe's `FarSize`, passes that exact value to the
+reviewed adapter, and emits an adaptation receipt containing the executed argv.
+The normal, tangent, corner, protected-band targets and 4,000,000-element cap
+remain unchanged.
 
-$PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
-  --log "$ATTEMPT/metric.log" --stage metric-preparation \
-  --input "seed-mesh=$ATTEMPT/seed.msh" \
-  --artifact "mmg-seed=$ATTEMPT/metric/seed.mesh" \
-  --artifact "metric=$ATTEMPT/metric/metric.f64" \
-  --artifact "pins=$ATTEMPT/metric/pins.txt" \
-  --artifact "fixed-triangles=$ATTEMPT/metric/fixed-triangles.txt" \
-  --artifact "restoration-recipe=$ATTEMPT/metric/recipe.json" \
-  --tool "runtime=$PYTHON" --tool "metric-preparer=$PREPARE" -- \
-  "$PYTHON" "$PREPARE" "$ATTEMPT/seed.msh" "$ATTEMPT/metric" \
-  --normal 0.025 --tangent 0.1 --far 0.16 --protected-distance 0.05 \
-  --protect-surface 0.05 --maximum-elements 4000000 \
-  --semantic-contract "$ATTEMPT/transformed-semantic-contract.json" \
-  --transformed-supports "$ATTEMPT/transformed-source-supports.json"
+`publish_rigid_coupon_mesh.py` requires a fresh output and a finite orthonormal
+homogeneous transform with determinant +1. It changes only Gmsh 2.2 node
+coordinates, preserving node tags, cell-block order, connectivity, physical and
+geometrical tags, physical names, and point/cell/field data. It reconstructs the
+transformed semantic and support contracts from immutable source, checks exact
+`R*x+t`, positive orientation, quality and invariant measures, and invokes
+`audit_rigid_coupon_ownership.jl`. That audit classifies quadrature points in the
+inverse source-local frame and rejects any final owner-label mismatch or
+nonpositive/nonclosing owner partition. Identity therefore gets a fresh path and
+receipt; reflection remains rejected.
 
-$PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
-  --log "$ATTEMPT/adapt.log" --stage native-adaptation-mmg \
-  --input "mmg-seed=$ATTEMPT/metric/seed.mesh" \
-  --input "metric=$ATTEMPT/metric/metric.f64" \
-  --input "pins=$ATTEMPT/metric/pins.txt" \
-  --input "fixed-triangles=$ATTEMPT/metric/fixed-triangles.txt" \
-  --artifact "adapted-mesh=$ATTEMPT/adapted.meshb" \
-  --tool "runtime=$ADAPTER" --tool "adapter-mmg=$ADAPTER" -- \
-  "$ADAPTER" "$ATTEMPT/metric/seed.mesh" "$ATTEMPT/metric/metric.f64" \
-  "$ATTEMPT/metric/pins.txt" "$ATTEMPT/adapted.meshb" 0.025 0.16 1.3 \
-  freeze-selected "$ATTEMPT/metric/fixed-triangles.txt" 1e-8
-
-$PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
-  --log "$ATTEMPT/restore.log" --stage label-restoration \
-  --input "adapted-mesh=$ATTEMPT/adapted.meshb" \
-  --input "restoration-recipe=$ATTEMPT/metric/recipe.json" \
-  --artifact "restored-mesh=$ATTEMPT/restored.msh" \
-  --tool "runtime=$PYTHON" --tool "label-restorer=$RESTORE" -- \
-  "$PYTHON" "$RESTORE" "$ATTEMPT/adapted.meshb" \
-  "$ATTEMPT/metric/recipe.json" "$ATTEMPT/restored.msh" --max-displacement 1e-8
-
-$PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
-  --log "$ATTEMPT/publish.log" --stage final-gmsh-publication \
-  --input "restored-mesh=$ATTEMPT/restored.msh" \
-  --artifact "candidate-mesh=$ATTEMPT/candidate.msh" \
-  --artifact "ownership-partition=$ATTEMPT/candidate.msh.interface-partition.csv" \
-  --artifact "ownership-quadrature-partition=$ATTEMPT/candidate.msh.interface-partition.csv.quadrature.csv" \
-  --tool "runtime=$JULIA" --tool "publisher=$PUBLISH" -- \
-  "$JULIA" --startup-file=no --project=test/examples "$PUBLISH" \
-  "$SOURCE" fabricated "$ATTEMPT/restored.msh" "$ATTEMPT/candidate.msh"
-```
-
-This is mesh-only. Do not launch Palace response, p4/p5, library, HPC, or
-physics jobs. Rotation still requires an explicit transformed source/producer;
-curved and multilayer cases need corresponding CAD-preserving native-stage
-evidence before any release claim.
+A complete four-edge and ten-edge evidence run still requires an executable
+reviewed build of `adapt_edge_metric.cpp` through `EDGE_METRIC_ADAPTER_EXE`.
+Use fresh directories, 1800 seconds and 8 GiB for each bounded stage (16 GiB for
+the aggregate audit), and the unchanged 4M element cap. Build the four-edge
+canonical candidate once, publish identity and rotate-z through stage seven,
+then build only ten-edge identity. Do not run ten-edge rotation, reflection,
+physics, p4/p5, library, or HPC work in this mesh-only gate.
