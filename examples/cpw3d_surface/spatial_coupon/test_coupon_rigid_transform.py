@@ -139,7 +139,8 @@ class RigidProducerIntegrationTest(unittest.TestCase):
         if probe.returncode:
             raise unittest.SkipTest("The test Julia project has no Gmsh dependency")
 
-    def produce(self, root, name, transform=None, source=None, ownership=False):
+    def produce(self, root, name, transform=None, source=None, ownership=False,
+                corner_isotropy=None, expect_failure=None):
         output = root / f"{name}.msh"
         source = source or {
             "signature": SOURCE / "mesh-signature.csv",
@@ -160,11 +161,29 @@ class RigidProducerIntegrationTest(unittest.TestCase):
         if transform is not None:
             command += ["--rigid-transform", ",".join(format(value, ".17g")
                                                         for value in transform)]
+        if corner_isotropy is not None:
+            command += corner_isotropy
         result = subprocess.run(command, cwd=REPO, capture_output=True, text=True,
                                 check=False, timeout=180)
+        if expect_failure is not None:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(expect_failure, result.stderr)
+            self.assertFalse(output.exists())
+            return None
         if result.returncode:
             self.fail(f"producer failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
         return output
+
+    def corner_isotropy(self, root, name, transform=None, radius="0.4", census=True):
+        """Seed corner-isotropy options for a contract placed by `transform`."""
+        contract = json.loads((SOURCE / "semantic-contract.json").read_text())
+        if transform is not None:
+            contract = transform_semantic_contract(contract, validate_rigid_transform(transform))
+        path = root / f"{name}-semantic.json"; path.write_text(json.dumps(contract))
+        options = ["--semantic-contract", str(path), "--corner-isotropy-radius", radius]
+        if census:
+            options += ["--corner-census", str(root / f"{name}-census.json")]
+        return options
 
     def test_identity_equivalence_and_rotation_covariance(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -195,6 +214,86 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             before, after = determinants(left.points), determinants(right.points)
             self.assertTrue(np.all(before * after > 0.0))
             np.testing.assert_allclose(after, before, rtol=2e-12, atol=1e-14)
+
+    def test_seed_corner_isotropy_is_rotation_covariant_and_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plain = self.produce(root, "plain")
+            identity = self.produce(root, "identity", IDENTITY,
+                                    corner_isotropy=self.corner_isotropy(root, "identity"))
+            rotated = self.produce(root, "rotated", ROTATE_Z,
+                                   corner_isotropy=self.corner_isotropy(root, "rotated", ROTATE_Z))
+            left, right = meshio.read(identity), meshio.read(rotated)
+            for first, second in zip(left.cells, right.cells):
+                np.testing.assert_array_equal(first.data, second.data)
+            for first, second in zip(left.cell_data["gmsh:physical"],
+                                     right.cell_data["gmsh:physical"]):
+                np.testing.assert_array_equal(first, second)
+            matrix = np.asarray(ROTATE_Z).reshape(4, 4)
+            np.testing.assert_allclose(right.points,
+                                       left.points @ matrix[:3, :3].T + matrix[:3, 3],
+                                       rtol=0.0, atol=3e-14)
+            # The corner ball changed the seed: the plain seed is a different mesh.
+            self.assertNotEqual(hashlib.sha256(plain.read_bytes()).hexdigest(),
+                                hashlib.sha256(identity.read_bytes()).hexdigest())
+            census = json.loads((root / "identity-census.json").read_text())
+            rotated_census = json.loads((root / "rotated-census.json").read_text())
+            contract = json.loads((SOURCE / "semantic-contract.json").read_text())
+            self.assertEqual(census["Version"], 1)
+            self.assertEqual(census["Frame"], "SourceLocal")
+            self.assertEqual(census["SemanticCorners"], contract["SemanticCorners"])
+            self.assertEqual(census["CornerIsotropyRadius"], 0.4)
+            self.assertEqual(census["IsotropicSize"], 0.2)
+            self.assertEqual(len(census["Corners"]), len(contract["SemanticCorners"]))
+            self.assertGreater(census["CornerIsotropicLongitudinalCurves"], 0)
+            self.assertLessEqual(census["CornerIsotropicLongitudinalCurves"],
+                                 census["LongitudinalCurves"])
+            for row in census["Corners"]:
+                self.assertGreater(row["BallEdges"], 0)
+                self.assertGreaterEqual(row["FractionOverSqrt2IsotropicSize"], 0.0)
+                self.assertLessEqual(row["EdgeMaximum"], 0.4)
+                self.assertGreater(row["IncidentMaximumAspect"], 1.0)
+            # The census is source-local: only the placement differs.
+            self.assertEqual(rotated_census["RigidTransform"], ROTATE_Z)
+            self.assertEqual(census["RigidTransform"], IDENTITY)
+            for key in ("CornerIsotropicLongitudinalCurves", "LongitudinalCurves",
+                        "Sqrt2IsotropicSize"):
+                self.assertEqual(census[key], rotated_census[key])
+            # Pulling the rotated contract corners back leaves roundoff only.
+            np.testing.assert_allclose(rotated_census["SemanticCorners"],
+                                       census["SemanticCorners"], rtol=0.0, atol=1e-14)
+            for row, rotated_row in zip(census["Corners"], rotated_census["Corners"]):
+                self.assertEqual(set(row), set(rotated_row))
+                for key, value in row.items():
+                    if isinstance(value, int):
+                        self.assertEqual(value, rotated_row[key], key)
+                    else:
+                        np.testing.assert_allclose(rotated_row[key], value, rtol=1e-9,
+                                                   atol=1e-13, err_msg=key)
+            metadata = json.loads((root / "identity.msh.metadata.json").read_text())
+            self.assertEqual(metadata["CornerIsotropyRadius"], 0.4)
+            self.assertEqual(metadata["SemanticCornerCount"], len(contract["SemanticCorners"]))
+
+    def test_seed_corner_isotropy_fails_closed_on_placement_or_missing_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Contract placed by the rotation but seed generated at identity.
+            self.produce(root, "misplaced", IDENTITY,
+                         corner_isotropy=self.corner_isotropy(root, "misplaced", ROTATE_Z),
+                         expect_failure="differs from the seed rigid transform")
+            self.produce(root, "no-census",
+                         corner_isotropy=self.corner_isotropy(root, "no-census", census=False),
+                         expect_failure="together")
+            self.produce(root, "no-radius",
+                         corner_isotropy=self.corner_isotropy(root, "no-radius", radius="0"),
+                         expect_failure="together")
+            absent = json.loads((SOURCE / "semantic-contract.json").read_text())
+            absent["SemanticCorners"] = [[0.5, 0.5, 0.0]]
+            path = root / "absent-semantic.json"; path.write_text(json.dumps(absent))
+            self.produce(root, "absent", corner_isotropy=[
+                "--semantic-contract", str(path), "--corner-isotropy-radius", "0.4",
+                "--corner-census", str(root / "absent-census.json")],
+                expect_failure="absent from the seed CAD")
 
     def test_multislot_tilted_translation_preserves_exact_slot_conductor_labels(self):
         with tempfile.TemporaryDirectory() as directory:

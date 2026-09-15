@@ -6,6 +6,7 @@
 import Gmsh: gmsh
 using DelimitedFiles
 using LinearAlgebra
+using SHA
 
 function signature_integer(value, name)
     value isa Real && isfinite(value) && value==round(value) ||
@@ -221,6 +222,326 @@ function transform_edge_contract(edge, matrix)
         tangent=transform_vector(matrix, edge.tangent),
         process_normal=transform_vector(matrix, (0.0, 0.0, edge.normal_sign))
     ))
+end
+
+# Minimal strict JSON reader/writer: the test Julia project has no JSON package,
+# and the seed must consume the frozen semantic contract exactly as written.
+function parse_json(text::AbstractString)
+    characters = collect(text)
+    position = Ref(1)
+    skip_space() = while position[] <= length(characters) && isspace(characters[position[]])
+        position[] += 1
+    end
+    function current()
+        position[] <= length(characters) || error("Unexpected end of JSON")
+        return characters[position[]]
+    end
+    function expect(token)
+        stop = position[] + length(token) - 1
+        stop <= length(characters) && String(characters[position[]:stop]) == token ||
+            error("Invalid JSON near position $(position[])")
+        position[] = stop + 1
+    end
+    function parse_string()
+        expect("\"")
+        buffer = IOBuffer()
+        while true
+            position[] <= length(characters) || error("Unterminated JSON string")
+            character = characters[position[]]
+            position[] += 1
+            character == '"' && return String(take!(buffer))
+            if character == '\\'
+                position[] <= length(characters) || error("Unterminated JSON escape")
+                escape = characters[position[]]
+                position[] += 1
+                if escape == 'u'
+                    stop = position[] + 3
+                    stop <= length(characters) || error("Invalid JSON unicode escape")
+                    write(buffer, Char(parse(UInt32, String(characters[position[]:stop]); base=16)))
+                    position[] = stop + 1
+                else
+                    mapped = Dict('"' => '"', '\\' => '\\', '/' => '/', 'b' => '\b',
+                                  'f' => '\f', 'n' => '\n', 'r' => '\r', 't' => '\t')
+                    haskey(mapped, escape) || error("Invalid JSON escape")
+                    write(buffer, mapped[escape])
+                end
+            else
+                write(buffer, character)
+            end
+        end
+    end
+    function parse_number()
+        start = position[]
+        while position[] <= length(characters) && characters[position[]] in "+-0123456789.eE"
+            position[] += 1
+        end
+        token = String(characters[start:(position[] - 1)])
+        isempty(token) && error("Invalid JSON near position $start")
+        value = tryparse(Int, token)
+        value === nothing || return value
+        value = tryparse(Float64, token)
+        value === nothing && error("Invalid JSON number $token")
+        return value
+    end
+    function parse_value()
+        skip_space()
+        character = current()
+        if character == '{'
+            position[] += 1
+            result = Dict{String, Any}()
+            skip_space()
+            if current() == '}'
+                position[] += 1
+                return result
+            end
+            while true
+                skip_space()
+                key = parse_string()
+                skip_space()
+                expect(":")
+                result[key] = parse_value()
+                skip_space()
+                current() == ',' && (position[] += 1; continue)
+                expect("}")
+                return result
+            end
+        elseif character == '['
+            position[] += 1
+            result = Any[]
+            skip_space()
+            if current() == ']'
+                position[] += 1
+                return result
+            end
+            while true
+                push!(result, parse_value())
+                skip_space()
+                current() == ',' && (position[] += 1; continue)
+                expect("]")
+                return result
+            end
+        elseif character == '"'
+            return parse_string()
+        elseif character == 't'
+            expect("true"); return true
+        elseif character == 'f'
+            expect("false"); return false
+        elseif character == 'n'
+            expect("null"); return nothing
+        else
+            return parse_number()
+        end
+    end
+    value = parse_value()
+    skip_space()
+    position[] > length(characters) || error("Trailing characters after JSON value")
+    return value
+end
+
+function write_json(io::IO, value, indent::Int=0)
+    pad = repeat(" ", indent)
+    if value isa AbstractDict
+        keys_sorted = sort!(collect(keys(value)))
+        println(io, "{")
+        for (index, key) in enumerate(keys_sorted)
+            print(io, pad, "  \"", key, "\": ")
+            write_json(io, value[key], indent + 2)
+            println(io, index < length(keys_sorted) ? "," : "")
+        end
+        print(io, pad, "}")
+    elseif value isa AbstractVector || value isa Tuple
+        if isempty(value)
+            print(io, "[]")
+        else
+            println(io, "[")
+            for (index, item) in enumerate(value)
+                print(io, pad, "  ")
+                write_json(io, item, indent + 2)
+                println(io, index < length(value) ? "," : "")
+            end
+            print(io, pad, "]")
+        end
+    elseif value isa AbstractString
+        print(io, "\"", escape_string(value), "\"")
+    elseif value isa Bool
+        print(io, value ? "true" : "false")
+    elseif value isa Integer
+        print(io, value)
+    elseif value isa Real
+        isfinite(value) || error("JSON cannot record a non-finite number")
+        print(io, Float64(value))
+    elseif value === nothing
+        print(io, "null")
+    else
+        error("Unsupported JSON value of type $(typeof(value))")
+    end
+end
+
+function json_point(value)
+    value isa AbstractVector && length(value) == 3 && all(x -> x isa Real && isfinite(x), value) ||
+        error("Semantic contract corners must be finite 3D points")
+    return (Float64(value[1]), Float64(value[2]), Float64(value[3]))
+end
+
+# Contract semantic corners pulled back into the seed's source-local frame.
+function read_semantic_corners(path, transform)
+    contract = parse_json(read(path, String))
+    contract isa AbstractDict && haskey(contract, "SemanticCorners") ||
+        error("Semantic contract lacks SemanticCorners")
+    corners = contract["SemanticCorners"]
+    corners isa AbstractVector && !isempty(corners) ||
+        error("Semantic contract must list at least one semantic corner")
+    placement = haskey(contract, "RigidTransform") ?
+        rigid_transform(Float64.(contract["RigidTransform"])) : copy(IDENTITY_RIGID_TRANSFORM)
+    isapprox(placement, transform; atol=1.0e-12, rtol=0.0) ||
+        error("Semantic contract placement differs from the seed rigid transform")
+    return [inverse_transform_point(transform, json_point(corner)) for corner in corners]
+end
+
+# Model point tags coincident with every semantic corner; fail closed otherwise.
+function semantic_corner_points(corners, tolerance)
+    entities = gmsh.model.getEntities(0)
+    coordinates = Dict(tag => gmsh.model.getValue(dim, tag, Float64[]) for (dim, tag) in entities)
+    tags = Int32[]
+    for corner in corners
+        matches = [tag for (tag, xyz) in coordinates if norm(xyz .- collect(corner)) <= tolerance]
+        isempty(matches) && error("Semantic corner $(corner) is absent from the seed CAD")
+        append!(tags, matches)
+    end
+    return sort!(unique(tags))
+end
+
+function corner_size_expression(distance, lc_fine, lc_far, radius, transition_width)
+    # Isotropic fine size inside the corner ball, then the same linear grading
+    # slope as the process edge band up to the far size.
+    return "min($(lc_far),$(lc_fine)+($(lc_far)-$(lc_fine))*" *
+           "max($(distance)-$(radius),0)/$(transition_width))"
+end
+
+# Samples per fine length for the size-weighted arclength quadrature that places
+# longitudinal curve nodes; a resolution constant, not a mesh target.
+const CURVE_SIZE_SAMPLES_PER_FINE_LENGTH = 16
+
+# Nodes of a longitudinal curve whose tangential spacing honors the corner ball:
+# lc_fine inside the ball, lc_tangent away from it, the process-band grading
+# slope between. Returns nothing when the curve is out of reach of every ball,
+# so the caller keeps the ordinary transfinite lc_tangent spacing unchanged.
+function corner_isotropic_curve_nodes(curve, corners, radius, lc_fine, lc_tangent, slope)
+    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    samples = max(64, ceil(Int, CURVE_SIZE_SAMPLES_PER_FINE_LENGTH *
+                              gmsh.model.occ.getMass(1, curve) / lc_fine))
+    parameters = collect(range(lower[1], upper[1]; length=samples + 1))
+    xyz = reshape(gmsh.model.getValue(1, curve, parameters), 3, :)
+    sizes = [min(lc_tangent, lc_fine + slope * max(
+                 minimum(norm(xyz[:, i] .- collect(corner)) for corner in corners) - radius, 0.0))
+             for i in axes(xyz, 2)]
+    all(size >= lc_tangent for size in sizes) && return nothing
+    cumulative = zeros(samples + 1)
+    for i in 1:samples
+        cumulative[i + 1] = cumulative[i] + norm(xyz[:, i + 1] .- xyz[:, i]) *
+                                            0.5 * (1.0 / sizes[i] + 1.0 / sizes[i + 1])
+    end
+    intervals = max(1, ceil(Int, cumulative[end]))
+    interior = Float64[]
+    for k in 1:(intervals - 1)
+        target = k * cumulative[end] / intervals
+        i = searchsortedlast(cumulative, target)
+        i = clamp(i, 1, samples)
+        fraction = (target - cumulative[i]) / (cumulative[i + 1] - cumulative[i])
+        push!(interior, parameters[i] + fraction * (parameters[i + 1] - parameters[i]))
+    end
+    return interior, gmsh.model.getValue(1, curve, interior)
+end
+
+# Install an explicit curve mesh (endpoints, interior nodes, line elements) so
+# that Mesh.MeshOnlyEmpty keeps it when the remaining entities are generated.
+function add_explicit_curve_mesh!(curve, parameters, coordinates, next_node, point_nodes)
+    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    ends = gmsh.model.getValue(1, curve, [lower[1], upper[1]])
+    _, points = gmsh.model.getAdjacencies(1, curve)
+    length(points) == 2 || error("Longitudinal curve $curve is not bounded by two points")
+    function endpoint_node(target)
+        tag = points[argmin([norm(gmsh.model.getValue(0, point, Float64[]) .- target)
+                             for point in points])]
+        return get!(point_nodes, tag) do
+            next_node[] += 1
+            gmsh.model.mesh.addNodes(0, tag, [next_node[]], gmsh.model.getValue(0, tag, Float64[]))
+            next_node[]
+        end
+    end
+    first_node = endpoint_node(ends[1:3])
+    last_node = endpoint_node(ends[4:6])
+    interior = collect((next_node[] + 1):(next_node[] + length(parameters)))
+    next_node[] += length(parameters)
+    isempty(interior) || gmsh.model.mesh.addNodes(1, curve, interior, coordinates, parameters)
+    sequence = [first_node; interior; last_node]
+    connectivity = Int[]
+    for i in 1:(length(sequence) - 1)
+        push!(connectivity, sequence[i], sequence[i + 1])
+    end
+    gmsh.model.mesh.addElementsByType(curve, 1, Int[], connectivity)
+    return length(interior)
+end
+
+function tetrahedron_aspect(xyz)
+    jacobian = hcat(xyz[2] .- xyz[1], xyz[3] .- xyz[1], xyz[4] .- xyz[1])
+    singular = svdvals(jacobian)
+    return singular[1] / singular[end]
+end
+
+# Edge lengths and cell aspects of the linear seed inside each semantic corner ball.
+function seed_corner_census(corners, radius, isotropic_size, tolerance)
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(coordinates, 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    _, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
+    tetrahedra = Vector{NTuple{4, Int}}()
+    for (tags, block) in zip(element_tags, element_nodes)
+        isempty(tags) && continue
+        nodes_per_element = length(block) ÷ length(tags)
+        # Only the vertex nodes define the linear cells (high-order nodes follow).
+        for start in 1:nodes_per_element:length(block)
+            push!(tetrahedra, ntuple(i -> index[block[start + i - 1]], 4))
+        end
+    end
+    threshold = sqrt(2.0) * isotropic_size
+    rows = Dict{String, Any}[]
+    for (k, corner) in enumerate(corners)
+        center = collect(corner)
+        inside = [norm(points[:, i] .- center) <= radius for i in axes(points, 2)]
+        at_corner = [norm(points[:, i] .- center) <= tolerance for i in axes(points, 2)]
+        ball = [cell for cell in tetrahedra if all(inside[i] for i in cell)]
+        incident = [cell for cell in tetrahedra if any(at_corner[i] for i in cell)]
+        edges = Set{Tuple{Int, Int}}()
+        for cell in ball, i in 1:4, j in (i + 1):4
+            push!(edges, (min(cell[i], cell[j]), max(cell[i], cell[j])))
+        end
+        lengths = sort!([norm(points[:, a] .- points[:, b]) for (a, b) in edges])
+        aspects = [tetrahedron_aspect([points[:, i] for i in cell]) for cell in incident]
+        ring = unique([i for cell in incident for i in cell if !at_corner[i]])
+        ring_radii = [norm(points[:, i] .- center) for i in ring]
+        push!(rows, Dict{String, Any}(
+            "Corner" => k - 1, "Point" => collect(corner),
+            "BallCells" => length(ball), "BallEdges" => length(lengths),
+            "EdgeMinimum" => isempty(lengths) ? nothing : lengths[1],
+            "EdgeMedian" => isempty(lengths) ? nothing : sorted_median(lengths),
+            "EdgeMaximum" => isempty(lengths) ? nothing : lengths[end],
+            "EdgesOverSqrt2IsotropicSize" => count(>(threshold), lengths),
+            "FractionOverSqrt2IsotropicSize" =>
+                isempty(lengths) ? nothing : count(>(threshold), lengths) / length(lengths),
+            "IncidentCells" => length(incident),
+            "IncidentMaximumAspect" => isempty(aspects) ? nothing : maximum(aspects),
+            "RingRadiusMinimum" => isempty(ring_radii) ? nothing : minimum(ring_radii),
+            "RingRadiusMaximum" => isempty(ring_radii) ? nothing : maximum(ring_radii),
+            "RingEdgesOverSqrt2IsotropicSize" => count(>(threshold), ring_radii)))
+    end
+    return rows
+end
+
+function sorted_median(values)
+    sorted = sort(values)
+    n = length(sorted)
+    return isodd(n) ? sorted[(n + 1) ÷ 2] : 0.5 * (sorted[n ÷ 2] + sorted[n ÷ 2 + 1])
 end
 
 function extended_interval(edge, radius)
@@ -1194,6 +1515,9 @@ function generate_spatial_coupon(;
     matching_trace_mode::String="all",
     geometry_only::Bool=false,
     transform::Matrix{Float64}=copy(IDENTITY_RIGID_TRANSFORM),
+    semantic_contract::Union{Nothing, String}=nothing,
+    corner_isotropy_radius::Float64=0.0,
+    corner_census::Union{Nothing, String}=nothing,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -1219,6 +1543,18 @@ function generate_spatial_coupon(;
     max_nodes > 0 || error("maximum node budget must be positive")
     max_elements > 0 || error("maximum element budget must be positive")
     transform = rigid_transform(vec(transform'))
+    corner_isotropy_radius >= 0.0 || error("corner isotropy radius must be nonnegative")
+    corner_isotropy = semantic_contract !== nothing
+    (corner_isotropy == (corner_isotropy_radius > 0.0) == (corner_census !== nothing)) ||
+        error("Corner isotropy requires --semantic-contract, --corner-isotropy-radius " *
+              "and --corner-census together")
+    corner_isotropy && corner_census == filename &&
+        error("Corner census must not overwrite the mesh output")
+    # The seed honors the same isotropic corner ball the metric stage prescribes:
+    # NormalSize (lc_fine) inside CornerIsotropyRadius around every contract
+    # semantic corner, graded to the far size with the process-band slope.
+    semantic_corners = corner_isotropy ? read_semantic_corners(semantic_contract, transform) :
+                       NTuple{3, Float64}[]
 
     edges = read_edges(signature)
     if length(unique(edge.slot for edge in edges)) > 1 &&
@@ -1482,6 +1818,8 @@ function generate_spatial_coupon(;
         end
     end
     occ.synchronize()
+    corner_point_tags = corner_isotropy ? semantic_corner_points(semantic_corners, tolerance) :
+                        Int32[]
 
     domain_tags = Set(tag for (dim, tag) in domains if dim == 3)
     substrate_tags = sort!(
@@ -1584,6 +1922,10 @@ function generate_spatial_coupon(;
     sort!(feature_curves)
     isempty(feature_curves) && error("No physical process-feature curves were generated")
     longitudinal_curves = Int32[]
+    corner_curves = Int32[]
+    corner_grading_slope = (lc_far - lc_fine) / (process_core_width - process_fine_width)
+    next_node = Ref(0)
+    point_nodes = Dict{Int32, Int}()
     if lc_tangent > 0.0
         for curve in feature_curves
             lower_parameter, upper_parameter =
@@ -1593,17 +1935,29 @@ function generate_spatial_coupon(;
             tangent = derivative[1:3]
             tangent ./= norm(tangent)
             if any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
-                curve_length = gmsh.model.occ.getMass(1, curve)
-                point_count = max(2, ceil(Int, curve_length / lc_tangent) + 1)
-                gmsh.model.mesh.setTransfiniteCurve(curve, point_count)
                 push!(longitudinal_curves, curve)
+                placed = corner_isotropy ? corner_isotropic_curve_nodes(
+                    curve, semantic_corners, corner_isotropy_radius, lc_fine, lc_tangent,
+                    corner_grading_slope) : nothing
+                if placed === nothing
+                    curve_length = gmsh.model.occ.getMass(1, curve)
+                    point_count = max(2, ceil(Int, curve_length / lc_tangent) + 1)
+                    gmsh.model.mesh.setTransfiniteCurve(curve, point_count)
+                else
+                    # Transfinite spacing cannot follow the corner ball; place the
+                    # curve nodes explicitly and keep them through generation.
+                    add_explicit_curve_mesh!(curve, placed..., next_node, point_nodes)
+                    push!(corner_curves, curve)
+                end
             end
         end
     end
+    isempty(corner_curves) || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
     println(
         "Spatial mesh features: candidates=$(length(candidate_curves)), " *
         "physical=$(length(feature_curves)), " *
         "longitudinal=$(length(longitudinal_curves)), " *
+        "corner_isotropic_longitudinal=$(length(corner_curves)), " *
         "discarded_coplanar_seams=$(length(discarded_seams)), " *
         "fine_width=$process_fine_width, core_width=$process_core_width, " *
         "grading_power=$process_grading_power"
@@ -1622,7 +1976,20 @@ function generate_spatial_coupon(;
         gmsh.model.mesh.field.setNumber(1, "SizeMinTangent", lc_tangent)
         gmsh.model.mesh.field.setNumber(1, "SizeMaxTangent", lc_far)
         gmsh.model.mesh.field.setNumber(1, "Sampling", 100)
-        gmsh.model.mesh.field.setAsBackgroundMesh(1)
+        background = 1
+        if corner_isotropy
+            # MathEval evaluates the attractor's own size ("F1") unchanged outside
+            # the corner balls; Min/MinAniso wrappers would not (they re-derive the
+            # anisotropic child's size), so the band prescription stays identical.
+            gmsh.model.mesh.field.add("Distance", 2)
+            gmsh.model.mesh.field.setNumbers(2, "PointsList", Float64.(corner_point_tags))
+            gmsh.model.mesh.field.add("MathEval", 3)
+            gmsh.model.mesh.field.setString(3, "F", "min(F1," * corner_size_expression(
+                "F2", lc_fine, lc_far, corner_isotropy_radius,
+                process_core_width - process_fine_width) * ")")
+            background = 3
+        end
+        gmsh.model.mesh.field.setAsBackgroundMesh(background)
     else
         gmsh.model.mesh.field.add("Distance", 1)
         gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
@@ -1632,6 +1999,12 @@ function generate_spatial_coupon(;
         size_expression =
             "min($(lc_far),$(lc_fine)+($(lc_far)-$(lc_fine))*" *
             "($(distance_expression)/$(transition_width))^$(process_grading_power))"
+        if corner_isotropy
+            gmsh.model.mesh.field.add("Distance", 3)
+            gmsh.model.mesh.field.setNumbers(3, "PointsList", Float64.(corner_point_tags))
+            size_expression = "min($(size_expression)," * corner_size_expression(
+                "F3", lc_fine, lc_far, corner_isotropy_radius, transition_width) * ")"
+        end
         gmsh.model.mesh.field.add("MathEval", 2)
         gmsh.model.mesh.field.setString(2, "F", size_expression)
         gmsh.model.mesh.field.setAsBackgroundMesh(2)
@@ -1665,6 +2038,9 @@ function generate_spatial_coupon(;
     if lc_tangent == 0.0 && optimize_volume
         gmsh.model.mesh.optimize("Netgen")
     end
+    census_rows = corner_isotropy ?
+        seed_corner_census(semantic_corners, corner_isotropy_radius, lc_fine, tolerance) :
+        Dict{String, Any}[]
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
@@ -1707,6 +2083,35 @@ function generate_spatial_coupon(;
             error("Rigid transform changed mesh connectivity")
     end
     gmsh.write(filename)
+    if corner_isotropy
+        # Recorded seed-stage artifact, source-local frame, no pass/fail gate.
+        ispath(corner_census) && error("Corner census output already exists")
+        open(corner_census, "w") do stream
+            write_json(stream, Dict{String, Any}(
+                "Version" => 1, "Frame" => "SourceLocal",
+                "Scope" => "Seed corner-ball census; reported, not a qualification gate",
+                "SemanticContract" => semantic_contract,
+                "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
+                "RigidTransform" => vec(transform'),
+                "SemanticCorners" => [collect(corner) for corner in semantic_corners],
+                "CornerIsotropyRadius" => corner_isotropy_radius,
+                "IsotropicSize" => lc_fine,
+                "Sqrt2IsotropicSize" => sqrt(2.0) * lc_fine,
+                "FarSize" => lc_far,
+                "GradingTransitionWidth" => process_core_width - process_fine_width,
+                "LongitudinalCurves" => length(longitudinal_curves),
+                "CornerIsotropicLongitudinalCurves" => length(corner_curves),
+                "Corners" => census_rows))
+            println(stream)
+        end
+        println("Seed corner census: $corner_census")
+        for row in census_rows
+            println("  corner $(row["Corner"]) $(row["Point"]): ball edges=$(row["BallEdges"]) " *
+                    "min/median/max=$(row["EdgeMinimum"])/$(row["EdgeMedian"])/$(row["EdgeMaximum"]) " *
+                    "over sqrt2*hn=$(row["EdgesOverSqrt2IsotropicSize"]) " *
+                    "incident aspect=$(row["IncidentMaximumAspect"])")
+        end
+    end
     metadata_path = filename * ".metadata.json"
     open(metadata_path, "w") do stream
         println(stream, "{")
@@ -1721,6 +2126,9 @@ function generate_spatial_coupon(;
         println(stream, "  \"ProcessCoreWidth\": $process_core_width,")
         println(stream, "  \"ProcessFineWidth\": $process_fine_width,")
         println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
+        println(stream, "  \"CornerIsotropyRadius\": $corner_isotropy_radius,")
+        println(stream, "  \"CornerIsotropicSize\": $(corner_isotropy ? lc_fine : 0.0),")
+        println(stream, "  \"SemanticCornerCount\": $(length(semantic_corners)),")
         println(stream, "  \"RigidTransform\": [$(join(vec(transform'), ", "))],")
         println(stream, "  \"Algorithm3D\": $(Int(gmsh.option.getNumber("Mesh.Algorithm3D"))),")
         println(stream, "  \"MeshOrder\": $mesh_order")
@@ -1764,7 +2172,10 @@ function parse_options(args)
         "--max-elements" => ("max_elements", Int),
         "--mesh-order" => ("mesh_order", Int),
         "--rigid-transform" => ("transform", Matrix{Float64}),
-        "--interface-ownership-report" => ("interface_ownership_report", String)
+        "--interface-ownership-report" => ("interface_ownership_report", String),
+        "--semantic-contract" => ("semantic_contract", String),
+        "--corner-isotropy-radius" => ("corner_isotropy_radius", Float64),
+        "--corner-census" => ("corner_census", String)
     )
     index = 4
     while index <= length(args)
@@ -1819,6 +2230,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
         max_elements    = get(options, "max_elements", 2_000_000),
         mesh_order      = get(options, "mesh_order", 1),
         mesh_postprocess = postprocess,
-        transform       = get(options, "transform", copy(IDENTITY_RIGID_TRANSFORM))
+        transform       = get(options, "transform", copy(IDENTITY_RIGID_TRANSFORM)),
+        semantic_contract = get(options, "semantic_contract", nothing),
+        corner_isotropy_radius = get(options, "corner_isotropy_radius", 0.0),
+        corner_census   = get(options, "corner_census", nothing)
     )
 end

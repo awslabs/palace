@@ -55,6 +55,9 @@ def main():
     parser.add_argument("--receipt", type=Path)
     parser.add_argument("--ownership-runtime", type=Path)
     parser.add_argument("--ownership-auditor", type=Path)
+    # Metric-stage corner isotropy prescription recorded in the recipe.
+    parser.add_argument("--normal", type=float)
+    parser.add_argument("--tangent", type=float)
     args = parser.parse_args()
     if args.stage == "metric":
         if (args.mmg_seed is None or args.pins is None or args.recipe is None or
@@ -67,9 +70,15 @@ def main():
         args.fixed_triangles.write_text("1\n")
         if args.semantic_contract is None or args.transformed_supports is None:
             parser.error("metric requires transformed semantic/support inputs")
+        if args.normal is None or args.tangent is None:
+            parser.error("metric requires --normal and --tangent")
+        semantic = json.loads(args.semantic_contract.read_text())
         args.recipe.write_text(json.dumps({
             "SeedSHA256": digest(args.source),
-            "SemanticContract": json.loads(args.semantic_contract.read_text()),
+            "SemanticContract": semantic,
+            "NormalSize": args.normal, "TangentialSize": args.tangent,
+            "CornerIsotropyRadius": args.tangent,
+            "TruePhysicalCorners": semantic["SemanticCorners"],
             "TransformedSupportsArtifact": str(args.transformed_supports.resolve()),
             "TransformedSupportsSHA256": digest(args.transformed_supports),
             "TransformedSupports": json.loads(args.transformed_supports.read_text()),

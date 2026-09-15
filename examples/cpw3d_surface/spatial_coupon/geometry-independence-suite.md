@@ -68,8 +68,8 @@ digest. The bounded record consumes five separately executed reports forming a
 digest-linked DAG: seed generation, metric preparation, native adapter/MMG,
 label restoration, and final Gmsh publication. A tool is accepted only when its
 frozen path occurs in that stage's executed argv. The DAG binds the seed mesh,
-MMG seed, tensor metric, pins, fixed triangles, restoration recipe, adapted
-mesh, restored mesh, final candidate, and ownership partition. Merely declaring
+seed corner census, MMG seed, tensor metric, pins, fixed triangles, restoration
+recipe, adapted mesh, restored mesh, final candidate, and ownership partition. Merely declaring
 an adaptor/MMG file cannot pass.
 
 The topology audit reads Gmsh physical volume names, derives ownership from the
@@ -130,13 +130,41 @@ process, semantic, recipe, and gate hashes plus the exact canonical tool-role
 set derived from the six stages (runtime, validator, mesher, metric preparer,
 adaptation wrapper, adapter, runtime-resolved MMG library, restorer, publisher).
 Its build record is derived from the six validated stage reports: it binds the
-exact fifteen canonical artifact roles (every stage output, including the
-adaptation receipt and the source-local restored mesh) and each stage report's
-SHA-256, and rejects missing or extra roles. A placement may share the six
+exact sixteen canonical artifact roles (every stage output, including the seed
+corner census, the adaptation receipt and the source-local restored mesh) and
+each stage report's SHA-256, and rejects missing or extra roles. A placement may share the six
 canonical reports only when the cache key, build hash, every canonical artifact
 hash and every stage-report hash match. Final meshes, transform receipts,
 ownership outputs, and audit records remain per-placement and content-distinct.
 Canonical and placement seconds/RSS are reported separately.
+
+Seed generation honors the same isotropic corner ball that metric preparation
+prescribes. `mesh_spatial_coupon.jl` takes the canonical semantic contract
+(`--semantic-contract`, bound to the `canonical-semantic-contract` input of the
+`canonical-source-validation` stage) and `--corner-isotropy-radius`, and around
+every contract `SemanticCorners` point (pulled back through the contract's
+`RigidTransform`, which must equal the seed's `--rigid-transform`) it imposes the
+isotropic size `--lc-fine` inside the radius, graded to `--lc-far` with the same
+linear slope as the process edge band (`(lc_far - lc_fine)` over the attractor
+transition width). The band field itself is evaluated unchanged through a
+`MathEval` `min(F1, ...)` (a `Min`/`MinAniso` wrapper re-derives the anisotropic
+attractor's size and was measured to change the band mesh, so it is not used).
+Longitudinal feature curves whose transfinite `lc_tangent` spacing would cross a
+corner ball are meshed explicitly instead (size-weighted arclength quadrature,
+`Mesh.MeshOnlyEmpty`), so the corner-adjacent ridge edges start at the isotropic
+size; curves out of reach keep the ordinary transfinite spacing. No new sizes are
+introduced. The stage contract requires the seed's `--lc-fine` and
+`--corner-isotropy-radius` to equal the recipe's `NormalSize` and
+`CornerIsotropyRadius`, and the seed's recorded `seed-corner-census` artifact
+(`--corner-census`) to name the recipe's `TruePhysicalCorners` with the same size
+and radius; a seed stage without these bindings, or with different values, is
+rejected. The census (edge minimum/median/maximum inside each corner ball, the
+count and fraction of ball edges longer than sqrt(2) x `lc_fine`, the
+corner-incident maximum aspect and ring radii) is reported so the property is
+asserted rather than assumed; it is **not** a pass/fail gate. Gmsh's Delaunay
+volume mesh still leaves a tail of interior ball edges up to about twice the
+size (the surface and ridge edges sit at the target), so MMG may still split
+interior edges in the balls.
 
 Metric preparation classifies seed surface features by geometry, not by label:
 `edge_volume_metric.surface_features` makes a shared triangle edge a feature
@@ -209,7 +237,9 @@ The normal, tangent, corner, protected-band targets and 4,000,000-element cap
 remain unchanged.
 
 Every stage command must name exactly its bound inputs and outputs: seed
-generation binds the source signature/boundary/mask, canonical publication binds
+generation binds the source signature/boundary/mask, the canonical semantic
+contract (`--semantic-contract`) and its corner census (`--corner-census`),
+canonical publication binds
 the source process/signature/boundary (`--process/--signature/--boundary`), and
 proper-rigid publication binds source semantic/signature/boundary/mask/process,
 the canonical build record and every ownership/semantic/support output. Named

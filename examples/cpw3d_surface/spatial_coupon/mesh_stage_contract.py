@@ -26,7 +26,8 @@ STAGE_TOOLS = {
 STAGE_INPUTS = {
     "canonical-source-validation": {"source-semantic-contract", "source-signature",
                                     "source-boundary", "source-mask", "canonical-transform"},
-    "seed-generation": {"source-signature", "source-boundary", "source-mask"},
+    "seed-generation": {"source-signature", "source-boundary", "source-mask",
+                        "canonical-semantic-contract"},
     "metric-preparation": {"seed-mesh", "canonical-semantic-contract",
                            "canonical-supports"},
     "native-adaptation-mmg": {"mmg-seed", "metric", "pins", "fixed-triangles",
@@ -41,7 +42,7 @@ STAGE_INPUTS = {
 }
 STAGE_OUTPUTS = {
     "canonical-source-validation": {"canonical-semantic-contract", "canonical-supports"},
-    "seed-generation": {"seed-mesh"},
+    "seed-generation": {"seed-mesh", "seed-corner-census"},
     "metric-preparation": {"mmg-seed", "metric", "pins", "fixed-triangles",
                            "restoration-recipe"},
     "native-adaptation-mmg": {"adapted-mesh", "adaptation-receipt"},
@@ -75,7 +76,9 @@ STAGE_BINDING_OPTIONS = {
         "--boundary": ("Inputs", "source-boundary"),
         "--mask": ("Inputs", "source-mask")},
     "seed-generation": {"--mask": ("Inputs", "source-mask"),
-                        "--boundary": ("Inputs", "source-boundary")},
+                        "--boundary": ("Inputs", "source-boundary"),
+                        "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
+                        "--corner-census": ("Artifacts", "seed-corner-census")},
     "metric-preparation": {
         "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
         "--transformed-supports": ("Inputs", "canonical-supports")},
@@ -119,6 +122,10 @@ STAGE_BINDING_ARGUMENTS = {
 }
 OWNERSHIP_AUDIT_OPTIONS = {"--process": "source-process", "--signature": "source-signature",
                            "--boundary": "source-boundary"}
+# Seed options whose values must equal the metric recipe's corner-isotropy
+# prescription, so the seed and the metric honor one ball around one corner set.
+SEED_RECIPE_VALUE_OPTIONS = {"--lc-fine": "NormalSize",
+                             "--corner-isotropy-radius": "CornerIsotropyRadius"}
 
 _INTERPRETER_OPTIONS_WITH_VALUE = {
     "-H", "--home", "-J", "--sysimage", "-C", "--cpu-target", "-t", "--threads",
@@ -341,18 +348,62 @@ def _validate_reports(report_paths, order, launcher_name, launcher_sha256,
     return reports, report_digests
 
 
+def _option_value(command, option):
+    positions = [index for index, value in enumerate(command) if value == option]
+    if len(positions) != 1 or positions[0] + 1 >= len(command):
+        raise ValueError(f"Stage command must provide exactly one {option}")
+    return command[positions[0] + 1]
+
+
+def _recipe_number(recipe, name):
+    value = recipe.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Restoration recipe lacks a numeric {name}")
+    return float(value)
+
+
+def validate_seed_corner_isotropy(seed_report, recipe_path):
+    """The seed's corner ball must be the recipe's: same size, radius and corners."""
+    recipe = json.loads(Path(recipe_path).read_text())
+    command = seed_report["Command"]
+    for option, name in SEED_RECIPE_VALUE_OPTIONS.items():
+        try:
+            value = float(_option_value(command, option))
+        except ValueError as error:
+            raise ValueError(f"Seed command {option} is not a bound number: {error}") from error
+        if value != _recipe_number(recipe, name):
+            raise ValueError(f"Seed command {option} differs from the recipe {name}")
+    census = json.loads(Path(seed_report["Artifacts"]["seed-corner-census"]["Path"]).read_text())
+    if (not isinstance(census, dict) or census.get("Version") != 1 or
+            not isinstance(census.get("Corners"), list)):
+        raise ValueError("Seed corner census has an unsupported schema")
+    if (_recipe_number(census, "IsotropicSize") != _recipe_number(recipe, "NormalSize") or
+            _recipe_number(census, "CornerIsotropyRadius") !=
+            _recipe_number(recipe, "CornerIsotropyRadius")):
+        raise ValueError("Seed corner census size or radius differs from the recipe")
+    corners = recipe.get("TruePhysicalCorners")
+    if (not isinstance(corners, list) or not corners or
+            sorted(census.get("SemanticCorners", [])) != sorted(corners) or
+            len(census["Corners"]) != len(corners)):
+        raise ValueError("Seed corner census corners differ from the recipe semantic corners")
+    return census
+
+
 def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
                            launcher_sha256=None, expected_tool_sha256=None):
     reports, digests = _validate_reports(report_paths, CANONICAL_STAGE_ORDER,
                                          launcher_name, launcher_sha256,
                                          expected_tool_sha256)
     source = reports["canonical-source-validation"]
-    seed = reports["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"]
+    seed_stage = reports["seed-generation"]
+    seed = seed_stage["Artifacts"]["seed-mesh"]["SHA256"]
     metric = reports["metric-preparation"]
     adaptation = reports["native-adaptation-mmg"]
     restoration = reports["label-restoration"]
     publication = reports["canonical-gmsh-publication"]
     links = (
+        (seed_stage["Inputs"]["canonical-semantic-contract"]["SHA256"],
+         source["Artifacts"]["canonical-semantic-contract"]["SHA256"]),
         (metric["Inputs"]["seed-mesh"]["SHA256"], seed),
         (metric["Inputs"]["canonical-semantic-contract"]["SHA256"],
          source["Artifacts"]["canonical-semantic-contract"]["SHA256"]),
@@ -372,6 +423,7 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
     )
     if any(actual != expected for actual, expected in links):
         raise ValueError("Canonical mesh stage input/output digest chain is broken")
+    validate_seed_corner_isotropy(seed_stage, metric["Artifacts"]["restoration-recipe"]["Path"])
     return reports, digests
 
 

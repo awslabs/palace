@@ -60,6 +60,9 @@ def require_native_fixture():
         raise unittest.SkipTest("native fixture adapter requires a C compiler (cc)")
 TRANSFORMER = HERE / "transform_coupon_source_contract.py"
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+# Fixture corner-isotropy prescription shared by the seed and metric stages.
+NORMAL_SIZE = 0.1
+CORNER_ISOTROPY_RADIUS = 0.5
 ANGLE = 0.63
 ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
             math.sin(ANGLE), math.cos(ANGLE), 0, 0,
@@ -229,14 +232,20 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  str(canonical_semantic), str(canonical_supports), "--semantic-input",
                  str(directory / "semantic.json"), "--signature", str(directory / "signature.csv"),
                  "--boundary", str(directory / "boundary.csv"), "--mask", str(directory / "mask.csv")])
+            census = root / f"{canonical_stem}-corner-census.json"
             launch(canonical_stem, canonical_reports, "seed-generation",
                 {"source-signature": directory / "signature.csv",
                  "source-boundary": directory / "boundary.csv",
-                 "source-mask": directory / "mask.csv"}, {"seed-mesh": seed},
+                 "source-mask": directory / "mask.csv",
+                 "canonical-semantic-contract": canonical_semantic},
+                {"seed-mesh": seed, "seed-corner-census": census},
                 {"runtime": sys.executable, "mesher": MESHER},
                 [sys.executable, str(MESHER), str(seed), str(identity_transform),
                  "--scale", str(case["TestScale"]), "--signature", str(directory / "signature.csv"),
-                 "--mask", str(directory / "mask.csv"), "--boundary", str(directory / "boundary.csv")])
+                 "--mask", str(directory / "mask.csv"), "--boundary", str(directory / "boundary.csv"),
+                 "--semantic-contract", str(canonical_semantic),
+                 "--corner-isotropy-radius", str(CORNER_ISOTROPY_RADIUS),
+                 "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census)])
             launch(canonical_stem, canonical_reports, "metric-preparation",
                 {"seed-mesh": seed, "canonical-semantic-contract": canonical_semantic,
                  "canonical-supports": canonical_supports},
@@ -246,7 +255,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 [sys.executable, str(STAGER), "metric", str(seed), str(metric),
                  "--mmg-seed", str(mmg_seed), "--pins", str(pins), "--fixed-triangles", str(fixed),
                  "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
-                 "--transformed-supports", str(canonical_supports)])
+                 "--transformed-supports", str(canonical_supports),
+                 "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS)])
             launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
                 {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
                  "fixed-triangles": fixed, "restoration-recipe": recipe},
@@ -724,25 +734,100 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("--adapter", result.stderr)
 
+    def _seed_stage_launch(self, root, output, *, semantic_option=True):
+        sources = {name: root / f"{name}.csv" for name in ("signature", "boundary", "mask")}
+        for path in sources.values(): path.write_text(path.name)
+        semantic = root / "semantic.json"; semantic.write_text("{}")
+        census = root / "census.json"
+        return [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
+                "--log", str(root / "seed.log"), "--stage", "seed-generation",
+                *[value for name, path in sources.items()
+                  for value in ("--input", f"source-{name}={path}")],
+                "--input", f"canonical-semantic-contract={semantic}",
+                "--artifact", f"seed-mesh={output}", "--artifact", f"seed-corner-census={census}",
+                "--tool", f"runtime={sys.executable}", "--tool", f"mesher={MESHER}",
+                "--", sys.executable, str(MESHER), str(output), str(root / "missing"),
+                *[value for name, path in sources.items()
+                  for value in (f"--{name}", str(path))],
+                *(["--semantic-contract", str(semantic)] if semantic_option else []),
+                "--corner-isotropy-radius", "0.5", "--lc-fine", "0.1",
+                "--corner-census", str(census)]
+
     def test_preexisting_stage_output_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); output = root / "seed.msh"
             output.write_text("preexisting")
-            sources = {name: root / f"{name}.csv" for name in ("signature", "boundary", "mask")}
-            for path in sources.values(): path.write_text(path.name)
-            result = subprocess.run(
-                [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
-                 "--log", str(root / "seed.log"), "--stage", "seed-generation",
-                 *[value for name, path in sources.items()
-                   for value in ("--input", f"source-{name}={path}")],
-                 "--artifact", f"seed-mesh={output}",
-                 "--tool", f"runtime={sys.executable}", "--tool", f"mesher={MESHER}",
-                 "--", sys.executable, str(MESHER), str(output), str(root / "missing"),
-                 *[value for name, path in sources.items()
-                   for value in (f"--{name}", str(path))]],
-                capture_output=True, text=True)
+            result = subprocess.run(self._seed_stage_launch(root, output),
+                                    capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("stage output must be absent", result.stderr)
+
+    def test_seed_stage_without_the_bound_semantic_contract_option_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); output = root / "seed.msh"
+            result = subprocess.run(
+                self._seed_stage_launch(root, output, semantic_option=False),
+                capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("exactly one --semantic-contract", result.stderr)
+            self.assertFalse(output.exists())
+
+    def test_seed_corner_isotropy_must_equal_the_recipe_prescription(self):
+        from mesh_stage_contract import validate_canonical_dag, validate_seed_corner_isotropy
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            reports = {stage: root / f"base--canonical-{stage}.log.json"
+                       for stage in CANONICAL_STAGE_ORDER}
+            recipe = root / "base--canonical-recipe.json"
+            seed_report = json.loads(reports["seed-generation"].read_text())
+            validate_canonical_dag(reports, root / "base--canonical.msh")
+            census = validate_seed_corner_isotropy(seed_report, recipe)
+            self.assertEqual(census["CornerIsotropyRadius"], CORNER_ISOTROPY_RADIUS)
+            self.assertEqual(census["IsotropicSize"], NORMAL_SIZE)
+            self.assertEqual(census["SemanticCorners"],
+                             json.loads(recipe.read_text())["TruePhysicalCorners"])
+
+            def tampered(mutate, description):
+                report = copy.deepcopy(seed_report); mutate(report)
+                path = root / f"tampered-{description}.json"
+                path.write_text(json.dumps(report))
+                with self.assertRaises(ValueError):
+                    validate_seed_corner_isotropy(report, recipe)
+                with self.assertRaises(ValueError):
+                    validate_canonical_dag({**reports, "seed-generation": path},
+                                           root / "base--canonical.msh")
+
+            def replace_option(option, value):
+                def mutate(report):
+                    index = report["Command"].index(option) + 1
+                    report["Command"][index] = value
+                return mutate
+
+            def remove_option(option):
+                def mutate(report):
+                    index = report["Command"].index(option)
+                    del report["Command"][index:index + 2]
+                return mutate
+
+            def rewrite_census(**changes):
+                def mutate(report):
+                    item = report["Artifacts"]["seed-corner-census"]
+                    data = json.loads(Path(item["Path"]).read_text()); data.update(changes)
+                    path = root / f"census-{'-'.join(changes)}.json"
+                    path.write_text(json.dumps(data))
+                    item["Path"] = str(path); item["SHA256"] = sha256(path)
+                return mutate
+
+            tampered(replace_option("--corner-isotropy-radius", str(2 * CORNER_ISOTROPY_RADIUS)),
+                     "radius-mismatch")
+            tampered(replace_option("--lc-fine", str(2 * NORMAL_SIZE)), "size-mismatch")
+            tampered(remove_option("--corner-isotropy-radius"), "radius-omitted")
+            tampered(remove_option("--lc-fine"), "size-omitted")
+            tampered(rewrite_census(CornerIsotropyRadius=2 * CORNER_ISOTROPY_RADIUS),
+                     "census-radius")
+            tampered(rewrite_census(IsotropicSize=2 * NORMAL_SIZE), "census-size")
+            tampered(rewrite_census(SemanticCorners=[[9., 9., 9.]]), "census-corners")
 
     def test_same_area_displaced_protected_support_is_detected(self):
         with tempfile.TemporaryDirectory() as temporary:

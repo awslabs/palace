@@ -256,9 +256,11 @@ def _validate_source_transformation(reports, binding, source_paths):
     metric = reports["metric-preparation"]
     recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
     recipe = json.loads(recipe_path.read_text())
+    seed_semantic = Path(reports["seed-generation"]["Inputs"]["canonical-semantic-contract"]["Path"])
     metric_semantic = Path(metric["Inputs"]["canonical-semantic-contract"]["Path"])
     metric_supports = Path(metric["Inputs"]["canonical-supports"]["Path"])
-    if (metric_semantic.resolve() != semantic_path.resolve() or
+    if (seed_semantic.resolve() != semantic_path.resolve() or
+            metric_semantic.resolve() != semantic_path.resolve() or
             metric_supports.resolve() != supports_path.resolve() or
             recipe.get("TransformedSupportsArtifact") != str(supports_path.resolve()) or
             recipe.get("TransformedSupportsSHA256") != sha256(supports_path) or

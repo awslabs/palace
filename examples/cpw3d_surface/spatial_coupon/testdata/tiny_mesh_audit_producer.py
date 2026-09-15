@@ -51,6 +51,17 @@ def produce(output, transform, scale=1.0):
     meshio.write(output, mesh, file_format="gmsh22", binary=False)
 
 
+def corner_census(output, contract_path, radius, isotropic_size):
+    """Recorded corner-ball census of the fixture seed (schema of the production seeder)."""
+    contract = json.loads(contract_path.read_text())
+    corners = contract["SemanticCorners"]
+    output.write_text(json.dumps({
+        "Version": 1, "Frame": "SourceLocal", "SemanticCorners": corners,
+        "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size,
+        "Corners": [{"Corner": index, "Point": corner, "BallEdges": 0}
+                    for index, corner in enumerate(corners)]}, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path); parser.add_argument("transform", type=Path)
@@ -60,10 +71,21 @@ def main():
     parser.add_argument("--signature", type=Path, required=True)
     parser.add_argument("--mask", type=Path, required=True)
     parser.add_argument("--boundary", type=Path, required=True)
+    # Corner isotropy contract of the production seeder: contract corners, ball
+    # radius, isotropic size and the recorded census artifact.
+    parser.add_argument("--semantic-contract", type=Path, required=True)
+    parser.add_argument("--corner-isotropy-radius", type=float, required=True)
+    parser.add_argument("--lc-fine", type=float, required=True)
+    parser.add_argument("--corner-census", type=Path, required=True)
     args = parser.parse_args()
-    if any(not path.is_file() for path in (args.signature, args.mask, args.boundary)):
-        parser.error("signature, mask, and boundary inputs must exist")
+    if any(not path.is_file() for path in (args.signature, args.mask, args.boundary,
+                                           args.semantic_contract)):
+        parser.error("signature, mask, boundary, and semantic contract inputs must exist")
+    if args.corner_census.exists():
+        parser.error("corner census output must be fresh")
     produce(args.output, json.loads(args.transform.read_text()), args.scale)
+    corner_census(args.corner_census, args.semantic_contract, args.corner_isotropy_radius,
+                  args.lc_fine)
 
 
 if __name__ == "__main__":
