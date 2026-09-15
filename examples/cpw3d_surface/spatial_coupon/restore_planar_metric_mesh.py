@@ -60,10 +60,18 @@ def restore(mesh,recipe,maximum_displacement):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('input',type=Path);p.add_argument('recipe',type=Path);p.add_argument('output',type=Path)
-    p.add_argument('--max-displacement',type=float,required=True);a=p.parse_args()
+    bound=p.add_mutually_exclusive_group(required=True)
+    bound.add_argument('--max-displacement',type=float)
+    bound.add_argument('--max-displacement-over-normal',type=float)
+    a=p.parse_args()
     if a.output.exists():raise ValueError('Do not overwrite candidates')
-    if not np.isfinite(a.max_displacement) or a.max_displacement<=0:raise ValueError('Invalid displacement bound')
-    mesh=meshio.read(a.input);output,report=restore(mesh,json.loads(a.recipe.read_text()),a.max_displacement)
+    recipe=json.loads(a.recipe.read_text())
+    maximum=(a.max_displacement if a.max_displacement is not None else
+             a.max_displacement_over_normal*float(recipe['NormalSize']))
+    if not np.isfinite(maximum) or maximum<=0:raise ValueError('Invalid displacement bound')
+    mesh=meshio.read(a.input);output,report=restore(mesh,recipe,maximum)
+    if a.max_displacement_over_normal is not None:
+        report['CorrectionBoundOverNormalSize']=a.max_displacement_over_normal
     meshio.write(a.output,output,file_format='gmsh22',binary=True)
     report['NativeInputSHA256']=hashlib.sha256(a.input.read_bytes()).hexdigest();report['OutputSHA256']=hashlib.sha256(a.output.read_bytes()).hexdigest()
     a.output.with_suffix('.projection.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
