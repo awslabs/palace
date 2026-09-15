@@ -31,6 +31,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Reduced repeated work in PROM construction [PR
     930](https://github.com/awslabs/palace/pull/930).
 
+#### Interface Changes
+
+  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
+    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+
 ## [0.18.0] - 2026-09-09
 
 #### New Features
