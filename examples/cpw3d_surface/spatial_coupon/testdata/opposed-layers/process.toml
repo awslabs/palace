@@ -1,0 +1,7 @@
+Units = "um"
+Radius = 0.5
+MetalThickness = 0.06
+Overetch = 0.02
+SidewallAngle = 90.0
+TopRounding = 0.0
+TrenchRounding = 0.0

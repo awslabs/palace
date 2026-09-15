@@ -63,13 +63,13 @@ class EdgeVolumeMetricTest(unittest.TestCase):
                         [2,6,7],[2,7,3],[0,4,6],[0,6,2],[1,3,7],[1,7,5]])
         points=np.vstack((4*cube-2,cube-.5));tri=np.vstack((faces,faces+8))
         refs=np.r_[np.ones(12,dtype=int),np.full(12,6001,dtype=int)]
-        _,_,s,c=surface_features(points,tri,refs)
+        _,_,s,c=surface_features(points,tri,refs,{1})
         self.assertEqual(len(s),12);self.assertEqual(len(c),8)
         axis=np.array([1.,2.,3.]);axis/=np.linalg.norm(axis);angle=.43
         cross=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
         q=np.eye(3)*np.cos(angle)+(1-np.cos(angle))*np.outer(axis,axis)+np.sin(angle)*cross
         shift=np.array([2.,-1.,3.])
-        _,_,rs,rc=surface_features(points@q.T+shift,tri,refs)
+        _,_,rs,rc=surface_features(points@q.T+shift,tri,refs,{1})
         self.assertEqual(len(rs),12);self.assertEqual(len(rc),8)
         query=np.array([[0.,-.5,-.5],[.4,-.49,-.48]])
         m=volume_metric(query,s,c,.005,.05,.4)

@@ -1,0 +1,8 @@
+{
+  "Version": 1,
+  "GeometryOrder": 1,
+  "NormalSizeOverThickness": 0.25,
+  "TangentialSizeOverNormalSize": 4.0,
+  "FarSizeOverRadius": 0.08,
+  "UnmatchedPolicy": "Error"
+}

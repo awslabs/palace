@@ -109,13 +109,16 @@ def feature_chains(points,edges,lower,upper,tolerance=1e-8,cut_nodes=None):
     return np.asarray(segments),np.asarray(corners).reshape(-1,3)
 
 
-def surface_features(points,triangles,references,tolerance=1e-8):
+def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     """Feature graph of a conforming piecewise-planar, reference-labeled complex.
 
     Geometry preservation uses ALL patch junctions. Metric sources exclude box
     cuts; same-reference coplanar subdivisions never become features.
     """
     p=np.asarray(points);tri=np.asarray(triangles);refs=np.asarray(references)
+    cut_references=set(cut_references)
+    if not cut_references or not cut_references <= set(refs):
+        raise ValueError('Cut-surface references must be a nonempty label subset')
     xyz=p[tri];n=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);length=np.linalg.norm(n,axis=1)
     if np.any(length<=0):raise ValueError('Degenerate surface triangle')
     n/=length[:,None]
@@ -125,7 +128,7 @@ def surface_features(points,triangles,references,tolerance=1e-8):
     pairs=np.sort(tri[:,[(0,1),(1,2),(2,0)]].reshape(-1,2),axis=1)
     owner=np.repeat(patch,3)
     order=np.lexsort((pairs[:,1],pairs[:,0]));pairs=pairs[order];owner=owner[order]
-    on_matching=np.repeat(refs==1,3)[order]
+    on_matching=np.repeat(np.isin(refs,list(cut_references)),3)[order]
     start=np.r_[0,np.flatnonzero(np.any(pairs[1:]!=pairs[:-1],axis=1))+1]
     is_feature=np.minimum.reduceat(owner,start)!=np.maximum.reduceat(owner,start)
     features=pairs[start][is_feature]
@@ -133,7 +136,7 @@ def surface_features(points,triangles,references,tolerance=1e-8):
     # valid for a rigidly rotated coupon and identifies artificial cut endpoints.
     touches_matching=np.logical_or.reduceat(on_matching,start)[is_feature]
     physical=features[~touches_matching]
-    cut_nodes=set(map(int,tri[refs==1].ravel()))
+    cut_nodes=set(map(int,tri[np.isin(refs,list(cut_references))].ravel()))
     lower=p.min(axis=0);upper=p.max(axis=0)
     segments,corners=feature_chains(p,physical,lower,upper,tolerance,cut_nodes=cut_nodes)
     # Pin junctions/turns in the complete preservation graph, including box corners.

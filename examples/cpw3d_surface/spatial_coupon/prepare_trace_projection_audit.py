@@ -117,6 +117,8 @@ def validate_bank(geometry, values):
 
 
 def prepare(inputs, palace, output):
+    # Historical model-specific diagnostic.  It is intentionally outside the
+    # geometry-independence gate; new generic producers use trace_audit_contract.py.
     config = json.loads((inputs/'template.json').read_text())
     sources = config['Boundaries']['PrescribedPotential']
     if len(sources) != 135 or [s['Index'] for s in sources] != list(range(1, 136)):

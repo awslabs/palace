@@ -2,8 +2,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Group all 135 audited columns using preexisting corrected-model constraints.
+"""Group the historical 135-column model-specific trace diagnostic.
 
+This tool and its fixed 40/95 partition are explicitly outside the generic
+geometry-independence gate.  New trace audits use ``trace_audit_contract.py``.
 Column-normalized nodal Gram spectra are numerical diagnostics, not rigorous rank
 certificates. No column is removed or relabeled based on its numerical values.
 """

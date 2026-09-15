@@ -1,0 +1,104 @@
+{
+  "Version": 1,
+  "VolumeMaterials": [
+    {
+      "Attribute": 1,
+      "Material": "vacuum"
+    },
+    {
+      "Attribute": 2,
+      "Material": "substrate"
+    }
+  ],
+  "BoundaryLabels": [
+    {
+      "Attribute": 1,
+      "Role": "outer",
+      "AdjacentMaterials": [
+        1
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 3100,
+      "Role": "matching-slot-0",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 3101,
+      "Role": "matching-slot-1",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 5001,
+      "Role": "conductor-1-slot-0-ms",
+      "AdjacentMaterials": [
+        1
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 5101,
+      "Role": "conductor-1-slot-1-ms",
+      "AdjacentMaterials": [
+        1
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 6001,
+      "Role": "conductor-1-slot-0-ma",
+      "AdjacentMaterials": [
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 6101,
+      "Role": "conductor-1-slot-1-ma",
+      "AdjacentMaterials": [
+        2
+      ],
+      "Protected": true
+    }
+  ],
+  "SemanticCorners": [
+    [
+      -0.4,
+      -0.4,
+      0
+    ],
+    [
+      0.4,
+      0.4,
+      0.6
+    ]
+  ],
+  "ProtectedSupports": [
+    "outer",
+    "matching-slot-0",
+    "matching-slot-1",
+    "conductor-1-slot-0-ms",
+    "conductor-1-slot-1-ms",
+    "conductor-1-slot-0-ma",
+    "conductor-1-slot-1-ma"
+  ],
+  "MetricSurfaceRoles": [
+    "conductor-1-slot-0-ms",
+    "conductor-1-slot-1-ms",
+    "conductor-1-slot-0-ma",
+    "conductor-1-slot-1-ma"
+  ],
+  "UnmatchedPolicy": "Error",
+  "CutSurfaceRoles": [
+    "outer"
+  ]
+}

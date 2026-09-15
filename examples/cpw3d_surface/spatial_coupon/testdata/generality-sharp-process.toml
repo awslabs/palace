@@ -1,0 +1,9 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+Units = "um"
+Radius = 12.5
+MetalThickness = 0.1
+Overetch = 0.05
+SidewallAngle = 90.0
+TopRounding = 0.0
+TrenchRounding = 0.0

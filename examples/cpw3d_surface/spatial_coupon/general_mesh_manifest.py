@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Fail-closed manifest and evidence gate for coupon mesh generality."""
+import csv
+import hashlib
+import json
+import math
+from pathlib import Path
+
+from semantic_mesh_contract import REQUIRED_ROLES, load_semantic_contract
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def canonical_sha256(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def _artifact_path(base, item):
+    path = Path(item["Path"])
+    return path if path.is_absolute() else (base / path).resolve()
+
+
+def _check_artifact(base, item, description):
+    if not isinstance(item, dict) or not item.get("Path") or not item.get("SHA256"):
+        raise ValueError(f"{description} binding is incomplete")
+    path = _artifact_path(base, item)
+    if not path.is_file() or sha256(path) != item["SHA256"]:
+        raise ValueError(f"{description} artifact hash mismatch")
+    return path
+
+
+def _same_points(expected, actual, tolerance):
+    if not expected or not actual or len(expected) != len(actual):
+        return False
+    unused = [tuple(float(x) for x in point) for point in actual]
+    for point in expected:
+        point = tuple(float(x) for x in point)
+        match = next((i for i, other in enumerate(unused)
+                      if len(point) == len(other) and math.dist(point, other) <= tolerance), None)
+        if match is None:
+            return False
+        unused.pop(match)
+    return True
+
+
+def _finite_number(value, *, nonnegative=False, positive=False):
+    good = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return good and (not nonnegative or value >= 0) and (not positive or value > 0)
+
+
+def validate_manifest(manifest, manifest_path, *, check_available_files=True):
+    if manifest.get("Version") != 2 or not isinstance(manifest.get("Cases"), list):
+        raise ValueError("Unsupported generality-suite manifest")
+    if not manifest["Cases"]:
+        raise ValueError("Manifest must declare cases")
+    identifiers = [case.get("Id") for case in manifest["Cases"]]
+    if any(not value for value in identifiers) or len(set(identifiers)) != len(identifiers):
+        raise ValueError("Manifest case identifiers must be nonempty and unique")
+    gates = manifest.get("Gates", {})
+    required_gates = ("CornerTolerance", "MaximumNormalFactor", "MinimumAchievedAspect",
+                      "MinimumScaledJacobian", "MaximumJacobianCondition",
+                      "MaximumSeconds", "MaximumRSSGiB", "MaximumElements")
+    if any(not _finite_number(gates.get(name), nonnegative=True) for name in required_gates):
+        raise ValueError("Manifest has missing or invalid mesh gates")
+    repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
+    tools = manifest.get("Tools")
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("Manifest must freeze at least one evidence tool")
+    tool_hashes = {}
+    for tool in tools:
+        name, digest = tool.get("Name"), tool.get("SHA256")
+        if not name or name in tool_hashes or not digest:
+            raise ValueError("Tool names and hashes must be nonempty and unique")
+        tool_hashes[name] = digest
+        if check_available_files:
+            path = repository / tool["Path"]
+            if not path.is_file() or sha256(path) != digest:
+                raise ValueError(f"frozen tool hash mismatch: {name}")
+    matrix = set()
+    comparison_kinds = set()
+    for case in manifest["Cases"]:
+        source = case.get("Source", {})
+        files = source.get("Files")
+        if not isinstance(files, dict) or any(role not in files for role in REQUIRED_ROLES):
+            raise ValueError(f"{case['Id']} lacks a required immutable role")
+        if "MeshRecipe" not in files:
+            raise ValueError(f"{case['Id']} lacks a frozen mesh recipe")
+        variants = case.get("Variants")
+        if not isinstance(variants, list) or not variants:
+            raise ValueError(f"{case['Id']} has no variants")
+        variant_ids = []
+        for variant in variants:
+            if (not isinstance(variant, dict) or not variant.get("Id") or
+                    not isinstance(variant.get("Transform"), list) or
+                    len(variant["Transform"]) != 16 or
+                    not all(_finite_number(x) for x in variant["Transform"])):
+                raise ValueError(f"{case['Id']} has an invalid variant transform")
+            variant_ids.append(variant["Id"])
+            matrix.add((case["Id"], variant["Id"]))
+        if len(set(variant_ids)) != len(variant_ids) or "identity" not in variant_ids:
+            raise ValueError(f"{case['Id']} variants must be unique and include identity")
+        comparison = case.get("TransformComparison")
+        if (not isinstance(comparison, dict) or comparison.get("Reference") not in variant_ids or
+                comparison.get("Transformed") not in variant_ids or
+                comparison.get("Reference") == comparison.get("Transformed") or
+                not _finite_number(comparison.get("MaximumRelativeInvariantError"),
+                                   nonnegative=True)):
+            raise ValueError(f"{case['Id']} has no exact transform comparison pair")
+    comparisons = manifest.get("ScalingComparisons")
+    if not isinstance(comparisons, list) or not comparisons:
+        raise ValueError("Manifest must declare scaling comparisons")
+    for comparison in comparisons:
+        kind = comparison.get("Kind")
+        refs = (tuple(comparison.get("Reference", [])), tuple(comparison.get("Compared", [])))
+        if kind not in ("feature-scaling", "cad-subdivision-sensitivity") or any(ref not in matrix for ref in refs):
+            raise ValueError("Invalid scaling comparison")
+        if not _finite_number(comparison.get("MaximumNormalizedDOFRatio"), positive=True):
+            raise ValueError("Scaling comparison has no positive bound")
+        comparison_kinds.add(kind)
+    if comparison_kinds != {"feature-scaling", "cad-subdivision-sensitivity"}:
+        raise ValueError("Both feature and CAD-subdivision scaling controls are required")
+    return repository, tool_hashes, matrix
+
+
+def audit_manifest_evidence(evidence, gates, contract, binding):
+    """Judge actual measurements against a separately frozen semantic contract."""
+    failures = []
+    required_binding = {
+        "CaseId": binding["CaseId"], "Variant": binding["Variant"],
+        "TransformSHA256": binding["TransformSHA256"],
+        "InputSHA256": binding["InputSHA256"],
+        "ProcessSHA256": binding["InputSHA256"]["Process"],
+        "SemanticContractSHA256": binding["InputSHA256"]["SemanticContract"],
+        "RecipeSHA256": binding["InputSHA256"]["MeshRecipe"],
+        "ToolSHA256": binding["ToolSHA256"],
+    }
+    if evidence.get("Version") != 2 or any(evidence.get(key) != value
+                                            for key, value in required_binding.items()):
+        failures.append("provenance-binding")
+
+    expected_materials = sorted(contract["VolumeMaterials"], key=lambda item: item["Attribute"])
+    actual_materials = evidence.get("ActualVolumeMaterials")
+    expected_labels = sorted(item["Attribute"] for item in contract["BoundaryLabels"])
+    actual_labels = evidence.get("ActualBoundaryAttributes")
+    if (not actual_materials or not actual_labels or
+            sorted(actual_materials, key=lambda item: item.get("Attribute", -1)) != expected_materials or
+            sorted(actual_labels) != expected_labels):
+        failures.append("exact-labels-materials")
+    expected_adjacency = {str(item["Attribute"]): sorted(item["AdjacentMaterials"])
+                          for item in contract["BoundaryLabels"]}
+    actual_adjacency = evidence.get("ActualAdjacency")
+    if (not actual_adjacency or
+            {str(key): sorted(value) for key, value in actual_adjacency.items()} !=
+            expected_adjacency):
+        failures.append("material-adjacency")
+
+    ownership = evidence.get("OwnershipClosure", {})
+    if (ownership.get("UnmatchedPolicy") != contract["UnmatchedPolicy"] or
+            ownership.get("Unmatched") != 0 or ownership.get("Overlaps") != 0 or
+            ownership.get("Exhaustive") is not True):
+        failures.append("ownership-exhaustive-closure")
+    if not _same_points(contract["SemanticCorners"], evidence.get("ActualSemanticCorners"),
+                        float(gates["CornerTolerance"])):
+        failures.append("semantic-corners")
+    protected = evidence.get("ProtectedSurfaces", {})
+    if (not protected.get("Actual") or
+            sorted(protected.get("Actual", [])) != sorted(contract["ProtectedSupports"]) or
+            protected.get("Changed") != 0):
+        failures.append("protected-surfaces")
+
+    widths = evidence.get("AchievedAnisotropy", {})
+    values = [widths.get(name) for name in ("Transverse1P90", "Transverse2P90",
+                                             "NormalTarget", "TangentialP50")]
+    if (not isinstance(widths.get("Samples"), int) or widths.get("Samples", 0) <= 0 or
+            any(not _finite_number(x, positive=True) for x in values) or
+            max(values[:2]) > gates["MaximumNormalFactor"] * values[2] or
+            values[3] < gates["MinimumAchievedAspect"] * max(values[:2])):
+        failures.append("achieved-anisotropy")
+    if evidence.get("TraceDiagonal", {}).get("GlobalDiagonalBands") != 0:
+        failures.append("trace-diagonal-overrefinement")
+
+    quality = evidence.get("MeshQuality", {})
+    if (not isinstance(quality.get("Samples"), int) or quality.get("Samples", 0) <= 0 or
+            not _finite_number(quality.get("MinimumScaledJacobian"), nonnegative=True) or
+            quality.get("MinimumScaledJacobian", -1) < gates["MinimumScaledJacobian"] or
+            not _finite_number(quality.get("MaximumJacobianCondition"), positive=True) or
+            quality.get("MaximumJacobianCondition", math.inf) > gates["MaximumJacobianCondition"]):
+        failures.append("mesh-quality-jacobian")
+    resources = evidence.get("Resources", {})
+    resource_names = ("Seconds", "PeakRSSGiB", "Elements")
+    if (resources.get("ExitCode") != 0 or
+            any(not _finite_number(resources.get(name), nonnegative=True) for name in resource_names) or
+            resources.get("Seconds", math.inf) > gates["MaximumSeconds"] or
+            resources.get("PeakRSSGiB", math.inf) > gates["MaximumRSSGiB"] or
+            resources.get("Elements", math.inf) > gates["MaximumElements"]):
+        failures.append("bounded-resources")
+    complexity = evidence.get("Complexity", {})
+    if (not isinstance(complexity.get("H1DOFs"), int) or complexity.get("H1DOFs", 0) <= 0 or
+            not isinstance(complexity.get("FeatureCount"), int) or
+            complexity.get("FeatureCount", 0) <= 0 or
+            not isinstance(complexity.get("CADSubdivisionCount"), int) or
+            complexity.get("CADSubdivisionCount", -1) < 0):
+        failures.append("complexity-counts")
+    invariants = evidence.get("ComparisonInvariants")
+    if (not isinstance(invariants, dict) or not invariants or
+            any(not _finite_number(value) for value in invariants.values())):
+        failures.append("comparison-invariants")
+    return failures
+
+
+def _relative_error(a, b):
+    scale = max(abs(a), abs(b), 1e-300)
+    return abs(a - b) / scale
+
+
+def run_manifest(args):
+    manifest_path = args.manifest.resolve()
+    manifest = json.loads(manifest_path.read_text())
+    repository, tool_hashes, _ = validate_manifest(manifest, manifest_path)
+    cases_by_id = {case["Id"]: case for case in manifest["Cases"]}
+    overrides = {}
+    for item in args.input:
+        if "=" not in item:
+            raise ValueError("--input must be CASE=DIRECTORY")
+        key, value = item.split("=", 1)
+        if key in overrides or key not in cases_by_id:
+            raise ValueError("Duplicate or unknown input override: " + key)
+        overrides[key] = Path(value).resolve()
+
+    records, sources, preflight_ok = [], {}, True
+    for case in manifest["Cases"]:
+        record = {"Id": case["Id"], "Passed": False,
+                  "Variants": [variant["Id"] for variant in case["Variants"]]}
+        try:
+            source = case["Source"]
+            directory = overrides.get(case["Id"])
+            if directory is None and source.get("Directory"):
+                candidate = Path(source["Directory"])
+                directory = candidate if candidate.is_absolute() else repository / candidate
+            if directory is None or not directory.is_dir():
+                raise ValueError("required immutable input directory is unavailable")
+            hashes, paths = {}, {}
+            for role, entry in source["Files"].items():
+                expected, name = entry.get("SHA256"), entry.get("Name")
+                repository_name = entry.get("RepositoryPath")
+                if not expected or (not name and not repository_name) or (name and repository_name):
+                    raise ValueError(f"{role} has no unambiguous frozen path and SHA256")
+                candidate = Path(repository_name or name)
+                if candidate.is_absolute():
+                    path = candidate
+                elif repository_name:
+                    path = repository / candidate
+                else:
+                    path = directory / candidate
+                if not path.is_file() or sha256(path) != expected:
+                    raise ValueError(f"immutable {role} hash mismatch")
+                hashes[role], paths[role] = expected, path
+            contract = load_semantic_contract(paths["SemanticContract"])
+            signature_role = source["SignatureRole"]
+            with paths[signature_role].open(newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            required_columns = set(source["SignatureColumns"])
+            if not rows or not required_columns.issubset(rows[0]):
+                raise ValueError("empty or malformed edge signature")
+            record.update({"InputDirectory": str(directory), "InputSHA256": hashes,
+                           "DiscoveredEdgeCount": len(rows),
+                           "DiscoveredSlots": sorted({int(row["Slot"]) for row in rows}),
+                           "DiscoveredConductors": sorted({int(row["Conductor"]) for row in rows})})
+            sources[case["Id"]] = (hashes, paths, contract)
+            record["Passed"] = True
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            record["Error"] = str(error)
+            preflight_ok = False
+        records.append(record)
+
+    summary = {"Version": 2, "Scope": "Mesh-only geometry-independence gates",
+               "Manifest": str(manifest_path), "PreflightPassed": preflight_ok,
+               "Cases": records, "Passed": False}
+    args.root.mkdir(parents=True, exist_ok=False)
+    if not preflight_ok or args.preflight_only:
+        summary["Passed"] = preflight_ok and args.preflight_only
+        (args.root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        return summary["Passed"]
+    if args.audit_root is None:
+        raise ValueError("--audit-root is required unless --preflight-only is used")
+
+    evidence_by_key, used_audits, used_meshes = {}, set(), set()
+    for case, record in zip(manifest["Cases"], records):
+        record["VariantResults"] = []
+        hashes, _, contract = sources[case["Id"]]
+        for variant in case["Variants"]:
+            variant_id = variant["Id"]
+            result = {"Variant": variant_id, "Passed": False}
+            path = args.audit_root / f"{case['Id']}--{variant_id}.json"
+            try:
+                evidence = json.loads(path.read_text())
+                binding = {"CaseId": case["Id"], "Variant": variant_id,
+                           "TransformSHA256": canonical_sha256(variant["Transform"]),
+                           "InputSHA256": hashes, "ToolSHA256": tool_hashes}
+                failures = audit_manifest_evidence(evidence, manifest["Gates"], contract, binding)
+                mesh_path = _check_artifact(path.parent, evidence.get("Mesh"), "audited mesh")
+                if mesh_path in used_meshes:
+                    raise ValueError("audited meshes must be independent per matrix entry")
+                used_meshes.add(mesh_path)
+                audit_records = evidence.get("AuditRecords")
+                if not isinstance(audit_records, list) or not audit_records:
+                    raise ValueError("independent audit records are required")
+                resolved = []
+                for item in audit_records:
+                    if item.get("Kind") != "producer-audit":
+                        raise ValueError("audit record kind is not producer-audit")
+                    audit_path = _check_artifact(path.parent, item, "audit record")
+                    audit_data = json.loads(audit_path.read_text())
+                    if (audit_data.get("CaseId") != case["Id"] or
+                            audit_data.get("Variant") != variant_id):
+                        raise ValueError("stale or wrong-case producer audit")
+                    resolved.append(audit_path)
+                if any(item in used_audits for item in resolved):
+                    raise ValueError("audit records must be independent per matrix entry")
+                used_audits.update(resolved)
+                result.update({"AuditEvidence": str(path), "GateFailures": failures,
+                               "Passed": not failures})
+                evidence_by_key[(case["Id"], variant_id)] = evidence
+            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                result["Error"] = str(error)
+            record["VariantResults"].append(result)
+        record["Passed"] = all(item["Passed"] for item in record["VariantResults"])
+
+    comparison_failures = []
+    for case in manifest["Cases"]:
+        comparison = case["TransformComparison"]
+        keys = [(case["Id"], comparison[name]) for name in ("Reference", "Transformed")]
+        if any(key not in evidence_by_key for key in keys):
+            comparison_failures.append(case["Id"] + ": missing transform evidence")
+            continue
+        left, right = (evidence_by_key[key]["ComparisonInvariants"] for key in keys)
+        if left.keys() != right.keys() or not left:
+            comparison_failures.append(case["Id"] + ": invariant keys differ")
+            continue
+        error = max(_relative_error(left[name], right[name]) for name in left)
+        if error > comparison["MaximumRelativeInvariantError"]:
+            comparison_failures.append(case["Id"] + ": rotation covariance")
+    scaling_failures = []
+    for comparison in manifest["ScalingComparisons"]:
+        keys = [tuple(comparison[name]) for name in ("Reference", "Compared")]
+        if any(key not in evidence_by_key for key in keys):
+            scaling_failures.append(comparison["Id"] + ": missing evidence")
+            continue
+        complexity = [evidence_by_key[key]["Complexity"] for key in keys]
+        normalized = [item["H1DOFs"] / item["FeatureCount"] for item in complexity]
+        ratio = max(normalized) / min(normalized)
+        if (comparison["Kind"] == "cad-subdivision-sensitivity" and
+                (complexity[0]["FeatureCount"] != complexity[1]["FeatureCount"] or
+                 complexity[0]["CADSubdivisionCount"] == complexity[1]["CADSubdivisionCount"])):
+            scaling_failures.append(comparison["Id"] + ": invalid CAD subdivision control")
+        elif ratio > comparison["MaximumNormalizedDOFRatio"]:
+            scaling_failures.append(comparison["Id"] + ": H1 DOF scaling")
+    summary["TransformComparisonFailures"] = comparison_failures
+    summary["ScalingComparisonFailures"] = scaling_failures
+    summary["Passed"] = (all(record["Passed"] for record in records) and
+                         not comparison_failures and not scaling_failures)
+    (args.root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    return summary["Passed"]

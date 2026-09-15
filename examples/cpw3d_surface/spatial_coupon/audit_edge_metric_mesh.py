@@ -11,6 +11,9 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from edge_volume_metric import segment_distances
 from mesh_array_io import read_mesh
+from semantic_mesh_contract import (boundary_adjacency, boundary_attributes,
+                                    load_semantic_contract, metric_surface_attributes,
+                                    volume_attributes)
 
 
 def blocks(mesh,kind):
@@ -19,9 +22,9 @@ def blocks(mesh,kind):
             np.concatenate([a for c,a in zip(mesh.cells,mesh.cell_data[key]) if c.type==kind]))
 
 
-def boundary_component_counts(triangles,labels):
-    """Connected metal-surface components, without joining through dielectric faces."""
-    metal=triangles[np.isin(labels,[5001,6001])]
+def boundary_component_counts(triangles,labels,metal_attributes):
+    """Connected metric-surface components, without joining through other faces."""
+    metal=triangles[np.isin(labels,list(metal_attributes))]
     if not len(metal):return 0
     edges=np.sort(metal[:,[(0,1),(1,2),(2,0)]].reshape(-1,2),axis=1)
     owners=np.repeat(np.arange(len(metal)),3)
@@ -34,8 +37,12 @@ def boundary_component_counts(triangles,labels):
     return int(connected_components(graph,directed=False,return_labels=False))
 
 
-def analyze(mesh):
+def analyze(mesh,contract):
     t,material=blocks(mesh,'tetra');b,labels=blocks(mesh,'triangle');p=mesh.points
+    if set(material)!=volume_attributes(contract):
+        raise ValueError('Volume materials differ from the frozen semantic contract')
+    if set(labels)!=boundary_attributes(contract):
+        raise ValueError('Boundary labels differ from the frozen semantic contract')
     xyz=p[t];signed=np.einsum('ij,ij->i',np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]),xyz[:,3]-xyz[:,0])/6
     if np.any(signed<=0) or not np.all(np.isfinite(p)):raise ValueError('Invalid tetrahedra/coordinates')
     volume={int(a):float(signed[material==a].sum()) for a in np.unique(material)}
@@ -54,11 +61,12 @@ def analyze(mesh):
         raise ValueError('Missing/duplicate boundary faces')
     required=np.flatnonzero((count==1)|(low!=high))
     if not np.array_equal(np.sort(ids),required):raise ValueError('Boundary/interface coverage mismatch')
+    expected_adjacency=boundary_adjacency(contract)
     for attr in np.unique(labels):
-        f=ids[labels==attr]
-        good = ((count[f]==2)&(low[f]==1)&(high[f]==2)) if attr==3100 else (
-            (count[f]==1)&(low[f]==(1 if attr==5001 else 2)) if attr in (5001,6001) else count[f]==1)
-        if not np.all(good):raise ValueError('Incorrect material adjacency for '+str(attr))
+        for f in ids[labels==attr]:
+            actual={int(low[f])} if count[f]==1 else {int(low[f]),int(high[f])}
+            if actual!=expected_adjacency[int(attr)]:
+                raise ValueError('Incorrect material adjacency for '+str(attr))
     adjacency=start[(count==2)&(low==high)]
     u,v=owner[adjacency],owner[adjacency+1]
     graph=coo_matrix((np.ones(len(u)),(u,v)),shape=(len(t),len(t))).tocsr()
@@ -73,7 +81,9 @@ def analyze(mesh):
     unique_planes,index=np.unique(planes,axis=0,return_inverse=True)
     plane_areas=np.bincount(index,weights=twice/2)
     return {'Tetrahedra':len(t),'SurfaceTriangles':len(b),'MaterialVolumes':volume,
-            'MaterialComponents':component_counts,'MetalSurfaceComponents':boundary_component_counts(b,labels),
+            'MaterialComponents':component_counts,
+            'MetalSurfaceComponents':boundary_component_counts(
+                b,labels,metric_surface_attributes(contract)),
             'PlanarPatchAreas':{' '.join(map(str,k)):float(a) for k,a in zip(unique_planes,plane_areas)}},unique_planes
 
 
@@ -105,9 +115,10 @@ def directional_widths(mesh,recipe):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('reference',type=Path);p.add_argument('candidate',type=Path);p.add_argument('recipe',type=Path);p.add_argument('output',type=Path)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('reference',type=Path);p.add_argument('candidate',type=Path);p.add_argument('recipe',type=Path);p.add_argument('semantic_contract',type=Path);p.add_argument('output',type=Path)
     a=p.parse_args();reference=read_mesh(a.reference);candidate=read_mesh(a.candidate)
-    before,_=analyze(reference);after,_=analyze(candidate)
+    contract=load_semantic_contract(a.semantic_contract)
+    before,_=analyze(reference,contract);after,_=analyze(candidate,contract)
     for key in ('MaterialVolumes','PlanarPatchAreas'):
         if before[key].keys()!=after[key].keys():raise ValueError('Changed '+key+' supports')
         error=max(abs(after[key][k]/v-1) for k,v in before[key].items())
