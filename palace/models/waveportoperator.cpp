@@ -335,7 +335,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
   port_linear.tol = data.ksp_tol;
   if (data.complex_coarse_solve)
   {
+    // An explicit per-port choice takes precedence over an inherited real-valued
+    // preconditioner approximation, which would otherwise silently discard it.
     port_linear.complex_coarse_solve = *data.complex_coarse_solve;
+    port_linear.pc_mat_real = false;
   }
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;

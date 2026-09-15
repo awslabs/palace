@@ -172,7 +172,10 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
   auto setup = LoadCpwWaveConfig();
   // Exercise the per-port doubled-real preconditioner override on the restricted port MPI
   // communicator while leaving the full 3D linear solver on its default real factorization.
+  // The global real-valued preconditioner approximation must not silently disable the
+  // explicit per-port choice.
   setup["Solver"]["Linear"]["ComplexCoarseSolve"] = false;
+  setup["Solver"]["Linear"]["PCMatReal"] = true;
   bool first_port = true;
   for (auto &port : setup["Boundaries"]["WavePort"])
   {

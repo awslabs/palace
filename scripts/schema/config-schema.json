@@ -1366,7 +1366,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve). This override affects only this wave port and does not change the full 3D system preconditioner.",
+          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` includes the complex terms in the real-valued preconditioner. This override affects only this wave port and does not change the full 3D system preconditioner.",
           "x-palace-advanced": true
         },
         "EigenTol": {

@@ -535,8 +535,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // The sparse matrix sum and doubled-real block construction below are MPI-collective on
   // the FE space communicator. Wave-port sparse-direct solvers run on a subcommunicator,
   // so assemble the complex-aware preconditioner on all ranks before non-port ranks
-  // return. The resulting real operator is already in the form expected by the wrapped
-  // sparse solver, avoiding another collective assembly in MfemWrapperSolver.
+  // return. direct_pc_op only carries the assembled real matrix (2N x 2N in the
+  // doubled-real case) into MfemWrapperSolver::SetOperator; its Mult is not meaningful.
   direct_pc_op.reset();
   if (!block_pc_ptr && !linear.pc_mat_real)
   {
