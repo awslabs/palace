@@ -241,7 +241,9 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
     if (report.get("Version") != 3 or report.get("Stage") != stage or
             report.get("ReturnCode") != 0 or report.get("StopReason") is not None or
             not isinstance(report.get("Command"), list) or not report["Command"] or
-            not isinstance(report.get("Environment"), dict)):
+            not isinstance(report.get("Environment"), dict) or
+            not isinstance(report.get("WorkingDirectory"), str) or
+            not Path(report["WorkingDirectory"]).is_absolute()):
         raise ValueError(f"Invalid or unsuccessful bounded stage: {stage}")
     producer = report.get("Producer", {})
     if launcher_name is not None and (producer.get("Name") != launcher_name or

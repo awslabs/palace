@@ -48,7 +48,8 @@ hash.
 
 A version-3 normalized record is assembled from five separate records:
 
-1. `bounded-run`: `run_bounded_mesher.py` records the exact command,
+1. `bounded-run`: `run_bounded_mesher.py` records the exact command, its
+   absolute working directory (so relative argv paths resolve unambiguously),
    constrained environment, launcher digest, resource measurements, and output
    mesh digest.
 2. `mesh-topology-quality`: the real Gmsh mesh is parsed and audited for

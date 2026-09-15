@@ -59,7 +59,7 @@
     {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "191dbb16d9db5cbc5d90277c12321e9e44d91a4d364dc82f03700f0a4c685129"
+      "SHA256": "75bd2c07786bf68f65b63e74800159634cc5bd3c601a1c011aa39426df98c212"
     },
     {
       "Name": "general_mesh_audit_producer.py",
@@ -69,7 +69,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "58ef178e994bd89cdf809b98fb47b324c5cf6836c35c8442b4431f22e19803f9"
+      "SHA256": "df919f129ea19b60fa892449f6a37d076eac5c578afe4f64301b8808c3aa7469"
     },
     {
       "Name": "canonical_mesh_build.py",

@@ -135,6 +135,7 @@ def main():
     report = {
         "Version": 3 if args.stage else 2,
         "Command": command,
+        "WorkingDirectory": str(Path.cwd().resolve()),
         "Environment": {name: env[name] for name in
                         ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "JULIA_NUM_THREADS")},
         "Producer": {"Name": Path(__file__).name,
