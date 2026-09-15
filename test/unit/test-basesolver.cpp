@@ -360,6 +360,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   {
     IoData iodata(units);
     iodata.model.mesh = p.string();
+    iodata.model.clean_unused_elements = false;
     return mesh::Load(iodata, comm);
   };
   auto gz = load(gz_path);

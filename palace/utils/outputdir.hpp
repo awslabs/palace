@@ -196,11 +196,6 @@ inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&writ
         if (compress)
         {
           mfem::ofgzstream stream(path.string(), true);
-          if (!stream.good())
-          {
-            throw fs::filesystem_error("Could not open output file", path,
-                                       std::make_error_code(std::errc::io_error));
-          }
           write_func(stream);
           return;
         }
