@@ -157,7 +157,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         raise ValueError('Seed boundary labels differ from the frozen semantic contract')
     if set(tetrahedron_refs)!=volume_attributes(semantic_contract):
         raise ValueError('Seed volume materials differ from the frozen semantic contract')
-    features,pins,segments,corners=surface_features(
+    features,pins,pin_kinds,segments,corners=surface_features(
         mesh.points,triangles,triangle_refs,cut_surface_attributes(semantic_contract))
     if transformed_supports is not None:
         validate_transformed_supports(transformed_supports, semantic_contract, segments)
@@ -221,6 +221,15 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'MetricOrder':['m11','m12','m13','m22','m23','m33'],
             'Nodes':len(mesh.points),'Tetrahedra':len(tetrahedra),'SurfaceTriangles':len(triangles),
             'PreservedFeatureEdges':len(features),'PinnedGeometryVertices':len(pins),
+            'PinnedVertexKinds':{kind:int(np.sum(pin_kinds==kind))
+                                 for kind in ('geometric-corner','reference-turn')},
+            'PinnedVertices':[{'Point':mesh.points[node].tolist(),'Kind':str(kind)}
+                              for node,kind in zip(pins,pin_kinds)],
+            'PinPolicy':'turns/junctions of the complete reference-boundary graph are MMG '
+                        'required vertices because MMG reconstructs reference boundaries as '
+                        'geometric curves; ridges, metric segments and protected bands are '
+                        'non-coplanar features only; reference-turn pins are not semantic '
+                        'corners or protected supports',
             'PhysicalSegments':segments.tolist(),'TruePhysicalCorners':semantic_corners.tolist(),
             'SurfaceFeatureCorners':corners.tolist(),
             'PlanarSupports':{str(10000+i):{'Attribute':int(row[0]),'Normal':row[1:4].tolist(),'Offset':float(row[4])} for i,row in enumerate(exact_planes)},

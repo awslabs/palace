@@ -75,13 +75,13 @@ class EdgeVolumeMetricTest(unittest.TestCase):
                         [2,6,7],[2,7,3],[0,4,6],[0,6,2],[1,3,7],[1,7,5]])
         points=np.vstack((4*cube-2,cube-.5));tri=np.vstack((faces,faces+8))
         refs=np.r_[np.ones(12,dtype=int),np.full(12,6001,dtype=int)]
-        _,_,s,c=surface_features(points,tri,refs,{1})
+        _,_,_,s,c=surface_features(points,tri,refs,{1})
         self.assertEqual(len(s),12);self.assertEqual(len(c),8)
         axis=np.array([1.,2.,3.]);axis/=np.linalg.norm(axis);angle=.43
         cross=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
         q=np.eye(3)*np.cos(angle)+(1-np.cos(angle))*np.outer(axis,axis)+np.sin(angle)*cross
         shift=np.array([2.,-1.,3.])
-        _,_,rs,rc=surface_features(points@q.T+shift,tri,refs,{1})
+        _,_,_,rs,rc=surface_features(points@q.T+shift,tri,refs,{1})
         self.assertEqual(len(rs),12);self.assertEqual(len(rc),8)
         query=np.array([[0.,-.5,-.5],[.4,-.49,-.48]])
         m=volume_metric(query,s,c,.005,.05,.4)
@@ -103,26 +103,61 @@ class EdgeVolumeMetricTest(unittest.TestCase):
 
     def test_coplanar_label_seam_is_a_reference_boundary_not_a_feature(self):
         points,tri,refs=self._boxed_cube()
-        single=surface_features(points,tri,refs,{1})
-        split=refs.copy();split[-2:]=6101  # two of the four coplanar top fans
-        seam=surface_features(points,tri,split,{1})
-        for one,two in zip(single,seam):np.testing.assert_array_equal(one,two)
-        features,pins,segments,corners=seam
+        features,pins,kinds,segments,corners=surface_features(points,tri,refs,{1})
         self.assertEqual(len(features),24);self.assertEqual(len(pins),16)
         self.assertEqual(len(segments),12);self.assertEqual(len(corners),8)
+        self.assertTrue(np.all(kinds=='geometric-corner'))
+        split=refs.copy();split[-2:]=6101  # two of the four coplanar top fans
+        seam_features,seam_pins,seam_kinds,seam_segments,seam_corners=surface_features(
+            points,tri,split,{1})
+        # The seam is a straight line through the center: no ridge, no metric
+        # segment, no corner, and the collinear center vertex is not a pin.
+        np.testing.assert_array_equal(seam_features,features)
+        np.testing.assert_array_equal(seam_segments,segments)
+        np.testing.assert_array_equal(seam_corners,corners)
+        np.testing.assert_array_equal(seam_pins,pins)
+        np.testing.assert_array_equal(seam_kinds,kinds)
         seam_edges={(12,16),(13,16),(14,16),(15,16)}
-        self.assertFalse(seam_edges&set(map(tuple,features)));self.assertNotIn(16,pins)
+        self.assertFalse(seam_edges&set(map(tuple,seam_features)));self.assertNotIn(16,seam_pins)
+
+    def test_coplanar_seam_junction_is_a_reference_turn_pin_only(self):
+        points,tri,refs=self._boxed_cube()
+        base=surface_features(points,tri,refs,{1})
+        split=refs.copy();split[-1]=6101  # one fan: the seam bends at the center
+        features,pins,kinds,segments,corners=surface_features(points,tri,split,{1})
+        np.testing.assert_array_equal(features,base[0])
+        np.testing.assert_array_equal(segments,base[3]);np.testing.assert_array_equal(corners,base[4])
+        self.assertEqual(len(pins),17);self.assertIn(16,pins)
+        self.assertEqual(dict(zip(pins.tolist(),kinds.tolist()))[16],'reference-turn')
+        self.assertEqual(int(np.sum(kinds=='reference-turn')),1)
+        self.assertEqual(int(np.sum(kinds=='geometric-corner')),16)
 
     def test_near_coplanar_within_tolerance_is_not_a_feature_but_a_dihedral_is(self):
         base=surface_features(*self._boxed_cube(),{1})
         within=surface_features(*self._boxed_cube(top_center_lift=1e-8),{1})
         for one,two in zip(base,within):np.testing.assert_array_equal(one,two)
-        features,pins,segments,corners=surface_features(
+        features,pins,kinds,segments,corners=surface_features(
             *self._boxed_cube(top_center_lift=1e-3),{1})
         self.assertEqual(len(features),28);self.assertIn(16,pins);self.assertEqual(len(pins),17)
+        self.assertTrue(np.all(kinds=='geometric-corner'))
         self.assertEqual(len(segments),16)
         self.assertTrue(any(np.allclose(c,[0.,0.,.5+1e-3]) for c in corners))
         self.assertEqual(len(corners),9)
+
+    def test_seam_and_pin_classification_follow_full_3d_rotation(self):
+        points,tri,refs=self._boxed_cube()
+        split=refs.copy();split[-1]=6101
+        axis=np.array([-2.,1.,.5]);axis/=np.linalg.norm(axis);angle=1.1
+        cross=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+        q=np.eye(3)*np.cos(angle)+(1-np.cos(angle))*np.outer(axis,axis)+np.sin(angle)*cross
+        shift=np.array([-3.,2.,7.])
+        for labels in (refs,split):
+            plain=surface_features(points,tri,labels,{1})
+            moved=surface_features(points@q.T+shift,tri,labels,{1})
+            np.testing.assert_array_equal(moved[0],plain[0]);np.testing.assert_array_equal(moved[1],plain[1])
+            np.testing.assert_array_equal(moved[2],plain[2])
+            self.assertEqual(len(moved[3]),len(plain[3]))
+            np.testing.assert_allclose(moved[4],plain[4]@q.T+shift,rtol=0,atol=1e-12)
 
     def test_protected_radial_band_keeps_old_metric(self):
         s=[[-1.,0,0,1,0,0]];corners=[[-1.,0,0],[1,0,0]]

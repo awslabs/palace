@@ -95,6 +95,22 @@ def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
     return metric
 
 
+def _continues_straight(v,w):
+    """Two edges leaving one node continue each other within COPLANAR_TOLERANCE."""
+    v=np.asarray(v,dtype=float);w=np.asarray(w,dtype=float)
+    return bool(np.dot(v,w)<0 and
+                np.linalg.norm(np.cross(v,w))<=COPLANAR_TOLERANCE*np.linalg.norm(v)*np.linalg.norm(w))
+
+
+def _graph_turns(points,edges):
+    """Nodes of an edge graph that are junctions (degree != 2) or direction changes."""
+    adjacency={}
+    for a,b in np.asarray(edges,dtype=int).reshape(-1,2):
+        adjacency.setdefault(int(a),[]).append(int(b));adjacency.setdefault(int(b),[]).append(int(a))
+    return {node for node,neighbors in adjacency.items()
+            if len(neighbors)!=2 or not _continues_straight(*(points[neighbors]-points[node]))}
+
+
 def feature_chains(points,edges,lower,upper,tolerance=1e-8,cut_nodes=None):
     """Merge collinear subdivisions; return straight segments and true corners.
 
@@ -106,12 +122,7 @@ def feature_chains(points,edges,lower,upper,tolerance=1e-8,cut_nodes=None):
     for i,(a,b) in enumerate(edges):
         if a==b:raise ValueError('Degenerate feature edge')
         adjacency.setdefault(int(a),[]).append(i);adjacency.setdefault(int(b),[]).append(i)
-    breaks=set()
-    for node,inc in adjacency.items():
-        if len(inc)!=2:breaks.add(node);continue
-        ends=[next(int(n) for n in edges[i] if n!=node) for i in inc]
-        v,w=points[ends]-points[node]
-        if np.dot(v,w)/np.linalg.norm(v)/np.linalg.norm(w)>-1+1e-10:breaks.add(node)
+    breaks=_graph_turns(points,edges)
     visited=set();segments=[]
     for start in sorted(breaks):
         for first_edge in adjacency[start]:
@@ -140,7 +151,10 @@ def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     A shared edge is a geometric feature only when its incident triangles are
     not coplanar within COPLANAR_TOLERANCE, whatever their references: coplanar
     label seams and coplanar subdivisions never become features. Geometry
-    preservation uses ALL such edges; metric sources exclude box cuts.
+    preservation uses ALL such edges; metric sources exclude box cuts. Returns
+    (features, pins, pin kinds, segments, corners); pins are turns/junctions of
+    the complete reference-boundary graph, kind 'geometric-corner' when the
+    feature graph alone pins them and 'reference-turn' otherwise.
     """
     p=np.asarray(points);tri=np.asarray(triangles);refs=np.asarray(references)
     cut_references=set(cut_references)
@@ -173,12 +187,15 @@ def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     cut_nodes=set(map(int,tri[np.isin(refs,list(cut_references))].ravel()))
     lower=p.min(axis=0);upper=p.max(axis=0)
     segments,corners=feature_chains(p,physical,lower,upper,tolerance,cut_nodes=cut_nodes)
-    # Pin junctions/turns in the complete preservation graph, including box corners.
-    adj={}
-    for a,b in features:adj.setdefault(int(a),[]).append(int(b));adj.setdefault(int(b),[]).append(int(a))
-    pins=[]
-    for node,neighbors in adj.items():
-        if len(neighbors)!=2:pins.append(node);continue
-        v,w=p[neighbors]-p[node]
-        if np.dot(v,w)/np.linalg.norm(v)/np.linalg.norm(w)>-1+1e-10:pins.append(node)
-    return features,np.array(sorted(pins)),segments,corners
+    # Pin junctions/turns of the complete reference-boundary graph, including box
+    # corners. MMG reconstructs every reference boundary (ridge or coplanar label
+    # seam) as a discrete geometric curve, so with a tight Hausdorff bound an
+    # unpinned seam bend is refined without limit. Seam turns are therefore
+    # required vertices only; ridges, metric sources and protected bands stay
+    # non-coplanar-only, and straight seam vertices remain free.
+    geometric_corners=_graph_turns(p,features)
+    reference_change=np.maximum.reduceat(refs[owner],start)!=np.minimum.reduceat(refs[owner],start)
+    pins=np.array(sorted(_graph_turns(p,pairs[start][is_feature|reference_change])),dtype=int)
+    kinds=np.array(['geometric-corner' if node in geometric_corners else 'reference-turn'
+                    for node in pins])
+    return features,pins,kinds,segments,corners

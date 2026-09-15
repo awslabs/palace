@@ -145,9 +145,19 @@ protected band) only when its incident triangles are not coplanar within the
 fixed dimensionless `COPLANAR_TOLERANCE` (sine of the normal angle and plane
 offset relative to the local triangle diameter). A reference change between
 coplanar triangles, such as a slot-ownership split of one plane, remains a
-plain reference boundary that MMG preserves without ridge or corner
-constraints; per-support relabeling and projection in the restorer are
-unchanged. Label restoration compares repair displacements to the bound with a
+plain reference boundary without ridge, metric or protected-band constraints;
+per-support relabeling and projection in the restorer are unchanged. MMG,
+however, reconstructs every reference boundary as a discrete geometric curve,
+and with the 1e-8 Hausdorff bound an unpinned seam bend is refined without
+limit (a ten-edge attempt reached 23.6M tetrahedra and aborted). Pins are
+therefore the turns and junctions of the complete reference-boundary graph
+(edges whose incident triangles differ in reference or are not coplanar):
+`geometric-corner` pins come from the feature graph alone, `reference-turn`
+pins only from coplanar seams; straight seam vertices are not pinned. The
+recipe records `PinnedVertexKinds`, `PinnedVertices` and `PinPolicy`.
+Reference-turn pins are MMG required vertices only; they never enter the
+semantic-corner set, the protected supports, or the ownership/covariance audits
+as geometry. Label restoration compares repair displacements to the bound with a
 roundoff-only relative allowance (`DISPLACEMENT_ROUNDOFF_TOLERANCE`, 1e-12) so
 a vertex clamped onto the displacement ball is not misreported as an overshoot;
 any true overshoot and any semantic-corner result that still misses the corner
