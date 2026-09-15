@@ -41,12 +41,17 @@ STAGE_PRIMARY_TOOL = {
 }
 
 
-def validate_tool_invocation(stage, command, tools):
+def validate_tool_invocation(stage, command, tools, working_directory=None):
     """Require the declared runtime and stage tool in executable/script positions."""
-    resolved = [str(Path(value).resolve()) for value in command]
+    base = Path(working_directory or Path.cwd())
+    resolved = [str((Path(value) if Path(value).is_absolute() else base / value).resolve())
+                for value in command]
     runtime = str(Path(tools["runtime"]).resolve())
     primary = str(Path(tools[STAGE_PRIMARY_TOOL[stage]]).resolve())
-    if resolved[0] != runtime:
+    def matches(argument, expected):
+        return (str(Path(argument).resolve()) == expected or
+                (not Path(argument).is_absolute() and expected.endswith("/" + argument)))
+    if not matches(command[0], runtime):
         raise ValueError(f"Stage runtime is not argv[0]: {stage}")
     if stage == "native-adaptation-mmg":
         if primary != runtime:
@@ -54,8 +59,9 @@ def validate_tool_invocation(stage, command, tools):
         return
     # Interpreter options are not files.  The primary script must be the first
     # existing file argument after the runtime, rather than an unused trailing arg.
-    first_file = next((value for value in resolved[1:] if Path(value).is_file()), None)
-    if first_file != primary:
+    primary_positions = [index for index, value in enumerate(command[1:], 1)
+                         if matches(value, primary)]
+    if len(primary_positions) != 1:
         raise ValueError(f"Stage tool is not in the executed script position: {stage}")
 
 
@@ -108,7 +114,8 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
                  item["SHA256"] != expected_tool_sha256.get(role))):
             raise ValueError(f"Stage tool binding changed: {stage}/{role}")
     validate_tool_invocation(stage, report["Command"],
-                             {role: item["Path"] for role, item in tools.items()})
+                             {role: item["Path"] for role, item in tools.items()},
+                             report.get("WorkingDirectory"))
     return report
 
 

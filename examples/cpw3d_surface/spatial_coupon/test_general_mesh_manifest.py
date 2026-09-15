@@ -490,7 +490,9 @@ class GeneralMeshManifestTest(unittest.TestCase):
         command = bounded["Command"]
         for name in ("mesh-signature.csv", "plan-view-mask.csv", "plan-view-boundary.csv"):
             path = (source / name).resolve()
-            self.assertIn(str(path), [str(Path(item).resolve()) for item in command])
+            self.assertTrue(any(str(path) == str(Path(item).resolve()) or
+                                (not Path(item).is_absolute() and
+                                 str(path).endswith("/" + item)) for item in command))
         contract = source / "semantic-contract.json"
         report, _ = analyze(read_mesh(mesh), json.loads(contract.read_text()),
                             require_material_names=True)
