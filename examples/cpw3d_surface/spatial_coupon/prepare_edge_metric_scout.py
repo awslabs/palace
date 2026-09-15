@@ -89,6 +89,23 @@ def validate_transformed_supports(data, semantic_contract, segments, tolerance=1
     return data
 
 
+def cluster_planar_supports(attributes, normals, points, tolerance=1e-7):
+    """Merge numerically noisy representations of the same CAD plane support."""
+    planes = []
+    patch = np.empty(len(attributes), dtype=np.int32)
+    offsets = np.einsum('ij,ij->i', normals, points)
+    for index, (attribute, normal, offset) in enumerate(zip(attributes, normals, offsets)):
+        found = next((i for i, row in enumerate(planes)
+                      if int(row[0]) == int(attribute) and
+                      np.linalg.norm(row[1:4] - normal) <= tolerance and
+                      abs(row[4] - offset) <= tolerance), None)
+        if found is None:
+            found = len(planes)
+            planes.append(np.array([attribute, *normal, offset], dtype=float))
+        patch[index] = found
+    return np.asarray(planes), patch
+
+
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
             semantic_contract=None, transformed_supports=None):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
@@ -121,11 +138,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     xyz=mesh.points[triangles]
     normals=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);normals/=np.linalg.norm(normals,axis=1)[:,None]
     pivot=np.argmax(abs(normals),axis=1);normals*=np.sign(normals[np.arange(len(normals)),pivot])[:,None]
-    support=np.column_stack((triangle_refs,np.round(normals,8),np.round(np.einsum('ij,ij->i',normals,xyz[:,0]),8)))
-    support[support==0]=0.
-    planes,first,patch=np.unique(support,axis=0,return_index=True,return_inverse=True)
-    exact_planes=np.column_stack((triangle_refs[first],normals[first],
-                                  np.einsum('ij,ij->i',normals[first],xyz[first,0])))
+    exact_planes,patch=cluster_planar_supports(triangle_refs,normals,xyz[:,0])
     # Separate planar supports during adaptation. Restore original physical labels
     # only after independently checking/projecting each support intersection.
     patch_references=(10000+patch).astype(np.int32)

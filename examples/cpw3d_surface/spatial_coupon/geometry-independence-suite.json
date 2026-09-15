@@ -39,7 +39,7 @@
     {
       "Name": "prepare_edge_metric_scout.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "60cba881f3294f55ee3e9f1241b37bf8a05d3ed24cad673e481babc6afc4744b"
+      "SHA256": "6f62277ec20c87fc52605eb54e55e6b2ac1de39b82b2ef4ba9cedfa61b3ac202"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -1489,7 +1489,7 @@
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "60cba881f3294f55ee3e9f1241b37bf8a05d3ed24cad673e481babc6afc4744b"
+      "metric-preparer": "6f62277ec20c87fc52605eb54e55e6b2ac1de39b82b2ef4ba9cedfa61b3ac202"
     },
     "native-adaptation-mmg": {
       "runtime": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",

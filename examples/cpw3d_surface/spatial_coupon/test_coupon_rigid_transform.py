@@ -22,7 +22,7 @@ if str(HERE) not in sys.path:
 import meshio
 import numpy as np
 
-from prepare_edge_metric_scout import validate_transformed_supports
+from prepare_edge_metric_scout import cluster_planar_supports, validate_transformed_supports
 from transform_coupon_source_contract import (
     transform_semantic_contract, transform_vector, transformed_supports,
     validate_rigid_transform,
@@ -98,6 +98,20 @@ class RigidContractTest(unittest.TestCase):
         tampered["Edges"][0]["Point"][0] += 0.01
         with self.assertRaisesRegex(ValueError, "seed-derived features"):
             validate_transformed_supports(tampered, contract, segments)
+
+    def test_numerically_noisy_coplanar_supports_are_clustered(self):
+        attributes = np.array([1, 1, 1, 2])
+        normals = np.array([[1.0, 0.0, 0.0],
+                            [1.0, 6e-9, 0.0],
+                            [1.0, 0.0, 0.0],
+                            [1.0, 0.0, 0.0]])
+        points = np.array([[9.8333333333, 0.0, 0.0],
+                           [9.8333333340, 1.0, 0.0],
+                           [9.8333340, 0.0, 0.0],
+                           [9.8333333333, 0.0, 0.0]])
+        planes, patch = cluster_planar_supports(attributes, normals, points)
+        self.assertEqual(len(planes), 3)
+        np.testing.assert_array_equal(patch, [0, 0, 1, 2])
 
     def test_nonrigid_singular_and_reflecting_transforms_are_rejected(self):
         for transform in (
