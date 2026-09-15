@@ -17,7 +17,7 @@ STAGE_TOOLS = {
     "canonical-source-validation": {"runtime", "source-validator"},
     "seed-generation": {"runtime", "mesher"},
     "metric-preparation": {"runtime", "metric-preparer"},
-    "native-adaptation-mmg": {"runtime", "adaptation-wrapper", "adapter-mmg"},
+    "native-adaptation-mmg": {"runtime", "adaptation-wrapper", "adapter-mmg", "mmg-library"},
     "label-restoration": {"runtime", "label-restorer"},
     "canonical-gmsh-publication": {"runtime", "publisher"},
     "proper-rigid-publication": {"runtime", "rigid-publisher", "ownership-runtime",
@@ -26,13 +26,14 @@ STAGE_TOOLS = {
 STAGE_INPUTS = {
     "canonical-source-validation": {"source-semantic-contract", "source-signature",
                                     "source-boundary", "source-mask", "canonical-transform"},
-    "seed-generation": set(),
+    "seed-generation": {"source-signature", "source-boundary", "source-mask"},
     "metric-preparation": {"seed-mesh", "canonical-semantic-contract",
                            "canonical-supports"},
     "native-adaptation-mmg": {"mmg-seed", "metric", "pins", "fixed-triangles",
                               "restoration-recipe"},
     "label-restoration": {"adapted-mesh", "restoration-recipe"},
-    "canonical-gmsh-publication": {"restored-mesh"},
+    "canonical-gmsh-publication": {"restored-mesh", "source-process", "source-signature",
+                                   "source-boundary"},
     "proper-rigid-publication": {
         "canonical-candidate-mesh", "canonical-build-record", "placement-transform",
         "source-semantic-contract", "source-signature", "source-boundary", "source-mask",
@@ -61,6 +62,63 @@ STAGE_PRIMARY_TOOL = {
     "canonical-gmsh-publication": "publisher",
     "proper-rigid-publication": "rigid-publisher",
 }
+# Named command options that must equal a bound tool, input, or output exactly.
+STAGE_TOOL_OPTIONS = {
+    "native-adaptation-mmg": {"--adapter": "adapter-mmg", "--mmg-library": "mmg-library"},
+    "proper-rigid-publication": {"--ownership-runtime": "ownership-runtime",
+                                 "--ownership-auditor": "ownership-auditor"},
+}
+STAGE_BINDING_OPTIONS = {
+    "canonical-source-validation": {
+        "--semantic-input": ("Inputs", "source-semantic-contract"),
+        "--signature": ("Inputs", "source-signature"),
+        "--boundary": ("Inputs", "source-boundary"),
+        "--mask": ("Inputs", "source-mask")},
+    "seed-generation": {"--mask": ("Inputs", "source-mask"),
+                        "--boundary": ("Inputs", "source-boundary")},
+    "metric-preparation": {
+        "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
+        "--transformed-supports": ("Inputs", "canonical-supports")},
+    "native-adaptation-mmg": {"--fixed-triangles": ("Inputs", "fixed-triangles")},
+    "label-restoration": {
+        "--source-local-output": ("Artifacts", "source-local-restored-mesh")},
+    "canonical-gmsh-publication": {
+        "--process": ("Inputs", "source-process"),
+        "--signature": ("Inputs", "source-signature"),
+        "--boundary": ("Inputs", "source-boundary")},
+    "proper-rigid-publication": {
+        "--semantic-input": ("Inputs", "source-semantic-contract"),
+        "--signature": ("Inputs", "source-signature"),
+        "--boundary": ("Inputs", "source-boundary"),
+        "--mask": ("Inputs", "source-mask"),
+        "--process": ("Inputs", "source-process"),
+        "--canonical-build-record": ("Inputs", "canonical-build-record"),
+        "--transformed-semantic": ("Artifacts", "transformed-semantic-contract"),
+        "--transformed-supports": ("Artifacts", "transformed-supports"),
+        "--ownership": ("Artifacts", "ownership-partition"),
+        "--ownership-quadrature": ("Artifacts", "ownership-quadrature-partition")},
+}
+# Bound inputs/outputs that are consumed positionally and must occur in argv.
+STAGE_BINDING_ARGUMENTS = {
+    "canonical-source-validation": {
+        ("Inputs", "canonical-transform"), ("Artifacts", "canonical-semantic-contract"),
+        ("Artifacts", "canonical-supports")},
+    "seed-generation": {("Inputs", "source-signature"), ("Artifacts", "seed-mesh")},
+    "metric-preparation": {("Inputs", "seed-mesh")},
+    "native-adaptation-mmg": {
+        ("Inputs", "mmg-seed"), ("Inputs", "metric"), ("Inputs", "pins"),
+        ("Inputs", "restoration-recipe"), ("Artifacts", "adapted-mesh"),
+        ("Artifacts", "adaptation-receipt")},
+    "label-restoration": {("Inputs", "adapted-mesh"), ("Inputs", "restoration-recipe"),
+                          ("Artifacts", "restored-mesh")},
+    "canonical-gmsh-publication": {("Inputs", "restored-mesh"),
+                                   ("Artifacts", "canonical-candidate-mesh")},
+    "proper-rigid-publication": {
+        ("Inputs", "canonical-candidate-mesh"), ("Inputs", "placement-transform"),
+        ("Artifacts", "candidate-mesh"), ("Artifacts", "transform-receipt")},
+}
+OWNERSHIP_AUDIT_OPTIONS = {"--process": "source-process", "--signature": "source-signature",
+                           "--boundary": "source-boundary"}
 
 _INTERPRETER_OPTIONS_WITH_VALUE = {
     "-H", "--home", "-J", "--sysimage", "-C", "--cpu-target", "-t", "--threads",
@@ -113,26 +171,45 @@ def _require_path_option(command, option, expected, working_directory=None):
         raise ValueError(f"Stage command {option} differs from its bound input or tool")
 
 
-def validate_tool_invocation(stage, command, tools, working_directory=None):
+def _require_path_argument(command, expected, description, working_directory=None):
     base = Path(working_directory or Path.cwd())
-    runtime = str(Path(tools["runtime"]).resolve())
-    primary = str(Path(tools[STAGE_PRIMARY_TOOL[stage]]).resolve())
+    if str(Path(expected).resolve()) not in [str(_resolved_argument(value, base))
+                                             for value in command]:
+        raise ValueError(f"Stage command did not consume its bound {description}")
+
+
+def _require_runtime_and_script(command, runtime, script, description, working_directory=None):
+    base = Path(working_directory or Path.cwd())
+    runtime, script = str(Path(runtime).resolve()), str(Path(script).resolve())
     def matches(argument, expected):
         path = Path(argument); resolved = path if path.is_absolute() else base / path
         return (str(resolved.resolve()) == expected or
                 (not path.is_absolute() and expected.endswith("/" + argument)))
-    if not matches(command[0], runtime):
-        raise ValueError(f"Stage runtime is not argv[0]: {stage}")
-    script_position = _first_interpreter_script(command, primary)
-    if script_position is None or not matches(command[script_position], primary):
-        raise ValueError(f"Stage tool is not in the executed script position: {stage}")
-    if stage == "native-adaptation-mmg":
-        _require_path_option(command, "--adapter", tools["adapter-mmg"], working_directory)
-    if stage == "proper-rigid-publication":
-        _require_path_option(command, "--ownership-runtime", tools["ownership-runtime"],
-                             working_directory)
-        _require_path_option(command, "--ownership-auditor", tools["ownership-auditor"],
-                             working_directory)
+    if not isinstance(command, list) or not command or not matches(command[0], runtime):
+        raise ValueError(f"{description} runtime is not argv[0]")
+    script_position = _first_interpreter_script(command, script)
+    if script_position is None or not matches(command[script_position], script):
+        raise ValueError(f"{description} tool is not in the executed script position")
+
+
+def validate_tool_invocation(stage, command, tools, working_directory=None):
+    try:
+        _require_runtime_and_script(command, tools["runtime"], tools[STAGE_PRIMARY_TOOL[stage]],
+                                    "Stage", working_directory)
+    except ValueError as error:
+        raise ValueError(f"{error}: {stage}") from error
+    for option, role in STAGE_TOOL_OPTIONS.get(stage, {}).items():
+        _require_path_option(command, option, tools[role], working_directory)
+
+
+def validate_command_bindings(stage, command, inputs, artifacts, working_directory=None):
+    """Require every consumed source/input/output path to be the bound one."""
+    bound = {"Inputs": inputs, "Artifacts": artifacts}
+    for option, (section, name) in STAGE_BINDING_OPTIONS.get(stage, {}).items():
+        _require_path_option(command, option, bound[section][name], working_directory)
+    for section, name in STAGE_BINDING_ARGUMENTS.get(stage, set()):
+        _require_path_argument(command, bound[section][name], f"{section.lower()} {name}",
+                               working_directory)
 
 
 def sha256(path):
@@ -181,27 +258,21 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
                 (expected_tool_sha256 is not None and
                  item["SHA256"] != expected_tool_sha256.get(role))):
             raise ValueError(f"Stage tool binding changed: {stage}/{role}")
-    validate_tool_invocation(stage, report["Command"],
-                             {role: item["Path"] for role, item in tools.items()},
+    tool_paths = {role: item["Path"] for role, item in tools.items()}
+    validate_tool_invocation(stage, report["Command"], tool_paths,
                              report.get("WorkingDirectory"))
+    validate_command_bindings(
+        stage, report["Command"],
+        {name: item["Path"] for name, item in report["Inputs"].items()},
+        {name: item["Path"] for name, item in report["Artifacts"].items()},
+        report.get("WorkingDirectory"))
     if stage == "canonical-source-validation":
         transform = json.loads(Path(report["Inputs"]["canonical-transform"]["Path"]).read_text())
         if isinstance(transform, dict): transform = transform.get("Transform")
         if transform != [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]:
             raise ValueError("Canonical source validation must use the identity transform")
-    elif stage == "metric-preparation":
-        _require_path_option(report["Command"], "--semantic-contract",
-                             report["Inputs"]["canonical-semantic-contract"]["Path"],
-                             report.get("WorkingDirectory"))
-        _require_path_option(report["Command"], "--transformed-supports",
-                             report["Inputs"]["canonical-supports"]["Path"],
-                             report.get("WorkingDirectory"))
     elif stage == "native-adaptation-mmg":
-        command = report["Command"]
         recipe = report["Inputs"]["restoration-recipe"]["Path"]
-        if str(Path(recipe).resolve()) not in [str(_resolved_argument(value,
-                Path(report.get("WorkingDirectory") or Path.cwd()))) for value in command]:
-            raise ValueError("Native adaptation command did not consume the metric recipe")
         receipt = json.loads(Path(report["Artifacts"]["adaptation-receipt"]["Path"]).read_text())
         recipe_data = json.loads(Path(recipe).read_text())
         hmax = recipe_data.get("FarFieldBudgetPolicy", {}).get("EffectiveFarSize")
@@ -210,7 +281,47 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
                 float(receipt.get("HmaxArgument", "nan")) != hmax or
                 receipt.get("OutputSHA256") != report["Artifacts"]["adapted-mesh"]["SHA256"]):
             raise ValueError("Native MMG hmax receipt differs from the bound metric policy")
+        if (receipt.get("AdapterSHA256") != tools["adapter-mmg"]["SHA256"] or
+                receipt.get("MMGLibrarySHA256") != tools["mmg-library"]["SHA256"] or
+                str(Path(receipt.get("MMGLibraryPath", "")).resolve()) !=
+                str(Path(tools["mmg-library"]["Path"]).resolve())):
+            raise ValueError("Native MMG receipt adapter/library differ from the bound stage tools")
+    elif stage == "proper-rigid-publication":
+        _validate_ownership_audit_binding(report)
     return report
+
+
+def _validate_ownership_audit_binding(report):
+    """The transformed-ownership audit must consume only bound source and outputs."""
+    inputs, artifacts, tools = report["Inputs"], report["Artifacts"], report["Tools"]
+    receipt = json.loads(Path(artifacts["transform-receipt"]["Path"]).read_text())
+    command = receipt.get("OwnershipCommand")
+    working_directory = report.get("WorkingDirectory")
+    try:
+        _require_runtime_and_script(command, tools["ownership-runtime"]["Path"],
+                                    tools["ownership-auditor"]["Path"], "Ownership audit",
+                                    working_directory)
+        for option, name in OWNERSHIP_AUDIT_OPTIONS.items():
+            _require_path_option(command, option, inputs[name]["Path"], working_directory)
+        for name in ("candidate-mesh", "ownership-partition"):
+            _require_path_argument(command, artifacts[name]["Path"], f"artifacts {name}",
+                                   working_directory)
+    except ValueError as error:
+        raise ValueError(f"Ownership audit command is not bound: {error}") from error
+    expected_hashes = {
+        "OwnershipRuntimeSHA256": tools["ownership-runtime"]["SHA256"],
+        "OwnershipAuditorSHA256": tools["ownership-auditor"]["SHA256"],
+        "OwnershipSHA256": artifacts["ownership-partition"]["SHA256"],
+        "OwnershipQuadratureSHA256": artifacts["ownership-quadrature-partition"]["SHA256"],
+        "TransformedSemanticSHA256": artifacts["transformed-semantic-contract"]["SHA256"],
+        "TransformedSupportsSHA256": artifacts["transformed-supports"]["SHA256"],
+        "SourceInputSHA256": {
+            name: inputs[name]["SHA256"]
+            for name in ("source-semantic-contract", "source-signature", "source-boundary",
+                         "source-mask", "source-process")},
+    }
+    if any(receipt.get(key) != value for key, value in expected_hashes.items()):
+        raise ValueError("Rigid publication receipt source/ownership hashes differ from bindings")
 
 
 def _validate_reports(report_paths, order, launcher_name, launcher_sha256,
@@ -275,7 +386,7 @@ def validate_placement_dag(report_paths, final_mesh, canonical_record,
     if (publication["Inputs"]["canonical-build-record"]["SHA256"] !=
             sha256(canonical_record) or
             publication["Inputs"]["canonical-candidate-mesh"]["SHA256"] !=
-            record.get("CanonicalArtifacts", {}).get("candidate-mesh", {}).get("SHA256") or
+            record.get("CanonicalArtifacts", {}).get("canonical-candidate-mesh", {}).get("SHA256") or
             publication["Artifacts"]["candidate-mesh"]["SHA256"] != sha256(final_mesh)):
         raise ValueError("Placement publication is not bound to its canonical build and final mesh")
     receipt = json.loads(Path(publication["Artifacts"]["transform-receipt"]["Path"]).read_text())
@@ -288,6 +399,25 @@ def validate_placement_dag(report_paths, final_mesh, canonical_record,
     return reports, digests
 
 
+def validate_canonical_record_binding(record, canonical_reports, canonical_report_paths):
+    """The canonical build record must bind exactly the six stages' outputs and reports."""
+    artifacts = record.get("CanonicalArtifacts")
+    report_hashes = record.get("CanonicalStageReportSHA256")
+    if (not isinstance(artifacts, dict) or not isinstance(report_hashes, dict) or
+            set(report_hashes) != set(CANONICAL_STAGE_ORDER) or
+            set(artifacts) != {role for stage in CANONICAL_STAGE_ORDER
+                               for role in STAGE_OUTPUTS[stage]}):
+        raise ValueError("Canonical build record artifact/report roles differ from the stage DAG")
+    for stage in CANONICAL_STAGE_ORDER:
+        if report_hashes[stage] != sha256(canonical_report_paths[stage]):
+            raise ValueError(f"Canonical build record binds a different stage report: {stage}")
+        for role, item in canonical_reports[stage]["Artifacts"].items():
+            if (artifacts[role].get("SHA256") != item["SHA256"] or
+                    str(Path(artifacts[role].get("Path", "")).resolve()) !=
+                    str(Path(item["Path"]).resolve())):
+                raise ValueError(f"Canonical build record artifact differs from stage output: {role}")
+
+
 def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sha256=None,
                        expected_tool_sha256=None, canonical_record=None):
     """Validate the complete canonical + mandatory placement DAG."""
@@ -298,13 +428,14 @@ def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sh
     placement_report = json.loads(Path(placement_paths["proper-rigid-publication"]).read_text())
     record_path = canonical_record or placement_report["Inputs"]["canonical-build-record"]["Path"]
     record = json.loads(Path(record_path).read_text())
-    canonical_mesh = record["CanonicalArtifacts"]["candidate-mesh"]["Path"]
+    canonical_mesh = record["CanonicalArtifacts"]["canonical-candidate-mesh"]["Path"]
     canonical_expected = None if expected_tool_sha256 is None else {
         name: expected_tool_sha256[name] for name in CANONICAL_STAGE_ORDER}
     placement_expected = None if expected_tool_sha256 is None else {
         name: expected_tool_sha256[name] for name in PLACEMENT_STAGE_ORDER}
     canonical, canonical_digests = validate_canonical_dag(
         canonical_paths, canonical_mesh, launcher_name, launcher_sha256, canonical_expected)
+    validate_canonical_record_binding(record, canonical, canonical_paths)
     placement, placement_digests = validate_placement_dag(
         placement_paths, final_mesh, record_path, launcher_name, launcher_sha256,
         placement_expected)

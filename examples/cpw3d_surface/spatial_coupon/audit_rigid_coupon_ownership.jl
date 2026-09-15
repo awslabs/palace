@@ -3,6 +3,7 @@
 
 # Recompute response ownership on a rigidly published final mesh. Classification
 # is performed in immutable source-local coordinates through the inverse transform.
+# Every consumed source file is an explicit, bound option; no directory is scanned.
 using Gmsh: gmsh
 using TOML
 include(joinpath(@__DIR__, "mesh_spatial_coupon.jl"))
@@ -37,19 +38,41 @@ function all_elements(dimension)
     return result
 end
 
-function main()
-    length(ARGS) == 5 || error("source thin|fabricated mesh transform.csv report.csv")
-    source, mesh, transform_path, report = abspath.((ARGS[1], ARGS[3], ARGS[4], ARGS[5]))
-    kind = ARGS[2]
+const OWNERSHIP_SOURCE_OPTIONS = ("--process", "--signature", "--boundary")
+
+function parse_arguments(args)
+    usage = "thin|fabricated mesh transform.csv report.csv --process P --signature S --boundary B"
+    length(args) >= 4 || error(usage)
+    kind = args[1]
     kind in ("thin", "fabricated") || error("Kind must be thin or fabricated")
+    mesh, transform_path, report = abspath.((args[2], args[3], args[4]))
+    sources = Dict{String,String}()
+    index = 5
+    while index <= length(args)
+        option = args[index]
+        option in OWNERSHIP_SOURCE_OPTIONS || error("Unknown option $option; usage: $usage")
+        index < length(args) || error("Missing value for option $option")
+        haskey(sources, option) && error("Duplicate option $option")
+        sources[option] = abspath(args[index + 1])
+        index += 2
+    end
+    for option in OWNERSHIP_SOURCE_OPTIONS
+        haskey(sources, option) || error("Missing required option $option")
+        isfile(sources[option]) || error("Source input for $option does not exist")
+    end
+    return kind, mesh, transform_path, report, sources
+end
+
+function main()
+    kind, mesh, transform_path, report, sources = parse_arguments(ARGS)
     all(isfile, (mesh, transform_path)) || error("Mesh or transform is missing")
     any(isfile, (report, report * ".quadrature.csv")) && error("Ownership outputs must be fresh")
     transform_values = only(readlines(transform_path))
     transform = parse_rigid_transform(transform_values)
-    process = TOML.parsefile(joinpath(source, "process.toml"))
+    process = TOML.parsefile(sources["--process"])
     process["Units"] == "um" || error("Process units must be um")
-    edges = read_edges(joinpath(source, "mesh-signature.csv"))
-    loops = read_boundary(joinpath(source, "plan-view-boundary.csv"))
+    edges = read_edges(sources["--signature"])
+    loops = read_boundary(sources["--boundary"])
     gmsh.initialize()
     try
         gmsh.open(mesh)

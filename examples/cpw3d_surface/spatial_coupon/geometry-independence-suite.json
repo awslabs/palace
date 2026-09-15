@@ -59,7 +59,7 @@
     {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "8215473f534e9e83475456c4d7b0ed865ce513a734a2bc66e193a68dd1d3667f"
+      "SHA256": "191dbb16d9db5cbc5d90277c12321e9e44d91a4d364dc82f03700f0a4c685129"
     },
     {
       "Name": "general_mesh_audit_producer.py",
@@ -69,27 +69,27 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "9384c522c3489e5cdbbe0675f51f678fcd2e794da37c23424f51f9f5b9ceefe7"
+      "SHA256": "58ef178e994bd89cdf809b98fb47b324c5cf6836c35c8442b4431f22e19803f9"
     },
     {
       "Name": "canonical_mesh_build.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/canonical_mesh_build.py",
-      "SHA256": "6432bdcdb80ee7ce12af258ab07e120ec2786b0b020196957bdd24f1b1fb6c2d"
+      "SHA256": "a0ce58d4b54304545104bf7c81419dcdd93d0351a7d33df87f05fd682f883210"
     },
     {
       "Name": "run_native_mmg_adaptation.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_native_mmg_adaptation.py",
-      "SHA256": "28651e0e23354530a984c8377f57cfdd4a7659c9527e9c7fa1b9caa4cb85c405"
+      "SHA256": "7d59ec514a9a8314bd3b8e4aef11e6f323d0e628a5c0f83ece8a9921d2de57a1"
     },
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "8fcddd475e785f6c7f3db27d7950c2306ad0f7a04c2a1433382d38c01d6819ce"
+      "SHA256": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_rigid_coupon_ownership.jl",
-      "SHA256": "962c9f38bc3b8925665ee1071f446ec18f5d8e70b46364377176443a4fa12a48"
+      "SHA256": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
     },
     {
       "Name": "transform_coupon_source_contract.py",
@@ -1522,8 +1522,9 @@
     },
     "native-adaptation-mmg": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "adaptation-wrapper": "28651e0e23354530a984c8377f57cfdd4a7659c9527e9c7fa1b9caa4cb85c405",
-      "adapter-mmg": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed"
+      "adaptation-wrapper": "7d59ec514a9a8314bd3b8e4aef11e6f323d0e628a5c0f83ece8a9921d2de57a1",
+      "adapter-mmg": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",
+      "mmg-library": "a97d9580837712e79c637b0a7228f44c51e446ef32471a1104894e7fe7e378d5"
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -1531,13 +1532,13 @@
     },
     "canonical-gmsh-publication": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "publisher": "0ec26a1123bde0b52b30e989537243363431804ffe05aaf68e2f8480b4a27d3d"
+      "publisher": "2906a5395ec957d1e4328183242ee9d7660ad8c23e7413af6e870c07629440d4"
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "8fcddd475e785f6c7f3db27d7950c2306ad0f7a04c2a1433382d38c01d6819ce",
+      "rigid-publisher": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731",
       "ownership-runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "ownership-auditor": "962c9f38bc3b8925665ee1071f446ec18f5d8e70b46364377176443a4fa12a48"
+      "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
     }
   },
   "PhysicalCovarianceToleranceBasis": "Frozen before rerun: exact CAD supports use 1e-8 um/relative; material volume and boundary measure use 5e-4 relative (sub-percent mesh discretization); quality and local anisotropy distribution changes use 0.35 relative; complexity uses a 1.10 ratio. Solver QoI is excluded."

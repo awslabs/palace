@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from mesh_stage_contract import (STAGE_INPUTS, STAGE_OUTPUTS, STAGE_TOOLS, binding,
-                                 sha256, validate_tool_invocation)
+                                 sha256, validate_command_bindings, validate_tool_invocation)
 
 
 def tree_rss(root):
@@ -93,6 +93,7 @@ def main():
             parser.error("stage tool roles must name every required existing tool")
         try:
             validate_tool_invocation(args.stage, command, tools)
+            validate_command_bindings(args.stage, command, inputs, artifacts)
         except ValueError as error:
             parser.error(str(error))
         if any(not path.is_file() for path in inputs.values()):

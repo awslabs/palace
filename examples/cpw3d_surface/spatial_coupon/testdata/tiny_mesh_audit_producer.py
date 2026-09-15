@@ -55,7 +55,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path); parser.add_argument("transform", type=Path)
     parser.add_argument("--scale", type=float, default=1.0)
+    # Bound source inputs: the fixture only requires them to exist, mirroring the
+    # production seeder's positional signature and --mask/--boundary consumption.
+    parser.add_argument("--signature", type=Path, required=True)
+    parser.add_argument("--mask", type=Path, required=True)
+    parser.add_argument("--boundary", type=Path, required=True)
     args = parser.parse_args()
+    if any(not path.is_file() for path in (args.signature, args.mask, args.boundary)):
+        parser.error("signature, mask, and boundary inputs must exist")
     produce(args.output, json.loads(args.transform.read_text()), args.scale)
 
 

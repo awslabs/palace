@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import atexit
 import copy
 import csv
 import json
@@ -24,14 +25,17 @@ from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
                                          _ownership_report,
                                          _protected_surface_report,
                                          produce as produce_audit)
-from canonical_mesh_build import build_record
+from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, build_record,
+                                  build_record_from_stage_reports)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, run_manifest, sha256,
                                    validate_manifest)
 from mesh_array_io import read_mesh
-from mesh_stage_contract import validate_tool_invocation
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, validate_stage_report,
+                                 validate_tool_invocation)
 from normalize_general_mesh_evidence import normalize
 from semantic_mesh_contract import (derive_feature_topology, validate_semantic_contract)
+from testdata.build_tiny_native_adapter import build as build_native_fixture, compiler
 
 
 HERE = Path(__file__).resolve().parent
@@ -39,8 +43,21 @@ MESHER = HERE / "testdata" / "tiny_mesh_audit_producer.py"
 AUDITOR = HERE / "general_mesh_audit_producer.py"
 BOUNDED = HERE / "run_bounded_mesher.py"
 STAGER = HERE / "testdata" / "tiny_mesh_stage.py"
-ADAPTER = HERE / "testdata" / "tiny_native_adapter.py"
+SCRIPT_ADAPTER = HERE / "testdata" / "tiny_native_adapter.py"
 WRAPPER = HERE / "run_native_mmg_adaptation.py"
+# The native fixture adapter links a fixture libmmg3d through rpath so the
+# wrapper's runtime-library resolution is exercised; it needs a C compiler.
+_NATIVE_FIXTURE_DIRECTORY = tempfile.TemporaryDirectory(prefix="tiny-native-adapter-")
+atexit.register(_NATIVE_FIXTURE_DIRECTORY.cleanup)
+if compiler() is not None:
+    ADAPTER, MMG_LIBRARY = build_native_fixture(_NATIVE_FIXTURE_DIRECTORY.name)
+else:
+    ADAPTER, MMG_LIBRARY = None, None
+
+
+def require_native_fixture():
+    if ADAPTER is None:
+        raise unittest.SkipTest("native fixture adapter requires a C compiler (cc)")
 TRANSFORMER = HERE / "transform_coupon_source_contract.py"
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ANGLE = 0.63
@@ -115,6 +132,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
                            "Files": files}, "TestScale": scale}
 
     def make_suite(self, root):
+        require_native_fixture()
         cases = [self.write_case(root, "base", 1, scale=1),
                  self.write_case(root, "subdivided", 2, scale=2),
                  self.write_case(root, "six-edge-supplemental", 6, scale=3)]
@@ -139,7 +157,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 "metric-preparation": {"runtime": sha256(sys.executable),
                                        "metric-preparer": sha256(STAGER)},
                 "native-adaptation-mmg": {"runtime": sha256(sys.executable),
-                    "adaptation-wrapper": sha256(WRAPPER), "adapter-mmg": sha256(ADAPTER)},
+                    "adaptation-wrapper": sha256(WRAPPER), "adapter-mmg": sha256(ADAPTER),
+                    "mmg-library": sha256(MMG_LIBRARY)},
                 "label-restoration": {"runtime": sha256(sys.executable),
                                       "label-restorer": sha256(STAGER)},
                 "canonical-gmsh-publication": {"runtime": sha256(sys.executable),
@@ -210,10 +229,14 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  str(canonical_semantic), str(canonical_supports), "--semantic-input",
                  str(directory / "semantic.json"), "--signature", str(directory / "signature.csv"),
                  "--boundary", str(directory / "boundary.csv"), "--mask", str(directory / "mask.csv")])
-            launch(canonical_stem, canonical_reports, "seed-generation", {}, {"seed-mesh": seed},
+            launch(canonical_stem, canonical_reports, "seed-generation",
+                {"source-signature": directory / "signature.csv",
+                 "source-boundary": directory / "boundary.csv",
+                 "source-mask": directory / "mask.csv"}, {"seed-mesh": seed},
                 {"runtime": sys.executable, "mesher": MESHER},
                 [sys.executable, str(MESHER), str(seed), str(identity_transform),
-                 "--scale", str(case["TestScale"])])
+                 "--scale", str(case["TestScale"]), "--signature", str(directory / "signature.csv"),
+                 "--mask", str(directory / "mask.csv"), "--boundary", str(directory / "boundary.csv")])
             launch(canonical_stem, canonical_reports, "metric-preparation",
                 {"seed-mesh": seed, "canonical-semantic-contract": canonical_semantic,
                  "canonical-supports": canonical_supports},
@@ -228,9 +251,11 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
                  "fixed-triangles": fixed, "restoration-recipe": recipe},
                 {"adapted-mesh": adapted, "adaptation-receipt": adaptation_receipt},
-                {"runtime": sys.executable, "adaptation-wrapper": WRAPPER, "adapter-mmg": ADAPTER},
+                {"runtime": sys.executable, "adaptation-wrapper": WRAPPER, "adapter-mmg": ADAPTER,
+                 "mmg-library": MMG_LIBRARY},
                 [sys.executable, str(WRAPPER), str(mmg_seed), str(metric), str(pins), str(recipe),
-                 str(adapted), str(adaptation_receipt), "--adapter", str(ADAPTER), "--hmin", ".1",
+                 str(adapted), str(adaptation_receipt), "--adapter", str(ADAPTER),
+                 "--mmg-library", str(MMG_LIBRARY), "--hmin", ".1",
                  "--hgrad", "1.3", "--fixed-triangles", str(fixed)])
             launch(canonical_stem, canonical_reports, "label-restoration",
                 {"adapted-mesh": adapted, "restoration-recipe": recipe},
@@ -239,26 +264,24 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
                  "--recipe", str(recipe), "--source-local-output", str(local_restored)])
             launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
-                {"restored-mesh": restored},
+                {"restored-mesh": restored, "source-process": directory / "process.toml",
+                 "source-signature": directory / "signature.csv",
+                 "source-boundary": directory / "boundary.csv"},
                 {"canonical-candidate-mesh": canonical_mesh,
                  "canonical-ownership-partition": canonical_ownership,
                  "canonical-ownership-quadrature-partition": canonical_quadrature},
                 {"runtime": sys.executable, "publisher": STAGER},
                 [sys.executable, str(STAGER), "publish", str(restored), str(canonical_mesh),
                  "--ownership", str(canonical_ownership),
-                 "--ownership-quadrature", str(canonical_quadrature)])
-            canonical_tools = {f"{stage}/{role}": digest for stage in
-                __import__("mesh_stage_contract").CANONICAL_STAGE_ORDER
-                for role, digest in manifest["StageToolSHA256"][stage].items()}
-            artifacts = {"candidate-mesh": {"Path": str(canonical_mesh),
-                                             "SHA256": sha256(canonical_mesh)},
-                         "ownership-partition": {"Path": str(canonical_ownership),
-                                                 "SHA256": sha256(canonical_ownership)},
-                         "ownership-quadrature-partition": {"Path": str(canonical_quadrature),
-                           "SHA256": sha256(canonical_quadrature)}}
+                 "--ownership-quadrature", str(canonical_quadrature),
+                 "--process", str(directory / "process.toml"),
+                 "--signature", str(directory / "signature.csv"),
+                 "--boundary", str(directory / "boundary.csv")])
+            canonical_tools = {f"{stage}/{role}": digest for stage in CANONICAL_STAGE_ORDER
+                               for role, digest in manifest["StageToolSHA256"][stage].items()}
             canonical_record = root / f"{canonical_stem}-build.json"
-            canonical_record.write_text(json.dumps(build_record(
-                inputs, manifest["Gates"], canonical_tools, artifacts)) + "\n")
+            canonical_record.write_text(json.dumps(build_record_from_stage_reports(
+                inputs, manifest["Gates"], canonical_tools, canonical_reports)) + "\n")
             for variant in case["Variants"]:
                 variant_id = variant["Id"]; stem = f"{case['Id']}--{variant_id}"
                 transform = directory / f"{variant_id}-transform.json"
@@ -282,12 +305,13 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     {"runtime": sys.executable, "rigid-publisher": STAGER,
                      "ownership-runtime": sys.executable, "ownership-auditor": STAGER},
                     [sys.executable, str(STAGER), "rigid", str(canonical_mesh), str(mesh),
-                     "--transform", str(transform), "--source-directory", str(directory),
+                     "--transform", str(transform),
                      "--semantic-input", str(directory / "semantic.json"), "--signature",
                      str(directory / "signature.csv"), "--boundary", str(directory / "boundary.csv"),
-                     "--mask", str(directory / "mask.csv"), "--canonical-build-record",
-                     str(canonical_record), "--transformed-semantic-output", str(transformed_semantic),
-                     "--transformed-supports-output", str(transformed_supports), "--receipt", str(receipt),
+                     "--mask", str(directory / "mask.csv"), "--process", str(directory / "process.toml"),
+                     "--canonical-build-record", str(canonical_record),
+                     "--transformed-semantic", str(transformed_semantic),
+                     "--transformed-supports", str(transformed_supports), "--receipt", str(receipt),
                      "--ownership", str(ownership), "--ownership-quadrature", str(quadrature),
                      "--ownership-runtime", sys.executable, "--ownership-auditor", str(STAGER)])
                 records = {}
@@ -473,6 +497,146 @@ class GeneralMeshManifestTest(unittest.TestCase):
                         _validate_source_transformation(reports, binding, source_paths)
             recipe_path.write_text(json.dumps(original))
 
+    def _stage_report(self, root, name):
+        path = root / f"{name}.log.json"
+        return path, json.loads(path.read_text())
+
+    def _substitute(self, command, option, replacement):
+        command = list(command); command[command.index(option) + 1] = str(replacement)
+        return command
+
+    def test_stage_commands_must_consume_exactly_the_bound_source_and_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            alternate = root / "subdivided"
+            substitutions = {
+                "seed-generation": ("base--canonical-seed-generation",
+                                    ["--mask", "--boundary", "--signature"]),
+                "canonical-gmsh-publication": ("base--canonical-canonical-gmsh-publication",
+                                               ["--process", "--signature", "--boundary"]),
+                "proper-rigid-publication": ("base--identity-proper-rigid-publication",
+                                             ["--semantic-input", "--signature", "--boundary",
+                                              "--mask", "--process"]),
+            }
+            for stage, (name, options) in substitutions.items():
+                _, report = self._stage_report(root, name)
+                validate_stage_report(report, stage)
+                for option in options:
+                    with self.subTest(stage=stage, option=option):
+                        original = Path(report["Command"][report["Command"].index(option) + 1])
+                        changed = copy.deepcopy(report)
+                        changed["Command"] = self._substitute(
+                            report["Command"], option, alternate / original.name)
+                        # Named options must equal the binding; the seeder's signature
+                        # is consumed positionally and must occur in argv.
+                        with self.assertRaisesRegex(
+                                ValueError, "differs from its bound|did not consume its bound"):
+                            validate_stage_report(changed, stage)
+                        dropped = copy.deepcopy(report)
+                        position = dropped["Command"].index(option)
+                        del dropped["Command"][position:position + 2]
+                        with self.assertRaisesRegex(
+                                ValueError, "exactly one|did not consume its bound"):
+                            validate_stage_report(dropped, stage)
+            _, placement = self._stage_report(root, "base--identity-proper-rigid-publication")
+            other = root / "base--rotate-z-0.63-ownership.csv"
+            for option in ("--ownership", "--ownership-quadrature", "--canonical-build-record",
+                           "--transformed-semantic", "--transformed-supports"):
+                with self.subTest(option=option):
+                    changed = copy.deepcopy(placement)
+                    changed["Command"] = self._substitute(placement["Command"], option, other)
+                    with self.assertRaisesRegex(ValueError, "differs from its bound"):
+                        validate_stage_report(changed, "proper-rigid-publication")
+            with self.assertRaisesRegex(ValueError, "did not consume its bound"):
+                changed = copy.deepcopy(placement)
+                changed["Command"] = [value if value != str(root / "base--canonical.msh") else
+                                      str(root / "subdivided--canonical.msh")
+                                      for value in placement["Command"]]
+                validate_stage_report(changed, "proper-rigid-publication")
+            self.assertNotIn("--source", placement["Command"])
+
+    def test_ownership_audit_must_consume_bound_source_and_write_bound_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            _, report = self._stage_report(root, "base--identity-proper-rigid-publication")
+            receipt_path = Path(report["Artifacts"]["transform-receipt"]["Path"])
+            original = json.loads(receipt_path.read_text())
+            def rebind(receipt):
+                receipt_path.write_text(json.dumps(receipt))
+                changed = copy.deepcopy(report)
+                changed["Artifacts"]["transform-receipt"]["SHA256"] = sha256(receipt_path)
+                return changed
+            try:
+                for option in ("--process", "--signature", "--boundary"):
+                    with self.subTest(option=option):
+                        receipt = copy.deepcopy(original)
+                        receipt["OwnershipCommand"] = self._substitute(
+                            original["OwnershipCommand"], option,
+                            root / "subdivided" / Path(original["OwnershipCommand"][
+                                original["OwnershipCommand"].index(option) + 1]).name)
+                        with self.assertRaisesRegex(ValueError, "Ownership audit command"):
+                            validate_stage_report(rebind(receipt), "proper-rigid-publication")
+                receipt = copy.deepcopy(original)
+                receipt["OwnershipCommand"] = [
+                    str(root / "base--rotate-z-0.63-ownership.csv")
+                    if value == report["Artifacts"]["ownership-partition"]["Path"] else value
+                    for value in original["OwnershipCommand"]]
+                with self.assertRaisesRegex(ValueError, "Ownership audit command"):
+                    validate_stage_report(rebind(receipt), "proper-rigid-publication")
+                receipt = copy.deepcopy(original)
+                receipt["OwnershipCommand"][1] = str(MESHER)
+                with self.assertRaisesRegex(ValueError, "Ownership audit command"):
+                    validate_stage_report(rebind(receipt), "proper-rigid-publication")
+                for key in ("OwnershipSHA256", "OwnershipAuditorSHA256"):
+                    with self.subTest(key=key):
+                        receipt = copy.deepcopy(original); receipt[key] = "0" * 64
+                        with self.assertRaisesRegex(ValueError, "differ from bindings"):
+                            validate_stage_report(rebind(receipt), "proper-rigid-publication")
+                receipt = copy.deepcopy(original)
+                receipt["SourceInputSHA256"]["source-process"] = "0" * 64
+                with self.assertRaisesRegex(ValueError, "differ from bindings"):
+                    validate_stage_report(rebind(receipt), "proper-rigid-publication")
+            finally:
+                receipt_path.write_text(json.dumps(original) + "\n")
+
+    def test_changed_mmg_library_hash_is_rejected_everywhere(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            _, report = self._stage_report(root, "base--canonical-native-adaptation-mmg")
+            validate_stage_report(report, "native-adaptation-mmg")
+            self.assertEqual(report["Tools"]["mmg-library"]["SHA256"], sha256(MMG_LIBRARY))
+            receipt_path = Path(report["Artifacts"]["adaptation-receipt"]["Path"])
+            original = json.loads(receipt_path.read_text())
+            self.assertEqual(original["MMGLibrarySHA256"], sha256(MMG_LIBRARY))
+            try:
+                receipt = copy.deepcopy(original); receipt["MMGLibrarySHA256"] = "0" * 64
+                receipt_path.write_text(json.dumps(receipt))
+                changed = copy.deepcopy(report)
+                changed["Artifacts"]["adaptation-receipt"]["SHA256"] = sha256(receipt_path)
+                with self.assertRaisesRegex(ValueError, "adapter/library differ"):
+                    validate_stage_report(changed, "native-adaptation-mmg")
+            finally:
+                receipt_path.write_text(json.dumps(original, indent=2) + "\n")
+            replaced = copy.deepcopy(manifest)
+            replaced["StageToolSHA256"]["native-adaptation-mmg"]["mmg-library"] = "0" * 64
+            replaced_path = root / "replaced-library-suite.json"
+            replaced_path.write_text(json.dumps(replaced))
+            stem = "base--identity"
+            records = {kind: root / f"{stem}-{kind}.json" for kind in KINDS}
+            with self.assertRaisesRegex(ValueError, "mmg-library"):
+                normalize(replaced_path, "base", "identity", root / f"{stem}.msh", records,
+                          root / "replaced-library-normalized.json")
+            changed = copy.deepcopy(report)
+            changed["Tools"]["mmg-library"]["Path"] = str(MESHER)
+            with self.assertRaisesRegex(ValueError, "mmg-library"):
+                validate_stage_report(changed, "native-adaptation-mmg")
+            self.assertEqual(
+                report["Command"][report["Command"].index("--mmg-library") + 1],
+                str(MMG_LIBRARY))
+
     def test_quadrature_partition_rejects_changed_missing_and_duplicate_owner(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -528,9 +692,11 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--artifact", f"adaptation-receipt={root / 'receipt.json'}",
                  "--tool", f"runtime={sys.executable}",
                  "--tool", f"adaptation-wrapper={WRAPPER}",
-                 "--tool", f"adapter-mmg={ADAPTER}", "--",
+                 "--tool", f"adapter-mmg={SCRIPT_ADAPTER}",
+                 "--tool", f"mmg-library={SCRIPT_ADAPTER}", "--",
                  sys.executable, str(WRAPPER), str(seed), str(metric), str(pins),
-                 str(recipe), str(root / "adapted.msh"), str(root / "receipt.json")],
+                 str(recipe), str(root / "adapted.msh"), str(root / "receipt.json"),
+                 "--mmg-library", str(SCRIPT_ADAPTER), "--fixed-triangles", str(fixed)],
                 capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("--adapter", result.stderr)
@@ -539,12 +705,18 @@ class GeneralMeshManifestTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); output = root / "seed.msh"
             output.write_text("preexisting")
+            sources = {name: root / f"{name}.csv" for name in ("signature", "boundary", "mask")}
+            for path in sources.values(): path.write_text(path.name)
             result = subprocess.run(
                 [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
                  "--log", str(root / "seed.log"), "--stage", "seed-generation",
+                 *[value for name, path in sources.items()
+                   for value in ("--input", f"source-{name}={path}")],
                  "--artifact", f"seed-mesh={output}",
                  "--tool", f"runtime={sys.executable}", "--tool", f"mesher={MESHER}",
-                 "--", sys.executable, str(MESHER), str(output), str(root / "missing")],
+                 "--", sys.executable, str(MESHER), str(output), str(root / "missing"),
+                 *[value for name, path in sources.items()
+                   for value in (f"--{name}", str(path))]],
                 capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("stage output must be absent", result.stderr)

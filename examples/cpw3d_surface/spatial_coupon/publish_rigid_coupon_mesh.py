@@ -162,8 +162,8 @@ def _exact_mesh_structure(left, right):
             _equal_data(left.field_data, right.field_data))
 
 
-def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *, source,
-            semantic_input, signature, boundary, mask, canonical_build_record,
+def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
+            semantic_input, signature, boundary, mask, process, canonical_build_record,
             transformed_semantic, transformed_supports_path, ownership, ownership_quadrature,
             ownership_runtime, ownership_auditor, kind="fabricated", tolerance=1e-12):
     outputs = [Path(value) for value in (output_mesh, receipt_path, transformed_semantic,
@@ -171,11 +171,16 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *, source
                                          ownership_quadrature)]
     if any(path.exists() for path in outputs):
         raise ValueError("Every rigid-publication output must be fresh")
+    source_inputs = {"source-semantic-contract": Path(semantic_input),
+                     "source-signature": Path(signature), "source-boundary": Path(boundary),
+                     "source-mask": Path(mask), "source-process": Path(process)}
+    if any(not path.is_file() for path in source_inputs.values()):
+        raise ValueError("Every explicit source input must exist")
     matrix = read_transform(transform_path)
     canonical_build = json.loads(Path(canonical_build_record).read_text())
     canonical_digest = sha256(canonical_mesh)
     artifacts = canonical_build.get("CanonicalArtifacts", {})
-    bound_candidate = artifacts.get("candidate-mesh", {})
+    bound_candidate = artifacts.get("canonical-candidate-mesh", {})
     if bound_candidate.get("SHA256") != canonical_digest:
         raise ValueError("Canonical candidate differs from the bound canonical build")
     before_section, after_section, coordinate_error = transform_gmsh22(
@@ -209,7 +214,7 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *, source
     semantic["SourceSemanticContractSHA256"] = semantic_digest
     semantic["CanonicalTransformSHA256"] = transform_digest
     supports = transformed_supports(
-        Path(source), matrix, signature=signature, boundary=boundary, mask=mask,
+        Path(signature).parent, matrix, signature=signature, boundary=boundary, mask=mask,
         transform_sha256=transform_digest, semantic_sha256=semantic_digest)
     Path(transformed_semantic).write_text(json.dumps(semantic, indent=2) + "\n")
     Path(transformed_supports_path).write_text(json.dumps(supports, indent=2) + "\n")
@@ -220,9 +225,12 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *, source
     transform_csv.write_text(",".join(format(value, ".17g")
                                       for row in matrix for value in row) + "\n")
     command = [str(Path(ownership_runtime).resolve()), "--startup-file=no",
-               str(Path(ownership_auditor).resolve()), str(Path(source).resolve()), kind,
+               str(Path(ownership_auditor).resolve()), kind,
                str(Path(output_mesh).resolve()), str(transform_csv.resolve()),
-               str(Path(ownership).resolve())]
+               str(Path(ownership).resolve()),
+               "--process", str(Path(process).resolve()),
+               "--signature", str(Path(signature).resolve()),
+               "--boundary", str(Path(boundary).resolve())]
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"Transformed ownership audit failed with status {result.returncode}")
@@ -236,12 +244,13 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *, source
     if ownership_summary["ResponseOwnership"]["Exhaustive"] is not True:
         raise ValueError("Transformed response ownership is not exhaustive")
     receipt = {
-        "Version": 1,
+        "Version": 2,
         "CanonicalBuildId": canonical_build.get("CanonicalBuildId"),
         "CanonicalBuildSHA256": canonical_build.get("CanonicalBuildSHA256"),
         "CanonicalMeshSHA256": canonical_digest,
         "OutputMeshSHA256": output_digest,
         "TransformSHA256": transform_digest,
+        "SourceInputSHA256": {name: sha256(path) for name, path in source_inputs.items()},
         "Transform": [value for row in matrix for value in row],
         "Identity": bool(identity),
         "MaximumCoordinateError": coordinate_error,
@@ -272,11 +281,11 @@ def main():
     parser.add_argument("transform", type=Path)
     parser.add_argument("output_mesh", type=Path)
     parser.add_argument("receipt", type=Path)
-    parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--semantic-input", type=Path, required=True)
     parser.add_argument("--signature", type=Path, required=True)
     parser.add_argument("--boundary", type=Path, required=True)
     parser.add_argument("--mask", type=Path, required=True)
+    parser.add_argument("--process", type=Path, required=True)
     parser.add_argument("--canonical-build-record", type=Path, required=True)
     parser.add_argument("--transformed-semantic", type=Path, required=True)
     parser.add_argument("--transformed-supports", type=Path, required=True)
@@ -289,8 +298,9 @@ def main():
     args = parser.parse_args()
     try:
         publish(args.canonical_mesh, args.transform, args.output_mesh, args.receipt,
-                source=args.source, semantic_input=args.semantic_input,
+                semantic_input=args.semantic_input,
                 signature=args.signature, boundary=args.boundary, mask=args.mask,
+                process=args.process,
                 canonical_build_record=args.canonical_build_record,
                 transformed_semantic=args.transformed_semantic,
                 transformed_supports_path=args.transformed_supports,

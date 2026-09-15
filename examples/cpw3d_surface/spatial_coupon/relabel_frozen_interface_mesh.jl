@@ -107,7 +107,7 @@ end
 
 function main()
     length(ARGS) >= 4 && iseven(length(ARGS)) ||
-        error("signature_directory thin|fabricated input.msh output.msh [--expected-measures measures.csv] [--rigid-transform MATRIX]")
+        error("signature_directory thin|fabricated input.msh output.msh [--expected-measures measures.csv] [--rigid-transform MATRIX] [--process process.toml] [--signature mesh-signature.csv] [--boundary plan-view-boundary.csv]")
     root, input, output = abspath.((ARGS[1], ARGS[3], ARGS[4]))
     kind = ARGS[2]
     kind in ("thin", "fabricated") || error("Kind must be thin or fabricated")
@@ -115,6 +115,12 @@ function main()
     isfile(output) && error("Refuse to overwrite output mesh")
     expected_path = nothing
     transform = copy(IDENTITY_RIGID_TRANSFORM)
+    # Explicit source options bind the consumed files; the directory layout is only
+    # a fallback for unstaged callers.
+    sources = Dict("--process" => joinpath(root, "process.toml"),
+                   "--signature" => joinpath(root, "mesh-signature.csv"),
+                   "--boundary" => joinpath(root, "plan-view-boundary.csv"))
+    explicit = Set{String}()
     index = 5
     while index <= length(ARGS)
         option, value = ARGS[index], ARGS[index + 1]
@@ -125,19 +131,24 @@ function main()
         elseif option == "--rigid-transform"
             transform == IDENTITY_RIGID_TRANSFORM || error("Duplicate --rigid-transform option")
             transform = parse_rigid_transform(value)
+        elseif haskey(sources, option)
+            option in explicit && error("Duplicate $option option")
+            push!(explicit, option)
+            sources[option] = abspath(value)
+            isfile(sources[option]) || error("Source input for $option does not exist")
         else
             error("Unknown option $option")
         end
         index += 2
     end
-    process_path = joinpath(root, "process.toml")
+    process_path = sources["--process"]
     process = TOML.parsefile(process_path)
     process["Units"] == "um" || error("Process units must be um")
     radius = Float64(process["Radius"])
     thickness = Float64(process["MetalThickness"])
     overetch = Float64(process["Overetch"])
-    edges = read_edges(joinpath(root, "mesh-signature.csv"))
-    loops = read_boundary(joinpath(root, "plan-view-boundary.csv"))
+    edges = read_edges(sources["--signature"])
+    loops = read_boundary(sources["--boundary"])
     expected = nothing
     if expected_path !== nothing
         data, _ = readdlm(expected_path, ',', header = true)
@@ -226,8 +237,8 @@ function main()
                 "MeshSHA256" => output_sha256,
                 "ElementCertificateSHA256" => file_sha256(certificate),
                 "ParentMeshSHA256" => file_sha256(input),
-                "SignatureSHA256" => file_sha256(joinpath(root, "mesh-signature.csv")),
-                "BoundarySHA256" => file_sha256(joinpath(root, "plan-view-boundary.csv")),
+                "SignatureSHA256" => file_sha256(sources["--signature"]),
+                "BoundarySHA256" => file_sha256(sources["--boundary"]),
                 "Radius" => radius,
                 "Fabricated" => kind == "fabricated",
                 "RigidTransform" => vec(transform')
@@ -240,8 +251,8 @@ function main()
             "Input" => input,
             "InputSHA256" => file_sha256(input),
             "OutputSHA256" => output_sha256,
-            "SignatureSHA256" => file_sha256(joinpath(root, "mesh-signature.csv")),
-            "BoundarySHA256" => file_sha256(joinpath(root, "plan-view-boundary.csv")),
+            "SignatureSHA256" => file_sha256(sources["--signature"]),
+            "BoundarySHA256" => file_sha256(sources["--boundary"]),
             "ProcessSHA256" => file_sha256(process_path),
             "InMemoryNodeAndElementIDsPreserved" => true,
             "SerializedGeometryAndConnectivityPreserved" => true,

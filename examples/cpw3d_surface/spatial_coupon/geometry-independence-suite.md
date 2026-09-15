@@ -125,20 +125,48 @@ native MMG adaptation, label restoration, and canonical Gmsh publication. The
 seventh stage, `proper-rigid-publication`, is mandatory even for identity.
 
 `canonical_mesh_build.py` computes the cache key from all immutable source,
-process, semantic, recipe, gate, canonical-tool, and adapter hashes. Its build
-hash additionally binds every canonical artifact. A placement may share the six
-canonical reports only when both hashes and every canonical artifact hash match.
-Final meshes, transform receipts, ownership outputs, and audit records remain
-per-placement and content-distinct. Canonical and placement seconds/RSS are
-reported separately.
+process, semantic, recipe, and gate hashes plus the exact canonical tool-role
+set derived from the six stages (runtime, validator, mesher, metric preparer,
+adaptation wrapper, adapter, runtime-resolved MMG library, restorer, publisher).
+Its build record is derived from the six validated stage reports: it binds the
+exact fifteen canonical artifact roles (every stage output, including the
+adaptation receipt and the source-local restored mesh) and each stage report's
+SHA-256, and rejects missing or extra roles. A placement may share the six
+canonical reports only when the cache key, build hash, every canonical artifact
+hash and every stage-report hash match. Final meshes, transform receipts,
+ownership outputs, and audit records remain per-placement and content-distinct.
+Canonical and placement seconds/RSS are reported separately.
 
 Native adaptation must be launched through `run_native_mmg_adaptation.py`.
 There is no caller-provided hmax: the wrapper reads
 `FarFieldBudgetPolicy.EffectiveFarSize` from the bound restoration recipe,
 requires it to equal the recipe's `FarSize`, passes that exact value to the
 reviewed adapter, and emits an adaptation receipt containing the executed argv.
+The wrapper also resolves the adapter's single MMG3D shared library from its
+link table and rpath entries (`otool` on macOS, `readelf` elsewhere), requires
+it to be the `--mmg-library` bound as the stage's `mmg-library` tool role,
+removes dynamic-loader search overrides from the adapter environment, and
+records the library path, link reference and SHA-256 in the receipt. The stage
+contract requires the receipt's adapter and library hashes to equal the bound
+tools, so replacing the loaded library changes `CanonicalBuildId`. Preflight
+resolution:
+
+```sh
+python3 -c 'from run_native_mmg_adaptation import resolve_mmg_library; \
+  print(resolve_mmg_library("$EDGE_METRIC_ADAPTER_EXE"))'
+```
+
 The normal, tangent, corner, protected-band targets and 4,000,000-element cap
 remain unchanged.
+
+Every stage command must name exactly its bound inputs and outputs: seed
+generation binds the source signature/boundary/mask, canonical publication binds
+the source process/signature/boundary (`--process/--signature/--boundary`), and
+proper-rigid publication binds source semantic/signature/boundary/mask/process,
+the canonical build record and every ownership/semantic/support output. Named
+options must equal the bindings and positionally consumed paths must occur in
+argv; `run_bounded_mesher.py` refuses to launch otherwise. No stage accepts a
+source directory.
 
 `publish_rigid_coupon_mesh.py` requires a fresh output and a finite orthonormal
 homogeneous transform with determinant +1. It changes only Gmsh 2.2 node
@@ -146,13 +174,20 @@ coordinates, preserving node tags, cell-block order, connectivity, physical and
 geometrical tags, physical names, and point/cell/field data. It reconstructs the
 transformed semantic and support contracts from immutable source, checks exact
 `R*x+t`, positive orientation, quality and invariant measures, and invokes
-`audit_rigid_coupon_ownership.jl`. That audit classifies quadrature points in the
-inverse source-local frame and rejects any final owner-label mismatch or
-nonpositive/nonclosing owner partition. Identity therefore gets a fresh path and
-receipt; reflection remains rejected.
+`audit_rigid_coupon_ownership.jl` with explicit `--process`, `--signature` and
+`--boundary` files. That audit classifies quadrature points in the inverse
+source-local frame and rejects any final owner-label mismatch or
+nonpositive/nonclosing owner partition. The receipt records the ownership argv,
+runtime/auditor hashes, output hashes and every source-input hash; the stage
+contract requires the argv options to equal the placement bindings and the
+hashes to equal the bound inputs/outputs. Identity therefore gets a fresh path
+and receipt; reflection remains rejected.
 
 A complete four-edge and ten-edge evidence run still requires an executable
-reviewed build of `adapt_edge_metric.cpp` through `EDGE_METRIC_ADAPTER_EXE`.
+reviewed build of `adapt_edge_metric.cpp` through `EDGE_METRIC_ADAPTER_EXE` and
+its resolved MMG3D library bound as `mmg-library`. The fixture tests build a
+tiny native adapter linked against a fixture `libmmg3d`
+(`testdata/build_tiny_native_adapter.py`), so they require a C compiler.
 Use fresh directories, 1800 seconds and 8 GiB for each bounded stage (16 GiB for
 the aggregate audit), and the unchanged 4M element cap. Build the four-edge
 canonical candidate once, publish identity and rotate-z through stage seven,

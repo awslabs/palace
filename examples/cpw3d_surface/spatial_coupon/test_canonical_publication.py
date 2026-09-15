@@ -1,55 +1,137 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Canonical cache, bound native-hmax, and exact rigid publication tests."""
+import atexit
 import copy
 import json
 import math
 from pathlib import Path
 import shutil
-import stat
 import tempfile
 import unittest
 
 import meshio
 import numpy as np
 
-from canonical_mesh_build import (build_record, same_canonical_build,
+from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, CANONICAL_TOOL_ROLES,
+                                  build_record, canonical_sha256, same_canonical_build,
                                   validate_build_record)
+from mesh_stage_contract import CANONICAL_STAGE_ORDER
 from publish_rigid_coupon_mesh import (_exact_mesh_structure, sha256,
                                        transform_gmsh22)
-from run_native_mmg_adaptation import effective_far_size, run
+from run_native_mmg_adaptation import effective_far_size, resolve_mmg_library, run
+from testdata.build_tiny_native_adapter import build as build_native_fixture, compiler
 from transform_coupon_source_contract import validate_rigid_transform
 
 
+HERE = Path(__file__).resolve().parent
+_NATIVE_FIXTURE_DIRECTORY = tempfile.TemporaryDirectory(prefix="tiny-native-adapter-")
+atexit.register(_NATIVE_FIXTURE_DIRECTORY.cleanup)
+if compiler() is not None:
+    ADAPTER, MMG_LIBRARY = build_native_fixture(_NATIVE_FIXTURE_DIRECTORY.name)
+else:
+    ADAPTER, MMG_LIBRARY = None, None
+
+
 class CanonicalBuildTest(unittest.TestCase):
+    GATES = {"MaximumElements": 4_000_000}
+
     def inputs(self):
         return {name: str(index) * 64 for index, name in enumerate(
             ("Signature", "Boundary", "Mask", "Process", "SemanticContract", "MeshRecipe"), 1)}
 
+    def tools(self):
+        return {role: canonical_sha256(role) for role in sorted(CANONICAL_TOOL_ROLES)}
+
+    def artifacts(self, root):
+        result = {}
+        for role in sorted(CANONICAL_ARTIFACT_ROLES):
+            path = root / f"{role}.bin"; path.write_text(role)
+            result[role] = {"Path": str(path), "SHA256": sha256(path)}
+        return result
+
+    def reports(self):
+        return {stage: canonical_sha256(stage) for stage in CANONICAL_STAGE_ORDER}
+
     def test_cache_reuse_requires_exact_source_gate_tool_and_artifact_hashes(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); mesh = root / "canonical.msh"; mesh.write_text("mesh")
-            artifacts = {"candidate-mesh": {"Path": str(mesh), "SHA256": sha256(mesh)}}
-            record = build_record(self.inputs(), {"MaximumElements": 4_000_000},
-                                  {"adapter-mmg": "a" * 64}, artifacts)
-            validate_build_record(record, self.inputs(), {"MaximumElements": 4_000_000},
-                                  {"adapter-mmg": "a" * 64})
+            root = Path(temporary)
+            record = build_record(self.inputs(), self.GATES, self.tools(),
+                                  self.artifacts(root), self.reports())
+            validate_build_record(record, self.inputs(), self.GATES, self.tools())
             self.assertTrue(same_canonical_build(record, copy.deepcopy(record)))
-            for field, replacement in (("SourceSHA256", "b" * 64),
-                                       ("CanonicalToolSHA256", "c" * 64)):
+            self.assertIn("native-adaptation-mmg/mmg-library",
+                          record["CanonicalCacheKey"]["CanonicalToolSHA256"])
+            for field, key, replacement in (
+                    ("SourceSHA256", "Signature", "b" * 64),
+                    ("CanonicalToolSHA256", "native-adaptation-mmg/mmg-library", "c" * 64),
+                    ("CanonicalToolSHA256", "native-adaptation-mmg/adapter-mmg", "e" * 64)):
                 changed = copy.deepcopy(record)
-                key = next(iter(changed["CanonicalCacheKey"][field]))
                 changed["CanonicalCacheKey"][field][key] = replacement
                 self.assertFalse(same_canonical_build(record, changed))
-                with self.assertRaises(ValueError):
-                    validate_build_record(changed, self.inputs(),
-                                          {"MaximumElements": 4_000_000},
-                                          {"adapter-mmg": "a" * 64}, check_files=False)
+                with self.assertRaisesRegex(ValueError, "cache key differs"):
+                    validate_build_record(changed, self.inputs(), self.GATES, self.tools(),
+                                          check_files=False)
             changed = copy.deepcopy(record)
-            changed["CanonicalArtifacts"]["candidate-mesh"]["SHA256"] = "d" * 64
+            changed["CanonicalArtifacts"]["canonical-candidate-mesh"]["SHA256"] = "d" * 64
+            self.assertFalse(same_canonical_build(record, changed))
+            with self.assertRaisesRegex(ValueError, "immutable payload"):
+                validate_build_record(changed, self.inputs(), self.GATES, self.tools(),
+                                      check_files=False)
+            changed = copy.deepcopy(record)
+            changed["CanonicalStageReportSHA256"]["native-adaptation-mmg"] = "f" * 64
             self.assertFalse(same_canonical_build(record, changed))
 
+    def test_changed_mmg_library_hash_is_a_different_canonical_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); artifacts = self.artifacts(root)
+            record = build_record(self.inputs(), self.GATES, self.tools(), artifacts,
+                                  self.reports())
+            replaced = dict(self.tools())
+            replaced["native-adaptation-mmg/mmg-library"] = "a" * 64
+            other = build_record(self.inputs(), self.GATES, replaced, artifacts, self.reports())
+            self.assertNotEqual(record["CanonicalBuildId"], other["CanonicalBuildId"])
+            self.assertFalse(same_canonical_build(record, other))
+            with self.assertRaisesRegex(ValueError, "cache key differs"):
+                validate_build_record(record, self.inputs(), self.GATES, replaced)
+            incomplete = {role: digest for role, digest in self.tools().items()
+                          if role != "native-adaptation-mmg/mmg-library"}
+            with self.assertRaisesRegex(ValueError, "exact canonical schema"):
+                build_record(self.inputs(), self.GATES, incomplete, artifacts, self.reports())
 
+    def test_every_canonical_artifact_role_is_required_and_no_extra_is_allowed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); artifacts = self.artifacts(root)
+            self.assertIn("adaptation-receipt", CANONICAL_ARTIFACT_ROLES)
+            record = build_record(self.inputs(), self.GATES, self.tools(), artifacts,
+                                  self.reports())
+            for role in sorted(CANONICAL_ARTIFACT_ROLES):
+                with self.subTest(role=role):
+                    missing = {name: item for name, item in artifacts.items() if name != role}
+                    with self.assertRaisesRegex(ValueError, "exact six-stage output schema"):
+                        build_record(self.inputs(), self.GATES, self.tools(), missing,
+                                     self.reports())
+                    deleted = copy.deepcopy(record)
+                    del deleted["CanonicalArtifacts"][role]
+                    payload = {key: value for key, value in deleted.items()
+                               if key != "CanonicalBuildSHA256"}
+                    deleted["CanonicalBuildSHA256"] = canonical_sha256(payload)
+                    with self.assertRaisesRegex(ValueError, "exact six-stage output schema"):
+                        validate_build_record(deleted, self.inputs(), self.GATES, self.tools(),
+                                              check_files=False)
+            extra = dict(artifacts)
+            extra["unreviewed-extra"] = artifacts["adaptation-receipt"]
+            with self.assertRaisesRegex(ValueError, "exact six-stage output schema"):
+                build_record(self.inputs(), self.GATES, self.tools(), extra, self.reports())
+            for stage in CANONICAL_STAGE_ORDER:
+                with self.subTest(stage=stage):
+                    reports = {name: digest for name, digest in self.reports().items()
+                               if name != stage}
+                    with self.assertRaisesRegex(ValueError, "exact canonical schema"):
+                        build_record(self.inputs(), self.GATES, self.tools(), artifacts, reports)
+
+
+@unittest.skipUnless(ADAPTER is not None, "native fixture adapter requires a C compiler (cc)")
 class NativeHmaxTest(unittest.TestCase):
     def recipe(self, root):
         path = root / "recipe.json"
@@ -60,21 +142,39 @@ class NativeHmaxTest(unittest.TestCase):
                 "EffectiveFarSize": 0.32}}))
         return path
 
-    def test_effective_far_policy_is_actual_adapter_hmax(self):
+    def inputs(self, root):
+        for name in ("seed.mesh", "metric.f64", "pins.txt", "fixed.txt"):
+            (root / name).write_text(name)
+        return dict(hmin=.025, hgrad=1.3, mode="freeze-selected",
+                    fixed_triangles=root / "fixed.txt")
+
+    def test_effective_far_policy_is_actual_adapter_hmax_and_library_is_bound(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            for name in ("seed.mesh", "metric.f64", "pins.txt", "fixed.txt"):
-                (root / name).write_text(name)
-            adapter = root / "adapter"
-            adapter.write_text("#!/usr/bin/env python3\nimport pathlib,shutil,sys\n"
-                               "shutil.copyfile(sys.argv[1],sys.argv[4])\n")
-            adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
-            receipt = run(adapter, root / "seed.mesh", root / "metric.f64",
+            root = Path(temporary); controls = self.inputs(root)
+            receipt = run(ADAPTER, root / "seed.mesh", root / "metric.f64",
                           root / "pins.txt", self.recipe(root), root / "adapted.meshb",
-                          root / "receipt.json", hmin=.025, hgrad=1.3,
-                          mode="freeze-selected", fixed_triangles=root / "fixed.txt")
+                          root / "receipt.json", mmg_library=MMG_LIBRARY, **controls)
             self.assertEqual(float(receipt["Command"][6]), 0.32)
             self.assertEqual(receipt["EffectiveFarSize"], 0.32)
+            self.assertEqual(receipt["AdapterSHA256"], sha256(ADAPTER))
+            self.assertEqual(receipt["MMGLibrarySHA256"], sha256(MMG_LIBRARY))
+            self.assertEqual(Path(receipt["MMGLibraryPath"]), Path(MMG_LIBRARY).resolve())
+            self.assertEqual(resolve_mmg_library(ADAPTER)["SHA256"], sha256(MMG_LIBRARY))
+
+    def test_library_not_resolved_from_adapter_link_rpath_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); controls = self.inputs(root)
+            copied = root / Path(MMG_LIBRARY).name; shutil.copyfile(MMG_LIBRARY, copied)
+            with self.assertRaisesRegex(ValueError, "different MMG library"):
+                run(ADAPTER, root / "seed.mesh", root / "metric.f64", root / "pins.txt",
+                    self.recipe(root), root / "adapted.meshb", root / "receipt.json",
+                    mmg_library=copied, **controls)
+            script = HERE / "testdata" / "tiny_native_adapter.py"
+            with self.assertRaisesRegex(ValueError, "exactly one MMG3D"):
+                run(script, root / "seed.mesh", root / "metric.f64", root / "pins.txt",
+                    self.recipe(root), root / "adapted.meshb", root / "receipt.json",
+                    mmg_library=MMG_LIBRARY, **controls)
+            self.assertFalse((root / "adapted.meshb").exists())
 
     def test_recorded_policy_not_consumed_and_tampered_hmax_are_rejected(self):
         recipe = {"FarSize": .16, "FarFieldBudgetPolicy": {
