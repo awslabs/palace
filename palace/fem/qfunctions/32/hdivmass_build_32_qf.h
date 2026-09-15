@@ -12,7 +12,7 @@ CEED_QFUNCTION(f_build_hdivmass_32)(void *__restrict__ ctx, CeedInt Q,
                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
-  CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + 3 * Q;
+  CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + 4 * Q;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {

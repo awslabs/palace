@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 name: Style
 
 permissions:
@@ -90,6 +93,9 @@ jobs:
 
       - name: Check test tags
         run: ./scripts/check-test-tags test/unit
+
+      - name: Test CMake architecture helpers
+        run: cmake -P cmake/tests/MultiArchitecture.cmake
 
   check-license:
     runs-on: ubuntu-latest

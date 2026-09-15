@@ -146,7 +146,9 @@ for implementation details.
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
-    the boundary).
+    the boundary). A wave port boundary must also be planar; both the 2D boundary mode
+    formulation and coordinate-based `"VoltagePath"` postprocessing use a single tangent
+    frame and surface normal for the complete port face.
 
     The overall sign of the wave port mode E-field is internally fixed by an arbitrary
     convention that does not necessarily match the polarity convention of lumped ports
@@ -264,10 +266,14 @@ flux loop boundary condition works by:
  4. **Computing inductance**: The resulting 3D field solutions enable inductance matrix
     extraction
 
-Flux-loop excitations cannot currently be combined with surface-current excitations in the
-same magnetostatic simulation. The `"FluxAmounts"` entries are nondimensional internal
-excitation amplitudes, analogous to unit-current excitations for current-driven
-magnetostatic solves. Palace reports `terminal-Phi.csv` in physical webers.
+Flux-loop excitations can be combined with surface-current excitations in the same
+magnetostatic simulation, in which case Palace reports a single inductance matrix covering
+both port types. Every surface-current element must provide an oriented `"Aperture"` with
+`"Attributes"` and a Cartesian `"Direction"`, and all current ports must be `"Open"` when
+inactive; see [Magnetostatic problems](problem.md#Magnetostatic-problems) for details. The
+`"FluxAmounts"` entries are nondimensional internal excitation amplitudes, analogous to
+unit-current excitations for current-driven magnetostatic solves. Palace reports
+`terminal-Phi.csv` in physical webers.
 
 !!! note "Flux loop requirements"
 

@@ -30,6 +30,7 @@ class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
 class SurfaceConductivityOperator;
+class SurfaceFunctional;
 class SurfaceRationalImpedanceOperator;
 class SurfaceImpedanceOperator;
 class Units;
@@ -77,7 +78,7 @@ private:
   std::unique_ptr<Mesh> port_mesh;
   std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
   std::unique_ptr<FiniteElementSpace> port_nd_fespace, port_h1_fespace;
-  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
+  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
   double mu_eps_max;
@@ -104,25 +105,32 @@ private:
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
+  // libCEED surface functional for port power computation, replacing per-call boundary
+  // LinearForm assembly in the legacy path when supported.
+  mutable std::unique_ptr<SurfaceFunctional> power_func;
+
   // Voltage path for line integral (optional, for impedance postprocessing).
   std::vector<mfem::Vector> voltage_path;
   int voltage_n_samples;
   bool has_voltage_coords = false;
 
-  // Reverse transfer map (port submesh → parent mesh) and parent-mesh GridFunction
-  // used to evaluate line integrals of the port mode field via GSLIB on the 3D parent
-  // mesh. Only allocated if the user configured a voltage path.
-  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer_reverse;
-  std::unique_ptr<GridFunction> parent_E0t;
+  // Cached quadrature locations on the embedded port submesh. Each point is owned by one
+  // rank and evaluated directly in port_E0t, avoiding any port-to-parent field transfer or
+  // duplicate flattened finite element space.
+  struct VoltageSample
+  {
+    int element;
+    mfem::IntegrationPoint point;
+    std::array<double, 3> weighted_tangent;
+  };
+  std::vector<VoltageSample> voltage_samples;
 
-  // Cached GSLIB point locator for the voltage-path line integrals, Setup once on the
-  // (fixed) parent mesh. The geometric Setup is the dominant cost, so reusing it across
-  // every Initialize() avoids an O(num_elements) hash rebuild per frequency — critical for
-  // the circuit-synthesis dispersion fit, which evaluates the mode at many frequencies.
-  // Only allocated if the user configured a voltage path.
+  // Cached GSLIB point locator on the fixed parent mesh for driven-field voltage.
 #if defined(MFEM_USE_GSLIB)
   std::unique_ptr<mfem::FindPointsGSLIB> voltage_gslib_op;
 #endif
+
+  void SetUpExcitationVoltagePath();
 
   // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal
   // first, ground second). When non-zero (i.e. set by the user) the mode is flipped

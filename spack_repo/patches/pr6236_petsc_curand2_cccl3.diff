@@ -1,0 +1,27 @@
+diff --git a/repos/spack_repo/builtin/packages/petsc/package.py b/repos/spack_repo/builtin/packages/petsc/package.py
+index 608cd71226..f39e4ca88f 100644
+--- a/repos/spack_repo/builtin/packages/petsc/package.py
++++ b/repos/spack_repo/builtin/packages/petsc/package.py
+@@ -231,6 +231,22 @@ class Petsc(Package, CudaPackage, ROCmPackage):
+     patch("petsc_modifiable_lvalue.patch", when="@3.21.6:3.22.4+rocm")
+     patch("petsc_modifiable_lvalue.patch", when="@3.21.6:3.22.4+cuda")
+ 
++    # curand2.cu uses thrust::tuple/get/make_tuple but only includes
++    # thrust/transform.h etc. CUDA 13.3 (CCCL 3.3) stopped pulling
++    # <thrust/tuple.h> in transitively, so nvcc fails with
++    # 'namespace "thrust" has no member "tuple"'. Upstream fix: petsc!9532.
++    # The tuple uses are guarded by PETSC_USE_COMPLEX, so only +complex builds
++    # trip it (which is why PETSc's own CUDA CI, built without complex, is
++    # unaffected). The lower bound is @3.16: because that is where curand2.cu
++    # started including <petsc/private/randomimpl.h> (the context this patch
++    # matches); no upper bound yet as no PETSc release ships the include.
++    # Remove once a fixed PETSc release is available.
++    patch(
++        "https://gitlab.com/petsc/petsc/-/commit/c0f7467a2261011568d510ece23f14cad8dcaaa4.diff",
++        sha256="e91c9b9323f22fe8988f5707eb262290e850b81262cf41557dc552848313a6b8",
++        when="@3.16: +cuda +complex ^cuda@13.3:",
++    )
++
+     # These require +mpi
+     mpi_msg = "Requires +mpi"
+     conflicts("+cgns", when="~mpi", msg=mpi_msg)

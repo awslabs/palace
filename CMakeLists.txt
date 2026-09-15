@@ -17,7 +17,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 endif()
 
 # Initialize the project
-project(palace-superbuild LANGUAGES CXX C VERSION 0.17.0)
+project(palace-superbuild LANGUAGES CXX C VERSION 0.18.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
@@ -74,7 +74,7 @@ if(PALACE_WITH_CUDA)
         string(REGEX REPLACE "\\." "" CUDA_CAPS "${CUDA_CAPS}")
         string(REGEX REPLACE "\n" ";" CUDA_CAPS "${CUDA_CAPS}")
         list(REMOVE_DUPLICATES CUDA_CAPS)
-        string(REPLACE ";" "," CMAKE_CUDA_ARCHITECTURES "${CUDA_CAPS}")
+        set(CMAKE_CUDA_ARCHITECTURES "${CUDA_CAPS}")
         message(STATUS "Detected CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
       else()
         set(CMAKE_CUDA_ARCHITECTURES "70")
@@ -146,6 +146,7 @@ endif()
 
 # Add extra CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(ArchitectureHelpers)
 
 # Intel classic compilers no longer supported (prior to CMake 3.20, the new compilers are
 # detected as Clang instead of IntelLLVM)

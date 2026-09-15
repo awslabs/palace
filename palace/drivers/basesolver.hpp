@@ -9,6 +9,7 @@
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
 
 namespace mfem
@@ -60,11 +61,16 @@ public:
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
+  // Writes the given (1-based) AMR iteration index to post_dir's palace.json as
+  // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
+  // initial solve is iteration 1).
+  void SaveAdaptationIteration(int iteration) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
+  void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
 };
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder

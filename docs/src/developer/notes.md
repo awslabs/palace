@@ -145,10 +145,10 @@ A JSON format [configuration file](../config/config.md), for example named
 `config.json`, can be validated against the provided Schema using:
 
 ```bash
-./scripts/validate_config config.json
+./scripts/validate-config config.json
 ```
 
-[This script](https://github.com/awslabs/palace/blob/main/scripts/validate_config) uses
+[This script](https://github.com/awslabs/palace/blob/main/scripts/validate-config) uses
 Julia's [`JSONSchema.jl`](https://github.com/fredo-dedup/JSONSchema.jl) and the Schema
 provided in [`scripts/schema/`](https://github.com/awslabs/palace/blob/main/scripts/schema)
 to parse the configuration file and check that the fields are correctly specified. This
@@ -222,13 +222,14 @@ numerically to *Palace*'s release version. The coupling is one-directional:
     not bump the schema version.
 
 Because the schema is versioned independently, a single schema version generally spans
-several *Palace* releases. The table below records the first *Palace* release shipping
-each schema version; a schema version applies to that release and all later ones up to
-(but not including) the next entry. Add a row whenever the schema version is bumped.
+several *Palace* releases. The table below records the schema version shipped by each
+*Palace* release; a listed version applies from that release until the next row. Add a
+row when a release is cut, recording the schema version at that boundary.
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
+| Schema version | *Palace* release | Notes                              |
+|:--------------:|:----------------:|:---------------------------------- |
+| `1-0-0`        | `0.17`           | First explicitly-versioned schema. |
+| `1-6-0`        | `0.18`           |                                    |
 
 #### When and how to bump (PR checklist)
 

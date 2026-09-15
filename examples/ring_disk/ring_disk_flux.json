@@ -1,0 +1,57 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro_flux"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/ring_disk.msh",
+    "L0": 1.0e-6,  // μm
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]  // Farfield
+    },
+    "FluxLoop":
+    [
+      {
+        "Index": 2,
+        "FluxLoopPEC": [5],     // Disk metal
+        "HoleAttributes": [6],  // Hole through the disk
+        "FluxAmounts": [1.0],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Magnetostatic":
+    {
+      "Save": 2
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

@@ -22,6 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  SPACK_PACKAGES_COMMIT: c3b260e171988c0ef05220174e8ada7efdbd6499
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -65,7 +66,7 @@ jobs:
         uses: spack/setup-spack@v3
         with:
           spack_ref: releases/v1.2
-          packages_ref: releases/v2026.06
+          packages_ref: ${{ env.SPACK_PACKAGES_COMMIT }}
           buildcache: true
           color: true
 

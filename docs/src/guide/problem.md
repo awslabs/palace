@@ -184,8 +184,46 @@ Prescribe magnetic flux through specified holes in conducting surfaces. For each
 magnetostatic field is computed by applying flux through the loop of interest, leaving all
 other flux loops with zero flux.
 
-Surface-current and flux-loop excitations cannot currently be combined in the same
-magnetostatic simulation. When running on GPU, the 2D surface curl solve for flux loop
+Surface-current and flux-loop excitations can be combined in the same magnetostatic
+simulation, in which case the two excitation types are driven with complementary
+constraints: a current excitation holds every flux loop at zero flux, while a flux
+excitation leaves every current port open. As a result the reported self-inductances are
+not directly the entries of a single inductance matrix — the current-port block comes out
+*screened* by the zero-flux loops (a Schur complement) and the flux-loop block comes out as
+a reluctance — and the coupling between the two types is invisible to the energy-based
+formula, because a current state carries no loop flux and a flux state carries no port
+current, making the two states energy-orthogonal.
+
+To recover a single inductance matrix in henries, *Palace* measures the coupling directly.
+Every surface-current element must specify an `"Aperture"` with `"Attributes"` tiling a
+surface spanning that element's current loop and a Cartesian `"Direction"` defining its
+positive orientation. The direction accepts the usual `"+X"`, `"-X"`, and similar
+Cartesian shorthands or a nonzero three-vector. It selects the sign of the local geometric
+normal in the surface integral ``\int \bm{B}\cdot\hat{n}\,dS``; it is not a direction onto
+which ``\bm{B}`` is projected. The aperture direction and the element's current `"Direction"`
+should follow the right-hand rule so that positive current and positive linked flux are
+conjugate coordinates.
+
+For a multielement surface-current port, each element owns its aperture. Because the unit
+port current is divided equally between its parallel elements, *Palace* combines their linked
+fluxes using the same weights rather than summing them. The selected aperture surfaces may be
+tiled by several attributes, but each must admit a consistent orientation by its reference
+direction. A direction tangent to the surface is rejected.
+
+Writing ``\bm{G}`` for the matrix of these linked fluxes normalized by the driving fluxes,
+the blocks are converted as ``\bm{M}_{ff} = \bm{H}_{ff}^{-1}``,
+``\bm{M}_{cf} = \bm{G}\bm{M}_{ff}``, and
+``\bm{M}_{cc} = \bm{H}_{cc} + \bm{G}\bm{M}_{ff}\bm{G}^T``, where the last term un-screens the
+current-port block. Only the flux-flux block is inverted, exactly as in the flux-only case.
+The aperture flux can contain nearly cancelling contributions and may therefore converge
+more slowly under mesh refinement than energy-based diagonal entries.
+
+Mixed extraction requires a complete aperture for every current element and requires every
+current port's effective `"InactiveMode"` to be `"Open"`. Invalid or incomplete combinations
+are rejected rather than producing a matrix containing a mixture of bare, screened, and
+unknown entries.
+
+When running on GPU, the 2D surface curl solve for flux loop
 boundary conditions is performed on the host while the main 3D magnetostatic solve uses
 GPU acceleration.
 

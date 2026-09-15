@@ -14,23 +14,38 @@ namespace palace
 SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
                                        const mfem::ParMesh &mesh)
 {
-  // Construct the source elements allowing for a possible multielement surface current
-  // sources.
+  MFEM_VERIFY(!data.elements.empty(),
+              "Surface current source must have at least one element!");
+  const double current_fraction = 1.0 / static_cast<double>(data.elements.size());
+
+  // Construct the parallel source elements together with their corresponding apertures.
   for (const auto &elem : data.elements)
   {
     mfem::Array<int> attr_list;
-    attr_list.Append(elem.attributes.data(), elem.attributes.size());
+    attr_list.Append(elem.attributes.data(), static_cast<int>(elem.attributes.size()));
+    std::unique_ptr<LumpedElementData> source;
     switch (elem.coordinate_system)
     {
       case CoordinateSystem::CYLINDRICAL:
-        elems.push_back(
-            std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh));
+        source = std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh);
         break;
       case CoordinateSystem::CARTESIAN:
-        elems.push_back(
-            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh));
+        source = std::make_unique<UniformElementData>(elem.direction, attr_list, mesh);
         break;
     }
+
+    std::optional<SurfaceCurrentAperture> aperture;
+    if (elem.aperture)
+    {
+      aperture.emplace();
+      aperture->attributes = elem.aperture->attributes;
+      aperture->direction.SetSize(static_cast<int>(elem.aperture->direction.size()));
+      for (int i = 0; i < aperture->direction.Size(); i++)
+      {
+        aperture->direction[i] = elem.aperture->direction[i];
+      }
+    }
+    elements.push_back({std::move(source), std::move(aperture), current_fraction});
   }
 }
 
@@ -75,7 +90,7 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(
         for (auto attr : elem.attributes)
         {
           MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-                      "Surface current boundary attribute tags must be non-negative and "
+                      "Surface current boundary attribute tags must be positive and "
                       "correspond to boundaries in the mesh!");
           MFEM_VERIFY(bdr_attr_marker[attr - 1],
                       "Unknown surface current boundary attribute " << attr << "!");
@@ -83,6 +98,19 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(
               !source_marker[attr - 1],
               "Boundary attribute is assigned to more than one surface current source!");
           source_marker[attr - 1] = 1;
+        }
+        if (elem.aperture)
+        {
+          MFEM_VERIFY(!elem.aperture->attributes.empty(),
+                      "SurfaceCurrent Aperture must contain at least one boundary "
+                      "attribute for SurfaceCurrent index "
+                          << idx << "!");
+          for (auto attr : elem.aperture->attributes)
+          {
+            MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1],
+                        "Unknown SurfaceCurrent Aperture boundary attribute "
+                            << attr << " for SurfaceCurrent index " << idx << "!");
+          }
         }
       }
     }
@@ -104,9 +132,9 @@ void SurfaceCurrentOperator::PrintBoundaryInfo(const mfem::ParMesh &mesh)
   Mpi::Print("\nConfiguring surface current excitation source term at attributes:\n");
   for (const auto &[idx, data] : sources)
   {
-    for (const auto &elem : data.elems)
+    for (const auto &elem : data.elements)
     {
-      for (auto attr : elem->GetAttrList())
+      for (auto attr : elem.source->GetAttrList())
       {
         Mpi::Print(" {:d}: Index = {:d}, n = ({:+.1f})\n", attr, idx,
                    fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
@@ -127,9 +155,9 @@ mfem::Array<int> SurfaceCurrentOperator::GetAttrList() const
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : sources)
   {
-    for (const auto &elem : data.elems)
+    for (const auto &elem : data.elements)
     {
-      attr_list.Append(elem->GetAttrList());
+      attr_list.Append(elem.source->GetAttrList());
     }
   }
   return attr_list;
@@ -159,10 +187,10 @@ void SurfaceCurrentOperator::AddExcitationBdrCoefficients(const SurfaceCurrentDa
 {
   // Add excited boundaries to the linear form, with a unit current distributed across
   // all elements of the current source in parallel.
-  for (const auto &elem : data.elems)
+  for (const auto &elem : data.elements)
   {
-    const double Jinc = 1.0 / (elem->GetGeometryWidth() * data.elems.size());
-    fb.AddCoefficient(elem->GetModeCoefficient(-Jinc));
+    const double Jinc = elem.current_fraction / elem.source->GetGeometryWidth();
+    fb.AddCoefficient(elem.source->GetModeCoefficient(-Jinc));
   }
 }
 
