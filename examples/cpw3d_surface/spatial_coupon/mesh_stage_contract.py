@@ -41,27 +41,70 @@ STAGE_PRIMARY_TOOL = {
 }
 
 
+# Interpreter options whose following argument is option data, not a script.  Unknown
+# options fail closed by making their following argument the apparent script.
+_INTERPRETER_OPTIONS_WITH_VALUE = {
+    "-H", "--home", "-J", "--sysimage", "-C", "--cpu-target", "-t", "--threads",
+    "-p", "--procs", "--machine-file", "--gcthreads", "-W", "-X",
+    "--check-hash-based-pycs",
+}
+_INTERPRETER_OPTIONS_WITH_ATTACHED_VALUE = (
+    "--home=", "--sysimage=", "--cpu-target=", "--threads=", "--procs=",
+    "--machine-file=", "--gcthreads=", "--project=", "--startup-file=",
+    "--history-file=", "--compiled-modules=", "--pkgimages=", "--banner=",
+    "--check-hash-based-pycs=", "-W", "-X",
+)
+_INTERPRETER_OPTIONS_WITHOUT_VALUE = {
+    "-b", "-bb", "-B", "-d", "-h", "--help", "-i", "-I", "-O", "-OO", "-P",
+    "-q", "--quiet", "-s", "-S", "-u", "-v", "-V", "--version", "-x", "--project",
+}
+_INTERPRETER_EXECUTION_OPTIONS = {"-c", "-m", "-e", "--eval", "--print", "-L",
+                                  "--load"}
+
+
+def _first_interpreter_script(command, primary):
+    """Return the first script position after recognized interpreter options."""
+    index = 1
+    while index < len(command):
+        argument = command[index]
+        if argument == "--":
+            return index + 1 if index + 1 < len(command) else None
+        if (argument in _INTERPRETER_EXECUTION_OPTIONS or
+                (argument == "-E" and Path(primary).suffix == ".jl")):
+            # These execute code, a module, or a loaded file before any positional script.
+            return None
+        if argument in _INTERPRETER_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if (argument in _INTERPRETER_OPTIONS_WITHOUT_VALUE or
+                (argument == "-E" and Path(primary).suffix == ".py") or
+                argument.startswith(_INTERPRETER_OPTIONS_WITH_ATTACHED_VALUE)):
+            index += 1
+            continue
+        return index
+    return None
+
+
 def validate_tool_invocation(stage, command, tools, working_directory=None):
     """Require the declared runtime and stage tool in executable/script positions."""
     base = Path(working_directory or Path.cwd())
-    resolved = [str((Path(value) if Path(value).is_absolute() else base / value).resolve())
-                for value in command]
     runtime = str(Path(tools["runtime"]).resolve())
     primary = str(Path(tools[STAGE_PRIMARY_TOOL[stage]]).resolve())
+
     def matches(argument, expected):
-        return (str(Path(argument).resolve()) == expected or
-                (not Path(argument).is_absolute() and expected.endswith("/" + argument)))
+        path = Path(argument)
+        resolved = path if path.is_absolute() else base / path
+        return (str(resolved.resolve()) == expected or
+                (not path.is_absolute() and expected.endswith("/" + argument)))
+
     if not matches(command[0], runtime):
         raise ValueError(f"Stage runtime is not argv[0]: {stage}")
     if stage == "native-adaptation-mmg":
         if primary != runtime:
             raise ValueError("Native adapter must be both runtime and adapter-mmg")
         return
-    # Interpreter options are not files.  The primary script must be the first
-    # existing file argument after the runtime, rather than an unused trailing arg.
-    primary_positions = [index for index, value in enumerate(command[1:], 1)
-                         if matches(value, primary)]
-    if len(primary_positions) != 1:
+    script_position = _first_interpreter_script(command, primary)
+    if script_position is None or not matches(command[script_position], primary):
         raise ValueError(f"Stage tool is not in the executed script position: {stage}")
 
 

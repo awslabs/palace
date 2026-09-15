@@ -20,6 +20,7 @@ from general_mesh_audit_producer import (KINDS, _protected_surface_report,
                                          produce as produce_audit)
 from general_mesh_manifest import run_manifest, sha256, validate_manifest
 from mesh_array_io import read_mesh
+from mesh_stage_contract import validate_tool_invocation
 from normalize_general_mesh_evidence import normalize
 from semantic_mesh_contract import (derive_feature_topology, validate_semantic_contract)
 
@@ -348,6 +349,15 @@ class GeneralMeshManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize(manifest_path, "base", "identity", root / f"{stem}.msh",
                           same_record, root / "raw-as-own-audit.json")
+
+    def test_non_native_primary_tool_must_be_first_executed_script(self):
+        tools = {"runtime": sys.executable, "metric-preparer": STAGER}
+        validate_tool_invocation(
+            "metric-preparation", [sys.executable, "-B", str(STAGER)], tools)
+        with self.assertRaisesRegex(ValueError, "executed script position"):
+            validate_tool_invocation(
+                "metric-preparation",
+                [sys.executable, "-B", str(MESHER), str(STAGER)], tools)
 
     def test_uninvoked_adapter_mmg_stage_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
