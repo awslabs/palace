@@ -1427,30 +1427,38 @@ inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
 {
   // For an NC parmesh, parent.GetGlobalVertexIndices internally builds an order-1 H1
   // ParFiniteElementSpace and calls GetGlobalTDofNumber on every vertex DoF. NC parmesh
-  // GetGlobalTDofNumber asserts that the ldof is a true DoF, which is not guaranteed
-  // for vertices that are shared / not owned by this rank (and is reliably broken when
-  // the parent has cracked-boundary duplicate vertices). Use the NCMesh node-id table
-  // directly: NCMesh nodes are replicated across ranks with rank-consistent ids, and
-  // every local vertex is the vert_index of exactly one node.
-  gi.SetSize(parent.GetNV());
+  // GetGlobalTDofNumber asserts that the ldof is a true DoF, which is not guaranteed for
+  // shared vertices. Use the NCMesh node-id table directly: node ids are rank-consistent.
+  // Include ghost-only vertex indices as well as [0, GetNV()), because a local slave edge
+  // can refer to a ghost-owned master whose MeshId endpoints are outside the local ParMesh
+  // vertex range.
   if (parent.Nonconforming())
   {
-    gi = -1;
     const auto &ncmesh = *parent.ncmesh;
+    int max_vertex = parent.GetNV() - 1;
     for (int n = 0; n < ncmesh.GetNumNodes(); n++)
     {
       const auto &node = ncmesh.GetNode(n);
       if (node.HasVertex())
       {
-        const int v = node.vert_index;
-        if (v >= 0 && v < parent.GetNV())
-        {
-          gi[v] = n;
-        }
+        max_vertex = std::max(max_vertex, node.vert_index);
+      }
+    }
+    gi.SetSize(max_vertex + 1);
+    gi = -1;
+    for (int n = 0; n < ncmesh.GetNumNodes(); n++)
+    {
+      const auto &node = ncmesh.GetNode(n);
+      // Nodes beyond the ghost layer still have vertex references but retain a negative
+      // vert_index (e.g. -4). Only numbered local and ghost vertices belong in this map.
+      if (node.HasVertex() && node.vert_index >= 0)
+      {
+        gi[node.vert_index] = n;
       }
     }
     return;
   }
+  gi.SetSize(parent.GetNV());
   parent.GetGlobalVertexIndices(gi);
 }
 
@@ -1514,11 +1522,10 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   const auto &parent = *submesh.GetParent();
   MPI_Comm comm = GetSubMeshComm(submesh);
 
-  // Build a set of surface attributes for quick lookup.
   std::unordered_set<int> surface_attr_set;
-  for (int i = 0; i < surface_attrs.Size(); i++)
+  for (int attr : surface_attrs)
   {
-    surface_attr_set.insert(surface_attrs[i]);
+    surface_attr_set.insert(attr);
   }
 
   // Rank-independent edge identifiers: ParMesh global vertex indices, or [0..NV) for
@@ -1527,34 +1534,72 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   mfem::Array<HYPRE_BigInt> pvert_gi;
   GetParentGlobalVertexIndices(parent, pvert_gi);
 
-  // Each rank: collect (gv0, gv1, attr, is_surface) for every edge of its local parent
-  // boundary elements, using sorted global vertex pairs as edge keys.
-  std::vector<int> local_edge_attrs;
+  // A nonconforming child edge and the coarse edge containing it have different endpoint
+  // pairs. MFEM already records that ancestry; canonicalize slave edges to the master
+  // MeshId before comparing attributes instead of recovering the relationship from
+  // coordinates. A master can be ghost-owned and therefore have no locally addressable
+  // ParMesh edge index, but its NCMesh MeshId still exposes the endpoint vertices.
+  mfem::Array<int> vertices;
+  auto EdgeKey = [&](int edge)
   {
-    mfem::Array<int> edges, orientations, ev;
-    for (int be = 0; be < parent.GetNBE(); be++)
+    if (parent.Nonconforming())
     {
-      int attr = parent.GetBdrAttribute(be);
-      bool is_surface = (surface_attr_set.count(attr) > 0);
-      parent.GetBdrElementEdges(be, edges, orientations);
-      for (int j = 0; j < edges.Size(); j++)
+      const auto &edge_list = parent.ncmesh->GetEdgeList();
+      const auto id_and_type = edge_list.GetMeshIdAndType(edge);
+      if (id_and_type.type == mfem::NCMesh::NCList::MeshIdType::SLAVE)
       {
-        parent.GetEdgeVertices(edges[j], ev);
-        int gv0 = static_cast<int>(pvert_gi[ev[0]]);
-        int gv1 = static_cast<int>(pvert_gi[ev[1]]);
-        local_edge_attrs.insert(
-            local_edge_attrs.end(),
-            {std::min(gv0, gv1), std::max(gv0, gv1), attr, is_surface ? 1 : 0});
+        const auto *slave = static_cast<const mfem::NCMesh::Slave *>(id_and_type.id);
+        MFEM_ASSERT(slave != nullptr && slave->master >= 0,
+                    "Invalid nonconforming slave-edge ancestry!");
+        const auto master = edge_list.GetMeshIdAndType(slave->master);
+        MFEM_ASSERT(master.id != nullptr,
+                    "Could not resolve nonconforming master-edge ancestry!");
+        int master_vertices[2];
+        parent.ncmesh->GetEdgeVertices(*master.id, master_vertices);
+        vertices.SetSize(2);
+        vertices[0] = master_vertices[0];
+        vertices[1] = master_vertices[1];
       }
+      else
+      {
+        parent.GetEdgeVertices(edge, vertices);
+      }
+    }
+    else
+    {
+      parent.GetEdgeVertices(edge, vertices);
+    }
+    MFEM_ASSERT(vertices.Size() == 2 && vertices[0] >= 0 && vertices[0] < pvert_gi.Size() &&
+                    vertices[1] >= 0 && vertices[1] < pvert_gi.Size(),
+                "Invalid canonical edge vertices!");
+    const int gv0 = static_cast<int>(pvert_gi[vertices[0]]);
+    const int gv1 = static_cast<int>(pvert_gi[vertices[1]]);
+    MFEM_ASSERT(gv0 >= 0 && gv1 >= 0, "Invalid global canonical edge vertices!");
+    return std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
+  };
+
+  // Collect the physical parent-boundary attribute associated with each canonical edge.
+  // The selected mode surface also contributes records for its perimeter; an adjacent
+  // non-surface attribute takes precedence. If several physical boundaries meet at the
+  // same edge, choose the smallest attribute deterministically.
+  constexpr int edge_attr_record_size = 4;
+  std::vector<int> local_edge_attrs;
+  mfem::Array<int> edges, orientations;
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    const int attr = parent.GetBdrAttribute(be);
+    const bool is_surface = surface_attr_set.count(attr) > 0;
+    parent.GetBdrElementEdges(be, edges, orientations);
+    for (int edge : edges)
+    {
+      const auto [gv0, gv1] = EdgeKey(edge);
+      local_edge_attrs.insert(local_edge_attrs.end(), {gv0, gv1, attr, is_surface ? 1 : 0});
     }
   }
 
-  // Allgather edge attribute data so every rank has the complete picture. The serial
-  // instantiation runs over MPI_COMM_SELF; the collectives degenerate to memcpy.
   const int local_count = static_cast<int>(local_edge_attrs.size());
   std::vector<int> recv_counts(Mpi::Size(comm));
   Mpi::Allgather(1, &local_count, recv_counts.data(), comm);
-
   std::vector<int> displs(Mpi::Size(comm));
   int total = 0;
   for (int i = 0; i < Mpi::Size(comm); i++)
@@ -1566,51 +1611,40 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   Mpi::Allgatherv(local_count, local_edge_attrs.data(), all_edge_attrs.data(),
                   recv_counts.data(), displs.data(), comm);
 
-  // Build resolved global vertex pair → attribute map. For edges shared by multiple parent
-  // boundary faces, prefer the face that is NOT part of the mode analysis surface.
-  std::map<std::pair<int, int>, int> gvpair_to_attr;
-  for (int i = 0; i < total / 4; i++)
+  std::map<std::pair<int, int>, int> edge_to_attr;
+  for (int i = 0; i < total / edge_attr_record_size; i++)
   {
-    int gv0 = all_edge_attrs[4 * i];
-    int gv1 = all_edge_attrs[4 * i + 1];
-    int attr = all_edge_attrs[4 * i + 2];
-    bool is_surface = (all_edge_attrs[4 * i + 3] != 0);
-    auto key = std::make_pair(gv0, gv1);
-    auto it = gvpair_to_attr.find(key);
-    if (it == gvpair_to_attr.end())
+    const int *record = all_edge_attrs.data() + edge_attr_record_size * i;
+    const auto key = std::make_pair(record[0], record[1]);
+    const int attr = record[2];
+    const bool is_surface = record[3] != 0;
+    auto [it, inserted] = edge_to_attr.try_emplace(key, attr);
+    if (!inserted && !is_surface)
     {
-      gvpair_to_attr[key] = attr;
-    }
-    else if (!is_surface)
-    {
-      it->second = attr;
+      const bool current_is_surface = surface_attr_set.count(it->second) > 0;
+      it->second = current_is_surface ? attr : std::min(it->second, attr);
     }
   }
 
-  // For each submesh boundary element, trace to parent edge, convert to global vertex pair,
-  // and apply the resolved attribute.
+  // Map every submesh perimeter edge through the same NC ancestry. A surface-only match is
+  // left at MFEM's generated attribute: it can be an artificial NC submesh boundary with no
+  // adjacent physical parent boundary.
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
-  mfem::Array<int> ev;
   for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
   {
-    int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
+    const int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
     MFEM_ASSERT(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size(),
                 "Submesh boundary element edge index out of range!");
-    int parent_edge = parent_edge_map[submesh_edge];
-    parent.GetEdgeVertices(parent_edge, ev);
-    int gv0 = static_cast<int>(pvert_gi[ev[0]]);
-    int gv1 = static_cast<int>(pvert_gi[ev[1]]);
-    auto key = std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
-    auto it = gvpair_to_attr.find(key);
-    if (it != gvpair_to_attr.end())
+    const auto key = EdgeKey(parent_edge_map[submesh_edge]);
+    const auto it = edge_to_attr.find(key);
+    if (it != edge_to_attr.end() && surface_attr_set.count(it->second) == 0)
     {
       submesh.SetBdrAttribute(sbe, it->second);
     }
   }
 
-  // Note: do not touch submesh.bdr_attributes directly — modifying it on a ParSubMesh
-  // can corrupt internal MFEM state. The per-element SetBdrAttribute calls above are
-  // sufficient; RebuildCeedAttributes reads GetBdrAttribute(i) on demand.
+  // Do not touch submesh.bdr_attributes directly: modifying it on a ParSubMesh can
+  // corrupt internal MFEM state. RebuildCeedAttributes reads per-element attributes.
 }
 
 template <class SubMeshT>

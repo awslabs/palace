@@ -17,6 +17,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Bug Fixes
+
+  - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
+    integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
+  - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
+    or leading to incorrect results. [PR 927](https://github.com/awslabs/palace/pull/927).
+
+#### Performance Improvements
+
+  - Reduced repeated work in complex operators [PR
+    932](https://github.com/awslabs/palace/pull/932).
+  - Reduced repeated work in PROM construction [PR
+    930](https://github.com/awslabs/palace/pull/930).
+
 #### Build system
 
   - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
