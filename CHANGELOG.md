@@ -22,6 +22,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
     integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
 
+#### Performance Improvements
+
+  - Reduced repeated work in complex operators [PR
+    932](https://github.com/awslabs/palace/pull/932).
+  - Reduced repeated work in PROM construction [PR
+    930](https://github.com/awslabs/palace/pull/930).
+
 ## [0.18.0] - 2026-09-09
 
 #### New Features
