@@ -566,13 +566,17 @@ private:
     // Stage x before touching the caller's output. Mult/AddMult consume the private
     // result only after both actions finish, including when their x and y alias.
     input_view = x;
-    packed->Mult(input, output);
     if (remainder)
     {
-      // The packed action has finished reading input. Reuse it for the remainder,
-      // which still reads the caller's x; output stays separate until accumulation.
-      remainder->Mult(x, input_view);
-      output_view.AXPY(1.0, input_view);
+      // The remainder writes the caller-facing output directly; the packed action then
+      // accumulates on top with its supported +1 coefficient. Both read the private
+      // staged input, so there is no packed-output zeroing or trailing complex AXPY.
+      remainder->Mult(input_view, output_view);
+      packed->AddMult(input, output);
+    }
+    else
+    {
+      packed->Mult(input, output);
     }
     return output_view;
   }
