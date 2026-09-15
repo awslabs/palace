@@ -550,6 +550,11 @@ public:
   // Tolerance for linear solver.
   double ksp_tol = 1e-8;
 
+  // Optional override for exact doubled-real factorization in the wave-port mode solve.
+  // When unset, inherit Solver.Linear.ComplexCoarseSolve and Solver.Linear.PCMatReal. An
+  // explicit value takes precedence over both for this port.
+  std::optional<bool> complex_coarse_solve = std::nullopt;
+
   // Tolerance for eigenvalue solver.
   double eig_tol = 1e-6;
 
