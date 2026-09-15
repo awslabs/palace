@@ -94,9 +94,11 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     remain on their exact support, ridge vertices remain on support
     intersections, and matching-surface and pinned vertices are fixed.
     Semantic-corner neighborhoods are selected only from the frozen contract and
-    repaired in alternating one-ring/two-ring passes inside the corner ball; a
-    multi-pass result is committed as one transaction only when it satisfies the
-    displacement bound, the incident floors and the corner-aspect gate.
+    repaired in alternating one-ring/two-ring passes over the vertices inside the
+    corner ball; the best chained candidate is committed as one transaction only
+    when it satisfies the displacement bound, the incident floors and the
+    corner-aspect gate. A neighborhood without movable vertices is a recorded
+    rejection, never an exception.
     """
     if not (np.isfinite(minimum_scaled) and 0<minimum_scaled<1 and
             np.isfinite(maximum_corner_aspect) and maximum_corner_aspect>1 and
@@ -133,16 +135,23 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         return active[selected],[bases[i] for i in selected]
 
     def solve(base,cells,active,objective):
-        """Bounded least-squares move of the active vertices from a base state."""
+        """Bounded least-squares move of the active vertices from a base state.
+
+        Returns None when no active vertex can move; the caller records that as
+        a rejection.
+        """
         active,bases=movable(active)
-        if not len(active):raise ValueError('Quality repair has no movable vertices')
+        if not len(active):return None
         offsets=np.cumsum([0]+[value.shape[1] for value in bases])
         incident=np.flatnonzero(np.any(np.isin(tetrahedra,active),axis=1))
         # Floors come from the original global mesh, not a preceding pass.
         floor=global_floor[incident]
-        initial=np.concatenate([
+        # A parameter saturated on the ball by a preceding pass can re-derive a
+        # few ulps outside the optimizer bounds; SciPy rejects such an initial
+        # point as infeasible, so clip it onto the bounds (no geometric effect).
+        initial=np.clip(np.concatenate([
             directions.T@(base[node]-original[node])/maximum_displacement
-            for node,directions in zip(active,bases)])
+            for node,directions in zip(active,bases)]),-.75,.75)
         def updated(value):
             candidate=base.copy()
             for i,(node,directions) in enumerate(zip(active,bases)):
@@ -169,7 +178,6 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     def commit(candidate,cells,objective):
         """Commit a candidate only within the bound, the floors and the corner gate."""
         nonlocal largest_step,rejected_components,rejected_corners,target_missed_gate_satisfied
-        moved=np.flatnonzero(np.any(candidate!=points,axis=1))
         def rejected():
             # The shared point array is unchanged. Keep searching other
             # components; strict global gates remain final.
@@ -177,6 +185,8 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             if objective=='corner':rejected_corners+=1
             else:rejected_components+=1
             return False
+        if candidate is None:return rejected()
+        moved=np.flatnonzero(np.any(candidate!=points,axis=1))
         if not len(moved):return rejected()
         cumulative=np.linalg.norm(candidate[moved]-original[moved],axis=1)
         if not _within_displacement_bound(cumulative,maximum_displacement):
@@ -207,22 +217,27 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         corner_before.append(before)
         if before<=corner_target:
             corner_outcomes.append({'Passes':0,'Outcome':'target-satisfied'});continue
-        one_ring=np.unique(tetrahedra[incident])
-        one_ring=one_ring[np.linalg.norm(points[one_ring]-corner,axis=1)>1e-10]
-        two_ring=np.unique(tetrahedra[np.any(np.isin(tetrahedra,one_ring),axis=1)])
-        two_ring=two_ring[(np.linalg.norm(points[two_ring]-corner,axis=1)>1e-10)&
-                          (np.linalg.norm(points[two_ring]-corner,axis=1)<=corner_radius)]
-        # Alternate one-ring and two-ring passes on a chained candidate; the
-        # candidate is committed once, so no intermediate state can stand alone.
-        candidate=points.copy();achieved=before;passes=0
+        # Both rings are the vertices inside the recipe's corner ball, so the
+        # two-ring pass is a superset of the one-ring pass.
+        def inside_ball(nodes):
+            distance=np.linalg.norm(points[nodes]-corner,axis=1)
+            return nodes[(distance>1e-10)&(distance<=corner_radius)]
+        one_ring=inside_ball(np.unique(tetrahedra[incident]))
+        two_ring=inside_ball(np.unique(tetrahedra[np.any(np.isin(tetrahedra,one_ring),axis=1)]))
+        # Alternate one-ring and two-ring passes on a chained candidate; only the
+        # best candidate is committed, once, so no intermediate or regressed
+        # state can stand alone.
+        best=None;achieved=before;passes=0
         for active in (one_ring,two_ring,one_ring,two_ring):
-            candidate=solve(candidate,incident,active,'corner');passes+=1
+            candidate=solve(points if best is None else best,incident,active,'corner')
+            if candidate is None:break
+            passes+=1
             improved=float(_tetra_quality(candidate,tetrahedra[incident])[1].max())
             converged=improved<=corner_target+corner_target_tolerance
             stalled=improved>=achieved-corner_target_tolerance
-            achieved=min(achieved,improved)
+            if improved<achieved:best,achieved=candidate,improved
             if converged or stalled:break
-        accepted=commit(candidate,incident,'corner')
+        accepted=commit(best,incident,'corner')
         after=float(_tetra_quality(points,tetrahedra[incident])[1].max())
         corner_outcomes.append({'Passes':passes,'AchievedAspect':achieved,
             'Outcome':('rejected' if not accepted else

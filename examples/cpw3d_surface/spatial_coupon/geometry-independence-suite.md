@@ -155,6 +155,14 @@ therefore the turns and junctions of the complete reference-boundary graph
 `geometric-corner` pins come from the feature graph alone, `reference-turn`
 pins only from coplanar seams; straight seam vertices are not pinned. The
 recipe records `PinnedVertexKinds`, `PinnedVertices` and `PinPolicy`.
+Straightness (`_continues_straight`, also used for chain merging in
+`feature_chains`) admits a deviation of at most `COPLANAR_TOLERANCE` radians
+(sine of the angle, 1e-6), which is *stricter* than the former
+`cos > -1 + 1e-10` collinearity test (about 1.4e-5 rad): a seed whose
+straight-edge vertices carry noise between 1e-6 and 1.4e-5 rad would now
+produce extra chain breaks (spurious feature corners, pins and segments), not
+merged chains. The canonical seeds are exact planes far below 1e-6 and their
+segments, pins and corners are unchanged.
 Reference-turn pins are MMG required vertices only; they never enter the
 semantic-corner set, the protected supports, or the ownership/covariance audits
 as geometry. Label restoration compares repair displacements to the bound with a
@@ -162,14 +170,20 @@ roundoff-only relative allowance (`DISPLACEMENT_ROUNDOFF_TOLERANCE`, 1e-12) so
 a vertex clamped onto the displacement ball is not misreported as an overshoot;
 a true overshoot is a rejected component, never an exception. Semantic corners
 are repaired in alternating one-ring/two-ring passes over the non-fixed
-vertices inside the recipe's corner ball (`CornerIsotropyRadius`), chained on
-one candidate that is committed as a single transaction only when it satisfies
-the cumulative displacement bound, the original incident floors and the
-`MaximumCornerAspect` gate; 0.95 x gate stays the optimizer objective, results
-in (target, gate] are committed and counted as
-`CornerRepairsTargetMissedGateSatisfied`, results above the gate are
-`RejectedCornerRepairs`. Pinned vertices (`PinnedVertices`, matched on the
-native adapted coordinates) and matching-surface vertices never move. The
+vertices inside the recipe's corner ball (`CornerIsotropyRadius`; both rings
+are filtered by the same radius, so the two-ring pass is a superset of the
+one-ring pass), chained on one candidate; the *best* chained candidate is
+committed as a single transaction only when it satisfies the cumulative
+displacement bound, the original incident floors and the `MaximumCornerAspect`
+gate, and `AchievedAspect` reports that committed candidate. The initial point
+of every chained pass is clipped onto the optimizer bounds so a parameter
+saturated by the previous pass cannot be rejected by SciPy as infeasible on
+roundoff. 0.95 x gate stays the optimizer objective, results in (target, gate]
+are committed and counted as `CornerRepairsTargetMissedGateSatisfied`, results
+above the gate are `RejectedCornerRepairs`, and a corner or component whose
+vertices are all fixed is a recorded rejection rather than an exception. Pinned
+vertices (`PinnedVertices`, matched on the native adapted coordinates) and
+matching-surface vertices never move. The
 final scaled-Jacobian, corner-aspect and displacement gates are unchanged.
 
 Native adaptation must be launched through `run_native_mmg_adaptation.py`.
@@ -200,8 +214,11 @@ the source process/signature/boundary (`--process/--signature/--boundary`), and
 proper-rigid publication binds source semantic/signature/boundary/mask/process,
 the canonical build record and every ownership/semantic/support output. Named
 options must equal the bindings and positionally consumed paths must occur in
-argv; `run_bounded_mesher.py` refuses to launch otherwise. No stage accepts a
-source directory.
+argv; `run_bounded_mesher.py` refuses to launch otherwise. Source validation
+and canonical publication still take a source directory as a positional
+argument, but the directory binds nothing: the files those stages consume are
+named only by their bound `--semantic-input/--signature/--boundary/--mask` and
+`--process/--signature/--boundary` options.
 
 `publish_rigid_coupon_mesh.py` requires a fresh output and a finite orthonormal
 homogeneous transform with determinant +1. It changes only Gmsh 2.2 node

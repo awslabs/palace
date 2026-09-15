@@ -233,9 +233,10 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
         # final corner gate (not the bound check) reported the failure.
         np.testing.assert_array_equal(points, original)
 
-    def test_corner_result_above_target_is_rejected_not_committed(self):
+    def test_stalled_corner_solver_is_a_rejected_repair_with_unchanged_points(self):
         # Initial corner aspect 3.88 is above the 3.8 repair target but within the
-        # 4.0 gate, so a rejected repair still yields a report.
+        # 4.0 gate; a solver that returns its initial point moves nothing, so the
+        # repair is recorded as rejected and the report is still produced.
         points, tetrahedra, supports, node_supports, recipe = \
             _single_tetrahedron_repair_case(.014)
         original = points.copy()
@@ -334,6 +335,95 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
             _quality_repair(points, tetrahedra, node_supports, supports,
                             out_of_ball, .01, 4., .01875)
         self.assertEqual(parameter_counts, [7, 7, 7, 7])
+        # A 0.03 ball excludes the one-ring vertices 1, 2 (0.05) from the one-ring
+        # pass too; only the apex (0.0195, 3 dof) moves in every pass.
+        small_ball = recipe | {"CornerIsotropyRadius": .03}
+        parameter_counts.clear(); points[:] = original
+
+        def nudge_apex_only(residual, initial, **_):
+            parameter_counts.append(len(initial))
+            value = np.asarray(initial, dtype=float).copy()
+            value[1] += .0002 / .01875  # apex y offset is the only 3-dof block
+            return SimpleNamespace(x=value)
+
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares", nudge_apex_only):
+            _quality_repair(points, tetrahedra, node_supports, supports,
+                            small_ball, .01, 4., .01875)
+        self.assertEqual(parameter_counts, [3, 3, 3, 3])
+
+    def test_best_chained_candidate_is_committed_when_a_later_pass_regresses(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0134)
+        original = points.copy()
+        steps = iter([.0006 / .01875, -.0003 / .01875])
+
+        def improve_then_regress(residual, initial, **_):
+            value = np.asarray(initial, dtype=float).copy()
+            value[5] += next(steps, 0.)
+            return SimpleNamespace(x=value)
+
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares",
+                               improve_then_regress):
+            report = _quality_repair(points, tetrahedra, node_supports, supports,
+                                     recipe, .01, 4., .01875)
+        outcome = report["CornerRepairOutcomes"][0]
+        # Pass 2 regressed (3.96 > 3.88) and stalled the chain; the pass-1
+        # candidate is committed and AchievedAspect is its aspect, not the last one.
+        self.assertEqual(outcome["Passes"], 2)
+        self.assertEqual(outcome["Outcome"], "target-missed-gate-satisfied")
+        np.testing.assert_allclose(points[3, 1], original[3, 1] + .0006)
+        self.assertEqual(outcome["AchievedAspect"], report["CornerAspectsAfter"][0])
+        self.assertAlmostEqual(report["CornerAspectsAfter"][0], 3.87936898, places=6)
+
+    def test_chained_pass_initial_point_is_clipped_to_the_optimizer_bounds(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.0002)
+        real_least_squares = restore_planar_metric_mesh.least_squares
+        initials = []
+
+        def saturate_then_solve(residual, initial, **options):
+            initials.append(np.asarray(initial, dtype=float).copy())
+            if len(initials) == 1:
+                value = np.zeros_like(initial); value[5] = .75  # apex y on the bound
+                return SimpleNamespace(x=value)
+            return real_least_squares(residual, initial, **options)
+
+        def roundoff_offset(directions, parameters, maximum_displacement):
+            # A few ulps of roundoff on a saturated offset, as re-deriving the
+            # parameters of a clamped vertex can produce.
+            return _bounded_offset(directions, parameters, maximum_displacement) * (
+                1. + 4. * np.finfo(float).eps)
+
+        with mock.patch.object(restore_planar_metric_mesh, "least_squares",
+                               saturate_then_solve), \
+                mock.patch.object(restore_planar_metric_mesh, "_bounded_offset",
+                                  roundoff_offset):
+            report = _quality_repair(points, tetrahedra, node_supports, supports,
+                                     recipe, .01, 4., .01875)
+        self.assertGreaterEqual(len(initials), 2)
+        self.assertGreater(.75 * (1. + 4. * np.finfo(float).eps), .75)
+        self.assertTrue(all(np.all(np.abs(initial) <= .75) for initial in initials[1:]))
+        self.assertLessEqual(report["CornerAspectsAfter"][0], 4.)
+
+    def test_corner_and_component_without_movable_vertices_are_recorded_rejections(self):
+        points, tetrahedra, supports, node_supports, recipe = \
+            _single_tetrahedron_repair_case(.014)
+        original = points.copy()
+        before = float(_tetra_quality(points, tetrahedra)[1].max())
+        self.assertGreater(before, 3.8); self.assertLess(before, 4.)
+        # Minimum scaled 0.4 makes the 0.70 cell a low-quality component (target
+        # 0.8) while the final 0.4 gate still holds; every vertex is pinned.
+        report = _quality_repair(points, tetrahedra, node_supports, supports, recipe,
+                                 .4, 4., .01875, pinned_nodes=frozenset({0, 1, 2, 3}))
+        outcome = report["CornerRepairOutcomes"][0]
+        self.assertEqual(outcome, {"Passes": 0, "AchievedAspect": before,
+                                   "Outcome": "rejected"})
+        self.assertEqual(report["RejectedCornerRepairs"], 1)
+        self.assertEqual(report["QualityRepairComponents"], 1)
+        self.assertEqual(report["RejectedQualityRepairComponents"], 1)
+        self.assertEqual(report["CornerAspectsAfter"], [before])
+        self.assertEqual(report["QualityRepairVertices"], 0)
+        np.testing.assert_array_equal(points, original)
 
     def test_pinned_vertices_are_matched_natively_and_never_move(self):
         points, tetrahedra, supports, node_supports, recipe = \
