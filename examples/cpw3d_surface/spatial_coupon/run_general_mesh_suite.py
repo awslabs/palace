@@ -138,7 +138,186 @@ def geometry_gate(expected, values, kind):
     return checks
 
 
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _same_points(expected, actual, tolerance):
+    if len(expected) != len(actual):
+        return False
+    unused = [tuple(float(x) for x in point) for point in actual]
+    for point in expected:
+        point = tuple(float(x) for x in point)
+        match = next((i for i, other in enumerate(unused)
+                      if len(point) == len(other) and math.dist(point, other) <= tolerance), None)
+        if match is None:
+            return False
+        unused.pop(match)
+    return True
+
+
+def audit_manifest_evidence(evidence, gates):
+    """Apply geometry-independent mesh gates to normalized tool evidence."""
+    failures = []
+    labels = evidence.get("ExactLabelsMaterials", {})
+    for name in ("VolumeAttributes", "BoundaryAttributes"):
+        expected_key, actual_key = "Expected" + name, "Actual" + name
+        if (expected_key not in labels or actual_key not in labels or
+                sorted(labels.get(expected_key, [])) != sorted(labels.get(actual_key, []))):
+            if "exact-labels-materials" not in failures:
+                failures.append("exact-labels-materials")
+
+    ownership = evidence.get("OwnershipClosure", {})
+    if (ownership.get("UnmatchedPolicy") != "Error" or
+            ownership.get("Unmatched") != 0 or ownership.get("Overlaps") != 0 or
+            ownership.get("Exhaustive") is not True):
+        failures.append("ownership-exhaustive-closure")
+
+    corners = evidence.get("SemanticCorners", {})
+    if ("Expected" not in corners or "Actual" not in corners or
+            not _same_points(corners.get("Expected", []), corners.get("Actual", []),
+                             float(gates["CornerTolerance"]))):
+        failures.append("semantic-corners")
+
+    protected = evidence.get("ProtectedSurfaces", {})
+    if ("Expected" not in protected or "Actual" not in protected or
+            "Changed" not in protected or
+            sorted(protected.get("Expected", [])) != sorted(protected.get("Actual", [])) or
+            protected.get("Changed") != 0):
+        failures.append("protected-surfaces")
+
+    widths = evidence.get("AchievedAnisotropy", {})
+    transverse = [widths.get("Transverse1P90"), widths.get("Transverse2P90")]
+    normal = widths.get("NormalTarget")
+    tangent = widths.get("TangentialP50")
+    if (not isinstance(widths.get("Samples"), int) or widths.get("Samples", 0) <= 0 or
+            any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in
+                [*transverse, normal, tangent]) or min(*transverse, normal, tangent) <= 0 or
+            max(transverse) > float(gates["MaximumNormalFactor"]) * normal or
+            tangent < float(gates["MinimumAchievedAspect"]) * max(transverse)):
+        failures.append("achieved-anisotropy")
+
+    covariance = evidence.get("RotationCovariance", {})
+    covariance_error = covariance.get("MaximumRelativeInvariantError")
+    if (not covariance.get("ComparedVariant") or
+            not isinstance(covariance_error, (int, float)) or
+            not math.isfinite(covariance_error) or covariance_error < 0 or
+            covariance_error > float(gates["RotationTolerance"])):
+        failures.append("rotation-covariance")
+
+    diagonal = evidence.get("TraceDiagonal", {})
+    if diagonal.get("GlobalDiagonalBands") != 0:
+        failures.append("trace-diagonal-overrefinement")
+
+    resources = evidence.get("Resources", {})
+    finite_resources = all(isinstance(resources.get(name), (int, float)) and
+                           math.isfinite(resources[name])
+                           for name in ("Seconds", "PeakRSSGiB", "Elements"))
+    if (resources.get("ExitCode") != 0 or not finite_resources or
+            resources.get("Seconds", math.inf) > float(gates["MaximumSeconds"]) or
+            resources.get("PeakRSSGiB", math.inf) > float(gates["MaximumRSSGiB"]) or
+            resources.get("Elements", math.inf) > int(gates["MaximumElements"])):
+        failures.append("bounded-resources")
+    return failures
+
+
+def run_manifest(args):
+    manifest_path = args.manifest.resolve()
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("Version") != 1 or not isinstance(manifest.get("Cases"), list):
+        raise ValueError("Unsupported generality-suite manifest")
+    identifiers = [case.get("Id") for case in manifest["Cases"]]
+    if any(not value for value in identifiers) or len(set(identifiers)) != len(identifiers):
+        raise ValueError("Manifest case identifiers must be nonempty and unique")
+    overrides = {}
+    for item in args.input:
+        if "=" not in item:
+            raise ValueError("--input must be CASE=DIRECTORY")
+        key, value = item.split("=", 1)
+        if key in overrides:
+            raise ValueError("Duplicate input override: " + key)
+        overrides[key] = Path(value).resolve()
+    unknown = set(overrides) - set(identifiers)
+    if unknown:
+        raise ValueError("Input overrides name unknown cases: " + ", ".join(sorted(unknown)))
+
+    repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
+    records = []
+    preflight_ok = True
+    for case in manifest["Cases"]:
+        record = {"Id": case["Id"], "Passed": False, "Variants": case.get("Variants", [])}
+        try:
+            source = case["Source"]
+            directory = overrides.get(case["Id"])
+            if directory is None and source.get("Directory"):
+                candidate = Path(source["Directory"])
+                directory = candidate if candidate.is_absolute() else repository / candidate
+            if directory is None or not directory.is_dir():
+                raise ValueError("required immutable input directory is unavailable")
+            hashes = {}
+            for role, entry in source["Files"].items():
+                path = directory / entry["Name"]
+                expected = entry.get("SHA256")
+                if not expected:
+                    raise ValueError(f"{role} has no frozen SHA256")
+                if not path.is_file():
+                    raise ValueError(f"missing required {role}: {path}")
+                actual = sha256(path)
+                if actual != expected:
+                    raise ValueError(f"immutable {role} hash mismatch")
+                hashes[role] = actual
+            signature_role = source["SignatureRole"]
+            with (directory / source["Files"][signature_role]["Name"]).open(newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            required_columns = set(source["SignatureColumns"])
+            if not rows or not required_columns.issubset(rows[0]):
+                raise ValueError("empty or malformed edge signature")
+            record.update({"InputDirectory": str(directory), "InputSHA256": hashes,
+                           "DiscoveredEdgeCount": len(rows),
+                           "DiscoveredSlots": sorted({int(row["Slot"]) for row in rows}),
+                           "DiscoveredConductors": sorted({int(row["Conductor"]) for row in rows})})
+            record["Passed"] = True
+        except (KeyError, OSError, ValueError) as error:
+            record["Error"] = str(error)
+            preflight_ok = False
+        records.append(record)
+
+    summary = {"Version": 1, "Scope": "Mesh-only geometry-independence gates",
+               "Manifest": str(manifest_path), "PreflightPassed": preflight_ok,
+               "Cases": records, "Passed": False}
+    args.root.mkdir(parents=True, exist_ok=False)
+    if not preflight_ok:
+        (args.root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        return False
+    if args.preflight_only:
+        summary["Passed"] = True
+        (args.root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        return True
+    if args.audit_root is None:
+        raise ValueError("--audit-root is required unless --preflight-only is used")
+    for case, record in zip(manifest["Cases"], records):
+        evidence_path = args.audit_root / (case["Id"] + ".json")
+        if not evidence_path.is_file():
+            record["Passed"] = False
+            record["Error"] = "missing mesh audit evidence"
+            continue
+        evidence = json.loads(evidence_path.read_text())
+        failures = audit_manifest_evidence(evidence, manifest["Gates"])
+        record["AuditEvidence"] = str(evidence_path)
+        record["GateFailures"] = failures
+        record["Passed"] = not failures
+    summary["Passed"] = all(record["Passed"] for record in records)
+    (args.root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    return summary["Passed"]
+
+
 def run(args):
+    if args.manifest:
+        return run_manifest(args)
     args.root.mkdir(parents=True, exist_ok=False)
     cases = fixtures(args.root)
     tools=args.root/"tools"
@@ -256,9 +435,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--julia", default="julia")
-    parser.add_argument("--julia-project", type=Path, required=True)
+    parser.add_argument("--julia-project", type=Path)
     parser.add_argument("--audit-bin", type=Path)
     parser.add_argument("--measures-bin", type=Path)
     parser.add_argument("--seconds", type=float, default=45)
     parser.add_argument("--case", action="append")
-    raise SystemExit(0 if run(parser.parse_args()) else 1)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--input", action="append", default=[], metavar="CASE=DIRECTORY")
+    parser.add_argument("--audit-root", type=Path)
+    parser.add_argument("--preflight-only", action="store_true")
+    parsed = parser.parse_args()
+    if not parsed.manifest and parsed.julia_project is None:
+        parser.error("--julia-project is required for the generated fixture suite")
+    raise SystemExit(0 if run(parsed) else 1)

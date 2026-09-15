@@ -1,0 +1,148 @@
+{
+  "Version": 1,
+  "RepositoryRoot": "../../..",
+  "Scope": "Mesh-only geometry-independence qualification; no response or library solves",
+  "Gates": {
+    "CornerTolerance": 1e-08,
+    "MaximumNormalFactor": 2.0,
+    "MinimumAchievedAspect": 1.5,
+    "RotationTolerance": 1e-08,
+    "MaximumSeconds": 1800,
+    "MaximumRSSGiB": 8,
+    "MaximumElements": 4000000
+  },
+  "SupplementalFixtures": [
+    {
+      "Name": "concave-multislot",
+      "Purpose": "slot ownership and rotated concave-mask control",
+      "Generator": "run_general_mesh_suite.py:fixtures"
+    },
+    {
+      "Name": "hole",
+      "Purpose": "hole-mask ownership and protected-surface control",
+      "Generator": "run_general_mesh_suite.py:fixtures"
+    }
+  ],
+  "Cases": [
+    {
+      "Id": "one-edge-straight",
+      "InventoryStatus": "RepositoryFixture",
+      "Frozen": true,
+      "Features": ["straight", "single-slot"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
+        "SignatureRole": "Signature",
+        "SignatureColumns": ["Index", "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "S0", "S1"],
+        "Files": {
+          "Signature": {"Name": "straight-edge-signature.csv", "SHA256": "d5f9a7c3a58d556445febcaaddded09d1fa2fcd9022a4aeca0d91467a7828ebd"}
+        }
+      }
+    },
+    {
+      "Id": "one-edge-masked",
+      "InventoryStatus": "RepositoryFixture",
+      "Frozen": true,
+      "Features": ["mask", "ownership"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
+        "SignatureRole": "Signature",
+        "SignatureColumns": ["Index", "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "S0", "S1"],
+        "Files": {
+          "Signature": {"Name": "one-edge-masked-signature.csv", "SHA256": "d5f9a7c3a58d556445febcaaddded09d1fa2fcd9022a4aeca0d91467a7828ebd"},
+          "Boundary": {"Name": "one-edge-masked-boundary.csv", "SHA256": "d9808f1852dd6a459b85126939a270a17fd852330018691edb009ae6b7d93055"},
+          "Mask": {"Name": "one-edge-masked-mask.csv", "SHA256": "21f2c12a47defa76b4727d90f3ce34c6f7fe9524219ae1b0fbaf66578fe5d8d9"}
+        }
+      }
+    },
+    {
+      "Id": "two-edge-transition",
+      "InventoryStatus": "RepositoryFixture",
+      "Frozen": true,
+      "Features": ["transition", "non-collinear-semantic-corner"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
+        "SignatureRole": "Signature",
+        "SignatureColumns": ["Index", "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "S0", "S1"],
+        "Files": {
+          "Signature": {"Name": "two-edge-transition-signature.csv", "SHA256": "3c9bc97ae0b92c542bf37b65fb4966f68572ff618e4fc7a16baed2bbe16e14ec"},
+          "Boundary": {"Name": "two-edge-transition-boundary.csv", "SHA256": "65b533f709eacbe36ec12a1f8e9a04f949aeaefd359564521779f91f99f0da30"},
+          "Mask": {"Name": "two-edge-transition-mask.csv", "SHA256": "10bc9e49efc8d7ab9afb0950e045c6b84e6a37888d53d3d110c473fbe1c1b764"}
+        }
+      }
+    },
+    {
+      "Id": "two-edge-multislot",
+      "InventoryStatus": "RepositoryFixture",
+      "Frozen": true,
+      "Features": ["multiple-slots", "ownership"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
+        "SignatureRole": "Signature",
+        "SignatureColumns": ["Index", "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "S0", "S1"],
+        "Files": {
+          "Signature": {"Name": "two-edge-multislot-signature.csv", "SHA256": "99a1dce1122caf12d256754b3d8580f9c97c376db70f25cf88833a2454fdac2a"},
+          "Boundary": {"Name": "two-edge-multislot-boundary.csv", "SHA256": "b1d3ff21fa74b52c79a7fcfd8e8865bdf85e00b585ca3ff3ac358255900195d9"},
+          "Mask": {"Name": "two-edge-multislot-mask.csv", "SHA256": "7d3e0555cdfc4c779371b0cd07886a95d1fdd00f30c4cd01791ecfe35c8ba0f1"}
+        }
+      }
+    },
+    {
+      "Id": "three-edge-current-calibration",
+      "InventoryStatus": "LocalImmutableCalibration",
+      "Frozen": true,
+      "Provenance": "current three-edge 419576fdab24 calibration input snapshot; existing outputs remain untouched",
+      "Features": ["current-calibration", "semantic-corners"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {
+        "Directory": "../coupon-mesh-inspection-20260911/fabricated-volume/input",
+        "SignatureRole": "Signature",
+        "SignatureColumns": ["Index", "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "S0", "S1"],
+        "Files": {
+          "Signature": {"Name": "mesh-signature.csv", "SHA256": "18993d7d7c3494a1b57848df425615041c485edf35ba9ecba312380d8ee70fd2"},
+          "Boundary": {"Name": "plan-view-boundary.csv", "SHA256": "2dad464db23421fb428218b12052a625cfe6d2159498163047021de82c352d95"},
+          "Mask": {"Name": "plan-view-mask.csv", "SHA256": "330754beb0c8e8d7554188e95b927d8292373d7a4e4b9b6b481873d33733e816"},
+          "Process": {"Name": "process.toml", "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"}
+        }
+      }
+    },
+    {
+      "Id": "four-edge-9d2cb9bbb3fe",
+      "InventoryStatus": "KnownCampaignInputNotLocal",
+      "Frozen": true,
+      "Provenance": "/data/home/simlap/transmon_library_graded_v2_20260911, four-edge case 9d2cb9bbb3fe",
+      "Features": ["four-edge"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {"Directory": null, "SignatureRole": "Signature", "SignatureColumns": ["Index", "Slot", "Conductor"], "Files": {"Signature": {"Name": "mesh-signature.csv", "SHA256": null}, "Boundary": {"Name": "plan-view-boundary.csv", "SHA256": null}, "Mask": {"Name": "plan-view-mask.csv", "SHA256": null}}}
+    },
+    {
+      "Id": "six-edge-cluster",
+      "InventoryStatus": "RepositoryFixture",
+      "Frozen": true,
+      "Features": ["six-edge", "multiple-slots", "multiple-conductors"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
+        "SignatureRole": "Signature",
+        "SignatureColumns": ["Index", "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz", "Tx", "Ty", "Tz", "S0", "S1"],
+        "Files": {
+          "Signature": {"Name": "six-edge-cluster-signature.csv", "SHA256": "de2cafed831862cdef0029813e8543c0d2288843d8913ab96710ecafdebeffed"},
+          "Boundary": {"Name": "six-edge-cluster-boundary.csv", "SHA256": "9cf1eacc3b3bc857e39e7c1725af5aac97ea56d2e5db21747c1957683ff0ea89"},
+          "Mask": {"Name": "six-edge-cluster-mask.csv", "SHA256": "b05a3cc18acd59d613a85a0b1c63cc4b772a840482d8f01b9ec85c904c90e09a"}
+        }
+      }
+    },
+    {
+      "Id": "ten-edge-6791f1c84123",
+      "InventoryStatus": "KnownCampaignInputNotLocal",
+      "Frozen": true,
+      "Provenance": "/data/home/simlap/transmon_library_graded_v2_20260911, ten-edge case 6791f1c84123",
+      "Features": ["ten-edge", "multiple-slots"],
+      "Variants": ["identity", "rotate-z-0.63"],
+      "Source": {"Directory": null, "SignatureRole": "Signature", "SignatureColumns": ["Index", "Slot", "Conductor"], "Files": {"Signature": {"Name": "mesh-signature.csv", "SHA256": null}, "Boundary": {"Name": "plan-view-boundary.csv", "SHA256": null}, "Mask": {"Name": "plan-view-mask.csv", "SHA256": null}}}
+    }
+  ]
+}
