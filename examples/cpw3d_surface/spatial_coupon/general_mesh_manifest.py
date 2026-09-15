@@ -385,6 +385,7 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         failures.append("semantic-corner-and-endpoint-anisotropy")
     protected = evidence.get("ProtectedSurfaces", {})
     if (not protected.get("Actual") or protected.get("PlaneSupportsMatch") is not True or
+            protected.get("TopologyMatches") is not True or
             sorted(protected.get("Actual", [])) != sorted(contract["ProtectedSupports"]) or
             not _finite_number(protected.get("MaximumRelativeMeasureError"),
                                nonnegative=True) or

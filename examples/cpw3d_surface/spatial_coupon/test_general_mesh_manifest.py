@@ -13,10 +13,14 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
+import meshio
 import numpy as np
 
 from audit_edge_metric_mesh import analyze
-from general_mesh_audit_producer import (KINDS, _footprint_boundary_distance,
+from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
+                                         _footprint_boundary_distance,
+                                         _global_diagonal_bands,
+                                         _normalized_footprint_boundary,
                                          _protected_surface_report,
                                          produce as produce_audit)
 from general_mesh_manifest import run_manifest, sha256, validate_manifest
@@ -415,7 +419,13 @@ class GeneralMeshManifestTest(unittest.TestCase):
         center = np.array([.5, .5, 0.])
         refined = np.array([[boundary[i], boundary[(i + 1) % len(boundary)], center]
                             for i in range(len(boundary))])
-        self.assertLessEqual(_footprint_boundary_distance(square, refined), 1e-15)
+        distance, left_topology, right_topology = _footprint_boundary_comparison(
+            square, refined)
+        self.assertLessEqual(distance, 1e-15)
+        self.assertEqual(left_topology, right_topology)
+        self.assertEqual(left_topology,
+                         {"Components": 1, "BoundaryLoops": 1, "Holes": 0,
+                          "LoopsPerComponent": [1]})
         reshaped_points = np.array([[0., 0., 0.], [1., 0., 0.],
                                     [1.2, 1., 0.], [.2, 1., 0.]])
         reshaped = reshaped_points[[[0, 1, 2], [0, 2, 3]]]
@@ -425,6 +435,92 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                                  reshaped[:, 2] - reshaped[:, 0]), axis=1).sum() / 2
         self.assertAlmostEqual(square_area, reshaped_area)
         self.assertGreater(_footprint_boundary_distance(square, reshaped), .1)
+
+    def test_protected_footprint_rejects_same_vertices_equal_area_rewiring(self):
+        points = np.array([[0., 0., 0.], [0., 1., 0.],
+                           [1., 1., 0.], [3., 2., 0.]])
+        first = points[[[0, 1, 2], [0, 2, 3]]]
+        rewired = points[[[0, 1, 2], [1, 3, 2]]]
+        area = lambda xyz: np.linalg.norm(
+            np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]), axis=1).sum() / 2
+        self.assertAlmostEqual(area(first), area(rewired))
+        self.assertEqual(set(map(tuple, first.reshape(-1, 3))),
+                         set(map(tuple, rewired.reshape(-1, 3))))
+        distance, first_topology, rewired_topology = _footprint_boundary_comparison(
+            first, rewired)
+        self.assertEqual(first_topology, rewired_topology)
+        self.assertGreater(distance, .2)
+
+    def test_protected_footprint_records_component_and_hole_topology(self):
+        ring_points = np.array([[0., 0., 0.], [3., 0., 0.], [3., 3., 0.], [0., 3., 0.],
+                                [1., 1., 0.], [2., 1., 0.], [2., 2., 0.], [1., 2., 0.]])
+        ring = ring_points[[[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+                            [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]]
+        _, topology = _normalized_footprint_boundary(ring)
+        self.assertEqual(topology,
+                         {"Components": 1, "BoundaryLoops": 2, "Holes": 1,
+                          "LoopsPerComponent": [2]})
+
+    def test_diagonal_detector_includes_declared_maximum_and_rejects_semantic_lines(self):
+        def strip(angle, length=1.0, width=.4):
+            columns = int(round(length / .05)) + 1
+            rotation = np.array([[math.cos(angle), -math.sin(angle)],
+                                 [math.sin(angle), math.cos(angle)]])
+            points = []
+            for transverse in (-width / 2, 0., width / 2):
+                for index in range(columns):
+                    xy = rotation @ np.array([index * .05, transverse])
+                    points.append([xy[0], xy[1], 0.])
+            triangles = []
+            for row in range(2):
+                for index in range(columns - 1):
+                    first = row * columns + index
+                    last = (row + 1) * columns + index
+                    triangles.extend([[first, first + 1, last + 1],
+                                      [first, last + 1, last]])
+            return np.asarray(points), np.asarray(triangles)
+
+        points, triangles = strip(math.pi / 6)
+        mesh = meshio.Mesh(points, [("triangle", triangles)],
+                           cell_data={"gmsh:physical": [np.ones(len(triangles), int)]})
+        arbitrary = _global_diagonal_bands(
+            mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025)
+        self.assertEqual(arbitrary["ShortEdgeThreshold"], .05)
+        self.assertGreater(arbitrary["ShortInternalEdges"], 0)
+        self.assertEqual(arbitrary["GlobalDiagonalBands"], 1)
+        direction = [math.cos(math.pi / 6), math.sin(math.pi / 6), 0.]
+        physical = _global_diagonal_bands(mesh, [[[0., 0., 0.], direction]], .025)
+        self.assertEqual(physical["GlobalDiagonalBands"], 0)
+        self.assertTrue(physical["LongShortEdgeComponents"][0][
+            "AlignedWithPhysicalSegment"])
+
+    def test_diagonal_detector_does_not_aggregate_orthogonal_supports(self):
+        # Each support carries only a sub-half-diameter chain.  They meet along
+        # one ridge, but combining chains from orthogonal planes would invent a
+        # diagonal direction with no geometric meaning.
+        points = np.array([[x, y, 0.] for y in (-.2, 0., .2)
+                           for x in np.linspace(0., .2, 5)] +
+                          [[.2, y, z] for z in (.2, .4)
+                           for y in (-.2, 0., .2)])
+        triangles = []
+        for row in range(2):
+            for column in range(4):
+                first = row * 5 + column; last = (row + 1) * 5 + column
+                triangles.extend([[first, first + 1, last + 1],
+                                  [first, last + 1, last]])
+        # The second plane reuses the x=.2 ridge (indices 4, 9, 14).
+        rows = [[4, 9, 14], [15, 16, 17], [18, 19, 20]]
+        for row in range(2):
+            for column in range(2):
+                first, right = rows[row][column], rows[row][column + 1]
+                last, diagonal = rows[row + 1][column], rows[row + 1][column + 1]
+                triangles.extend([[first, right, diagonal], [first, diagonal, last]])
+        triangles = np.asarray(triangles)
+        mesh = meshio.Mesh(points, [("triangle", triangles)],
+                           cell_data={"gmsh:physical": [np.ones(len(triangles), int)]})
+        report = _global_diagonal_bands(
+            mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025)
+        self.assertEqual(report["GlobalDiagonalBands"], 0)
 
     def test_measured_semantic_gates_reject_bound_failures(self):
         with tempfile.TemporaryDirectory() as temporary:

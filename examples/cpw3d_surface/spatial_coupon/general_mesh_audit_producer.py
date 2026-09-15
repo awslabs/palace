@@ -69,9 +69,11 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
     median = float(np.median(all_lengths))
     threshold = min(.6 * median, 2.0 * float(normal_size))
     short_by_patch = {}
+    threshold_tolerance = 64.0 * np.finfo(float).eps * max(median, threshold, 1.0)
     for edge, owners in owners_by_edge.items():
         length = np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]])
-        if len(owners) == 2 and patch[owners[0]] == patch[owners[1]] and length < threshold:
+        if (len(owners) == 2 and patch[owners[0]] == patch[owners[1]] and
+                length <= threshold + threshold_tolerance):
             short_by_patch.setdefault(int(patch[owners[0]]), []).append(edge)
     segments = np.asarray(physical_segments, dtype=float).reshape(-1, 2, 3)
     bands, components = 0, []
@@ -177,19 +179,123 @@ def _point_to_segments(points, segments):
     return result
 
 
+def _normalized_footprint_boundary(xyz):
+    """Return subdivision-independent boundary segments and component/hole topology."""
+    points, inverse = np.unique(xyz.reshape(-1, 3), axis=0, return_inverse=True)
+    triangles = inverse.reshape(-1, 3)
+    raw_edges = np.sort(
+        triangles[:, ((0, 1), (1, 2), (2, 0))].reshape(-1, 2), axis=1)
+    edges, count = np.unique(raw_edges, axis=0, return_counts=True)
+    if np.any(count > 2):
+        raise ValueError("Nonmanifold protected planar patch")
+    boundary = edges[count == 1]
+    adjacency = {}
+    for first, last in boundary:
+        adjacency.setdefault(int(first), set()).add(int(last))
+        adjacency.setdefault(int(last), set()).add(int(first))
+    if any(len(neighbors) != 2 for neighbors in adjacency.values()):
+        raise ValueError("Protected planar patch has an open or branched boundary")
+
+    # Count triangle components and associate each closed boundary loop with its
+    # owning component.  A connected planar component has one exterior loop;
+    # every additional loop is a hole.  This distinguishes disconnected disks
+    # from an annulus even when their aggregate boundary geometry is similar.
+    triangle_neighbors = [set() for _ in triangles]
+    owners = {}
+    for owner, triangle in enumerate(triangles):
+        for first, last in ((triangle[0], triangle[1]), (triangle[1], triangle[2]),
+                            (triangle[2], triangle[0])):
+            owners.setdefault(tuple(sorted((int(first), int(last)))), []).append(owner)
+    for edge_owners in owners.values():
+        if len(edge_owners) == 2:
+            first, last = edge_owners
+            triangle_neighbors[first].add(last)
+            triangle_neighbors[last].add(first)
+    triangle_component = np.full(len(triangles), -1, dtype=int)
+    component_count = 0
+    for start in range(len(triangles)):
+        if triangle_component[start] >= 0:
+            continue
+        stack = [start]
+        while stack:
+            owner = stack.pop()
+            if triangle_component[owner] >= 0:
+                continue
+            triangle_component[owner] = component_count
+            stack.extend(triangle_neighbors[owner])
+        component_count += 1
+
+    edge_owner = {edge: values[0] for edge, values in owners.items()
+                  if len(values) == 1}
+    loops_by_component = [0] * component_count
+    unvisited = {tuple(map(int, edge)) for edge in boundary}
+    while unvisited:
+        first, last = min(unvisited)
+        start, previous, current = first, first, last
+        unvisited.remove((first, last))
+        component = int(triangle_component[edge_owner[(first, last)]])
+        while current != start:
+            choices = adjacency[current] - {previous}
+            if len(choices) != 1:
+                raise ValueError("Protected planar boundary is not a closed cycle")
+            following = next(iter(choices))
+            edge = tuple(sorted((current, following)))
+            if edge not in unvisited:
+                raise ValueError("Protected planar boundary cycle is inconsistent")
+            if int(triangle_component[edge_owner[edge]]) != component:
+                raise ValueError("Protected boundary loop crosses surface components")
+            unvisited.remove(edge)
+            previous, current = current, following
+        loops_by_component[component] += 1
+
+    # Remove degree-two collinear subdivision vertices.  The resulting segment
+    # set represents the PL boundary connectivity rather than only its vertices.
+    tolerance = 64.0 * np.finfo(float).eps
+    changed = True
+    while changed:
+        changed = False
+        for vertex in sorted(adjacency):
+            if vertex not in adjacency or len(adjacency[vertex]) != 2:
+                continue
+            first, last = sorted(adjacency[vertex])
+            left, right = points[first] - points[vertex], points[last] - points[vertex]
+            scale = max(np.linalg.norm(left) * np.linalg.norm(right), 1e-300)
+            if (np.linalg.norm(np.cross(left, right)) <= tolerance * scale and
+                    np.dot(left, right) < 0):
+                adjacency[first].remove(vertex); adjacency[first].add(last)
+                adjacency[last].remove(vertex); adjacency[last].add(first)
+                del adjacency[vertex]
+                changed = True
+                break
+    normalized = []
+    for first, neighbors in adjacency.items():
+        for last in neighbors:
+            if first < last:
+                normalized.append([points[first], points[last]])
+    topology = {"Components": component_count,
+                "BoundaryLoops": int(sum(loops_by_component)),
+                "Holes": int(sum(value - 1 for value in loops_by_component)),
+                "LoopsPerComponent": sorted(map(int, loops_by_component))}
+    return np.asarray(normalized, dtype=float).reshape(-1, 2, 3), topology
+
+
+def _footprint_boundary_comparison(left_triangles, right_triangles):
+    """Compare normalized PL segment sets and planar component/hole topology."""
+    left, left_topology = _normalized_footprint_boundary(left_triangles)
+    right, right_topology = _normalized_footprint_boundary(right_triangles)
+    # Endpoints alone discard connectivity.  Including each normalized segment
+    # midpoint detects same-vertex rewiring while remaining invariant to boundary
+    # subdivision (which normalization removes).
+    def witnesses(segments):
+        return np.concatenate((segments[:, 0], segments[:, 1], segments.mean(axis=1)))
+    distance = max(_point_to_segments(witnesses(left), right),
+                   _point_to_segments(witnesses(right), left))
+    return distance, left_topology, right_topology
+
+
 def _footprint_boundary_distance(left_triangles, right_triangles):
-    """Bidirectional boundary-to-segment distance for two planar PL patches."""
-    def boundary(xyz):
-        points, inverse = np.unique(xyz.reshape(-1, 3), axis=0, return_inverse=True)
-        triangles = inverse.reshape(-1, 3)
-        edges = np.sort(triangles[:, ((0, 1), (1, 2), (2, 0))].reshape(-1, 2), axis=1)
-        unique, count = np.unique(edges, axis=0, return_counts=True)
-        if np.any(count > 2):
-            raise ValueError("Nonmanifold protected planar patch")
-        return points[unique[count == 1]]
-    left, right = boundary(left_triangles), boundary(right_triangles)
-    return max(_point_to_segments(np.unique(left.reshape(-1, 3), axis=0), right),
-               _point_to_segments(np.unique(right.reshape(-1, 3), axis=0), left))
+    """Compatibility helper returning normalized segment-set distance."""
+    return _footprint_boundary_comparison(left_triangles, right_triangles)[0]
 
 
 def _protected_surface_report(reference, candidate, contract):
@@ -224,18 +330,25 @@ def _protected_surface_report(reference, candidate, contract):
         return {"Actual": sorted(protected_attributes.values()),
                 "PlaneSupportsMatch": False, "MaximumRelativeMeasureError": math.inf,
                 "MaximumSupportVertexDistance": math.inf, "PatchCount": len(right)}
-    area_errors, distances, by_patch = [], [], {}
+    area_errors, distances, topology_matches, by_patch = [], [], [], {}
     for key in left:
         left_area, left_triangles = left[key]
         right_area, right_triangles = right[key]
         area_error = abs(right_area - left_area) / max(abs(left_area), 1e-300)
-        distance = _footprint_boundary_distance(left_triangles, right_triangles)
+        distance, left_topology, right_topology = _footprint_boundary_comparison(
+            left_triangles, right_triangles)
+        topology_match = left_topology == right_topology
         area_errors.append(float(area_error)); distances.append(float(distance))
+        topology_matches.append(topology_match)
         by_patch[f"{key[0]} {' '.join(map(str, key[1]))}"] = {
             "RelativeMeasureError": float(area_error),
-            "SupportVertexDistance": float(distance)}
+            "SupportVertexDistance": float(distance),
+            "TopologyMatches": topology_match,
+            "ReferenceTopology": left_topology,
+            "CandidateTopology": right_topology}
     return {"Actual": sorted(protected_attributes.values()), "PlaneSupportsMatch": True,
-            "Comparison": "bidirectional-boundary-point-to-segment",
+            "Comparison": "normalized-boundary-segment-sets-and-component-hole-topology",
+            "TopologyMatches": all(topology_matches),
             "MaximumRelativeMeasureError": max(area_errors, default=0.0),
             "MaximumSupportVertexDistance": max(distances, default=0.0),
             "PatchCount": len(right), "ByPlaneSupport": by_patch}
