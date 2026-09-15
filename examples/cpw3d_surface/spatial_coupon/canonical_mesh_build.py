@@ -28,8 +28,8 @@ def _digests(value, description):
 
 def canonical_cache_key(source_sha256, gates, canonical_tool_sha256):
     sources = _digests(source_sha256, "Canonical sources")
-    if set(sources) != set(CANONICAL_SOURCE_ROLES):
-        raise ValueError("Canonical sources do not match the immutable source contract")
+    if not set(CANONICAL_SOURCE_ROLES).issubset(sources):
+        raise ValueError("Canonical sources omit a required immutable source role")
     tools = _digests(canonical_tool_sha256, "Canonical tools")
     if not isinstance(gates, dict) or not gates:
         raise ValueError("Canonical qualification gates must be frozen")

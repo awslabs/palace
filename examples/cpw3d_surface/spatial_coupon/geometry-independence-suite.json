@@ -74,7 +74,7 @@
     {
       "Name": "canonical_mesh_build.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/canonical_mesh_build.py",
-      "SHA256": "9cbf2bce67f07f7732f774e06a23367fe4ab0cfa1cfa18b17f18bc000c4b5e5e"
+      "SHA256": "6432bdcdb80ee7ce12af258ab07e120ec2786b0b020196957bdd24f1b1fb6c2d"
     },
     {
       "Name": "run_native_mmg_adaptation.py",
