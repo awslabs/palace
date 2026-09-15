@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Rigid source-production contract and mesh covariance tests."""
+import csv
 import hashlib
 import json
 import math
@@ -21,6 +22,7 @@ if str(HERE) not in sys.path:
 import meshio
 import numpy as np
 
+from prepare_edge_metric_scout import validate_transformed_supports
 from transform_coupon_source_contract import (
     transform_semantic_contract, transform_vector, transformed_supports,
     validate_rigid_transform,
@@ -72,6 +74,30 @@ class RigidContractTest(unittest.TestCase):
                                    transform_vector(matrix, original_normal),
                                    rtol=0.0, atol=1e-14)
         self.assertEqual(len(supports["Edges"]), 4)
+
+    def test_metric_support_validation_rejects_tampered_transformed_edge(self):
+        matrix = validate_rigid_transform(ROTATE_Z)
+        contract = transform_semantic_contract(
+            json.loads((SOURCE / "semantic-contract.json").read_text()), matrix)
+        contract["CanonicalTransformSHA256"] = "1" * 64
+        contract["SourceSemanticContractSHA256"] = "2" * 64
+        supports = transformed_supports(
+            SOURCE, matrix, transform_sha256="1" * 64, semantic_sha256="2" * 64)
+        segments = []
+        for edge in supports["Edges"]:
+            point = np.asarray(edge["Point"])
+            tangent = np.asarray(edge["TangentDirection"])
+            segments.append([point + edge["Interval"][0] * tangent,
+                             point + edge["Interval"][1] * tangent])
+        validate_transformed_supports(supports, contract, segments)
+        tampered_hash = json.loads(json.dumps(supports))
+        tampered_hash["CanonicalTransformSHA256"] = "3" * 64
+        with self.assertRaisesRegex(ValueError, "provenance differs"):
+            validate_transformed_supports(tampered_hash, contract, segments)
+        tampered = json.loads(json.dumps(supports))
+        tampered["Edges"][0]["Point"][0] += 0.01
+        with self.assertRaisesRegex(ValueError, "seed-derived features"):
+            validate_transformed_supports(tampered, contract, segments)
 
     def test_nonrigid_singular_and_reflecting_transforms_are_rejected(self):
         for transform in (
@@ -177,11 +203,45 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             actual = set(np.concatenate([
                 values for cell, values in zip(right.cells,
                     right.cell_data["gmsh:physical"]) if cell.type == "triangle"]))
-            # The fixture has no exposed substrate-air patch for the optional
-            # 3000/3001 roles; every geometrically present declared label is exact.
-            self.assertEqual(actual, expected - {3000, 3001})
+            self.assertEqual(actual, expected)
             self.assertTrue({5001, 5101, 5002, 5102,
                              6001, 6101, 6002, 6102} <= actual)
+
+            def ownership(name):
+                report_path = root / f"{name}-ownership.csv"
+                with report_path.open(newline="") as stream:
+                    report = list(csv.DictReader(stream))
+                with (Path(str(report_path) + ".elements.csv")).open(newline="") as stream:
+                    elements = list(csv.DictReader(stream))
+                with (Path(str(report_path) + ".quadrature.csv")).open(newline="") as stream:
+                    quadrature = list(csv.DictReader(stream))
+                return report, elements, quadrature
+
+            local_report, local_elements, local_quadrature = ownership("multislot-local")
+            global_report, global_elements, global_quadrature = ownership(
+                "multislot-transformed")
+            self.assertEqual(local_report, global_report)
+            self.assertEqual(local_elements, global_elements)
+            self.assertEqual(local_quadrature, global_quadrature)
+            self.assertEqual(sum(int(row["elements"]) for row in local_report),
+                             len(local_elements))
+            element_ids = [row["element"] for row in local_elements]
+            self.assertEqual(len(element_ids), len(set(element_ids)))
+            summary = local_report[0]
+            self.assertEqual((summary["quadrature_rule"],
+                              int(summary["quadrature_order"])), ("Gauss4", 4))
+            self.assertEqual(int(summary["quadrature_positive_weights"]), 1)
+            self.assertEqual(int(summary["quadrature_unmatched"]), 0)
+            self.assertEqual(int(summary["quadrature_overlaps"]), 0)
+            self.assertLessEqual(float(summary["quadrature_relative_closure"]),
+                                 float(summary["quadrature_closure_tolerance"]))
+            owned_measure = sum(float(row["measure"]) for row in local_quadrature)
+            self.assertAlmostEqual(owned_measure,
+                                   float(summary["quadrature_whole_measure"]), places=11)
+            # Whole-element ambiguity is preserved as a non-authoritative diagnostic;
+            # it is not response ownership and must not drop or duplicate a triangle.
+            self.assertGreater(sum(int(row["unresolved_elements"])
+                                   for row in local_report), 0)
 
     def test_julia_option_rejects_nonrigid_and_singular_matrices(self):
         invalid = (

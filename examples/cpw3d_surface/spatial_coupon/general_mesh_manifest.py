@@ -234,13 +234,16 @@ def _validate_source_transformation(reports, binding, source_paths):
     semantic_path = Path(stage["Artifacts"]["transformed-semantic-contract"]["Path"])
     supports_path = Path(stage["Artifacts"]["transformed-supports"]["Path"])
     source_semantic = json.loads(Path(source_paths["SemanticContract"]).read_text())
+    transform_sha256 = sha256(transform_path)
+    semantic_sha256 = sha256(source_paths["SemanticContract"])
     expected_semantic = transform_semantic_contract(source_semantic, matrix)
-    expected_semantic["SourceSemanticContractSHA256"] = sha256(
-        source_paths["SemanticContract"])
+    expected_semantic["SourceSemanticContractSHA256"] = semantic_sha256
+    expected_semantic["CanonicalTransformSHA256"] = transform_sha256
     expected_supports = transformed_supports(
         Path(source_paths["Signature"]).parent, matrix,
         signature=source_paths["Signature"], boundary=source_paths["Boundary"],
-        mask=source_paths["Mask"])
+        mask=source_paths["Mask"], transform_sha256=transform_sha256,
+        semantic_sha256=semantic_sha256)
     if (json.loads(semantic_path.read_text()) != expected_semantic or
             json.loads(supports_path.read_text()) != expected_supports):
         raise ValueError("transformed semantic/support artifact differs from source transform")
@@ -409,9 +412,18 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         failures.append("material-adjacency")
 
     ownership = evidence.get("OwnershipClosure", {})
-    if (ownership.get("UnmatchedPolicy") != contract["UnmatchedPolicy"] or
-            ownership.get("Unmatched") != 0 or ownership.get("Overlaps") != 0 or
-            ownership.get("Exhaustive") is not True):
+    physical_coverage = ownership.get("PhysicalSurfaceCoverage", {})
+    response_ownership = ownership.get("ResponseOwnership", {})
+    diagnostics = ownership.get("WholeElementAmbiguityDiagnostics", {})
+    if (physical_coverage.get("Complete") is not True or
+            response_ownership.get("UnmatchedPolicy") != contract["UnmatchedPolicy"] or
+            response_ownership.get("PositiveWeights") is not True or
+            response_ownership.get("UnmatchedPoints") != 0 or
+            response_ownership.get("OverlappingPoints") != 0 or
+            response_ownership.get("Exhaustive") is not True or
+            response_ownership.get("RelativeClosureError", float("inf")) >
+            response_ownership.get("ClosureTolerance", -1.0) or
+            diagnostics.get("AuthoritativeForResponseOwnership") is not False):
         failures.append("ownership-exhaustive-closure")
     expected_corners = _transform_points(contract["SemanticCorners"], binding["Transform"])
     if not _same_points(expected_corners, evidence.get("ActualSemanticCorners"),

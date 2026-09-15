@@ -58,10 +58,17 @@ def main():
         if args.ownership is None:
             parser.error("publish requires --ownership")
         rewrite(args.source, args.output, True)
-        args.ownership.write_text(
+        header = (
             "attribute,elements,area,ambiguous_area,ambiguous_fraction,"
-            "unresolved_elements,unresolved_area,unresolved_fraction\n"
-            "1,7,1,0,0,0,0,0\n2,3,1,0,0,0,0,0\n3,1,1,0,0,0,0,0\n")
+            "unresolved_elements,unresolved_area,unresolved_fraction,quadrature_rule,"
+            "quadrature_order,quadrature_points,quadrature_whole_measure,"
+            "quadrature_owned_measure,quadrature_relative_closure,"
+            "quadrature_closure_tolerance,quadrature_unmatched,quadrature_overlaps,"
+            "quadrature_positive_weights\n")
+        suffix = ",Gauss4,4,11,3,3,0,1e-12,0,0,1\n"
+        args.ownership.write_text(
+            header + "1,7,1,0,0,0,0,0" + suffix +
+            "2,3,1,0,0,0,0,0" + suffix + "3,1,1,0,0,0,0,0" + suffix)
 
 
 if __name__ == "__main__":

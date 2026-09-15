@@ -160,7 +160,8 @@ $PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
   --tool "runtime=$PYTHON" --tool "metric-preparer=$PREPARE" -- \
   "$PYTHON" "$PREPARE" "$ATTEMPT/seed.msh" "$ATTEMPT/metric" \
   --normal 0.025 --tangent 0.1 --far 0.16 --protected-distance 0.05 \
-  --protect-surface 0.05 --semantic-contract "$SOURCE/semantic-contract.json"
+  --protect-surface 0.05 --semantic-contract "$ATTEMPT/transformed-semantic-contract.json" \
+  --transformed-supports "$ATTEMPT/transformed-source-supports.json"
 
 $PYTHON "$RUN" --seconds 1800 --memory-gib 8 \
   --log "$ATTEMPT/adapt.log" --stage native-adaptation-mmg \

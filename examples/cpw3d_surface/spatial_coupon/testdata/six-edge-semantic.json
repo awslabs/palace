@@ -29,26 +29,8 @@
       ]
     },
     {
-      "Attribute": 3000,
-      "Role": "substrate-vacuum-slot-0",
-      "AdjacentMaterials": [
-        1,
-        2
-      ],
-      "Protected": true
-    },
-    {
-      "Attribute": 3001,
-      "Role": "substrate-vacuum-slot-1",
-      "AdjacentMaterials": [
-        1,
-        2
-      ],
-      "Protected": true
-    },
-    {
       "Attribute": 3100,
-      "Role": "matching-slot-0",
+      "Role": "etched-substrate-vacuum-slot-0",
       "AdjacentMaterials": [
         1,
         2
@@ -57,7 +39,7 @@
     },
     {
       "Attribute": 3101,
-      "Role": "matching-slot-1",
+      "Role": "etched-substrate-vacuum-slot-1",
       "AdjacentMaterials": [
         1,
         2
@@ -153,10 +135,8 @@
   ],
   "ProtectedSupports": [
     "matching-surface",
-    "substrate-vacuum-slot-0",
-    "substrate-vacuum-slot-1",
-    "matching-slot-0",
-    "matching-slot-1",
+    "etched-substrate-vacuum-slot-0",
+    "etched-substrate-vacuum-slot-1",
     "conductor-1-slot-0-ms",
     "conductor-2-slot-0-ms",
     "conductor-1-slot-1-ms",

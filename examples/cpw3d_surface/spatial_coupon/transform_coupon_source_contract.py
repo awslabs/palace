@@ -80,11 +80,16 @@ def _read_rows(path):
         return list(csv.DictReader(stream))
 
 
-def transformed_supports(source, matrix, *, signature=None, boundary=None, mask=None):
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def transformed_supports(source, matrix, *, signature=None, boundary=None, mask=None,
+                         transform_sha256=None, semantic_sha256=None):
     source = Path(source)
     signature = Path(signature or source / "mesh-signature.csv")
-    boundary = Path(boundary or source / "plan-view-boundary.csv")
-    mask = Path(mask or source / "plan-view-mask.csv")
+    boundary_path = Path(boundary or source / "plan-view-boundary.csv")
+    mask_path = Path(mask or source / "plan-view-mask.csv")
     edges = []
     for row in _read_rows(signature):
         point = [float(row[name]) for name in ("Px", "Py", "Pz")]
@@ -107,14 +112,19 @@ def transformed_supports(source, matrix, *, signature=None, boundary=None, mask=
         "Class": row["Class"],
         "Point": transform_point(matrix, [float(row["X"]), float(row["Y"]),
                                             float(row["Plane"])]),
-    } for row in _read_rows(boundary)]
+    } for row in _read_rows(boundary_path)]
     mask = [{
         "Facet": int(row["Facet"]), "Conductor": int(row["Conductor"]),
         "Point": transform_point(matrix, [float(row["X"]), float(row["Y"]),
                                             float(row["Plane"])]),
-    } for row in _read_rows(mask)]
+    } for row in _read_rows(mask_path)]
     return {"Version": 1, "CoordinateSystem": "TransformedGlobal3D",
             "RigidTransform": [value for row in matrix for value in row],
+            "CanonicalTransformSHA256": transform_sha256,
+            "SourceSemanticContractSHA256": semantic_sha256,
+            "SourceSignatureSHA256": _sha256(signature),
+            "SourceBoundarySHA256": _sha256(boundary_path),
+            "SourceMaskSHA256": _sha256(mask_path),
             "Edges": edges, "BoundaryVertices": boundary, "MaskVertices": mask}
 
 
@@ -124,12 +134,15 @@ def write_transformed_contracts(source, transform_path, semantic_output, support
     source = Path(source)
     matrix = read_transform(transform_path)
     semantic_input = Path(semantic_input or source / "semantic-contract.json")
+    transform_sha256 = _sha256(transform_path)
+    semantic_sha256 = _sha256(semantic_input)
     contract = transform_semantic_contract(json.loads(semantic_input.read_text()), matrix)
-    contract["SourceSemanticContractSHA256"] = hashlib.sha256(
-        semantic_input.read_bytes()).hexdigest()
+    contract["SourceSemanticContractSHA256"] = semantic_sha256
+    contract["CanonicalTransformSHA256"] = transform_sha256
     Path(semantic_output).write_text(json.dumps(contract, indent=2) + "\n")
     Path(supports_output).write_text(json.dumps(transformed_supports(
-        source, matrix, signature=signature, boundary=boundary, mask=mask), indent=2) + "\n")
+        source, matrix, signature=signature, boundary=boundary, mask=mask,
+        transform_sha256=transform_sha256, semantic_sha256=semantic_sha256), indent=2) + "\n")
 
 
 def main():

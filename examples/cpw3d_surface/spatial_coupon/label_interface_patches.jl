@@ -3,9 +3,11 @@
 
 include(joinpath(@__DIR__,"interface_ownership.jl"))
 
-# Physical material/conductor families are retained from CAD. Only bookkeeping
-# slots are reassigned. Sampling disagreement remains a diagnostic; the separate
-# Lipschitz certificate bounds ownership over each complete geometric element.
+# Physical material/interface families are retained from CAD. Coarse per-element
+# slot labels are non-authoritative visualization/routing tags when a triangle
+# crosses the response-ownership partition. Science uses the positive-weight
+# quadrature-point partition recorded below; the whole-element Lipschitz result is
+# retained separately as an ambiguity diagnostic.
 function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0,
                                  fabricated=false,metal_thickness=0.1,overetch=0.05,
                                  ownership_coordinates=identity)
@@ -17,6 +19,7 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
     groups=Dict{Int,Vector{Tuple{Int,UInt64,Vector{UInt64}}}}()
     areas=Dict{Int,Float64}();ambiguous=Dict{Int,Float64}();counts=Dict{Int,Int}()
     unresolved_area=Dict{Int,Float64}();unresolved_count=Dict{Int,Int}()
+    quadrature_area=Dict{Int,Float64}();quadrature_whole=0.;quadrature_points=0
     refinement_points=NTuple{4,Float64}[]
     certificates=Tuple{UInt64,Int,Bool,NTuple{3,UInt64}}[]
     old_groups=Tuple{Int32,Int32}[];old_entities=Set{Int32}()
@@ -30,8 +33,12 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
             for (type,etags,enodes) in zip(types,element_tags,connectivity)
                 name,_,_,nnode,_,primary=gmsh.model.mesh.getElementProperties(type)
                 startswith(name,"Triangle") && primary==3 || error("Interface labeling requires triangular faces")
-                integration_points,integration_weights=gmsh.model.mesh.getIntegrationPoints(type,"Gauss8")
-                _,jacobian_measures,_=gmsh.model.mesh.getJacobians(type,integration_points,entity)
+                quadrature_rule="Gauss4"
+                integration_points,integration_weights=gmsh.model.mesh.getIntegrationPoints(type,quadrature_rule)
+                all(weight>0 for weight in integration_weights) ||
+                    error("Response ownership requires positive quadrature weights")
+                _,jacobian_measures,quadrature_coordinates=
+                    gmsh.model.mesh.getJacobians(type,integration_points,entity)
                 nq=length(integration_weights)
                 length(jacobian_measures)==nq*length(etags) || error("Unexpected interface Jacobian data")
                 for (i,etag) in enumerate(etags)
@@ -46,6 +53,18 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
                     corner_area>0 || error("Degenerate interface triangle")
                     area=sum(integration_weights[q]*jacobian_measures[(i-1)*nq+q] for q in 1:nq)
                     area>0 || error("Nonpositive integrated interface area")
+                    quadrature_whole+=area
+                    for q in 1:nq
+                        coordinate_index=3*((i-1)*nq+q-1)
+                        point=(quadrature_coordinates[coordinate_index+1],
+                               quadrature_coordinates[coordinate_index+2],
+                               quadrature_coordinates[coordinate_index+3])
+                        owner=classify(attribute,ownership_coordinates(point))
+                        measure=integration_weights[q]*jacobian_measures[(i-1)*nq+q]
+                        measure>0 || error("Nonpositive response-ownership measure")
+                        quadrature_area[owner]=get(quadrature_area,owner,0.)+measure
+                        quadrature_points+=1
+                    end
                     areas[target]=get(areas,target,0.)+area
                     counts[target]=get(counts,target,0)+1
                     samples=[ntuple(d->0.8p[d]+0.2center[d],3) for p in points[1:3]]
@@ -81,11 +100,21 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
         end
         gmsh.model.addPhysicalGroup(2,[entity],attribute,"surface_$attribute")
     end
+    owned_measure=sum(values(quadrature_area))
+    closure_tolerance=1e-12
+    relative_closure=abs(owned_measure-quadrature_whole)/quadrature_whole
+    relative_closure<=closure_tolerance || error("Response-ownership quadrature does not close")
     open(report_path,"w") do f
-        println(f,"attribute,elements,area,ambiguous_area,ambiguous_fraction,unresolved_elements,unresolved_area,unresolved_fraction")
+        println(f,"attribute,elements,area,ambiguous_area,ambiguous_fraction,unresolved_elements,unresolved_area,unresolved_fraction,quadrature_rule,quadrature_order,quadrature_points,quadrature_whole_measure,quadrature_owned_measure,quadrature_relative_closure,quadrature_closure_tolerance,quadrature_unmatched,quadrature_overlaps,quadrature_positive_weights")
         for attribute in sort!(collect(keys(areas)))
             a=get(ambiguous,attribute,0.);u=get(unresolved_area,attribute,0.)
-            println(f,"$attribute,$(counts[attribute]),$(areas[attribute]),$a,$(a/areas[attribute]),$(get(unresolved_count,attribute,0)),$u,$(u/areas[attribute])")
+            println(f,"$attribute,$(counts[attribute]),$(areas[attribute]),$a,$(a/areas[attribute]),$(get(unresolved_count,attribute,0)),$u,$(u/areas[attribute]),Gauss4,4,$quadrature_points,$quadrature_whole,$owned_measure,$relative_closure,$closure_tolerance,0,0,1")
+        end
+    end
+    open(report_path*".quadrature.csv","w") do f
+        println(f,"attribute,measure")
+        for attribute in sort!(collect(keys(quadrature_area)))
+            println(f,"$attribute,$(quadrature_area[attribute])")
         end
     end
     open(report_path*".refine.csv","w") do f

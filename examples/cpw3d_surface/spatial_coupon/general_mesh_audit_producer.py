@@ -364,14 +364,43 @@ def _ownership_report(path):
     with Path(path).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     required = {"attribute", "elements", "ambiguous_fraction", "unresolved_elements",
-                "unresolved_fraction"}
+                "unresolved_fraction", "quadrature_rule", "quadrature_order",
+                "quadrature_points", "quadrature_whole_measure",
+                "quadrature_owned_measure", "quadrature_relative_closure",
+                "quadrature_closure_tolerance", "quadrature_unmatched",
+                "quadrature_overlaps", "quadrature_positive_weights"}
     if not rows or not required <= set(rows[0]):
         raise ValueError("Ownership partition report is incomplete")
-    unresolved = sum(int(row["unresolved_elements"]) for row in rows)
-    ambiguous = sum(float(row["ambiguous_fraction"]) > 0 for row in rows)
-    return {"UnmatchedPolicy": "Error", "Unmatched": unresolved,
-            "Overlaps": ambiguous, "Exhaustive": unresolved == 0 and ambiguous == 0,
-            "PartitionRows": len(rows)}
+    fields = ("quadrature_rule", "quadrature_order", "quadrature_points",
+              "quadrature_whole_measure", "quadrature_owned_measure",
+              "quadrature_relative_closure", "quadrature_closure_tolerance",
+              "quadrature_unmatched", "quadrature_overlaps",
+              "quadrature_positive_weights")
+    if any(row[name] != rows[0][name] for row in rows[1:] for name in fields):
+        raise ValueError("Response-ownership quadrature summary is inconsistent")
+    summary = rows[0]
+    closure = float(summary["quadrature_relative_closure"])
+    tolerance = float(summary["quadrature_closure_tolerance"])
+    unmatched = int(summary["quadrature_unmatched"])
+    overlaps = int(summary["quadrature_overlaps"])
+    positive = bool(int(summary["quadrature_positive_weights"]))
+    return {
+        "PhysicalSurfaceCoverage": {
+            "InterfaceElements": sum(int(row["elements"]) for row in rows),
+            "PartitionRows": len(rows), "Complete": True},
+        "ResponseOwnership": {
+            "UnmatchedPolicy": "Error", "QuadratureRule": summary["quadrature_rule"],
+            "QuadratureOrder": int(summary["quadrature_order"]),
+            "PositiveWeights": positive, "EvaluatedPoints": int(summary["quadrature_points"]),
+            "UnmatchedPoints": unmatched, "OverlappingPoints": overlaps,
+            "WholeMeasure": float(summary["quadrature_whole_measure"]),
+            "OwnedMeasure": float(summary["quadrature_owned_measure"]),
+            "RelativeClosureError": closure, "ClosureTolerance": tolerance,
+            "Exhaustive": positive and unmatched == 0 and overlaps == 0 and closure <= tolerance},
+        "WholeElementAmbiguityDiagnostics": {
+            "AmbiguousRows": sum(float(row["ambiguous_fraction"]) > 0 for row in rows),
+            "UnresolvedElements": sum(int(row["unresolved_elements"]) for row in rows),
+            "AuthoritativeForResponseOwnership": False}}
 
 
 def _signature_segments(path):

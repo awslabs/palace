@@ -222,7 +222,7 @@ function main()
         open(output * ".partition-certificate.toml", "w") do stream
             TOML.print(stream, Dict(
                 "Version" => 1,
-                "Method" => "Whole-element Lipschitz ownership on a frozen surface",
+                "Method" => "Whole-element Lipschitz ambiguity diagnostic; non-authoritative for response ownership",
                 "MeshSHA256" => output_sha256,
                 "ElementCertificateSHA256" => file_sha256(certificate),
                 "ParentMeshSHA256" => file_sha256(input),
@@ -235,7 +235,7 @@ function main()
         end
         metadata = Dict(
             "Version" => 2,
-            "Method" => "Exact element-wise interface ownership after frozen-surface volume generation",
+            "Method" => "Physical-family coverage with coarse visualization labels; response ownership is quadrature-point based",
             "Kind" => kind,
             "Input" => input,
             "InputSHA256" => file_sha256(input),

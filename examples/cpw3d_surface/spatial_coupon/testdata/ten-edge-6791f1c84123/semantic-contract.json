@@ -3,7 +3,7 @@
   "Derivation": {
     "ProcessLibrarySHA256": "1d783b43be2133be1454cc015452f1b8074dcaf8a1284b6f5faa119837641758",
     "PlanViewBoundarySHA256": "1f82811d304d8f265870999f967461031a41a9edfa362a6240568bc087bb5309",
-    "Rules": "materials and label families follow the frozen spatial-coupon producer; slots/conductors come from Models[0].Edges; semantic corners are plan-view vertices classified Physical"
+    "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer; slots/conductors come from Models[0].Edges; semantic corners are plan-view vertices classified Physical; the single process layer is fully etched wherever substrate-vacuum is exposed, so only recessed 3100/3101 SA geometry exists and nonexistent background 3000/3001 groups are excluded"
   },
   "VolumeMaterials": [
     {
@@ -34,26 +34,8 @@
       ]
     },
     {
-      "Attribute": 3000,
-      "Role": "substrate-vacuum-slot-0",
-      "AdjacentMaterials": [
-        1,
-        2
-      ],
-      "Protected": true
-    },
-    {
-      "Attribute": 3001,
-      "Role": "substrate-vacuum-slot-1",
-      "AdjacentMaterials": [
-        1,
-        2
-      ],
-      "Protected": true
-    },
-    {
       "Attribute": 3100,
-      "Role": "matching-slot-0",
+      "Role": "etched-substrate-vacuum-slot-0",
       "AdjacentMaterials": [
         1,
         2
@@ -62,7 +44,7 @@
     },
     {
       "Attribute": 3101,
-      "Role": "matching-slot-1",
+      "Role": "etched-substrate-vacuum-slot-1",
       "AdjacentMaterials": [
         1,
         2
@@ -188,10 +170,8 @@
   ],
   "ProtectedSupports": [
     "matching-surface",
-    "substrate-vacuum-slot-0",
-    "substrate-vacuum-slot-1",
-    "matching-slot-0",
-    "matching-slot-1",
+    "etched-substrate-vacuum-slot-0",
+    "etched-substrate-vacuum-slot-1",
     "conductor-1-slot-0-ms",
     "conductor-2-slot-0-ms",
     "conductor-1-slot-1-ms",
