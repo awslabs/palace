@@ -1194,6 +1194,10 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
 
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
+    // Incident voltage and current of the excited port: peak amplitudes of the unit time-
+    // averaged power wave for the frequency domain, instantaneous amplitudes scaled by the
+    // pulse envelope for the time domain.
+    constexpr bool time_harmonic = (solver_t == ProblemType::DRIVEN);
     for (const auto &[idx, data] : lumped_port_op)
     {
       // Cast to avoid compiler warnings about types.
@@ -1201,10 +1205,10 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
       {
         // Weighted incident voltage a V_inc,0 and current a I_inc,0 of the port, with the
         // weight a = A exp(iφ) (a = 1 without weight) and the unit-power quantities V_inc,0
-        // and I_inc,0 = P_inc,0 / V_inc,0 (GetExcitationVoltage is the unit-power one).
+        // and I_inc,0 (GetExcitationVoltage and GetExcitationCurrent).
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
-        const std::complex<double> V_inc = data.GetIncidentVoltage() * Jcoeff;
-        const std::complex<double> I_inc = data.GetIncidentCurrent() * Jcoeff;
+        const std::complex<double> V_inc = data.GetIncidentVoltage(time_harmonic) * Jcoeff;
+        const std::complex<double> I_inc = data.GetIncidentCurrent(time_harmonic) * Jcoeff;
 
         if (complex_incident_port_VI)
         {
@@ -1447,15 +1451,14 @@ void PostOperatorCSV<solver_t>::PrintPortZ()
       port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
     }
 
-    // Per-excitation total-field impedance Z[i][j] = V / I. GetPower returns the full
-    // Poynting integral P = ∫(E × H*)·n dS = V I* (without the 1/2 time-averaging
-    // factor), so Z = (V · conj(V)) / conj(P). This is direction-specific (sign of P
-    // depends on whether the field at port i is incoming or outgoing): Re{Z[i][i]} > 0
-    // at the driven port, but Re{Z[i][j]} for i ≠ j can be negative when port i is a
-    // passive receiver of power leaving the domain.
+    // Per-excitation total-field impedance Z[i][j] = V / I. GetPower returns the
+    // complex time-averaged power P = 1/2 ∫(E × H*)·n dS = 1/2 V I* for peak
+    // phasors, so Z = |V|² / (2 conj(P)). This is direction-specific: Re{Z[i][i]}
+    // is positive at the driven port, while Re{Z[i][j]} for i != j can be negative
+    // at a passive port where power leaves the domain.
     if (std::abs(data.P) > 0.0)
     {
-      auto Z = (data.V * std::conj(data.V)) / std::conj(data.P);
+      auto Z = std::norm(data.V) / (2.0 * std::conj(data.P));
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }

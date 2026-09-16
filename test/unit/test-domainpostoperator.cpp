@@ -101,9 +101,9 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
           "[domainpostoperator][Serial][Parallel]")
 {
   // In 2D, B = curl E is a scalar in an L2 space with INTEGRAL map type, B = B̂ / |J|. The
-  // magnetic energy 1/2 ∫ μ⁻¹ |B|² dA must not depend on the element Jacobians. The
-  // rectangle [0, 1] x [0, 0.5] has μ_r = 1 for x < 1/2 (attribute 1, also the energy
-  // region) and μ_r = 2 for x > 1/2 (attribute 2).
+  // time-averaged magnetic energy 1/4 ∫ μ⁻¹ |B|² dA of the complex phasor B must not depend
+  // on the element Jacobians. The rectangle [0, 1] x [0, 0.5] has μ_r = 1 for x < 1/2
+  // (attribute 1, also the energy region) and μ_r = 2 for x > 1/2 (attribute 2).
   const int n = GENERATE(2, 4);
   const bool distort = GENERATE(false, true);
   CAPTURE(n, distort);
@@ -153,21 +153,21 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
   if (!distort)
   {
     // Project the physical field B = 1 + i x, which the space represents exactly on
-    // parallelograms. Region 1: 1/2 ∫ (1 + x²) dA = 1/8 + 1/96. Region 2: 1/4 ∫ (1 + x²) dA
-    // = 1/16 + 7/192.
+    // parallelograms. Region 1: 1/4 ∫ (1 + x²) dA = 1/16 + 1/192. Region 2: 1/8 ∫ (1 + x²)
+    // dA = 1/32 + 7/384.
     GridFunction B(l2_fespace, true);
     mfem::ConstantCoefficient one(1.0);
     mfem::FunctionCoefficient x([](const mfem::Vector &x) { return x(0); });
     B.Real().ProjectCoefficient(one);
     B.Imag().ProjectCoefficient(x);
-    const double region = 1.0 / 8.0 + 1.0 / 96.0;
-    const double total = region + 1.0 / 16.0 + 7.0 / 192.0;
+    const double region = 1.0 / 16.0 + 1.0 / 192.0;
+    const double total = region + 1.0 / 32.0 + 7.0 / 384.0;
     CHECK_THAT(dom_post_op.GetMagneticFieldEnergy(B), WithinRel(total, 1.0e-12));
     CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(1, B), WithinRel(region, 1.0e-12));
   }
 
-  // The energy of B = curl E must match the curl-curl quadratic 1/2 Eᴴ K E of the system
-  // matrix on any mesh.
+  // The energy of B = curl E must match the time-averaged curl-curl quadratic 1/4 Eᴴ K E of
+  // the system matrix on any mesh.
   GridFunction E(nd_fespace, true), B(l2_fespace, true);
   mfem::VectorFunctionCoefficient Er(2,
                                      [](const mfem::Vector &x, mfem::Vector &v)
@@ -209,7 +209,7 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
     K->Mult(E.Imag(), KE);
     dot += linalg::LocalDot(E.Imag(), KE);
     Mpi::GlobalSum(1, &dot, Mpi::World());
-    return 0.5 * dot;
+    return 0.25 * dot;
   };
   const double total = CurlCurlEnergy(false), region = CurlCurlEnergy(true);
   REQUIRE(region > 0.0);

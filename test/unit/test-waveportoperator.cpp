@@ -14,11 +14,14 @@
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -253,7 +256,10 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
     break;
   }
 
-  // (i·k_n·M + W)·e should equal −iω·s_full = RHS₂/2 for the excited port.
+  // (i·k_n·M + W)·e should equal −iω·s_full for the excited port. The excitation vector
+  // RHS₂ = −2iω·√2·s_full is that of the incident wave, which is √2 times the unit-overlap
+  // mode so that it carries unit time-averaged power (see
+  // WavePortOperator::AddExcitationBdrCoefficients).
   ComplexVector We(n), rhs(n), expected(n), diff(n);
   We.UseDevice(true);
   rhs.UseDevice(true);
@@ -266,7 +272,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   bool nnz = space_op.GetExcitationVector2(exc_idx, omega, rhs);
   REQUIRE(nnz);
   expected = 0.0;
-  linalg::AXPY(std::complex<double>(0.5, 0.0), rhs, expected);
+  linalg::AXPY(std::complex<double>(0.5 / electromagnetics::UnitPowerAmplitude(true), 0.0),
+               rhs, expected);
 
   diff = We;
   linalg::AXPY(std::complex<double>(-1.0, 0.0), expected, diff);
@@ -399,12 +406,13 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
 }
 
 // The wave port S-parameter projection is the unconjugated reaction ∫ (E x H_mode) ⋅ n of
-// the field with the port mode, relative to that of the mode itself, which separates the
-// incident and reflected modal amplitudes also for a lossy port mode. The unit-power mode
-// has a real reaction, close to unity. Applied to the port's own mode field the projection
-// must return exactly 1 (a matched port has S_ii = 0). The conjugated projection
-// ∫ (E x H_mode⋆) ⋅ n would instead return the complex power P of the mode, which has a
-// phase for the lossy cpw port mode, giving a spurious S_ii = P - 1 at a matched port.
+// the field with the port mode, relative to that of the incident wave, which separates the
+// incident and reflected modal amplitudes also for a lossy port mode. The unit-overlap mode
+// has a real reaction, close to unity. Applied to the 1 W incident wave, sqrt(2) times the
+// port's own mode field, the projection must return exactly 1 (a matched port has
+// S_ii = 0). The conjugated projection ∫ (E x H_mode⋆) ⋅ n would instead return the complex
+// power overlap P of the mode, which has a phase for the lossy cpw port mode, giving a
+// spurious S_ii = P - 1 at a matched port.
 TEST_CASE("WavePortOperator-LossyModeProjection", "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
@@ -430,16 +438,69 @@ TEST_CASE("WavePortOperator-LossyModeProjection", "[waveportoperator][Serial][Pa
     CHECK(std::abs(data.modal_reaction.imag()) < 1.0e-12);
     CHECK(std::abs(data.modal_reaction + 1.0) < 1.0e-3);
 
-    // Tangential trace of the mode field on the parent ND space (zero elsewhere).
+    // Tangential trace of the incident wave on the parent ND space (zero elsewhere). The
+    // stored mode has unit overlap, not 1 W: construct the 1 W incident wave explicitly,
+    // without using the amplitude helper.
     GridFunction E(nd_fespace, true);
     E = 0.0;
     mfem::Array<int> marker = mesh::AttrToMarker(bdr_attr_max, data.GetAttrList());
-    auto er = data.GetModeFieldCoefficientReal();
-    auto ei = data.GetModeFieldCoefficientImag();
+    auto er = data.GetModeFieldCoefficientReal(std::numbers::sqrt2);
+    auto ei = data.GetModeFieldCoefficientImag(std::numbers::sqrt2);
     E.Real().ProjectBdrCoefficientTangent(*er, marker);
     E.Imag().ProjectBdrCoefficientTangent(*ei, marker);
     const std::complex<double> S = data.GetSParameter(E);
     CAPTURE(S);
+    CHECK(std::abs(S - 1.0) < 1.0e-8);
+  }
+}
+
+// The wave port mode field E0_<n> of the boundary field output is the 1 W incident wave,
+// sqrt(2) times the unit-overlap mode, so it projects to S = 1 as above.
+namespace
+{
+
+class WavePortModeFieldPostOperator : public PostOperator<ProblemType::DRIVEN>
+{
+public:
+  using PostOperator<ProblemType::DRIVEN>::PostOperator;
+  const auto &GetModeField(int idx) const { return port_E0.at(idx); }
+};
+
+}  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "WavePortOperator-ModeFieldOutput",
+                 "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto setup = LoadCpwWaveConfig();
+  setup["Problem"]["Output"] = temp_dir.string();
+  IoData iodata(setup, /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  WavePortModeFieldPostOperator post_op(iodata, space_op);
+
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  wp_op.PrepareFrequency(omega);
+
+  auto &nd_fespace = space_op.GetNDSpace();
+  const auto &mesh = *nd_fespace.Get().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const double scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  for (const auto &[idx, data] : wp_op)
+  {
+    GridFunction E(nd_fespace, true);
+    E = 0.0;
+    mfem::Array<int> marker = mesh::AttrToMarker(bdr_attr_max, data.GetAttrList());
+    const auto &E0 = post_op.GetModeField(idx);
+    E.Real().ProjectBdrCoefficientTangent(*E0.E0r, marker);
+    E.Imag().ProjectBdrCoefficientTangent(*E0.E0i, marker);
+    E.Real() *= 1.0 / scaling;
+    E.Imag() *= 1.0 / scaling;
+    const std::complex<double> S = data.GetSParameter(E);
+    CAPTURE(idx, S);
     CHECK(std::abs(S - 1.0) < 1.0e-8);
   }
 }

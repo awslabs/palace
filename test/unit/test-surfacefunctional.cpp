@@ -1264,9 +1264,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
   mfem::Array<int> marker(pmesh.bdr_attributes.Max());
   marker = 0;
   marker[7 - 1] = 1;
+  // The measured interface energy is the time average of the raw 1/2 t ε |E|² integrand
+  // for the complex mode fields (the domain energy below is likewise time-averaged).
   InterfaceDielectricCoefficient<InterfaceDielectric::SA> legacy(E, mat_op, interface.t,
                                                                  interface.epsilon_r);
-  const double interface_energy = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
+  const double interface_energy =
+      0.5 * RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
   DomainPostOperator domain_post(iodata.domains.postpro, mat_op, fem_op.GetNDSpace(),
                                  fem_op.GetCurlSpace());
   const double domain_energy = domain_post.GetElectricFieldEnergy(E);
@@ -3058,9 +3061,10 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   // routes exercised by this fixture.
   const long long bundle_count_before = BoundaryDerivedFieldBundle::BundleCount();
   const long long bundle_applies_before = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+  // The independent evaluators apply no time-average weight, so neither does the bundle.
   auto derived_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
       *mesh, marker, mat_op, nd_fespace, rt_fespace, sampling_plan, trace_cache, E, B,
-      scaling, scaling);
+      scaling, scaling, 1.0);
   REQUIRE(derived_bundle->IsValid());
   REQUIRE(BoundaryDerivedFieldBundle::BundleCount() == bundle_count_before + 1);
   PointFieldEvaluator e_bundle(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
@@ -3149,9 +3153,10 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   const long long complex_phases_before = BoundaryDerivedFieldBundle::PhaseCount();
   const long long complex_phase_avoided_before =
       BoundaryDerivedFieldBundle::AvoidedPhaseOperatorApplyCount();
+  // The independent evaluators apply no time-average weight, so neither does the bundle.
   auto complex_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
       *mesh, marker, mat_op, nd_fespace, rt_fespace, sampling_plan, complex_trace_cache,
-      E_complex, B_complex, scaling, scaling);
+      E_complex, B_complex, scaling, scaling, 1.0);
   REQUIRE(complex_bundle->IsValid());
   REQUIRE(complex_bundle->BatchesComplexPhases(E_complex.Real(), B_complex.Real()));
   REQUIRE(complex_bundle->BatchesComplexPhases(E_complex.Imag(), B_complex.Imag()));

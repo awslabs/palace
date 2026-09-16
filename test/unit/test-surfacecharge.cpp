@@ -265,7 +265,7 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
   // Net current into the top plate from the port and the plate charge.
   const auto &port = space_op.GetLumpedPortOp().GetPort(1);
   const std::complex<double> V = port.GetVoltage(E_gf);
-  const double V_inc = port.GetExcitationVoltage();
+  const double V_inc = port.GetExcitationVoltage(true);
   const std::complex<double> I_net = (2.0 * V_inc - V) / port.R;
   SurfacePostOperator surf_post_op(iodata.boundaries.postpro, ProblemType::DRIVEN,
                                    space_op.GetMaterialOp(), space_op.GetH1Space(),
