@@ -582,6 +582,29 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 validate_seed_corner_isotropy(
                     tampered_report,
                     reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"])
+            # The census must measure exactly the contract's boundary labels (the
+            # labels the seed is written with): a missing, extra or duplicated label
+            # fails closed even when every recorded area is positive.
+            recipe_path = reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"]
+            contract_labels = {item["Attribute"] for item in json.loads(
+                Path(recipe_path).read_text())["SemanticContract"]["BoundaryLabels"]}
+            self.assertEqual({row["Attribute"] for row in census["InterfaceAreas"]},
+                             contract_labels)
+            for description, mutate in (
+                    ("missing", lambda rows: rows.pop()),
+                    ("extra", lambda rows: rows.append(
+                        {"Attribute": 9999, "Name": "surface_9999", "Triangles": 1,
+                         "Area": 1.0})),
+                    ("duplicate", lambda rows: rows.append(dict(rows[0])))):
+                mutated = json.loads(Path(census_item["Path"]).read_text())
+                mutate(mutated["InterfaceAreas"])
+                mutated_path = root / f"census-labels-{description}.json"
+                mutated_path.write_text(json.dumps(mutated))
+                mutated_report = copy.deepcopy(seed)
+                mutated_report["Artifacts"]["seed-corner-census"] = {
+                    "Path": str(mutated_path), "SHA256": sha256(mutated_path)}
+                with self.assertRaisesRegex(ValueError, "labels differ", msg=description):
+                    validate_seed_corner_isotropy(mutated_report, recipe_path)
             # The seed command must pass exactly the bound path, and never an
             # undeclared footprint.
             input_paths = {name: item["Path"] for name, item in seed["Inputs"].items()}

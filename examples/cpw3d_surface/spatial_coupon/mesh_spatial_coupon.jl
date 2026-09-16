@@ -2201,7 +2201,6 @@ function generate_spatial_coupon(;
     face_rows = corner_isotropy ?
         longitudinal_face_census(longitudinal_curves, semantic_corners, corner_reach) :
         Dict{String, Any}[]
-    area_rows = corner_isotropy ? interface_areas() : Dict{String, Any}[]
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
@@ -2237,6 +2236,11 @@ function generate_spatial_coupon(;
         # transform; otherwise tilted transforms invalidate the XY/layer queries.
         mesh_postprocess(edges, boundary_loops, radius)
     end
+    # The per-label areas are those of the labels the seed is written with: a
+    # multi-slot postprocessor replaces the CAD-face groups by slot/conductor
+    # groups, so the census is taken after it (areas are rigid-invariant, and the
+    # source-local frame is kept by measuring before the placement transform).
+    area_rows = corner_isotropy ? interface_areas() : Dict{String, Any}[]
     if transform != IDENTITY_RIGID_TRANSFORM
         connectivity = gmsh.model.mesh.getElements()
         gmsh.model.mesh.affineTransform(vec(transform'))

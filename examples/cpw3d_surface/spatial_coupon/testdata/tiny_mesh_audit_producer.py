@@ -63,9 +63,11 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
         "EtchBoundarySHA256": None if etch_boundary is None else
                               hashlib.sha256(etch_boundary.read_bytes()).hexdigest(),
         "InterfaceAreaUnits": "um^2",
-        "InterfaceAreas": [{"Attribute": 1, "Name": "matching_surface", "Triangles": 2,
+        # One row per contract boundary label, as written in the fixture seed.
+        "InterfaceAreas": [{"Attribute": 1, "Name": "surface_1", "Triangles": 7,
                             "Area": 2.0},
-                           {"Attribute": 3, "Name": "surface_3", "Triangles": 2, "Area": 1.0}],
+                           {"Attribute": 2, "Name": "surface_2", "Triangles": 3, "Area": 2.0},
+                           {"Attribute": 3, "Name": "surface_3", "Triangles": 1, "Area": 1.0}],
         "Corners": [{"Corner": index, "Point": corner, "BallEdges": 0}
                     for index, corner in enumerate(corners)],
         "LongitudinalFaces": [{"Surface": 1, "Triangles": 2, "InteriorNodes": 0,

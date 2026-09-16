@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from semantic_mesh_contract import boundary_attributes
+
 
 CANONICAL_STAGE_ORDER = (
     "canonical-source-validation", "seed-generation", "metric-preparation",
@@ -443,6 +445,14 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
                 isinstance(row.get("Area"), bool) or not row["Area"] > 0
                 for row in areas)):
         raise ValueError("Seed census lacks positive per-label interface areas")
+    # The census must measure the labels the seed is written with (after any
+    # slot/conductor relabeling), which are exactly the contract's boundary labels.
+    semantic = recipe.get("SemanticContract")
+    if not isinstance(semantic, dict) or not isinstance(semantic.get("BoundaryLabels"), list):
+        raise ValueError("Restoration recipe lacks the semantic contract boundary labels")
+    labels = [row["Attribute"] for row in areas]
+    if len(labels) != len(set(labels)) or set(labels) != boundary_attributes(semantic):
+        raise ValueError("Seed census interface-area labels differ from the semantic contract")
     # The ridge-to-ridge face census (interior nodes and full-height triangles) is
     # recorded for every seed; its values are reported, not gated.
     for row in census["LongitudinalFaces"]:

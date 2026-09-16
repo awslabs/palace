@@ -409,6 +409,29 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             self.assertGreater(sum(int(row["unresolved_elements"])
                                    for row in local_report), 0)
 
+    def test_multislot_census_interface_areas_are_the_written_slot_labels(self):
+        """The census measures the labels the seed is written with: after the multi-slot
+        postprocess these are the contract's slot/conductor labels (not the CAD faces),
+        and their areas equal the ownership report's whole-element areas."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            contract = json.loads(MULTISLOT["semantic"].read_text())
+            path = root / "multislot-semantic.json"; path.write_text(json.dumps(contract))
+            self.produce(root, "multislot-census", source=MULTISLOT, ownership=True,
+                         corner_isotropy=["--semantic-contract", str(path),
+                                          "--corner-isotropy-radius", "0.4",
+                                          "--corner-census", str(root / "multislot-census.json")])
+            census = json.loads((root / "multislot-census.json").read_text())
+            rows = {row["Attribute"]: row for row in census["InterfaceAreas"]}
+            self.assertEqual(len(rows), len(census["InterfaceAreas"]))
+            self.assertEqual(set(rows), {item["Attribute"] for item in contract["BoundaryLabels"]})
+            with (root / "multislot-census-ownership.csv").open(newline="") as stream:
+                report = {int(row["attribute"]): row for row in csv.DictReader(stream)}
+            for attribute, row in report.items():
+                self.assertEqual(rows[attribute]["Triangles"], int(row["elements"]))
+                self.assertAlmostEqual(rows[attribute]["Area"], float(row["area"]),
+                                       delta=1e-9 * float(row["area"]))
+
     def test_julia_option_rejects_nonrigid_and_singular_matrices(self):
         invalid = (
             [2.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0],
