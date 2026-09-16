@@ -255,7 +255,15 @@ Records and meshes must be content-distinct by SHA-256 across matrix entries.
 
 Run `general_mesh_audit_producer.py` once for each required kind, passing all
 five `--stage-report STAGE=PATH` bindings to `bounded-run` and
-`mesh-topology-quality`. Normalize only those five audit outputs:
+`mesh-topology-quality`, or run its `variant-audits` kind once per variant: one
+bounded process (the same `run_bounded_mesher.py` limits, 1800 s / 16 GiB, with
+the five records declared as `--artifact`s) reads the mesh once and writes the
+five records `<prefix><kind>.json` through the same per-kind producer functions,
+so every record equals its standalone twin except the recorded `Command`
+(unit-tested); on the four-edge identity variant this replaced 434 s of five
+separate processes (each re-reading the 137 MB mesh; peak 3.1 GiB) by one
+226 s run (peak 3.0 GiB).
+Normalize only those five audit outputs:
 
 ```sh
 python3 normalize_general_mesh_evidence.py \

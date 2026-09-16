@@ -18,13 +18,14 @@ import meshio
 import numpy as np
 
 from audit_edge_metric_mesh import analyze
-from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
+from general_mesh_audit_producer import (KINDS, VARIANT_AUDITS_KIND,
+                                         _footprint_boundary_comparison,
                                          _footprint_boundary_distance,
                                          _global_diagonal_bands,
                                          _normalized_footprint_boundary,
                                          _ownership_report, _planar_diameter,
                                          _protected_surface_report,
-                                         produce as produce_audit)
+                                         produce as produce_audit, produce_variant_audits)
 from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, build_record,
                                   build_record_from_stage_reports)
 from general_mesh_manifest import (_physical_comparison_failures,
@@ -205,7 +206,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
         return SimpleNamespace(manifest=manifest, input=[], root=output,
                                preflight_only=preflight, audit_root=audit)
 
-    def produce_matrix(self, root, manifest_path, manifest):
+    def produce_matrix(self, root, manifest_path, manifest, compare_consolidated=False):
         audits = root / "audits"; audits.mkdir()
         for case in manifest["Cases"]:
             directory = root / case["Id"]
@@ -370,9 +371,38 @@ class GeneralMeshManifestTest(unittest.TestCase):
                         identity_seed_mesh=seed, stage_reports=stage_reports,
                         command=[str(AUDITOR), kind, stem])
                     records[kind] = record
+                if compare_consolidated:
+                    # One process, the mesh read once, the same producer functions: every
+                    # record equals its standalone twin except the recorded Command.
+                    consolidated_command = [str(AUDITOR), VARIANT_AUDITS_KIND, stem]
+                    consolidated = {kind: root / f"{stem}-consolidated-{kind}.json" for kind in KINDS}
+                    produce_variant_audits(case["Id"], variant_id, mesh, inputs_path, transform,
+                        consolidated, contract=directory / "semantic.json",
+                        recipe=directory / "recipe.json", process=directory / "process.toml",
+                        signature=directory / "signature.csv", identity_mesh=canonical_mesh,
+                        identity_seed_mesh=seed, stage_reports=stage_reports,
+                        command=consolidated_command)
+                    for kind in KINDS:
+                        standalone = json.loads(records[kind].read_text())
+                        merged = json.loads(consolidated[kind].read_text())
+                        self.assertEqual(merged.pop("Command"), consolidated_command)
+                        self.assertEqual(standalone.pop("Command"), [str(AUDITOR), kind, stem])
+                        self.assertEqual(merged, standalone, kind)
+                    with self.assertRaisesRegex(ValueError, "must be fresh"):
+                        produce_variant_audits(case["Id"], variant_id, mesh, inputs_path,
+                                               transform, consolidated, stage_reports=stage_reports)
+                    with self.assertRaisesRegex(ValueError, "per audit kind"):
+                        produce_variant_audits(case["Id"], variant_id, mesh, inputs_path,
+                                               transform, {"bounded-run": root / "one.json"})
                 normalize(manifest_path, case["Id"], variant_id, mesh, records,
                           audits / f"{stem}.json")
         return audits
+
+    def test_variant_audits_match_standalone_records(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            audits = self.produce_matrix(root, manifest_path, manifest, compare_consolidated=True)
+            self.assertTrue(run_manifest(self.args(manifest_path, root / "out", audit=audits)))
 
     def test_staged_gmsh_evidence_accepts_complete_fixture_matrix(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -771,8 +771,9 @@ def _trace_basis_edges(restoration_recipe_path):
 
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
-                    ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8):
-    mesh = read_mesh(mesh_path)
+                    ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8,
+                    *, mesh=None):
+    mesh = read_mesh(mesh_path) if mesh is None else mesh
     contract = load_semantic_contract(contract_path)
     report, _ = analyze(mesh, contract, require_material_names=True)
     points = np.asarray(mesh.points)
@@ -881,8 +882,8 @@ def _simplex_h1_dofs(mesh, order):
             max((order - 1) * (order - 2) * (order - 3) // 6, 0) * len(tetrahedra))
 
 
-def complexity_record(base, mesh_path, contract_path, recipe_path):
-    mesh = read_mesh(mesh_path)
+def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None):
+    mesh = read_mesh(mesh_path) if mesh is None else mesh
     recipe = json.loads(Path(recipe_path).read_text())
     order = int(recipe["GeometryOrder"])
     topology = load_semantic_contract(contract_path)["FeatureTopology"]
@@ -909,8 +910,9 @@ def _mesh_invariants(mesh):
     return values
 
 
-def invariants_record(base, mesh_path):
-    base["Measurements"] = {"ComparisonInvariants": _mesh_invariants(read_mesh(mesh_path))}
+def invariants_record(base, mesh_path, *, mesh=None):
+    mesh = read_mesh(mesh_path) if mesh is None else mesh
+    base["Measurements"] = {"ComparisonInvariants": _mesh_invariants(mesh)}
     return base
 
 
@@ -959,8 +961,8 @@ def _physical_covariance_report(identity, transformed, contract, matrix):
 
 
 def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
-                   transform, contract_path, stage_reports, tolerance=1e-10):
-    mesh = read_mesh(mesh_path)
+                   transform, contract_path, stage_reports, tolerance=1e-10, *, mesh=None):
+    mesh = read_mesh(mesh_path) if mesh is None else mesh
     matrix = np.asarray(transform, dtype=float).reshape(4, 4)
     reports, _ = validate_stage_dag(stage_reports, mesh_path)
     publication = reports["proper-rigid-publication"]
@@ -996,7 +998,8 @@ def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
     return base
 
 
-def bounded_record(base, mesh_path, stage_reports):
+def bounded_record(base, mesh_path, stage_reports, *, mesh=None):
+    mesh = read_mesh(mesh_path) if mesh is None else mesh
     reports, digests = validate_stage_dag(stage_reports, mesh_path)
     canonical = [reports[name] for name in CANONICAL_STAGE_ORDER]
     placement = [reports[name] for name in PLACEMENT_STAGE_ORDER]
@@ -1011,7 +1014,7 @@ def bounded_record(base, mesh_path, stage_reports):
         "Seconds": canonical_resources["Seconds"] + placement_resources["Seconds"],
         "PeakRSSGiB": max(canonical_resources["PeakRSSGiB"],
                            placement_resources["PeakRSSGiB"]),
-        "Elements": len(blocks(read_mesh(mesh_path), "tetra")[0]),
+        "Elements": len(blocks(mesh, "tetra")[0]),
         "CanonicalBuild": canonical_resources,
         "PlacementPublication": placement_resources}}
     base["BoundedStages"] = reports
@@ -1024,7 +1027,9 @@ def bounded_record(base, mesh_path, stage_reports):
 
 def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
             contract=None, recipe=None, process=None, signature=None, identity_mesh=None,
-            identity_seed_mesh=None, stage_reports=None, command=None):
+            identity_seed_mesh=None, stage_reports=None, command=None, loaded_mesh=None):
+    """Write one audit record; `loaded_mesh` is the already read `mesh` when the
+    caller audits several kinds of one mesh in one process."""
     if kind not in KINDS:
         raise ValueError("Unknown audit kind")
     inputs = json.loads(Path(inputs_path).read_text())
@@ -1032,7 +1037,7 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     base = _base(kind, case, variant, Path(mesh), inputs, transform,
                  command or [Path(__file__).name, kind])
     if kind == "bounded-run":
-        record = bounded_record(base, mesh, stage_reports)
+        record = bounded_record(base, mesh, stage_reports, mesh=loaded_mesh)
     elif kind == "mesh-topology-quality":
         reports, _ = validate_stage_dag(stage_reports, mesh)
         reference = reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
@@ -1041,19 +1046,20 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
         ownership = publication["ownership-partition"]["Path"]
         quadrature = publication["ownership-quadrature-partition"]["Path"]
         record = topology_record(base, mesh, contract, recipe, process, signature,
-                                 reference, ownership, quadrature, restoration_recipe)
+                                 reference, ownership, quadrature, restoration_recipe,
+                                 mesh=loaded_mesh)
         record["Dependencies"] = {"SemanticContract": sha256(contract),
                                   "MeshRecipe": sha256(recipe), "Process": sha256(process),
                                   "Signature": sha256(signature)}
     elif kind == "mesh-complexity":
-        record = complexity_record(base, mesh, contract, recipe)
+        record = complexity_record(base, mesh, contract, recipe, mesh=loaded_mesh)
         record["Dependencies"] = {"MeshRecipe": sha256(recipe),
                                   "SemanticContract": sha256(contract)}
     elif kind == "mesh-invariants":
-        record = invariants_record(base, mesh)
+        record = invariants_record(base, mesh, mesh=loaded_mesh)
     else:
         record = variant_record(base, mesh, identity_mesh, identity_seed_mesh,
-                                transform, contract, stage_reports)
+                                transform, contract, stage_reports, mesh=loaded_mesh)
     output = Path(output)
     if output.exists():
         raise ValueError("Audit output must be fresh")
@@ -1061,12 +1067,35 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     return record
 
 
+VARIANT_AUDITS_KIND = "variant-audits"
+
+
+def produce_variant_audits(case, variant, mesh, inputs_path, transform_path, outputs, **options):
+    """Write all five audit records of one mesh from one process: the mesh is read
+    once and every record is produced by the same per-kind function as the
+    standalone invocation (only the recorded Command differs).  `outputs` maps
+    every kind to its fresh output path."""
+    if set(outputs) != set(KINDS):
+        raise ValueError("Exactly one output path per audit kind is required")
+    for path in outputs.values():
+        if Path(path).exists():
+            raise ValueError("Audit output must be fresh")
+    loaded_mesh = read_mesh(mesh)
+    return {kind: produce(kind, case, variant, mesh, inputs_path, transform_path, outputs[kind],
+                          loaded_mesh=loaded_mesh, **options) for kind in KINDS}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=KINDS)
+    parser.add_argument("kind", choices=KINDS + (VARIANT_AUDITS_KIND,),
+                        help=f"one audit kind, or '{VARIANT_AUDITS_KIND}' for all five kinds "
+                             "from one process (the mesh is read once)")
     parser.add_argument("case"); parser.add_argument("variant")
     parser.add_argument("mesh", type=Path); parser.add_argument("inputs", type=Path)
-    parser.add_argument("transform", type=Path); parser.add_argument("output", type=Path)
+    parser.add_argument("transform", type=Path)
+    parser.add_argument("output", type=Path,
+                        help=f"record path; for '{VARIANT_AUDITS_KIND}' the common prefix of the "
+                             "five records, written as <prefix><kind>.json")
     parser.add_argument("--contract", type=Path); parser.add_argument("--recipe", type=Path)
     parser.add_argument("--process", type=Path); parser.add_argument("--signature", type=Path)
     parser.add_argument("--identity-mesh", type=Path)
@@ -1081,11 +1110,17 @@ def main():
         if stage in stage_reports:
             parser.error("duplicate stage report")
         stage_reports[stage] = Path(value)
-    produce(args.kind, args.case, args.variant, args.mesh, args.inputs, args.transform,
-            args.output, contract=args.contract, recipe=args.recipe, process=args.process,
-            signature=args.signature, identity_mesh=args.identity_mesh,
-            identity_seed_mesh=args.identity_seed_mesh,
-            stage_reports=stage_reports, command=sys.argv)
+    options = dict(contract=args.contract, recipe=args.recipe, process=args.process,
+                   signature=args.signature, identity_mesh=args.identity_mesh,
+                   identity_seed_mesh=args.identity_seed_mesh,
+                   stage_reports=stage_reports, command=sys.argv)
+    if args.kind == VARIANT_AUDITS_KIND:
+        outputs = {kind: Path(f"{args.output}{kind}.json") for kind in KINDS}
+        produce_variant_audits(args.case, args.variant, args.mesh, args.inputs, args.transform,
+                               outputs, **options)
+    else:
+        produce(args.kind, args.case, args.variant, args.mesh, args.inputs, args.transform,
+                args.output, **options)
 
 
 if __name__ == "__main__":
