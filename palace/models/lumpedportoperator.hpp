@@ -119,9 +119,23 @@ public:
   std::complex<double> GetCharacteristicImpedance(double omega = 0.0,
                                                   Branch branch = Branch::TOTAL) const;
 
+  // Incident wave of an excited port. Excitations are normalized to unit physical incident
+  // power referenced to GetExcitationRefResistance(): unit time-averaged power for a time-
+  // harmonic (frequency domain, peak phasor) excitation, unit instantaneous power at unit
+  // pulse amplitude for a time domain one. The incident voltage and current are the
+  // corresponding peak (time-harmonic) or instantaneous amplitudes: for R_ref = 50 Ω and a
+  // time-harmonic excitation, V_inc = 10 V and I_inc = 0.2 A.
   double GetExcitationPower() const;
-  double GetExcitationVoltage() const;
+  double GetExcitationVoltage(bool time_harmonic) const;
+  double GetExcitationCurrent(bool time_harmonic) const;
 
+  // Peak incident voltage of a time-harmonic wave carrying unit time-averaged power
+  // referenced to the port reference resistance, V_ref = sqrt(2 R_ref). The frequency
+  // domain S-parameter (Kurokawa b-amplitude) of the port is V / V_ref.
+  double GetReferenceVoltage() const;
+
+  // Port power (E x H) ⋅ n integrated over the port surface: instantaneous for real-valued
+  // fields, complex time-averaged power 1/2 ∫ (E x H⋆) ⋅ n dS for complex peak phasors.
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
@@ -194,8 +208,10 @@ public:
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
-  // the complex one).
-  void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
+  // the complex one). Time-harmonic excitations carry unit time-averaged incident power,
+  // time domain ones unit instantaneous power (see LumpedPortData::GetExcitationPower).
+  void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb,
+                                    bool time_harmonic);
 };
 
 }  // namespace palace

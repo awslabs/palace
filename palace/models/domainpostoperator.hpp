@@ -26,10 +26,12 @@ struct DomainPostData;
 }  // namespace config
 
 //
-// Class to handle domain energy postprocessing. We use a leading factor of 1/2 instead of
-// 1/4 even though the eigenmodes are peak phasors and not RMS normalized because the same
-// peak phasors are used to compute the voltages/currents which are 2x the time-averaged
-// values. This correctly yields an EPR of 1 in cases where expected.
+// Class to handle domain energy postprocessing. Energies are physical stored energies: for
+// real-valued (instantaneous) fields E_elec = 1/2 ∫ D ⋅ E dV, while for complex peak-phasor
+// fields the reported value is the time average over one period, E_elec = 1/4 Re{∫ Dᴴ E dV}
+// (see electromagnetics::TimeAverageWeight). Ratios of energies (participation ratios) are
+// independent of this choice; quality factors formed from time-averaged losses divide by
+// the total (electric + magnetic) time-averaged energy, see PostOperator.
 //
 class DomainPostOperator
 {
@@ -59,14 +61,19 @@ public:
                      const FiniteElementSpace &nd_fespace, bool electric_energy_only);
 
   // Get volume integrals computing the electric or magnetic field energy in the entire
-  // domain.
+  // domain (time-averaged for complex-valued fields).
   double GetElectricFieldEnergy(const GridFunction &E) const;
   double GetMagneticFieldEnergy(const GridFunction &B) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
-  // domain.
+  // domain (time-averaged for complex-valued fields).
   double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
+
+private:
+  // Evaluate the energy quadratic form 1/2 uᴴ M u for a real or complex field u, with the
+  // time-average weight applied for complex peak phasors.
+  static double GetFieldEnergy(const Operator &M, const GridFunction &u, Vector &Mu);
 };
 
 }  // namespace palace
