@@ -146,6 +146,18 @@ python3 normalize_general_mesh_evidence.py \
   --audit-record variant-transform=/large/run/CASE--VARIANT/transform.json
 ```
 
+One case can be verified independently of the matrix with
+`verify_canonical_case_entries.py MANIFEST AUDIT_ROOT OUTPUT.json CASE` (a frozen
+tool): it judges every manifest variant of the case with the unchanged
+production functions (manifest validation, immutable-input hashes, evidence
+gates, mesh readability, bound audit/stage records, exact canonical-build reuse)
+and evaluates the frozen covariance comparison whenever both compared variants
+have evidence - even when a variant fails - so the report lists every failure
+(`Failures`, per-entry `GateFailures`/`Error`, `TransformComparisonFailures`,
+`CanonicalReuseFailures`). The report is written whether or not the case
+passed; the exit status is nonzero unless everything passed. It is a
+single-case check, not the matrix, physics or release qualification.
+
 After all 24 records exist:
 
 ```sh
