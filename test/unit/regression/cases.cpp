@@ -2398,7 +2398,8 @@ TEST_CASE("cylinder_driven_wave_absorbing", "[Serial][Parallel][GPU][Regression]
 // polarization and so on the number of processes: it has no unique reference value. The
 // medium is homogeneous, the recovered fluxes are L2 projections of εE and B/μ, and the
 // lossless Lorentz medium has W >= ε > 0. The squared indicators then sum to at most
-// (|ε|²/W ||E||² + ||B||²/μ) / (2 E_t) <= 1 for each sample, with the stored energy E_t.
+// (|ε|²/W ||E||² + ||B||²/μ) / (4 E_t) <= 1 for each sample, with the time-averaged
+// stored energy E_t = (W ||E||² + ||B||²/μ) / 4.
 TEST_CASE("cylinder_driven_wave_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2650,10 +2651,10 @@ TEST_CASE("dielectric_grating_adaptive", "[Serial][Parallel][GPU][Regression]")
                                   "adaptive", opts);
 }
 
-// Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
-// normalization bridge for cross-type observations. Use custom checks to verify power
-// balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
-// entries handled as in dielectric_grating.
+// Mixed Floquet + lumped/wave port S-parameter tests: all port families share the unit
+// time-averaged incident power normalization, so cross-type S needs no bridge factor. Use
+// custom checks to verify power balance (sum |S|^2 = 1 for the lossless structure). Floquet
+// NaN and negligible entries handled as in dielectric_grating.
 TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

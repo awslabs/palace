@@ -3605,8 +3605,8 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
       CHECK(error_A <= 1.0e-10 * Ar.cwiseAbs().maxCoeff());
       CHECK(error_y <= 1.0e-8 * y.norm());
 
-      // The wave port S-parameters from the pairings, sᵀV y / R, are those of the expanded
-      // solution.
+      // The wave port S-parameters from the pairings, sᵀV y / (sqrt(2) R) relative to the
+      // incident wave of sqrt(2) times the mode, are those of the expanded solution.
       rom_op.ExpandPROMSolution(excitation_idx, v);
       GridFunction E(space_op.GetNDSpace(), true);
       E.Real().SetFromTrueDofs(v.Real());
@@ -3616,7 +3616,7 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
         const auto *sV = rom_op.GetWavePortModePairing(idx);
         REQUIRE(sV);
         const auto S = sV->cwiseProduct(rom_op.GetReducedSolution(excitation_idx)).sum() /
-                       data.modal_reaction;
+                       (std::sqrt(2.0) * data.modal_reaction);
         const auto S_ref = data.GetSParameter(E);
         CAPTURE(idx, S, S_ref);
         CHECK(std::abs(S - S_ref) <= 1.0e-12 * std::max(std::abs(S_ref), 1.0));

@@ -354,8 +354,11 @@ for implementation details.
     materials retain the existing lossless-port approximation: their `LossTan` and
     `Conductivity` are not used in the port coefficients.
 
-For each port, the excitation is normalized to have unit incident power over the port boundary
-surface. Lumped ports with reactive elements (`"L"` and/or `"C"`, or the surface-parameter
+In the frequency domain, the excitation of each port is normalized to have unit
+time-averaged incident power over the port boundary surface (see the
+[mathematical reference](../reference.md#Lumped-ports-and-wave-ports)); transient
+excitations carry unit instantaneous power at unit pulse amplitude. Lumped ports with
+reactive elements (`"L"` and/or `"C"`, or the surface-parameter
 equivalents `"Ls"` and/or `"Cs"`) may also be excited, including purely reactive ports with
 `"R": 0` (`"Rs": 0`). For a purely reactive port (`R = 0`) the power normalization
 references an internal unit impedance; see the [mathematical reference](../reference.md#Lumped-ports-and-wave-ports)

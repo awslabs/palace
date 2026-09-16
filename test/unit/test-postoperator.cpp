@@ -274,7 +274,7 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     for (const auto *m : {&dim, &back})
     {
       CHECK_FALSE(m->domain_E_field_energy_all);
-      CHECK_FALSE(m->TotalEnergyNormalization());
+      CHECK_FALSE(m->ElectricEnergyNormalization());
       CHECK_FALSE(m->TotalFieldEnergy());
       CHECK_FALSE(m->domain_E_field_energy_i.at(0).energy);
       CHECK_FALSE(m->domain_E_field_energy_i.at(0).participation_ratio);
@@ -600,10 +600,11 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
   const auto measured = post.MeasureForTest(e, b, 1.0);
 
   // At ω = 1, χ = 9/8 and w = 90/64 for this lossless Lorentz oscillator, and
-  // Re χ = Re 0.5/(1 + i) = 1/4 for the compensated Debye.
+  // Re χ = Re 0.5/(1 + i) = 1/4 for the compensated Debye. The energies of the complex
+  // mode fields are time averages, 1/4 ε |E|² and 1/4 C |V|².
   constexpr double norm_E2 = 1.25;
   const double re_chi = dispersive ? 9.0 / 8.0 : (stored ? 0.0 : 0.25);
-  const double at_material = 0.5 * norm_E2 * (2.0 + re_chi);
+  const double at_material = 0.25 * norm_E2 * (2.0 + re_chi);
   CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
   const auto &port = measured.lumped_port_vi.at(1);
   CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
@@ -629,27 +630,30 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
   {
     // No total energy, so no normalized output, and not a placeholder value.
     CHECK_FALSE(measured.domain_E_field_energy_all);
-    CHECK_FALSE(measured.TotalEnergyNormalization());
+    CHECK_FALSE(measured.ElectricEnergyNormalization());
     CHECK_FALSE(port.mode_port_kappa);
     CHECK_FALSE(port.quality_factor);
     CHECK_FALSE(port.inductive_energy_participation);
     CHECK(measured.interface_eps_i.empty());
     return;
   }
-  const double stored_E = 0.5 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
-  const double capacitor = 0.5 * 0.4 * norm_E2;
+  const double stored_E = 0.25 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
+  const double capacitor = 0.25 * 0.4 * norm_E2;
+  // The electric-side energy U of the mode, half its total stored energy 2 U.
   const double total = 0.5 * (stored_E + at_material) + capacitor;
   // The typed models have a stored electric energy, so every normalized output exists.
   REQUIRE(measured.domain_E_field_energy_all);
-  REQUIRE(measured.TotalEnergyNormalization());
+  REQUIRE(measured.ElectricEnergyNormalization());
   CHECK_THAT(*measured.domain_E_field_energy_all, WithinRel(stored_E, 1.0e-12));
-  CHECK_THAT(*measured.TotalEnergyNormalization(), WithinRel(total, 1.0e-12));
+  CHECK_THAT(*measured.ElectricEnergyNormalization(), WithinRel(total, 1.0e-12));
   REQUIRE(port.mode_port_kappa);
   REQUIRE(port.inductive_energy_participation);
+  // κ = P / (2 U) with the resistor power P = |V|² / (2 R), and the inductive EPR
+  // 1/4 L |I|² / U with |I| = |V| / (ω L).
   CHECK_THAT(std::abs(*port.mode_port_kappa),
-             WithinRel(0.5 * norm_E2 / 3.0 / total, 1.0e-12));
+             WithinRel(0.5 * norm_E2 / 3.0 / (2.0 * total), 1.0e-12));
   CHECK_THAT(std::abs(*port.inductive_energy_participation),
-             WithinRel(0.5 * norm_E2 / 2.0 / total, 1.0e-12));
+             WithinRel(0.25 * norm_E2 / 2.0 / total, 1.0e-12));
   REQUIRE(measured.interface_eps_i.size() == 1);
   const auto &interface = measured.interface_eps_i.front();
   REQUIRE(interface.energy > 0.0);
@@ -901,8 +905,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto vi = post_op.MeasureLumpedPortForTest(1, E, B, 1.0);
     const auto &port = space_op.GetLumpedPortOp().GetPort(1);
     REQUIRE(std::abs(vi.V) > 0.0);
-    CHECK_THAT(std::abs(vi.S - vi.V / std::sqrt(port.GetExcitationRefResistance())),
+    // S = V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the unit time-
+    // averaged power wave referenced to the port reference resistance.
+    CHECK_THAT(std::abs(vi.S - vi.V / port.GetReferenceVoltage()),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(vi.V)));
+    CHECK_THAT(port.GetReferenceVoltage(),
+               Catch::Matchers::WithinRel(
+                   std::sqrt(2.0 * port.GetExcitationRefResistance()), 1.0e-12));
 
     GridFunction E_gf(space_op.GetNDSpace(), true);
     E_gf.Real().SetFromTrueDofs(E.Real());
@@ -910,6 +919,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto S_legacy = port.GetSParameter(E_gf);
     CHECK_THAT(std::abs(vi.S - S_legacy),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
+
+    // The stored inductor energy is the time average 1/4 L |I_L|² for the peak phasor
+    // branch current I_L = V / (iωL) (the physical definition, written out explicitly).
+    REQUIRE(std::abs(vi.I_RLC[1]) > 0.0);
+    CHECK_THAT(vi.inductor_energy,
+               Catch::Matchers::WithinRel(0.25 * std::abs(port.L) * std::norm(vi.I_RLC[1]),
+                                          1.0e-12));
   }
 
   SECTION("Eigenmode")
