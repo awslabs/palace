@@ -136,7 +136,13 @@ equal mesh-frame triangles and the statistics; the manifest requires the seed
 and metric inputs to be exactly the case's frozen files. Without a bound basis
 nothing is sized, recorded or passed. The four-edge basis has 234 unique edges,
 46 below the 0.16 um far size (minimum 0.0217 um, 76 of 156 triangles); the
-ten-edge basis 774 edges, 146 below (minimum 0.0492 um, 244 of 516).
+ten-edge basis 774 edges, 151 below its effective far size 0.1799 um (the
+far-budget policy raised the requested 0.16; minimum 0.0492 um, 250 of 516).
+The cut-surface rule is honoured to within ~2x on the seed cut surface
+(`MaximumExtentOverRequested` 1.88 four-edge, 1.82 ten-edge; reported, not
+gated) because the smallest requests (0.0217 um four-edge) fall below the
+adapter `hmin` = NormalSize 0.025; the narrowest slivers are resolved at about
+twice the request.
 Supervisor decision 21 (trace-basis bands in the diagonal detector): the
 four-edge narrow-hat basis triangles are slivers (0.022-0.048 um base, 11.4 um
 long, fanning from (1.93..2, 8) to (-6, 0) on the bottom and top faces) and the
@@ -160,11 +166,26 @@ than the direction-only signature/footprint/junction checks) - and reports such
 bands separately (`TraceBasisEdgeBands`: count, total span, maximum RMS width;
 `LineLikeBandsAlignedWith` per feature class) so the arbitrary-diagonal guard
 stays visible. Unaligned bands must still be zero (gate unchanged); with no
-bound basis the behaviour is unchanged. P2 (recorded, not fixed): the
-detector's components are formed from edges at or below the threshold, so a
-band whose edges sit at the threshold can split into sub-half-diameter pieces
-under a rigid motion (three edges of 16,819 crossed 0.05 by roundoff in the
-rotate-z variant); a tolerance-consistent component rule is a follow-up.
+bound basis the behaviour is unchanged. Rigid-motion covariance of the detector
+(review P2, supervisor decision 23; measured on the preserved four-edge
+b8d323f5a root): (i) 681 seed-grid edges sit at exactly 2 x NormalSize = 0.05
+with construction roundoff up to ~7e-12 (clusters at +6.3e-13, +4e-12,
++6.7e-12), far above the former 64-eps tolerance, so identity classified
+17,609 short edges and rotate-z 17,606; the short-edge tolerance is now
+`COPLANAR_TOLERANCE x ShortEdgeThreshold` (the shared dimensionless family,
+5e-8 um here) and both placements classify exactly the same 16,837 interior
+short edges. (ii) The "span > half the surface diameter" rule used the
+axis-aligned bounding-box diagonal of the patch, which a rotation inflates
+(bottom/top faces 22.63 -> 31.61 um for rotate-z-0.63 while the band span
+11.44 um is invariant): the two basis bands vanished under rotation. The
+diameter is now the in-plane convex-hull diameter of the patch
+(`_planar_diameter`), a rigid-motion invariant that equals the former value on
+every patch of the four-edge and ten-edge identity meshes (all rectangles or
+corner-to-corner footprint spans), so identity records are unchanged; the
+rotate-z four-edge variant now reports identity's 2/41/2/2 line-like bands
+with 2 basis bands (span 22.8757 um), and the ten-edge variants stay at 0
+bands (12,309 short edges both). Unit tests cover construction roundoff at the
+threshold and the rotated-square band.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

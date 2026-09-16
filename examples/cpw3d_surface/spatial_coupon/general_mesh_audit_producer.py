@@ -15,6 +15,7 @@ import tomllib
 
 import meshio
 import numpy as np
+from scipy.spatial import ConvexHull, QhullError
 
 from audit_edge_metric_mesh import analyze, blocks, directional_widths, planar_patch_key
 from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles,
@@ -75,6 +76,26 @@ def _on_basis_edge(direction, endpoints, basis_edges, reach):
     return False
 
 
+def _planar_diameter(points, normal):
+    """Diameter (largest vertex distance) of a planar patch: the hull of the points
+    projected on the patch plane, so the value is rigid-motion invariant (an
+    axis-aligned bounding box inflates under rotation and would hide a band that
+    spans more than half the true diameter)."""
+    points = np.asarray(points, dtype=float)
+    normal = np.asarray(normal, dtype=float) / np.linalg.norm(normal)
+    seed_axis = np.array([1., 0., 0.]) if abs(normal[0]) < .9 else np.array([0., 1., 0.])
+    first = np.cross(normal, seed_axis); first /= np.linalg.norm(first)
+    planar = np.column_stack((points @ first, points @ np.cross(normal, first)))
+    if len(planar) < 3:
+        hull = planar
+    else:
+        try:
+            hull = planar[ConvexHull(planar).vertices]
+        except QhullError:
+            hull = planar
+    return float(np.sqrt(((hull[:, None, :] - hull[None, :, :]) ** 2).sum(axis=2)).max())
+
+
 def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segments=(),
                            junction_segments=(), trace_basis_edges=()):
     """Find long, narrow short-edge bands on one planar labeled support.
@@ -121,7 +142,12 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     median = float(np.median(all_lengths))
     threshold = min(.6 * median, 2.0 * float(normal_size))
     short_by_patch = {}
-    threshold_tolerance = 64.0 * np.finfo(float).eps * max(median, threshold, 1.0)
+    # Seed grid edges sit exactly at 2 x NormalSize up to construction roundoff
+    # (~1e-12 relative on the four-edge coupon), which a 64-eps tolerance does
+    # not cover: three of them crossed the threshold under the rotate-z
+    # placement and split a band component.  The shared dimensionless
+    # COPLANAR_TOLERANCE classifies them consistently under any rigid motion.
+    threshold_tolerance = COPLANAR_TOLERANCE * threshold
     for edge, owners in owners_by_edge.items():
         length = np.linalg.norm(mesh.points[edge[0]] - mesh.points[edge[1]])
         if (len(owners) == 2 and patch[owners[0]] == patch[owners[1]] and
@@ -140,8 +166,8 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             adjacency.setdefault(first, set()).add(last)
             adjacency.setdefault(last, set()).add(first)
         patch_vertices = np.unique(triangles[patch == patch_id])
-        surface_diameter = max(float(np.linalg.norm(
-            np.ptp(mesh.points[patch_vertices], axis=0))), 1e-300)
+        surface_diameter = max(_planar_diameter(mesh.points[patch_vertices],
+                                                planes[patch_id][:3]), 1e-300)
         visited = set()
         for start in adjacency:
             if start in visited:

@@ -715,7 +715,9 @@ def validate_trace_basis_sizing(seed_report, metric_report, recipe, census):
 def _validate_trace_basis_edges(recipe, triangles, digests, scale):
     """The recipe's TraceBasisEdges (the audit's source-driven band lines) are exactly
     the unique edges of the recorded basis triangles placed by the recipe's contract
-    transform, with the bound input digests."""
+    transform, with the bound input digests.  Matching is one-to-one: every recorded
+    segment consumes one expected edge, so a duplicated segment cannot stand in for a
+    missing one."""
     record = recipe.get("TraceBasisEdges")
     if (not isinstance(record, dict) or record.get("InputSHA256") != digests or
             not isinstance(record.get("Segments"), list)):
@@ -735,16 +737,21 @@ def _validate_trace_basis_edges(recipe, triangles, digests, scale):
     segments = record["Segments"]
     if record.get("Count") != len(segments) or len(segments) != len(expected):
         raise ValueError("Restoration recipe trace basis edges differ from the basis triangles")
-    keys = list(expected)
+    unmatched = list(expected)
     for segment in segments:
         if (not isinstance(segment, list) or len(segment) != 6 or
                 any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
                     for v in segment)):
             raise ValueError("Restoration recipe trace basis edge is invalid")
         ends = tuple(sorted((tuple(segment[:3]), tuple(segment[3:]))))
-        if not any(all(abs(x - y) <= 1e-8 * scale for p, q in zip(ends, key) for x, y in zip(p, q))
-                   for key in keys):
+        match = next((index for index, key in enumerate(unmatched)
+                      if all(abs(x - y) <= 1e-8 * scale
+                             for p, q in zip(ends, key) for x, y in zip(p, q))), None)
+        if match is None:
             raise ValueError("Restoration recipe trace basis edges differ from the basis triangles")
+        del unmatched[match]
+    if unmatched:
+        raise ValueError("Restoration recipe trace basis edges differ from the basis triangles")
     return record
 
 

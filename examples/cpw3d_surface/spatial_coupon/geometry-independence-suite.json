@@ -74,12 +74,12 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "08ad1302fec42ce981958b39a919e1c8a003090314ba4021e8d153c638792e02"
+      "SHA256": "d3327426d1313066d206df4908ff90c520699ab34bfe1c76982c0e76064240ab"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "bb02074fe685a91221dd19ee2b71e4ae3b441e57c768bcc432ec978210d5e65d"
+      "SHA256": "64e680ced7c6c2658558ab78dd793cadae5e94c1a5765e5c8d8c26e54af7cae5"
     },
     {
       "Name": "canonical_mesh_build.py",

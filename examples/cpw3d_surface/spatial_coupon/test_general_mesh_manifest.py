@@ -22,7 +22,7 @@ from general_mesh_audit_producer import (KINDS, _footprint_boundary_comparison,
                                          _footprint_boundary_distance,
                                          _global_diagonal_bands,
                                          _normalized_footprint_boundary,
-                                         _ownership_report,
+                                         _ownership_report, _planar_diameter,
                                          _protected_surface_report,
                                          produce as produce_audit)
 from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, build_record,
@@ -859,6 +859,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     ("digest", {"InputSHA256": {**expected, "BasisContract": "4" * 64}}),
                     ("dropped", {"Segments": edges["Segments"][1:], "Count": edges["Count"] - 1}),
                     ("count", {"Count": edges["Count"] + 1}),
+                    # One-to-one: a duplicated segment must not cover a missing one.
+                    ("duplicated", {"Segments": [edges["Segments"][0]] + edges["Segments"][:-1]}),
                     ("moved", {"Segments": [[v + 1.0 for v in segment] for segment in edges["Segments"]]})):
                 rejected(recipe_data={**recipe, "TraceBasisEdges": {**edges, **changes}},
                          message="trace basis edge", description=f"edges {description}")
@@ -1682,6 +1684,75 @@ class GeneralMeshManifestTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Degenerate feature segment"):
             _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
                                    footprint_segments=[[[0., 0., 0.], [0., 0., 0.]]])
+
+    def test_diagonal_detector_threshold_tolerates_construction_roundoff(self):
+        # Seed grid edges sit at exactly 2 x NormalSize up to construction roundoff
+        # (~1e-12 relative on the coupon).  A band of such edges must be classified
+        # the same way whether the roundoff falls below or above the threshold, so
+        # a rigid placement cannot split it (the recorded P2 fragility); a
+        # geometrically longer edge is still above the threshold.
+        columns = 21
+        points = np.array([[index * .05, transverse, 0.] for transverse in (-.2, 0., .2)
+                           for index in range(columns)])
+        triangles = []
+        for row in range(2):
+            for index in range(columns - 1):
+                first = row * columns + index; last = (row + 1) * columns + index
+                triangles.extend([[first, first + 1, last + 1], [first, last + 1, last]])
+        triangles = np.asarray(triangles)
+
+        def bands(stretch):
+            stretched = points * np.array([stretch, 1., 1.])
+            mesh = meshio.Mesh(stretched, [("triangle", triangles)],
+                               cell_data={"gmsh:physical": [np.ones(len(triangles), int)]})
+            report = _global_diagonal_bands(mesh, [[[0., 0., 0.], [0., 1., 0.]]], .025)
+            self.assertEqual(report["ShortEdgeThreshold"], .05)
+            return report["GlobalDiagonalBands"], report["ShortInternalEdges"]
+
+        # The 20 interior row edges (the boundary rows have one owner) form one band.
+        self.assertEqual(bands(1.0), (1, 20))
+        self.assertEqual(bands(1.0 - 1e-9), (1, 20))
+        self.assertEqual(bands(1.0 + 1e-9), (1, 20))
+        self.assertEqual(bands(1.0 + 1e-3), (0, 0))
+
+    def test_diagonal_detector_half_diameter_rule_is_rotation_covariant(self):
+        # The four-edge rotate-z placement lost its two basis bands because the
+        # patch "diameter" was an axis-aligned bounding-box diagonal (22.6 -> 31.6
+        # under the 0.63 rad rotation) while the band span (11.44) is invariant.
+        # The in-plane convex-hull diameter is a rigid-motion invariant, so the
+        # same patch rotated by a non-axis angle gives the same diameter, span and
+        # band classification.
+        from scipy.spatial import Delaunay
+        coarse = [[x, y] for x in np.linspace(0., 1., 11) for y in np.linspace(0., 1., 11)
+                  if abs(y - .5) > 1e-9]
+        band = [[x, .5] for x in np.arange(0., .8 + 1e-9, .05)]
+        planar = np.asarray(coarse + band)
+        triangles = Delaunay(planar).simplices
+        points = np.column_stack((planar, np.zeros(len(planar))))
+        angle = .63; q = np.array([[math.cos(angle), -math.sin(angle), 0.],
+                                   [math.sin(angle), math.cos(angle), 0.], [0., 0., 1.]])
+        shift = np.array([2., -3., 1.])
+        self.assertAlmostEqual(_planar_diameter(points, [0., 0., 1.]), math.sqrt(2.), places=12)
+        self.assertAlmostEqual(_planar_diameter(points @ q.T + shift, q @ [0., 0., 1.]),
+                               math.sqrt(2.), places=12)
+        # The bounding-box diagonal of the rotated square would be 1.98, whose half
+        # (0.99) exceeds the 0.8 band span: the band would vanish under rotation.
+        self.assertGreater(.5 * float(np.linalg.norm(np.ptp(points @ q.T, axis=0))), .8)
+        transverse = [[[0., 0., 0.], [0., 1., 0.]]]
+        reports = []
+        for rotation, offset in ((np.eye(3), np.zeros(3)), (q, shift)):
+            mesh = meshio.Mesh(points @ rotation.T + offset, [("triangle", triangles)],
+                               cell_data={"gmsh:physical": [np.ones(len(triangles), int)]})
+            reports.append(_global_diagonal_bands(
+                mesh, (np.asarray(transverse) @ rotation.T + offset).tolist(), .025))
+        for report in reports:
+            self.assertEqual(report["ShortEdgeThreshold"], .05)
+            self.assertEqual(report["GlobalDiagonalBands"], 1)
+            self.assertEqual(len(report["LongShortEdgeComponents"]), 1)
+        spans = [report["LongShortEdgeComponents"][0]["Span"] for report in reports]
+        self.assertAlmostEqual(spans[0], .8, places=9)
+        self.assertAlmostEqual(spans[0], spans[1], places=9)
+        self.assertEqual(reports[0]["ShortInternalEdges"], reports[1]["ShortInternalEdges"])
 
     def test_diagonal_detector_does_not_aggregate_orthogonal_supports(self):
         # Each support carries only a sub-half-diameter chain.  They meet along
