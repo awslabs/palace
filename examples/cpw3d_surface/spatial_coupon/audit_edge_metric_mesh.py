@@ -9,7 +9,8 @@ import meshio
 import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from edge_volume_metric import segment_distances
+from edge_volume_metric import (cluster_coplanar_triangles,match_equivalent_planes,
+                                segment_distances)
 from mesh_array_io import read_mesh
 from semantic_mesh_contract import (boundary_adjacency, boundary_attributes,
                                     load_semantic_contract, metric_surface_attributes,
@@ -96,16 +97,41 @@ def analyze(mesh,contract,require_material_names=False):
     if np.any(twice<=0):raise ValueError('Degenerate boundary triangle')
     normals=cross/twice[:,None];pivot=np.argmax(abs(normals),axis=1)
     normals*=np.sign(normals[np.arange(len(normals)),pivot])[:,None]
-    planes=np.column_stack((labels,np.round(normals,8),np.round(np.einsum('ij,ij->i',normals,xyz[:,0]),8)))
-    planes[planes==0]=0.0  # Canonicalize signed zero for persistent plane keys.
-    unique_planes,index=np.unique(planes,axis=0,return_inverse=True)
-    plane_areas=np.bincount(index,weights=twice/2)
+    # Planar patches are equivalence classes of (label, plane) under the shared
+    # tolerance rule, never rounded coordinates: roundoff-level normal noise on
+    # one CAD plane must not fragment it into several keys.
+    representatives,patch=cluster_coplanar_triangles(labels,normals,xyz)
+    plane_areas=np.bincount(patch,weights=twice/2,minlength=len(representatives))
     return {'Tetrahedra':len(t),'SurfaceTriangles':len(b),'MaterialVolumes':volume,
             'PhysicalVolumeNames':names,'BoundaryAdjacency':actual_adjacency,
             'MaterialComponents':component_counts,
             'MetalSurfaceComponents':boundary_component_counts(
                 b,labels,metric_surface_attributes(contract)),
-            'PlanarPatchAreas':{' '.join(map(str,k)):float(a) for k,a in zip(unique_planes,plane_areas)}},unique_planes
+            'PlanarPatchEquivalence':'edge_volume_metric.cluster_coplanar_triangles',
+            'PlanarPatchAreas':{planar_patch_key(row):float(a)
+                                for row,a in zip(representatives,plane_areas)}},(representatives,patch)
+
+
+def planar_patch_key(representative):
+    """Report key of a planar-patch representative: label and its first triangle's plane."""
+    row=np.asarray(representative,dtype=float)
+    plane=np.r_[row[1:4],np.dot(row[1:4],row[4:7])]
+    plane[plane==0]=0.0  # Canonicalize signed zero for persistent plane keys.
+    return ' '.join([str(int(row[0])),*map(str,plane)])
+
+
+def matched_planar_patch_areas(before,after):
+    """Pair the planar patches of two analyses of one geometry by plane equivalence.
+
+    Returns [(reference key, reference area, candidate area)] or None when the
+    patch sets do not correspond one to one.
+    """
+    (left,_),(right,_)=before[1],after[1]
+    mapping=match_equivalent_planes(left,right)
+    if mapping is None:return None
+    return [(planar_patch_key(row),before[0]['PlanarPatchAreas'][planar_patch_key(row)],
+             after[0]['PlanarPatchAreas'][planar_patch_key(right[j])])
+            for row,j in zip(left,mapping)]
 
 
 def directional_widths(mesh,recipe):
@@ -139,11 +165,16 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('reference',type=Path);p.add_argument('candidate',type=Path);p.add_argument('recipe',type=Path);p.add_argument('semantic_contract',type=Path);p.add_argument('output',type=Path)
     a=p.parse_args();reference=read_mesh(a.reference);candidate=read_mesh(a.candidate)
     contract=load_semantic_contract(a.semantic_contract)
-    before,_=analyze(reference,contract);after,_=analyze(candidate,contract)
-    for key in ('MaterialVolumes','PlanarPatchAreas'):
-        if before[key].keys()!=after[key].keys():raise ValueError('Changed '+key+' supports')
-        error=max(abs(after[key][k]/v-1) for k,v in before[key].items())
-        if error>1e-8:raise ValueError('Changed '+key+': '+str(error))
+    before=analyze(reference,contract);after=analyze(candidate,contract)
+    if before[0]['MaterialVolumes'].keys()!=after[0]['MaterialVolumes'].keys():
+        raise ValueError('Changed MaterialVolumes supports')
+    error=max(abs(after[0]['MaterialVolumes'][k]/v-1) for k,v in before[0]['MaterialVolumes'].items())
+    if error>1e-8:raise ValueError('Changed MaterialVolumes: '+str(error))
+    matched=matched_planar_patch_areas(before,after)
+    if matched is None:raise ValueError('Changed PlanarPatchAreas supports')
+    error=max(abs(right/left-1) for _,left,right in matched)
+    if error>1e-8:raise ValueError('Changed PlanarPatchAreas: '+str(error))
+    before,after=before[0],after[0]
     if before['MaterialComponents']!=after['MaterialComponents']:raise ValueError('Material connectivity changed')
     if before['MetalSurfaceComponents']!=after['MetalSurfaceComponents']:raise ValueError('Conductor surface connectivity changed')
     report={'Reference':before,'Candidate':after,'DirectionalWidths':directional_widths(candidate,json.loads(a.recipe.read_text())),

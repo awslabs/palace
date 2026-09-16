@@ -230,6 +230,34 @@ segments, pins and corners are unchanged.
 Reference-turn pins are MMG required vertices only; they never enter the
 semantic-corner set, the protected supports, or the ownership/covariance audits
 as geometry.
+
+The same tolerance is the only rule for deciding that two triangles lie on one
+plane anywhere in the chain: `edge_volume_metric.plane_deviation` (the larger of
+the sine of the normal angle and the offset of a point from the plane relative
+to max(local triangle diameter, distance to the reference point) - dimensionless,
+origin-independent, rigid-covariant), `cluster_coplanar_triangles` (first-fit
+clustering per label) and `match_equivalent_planes` (one-to-one pairing of the
+clusters of two meshes). The metric stage's `PlanarSupports`, the planar-patch
+areas of `audit_edge_metric_mesh.analyze`, the protected-surface audit patches
+and the diagonal-band detector's planes are all these equivalence classes; no
+plane is keyed by rounded coordinates any more (8-digit rounding fragmented the
+ten-edge seed's `x = 9.8333...` matching plane into seven keys from 1e-8
+normal noise). The metric recipe records `PlanarSupportEquivalence`.
+
+Protected labels that occupy one plane and are joined by coplanar label seams -
+edges shared by exactly two surface triangles of one plane class whose labels
+differ while their contract roles differ only in the slot index
+(`etched-substrate-vacuum-slot-0`/`slot-1`, `conductor-k-slot-i-ms`/`-ma`
+across slots) - are audited as their union on that plane (supervisor decision
+20): the per-triangle slot partition of one physical surface is label-only,
+response ownership is certified point-wise by the quadrature ownership audit,
+and another triangulation cannot reproduce a per-triangle partition to 1e-8
+(ten-edge trench floor: 3100 = 6.4855 vs 6.5087 um^2 per label, union 193.0
+both). Roles that differ otherwise are never unioned, and an edge carrying a
+third, non-coplanar surface triangle (a metal footprint edge with its sidewall)
+is a feature line, not a seam. Measure, boundary and topology thresholds are
+unchanged; the per-label areas and seam length of every union are recorded as
+`CoplanarSlotUnion` diagnostics.
 Metric preparation also protects the seed's corner balls: every seed surface
 triangle with at least one vertex within `CornerIsotropyRadius` of a contract
 semantic corner is a fixed (MMG required) triangle, in addition to the cut

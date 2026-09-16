@@ -990,6 +990,150 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 with self.assertRaises(ValueError, msg=description):
                     validate_seed_corner_isotropy(seed_report, path)
 
+    @staticmethod
+    def _star_mesh(points, faces, materials):
+        """Closed labeled surface -> tetrahedral mesh (one star per material body).
+
+        `faces` are (triangle, label, material-or-materials): every triangle is
+        joined to the centroid of each listed body (two bodies for an interface),
+        so the surface is exactly the mesh boundary/interface set."""
+        points = [list(map(float, point)) for point in points]
+        bodies = [(t, m) for t, _, ms in faces
+                  for m in (ms if isinstance(ms, tuple) else (ms,))]
+        tetrahedra, tetrahedron_materials, centroids = [], [], {}
+        for triangle, material in bodies:
+            if material not in centroids:
+                body = np.unique([t for t, m in bodies if m == material])
+                centroids[material] = len(points)
+                points.append(np.mean(np.asarray(points)[body], axis=0).tolist())
+            tetrahedra.append([centroids[material], *triangle])
+            tetrahedron_materials.append(material)
+        xyz = np.asarray(points)[np.asarray(tetrahedra)]
+        signed = np.einsum("ij,ij->i", np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]),
+                           xyz[:, 3] - xyz[:, 0])
+        tetrahedra = np.asarray(tetrahedra)
+        tetrahedra[signed < 0] = tetrahedra[signed < 0][:, [0, 2, 1, 3]]
+        triangles = np.asarray([triangle for triangle, _, _ in faces])
+        labels = np.asarray([label for _, label, _ in faces])
+        names = {1: "substrate", 2: "vacuum"}
+        return meshio.Mesh(np.asarray(points), [("triangle", triangles), ("tetra", tetrahedra)],
+                           cell_data={"gmsh:physical": [labels, np.asarray(tetrahedron_materials)]},
+                           field_data={names[m]: np.array([m, 3]) for m in centroids})
+
+    @staticmethod
+    def _slot_union_contract(roles, materials=(1,)):
+        labels = [{"Attribute": 1, "Role": "matching-surface", "AdjacentMaterials": [1],
+                   "Protected": True}]
+        labels += [{"Attribute": attribute, "Role": role, "AdjacentMaterials": list(adjacent),
+                    "Protected": True} for attribute, (role, adjacent) in roles.items()]
+        return {"VolumeMaterials": [{"Attribute": 1, "Material": "substrate"}] + (
+                    [{"Attribute": 2, "Material": "vacuum"}] if 2 in materials else []),
+                "BoundaryLabels": labels, "MetricSurfaceRoles": [], "CutSurfaceRoles": []}
+
+    def _slot_split_cubes(self, bottom_labels, split_candidate=True, transform=None):
+        """Unit cube whose bottom face carries two labels (reference: two triangles
+        along the diagonal; candidate: four triangles around the face center, one of
+        the first label) and five matching-surface faces."""
+        corners = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                            [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], dtype=float)
+        sides = [([0, 1, 5], 1), ([0, 5, 4], 1), ([1, 2, 6], 1), ([1, 6, 5], 1),
+                 ([2, 3, 7], 1), ([2, 7, 6], 1), ([3, 0, 4], 1), ([3, 4, 7], 1),
+                 ([4, 5, 6], 1), ([4, 6, 7], 1)]
+        first, second = bottom_labels
+        reference_faces = [([0, 2, 1], first), ([0, 3, 2], second)] + sides
+        center = np.array([[.5, .5, 0.]])
+        candidate_faces = [([0, 8, 1], first), ([1, 8, 2], second), ([2, 8, 3], second),
+                           ([3, 8, 0], second)] + sides if split_candidate else reference_faces
+        def mesh(points, faces):
+            if transform is not None:
+                matrix = np.asarray(transform, dtype=float).reshape(4, 4)
+                points = points @ matrix[:3, :3].T + matrix[:3, 3]
+            return self._star_mesh(points, [(t, label, 1) for t, label in faces], (1,))
+        return (mesh(corners, reference_faces),
+                mesh(np.vstack((corners, center)), candidate_faces))
+
+    def test_coplanar_slot_seam_labels_are_audited_as_one_union_patch(self):
+        contract = self._slot_union_contract({
+            3100: ("etched-substrate-vacuum-slot-0", [1]),
+            3101: ("etched-substrate-vacuum-slot-1", [1])})
+        reference, candidate = self._slot_split_cubes((3100, 3101))
+        result = _protected_surface_report(reference, candidate, contract)
+        self.assertTrue(result["PlaneSupportsMatch"]); self.assertTrue(result["TopologyMatches"])
+        # Six audited patches: five matching faces and ONE union of the slot labels.
+        self.assertEqual(result["PatchCount"], 6); self.assertEqual(result["LabelPatchCount"], 7)
+        self.assertEqual(result["CoplanarSlotUnions"], 1)
+        self.assertLessEqual(result["MaximumRelativeMeasureError"], 1e-12)
+        self.assertLessEqual(result["MaximumSupportVertexDistance"], 1e-12)
+        key = next(key for key in result["ByPlaneSupport"] if "+" in key)
+        self.assertTrue(key.startswith(
+            "etched-substrate-vacuum-slot-0+etched-substrate-vacuum-slot-1 "))
+        union = result["ByPlaneSupport"][key]["CoplanarSlotUnion"]
+        self.assertEqual(union["Labels"], [3100, 3101])
+        self.assertEqual(union["ReferenceLabelAreas"], {"3100": .5, "3101": .5})
+        self.assertAlmostEqual(union["CandidateLabelAreas"]["3100"], .25)
+        self.assertAlmostEqual(union["CandidateLabelAreas"]["3101"], .75)
+        self.assertAlmostEqual(union["SeamLength"], math.sqrt(2.0))
+        # Rotation covariance: the same audit in a rotated frame.
+        rotated_reference, rotated_candidate = self._slot_split_cubes((3100, 3101),
+                                                                       transform=ROTATION)
+        rotated = _protected_surface_report(rotated_reference, rotated_candidate, contract)
+        for name in ("PatchCount", "LabelPatchCount", "CoplanarSlotUnions", "TopologyMatches",
+                     "PlaneSupportsMatch"):
+            self.assertEqual(rotated[name], result[name], name)
+        self.assertLessEqual(rotated["MaximumRelativeMeasureError"], 1e-12)
+        self.assertLessEqual(rotated["MaximumSupportVertexDistance"], 1e-12)
+        rotated_union = next(value["CoplanarSlotUnion"] for value in
+                             rotated["ByPlaneSupport"].values() if "CoplanarSlotUnion" in value)
+        self.assertEqual(rotated_union["Labels"], union["Labels"])
+        self.assertAlmostEqual(rotated_union["SeamLength"], union["SeamLength"])
+
+    def test_coplanar_adjacent_labels_of_different_roles_are_never_unioned(self):
+        # Same geometry, but the roles differ by more than the slot index: each
+        # label keeps its own 1e-8 measure/boundary check, which the re-partitioned
+        # candidate fails.
+        for roles in ((("substrate-vacuum-slot-0", [1]), ("conductor-1-slot-0-ms", [1])),
+                      (("etched-substrate-vacuum-slot-0", [1]), ("substrate-outer", [1]))):
+            contract = self._slot_union_contract({3000: roles[0], 5001: roles[1]})
+            reference, candidate = self._slot_split_cubes((3000, 5001))
+            result = _protected_surface_report(reference, candidate, contract)
+            self.assertTrue(result["PlaneSupportsMatch"], roles)
+            self.assertEqual(result["PatchCount"], 7); self.assertEqual(result["CoplanarSlotUnions"], 0)
+            self.assertFalse(any("+" in key for key in result["ByPlaneSupport"]))
+            self.assertAlmostEqual(result["MaximumRelativeMeasureError"], .5)
+            self.assertGreater(result["MaximumSupportVertexDistance"], .1)
+            unchanged, _ = self._slot_split_cubes((3000, 5001), split_candidate=False)
+            same = _protected_surface_report(reference, unchanged, contract)
+            self.assertLessEqual(same["MaximumRelativeMeasureError"], 1e-12)
+
+    def test_slot_labels_meeting_along_a_feature_line_are_not_unioned(self):
+        # Two substrate bodies separated by a vertical interface wall: the bottom
+        # faces 3100 (left) and 3101 (right) are coplanar and edge-adjacent, but the
+        # shared edge carries a third, non-coplanar surface triangle (the wall), so it
+        # is a feature line and the slot labels stay separate patches.
+        points = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0], [0, 1, 0],
+                           [0, 0, 1], [1, 0, 1], [2, 0, 1], [2, 1, 1], [1, 1, 1], [0, 1, 1]],
+                          dtype=float)
+        left = [([0, 4, 1], 3100, 1), ([0, 5, 4], 3100, 1),     # bottom
+                ([0, 1, 7], 1, 1), ([0, 7, 6], 1, 1), ([4, 5, 11], 1, 1), ([4, 11, 10], 1, 1),
+                ([5, 0, 6], 1, 1), ([5, 6, 11], 1, 1), ([6, 7, 10], 1, 1), ([6, 10, 11], 1, 1),
+                ([1, 4, 10], 5001, (1, 2)), ([1, 10, 7], 5001, (1, 2))]  # interface wall
+        right = [([1, 3, 2], 3101, 2), ([1, 4, 3], 3101, 2),
+                 ([1, 2, 8], 1, 2), ([1, 8, 7], 1, 2), ([2, 3, 9], 1, 2), ([2, 9, 8], 1, 2),
+                 ([3, 4, 10], 1, 2), ([3, 10, 9], 1, 2), ([7, 8, 9], 1, 2), ([7, 9, 10], 1, 2)]
+        contract = self._slot_union_contract({
+            3100: ("etched-substrate-vacuum-slot-0", [1]),
+            3101: ("etched-substrate-vacuum-slot-1", [2]),
+            5001: ("conductor-1-slot-0-ms", [1, 2])}, materials=(1, 2))
+        contract["BoundaryLabels"][0]["AdjacentMaterials"] = [1, 2]
+        contract["BoundaryLabels"][0]["AdjacentMaterialSets"] = [[1], [2]]
+        mesh = self._star_mesh(points, left + right, (1, 2))
+        result = _protected_surface_report(mesh, mesh, contract)
+        self.assertTrue(result["PlaneSupportsMatch"])
+        self.assertEqual(result["CoplanarSlotUnions"], 0)
+        self.assertEqual(result["PatchCount"], result["LabelPatchCount"])
+        self.assertIn("etched-substrate-vacuum-slot-0 0.0 0.0 1.0 0.0", result["ByPlaneSupport"])
+        self.assertIn("etched-substrate-vacuum-slot-1 0.0 0.0 1.0 0.0", result["ByPlaneSupport"])
+
     def test_same_area_displaced_protected_support_is_detected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)

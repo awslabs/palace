@@ -12,7 +12,8 @@ import json
 from pathlib import Path
 import meshio
 import numpy as np
-from edge_volume_metric import surface_features,volume_metric,segment_distances
+from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,surface_features,
+                                volume_metric,segment_distances)
 from mesh_array_io import read_mesh,sha
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     load_semantic_contract, simple_sharp_contract,
@@ -89,21 +90,19 @@ def validate_transformed_supports(data, semantic_contract, segments, tolerance=1
     return data
 
 
-def cluster_planar_supports(attributes, normals, points, tolerance=1e-7):
-    """Merge numerically noisy representations of the same CAD plane support."""
-    planes = []
-    patch = np.empty(len(attributes), dtype=np.int32)
-    offsets = np.einsum('ij,ij->i', normals, points)
-    for index, (attribute, normal, offset) in enumerate(zip(attributes, normals, offsets)):
-        found = next((i for i, row in enumerate(planes)
-                      if int(row[0]) == int(attribute) and
-                      np.linalg.norm(row[1:4] - normal) <= tolerance and
-                      abs(row[4] - offset) <= tolerance), None)
-        if found is None:
-            found = len(planes)
-            planes.append(np.array([attribute, *normal, offset], dtype=float))
-        patch[index] = found
-    return np.asarray(planes), patch
+def cluster_planar_supports(attributes, normals, xyz):
+    """Merge numerically noisy representations of the same CAD plane support.
+
+    One plane per (attribute, equivalence class) under the shared
+    edge_volume_metric.cluster_coplanar_triangles rule; the audits key planar
+    patches with the same function, so a support the metric stage records is a
+    patch the audits recognize.  Returns (planes, patch): planes rows are
+    [attribute, nx, ny, nz, offset] of each cluster's first triangle.
+    """
+    representatives, patch = cluster_coplanar_triangles(attributes, normals, xyz)
+    offsets = np.einsum('ij,ij->i', representatives[:, 1:4], representatives[:, 4:7])
+    planes = np.column_stack((representatives[:, 0], representatives[:, 1:4], offsets))
+    return planes, patch.astype(np.int32)
 
 
 def budget_aware_far_policy(seed_elements, maximum_elements, far_size, far_growth):
@@ -189,7 +188,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     xyz=mesh.points[triangles]
     normals=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);normals/=np.linalg.norm(normals,axis=1)[:,None]
     pivot=np.argmax(abs(normals),axis=1);normals*=np.sign(normals[np.arange(len(normals)),pivot])[:,None]
-    exact_planes,patch=cluster_planar_supports(triangle_refs,normals,xyz[:,0])
+    exact_planes,patch=cluster_planar_supports(triangle_refs,normals,xyz)
     # Separate planar supports during adaptation. Restore original physical labels
     # only after independently checking/projecting each support intersection.
     patch_references=(10000+patch).astype(np.int32)
@@ -259,6 +258,10 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'PhysicalSegments':segments.tolist(),'TruePhysicalCorners':semantic_corners.tolist(),
             'SurfaceFeatureCorners':corners.tolist(),
             'PlanarSupports':{str(10000+i):{'Attribute':int(row[0]),'Normal':row[1:4].tolist(),'Offset':float(row[4])} for i,row in enumerate(exact_planes)},
+            'PlanarSupportEquivalence':{'Tolerance':COPLANAR_TOLERANCE,
+                'Rule':'edge_volume_metric.cluster_coplanar_triangles: same attribute, sine of '
+                       'the normal angle and point offset relative to max(local size, distance) '
+                       'within the tolerance; shared with the planar-patch audits'},
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
     print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners')},indent=2))

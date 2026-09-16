@@ -101,18 +101,34 @@ class RigidContractTest(unittest.TestCase):
             validate_transformed_supports(tampered, contract, segments)
 
     def test_numerically_noisy_coplanar_supports_are_clustered(self):
+        """The metric's PlanarSupports use the shared plane-equivalence rule: roundoff
+        noise on one CAD plane is one support, a parallel plane offset by a
+        resolvable fraction of the local size is another, and labels never merge."""
         attributes = np.array([1, 1, 1, 2])
-        normals = np.array([[1.0, 0.0, 0.0],
-                            [1.0, 6e-9, 0.0],
-                            [1.0, 0.0, 0.0],
-                            [1.0, 0.0, 0.0]])
-        points = np.array([[9.8333333333, 0.0, 0.0],
-                           [9.8333333340, 1.0, 0.0],
-                           [9.8333340, 0.0, 0.0],
-                           [9.8333333333, 0.0, 0.0]])
-        planes, patch = cluster_planar_supports(attributes, normals, points)
+        def triangle(x, y, z, tilt=0.0):
+            corners = np.array([[x, y, z], [x, y + .1, z], [x, y, z + .1]])
+            corners[:, 0] += [0.0, 0.0, tilt * .1]
+            return corners
+        xyz = np.array([triangle(9.8333333333, 0.0, 0.0),
+                        triangle(9.8333333340, 1.0, 0.0, tilt=6e-9),
+                        triangle(9.8333340, 0.0, 0.0),
+                        triangle(9.8333333333, 0.0, 0.0)])
+        normals = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
+        normals /= np.linalg.norm(normals, axis=1)[:, None]
+        planes, patch = cluster_planar_supports(attributes, normals, xyz)
         self.assertEqual(len(planes), 3)
         np.testing.assert_array_equal(patch, [0, 0, 1, 2])
+        np.testing.assert_array_equal(planes[:, 0], [1, 1, 2])
+        np.testing.assert_allclose(planes[:, 4], [9.8333333333, 9.8333340, 9.8333333333])
+        # Same planes in a rotated frame: same clustering, rotated representatives.
+        angle = 0.63
+        rotation = np.array([[math.cos(angle), -math.sin(angle), 0.0],
+                             [math.sin(angle), math.cos(angle), 0.0], [0.0, 0.0, 1.0]])
+        rotated_planes, rotated_patch = cluster_planar_supports(
+            attributes, normals @ rotation.T, xyz @ rotation.T)
+        np.testing.assert_array_equal(rotated_patch, patch)
+        np.testing.assert_allclose(rotated_planes[:, 1:4], planes[:, 1:4] @ rotation.T, atol=1e-15)
+        np.testing.assert_allclose(rotated_planes[:, 4], planes[:, 4], rtol=1e-14)
 
     def test_nonrigid_singular_and_reflecting_transforms_are_rejected(self):
         for transform in (

@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 import numpy as np
-from edge_volume_metric import volume_metric, intersect_metrics, feature_chains, surface_features
+from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, feature_chains,
+                                intersect_metrics, match_equivalent_planes, plane_deviation,
+                                surface_features, volume_metric)
 from prepare_edge_metric_scout import budget_aware_far_policy, protected_corner_ball_triangles
 
 class EdgeVolumeMetricTest(unittest.TestCase):
@@ -211,6 +213,97 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         np.testing.assert_array_equal(moved_counts,[1,1])
         for radius in (0.,-1.,float('nan')):
             with self.assertRaises(ValueError):protected_corner_ball_triangles(points,triangles,corners,radius)
+
+    @staticmethod
+    def _noisy_matching_plane():
+        """Seven triangles of one x = 9.8333... box face whose normals carry
+        roundoff-level (1e-8) noise, like the ten-edge seed's matching plane."""
+        rng=np.random.default_rng(7);x=9.8333333333
+        centers=np.array([[0.,0.],[2.,1.],[-3.,0.5],[1.,-2.],[3.,3.],[-2.,-3.],[0.5,2.5]])
+        xyz=[]
+        for c in centers:
+            corners=np.array([[x,c[0]-.1,c[1]-.1],[x,c[0]+.1,c[1]-.1],[x,c[0],c[1]+.1]])
+            corners[:,0]+=rng.uniform(-3.5e-10,3.5e-10,3)  # x spread <= 7e-10 as measured
+            xyz.append(corners)
+        xyz=np.asarray(xyz);n=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0])
+        n/=np.linalg.norm(n,axis=1)[:,None];n*=np.sign(n[:,:1])
+        return xyz,n
+
+    def test_noisy_matching_plane_keys_collapse_to_one_equivalence_class(self):
+        xyz,n=self._noisy_matching_plane()
+        # The retired 8-digit rounding fragments the plane into several keys ...
+        rounded=np.round(np.column_stack((n,np.einsum('ij,ij->i',n,xyz[:,0]))),8)
+        self.assertGreater(len(np.unique(rounded,axis=0)),1)
+        # ... whereas the tolerance rule sees one plane and one label class.
+        representatives,patch=cluster_coplanar_triangles(np.ones(len(n),int),n,xyz)
+        self.assertEqual(len(representatives),1)
+        np.testing.assert_array_equal(patch,0)
+        self.assertEqual(representatives[0,0],1)
+        # Labels are never merged: the same planes under two labels are two classes.
+        representatives,patch=cluster_coplanar_triangles([1,1,1,2,2,2,2],n,xyz)
+        self.assertEqual(len(representatives),2)
+        np.testing.assert_array_equal(patch,[0,0,0,1,1,1,1])
+
+    def test_distinct_planes_stay_distinct_and_the_rule_is_dimensionless(self):
+        xyz,n=self._noisy_matching_plane()
+        # A 1e-3 rad dihedral (and a 1e-4 rad one) is a different plane; the
+        # roundoff class (1e-8) is not.
+        for angle in (1e-3,1e-4):
+            rotation=np.array([[np.cos(angle),-np.sin(angle),0],[np.sin(angle),np.cos(angle),0],[0,0,1]])
+            tilted=xyz.copy();tilted[3:]=(xyz[3:]-xyz[3,0])@rotation.T+xyz[3,0]
+            m=np.cross(tilted[:,1]-tilted[:,0],tilted[:,2]-tilted[:,0]);m/=np.linalg.norm(m,axis=1)[:,None]
+            representatives,patch=cluster_coplanar_triangles(np.ones(7,int),m,tilted)
+            self.assertEqual(len(representatives),2,angle)
+            np.testing.assert_array_equal(patch,[0,0,0,1,1,1,1])
+        # A parallel plane offset by 1e-3 of the local size is distinct; the
+        # same offset scaled with the geometry stays distinct (dimensionless).
+        for scale in (1.,1e-3,1e3):
+            shifted=xyz*scale;shifted[3:,:,0]+=1e-3*0.2*scale
+            representatives,patch=cluster_coplanar_triangles(np.ones(7,int),n,shifted)
+            self.assertEqual(len(representatives),2,scale)
+            representatives,_=cluster_coplanar_triangles(np.ones(7,int),n,xyz*scale)
+            self.assertEqual(len(representatives),1,scale)
+        deviation=plane_deviation([1.,0,0],[0.,0,0],.1,[[1.,0,0]],[[[0.,5,5],[1e-7,5,5],[0,5,6]]],.1)
+        # Offset 1e-7 seen from 7 units away: an angle of ~1.4e-8, not 1e-7/0.1.
+        np.testing.assert_allclose(deviation,[1e-7/np.linalg.norm([1e-7,5,5])],rtol=1e-6)
+        with self.assertRaises(ValueError):plane_deviation([1.,0,0],[0.,0,0],0.,[[1.,0,0]],[[0.,0,0]],.1)
+        with self.assertRaises(ValueError):cluster_coplanar_triangles([1],[[1.,0,0]],[[[0,0,0],[0,0,0],[0,1,0]]])
+
+    def test_plane_equivalence_is_rotation_covariant_and_matches_bijectively(self):
+        xyz,n=self._noisy_matching_plane()
+        angle=1e-3;rotation=np.array([[np.cos(angle),-np.sin(angle),0],[np.sin(angle),np.cos(angle),0],[0,0,1]])
+        tilted=xyz.copy();tilted[3:]=(xyz[3:]-xyz[3,0])@rotation.T+xyz[3,0]
+        m=np.cross(tilted[:,1]-tilted[:,0],tilted[:,2]-tilted[:,0]);m/=np.linalg.norm(m,axis=1)[:,None]
+        labels=np.array([1,1,1,1,2,2,2])
+        reference,patch=cluster_coplanar_triangles(labels,m,tilted)
+        theta,phi=.63,.41
+        rz=np.array([[np.cos(theta),-np.sin(theta),0],[np.sin(theta),np.cos(theta),0],[0,0,1]])
+        rx=np.array([[1,0,0],[0,np.cos(phi),-np.sin(phi)],[0,np.sin(phi),np.cos(phi)]])
+        R=rx@rz;t=np.array([1.2,-0.7,0.9])
+        moved=tilted@R.T+t;mn=m@R.T
+        rotated,rotated_patch=cluster_coplanar_triangles(labels,mn,moved)
+        np.testing.assert_array_equal(rotated_patch,patch)
+        self.assertEqual(len(rotated),len(reference))
+        np.testing.assert_allclose(rotated[:,1:4],reference[:,1:4]@R.T,atol=1e-14)
+        np.testing.assert_allclose(rotated[:,4:7],reference[:,4:7]@R.T+t,atol=1e-14)
+        np.testing.assert_allclose(rotated[:,7],reference[:,7],rtol=1e-13)
+        # Matching pairs the same planes of two triangulations (here: the same
+        # planes seen through other representative triangles, shuffled) ...
+        shuffled=np.array([6,4,5,3,0,2,1])
+        candidate,_=cluster_coplanar_triangles(labels[shuffled],m[shuffled],tilted[shuffled])
+        mapping=match_equivalent_planes(reference,candidate)
+        self.assertIsNotNone(mapping)
+        for i,j in enumerate(mapping):self.assertEqual(reference[i,0],candidate[j,0])
+        self.assertEqual(sorted(mapping),list(range(len(reference))))
+        # ... and fails closed on a missing, an extra, a relabeled or a moved plane.
+        self.assertIsNone(match_equivalent_planes(reference,candidate[:-1]))
+        self.assertIsNone(match_equivalent_planes(reference,np.vstack((candidate,candidate[-1:]))))
+        relabeled=candidate.copy();relabeled[:,0]=np.where(relabeled[:,0]==1,2,1)
+        self.assertIsNone(match_equivalent_planes(reference,relabeled))
+        displaced=candidate.copy();displaced[0,4]+=1e-3
+        self.assertIsNone(match_equivalent_planes(reference,displaced))
+        self.assertEqual(match_equivalent_planes(np.zeros((0,8)),np.zeros((0,8))),[])
+        self.assertEqual(COPLANAR_TOLERANCE,1e-6)
 
     def test_bad_controls_fail_closed(self):
         for controls in ((0,.1,1),(.1,.01,1),(.1,2,1)):

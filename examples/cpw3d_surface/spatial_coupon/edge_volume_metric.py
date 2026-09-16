@@ -19,6 +19,95 @@ import numpy as np
 COPLANAR_TOLERANCE=1e-6
 
 
+def plane_deviation(normal,point,scale,normals,points,scales):
+    """Dimensionless deviation of the planes (normals, points) from (normal, point).
+
+    The deviation is the larger of the sine of the angle between the normals
+    (orientation-free) and the offset of every point from the reference plane
+    relative to max(scale, scales, distance to the reference point): the offset
+    is the angle under which the point leaves the plane as seen from the
+    reference point, floored by the local size scale, so plane equivalence is
+    independent of the coordinate origin and covariant under rigid motion.
+    `points` is (m, 3) or (m, k, 3) (offset maximized over k); `scales` is a
+    scalar or (m,).  Planes are equivalent when the result is at most
+    COPLANAR_TOLERANCE.
+    """
+    normal=np.asarray(normal,dtype=float).reshape(3);point=np.asarray(point,dtype=float).reshape(3)
+    normals=np.asarray(normals,dtype=float).reshape(-1,3)
+    points=np.asarray(points,dtype=float)
+    if points.ndim==2:points=points[:,None,:]
+    if points.shape[0]!=len(normals) or points.shape[-1]!=3:
+        raise ValueError('Plane points must be (m, 3) or (m, k, 3) matching the normals')
+    scales=np.broadcast_to(np.asarray(scales,dtype=float),(len(normals),))
+    if (not np.all(np.isfinite(normal)) or not np.all(np.isfinite(point)) or
+            not np.isfinite(scale) or scale<=0 or not np.all(np.isfinite(normals)) or
+            not np.all(np.isfinite(points)) or not np.all(np.isfinite(scales)) or
+            np.any(scales<=0)):
+        raise ValueError('Plane deviation requires finite planes and positive size scales')
+    angle=np.linalg.norm(np.cross(normal,normals),axis=1)
+    delta=points-point
+    reach=np.maximum(np.maximum(scale,scales)[:,None],np.linalg.norm(delta,axis=2))
+    return np.maximum(angle,np.max(np.abs(delta@normal)/reach,axis=1))
+
+
+def cluster_coplanar_triangles(groups,normals,xyz,tolerance=COPLANAR_TOLERANCE):
+    """First-fit clustering of triangles into equivalent planes within each group.
+
+    Every triangle joins the earliest cluster of its group whose representative
+    (the cluster's first triangle: unit normal, first vertex, diameter) it
+    deviates from by at most `tolerance` under plane_deviation; otherwise it
+    starts a cluster.  This is the single plane-equivalence rule for CAD-support
+    clustering and every planar-patch audit key; rounding coordinates is not.
+    Returns (representatives, patch): representatives is (k, 8) rows
+    [group, nx, ny, nz, px, py, pz, diameter] in first-appearance order and
+    patch the cluster index of every triangle.
+    """
+    groups=np.asarray(groups);normals=np.asarray(normals,dtype=float).reshape(-1,3)
+    xyz=np.asarray(xyz,dtype=float).reshape(-1,3,3)
+    if len(groups)!=len(normals) or len(xyz)!=len(normals):
+        raise ValueError('Groups, normals and triangle vertices must have one row per triangle')
+    if not np.all(np.isfinite(normals)) or not np.all(np.isfinite(xyz)):
+        raise ValueError('Triangle planes must be finite')
+    diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1)
+                              for i,j in ((0,1),(1,2),(2,0))]),axis=0) if len(xyz) else np.zeros(0)
+    if np.any(np.linalg.norm(np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]),axis=1)<=0):
+        raise ValueError('Degenerate triangle in plane clustering')
+    patch=np.full(len(groups),-1,dtype=np.int64);representatives=[]
+    while True:
+        remaining=np.flatnonzero(patch<0)
+        if not len(remaining):break
+        first=int(remaining[0])
+        same=remaining[groups[remaining]==groups[first]]
+        deviation=plane_deviation(normals[first],xyz[first,0],diameter[first],
+                                  normals[same],xyz[same],diameter[same])
+        patch[same[deviation<=tolerance]]=len(representatives)
+        representatives.append([groups[first],*normals[first],*xyz[first,0],diameter[first]])
+    return np.asarray(representatives,dtype=float).reshape(-1,8),patch
+
+
+def match_equivalent_planes(reference,candidate,tolerance=COPLANAR_TOLERANCE):
+    """One-to-one correspondence of cluster representatives by plane equivalence.
+
+    Returns the candidate row index of every reference row when each reference
+    plane is equivalent (same group, mutual plane_deviation <= tolerance) to
+    exactly one candidate plane and vice versa; otherwise None.
+    """
+    reference=np.asarray(reference,dtype=float).reshape(-1,8)
+    candidate=np.asarray(candidate,dtype=float).reshape(-1,8)
+    if len(reference)!=len(candidate):return None
+    if not len(reference):return []
+    forward=np.zeros((len(reference),len(candidate)))
+    backward=np.zeros((len(candidate),len(reference)))
+    for i,row in enumerate(reference):
+        forward[i]=plane_deviation(row[1:4],row[4:7],row[7],candidate[:,1:4],candidate[:,4:7],candidate[:,7])
+    for j,row in enumerate(candidate):
+        backward[j]=plane_deviation(row[1:4],row[4:7],row[7],reference[:,1:4],reference[:,4:7],reference[:,7])
+    equivalent=((np.maximum(forward,backward.T)<=tolerance)&
+                (reference[:,:1]==candidate[:,0][None,:]))
+    if np.any(equivalent.sum(axis=1)!=1) or np.any(equivalent.sum(axis=0)!=1):return None
+    return [int(np.flatnonzero(row)[0]) for row in equivalent]
+
+
 def intersect_metrics(a,b):
     """Deterministic SPD intersection dominating both inputs in Loewner order."""
     a,b=np.asarray(a,dtype=float),np.asarray(b,dtype=float)

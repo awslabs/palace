@@ -9,13 +9,16 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import tomllib
 
 import meshio
 import numpy as np
 
-from audit_edge_metric_mesh import analyze, blocks, directional_widths
+from audit_edge_metric_mesh import analyze, blocks, directional_widths, planar_patch_key
+from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles,
+                                match_equivalent_planes, plane_deviation)
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, PLACEMENT_STAGE_ORDER, STAGE_ORDER,
@@ -47,8 +50,9 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
 
     A connected set spanning several orthogonal supports is not a geometric
     band: its bounding-box diagonal has no source meaning.  Components are
-    therefore formed independently on the exact labeled planes.  The short
-    scale is also bounded by twice the audited transverse target, so ordinary
+    therefore formed independently on the labeled planes, keyed by the shared
+    plane-equivalence rule (cluster_coplanar_triangles).  The short scale is
+    also bounded by twice the audited transverse target, so ordinary
     coarse-surface triangulation cannot masquerade as propagated trace sizing.
     """
     triangles, labels = blocks(mesh, "triangle")
@@ -57,10 +61,10 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
     normals /= np.linalg.norm(normals, axis=1)[:, None]
     pivot = np.argmax(abs(normals), axis=1)
     normals *= np.sign(normals[np.arange(len(normals)), pivot])[:, None]
-    planes = np.round(np.column_stack(
-        (normals, np.einsum("ij,ij->i", normals, xyz[:, 0]))), 8)
+    representatives, patch = cluster_coplanar_triangles(labels, normals, xyz)
+    planes = np.column_stack((representatives[:, 1:4], np.einsum(
+        "ij,ij->i", representatives[:, 1:4], representatives[:, 4:7])))
     planes[planes == 0] = 0.0
-    _, patch = np.unique(np.column_stack((labels, planes)), axis=0, return_inverse=True)
     owners_by_edge, all_lengths = {}, []
     for owner, triangle in enumerate(triangles):
         for a, b in ((triangle[0], triangle[1]), (triangle[1], triangle[2]),
@@ -118,7 +122,7 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
             bands += int(line_like and not aligned)
             owner = int(np.flatnonzero(patch == patch_id)[0])
             components.append({
-                "Attribute": int(labels[owner]), "Plane": planes[owner].tolist(),
+                "Attribute": int(labels[owner]), "Plane": planes[patch_id].tolist(),
                 "Endpoints": [points[first].tolist(), points[last].tolist()],
                 "Span": span, "RMSWidth": width, "PhysicalSegmentAlignment": alignment,
                 "LineLike": line_like, "AlignedWithPhysicalSegment": aligned,
@@ -381,42 +385,117 @@ def _footprint_boundary_distance(left_triangles, right_triangles):
     return _footprint_boundary_comparison(left_triangles, right_triangles)[0]
 
 
+def _role_family(role):
+    """A role with its slot index wildcarded: roles differing only in slot index
+    (etched-substrate-vacuum-slot-0 / slot-1, conductor-1-slot-0-ms / slot-1-ms)
+    share a family; any other difference is a different physical surface."""
+    return re.sub(r"slot-\d+", "slot-*", role)
+
+
+def _coplanar_label_seams(points, triangles, patch, planes, protected_roles,
+                          tolerance=COPLANAR_TOLERANCE):
+    """Protected patch pairs joined by coplanar label seams, with the seam length.
+
+    A seam edge is a pure reference change: exactly two surface triangles share
+    it, both lie in one plane-equivalence class, their labels differ but their
+    roles differ only in the slot index.  An edge with a third (non-coplanar)
+    surface triangle is a feature line, never a seam.  Returns {(patch, patch):
+    seam length} with patch indices ordered."""
+    pairs = np.sort(triangles[:, [(0, 1), (1, 2), (2, 0)]].reshape(-1, 2), axis=1)
+    owner = np.repeat(np.arange(len(triangles)), 3)
+    order = np.lexsort((pairs[:, 1], pairs[:, 0])); pairs = pairs[order]; owner = owner[order]
+    start = np.r_[0, np.flatnonzero(np.any(pairs[1:] != pairs[:-1], axis=1)) + 1]
+    count = np.diff(np.r_[start, len(pairs)])
+    seams = {}
+    for first in start[count == 2]:
+        a, b = int(patch[owner[first]]), int(patch[owner[first + 1]])
+        if a == b:
+            continue
+        label_a, label_b = int(planes[a][0]), int(planes[b][0])
+        if (label_a not in protected_roles or label_b not in protected_roles or
+                label_a == label_b or
+                _role_family(protected_roles[label_a]) != _role_family(protected_roles[label_b])):
+            continue
+        row_a, row_b = planes[a], planes[b]
+        deviation = max(float(plane_deviation(row_a[1:4], row_a[4:7], row_a[7], row_b[None, 1:4],
+                                              row_b[None, 4:7], row_b[7])[0]),
+                        float(plane_deviation(row_b[1:4], row_b[4:7], row_b[7], row_a[None, 1:4],
+                                              row_a[None, 4:7], row_a[7])[0]))
+        if deviation > tolerance:
+            continue
+        key = (min(a, b), max(a, b))
+        seams[key] = seams.get(key, 0.0) + float(np.linalg.norm(
+            points[pairs[first][0]] - points[pairs[first][1]]))
+    return seams
+
+
 def _protected_surface_report(reference, candidate, contract):
-    before, _ = analyze(reference, contract, require_material_names=True)
-    after, _ = analyze(candidate, contract, require_material_names=True)
+    """Compare the protected planar patches of the candidate with the reference.
+
+    Patches are the label/plane equivalence classes of analyze(), paired across
+    the two meshes by the same plane-equivalence rule (match_equivalent_planes):
+    a reference plane must correspond to exactly one candidate plane and vice
+    versa, otherwise the supports do not match.  Protected labels that share one
+    plane and are joined by coplanar label seams whose roles differ only in the
+    slot index (the per-triangle slot partition of one physical surface) are
+    audited as their union on that plane: the slot partition is label-only,
+    response ownership is certified point-wise by the quadrature ownership audit,
+    and a per-triangle partition is not reproducible to 1e-8 by another
+    triangulation.  The per-label areas and seam length of a union are recorded
+    as diagnostics; measure, boundary and topology thresholds are unchanged."""
+    before, (before_planes, before_patch) = analyze(reference, contract,
+                                                    require_material_names=True)
+    after, (after_planes, after_patch) = analyze(candidate, contract,
+                                                 require_material_names=True)
     protected_attributes = {item["Attribute"]: item["Role"]
                             for item in contract["BoundaryLabels"]
                             if item.get("Protected") is True}
 
-    def patches(mesh, report):
-        triangles, labels = blocks(mesh, "triangle")
-        result = {}
-        for key, area in report["PlanarPatchAreas"].items():
-            values = tuple(float(value) for value in key.split())
-            attribute, plane = int(values[0]), values[1:]
-            if attribute not in protected_attributes:
-                continue
-            xyz = mesh.points[triangles[labels == attribute]]
-            cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
-            normals = cross / np.linalg.norm(cross, axis=1)[:, None]
-            pivot = np.argmax(abs(normals), axis=1)
-            normals *= np.sign(normals[np.arange(len(normals)), pivot])[:, None]
-            triangle_planes = np.round(np.column_stack(
-                (normals, np.einsum("ij,ij->i", normals, xyz[:, 0]))), 8)
-            triangle_planes[triangle_planes == 0] = 0.0
-            selected = xyz[np.all(triangle_planes == np.asarray(plane), axis=1)]
-            result[(protected_attributes[attribute], plane)] = (float(area), selected)
-        return result
+    def patches(mesh, report, planes, patch):
+        triangles, _ = blocks(mesh, "triangle")
+        xyz = mesh.points[triangles]
+        selected = [index for index, row in enumerate(planes)
+                    if int(row[0]) in protected_attributes]
+        return (planes[selected], selected,
+                [(protected_attributes[int(planes[index][0])],
+                  float(report["PlanarPatchAreas"][planar_patch_key(planes[index])]),
+                  xyz[patch == index]) for index in selected])
 
-    left, right = patches(reference, before), patches(candidate, after)
-    if left.keys() != right.keys():
+    left_planes, left_indices, left = patches(reference, before, before_planes, before_patch)
+    right_planes, _, right = patches(candidate, after, after_planes, after_patch)
+    mapping = match_equivalent_planes(left_planes, right_planes)
+    if mapping is None:
         return {"Actual": sorted(protected_attributes.values()),
                 "PlaneSupportsMatch": False, "MaximumRelativeMeasureError": math.inf,
                 "MaximumSupportVertexDistance": math.inf, "PatchCount": len(right)}
+    # Union groups are decided on the reference (seed) mesh and applied to the
+    # matched candidate patches.
+    reference_triangles, _ = blocks(reference, "triangle")
+    seams = _coplanar_label_seams(np.asarray(reference.points), reference_triangles,
+                                  before_patch, before_planes, protected_attributes)
+    position = {index: order for order, index in enumerate(left_indices)}
+    parent = list(range(len(left)))
+    def root(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]; index = parent[index]
+        return index
+    for a, b in seams:
+        parent[root(position[a])] = root(position[b])
+    groups = {}
+    for order in range(len(left)):
+        groups.setdefault(root(order), []).append(order)
     area_errors, distances, topology_matches, by_patch = [], [], [], {}
-    for key in left:
-        left_area, left_triangles = left[key]
-        right_area, right_triangles = right[key]
+    for members in sorted(groups.values(), key=lambda items: int(left_planes[items[0]][0])):
+        members = sorted(members, key=lambda order: int(left_planes[order][0]))
+        roles = [left[order][0] for order in members]
+        row = left_planes[members[0]]
+        # Keyed by the (sorted, '+'-joined) roles and the reference representative
+        # plane of the lowest-label member.
+        key = f"{'+'.join(roles)} {' '.join(planar_patch_key(row).split()[1:])}"
+        left_area = sum(left[order][1] for order in members)
+        right_area = sum(right[mapping[order]][1] for order in members)
+        left_triangles = np.concatenate([left[order][2] for order in members])
+        right_triangles = np.concatenate([right[mapping[order]][2] for order in members])
         area_error = abs(right_area - left_area) / max(abs(left_area), 1e-300)
         diagnostics = {}
         distance, left_topology, right_topology = _footprint_boundary_comparison(
@@ -424,7 +503,7 @@ def _protected_surface_report(reference, candidate, contract):
         topology_match = left_topology == right_topology
         area_errors.append(float(area_error)); distances.append(float(distance))
         topology_matches.append(topology_match)
-        by_patch[f"{key[0]} {' '.join(map(str, key[1]))}"] = {
+        by_patch[key] = {
             "RelativeMeasureError": float(area_error),
             "SupportVertexDistance": float(distance),
             "TopologyMatches": topology_match,
@@ -432,12 +511,32 @@ def _protected_surface_report(reference, candidate, contract):
             "CandidateTopology": right_topology,
             # Diagnostic only: pinched boundary vertices resolved per wedge.
             "PinchVertices": diagnostics["PinchVertices"]}
+        if len(members) > 1:
+            # Diagnostic only: the slot partition of the union (label-only seam).
+            by_patch[key]["CoplanarSlotUnion"] = {
+                "Roles": roles, "Labels": [int(left_planes[order][0]) for order in members],
+                "ReferenceLabelAreas": {str(int(left_planes[order][0])): left[order][1]
+                                        for order in members},
+                "CandidateLabelAreas": {str(int(left_planes[order][0])): right[mapping[order]][1]
+                                        for order in members},
+                "SeamLength": float(sum(
+                    length for (a, b), length in seams.items()
+                    if position[a] in members and position[b] in members)),
+                "Rule": "protected labels on one plane joined by coplanar label seams whose "
+                        "roles differ only in slot index are one physical surface; the "
+                        "per-triangle slot partition is label-only (certified by the "
+                        "quadrature ownership audit), so measure/boundary/topology are "
+                        "audited on the union"}
     return {"Actual": sorted(protected_attributes.values()), "PlaneSupportsMatch": True,
+            "PlaneEquivalence": "edge_volume_metric.match_equivalent_planes",
             "Comparison": "normalized-boundary-segment-sets-and-component-hole-topology",
             "TopologyMatches": all(topology_matches),
             "MaximumRelativeMeasureError": max(area_errors, default=0.0),
             "MaximumSupportVertexDistance": max(distances, default=0.0),
-            "PatchCount": len(right), "ByPlaneSupport": by_patch}
+            "PatchCount": len(by_patch), "LabelPatchCount": len(right),
+            "CoplanarSlotUnions": sum(1 for value in by_patch.values()
+                                      if "CoplanarSlotUnion" in value),
+            "ByPlaneSupport": by_patch}
 
 
 def _expected_response_owner_attributes(contract):
