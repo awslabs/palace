@@ -828,6 +828,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                      "census-radius")
             tampered(rewrite_census(IsotropicSize=2 * NORMAL_SIZE), "census-size")
             tampered(rewrite_census(SemanticCorners=[[9., 9., 9.]]), "census-corners")
+            tampered(rewrite_census(LongitudinalFaces=None), "census-faces-omitted")
+            tampered(rewrite_census(LongitudinalFaces=[{"Surface": 1}]), "census-faces-incomplete")
 
     def test_same_area_displaced_protected_support_is_detected(self):
         with tempfile.TemporaryDirectory() as temporary:

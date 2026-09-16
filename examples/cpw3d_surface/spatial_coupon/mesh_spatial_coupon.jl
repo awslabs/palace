@@ -418,39 +418,71 @@ function corner_size_expression(distance, lc_fine, lc_far, radius, transition_wi
            "max($(distance)-$(radius),0)/$(transition_width))"
 end
 
+# Tangential size of a longitudinal curve through the corner balls: lc_fine
+# inside a ball, the process-band grading slope up to lc_tangent outside.
+function corner_curve_size(point, corners, radius, lc_fine, lc_tangent, slope)
+    distance = minimum(norm(point .- corner) for corner in corners)
+    return min(lc_tangent, lc_fine + slope * max(distance - radius, 0.0))
+end
+
 # Samples per fine length for the size-weighted arclength quadrature that places
 # longitudinal curve nodes; a resolution constant, not a mesh target.
 const CURVE_SIZE_SAMPLES_PER_FINE_LENGTH = 16
 
-# Nodes of a longitudinal curve whose tangential spacing honors the corner ball:
-# lc_fine inside the ball, lc_tangent away from it, the process-band grading
-# slope between. Returns nothing when the curve is out of reach of every ball,
-# so the caller keeps the ordinary transfinite lc_tangent spacing unchanged.
+# Interior node parameters of a longitudinal curve that reaches a corner ball. The
+# transfinite lc_tangent grid is kept wherever the corner size law equals
+# lc_tangent, so the ridge nodes of one process edge stay aligned across its
+# faces away from the corners exactly as without the corner ball (misaligned
+# ridge rows were measured to remove the sidewall interior nodes). Each gap
+# between kept grid nodes, or between a curve end and the first kept grid node,
+# is filled by size-weighted arclength quadrature of the law: lc_fine inside the
+# ball, the process-band grading slope up to lc_tangent. Returns nothing when the
+# curve is out of reach of every ball, so the caller keeps the ordinary
+# transfinite spacing unchanged.
 function corner_isotropic_curve_nodes(curve, corners, radius, lc_fine, lc_tangent, slope)
     lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    intervals = max(1, ceil(Int, gmsh.model.occ.getMass(1, curve) / lc_tangent))
+    grid = collect(range(lower[1], upper[1]; length=intervals + 1))
+    xyz = reshape(gmsh.model.getValue(1, curve, grid), 3, :)
+    at_tangent = [corner_curve_size(Tuple(xyz[:, i]), corners, radius, lc_fine, lc_tangent,
+                                    slope) >= lc_tangent for i in axes(xyz, 2)]
+    all(at_tangent) && return nothing
+    anchors = [i for i in 1:(intervals + 1) if at_tangent[i] || i == 1 || i == intervals + 1]
+    interior = Float64[]
+    for (a, b) in zip(anchors[1:(end - 1)], anchors[2:end])
+        if !(b == a + 1 && at_tangent[a] && at_tangent[b])
+            append!(interior, graded_curve_parameters(curve, grid[a], grid[b], corners, radius,
+                                                      lc_fine, lc_tangent, slope))
+        end
+        b <= intervals && push!(interior, grid[b])
+    end
+    return interior, gmsh.model.getValue(1, curve, interior)
+end
+
+# Interior parameters of the curve span [from, to] equidistributed in the
+# arclength integral of 1 / corner size law.
+function graded_curve_parameters(curve, from, to, corners, radius, lc_fine, lc_tangent, slope)
     samples = max(64, ceil(Int, CURVE_SIZE_SAMPLES_PER_FINE_LENGTH *
-                              gmsh.model.occ.getMass(1, curve) / lc_fine))
-    parameters = collect(range(lower[1], upper[1]; length=samples + 1))
+                              norm(gmsh.model.getValue(1, curve, [to]) .-
+                                   gmsh.model.getValue(1, curve, [from])) / lc_fine))
+    parameters = collect(range(from, to; length=samples + 1))
     xyz = reshape(gmsh.model.getValue(1, curve, parameters), 3, :)
-    sizes = [min(lc_tangent, lc_fine + slope * max(
-                 minimum(norm(xyz[:, i] .- collect(corner)) for corner in corners) - radius, 0.0))
+    sizes = [corner_curve_size(Tuple(xyz[:, i]), corners, radius, lc_fine, lc_tangent, slope)
              for i in axes(xyz, 2)]
-    all(size >= lc_tangent for size in sizes) && return nothing
     cumulative = zeros(samples + 1)
     for i in 1:samples
         cumulative[i + 1] = cumulative[i] + norm(xyz[:, i + 1] .- xyz[:, i]) *
                                             0.5 * (1.0 / sizes[i] + 1.0 / sizes[i + 1])
     end
-    intervals = max(1, ceil(Int, cumulative[end]))
+    intervals = max(1, round(Int, cumulative[end]))
     interior = Float64[]
     for k in 1:(intervals - 1)
         target = k * cumulative[end] / intervals
-        i = searchsortedlast(cumulative, target)
-        i = clamp(i, 1, samples)
+        i = clamp(searchsortedlast(cumulative, target), 1, samples)
         fraction = (target - cumulative[i]) / (cumulative[i + 1] - cumulative[i])
         push!(interior, parameters[i] + fraction * (parameters[i + 1] - parameters[i]))
     end
-    return interior, gmsh.model.getValue(1, curve, interior)
+    return interior
 end
 
 # Install an explicit curve mesh (endpoints, interior nodes, line elements) so
@@ -542,6 +574,97 @@ function sorted_median(values)
     sorted = sort(values)
     n = length(sorted)
     return isodd(n) ? sorted[(n + 1) ÷ 2] : 0.5 * (sorted[n ÷ 2] + sorted[n ÷ 2 + 1])
+end
+
+# Bins of the along-edge histogram of a longitudinal face's interior nodes; a
+# census resolution constant, not a mesh target.
+const LONGITUDINAL_FACE_HISTOGRAM_BINS = 10
+
+# Distance from a semantic corner beyond which the corner size law is lc_tangent,
+# so the seed is meant to be unchanged there.
+function corner_law_reach(radius, lc_fine, lc_tangent, slope)
+    return lc_tangent > lc_fine ? radius + (lc_tangent - lc_fine) / slope : radius
+end
+
+# Interior-node and full-height-triangle census of every surface bounded by at
+# least two longitudinal feature curves (sidewalls and other ridge-to-ridge
+# faces). The interior row of such a face is alignment-fragile: ridge rows that
+# are misaligned across the face leave triangles whose vertices all lie on the
+# bounding curves and span two longitudinal curves ("full-height" triangles)
+# with no interior node. Nodes and triangles farther than `reach` from every
+# semantic corner are counted separately, since the seed is meant to be
+# unchanged there. Reported, not gated.
+function longitudinal_face_census(longitudinal_curves, corners, reach)
+    longitudinal = Set{Int32}(longitudinal_curves)
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(coordinates, 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    away(i) = all(norm(points[:, i] .- corner) > reach for corner in corners)
+    rows = Dict{String, Any}[]
+    for (_, surface) in gmsh.model.getEntities(2)
+        curves = Int32[curve for (dim, curve) in
+                       gmsh.model.getBoundary([(2, surface)], false, false, false)]
+        face_longitudinal = [curve for curve in curves if curve in longitudinal]
+        length(face_longitudinal) >= 2 || continue
+        curve_nodes = Dict{Int, Set{Int32}}()
+        boundary = Set{Int}()
+        for curve in curves
+            tags, _, _ = gmsh.model.mesh.getNodes(1, curve, true)
+            for tag in tags
+                node = index[tag]
+                push!(boundary, node)
+                curve in longitudinal &&
+                    push!(get!(curve_nodes, node, Set{Int32}()), curve)
+            end
+        end
+        _, element_tags, element_nodes = gmsh.model.mesh.getElements(2, surface)
+        triangles = Vector{NTuple{3, Int}}()
+        for (tags, block) in zip(element_tags, element_nodes)
+            isempty(tags) && continue
+            nodes_per_element = length(block) ÷ length(tags)
+            for start in 1:nodes_per_element:length(block)
+                push!(triangles, ntuple(i -> index[block[start + i - 1]], 3))
+            end
+        end
+        face_nodes = unique([node for triangle in triangles for node in triangle])
+        interior = [node for node in face_nodes if !(node in boundary)]
+        interior_away = [node for node in interior if away(node)]
+        function full_height(triangle)
+            all(node in boundary for node in triangle) || return false
+            spanned = union((get(curve_nodes, node, Set{Int32}()) for node in triangle)...)
+            length(spanned) >= 2 || return false
+            return !any(all(curve in get(curve_nodes, node, Set{Int32}()) for node in triangle)
+                        for curve in spanned)
+        end
+        full = [triangle for triangle in triangles if full_height(triangle)]
+        # Along-edge histogram of the interior nodes away from the corners, over
+        # the face's extent along its first longitudinal curve's direction.
+        lower, upper = gmsh.model.getParametrizationBounds(1, face_longitudinal[1])
+        derivative = gmsh.model.getDerivative(1, face_longitudinal[1],
+                                              [0.5 * (lower[1] + upper[1])])
+        direction = derivative[1:3] ./ norm(derivative[1:3])
+        along = [dot(points[:, node], direction) for node in face_nodes]
+        start, stop = extrema(along)
+        histogram = zeros(Int, LONGITUDINAL_FACE_HISTOGRAM_BINS)
+        for node in interior_away
+            fraction = (dot(points[:, node], direction) - start) / max(stop - start, eps())
+            histogram[clamp(floor(Int, fraction * LONGITUDINAL_FACE_HISTOGRAM_BINS) + 1, 1,
+                            LONGITUDINAL_FACE_HISTOGRAM_BINS)] += 1
+        end
+        push!(rows, Dict{String, Any}(
+            "Surface" => Int(surface),
+            "PhysicalGroups" => sort!(Int.(gmsh.model.getPhysicalGroupsForEntity(2, surface))),
+            "LongitudinalCurves" => length(face_longitudinal),
+            "Triangles" => length(triangles),
+            "InteriorNodes" => length(interior),
+            "InteriorNodesAwayFromCorners" => length(interior_away),
+            "InteriorNodeHistogramAlongEdge" => histogram,
+            "FullHeightTriangles" => length(full),
+            "FullHeightTrianglesAwayFromCorners" =>
+                count(triangle -> all(away(node) for node in triangle), full)))
+    end
+    sort!(rows; by=row -> row["Surface"])
+    return rows
 end
 
 function extended_interval(edge, radius)
@@ -2041,6 +2164,12 @@ function generate_spatial_coupon(;
     census_rows = corner_isotropy ?
         seed_corner_census(semantic_corners, corner_isotropy_radius, lc_fine, tolerance) :
         Dict{String, Any}[]
+    corner_reach = corner_isotropy ?
+        corner_law_reach(corner_isotropy_radius, lc_fine, lc_tangent, corner_grading_slope) :
+        0.0
+    face_rows = corner_isotropy ?
+        longitudinal_face_census(longitudinal_curves, semantic_corners, corner_reach) :
+        Dict{String, Any}[]
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
@@ -2101,6 +2230,9 @@ function generate_spatial_coupon(;
                 "GradingTransitionWidth" => process_core_width - process_fine_width,
                 "LongitudinalCurves" => length(longitudinal_curves),
                 "CornerIsotropicLongitudinalCurves" => length(corner_curves),
+                "CornerLawReach" => corner_reach,
+                "LongitudinalFaceHistogramBins" => LONGITUDINAL_FACE_HISTOGRAM_BINS,
+                "LongitudinalFaces" => face_rows,
                 "Corners" => census_rows))
             println(stream)
         end
@@ -2110,6 +2242,13 @@ function generate_spatial_coupon(;
                     "min/median/max=$(row["EdgeMinimum"])/$(row["EdgeMedian"])/$(row["EdgeMaximum"]) " *
                     "over sqrt2*hn=$(row["EdgesOverSqrt2IsotropicSize"]) " *
                     "incident aspect=$(row["IncidentMaximumAspect"])")
+        end
+        for row in face_rows
+            println("  longitudinal face $(row["Surface"]) $(row["PhysicalGroups"]): " *
+                    "triangles=$(row["Triangles"]) interior nodes=$(row["InteriorNodes"]) " *
+                    "(away from corners $(row["InteriorNodesAwayFromCorners"])) " *
+                    "full-height triangles=$(row["FullHeightTriangles"]) " *
+                    "(away from corners $(row["FullHeightTrianglesAwayFromCorners"]))")
         end
     end
     metadata_path = filename * ".metadata.json"

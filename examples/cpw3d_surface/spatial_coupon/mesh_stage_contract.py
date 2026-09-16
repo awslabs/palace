@@ -375,8 +375,18 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
             raise ValueError(f"Seed command {option} differs from the recipe {name}")
     census = json.loads(Path(seed_report["Artifacts"]["seed-corner-census"]["Path"]).read_text())
     if (not isinstance(census, dict) or census.get("Version") != 1 or
-            not isinstance(census.get("Corners"), list)):
+            not isinstance(census.get("Corners"), list) or
+            not isinstance(census.get("LongitudinalFaces"), list)):
         raise ValueError("Seed corner census has an unsupported schema")
+    # The ridge-to-ridge face census (interior nodes and full-height triangles) is
+    # recorded for every seed; its values are reported, not gated.
+    for row in census["LongitudinalFaces"]:
+        if (not isinstance(row, dict) or
+                any(not isinstance(row.get(key), int) or isinstance(row.get(key), bool)
+                    for key in ("Surface", "Triangles", "InteriorNodes",
+                                "InteriorNodesAwayFromCorners", "FullHeightTriangles",
+                                "FullHeightTrianglesAwayFromCorners"))):
+            raise ValueError("Seed corner census longitudinal face rows are incomplete")
     if (_recipe_number(census, "IsotropicSize") != _recipe_number(recipe, "NormalSize") or
             _recipe_number(census, "CornerIsotropyRadius") !=
             _recipe_number(recipe, "CornerIsotropyRadius")):

@@ -150,21 +150,38 @@ transition width). The band field itself is evaluated unchanged through a
 `MathEval` `min(F1, ...)` (a `Min`/`MinAniso` wrapper re-derives the anisotropic
 attractor's size and was measured to change the band mesh, so it is not used).
 Longitudinal feature curves whose transfinite `lc_tangent` spacing would cross a
-corner ball are meshed explicitly instead (size-weighted arclength quadrature,
-`Mesh.MeshOnlyEmpty`), so the corner-adjacent ridge edges start at the isotropic
-size; curves out of reach keep the ordinary transfinite spacing. No new sizes are
-introduced. The stage contract requires the seed's `--lc-fine` and
-`--corner-isotropy-radius` to equal the recipe's `NormalSize` and
+corner ball are meshed explicitly instead (`Mesh.MeshOnlyEmpty`), so the
+corner-adjacent ridge edges start at the isotropic size; curves out of reach keep
+the ordinary transfinite spacing. The explicit placement keeps the transfinite
+`lc_tangent` grid wherever the corner size law equals `lc_tangent` (beyond
+`CornerLawReach` = radius + (`lc_tangent` - `lc_fine`) / slope from every corner)
+and fills only the gaps between kept grid nodes and the curve ends by
+size-weighted arclength quadrature of the law. Grid preservation is required, not
+cosmetic: the interior node row of a ridge-to-ridge face (a metal sidewall) exists
+only because the ridge nodes of its two longitudinal curves are exactly aligned
+(0.1 x 0.1 squares whose 0.141 diagonals the face mesher splits); rows that are
+misaligned by a different node count or phase produce 0.1 x 0.11 triangles that
+need no interior node, leaving full-height slivers along the whole face. A 1D
+mesh driven by the size field or a size callback cannot reproduce the exact grid
+(the scalar anisotropic attractor evaluates to sqrt(`lc_tangent` x `lc_fine`) on
+the curve, and integral inversion shifts the phase), so it was measured to remove
+the sidewall interior row exactly as the first, non-grid-preserving explicit
+placement did. No new sizes are introduced. The stage contract requires the seed's
+`--lc-fine` and `--corner-isotropy-radius` to equal the recipe's `NormalSize` and
 `CornerIsotropyRadius`, and the seed's recorded `seed-corner-census` artifact
 (`--corner-census`) to name the recipe's `TruePhysicalCorners` with the same size
-and radius; a seed stage without these bindings, or with different values, is
-rejected. The census (edge minimum/median/maximum inside each corner ball, the
-count and fraction of ball edges longer than sqrt(2) x `lc_fine`, the
-corner-incident maximum aspect and ring radii) is reported so the property is
-asserted rather than assumed; it is **not** a pass/fail gate. Gmsh's Delaunay
-volume mesh still leaves a tail of interior ball edges up to about twice the
-size (the surface and ridge edges sit at the target), so MMG may still split
-interior edges in the balls.
+and radius and to carry a `LongitudinalFaces` census; a seed stage without these
+bindings, or with different values, is rejected. The census (edge
+minimum/median/maximum inside each corner ball, the count and fraction of ball
+edges longer than sqrt(2) x `lc_fine`, the corner-incident maximum aspect and
+ring radii; per face bounded by at least two longitudinal curves, the interior
+node count and along-edge histogram away from the corners and the count of
+full-height triangles, i.e. triangles whose vertices all lie on the bounding
+curves and span two longitudinal curves) is reported so the property is asserted
+rather than assumed; it is **not** a pass/fail gate. Gmsh's Delaunay volume mesh
+still leaves a tail of interior ball edges up to about twice the size (the
+surface and ridge edges sit at the target), so MMG may still split interior edges
+in the balls.
 
 Metric preparation classifies seed surface features by geometry, not by label:
 `edge_volume_metric.surface_features` makes a shared triangle edge a feature

@@ -253,11 +253,25 @@ class RigidProducerIntegrationTest(unittest.TestCase):
                 self.assertGreaterEqual(row["FractionOverSqrt2IsotropicSize"], 0.0)
                 self.assertLessEqual(row["EdgeMaximum"], 0.4)
                 self.assertGreater(row["IncidentMaximumAspect"], 1.0)
+            # Ridge-to-ridge faces are censused (interior row, full-height triangles).
+            # With this test's coarse tangential size the 0.1 sidewalls are legitimately
+            # full-height; the recipe-size property is covered by the Julia unit tests.
+            self.assertGreater(census["CornerLawReach"], census["CornerIsotropyRadius"])
+            self.assertGreater(len(census["LongitudinalFaces"]), 0)
+            for row in census["LongitudinalFaces"]:
+                self.assertGreaterEqual(row["LongitudinalCurves"], 2)
+                self.assertLessEqual(row["FullHeightTrianglesAwayFromCorners"],
+                                     row["FullHeightTriangles"])
+                self.assertLessEqual(row["FullHeightTriangles"], row["Triangles"])
+                self.assertEqual(len(row["InteriorNodeHistogramAlongEdge"]),
+                                 census["LongitudinalFaceHistogramBins"])
+                self.assertEqual(sum(row["InteriorNodeHistogramAlongEdge"]),
+                                 row["InteriorNodesAwayFromCorners"])
             # The census is source-local: only the placement differs.
             self.assertEqual(rotated_census["RigidTransform"], ROTATE_Z)
             self.assertEqual(census["RigidTransform"], IDENTITY)
             for key in ("CornerIsotropicLongitudinalCurves", "LongitudinalCurves",
-                        "Sqrt2IsotropicSize"):
+                        "Sqrt2IsotropicSize", "LongitudinalFaces"):
                 self.assertEqual(census[key], rotated_census[key])
             # Pulling the rotated contract corners back leaves roundoff only.
             np.testing.assert_allclose(rotated_census["SemanticCorners"],
@@ -273,6 +287,16 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             metadata = json.loads((root / "identity.msh.metadata.json").read_text())
             self.assertEqual(metadata["CornerIsotropyRadius"], 0.4)
             self.assertEqual(metadata["SemanticCornerCount"], len(contract["SemanticCorners"]))
+
+    def test_longitudinal_face_census_detects_misaligned_ridge_rows(self):
+        """Julia unit tests: misaligned ridge rows leave full-height triangles the census
+        counts; the grid-preserving corner law leaves none and keeps the interior row."""
+        result = subprocess.run(
+            [self.julia, "--startup-file=no", f"--project={self.project}",
+             str(HERE / "test_longitudinal_face_census.jl")],
+            cwd=REPO, capture_output=True, text=True, check=False, timeout=600)
+        self.assertEqual(result.returncode, 0,
+                         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
 
     def test_seed_corner_isotropy_fails_closed_on_placement_or_missing_options(self):
         with tempfile.TemporaryDirectory() as directory:

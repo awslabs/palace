@@ -59,7 +59,10 @@ def corner_census(output, contract_path, radius, isotropic_size):
         "Version": 1, "Frame": "SourceLocal", "SemanticCorners": corners,
         "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size,
         "Corners": [{"Corner": index, "Point": corner, "BallEdges": 0}
-                    for index, corner in enumerate(corners)]}, indent=2) + "\n")
+                    for index, corner in enumerate(corners)],
+        "LongitudinalFaces": [{"Surface": 1, "Triangles": 2, "InteriorNodes": 0,
+                               "InteriorNodesAwayFromCorners": 0, "FullHeightTriangles": 0,
+                               "FullHeightTrianglesAwayFromCorners": 0}]}, indent=2) + "\n")
 
 
 def main():
