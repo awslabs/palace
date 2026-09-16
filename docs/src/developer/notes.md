@@ -28,6 +28,42 @@ time is nanoseconds instead of seconds. This is more suitable for the problems
 The second and third systems are described by the `Units` class defined in
 `units.hpp`.
 
+## Phasor and power conventions
+
+Frequency domain solutions (driven, eigenmode, boundary mode) are complex peak phasors: the
+physical field is ``\text{Re}\{\bm{E}\,e^{i\omega t}\}``. Linear outputs (fields, voltages,
+currents, S- and Z-parameters) are reported as peak phasors. Every quadratic physical output
+(stored energies, powers, Poynting vectors, dissipation) is reported as the time average over
+one period, which carries a factor of ``1/2`` relative to the same product of the phasors,
+while real-valued (time domain, static) fields are instantaneous and carry no such factor. All
+port excitations (lumped, wave, Floquet) carry unit *time-averaged* incident power (for a
+``50\,\Omega`` lumped port, ``V^{inc} = 10`` V and ``I^{inc} = 0.2`` A peak); time domain
+excitations carry unit instantaneous power at unit pulse amplitude.
+
+The convention is defined in exactly one place, `electromagnetics::TimeAverageWeight` and
+`electromagnetics::UnitPowerAmplitude` in `palace/utils/constants.hpp`, and is applied by the
+*owners* of the physical quantities — `DomainPostOperator` (field energies),
+`SurfacePostOperator` (power flux, interface energies), `LumpedPortData`/`WavePortData`
+(port power, incident amplitudes, S-parameter normalization), `PostOperator` (lumped C/L
+energies, `U_e`/`U_m`/`S` visualization densities) and `linalg/errorestimator.cpp` (energy
+normalization of the error indicators). It is never applied inside generic norms, mass
+matrices, or mode-overlap functionals, which keep their mathematical definitions.
+
+Normalization mistakes of this kind are easy to introduce and hard to notice, because
+ratios (Q, EPR, participation, S) stay correct while absolute values drift. When adding or
+modifying a quadratic output or a port normalization:
+
+ 1. Apply the weight once, at the owner of the physical quantity, using the named helpers
+    (never a literal `0.5` or `sqrt(2)`), and make the header comment state the convention.
+ 2. Add an analytic case to `test/unit/test-timeaverage.cpp`. That test pins the absolute
+    scale of every quadratic output against values written directly from the physical
+    definitions (uniform ``\bm{E} = (1+i, 0, 0)`` V/m and ``\bm{H} = (0, 2+3i, 0)`` A/m in
+    vacuum) and checks the invariant that a purely real complex phasor gives exactly half of
+    the real instantaneous result. A new output that forgets the weight fails it.
+ 3. Do not regenerate regression references to make the suite pass: the reference CSVs
+    store absolute energies, powers, voltages and currents and are the second line of
+    defense against convention drift.
+
 ### Non-dimensional unit system
 
 The non-dimensional unit system is constructed as follows:

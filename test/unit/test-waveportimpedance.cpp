@@ -293,7 +293,9 @@ TEST_CASE("WavePort port power", "[waveportimpedance][Serial][GPU]")
   B.Real().ProjectCoefficient(fbr);
   B.Imag().ProjectCoefficient(fbi);
 
-  auto ref = RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
+  // GetPower returns the time-averaged complex power 1/2 ∫ (E x H⋆) ⋅ n dS of the complex
+  // peak phasors; the legacy reference evaluates the raw overlap ∫ (E x H⋆) ⋅ n dS.
+  auto ref = 0.5 * RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
   auto val = wave_port_op.GetPort(1).GetPower(E, B);
   CAPTURE(ref, val);
   CHECK_THAT(val.real(), WithinRel(ref.real(), 1.0e-10));

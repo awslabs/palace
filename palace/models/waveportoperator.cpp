@@ -37,6 +37,7 @@
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -85,11 +86,14 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
 void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
                mfem::LinearForm &sr, mfem::LinearForm &si)
 {
-  // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
-  // n, integrated over the port surface (+n is the outward mesh normal). The n x H
-  // coefficients are updated implicitly as they only store references to the Et, En grid
-  // functions. We choose a (rather arbitrary) phase constraint to at least make results for
-  // the same port consistent between frequencies/meshes.
+  // Normalize grid functions to a chosen polarization direction and unit power overlap,
+  // |∫ (E x H⋆) ⋅ n dS| = 1, over the port surface (+n is the outward mesh normal). This is
+  // the basis mode of the port: the physical incident wave carrying unit time-averaged
+  // power is sqrt(2) times this mode (see WavePortOperator::AddExcitationBdrCoefficients
+  // and WavePortData::GetSParameter). The n x H coefficients are updated implicitly as they
+  // only store references to the Et, En grid functions. We choose a (rather arbitrary)
+  // phase constraint to at least make results for the same port consistent between
+  // frequencies/meshes.
 
   // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
   // Et, En. Update linear forms for postprocessing too.
@@ -781,8 +785,9 @@ void WavePortData::Initialize(double omega)
   }
 
   // Configure the linear forms for computing S-parameters (projection of the field onto the
-  // port mode). Normalize the mode for a chosen polarization direction and unit power,
-  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
+  // port mode). Normalize the mode for a chosen polarization direction and unit power
+  // overlap, |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh
+  // normal).
   {
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
@@ -903,19 +908,21 @@ WavePortData::GetModeFieldCoefficientImag(double scaling) const
 
 double WavePortData::GetExcitationPower() const
 {
-  // The computed port modes are normalized such that the power integrated over the port is
-  // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.
+  // The incident wave, sqrt(2) times the unit-overlap port mode, carries unit time-averaged
+  // power: 1/2 |∫ (E_inc x H_inc⋆) ⋅ n dS| = 1.
   return HasExcitation() ? 1.0 : 0.0;
 }
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute the stationary complex power on the port, E ⋅ (-n x H⋆), integrated over the
-  // port surface with +n the outward mesh normal. Use the libCEED surface functional path
-  // when supported to avoid per-call boundary LinearForm assembly in the legacy path.
+  // port surface with +n the outward mesh normal, weighted by 1/2 for the complex peak
+  // phasors to give the time-averaged power. Use the libCEED surface functional path when
+  // supported to avoid per-call boundary LinearForm assembly in the legacy path.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
+  const double weight = electromagnetics::TimeAverageWeight(true);
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
 
@@ -936,7 +943,7 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
     // EvalComplexPower returns the complex Poynting integral with the same normal
     // convention as the legacy BdrSurfaceCurrentVectorCoefficient path (n x H for the
     // outward normal, contributions negated), matching LumpedPortData::GetPower.
-    return power_func->EvalComplexPower(E, B);
+    return weight * power_func->EvalComplexPower(E, B);
   }
   if (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
   {
@@ -969,13 +976,15 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
     dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
   }
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
-  return dot;
+  return weight * dot;
 }
 
 std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
 {
-  // Compute port S-parameter, or the projection of the field onto the port mode:
-  // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
+  // Compute port S-parameter, or the projection of the field onto the unit-overlap port
+  // mode, (E x H_mode⋆) ⋅ n = E ⋅ (-n x H_mode⋆) integrated over the port surface,
+  // normalized by the amplitude sqrt(2) of the unit time-averaged power incident wave
+  // relative to the mode, so that the incident wave itself projects to 1.
   MFEM_VERIFY(E.HasImag(),
               "Wave ports expect complex-valued E and B fields in port S-parameter "
               "calculation!");
@@ -984,7 +993,7 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
   std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
                            -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
   Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
-  return dot;
+  return dot / electromagnetics::UnitPowerAmplitude(true);
 }
 
 int WavePortData::GetModePolaritySign(int high_attr, int low_attr) const
@@ -1140,11 +1149,11 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const
 {
-  // Z_PV = (V·V*) / P_mode, where P_mode = ∫(E_mode × H_mode*)·n dS is the full
-  // complex Poynting integral of the mode field over the port boundary. The driven
-  // solver's Normalize() function normalizes the mode so that |P_mode| = 1, with the
-  // mode polarity fixed (via VoltagePath when configured) so that P_mode is real-
-  // positive for a propagating mode. Therefore P_mode = 1 and Z_PV reduces to V·V*.
+  // Z_PV = (V·V*) / (2 P_avg), where P_avg = 1/2 ∫(E_mode × H_mode*)·n dS is the time-
+  // averaged power of the mode field over the port boundary. The driven solver's
+  // Normalize() function normalizes the mode so that |∫(E_mode × H_mode*)·n dS| = 1, with
+  // the mode polarity fixed (via VoltagePath when configured) so that the overlap is real-
+  // positive for a propagating mode. Therefore 2 P_avg = 1 and Z_PV reduces to V·V*.
   auto V = GetExcitationVoltage();
   if (std::abs(V) == 0.0)
   {
@@ -1494,15 +1503,18 @@ void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double o
 {
   // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by
   // the modal solution (stored as a grid function and coefficient during initialization).
+  // The incident wave is sqrt(2) times the unit-overlap port mode so that it carries unit
+  // time-averaged power (see GetExcitationPower and GetSParameter).
   Initialize(omega);
+  const double amplitude = 2.0 * omega * electromagnetics::UnitPowerAmplitude(true);
   for (const auto &[idx, data] : ports)
   {
     if (data.excitation != excitation_idx)
     {
       continue;
     }
-    fbr.AddCoefficient(data.GetModeExcitationCoefficientImag(), 2.0 * omega);
-    fbi.AddCoefficient(data.GetModeExcitationCoefficientReal(), -2.0 * omega);
+    fbr.AddCoefficient(data.GetModeExcitationCoefficientImag(), amplitude);
+    fbi.AddCoefficient(data.GetModeExcitationCoefficientReal(), -amplitude);
   }
 }
 

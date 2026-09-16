@@ -234,12 +234,26 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   CHECK(port_1.HasExcitation());
   CHECK(port_1.elems.size() == 1);
 
-  // Power normalization and corresponding excitation voltage.
-  // These analytic values are actually not valid for PEC::SIDE see below.
+  // Power normalization and corresponding excitation voltage and current: unit time-
+  // averaged incident power for the time-harmonic excitation (peak V_inc = sqrt(2 R) = 10
+  // V, I_inc = sqrt(2 / R) = 0.2 A for R = 50 Ω), unit instantaneous power for the time
+  // domain one (V_inc = sqrt(R), I_inc = 1 / sqrt(R)). These analytic values are actually
+  // not valid for PEC::SIDE see below.
   CHECK_THAT(port_1.GetExcitationPower(),
              WithinRel(iodata.units.Nondimensionalize<VT::POWER>(1.0)));
-  CHECK_THAT(port_1.GetExcitationVoltage(),
+  CHECK_THAT(port_1.GetExcitationVoltage(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(10.0)));
+  CHECK_THAT(port_1.GetExcitationCurrent(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(0.2)));
+  CHECK_THAT(0.5 * port_1.GetExcitationVoltage(true) * port_1.GetExcitationCurrent(true),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetExcitationVoltage(false),
              WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationCurrent(false),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(1.0 / std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationVoltage(false) * port_1.GetExcitationCurrent(false),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetReferenceVoltage(), WithinRel(port_1.GetExcitationVoltage(true)));
 
   // Properties of single rectangular element in port.
   const UniformElementData *el_ptr =
@@ -447,7 +461,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   // Now "s" form in LumpedPortData is just e_t / eta (with Z_R = R). So check inner
-  // product.
+  // product. The S-parameter is referenced to the peak incident voltage of the unit time-
+  // averaged power wave, V_ref = sqrt(2 R).
   //
   // Note: s should not change during change of field normalization alpha, but formula
   // assumes 1.0 and does not normalized. Also, the integral seems wrong with metal, as the
@@ -456,8 +471,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   {
     std::complex<double> s_param = port_1.GetSParameter(port_primary_gf_ht_cn);
     CHECK_THAT(s_param.real(),
-               WithinRel(ht_cn_norm_expected /
-                         iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+               WithinRel(ht_cn_norm_expected / iodata.units.Nondimensionalize<VT::VOLTAGE>(
+                                                   std::sqrt(2.0 * 50.))));
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
@@ -513,15 +528,18 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
   }
 
-  // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
-  // fact, this should only true in the ideal case, without any metal subtraction. Here it
-  // is always true because of the form definitions.
+  // Check that form_s and form_v are the same apart from the factor sqrt(2) / sqrt(R): the
+  // s form is the projection onto the incident mode H_inc carrying unit time-averaged
+  // power (sqrt(2) larger than for a unit product of the phasors). In actual fact, this
+  // should only true in the ideal case, without any metal subtraction. Here it is always
+  // true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
     CHECK_THAT(VecFormV.Real()[i],
                WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
+                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)) /
+                             std::sqrt(2.0),
                          1e-12));
   }
 }
@@ -604,12 +622,26 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   CHECK(port_1.HasExcitation());
   CHECK(port_1.elems.size() == 3);
 
-  // Power normalization and corresponding excitation voltage.
-  // These analytic values are actually not valid for PEC::SIDE see below.
+  // Power normalization and corresponding excitation voltage and current: unit time-
+  // averaged incident power for the time-harmonic excitation (peak V_inc = sqrt(2 R) = 10
+  // V, I_inc = sqrt(2 / R) = 0.2 A for R = 50 Ω), unit instantaneous power for the time
+  // domain one (V_inc = sqrt(R), I_inc = 1 / sqrt(R)). These analytic values are actually
+  // not valid for PEC::SIDE see below.
   CHECK_THAT(port_1.GetExcitationPower(),
              WithinRel(iodata.units.Nondimensionalize<VT::POWER>(1.0)));
-  CHECK_THAT(port_1.GetExcitationVoltage(),
+  CHECK_THAT(port_1.GetExcitationVoltage(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(10.0)));
+  CHECK_THAT(port_1.GetExcitationCurrent(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(0.2)));
+  CHECK_THAT(0.5 * port_1.GetExcitationVoltage(true) * port_1.GetExcitationCurrent(true),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetExcitationVoltage(false),
              WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationCurrent(false),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(1.0 / std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationVoltage(false) * port_1.GetExcitationCurrent(false),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetReferenceVoltage(), WithinRel(port_1.GetExcitationVoltage(true)));
 
   double length_dx_m = iodata.units.Nondimensionalize<VT::LENGTH>(1.0 * L0);  // in [m]
 
@@ -801,7 +833,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   // Now "s" form in LumpedPortData is just e_t / eta (with Z_R = R). So check inner
-  // product.
+  // product. The S-parameter is referenced to the peak incident voltage of the unit time-
+  // averaged power wave, V_ref = sqrt(2 R).
   //
   // Note: s should not change during change of field normalization alpha, but formula
   // assumes 1.0 and does not normalized. Also, the integral seems wrong with metal, as the
@@ -810,8 +843,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   {
     std::complex<double> s_param = port_1.GetSParameter(port_primary_gf_ht_cn);
     CHECK_THAT(s_param.real(),
-               WithinRel(ht_cn_norm_expected /
-                         iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+               WithinRel(ht_cn_norm_expected / iodata.units.Nondimensionalize<VT::VOLTAGE>(
+                                                   std::sqrt(2.0 * 50.))));
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
@@ -865,15 +898,18 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
   }
 
-  // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
-  // fact, this should only true in the ideal case, without any metal subtraction. Here it
-  // is always true because of the form definitions.
+  // Check that form_s and form_v are the same apart from the factor sqrt(2) / sqrt(R): the
+  // s form is the projection onto the incident mode H_inc carrying unit time-averaged
+  // power (sqrt(2) larger than for a unit product of the phasors). In actual fact, this
+  // should only true in the ideal case, without any metal subtraction. Here it is always
+  // true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
     CHECK_THAT(VecFormV.Real()[i],
                WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
+                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)) /
+                             std::sqrt(2.0),
                          1e-12));
   }
 }
@@ -999,7 +1035,7 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   // finite and nonzero for R = 0 (it references GetExcitationRefResistance(), not R), and
   // the S-parameter projection linear form must produce a finite, nonzero projection for
   // a nonzero field (its normalization also references the real reference resistance).
-  const double V_inc = port_1.GetExcitationVoltage();
+  const double V_inc = port_1.GetExcitationVoltage(true);
   CHECK(std::isfinite(V_inc));
   CHECK(V_inc > 0.0);
 
