@@ -10,7 +10,8 @@ import unittest
 from general_mesh_manifest import sha256
 # Imported as a module so unittest does not re-collect the fixture suite's tests here.
 import test_general_mesh_manifest as fixture_suite
-from verify_canonical_case_entries import covariance_failures, verify_case
+from verify_canonical_case_entries import (covariance_failures, validate_calibration_commands,
+                                           verify_case)
 
 HERE = Path(__file__).resolve().parent
 
@@ -187,6 +188,103 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         self.assertEqual(failures, ["complexity ratio"])
         failures, error = covariance_failures(manifest, case, {"identity": identity})
         self.assertEqual((failures, error), (["missing transform evidence"], None))
+
+    @staticmethod
+    def _declare_calibration(manifest_path, case_id, seed, metric, production, adaptation=None):
+        """Label `case_id` as a calibration case with the given declared option values."""
+        manifest = json.loads(manifest_path.read_text())
+        case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
+        case["Calibration"] = {"Label": "fixture calibration", "BaseCase": case_id,
+                               "SeedCommandOptions": seed, "MetricCommandOptions": metric,
+                               "ProductionValues": production}
+        if adaptation is not None:
+            case["Calibration"]["AdaptationCommandOptions"] = adaptation
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    def test_calibration_option_declarations_are_bound_to_the_recorded_commands(self):
+        # The fixture seed executes --lc-fine NORMAL_SIZE, the metric --normal
+        # NORMAL_SIZE / --tangent CORNER_ISOTROPY_RADIUS and the adaptation --hmin .1; a
+        # calibration label is accepted only when the recorded commands executed exactly
+        # what it declares.
+        normal, radius = fixture_suite.NORMAL_SIZE, fixture_suite.CORNER_ISOTROPY_RADIUS
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self.fixture(root)
+            self._declare_calibration(manifest_path, "base", {"--lc-fine": normal},
+                                      {"--normal": normal},
+                                      {"--lc-fine": 2 * normal, "--normal": 2 * normal,
+                                       "--hmin": 0.2}, adaptation={"--hmin": 0.1})
+            report = verify_case(manifest_path, audits, "base")
+            self.assertTrue(report["Passed"], report["Failures"])
+            rejected = (
+                # Labeled as a finer variant than the one that was built (a "V2" label
+                # on a root built with the "V1" options): the declared pair is absent
+                # and the recorded value is the production value.
+                ({"--lc-fine": normal / 2}, {}, {"--lc-fine": normal}, None,
+                 "does not execute calibration option --lc-fine"),
+                # A declared metric option the recorded command never executed.
+                ({}, {"--far-growth": 0.5}, {"--far-growth": 1.0}, None,
+                 "does not execute calibration option --far-growth"),
+                # The adaptation hmin labeled halved while the root kept it.
+                ({}, {}, {"--hmin": 0.1}, {"--hmin": 0.05},
+                 "does not execute calibration option --hmin"),
+                # Declared at the production value: not a calibration variant.
+                ({"--lc-fine": normal}, {}, {"--lc-fine": normal}, None,
+                 "declared at its production value"),
+                # An undeclared production option executed away from production.
+                ({"--lc-fine": normal}, {}, {"--lc-fine": 2 * normal, "--tangent": 2 * radius},
+                 None, "undeclared calibration option --tangent"),
+                # A declared option without a production value.
+                ({"--lc-fine": normal}, {}, {}, None, "has no production value"))
+            for seed, metric, production, adaptation, message in rejected:
+                self._declare_calibration(manifest_path, "base", seed, metric, production,
+                                          adaptation=adaptation)
+                report = verify_case(manifest_path, audits, "base")
+                self.assertFalse(report["Passed"], (seed, metric, production, adaptation))
+                for entry in report["Entries"].values():
+                    self.assertIn(message, entry["Error"] or "",
+                                  (seed, metric, production, adaptation))
+            # Without a Calibration block nothing is required.
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+            self.assertTrue(verify_case(manifest_path, audits, "base")["Passed"])
+
+    def test_validate_calibration_commands_reads_the_recorded_argv_numerically(self):
+        # Recorded argv tokens are strings (".05" and "0.05" are the same value); a
+        # repeated option is not "exactly once"; option=value tokens are not executed.
+        stages = {"seed-generation": {"Command": ["julia", "mesher.jl", "--lc-tangent", ".05",
+                                                  "--lc-fine", ".025"]},
+                  "metric-preparation": {"Command": ["python3", "metric.py", "--normal",
+                                                     ".025", "--far-growth", "0.5"]},
+                  "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin",
+                                                        ".025"]}}
+        case = {"Calibration": {"SeedCommandOptions": {"--lc-tangent": 0.05},
+                                "MetricCommandOptions": {"--far-growth": 0.5},
+                                "ProductionValues": {"--lc-tangent": 0.1, "--far-growth": 1.0}}}
+        validate_calibration_commands(case, stages)
+        validate_calibration_commands({}, stages)
+        # An adaptation block binds --hmin; without the block hmin is not declared.
+        halved = {"Calibration": {**case["Calibration"],
+                                  "AdaptationCommandOptions": {"--hmin": 0.0125},
+                                  "ProductionValues": {**case["Calibration"]["ProductionValues"],
+                                                       "--hmin": 0.025}}}
+        with self.assertRaisesRegex(ValueError, "--hmin=0.0125 exactly once"):
+            validate_calibration_commands(halved, stages)
+        validate_calibration_commands(halved, {
+            **stages, "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin",
+                                                            "0.0125"]}})
+        with self.assertRaisesRegex(ValueError, "exactly once"):
+            validate_calibration_commands(case, {
+                **stages, "seed-generation": {"Command": stages["seed-generation"]["Command"]
+                                              + ["--lc-tangent", ".1"]}})
+        with self.assertRaisesRegex(ValueError, "exactly once"):
+            validate_calibration_commands(case, {
+                **stages, "metric-preparation": {"Command": ["python3", "metric.py",
+                                                             "--far-growth=0.5"]}})
+        with self.assertRaisesRegex(ValueError, "declared for two stages"):
+            validate_calibration_commands({"Calibration": {
+                **case["Calibration"], "MetricCommandOptions": {"--lc-tangent": 0.05}}}, stages)
+        with self.assertRaisesRegex(ValueError, "ends with option"):
+            validate_calibration_commands(case, {
+                **stages, "metric-preparation": {"Command": ["python3", "--far-growth"]}})
 
 
 if __name__ == "__main__":

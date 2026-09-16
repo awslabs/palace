@@ -29,7 +29,7 @@
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "dfe60b4b3e48bb02b33cb41a42945c89361fa52e43382451383fd5007c3c31e5"
+      "SHA256": "7a7166132dbe2c6bba330d580d77eacef80db27f38d813705fd263a97c0a0b25"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",

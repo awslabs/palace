@@ -1986,6 +1986,68 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertEqual(case["TransformComparison"], base["TransformComparison"])
         validate_manifest(calibration, calibration_path)
 
+    def test_refreeze_manifest_tools_keeps_both_manifests_current_together(self):
+        # The in-repo refreeze recomputes every repository-tool digest of the production
+        # manifest and mirrors Tools / StageToolSHA256 into the calibration manifest; the
+        # committed manifests must be current (fails closed when a refreeze was forgotten).
+        import refreeze_manifest_tools as refreezer
+        production_path = HERE / "geometry-independence-suite.json"
+        calibration_path = HERE / "geometry-independence-calibration-ma.json"
+        self.assertEqual(refreezer.refreeze(production_path, calibration_path, check_only=True),
+                         ([], False))
+        production = json.loads(production_path.read_text())
+        for (stage, role), name in refreezer.STAGE_REPOSITORY_TOOLS.items():
+            self.assertEqual(production["StageToolSHA256"][stage][role], sha256(HERE / name),
+                             f"{stage}/{role}")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "examples" / "cpw3d_surface" / "spatial_coupon"
+            root.mkdir(parents=True)
+            for name in [tool["Path"].rsplit("/", 1)[1] for tool in production["Tools"]] + list(
+                    refreezer.STAGE_REPOSITORY_TOOLS.values()):
+                shutil.copy(HERE / name, root / name)
+            stale = copy.deepcopy(production)
+            stale["Tools"][0]["SHA256"] = "0" * 64
+            stale["StageToolSHA256"]["seed-generation"]["mesher"] = "1" * 64
+            stale_production = root / "geometry-independence-suite.json"
+            stale_calibration = root / "geometry-independence-calibration-ma.json"
+            stale_production.write_text(json.dumps(stale))
+            # The calibration copy still mirrors the (current) production digests.
+            stale_calibration.write_text(json.dumps(json.loads(calibration_path.read_text())))
+            changes, mirror_stale = refreezer.refreeze(stale_production, stale_calibration,
+                                                      check_only=True)
+            self.assertEqual([(name, old) for name, old, _ in changes],
+                             [(production["Tools"][0]["Name"], "0" * 64),
+                              ("seed-generation/mesher", "1" * 64)])
+            self.assertFalse(mirror_stale)
+            self.assertEqual(json.loads(stale_production.read_text()), stale)  # check-only
+            changes, _ = refreezer.refreeze(stale_production, stale_calibration,
+                                            check_only=False)
+            self.assertEqual(len(changes), 2)
+            refrozen = json.loads(stale_production.read_text())
+            self.assertEqual(refrozen, production)
+            mirrored = json.loads(stale_calibration.read_text())
+            self.assertEqual(mirrored["Tools"], production["Tools"])
+            self.assertEqual(mirrored["StageToolSHA256"], production["StageToolSHA256"])
+            self.assertEqual(mirrored["Gates"]["MinimumAchievedAspect"], 0.9)
+            self.assertEqual(refreezer.refreeze(stale_production, stale_calibration,
+                                                check_only=True), ([], False))
+            # A calibration mirror that drifted from an otherwise current production
+            # manifest is stale on its own and is restored by the refreeze.
+            drifted = json.loads(stale_calibration.read_text())
+            drifted["StageToolSHA256"]["native-adaptation-mmg"]["adapter-mmg"] = "2" * 64
+            stale_calibration.write_text(json.dumps(drifted))
+            self.assertEqual(refreezer.refreeze(stale_production, stale_calibration,
+                                                check_only=True), ([], True))
+            refreezer.refreeze(stale_production, stale_calibration, check_only=False)
+            self.assertEqual(json.loads(stale_calibration.read_text())["StageToolSHA256"],
+                             production["StageToolSHA256"])
+            # Machine-bound identities are never recomputed.
+            for stage, roles in production["StageToolSHA256"].items():
+                for role in roles:
+                    if (stage, role) not in refreezer.STAGE_REPOSITORY_TOOLS:
+                        self.assertEqual(json.loads(stale_production.read_text())
+                                         ["StageToolSHA256"][stage][role], roles[role])
+
     def test_remote_verified_contracts_match_source_model_and_physical_corners(self):
         manifest = json.loads((HERE / "geometry-independence-suite.json").read_text())
         for case_id, expected_model, expected_edges in (

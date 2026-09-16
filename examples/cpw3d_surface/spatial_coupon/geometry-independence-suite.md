@@ -18,6 +18,17 @@ cases re-mesh the four-edge inputs with the recipe parameters listed in their
 `--far-growth 0.5`); it mirrors the production tools and gates except the
 labeled anisotropy-design gate `MinimumAchievedAspect 0.9`, which can never be
 used by the production suite (asserted by `test_general_mesh_manifest.py`).
+The per-case verifier binds each calibration label to its build: the recorded
+`seed-generation` / `metric-preparation` / `native-adaptation-mmg` commands must
+execute exactly every `SeedCommandOptions` / `MetricCommandOptions` /
+`AdaptationCommandOptions` pair (numerically, exactly once)
+and none of the `ProductionValues` of those options, and an undeclared
+production option may appear only at its production value - the canonical cache
+key does not encode recipe options, so a root labeled V2 but built with the V1
+options is rejected. `refreeze_manifest_tools.py` recomputes the
+repository-tool digests of the production manifest and mirrors `Tools` /
+`StageToolSHA256` into the calibration manifest in one step (`--check` reports
+stale digests; runtimes, adapter and MMG library are never recomputed).
 
 Every runnable case requires SHA-256-frozen `Signature`, `Boundary`, `Mask`,
 `Process`, `SemanticContract`, and `MeshRecipe` roles. Expected materials,
@@ -246,9 +257,10 @@ A version-3 normalized record is assembled from five separate records:
 
 Every record binds the same mesh digest, every manifest source digest, exact
 transform and digest, case/variant, command/environment, and frozen producer
-digest. The bounded record consumes five separately executed reports forming a
-digest-linked DAG: seed generation, metric preparation, native adapter/MMG,
-label restoration, and final Gmsh publication. A tool is accepted only when its
+digest. The bounded record consumes seven separately executed reports forming a
+digest-linked DAG: canonical source validation, seed generation, metric
+preparation, native adapter/MMG, label restoration, final Gmsh publication, and
+proper rigid publication. A tool is accepted only when its
 frozen path occurs in that stage's executed argv. The DAG binds the seed mesh,
 seed corner census, MMG seed, tensor metric, pins, fixed triangles, restoration
 recipe, adapted mesh, restored mesh, final candidate, and ownership partition. Merely declaring
@@ -263,7 +275,7 @@ oriented signature segments plus boundary `Physical`/`Continuation` classes.
 Records and meshes must be content-distinct by SHA-256 across matrix entries.
 
 Run `general_mesh_audit_producer.py` once for each required kind, passing all
-five `--stage-report STAGE=PATH` bindings to `bounded-run` and
+seven `--stage-report STAGE=PATH` bindings to `bounded-run` and
 `mesh-topology-quality`, or run its `variant-audits` kind once per variant: one
 bounded process (the same `run_bounded_mesher.py` limits, 1800 s / 16 GiB, with
 the five records declared as `--artifact`s) reads the mesh once and writes the

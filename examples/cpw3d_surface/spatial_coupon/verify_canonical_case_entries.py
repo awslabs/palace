@@ -9,7 +9,9 @@ functions (manifest validation, immutable-input hashes, evidence gates, mesh
 readability, bound audit/stage records, exact canonical-build reuse) and the
 frozen physical-covariance comparison is evaluated whenever both compared
 variants have evidence - even when a variant fails - so one report lists every
-failure of the case.  The report is written whether or not the case passed;
+failure of the case.  A case with a `Calibration` block is additionally bound to
+its recorded seed/metric/adaptation commands (`validate_calibration_commands`).
+The report is written whether or not the case passed;
 the exit status is nonzero unless everything passed.  Scope: a single case and
 its manifest variants; no matrix, physics or release qualification.
 """
@@ -32,6 +34,60 @@ PRODUCTION_FUNCTIONS = ["validate_manifest", "validate_feature_topology",
                         "_validate_bound_records", "same_canonical_build",
                         "_physical_comparison_failures"]
 _EXPECTED_ERRORS = (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError)
+# A calibration case (labeled calibration manifest) declares the recipe options that
+# differ from production per stage command; the canonical cache key does not encode
+# them, so the recorded stage commands are the only binding of the label to the build.
+# A stage whose block is absent declares no calibration option for that stage.
+CALIBRATION_STAGE_OPTIONS = {"seed-generation": "SeedCommandOptions",
+                             "metric-preparation": "MetricCommandOptions",
+                             "native-adaptation-mmg": "AdaptationCommandOptions"}
+
+
+def _option_values(command, option):
+    """Every value the recorded argv passes to `option` (separate tokens), as floats."""
+    values = []
+    for index, token in enumerate(command):
+        if token == option:
+            if index + 1 >= len(command):
+                raise ValueError(f"recorded command ends with option {option}")
+            values.append(float(command[index + 1]))
+    return values
+
+
+def validate_calibration_commands(case, bounded_stages):
+    """For a case with a `Calibration` block, the recorded seed-generation,
+    metric-preparation and native-adaptation commands must execute exactly each
+    declared option/value pair and none of the `ProductionValues` of those options; an
+    undeclared production option may appear only at its production value.  Raises
+    ValueError otherwise."""
+    calibration = case.get("Calibration")
+    if calibration is None:
+        return
+    production = calibration["ProductionValues"]
+    declared = {}
+    for stage, key in CALIBRATION_STAGE_OPTIONS.items():
+        command = bounded_stages[stage]["Command"]
+        for option, value in calibration.get(key, {}).items():
+            if option in declared:
+                raise ValueError(f"calibration option {option} is declared for two stages")
+            declared[option] = stage
+            if option not in production:
+                raise ValueError(f"calibration option {option} has no production value")
+            if float(value) == float(production[option]):
+                raise ValueError(f"calibration option {option} is declared at its "
+                                 f"production value")
+            executed = _option_values(command, option)
+            if executed != [float(value)]:
+                raise ValueError(f"{stage} command does not execute calibration option "
+                                 f"{option}={value} exactly once (executed {executed})")
+    for option, value in production.items():
+        if option in declared:
+            continue
+        for stage in CALIBRATION_STAGE_OPTIONS:
+            executed = _option_values(bounded_stages[stage]["Command"], option)
+            if any(item != float(value) for item in executed):
+                raise ValueError(f"{stage} command executes undeclared calibration option "
+                                 f"{option} away from its production value {value}")
 
 
 def _immutable_inputs(manifest_path, repository, case):
@@ -73,6 +129,11 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
     shared["meshes"].add(evidence["Mesh"]["SHA256"])
     variant_digests, canonical_digests, canonical_record = _validate_bound_records(
         evidence_path, evidence, binding, paths)
+    bounded_item = next(item for item in evidence["AuditRecords"]
+                        if item.get("Kind") == "bounded-run")
+    bounded_record = json.loads(_check_artifact(evidence_path.parent, bounded_item,
+                                                "audit record").read_text())
+    validate_calibration_commands(case, bounded_record["BoundedStages"])
     if shared["variant_digests"] & variant_digests:
         raise ValueError("variant audit/placement records must be content-distinct")
     shared["variant_digests"].update(variant_digests)
