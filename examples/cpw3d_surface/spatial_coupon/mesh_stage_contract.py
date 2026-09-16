@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from edge_volume_metric import COPLANAR_TOLERANCE
 from semantic_mesh_contract import boundary_attributes
 
 
@@ -411,6 +412,54 @@ def validate_protected_corner_balls(recipe):
     return balls
 
 
+def validate_footprint_polygons(census):
+    """The seed simplified every etch footprint polygon (device or producer default)
+    with the shared collinearity tolerance before CAD face creation and recorded the
+    result: removed vertices and a maximum deviation within tolerance x local scale."""
+    tolerance = census.get("FootprintCollinearTolerance")
+    if isinstance(tolerance, bool) or tolerance != COPLANAR_TOLERANCE:
+        raise ValueError("Seed census footprint collinearity tolerance differs from COPLANAR_TOLERANCE")
+    polygons = census.get("FootprintPolygons")
+    summary = census.get("FootprintSimplification")
+    if not isinstance(polygons, list) or not polygons or not isinstance(summary, dict):
+        raise ValueError("Seed census lacks the simplified footprint polygons")
+    removed, worst = 0, 0.0
+    for polygon in polygons:
+        record = polygon.get("Simplification") if isinstance(polygon, dict) else None
+        points = polygon.get("Points") if isinstance(polygon, dict) else None
+        if (not isinstance(record, dict) or not isinstance(points, list) or len(points) < 3 or
+                any(not isinstance(point, list) or len(point) != 2 or
+                    any(isinstance(value, bool) or not isinstance(value, (int, float))
+                        for value in point) for point in points) or
+                not isinstance(polygon.get("Hole"), bool) or
+                isinstance(polygon.get("Plane"), bool) or
+                not isinstance(polygon.get("Plane"), (int, float)) or
+                _count(polygon.get("Conductor"), "Footprint conductor") <= 0):
+            raise ValueError("Seed census footprint polygon is incomplete")
+        indices = record.get("RemovedVertexIndices")
+        original = _count(record.get("OriginalVertices"), "Footprint original vertices")
+        count = _count(record.get("RemovedVertexCount"), "Footprint removed vertices")
+        if (not isinstance(indices, list) or len(indices) != count or
+                any(_count(index, "Footprint removed vertex index") <= 0 or index > original
+                    for index in indices) or len(set(indices)) != count or
+                _count(record.get("Vertices"), "Footprint vertices") != len(points) or
+                original - count != len(points) or record.get("Tolerance") != tolerance):
+            raise ValueError("Seed census footprint simplification record is inconsistent")
+        deviation = _recipe_number(record, "MaximumDeviation")
+        scale = _recipe_number(record, "MaximumDeviationLocalScale")
+        relative = _recipe_number(record, "MaximumRelativeDeviation")
+        # The bound is deviation <= tolerance x local scale; the relative value is
+        # the recorded quotient (1e-12 covers its floating-point roundoff only).
+        if (deviation < 0 or scale < 0 or relative < 0 or relative > tolerance or
+                deviation > tolerance * scale * (1 + 1e-12)):
+            raise ValueError("Seed census footprint simplification exceeds the collinearity tolerance")
+        removed += count; worst = max(worst, relative)
+    if (summary.get("Polygons") != len(polygons) or summary.get("RemovedVertices") != removed or
+            _recipe_number(summary, "MaximumRelativeDeviation") != worst):
+        raise ValueError("Seed census footprint simplification summary differs from its polygons")
+    return polygons
+
+
 def validate_seed_corner_isotropy(seed_report, recipe_path):
     """The seed's corner ball must be the recipe's: same size, radius and corners,
     and the metric stage must have protected the balls it received."""
@@ -453,6 +502,7 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
     labels = [row["Attribute"] for row in areas]
     if len(labels) != len(set(labels)) or set(labels) != boundary_attributes(semantic):
         raise ValueError("Seed census interface-area labels differ from the semantic contract")
+    validate_footprint_polygons(census)
     # The ridge-to-ridge face census (interior nodes and full-height triangles) is
     # recorded for every seed; its values are reported, not gated.
     for row in census["LongitudinalFaces"]:

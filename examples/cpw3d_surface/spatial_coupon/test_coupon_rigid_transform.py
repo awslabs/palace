@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -313,6 +314,74 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             cwd=REPO, capture_output=True, text=True, check=False, timeout=600)
         self.assertEqual(result.returncode, 0,
                          f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
+    def test_footprint_simplification_julia_unit_tests(self):
+        """Julia unit tests: near-collinear duplicate footprint vertices are merged within
+        the shared tolerance, a genuine 5-degree bend is kept, and the simplification is
+        covariant under in-plane rigid motion."""
+        result = subprocess.run(
+            [self.julia, "--startup-file=no", f"--project={self.project}",
+             str(HERE / "test_footprint_simplification.jl")],
+            cwd=REPO, capture_output=True, text=True, check=False, timeout=600)
+        self.assertEqual(result.returncode, 0,
+                         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
+    def test_footprint_collinear_tolerance_is_the_shared_coplanar_tolerance(self):
+        from edge_volume_metric import COPLANAR_TOLERANCE
+        source = MESHER.read_text()
+        match = re.search(r"^const FOOTPRINT_COLLINEAR_TOLERANCE = ([0-9.eE+-]+)$", source,
+                          re.MULTILINE)
+        self.assertIsNotNone(match)
+        self.assertEqual(float(match.group(1)), COPLANAR_TOLERANCE)
+
+    def test_device_and_default_footprints_are_simplified_and_recorded(self):
+        """The bound device footprint's near-collinear vertices (retained-etch loop 2,
+        vertices 8-10) are merged before CAD face creation and recorded; the producer
+        default collars are recorded with nothing to merge."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            etch = SOURCE / "retained-etch.csv"
+            self.produce(root, "device", IDENTITY,
+                         corner_isotropy=self.corner_isotropy(root, "device") +
+                         ["--etch-boundary", str(etch)])
+            census = json.loads((root / "device-census.json").read_text())
+            from edge_volume_metric import COPLANAR_TOLERANCE
+            self.assertEqual(census["FootprintCollinearTolerance"], COPLANAR_TOLERANCE)
+            self.assertEqual(census["EtchBoundarySHA256"],
+                             hashlib.sha256(etch.read_bytes()).hexdigest())
+            polygons = census["FootprintPolygons"]
+            self.assertEqual(len(polygons), 2)
+            self.assertEqual(census["FootprintSimplification"]["Polygons"], 2)
+            with etch.open(newline="") as stream:
+                loops = {}
+                for row in csv.DictReader(stream):
+                    loops.setdefault(int(row["Loop"]), []).append([float(row["X"]), float(row["Y"])])
+            by_size = sorted(polygons, key=lambda polygon: polygon["Simplification"]["OriginalVertices"])
+            second = by_size[0]
+            self.assertEqual(second["Simplification"]["OriginalVertices"], len(loops[2]))
+            self.assertEqual(second["Simplification"]["RemovedVertexIndices"], [8, 9, 10])
+            self.assertEqual(second["Points"], [point for index, point in enumerate(loops[2], 1)
+                                                if index not in (8, 9, 10)])
+            self.assertEqual(by_size[1]["Simplification"]["OriginalVertices"], len(loops[1]))
+            for polygon in polygons:
+                record = polygon["Simplification"]
+                self.assertLessEqual(record["MaximumRelativeDeviation"], COPLANAR_TOLERANCE)
+                self.assertLessEqual(record["MaximumDeviation"],
+                                     COPLANAR_TOLERANCE * record["MaximumDeviationLocalScale"])
+                self.assertEqual(record["Tolerance"], COPLANAR_TOLERANCE)
+                self.assertFalse(polygon["Hole"])
+            self.assertEqual(census["FootprintSimplification"]["RemovedVertices"],
+                             sum(p["Simplification"]["RemovedVertexCount"] for p in polygons))
+            # The producer default: one collar polygon per conductor loop, nothing merged.
+            self.produce(root, "default", IDENTITY,
+                         corner_isotropy=self.corner_isotropy(root, "default"))
+            default = json.loads((root / "default-census.json").read_text())
+            self.assertEqual(default["EtchBoundary"], "producer-default")
+            self.assertGreater(len(default["FootprintPolygons"]), 0)
+            self.assertEqual(default["FootprintSimplification"]["RemovedVertices"], 0)
+            for polygon in default["FootprintPolygons"]:
+                self.assertEqual(polygon["Simplification"]["RemovedVertexCount"], 0)
+                self.assertGreaterEqual(len(polygon["Points"]), 3)
 
     def test_seed_corner_isotropy_fails_closed_on_placement_or_missing_options(self):
         with tempfile.TemporaryDirectory() as directory:

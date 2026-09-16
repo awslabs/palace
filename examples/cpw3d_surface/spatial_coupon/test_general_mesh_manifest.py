@@ -605,6 +605,41 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     "Path": str(mutated_path), "SHA256": sha256(mutated_path)}
                 with self.assertRaisesRegex(ValueError, "labels differ", msg=description):
                     validate_seed_corner_isotropy(mutated_report, recipe_path)
+            # The simplified footprint polygons are bound to the shared tolerance and
+            # to their own record: another tolerance, a deviation beyond tolerance x
+            # local scale, an inconsistent record or a stale summary fails closed.
+            def polygon_mutation(**changes):
+                def mutate(data):
+                    for key, value in changes.items():
+                        if key == "FootprintCollinearTolerance":
+                            data[key] = value
+                        elif key == "FootprintPolygons":
+                            data[key] = value
+                        elif key == "FootprintSimplification":
+                            data[key].update(value)
+                        else:
+                            data["FootprintPolygons"][0]["Simplification"][key] = value
+                return mutate
+            for description, mutate, message in (
+                    ("tolerance", polygon_mutation(FootprintCollinearTolerance=1e-5),
+                     "COPLANAR_TOLERANCE"),
+                    ("deviation", polygon_mutation(MaximumDeviation=1e-3,
+                                                  MaximumRelativeDeviation=1e-4),
+                     "exceeds the collinearity tolerance"),
+                    ("count", polygon_mutation(RemovedVertexCount=2), "inconsistent"),
+                    ("index", polygon_mutation(RemovedVertexIndices=[9]), "inconsistent"),
+                    ("empty", polygon_mutation(FootprintPolygons=[]), "lacks the simplified"),
+                    ("summary", polygon_mutation(FootprintSimplification={"RemovedVertices": 7}),
+                     "summary differs")):
+                mutated = json.loads(Path(census_item["Path"]).read_text())
+                mutate(mutated)
+                mutated_path = root / f"census-footprint-{description}.json"
+                mutated_path.write_text(json.dumps(mutated))
+                mutated_report = copy.deepcopy(seed)
+                mutated_report["Artifacts"]["seed-corner-census"] = {
+                    "Path": str(mutated_path), "SHA256": sha256(mutated_path)}
+                with self.assertRaisesRegex(ValueError, message, msg=description):
+                    validate_seed_corner_isotropy(mutated_report, recipe_path)
             # The seed command must pass exactly the bound path, and never an
             # undeclared footprint.
             input_paths = {name: item["Path"] for name, item in seed["Inputs"].items()}

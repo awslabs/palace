@@ -1017,6 +1017,114 @@ function offset_loop_points(loop, distance, tolerance)
     return points
 end
 
+# Two consecutive etch-footprint edges are one edge when every vertex between
+# their outer endpoints lies within this fraction of the merged edge's length from
+# the merged edge. It is the same dimensionless roundoff-scale bound as
+# edge_volume_metric.COPLANAR_TOLERANCE (1e-6, the sine of the dihedral between
+# the two trench-wall faces the edges would create): a merged vertex never leaves
+# a near-coplanar sliver face for the metric stage to see, and a kept vertex
+# always bends the wall by more than the tolerance, so it is a genuine facet.
+const FOOTPRINT_COLLINEAR_TOLERANCE = 1.0e-6
+
+function point_segment_distance_2d(point, first, second)
+    direction = (second[1] - first[1], second[2] - first[2])
+    span = direction[1]^2 + direction[2]^2
+    span > 0.0 || return hypot(point[1] - first[1], point[2] - first[2])
+    parameter = clamp(((point[1] - first[1]) * direction[1] +
+                       (point[2] - first[2]) * direction[2]) / span, 0.0, 1.0)
+    return hypot(point[1] - first[1] - parameter * direction[1],
+                 point[2] - first[2] - parameter * direction[2])
+end
+
+# Merge consecutive collinear edges of a closed plan-view footprint polygon before
+# any CAD face is created from it: one CAD face per genuine facet. A vertex is
+# removed when it, and every original vertex already merged into its two edges,
+# deviates from the merged edge by at most `tolerance` times that edge's length;
+# the vertex of smallest relative deviation is removed first until none qualifies.
+# Returns the simplified points and the record (removed 1-based original vertex
+# indices, maximum deviation and its local scale). Fails closed if the result is
+# not a polygon or exceeds the tolerance.
+function simplify_footprint_polygon(points, tolerance)
+    length(points) >= 3 || error("Footprint polygon needs at least three vertices")
+    tolerance > 0.0 || error("Footprint collinearity tolerance must be positive")
+    kept = collect(eachindex(points))
+    removed = Int[]
+    maximum_deviation = 0.0
+    maximum_scale = 0.0
+    maximum_relative = 0.0
+    function merged_span(k)
+        # Original vertices strictly between the kept neighbours of kept[k].
+        before = kept[mod1(k - 1, length(kept))]
+        after = kept[mod1(k + 1, length(kept))]
+        span = Int[]
+        index = mod1(before + 1, length(points))
+        while index != after
+            push!(span, index)
+            index = mod1(index + 1, length(points))
+        end
+        return before, after, span
+    end
+    while length(kept) > 3
+        best = 0
+        best_relative = Inf
+        best_deviation = 0.0
+        best_scale = 0.0
+        for k in eachindex(kept)
+            before, after, span = merged_span(k)
+            scale = hypot(points[after][1] - points[before][1],
+                          points[after][2] - points[before][2])
+            scale > 0.0 || continue
+            deviation = maximum(point_segment_distance_2d(points[index], points[before],
+                                                          points[after]) for index in span)
+            relative = deviation / scale
+            if relative <= tolerance && relative < best_relative
+                best, best_relative, best_deviation, best_scale = k, relative, deviation, scale
+            end
+        end
+        best == 0 && break
+        push!(removed, kept[best])
+        deleteat!(kept, best)
+        if best_relative >= maximum_relative
+            maximum_deviation, maximum_scale, maximum_relative =
+                best_deviation, best_scale, best_relative
+        end
+    end
+    sort!(removed)
+    simplified = [points[index] for index in kept]
+    maximum_relative <= tolerance ||
+        error("Footprint simplification exceeded its collinearity tolerance")
+    abs(sum(cross2d(simplified[i], simplified[mod1(i + 1, length(simplified))])
+            for i in eachindex(simplified))) > 0.0 ||
+        error("Footprint simplification produced a degenerate polygon")
+    record = Dict{String, Any}(
+        "OriginalVertices" => length(points), "Vertices" => length(simplified),
+        "RemovedVertexCount" => length(removed), "RemovedVertexIndices" => removed,
+        "MaximumDeviation" => maximum_deviation,
+        "MaximumDeviationLocalScale" => maximum_scale,
+        "MaximumRelativeDeviation" => maximum_relative, "Tolerance" => tolerance)
+    return simplified, record
+end
+
+function footprint_record(conductor, plane, hole, points, record)
+    return Dict{String, Any}(
+        "Conductor" => conductor, "Plane" => plane, "Hole" => hole,
+        "Points" => [collect(point) for point in points], "Simplification" => record)
+end
+
+# Simplify the bottom and top polygons of a footprint loft; when `footprint` is a
+# vector, the loft must be prismatic (one polygon) and the polygon is recorded.
+function simplified_loft_polygons(bottom_points, top_points, footprint, conductor, plane, hole)
+    bottom_points, bottom_record =
+        simplify_footprint_polygon(bottom_points, FOOTPRINT_COLLINEAR_TOLERANCE)
+    top_points, _ = simplify_footprint_polygon(top_points, FOOTPRINT_COLLINEAR_TOLERANCE)
+    if footprint !== nothing
+        bottom_points == top_points ||
+            error("Footprint recording requires a prismatic (vertical-wall) loft")
+        push!(footprint, footprint_record(conductor, plane, hole, bottom_points, bottom_record))
+    end
+    return bottom_points, top_points
+end
+
 function loft_polygon(occ, bottom_points, top_points, z0, z1)
     bottom = polygon_wire(occ, bottom_points, z0)
     top = polygon_wire(occ, top_points, z1)
@@ -1072,20 +1180,24 @@ function offset_hole_points(loop,distance,tolerance)
     return abs(area2)>tolerance^2 ? cleaned : NTuple{2,Float64}[]
 end
 
-function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolerance)
+# `simplify` merges collinear polygon edges (etch footprints: one CAD face per
+# genuine facet); `footprint` additionally records every simplified polygon.
+function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolerance;
+                           simplify=false, footprint=nothing)
+    footprint === nothing || simplify || error("Footprint recording requires simplification")
     outers = [loop for loop in loops if !loop.hole]
     holes = [loop for loop in loops if loop.hole]
     isempty(outers) && error("Plan-view mask has no exterior loop")
     result = Tuple{Int32, Int32}[]
     hole_owners=zeros(Int,length(holes))
     for outer in outers
-        volume = loft_polygon(
-            occ,
-            offset_loop_points(outer, bottom_offset, tolerance),
-            offset_loop_points(outer, top_offset, tolerance),
-            z0,
-            z1
-        )
+        bottom_points = offset_loop_points(outer, bottom_offset, tolerance)
+        top_points = offset_loop_points(outer, top_offset, tolerance)
+        if simplify
+            bottom_points, top_points = simplified_loft_polygons(
+                bottom_points, top_points, footprint, outer.conductor, z0, false)
+        end
+        volume = loft_polygon(occ, bottom_points, top_points, z0, z1)
         cutters = Tuple{Int32, Int32}[]
         for (index,hole) in enumerate(holes)
             hole.conductor==outer.conductor && abs(hole.plane-outer.plane)<=tolerance || continue
@@ -1096,6 +1208,10 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
             isempty(bottom_hole) && isempty(top_hole) && continue
             isempty(bottom_hole)==isempty(top_hole) ||
                 error("Fabrication hole collapses across loft height; unsupported topology change")
+            if simplify
+                bottom_hole, top_hole = simplified_loft_polygons(
+                    bottom_hole, top_hole, footprint, hole.conductor, z0, true)
+            end
             append!(
                 cutters,
                 loft_polygon(occ,bottom_hole,top_hole,z0,z1)
@@ -1111,18 +1227,22 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
     return fuse_all(occ, result)
 end
 
-function loft_mask(occ, loops, z0, z1, pullback, tolerance)
-    return loft_mask_offsets(occ, loops, z0, z1, 0.0, pullback, tolerance)
+function loft_mask(occ, loops, z0, z1, pullback, tolerance; simplify=false, footprint=nothing)
+    return loft_mask_offsets(occ, loops, z0, z1, 0.0, pullback, tolerance;
+                             simplify=simplify, footprint=footprint)
 end
 
-function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance)
+# The expanded collar polygons are the producer-default etch footprint: they are
+# simplified and recorded like a device footprint. The retained metal mask is not.
+function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance; footprint=nothing)
     expanded_volumes = Tuple{Int32, Int32}[]
     retained_volumes = Tuple{Int32, Int32}[]
     width = 3radius
     for conductor in sort!(unique(loop.conductor for loop in loops))
         conductor_loops = [loop for loop in loops if loop.conductor == conductor]
         append!(expanded_volumes,
-                loft_mask_offsets(occ, conductor_loops, z0, z1, -width, -width, tolerance))
+                loft_mask_offsets(occ, conductor_loops, z0, z1, -width, -width, tolerance;
+                                  simplify=true, footprint=footprint))
         append!(retained_volumes,
                 loft_mask_offsets(occ, conductor_loops, z0, z1, 0.0, -pullback, tolerance))
     end
@@ -1136,9 +1256,16 @@ function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance)
     return fuse_all(occ, strip)
 end
 
-function loft_strip(occ, edge, radius, side, z0, z1, pullback)
-    bottom = polygon_wire(occ, strip_points(edge, radius, side), z0)
-    top = polygon_wire(occ, strip_points(edge, radius, side, pullback), z1)
+function loft_strip(occ, edge, radius, side, z0, z1, pullback; footprint=nothing)
+    # Producer-default per-edge trench strips are etch footprint polygons too
+    # (recorded when `footprint` is given); strips are rectangles, so the
+    # simplification is a no-op that keeps one rule for every lofted polygon.
+    bottom_points, top_points = simplified_loft_polygons(
+        collect(strip_points(edge, radius, side)),
+        collect(strip_points(edge, radius, side, pullback)), footprint, edge.conductor, z0,
+        false)
+    bottom = polygon_wire(occ, bottom_points, z0)
+    top = polygon_wire(occ, top_points, z1)
     entities = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
     volumes = [(dim, tag) for (dim, tag) in entities if dim == 3]
     isempty(volumes) && error("Spatial strip loft produced no volume")
@@ -1752,6 +1879,9 @@ function generate_spatial_coupon(;
 
     substrates = Tuple{Int32, Int32}[]
     layer_substrates = Vector{Vector{Tuple{Int32, Int32}}}()
+    # Every etch footprint polygon (device or producer default) as lofted, after
+    # collinear-edge simplification; recorded in the census when it is written.
+    footprint_polygons = corner_isotropy ? Dict{String, Any}[] : nothing
     for layer in layers
         slab = if layer.sign > 0
             [(
@@ -1788,7 +1918,8 @@ function generate_spatial_coupon(;
                              if abs(loop.plane - layer.plane) <= tolerance]
                 isempty(footprint) && error("Explicit etch footprint is missing a process layer")
                 loft_mask(occ, footprint, layer.plane,
-                          layer.plane - layer.sign * overetch, 0.0, tolerance)
+                          layer.plane - layer.sign * overetch, 0.0, tolerance;
+                          simplify=true, footprint=footprint_polygons)
             elseif isempty(boundary_loops)
                 result = Tuple{Int32, Int32}[]
                 for edge in layer.edges
@@ -1801,7 +1932,8 @@ function generate_spatial_coupon(;
                             1.0,
                             layer.plane,
                             layer.plane - layer.sign * overetch,
-                            pullback_trench
+                            pullback_trench;
+                            footprint=footprint_polygons
                         )
                     )
                 end
@@ -1817,7 +1949,8 @@ function generate_spatial_coupon(;
                     layer.plane,
                     layer.plane - layer.sign * overetch,
                     pullback_trench,
-                    tolerance
+                    tolerance;
+                    footprint=footprint_polygons
                 )
             end
             trench = if isempty(boundary_loops)
@@ -2273,6 +2406,19 @@ function generate_spatial_coupon(;
                 "EtchBoundary" => etch_boundary === nothing ? "producer-default" : etch_boundary,
                 "EtchBoundarySHA256" => etch_boundary === nothing ? nothing :
                                         bytes2hex(sha256(read(etch_boundary))),
+                "FootprintCollinearTolerance" => FOOTPRINT_COLLINEAR_TOLERANCE,
+                "FootprintSimplification" => Dict{String, Any}(
+                    "Rule" => "consecutive footprint edges are merged when every vertex " *
+                              "between their outer endpoints lies within " *
+                              "FootprintCollinearTolerance times the merged edge length " *
+                              "of the merged edge, before CAD face creation",
+                    "Polygons" => length(footprint_polygons),
+                    "RemovedVertices" => sum(Int[polygon["Simplification"]["RemovedVertexCount"]
+                                                 for polygon in footprint_polygons]),
+                    "MaximumRelativeDeviation" => maximum(
+                        Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
+                                for polygon in footprint_polygons]; init=0.0)),
+                "FootprintPolygons" => footprint_polygons,
                 "InterfaceAreas" => area_rows,
                 "Corners" => census_rows))
             println(stream)
@@ -2287,6 +2433,14 @@ function generate_spatial_coupon(;
         for row in area_rows
             println("  interface $(row["Attribute"]) $(row["Name"]): triangles=$(row["Triangles"]) " *
                     "area=$(row["Area"]) um^2")
+        end
+        for polygon in footprint_polygons
+            record = polygon["Simplification"]
+            println("  footprint polygon conductor $(polygon["Conductor"]) plane $(polygon["Plane"]) " *
+                    "hole=$(polygon["Hole"]): vertices $(record["OriginalVertices"]) -> " *
+                    "$(record["Vertices"]), removed $(record["RemovedVertexIndices"]), " *
+                    "max deviation $(record["MaximumDeviation"]) " *
+                    "(relative $(record["MaximumRelativeDeviation"]))")
         end
         for row in face_rows
             println("  longitudinal face $(row["Surface"]) $(row["PhysicalGroups"]): " *

@@ -62,6 +62,20 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
         "EtchBoundary": "producer-default" if etch_boundary is None else str(etch_boundary),
         "EtchBoundarySHA256": None if etch_boundary is None else
                               hashlib.sha256(etch_boundary.read_bytes()).hexdigest(),
+        # Simplified etch footprint polygons (schema of the production seeder): the
+        # fixture footprint is one square whose duplicated vertex was merged.
+        "FootprintCollinearTolerance": 1e-6,
+        "FootprintSimplification": {"Rule": "fixture", "Polygons": 1, "RemovedVertices": 1,
+                                    "MaximumRelativeDeviation": 0.0},
+        "FootprintPolygons": [{"Conductor": 1, "Plane": 0.0, "Hole": False,
+                               "Points": [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+                               "Simplification": {"OriginalVertices": 5, "Vertices": 4,
+                                                  "RemovedVertexCount": 1,
+                                                  "RemovedVertexIndices": [3],
+                                                  "MaximumDeviation": 0.0,
+                                                  "MaximumDeviationLocalScale": 10.0,
+                                                  "MaximumRelativeDeviation": 0.0,
+                                                  "Tolerance": 1e-6}}],
         "InterfaceAreaUnits": "um^2",
         # One row per contract boundary label, as written in the fixture seed.
         "InterfaceAreas": [{"Attribute": 1, "Name": "surface_1", "Triangles": 7,

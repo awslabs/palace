@@ -32,6 +32,20 @@ explicitly. With the bound footprint the four-edge seed's areas are 3000 =
 11.9259 um^2 and 3100 = 210.5627 um^2 against the graded_v2 reference 11.926 /
 210.563 (the producer default gave a 2 x 2 square and 218.0). Exporting a
 producer-default footprint as a bound file is a P2 follow-up.
+Every etch footprint polygon - each device loop, or each producer-default collar
+and strip - is simplified before any CAD face is created from it
+(`simplify_footprint_polygon`): consecutive edges are merged while every vertex
+between their outer endpoints lies within `FOOTPRINT_COLLINEAR_TOLERANCE` (the
+same 1e-6 as `COPLANAR_TOLERANCE`; the stage contract requires equality) times
+the merged edge's length of the merged edge, so there is one CAD face per
+genuine facet and no near-coplanar sliver walls (the four-edge device footprint
+carries a CSV-precision chain, loop 2 vertices 8-10, whose walls differed by
+2e-8 to 1.6e-6 in normal). A kept vertex bends the wall by more than the
+tolerance, so the metric stage always sees it as a dihedral. The census records
+every simplified polygon (`FootprintPolygons`: conductor, plane, hole, points,
+removed vertex indices, maximum deviation with its local scale) and a summary
+(`FootprintSimplification`); the contract requires the deviation to stay within
+tolerance x local scale (reported otherwise, not gated).
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
