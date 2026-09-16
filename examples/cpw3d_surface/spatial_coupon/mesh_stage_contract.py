@@ -362,9 +362,42 @@ def _recipe_number(recipe, name):
     return float(value)
 
 
+def _count(value, description):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{description} must be a non-negative integer count")
+    return value
+
+
+def validate_protected_corner_balls(recipe):
+    """The metric stage must freeze the seed's corner balls: the recipe records the
+    rule's radius (the recipe's CornerIsotropyRadius) and the frozen-triangle count
+    of every semantic corner. Counts are reported, not gated."""
+    balls = recipe.get("ProtectedCornerBalls")
+    corners = recipe.get("TruePhysicalCorners")
+    if (not isinstance(balls, dict) or not isinstance(corners, list) or not corners or
+            not isinstance(balls.get("PerCorner"), list)):
+        raise ValueError("Restoration recipe lacks the protected corner balls")
+    if _recipe_number(balls, "Radius") != _recipe_number(recipe, "CornerIsotropyRadius"):
+        raise ValueError("Protected corner ball radius differs from the recipe CornerIsotropyRadius")
+    frozen = _count(balls.get("FrozenTriangles"), "Protected corner ball frozen triangles")
+    if frozen > _count(recipe.get("FixedSurfaceTriangles"), "Fixed surface triangles"):
+        raise ValueError("Protected corner balls exceed the fixed surface triangles")
+    per_corner = balls["PerCorner"]
+    if (len(per_corner) != len(corners) or
+            any(not isinstance(row, dict) for row in per_corner) or
+            sorted(row.get("Point") for row in per_corner) != sorted(corners)):
+        raise ValueError("Protected corner balls differ from the recipe semantic corners")
+    if sum(_count(row.get("FrozenTriangles"), "Protected corner ball frozen triangles")
+           for row in per_corner) < frozen:
+        raise ValueError("Protected corner ball counts do not cover the frozen triangles")
+    return balls
+
+
 def validate_seed_corner_isotropy(seed_report, recipe_path):
-    """The seed's corner ball must be the recipe's: same size, radius and corners."""
+    """The seed's corner ball must be the recipe's: same size, radius and corners,
+    and the metric stage must have protected the balls it received."""
     recipe = json.loads(Path(recipe_path).read_text())
+    validate_protected_corner_balls(recipe)
     command = seed_report["Command"]
     for option, name in SEED_RECIPE_VALUE_OPTIONS.items():
         try:

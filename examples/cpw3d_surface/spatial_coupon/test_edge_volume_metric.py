@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 from edge_volume_metric import volume_metric, intersect_metrics, feature_chains, surface_features
-from prepare_edge_metric_scout import budget_aware_far_policy
+from prepare_edge_metric_scout import budget_aware_far_policy, protected_corner_ball_triangles
 
 class EdgeVolumeMetricTest(unittest.TestCase):
     def test_two_transverse_directions_and_corner_recovery(self):
@@ -187,6 +187,30 @@ class EdgeVolumeMetricTest(unittest.TestCase):
                              far_growth=loaded['EffectiveFarGrowth'])
         np.testing.assert_allclose(coarse[0],base[0],rtol=0.,atol=1e-10)
         self.assertTrue(np.all(np.linalg.eigvalsh(base[1:]-coarse[1:])>=-1e-8))
+
+    def test_protected_corner_balls_freeze_straddling_triangles_by_any_vertex(self):
+        corners=[[0.,0.,0.],[5.,0.,0.]]
+        points=np.array([[0.,0,0],[.05,0,0],[0,.05,0],      # inside the first ball
+                         [.09,.09,0],[.3,0,0],[.3,.3,0],    # nearest vertex at 0.127: outside
+                         [.11,0,0],[.5,0,0],[.5,.5,0],      # entirely outside
+                         [4.95,0,0],[5.2,0,0],[5.,.3,0]])   # straddles the second ball
+        triangles=np.array([[0,1,2],[3,4,5],[6,7,8],[9,10,11]])
+        frozen,counts=protected_corner_ball_triangles(points,triangles,corners,.1)
+        # Triangle 1 crosses the ball's bounding box but has no vertex inside;
+        # triangle 3 straddles the second ball through its vertex at x = 4.95.
+        np.testing.assert_array_equal(frozen,[True,False,False,True])
+        np.testing.assert_array_equal(counts,[1,1])
+        straddling=np.array([[0,3,5],[6,7,8]])
+        frozen,counts=protected_corner_ball_triangles(points,straddling,corners,.1)
+        np.testing.assert_array_equal(frozen,[True,False])
+        np.testing.assert_array_equal(counts,[1,0])
+        angle=.37;q=np.array([[np.cos(angle),-np.sin(angle),0],[np.sin(angle),np.cos(angle),0],[0,0,1.]])
+        moved,moved_counts=protected_corner_ball_triangles(points@q.T+[2,3,4],triangles,
+                                                           np.asarray(corners)@q.T+[2,3,4],.1)
+        np.testing.assert_array_equal(moved,[True,False,False,True])
+        np.testing.assert_array_equal(moved_counts,[1,1])
+        for radius in (0.,-1.,float('nan')):
+            with self.assertRaises(ValueError):protected_corner_ball_triangles(points,triangles,corners,radius)
 
     def test_bad_controls_fail_closed(self):
         for controls in ((0,.1,1),(.1,.01,1),(.1,2,1)):

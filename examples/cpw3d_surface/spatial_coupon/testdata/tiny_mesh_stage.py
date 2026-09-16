@@ -79,6 +79,10 @@ def main():
             "NormalSize": args.normal, "TangentialSize": args.tangent,
             "CornerIsotropyRadius": args.tangent,
             "TruePhysicalCorners": semantic["SemanticCorners"],
+            "FixedSurfaceTriangles": 1,
+            "ProtectedCornerBalls": {"Radius": args.tangent, "FrozenTriangles": 1,
+                "PerCorner": [{"Point": corner, "FrozenTriangles": 1}
+                              for corner in semantic["SemanticCorners"]]},
             "TransformedSupportsArtifact": str(args.transformed_supports.resolve()),
             "TransformedSupportsSHA256": digest(args.transformed_supports),
             "TransformedSupports": json.loads(args.transformed_supports.read_text()),

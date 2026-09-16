@@ -210,7 +210,35 @@ merged chains. The canonical seeds are exact planes far below 1e-6 and their
 segments, pins and corners are unchanged.
 Reference-turn pins are MMG required vertices only; they never enter the
 semantic-corner set, the protected supports, or the ownership/covariance audits
-as geometry. Label restoration compares repair displacements to the bound with a
+as geometry.
+Metric preparation also protects the seed's corner balls: every seed surface
+triangle with at least one vertex within `CornerIsotropyRadius` of a contract
+semantic corner is a fixed (MMG required) triangle, in addition to the cut
+surfaces and the protected edge bands. The seed's isotropic Gmsh corner ball at
+`NormalSize` (asserted by the seed census) is the intended corner
+discretization; MMG's anisotropic adaptation adds value along the edges, not at
+the corners, and when the balls were left free MMG re-meshed the corner surface
+and volume with ring edges down to `NormalSize` / 2 and corner-incident aspects
+of 7-15 that the bounded restoration repair cannot reach (measured on the
+grid-preserving seeds: four-edge corner 2 at 10.59, ten-edge 5 of 10 corners).
+The volume inside a ball is still adapted to the same isotropic metric. Freezing
+the balls does not by itself fix the corners: the frozen surface ring is
+preserved (four-edge ring radii 0.0243-0.0259, seed corner cells of aspect
+3.4-7.8) but MMG inserts free interior vertices at about `NormalSize` / 2
+(0.012-0.017, below its own `hmin`) next to the required corner vertex, and the
+resulting cells have aspects 7-12 (four-edge after MMG [7.19, 11.90, 10.59,
+5.19]; ten-edge [10.99, 11.95, 5.28, 5.29, 10.19, 9.18, 5.94, 9.89, 7.38,
+10.50]) that the bounded 0.75 x `NormalSize` smoothing cannot undo (four-edge
+repair reaches 4.57 / 5.72 / 6.68 / 3.80). The edge bands, however, improve
+further (four-edge restoration components 7 -> 5; ten-edge sub-0.02
+scaled-Jacobian cells 23 -> 6), so the protection is kept. The
+recipe records `ProtectedCornerBalls` (radius, rule, total and per-corner frozen
+triangle counts); the stage contract requires it, with the recipe's
+`CornerIsotropyRadius`, the recipe's semantic corners and counts covered by the
+fixed-triangle total (reported, not gated). The far-field budget policy depends
+only on the seed element count and is unaffected; the ownership and covariance
+audits see the same frozen cut/matching surface everywhere, since the corner
+balls on a cut were the only previously unfrozen cut triangles. Label restoration compares repair displacements to the bound with a
 roundoff-only relative allowance (`DISPLACEMENT_ROUNDOFF_TOLERANCE`, 1e-12) so
 a vertex clamped onto the displacement ball is not misreported as an overshoot;
 a true overshoot is a rejected component, never an exception. Semantic corners

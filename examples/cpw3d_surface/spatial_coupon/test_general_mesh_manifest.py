@@ -831,6 +831,39 @@ class GeneralMeshManifestTest(unittest.TestCase):
             tampered(rewrite_census(LongitudinalFaces=None), "census-faces-omitted")
             tampered(rewrite_census(LongitudinalFaces=[{"Surface": 1}]), "census-faces-incomplete")
 
+            # The metric stage must have frozen the seed corner balls it received.
+            from mesh_stage_contract import validate_protected_corner_balls
+            recipe_data = json.loads(recipe.read_text())
+            balls = validate_protected_corner_balls(recipe_data)
+            self.assertEqual(balls["Radius"], recipe_data["CornerIsotropyRadius"])
+            self.assertEqual(len(balls["PerCorner"]), len(recipe_data["TruePhysicalCorners"]))
+
+            def recipe_without(**changes):
+                data = copy.deepcopy(recipe_data)
+                for key, value in changes.items():
+                    if value is None: data.pop(key, None)
+                    else: data[key] = value
+                return data
+
+            for description, data in (
+                    ("omitted", recipe_without(ProtectedCornerBalls=None)),
+                    ("radius", recipe_without(ProtectedCornerBalls={
+                        **recipe_data["ProtectedCornerBalls"],
+                        "Radius": 2 * recipe_data["CornerIsotropyRadius"]})),
+                    ("corners", recipe_without(ProtectedCornerBalls={
+                        **recipe_data["ProtectedCornerBalls"],
+                        "PerCorner": [{"Point": [9., 9., 9.], "FrozenTriangles": 1}]})),
+                    ("uncovered", recipe_without(ProtectedCornerBalls={
+                        **recipe_data["ProtectedCornerBalls"], "FrozenTriangles": 10 ** 6})),
+                    ("count", recipe_without(ProtectedCornerBalls={
+                        **recipe_data["ProtectedCornerBalls"], "FrozenTriangles": -1}))):
+                with self.assertRaises(ValueError, msg=description):
+                    validate_protected_corner_balls(data)
+                path = root / f"recipe-{description}.json"
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError, msg=description):
+                    validate_seed_corner_isotropy(seed_report, path)
+
     def test_same_area_displaced_protected_support_is_detected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)

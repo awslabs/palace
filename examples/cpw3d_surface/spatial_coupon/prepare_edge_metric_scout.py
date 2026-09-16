@@ -132,6 +132,25 @@ def budget_aware_far_policy(seed_elements, maximum_elements, far_size, far_growt
                                   'trace', 'protected-band']}
 
 
+def protected_corner_ball_triangles(points, triangles, semantic_corners, radius):
+    """Surface triangles with at least one vertex inside a semantic corner ball.
+
+    The seed's isotropic corner ball at NormalSize is the intended corner
+    discretization; MMG's anisotropic adaptation adds value along edges, not at
+    corners, so the balls are protected supports like the edge bands.  Any vertex
+    inside the ball freezes the triangle, so the frozen set covers the ball.
+    Returns the boolean triangle mask and the frozen-triangle count per corner.
+    """
+    corners = np.asarray(semantic_corners, dtype=float).reshape(-1, 3)
+    if not np.isfinite(radius) or radius <= 0:
+        raise ValueError('Invalid corner isotropy radius')
+    inside = np.zeros((len(triangles), len(corners)), dtype=bool)
+    vertices = np.asarray(points)[np.asarray(triangles)]
+    for index, corner in enumerate(corners):
+        inside[:, index] = np.linalg.norm(vertices - corner, axis=2).min(axis=1) <= radius
+    return inside.any(axis=1), inside.sum(axis=0)
+
+
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
             semantic_contract=None, transformed_supports=None, maximum_elements=None):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
@@ -194,13 +213,13 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         # could intersect the anisotropic edge band, rather than relying only on
         # its centroid.
         fixed |= distance[triangles].min(axis=1)-diameter <= protect_surface
-    corner_distance=np.full(len(mesh.points),np.inf)
-    for corner in semantic_corners:
-        corner_distance=np.minimum(corner_distance,np.linalg.norm(mesh.points-corner,axis=1))
-    # Local semantic isotropy requires surface remeshing too.  Permit inserted
-    # vertices only in the same tangentially-scaled balls used by the SPD
-    # metric; matching and edge-band triangles remain frozen everywhere else.
-    fixed &= corner_distance[triangles].min(axis=1)-diameter > tangent
+    # The seed already carries the isotropic corner ball at NormalSize (its census
+    # asserts it), so the ball surface is a protected support: MMG adapts the
+    # volume inside the ball to the same isotropic metric but cannot re-mesh the
+    # corner surface.
+    corner_balls,corner_ball_counts=protected_corner_ball_triangles(
+        mesh.points,triangles,semantic_corners,tangent)
+    fixed |= corner_balls
     np.savetxt(path/'fixed-triangles.txt',np.flatnonzero(fixed)+1,fmt='%d')
     with (path/'metric.f64').open('wb') as f:
         for start in range(0,len(mesh.points),100000):
@@ -218,6 +237,13 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'FarFieldBudgetPolicy':far_policy,
             'SurfaceProtectionRadius':protect_surface,'FixedSurfaceTriangles':int(fixed.sum()),
             'CornerIsotropyRadius':tangent,
+            'ProtectedCornerBalls':{'Radius':tangent,
+                'Rule':'every seed surface triangle with a vertex within CornerIsotropyRadius '
+                       'of a semantic corner is frozen; the seed corner ball is the corner '
+                       'discretization and MMG adapts only the volume inside it',
+                'FrozenTriangles':int(corner_balls.sum()),
+                'PerCorner':[{'Point':corner.tolist(),'FrozenTriangles':int(count)}
+                             for corner,count in zip(semantic_corners,corner_ball_counts)]},
             'MetricOrder':['m11','m12','m13','m22','m23','m33'],
             'Nodes':len(mesh.points),'Tetrahedra':len(tetrahedra),'SurfaceTriangles':len(triangles),
             'PreservedFeatureEdges':len(features),'PinnedGeometryVertices':len(pins),
