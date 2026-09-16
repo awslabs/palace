@@ -3,8 +3,8 @@
 import unittest
 import numpy as np
 from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, feature_chains,
-                                intersect_metrics, match_equivalent_planes, plane_deviation,
-                                surface_features, volume_metric)
+                                intersect_metrics, junction_segments, match_equivalent_planes,
+                                plane_deviation, surface_features, volume_metric)
 from prepare_edge_metric_scout import budget_aware_far_policy, protected_corner_ball_triangles
 
 class EdgeVolumeMetricTest(unittest.TestCase):
@@ -160,6 +160,73 @@ class EdgeVolumeMetricTest(unittest.TestCase):
             np.testing.assert_array_equal(moved[2],plain[2])
             self.assertEqual(len(moved[3]),len(plain[3]))
             np.testing.assert_allclose(moved[4],plain[4]@q.T+shift,rtol=0,atol=1e-12)
+
+    @staticmethod
+    def _split_box(lift=0.):
+        """Cut box [0,4]^3 (label 1) whose mid-plane z=2 is a material interface (3000)
+        for y<2 and a conductor surface (6001) for y>2; the label seam y=2 is coplanar."""
+        corners=[[x,y,z] for z in (0.,2.,4.) for y in (0.,2.,4.) for x in (0.,4.)]
+        # ring k (z level) indices: k*6 + (0..5) for (x,y) in [(0,0),(4,0),(0,2),(4,2),(0,4),(4,4)]
+        points=np.array(corners,dtype=float);points[6:12,2]+=lift
+        def quad(a,b,c,d):return [[a,b,c],[a,c,d]]
+        tri=[];refs=[]
+        def add(faces,label):tri.extend(faces);refs.extend([label]*len(faces))
+        add(quad(0,2,3,1)+quad(2,4,5,3),1)           # bottom z=0
+        add(quad(12,13,15,14)+quad(14,15,17,16),1)   # top z=4
+        for k in (0,6):                              # side faces, lower and upper halves
+            add(quad(k,k+1,k+7,k+6),1)               # y=0
+            add(quad(k+4,k+10,k+11,k+5),1)           # y=4
+            add(quad(k,k+6,k+8,k+2)+quad(k+2,k+8,k+10,k+4),1)   # x=0
+            add(quad(k+1,k+3,k+9,k+7)+quad(k+3,k+5,k+11,k+9),1) # x=4
+        add(quad(6,7,9,8),3000)                      # interface half y in [0,2]
+        add(quad(8,9,11,10),6001)                    # conductor half y in [2,4]
+        return points,np.array(tri),np.array(refs)
+
+    def test_junction_segments_are_cut_interface_features_only(self):
+        points,tri,refs=self._split_box()
+        segments=junction_segments(points,tri,refs,{1},{3000})
+        lengths=np.linalg.norm(segments[:,3:]-segments[:,:3],axis=1)
+        # The interface half meets the box along y=0 (length 4) and x=0, x=4 (length 2);
+        # the coplanar seam y=2 and the conductor/cut edges are not junctions.
+        self.assertEqual(len(segments),3);self.assertAlmostEqual(lengths.sum(),8.)
+        expected={((0.,0.,2.),(4.,0.,2.)),((0.,0.,2.),(0.,2.,2.)),((4.,0.,2.),(4.,2.,2.))}
+        actual={tuple(sorted((tuple(s[:3]),tuple(s[3:])))) for s in segments}
+        self.assertEqual(actual,expected)
+        # Box edges (cut/cut) never appear even when every label is an interface candidate.
+        both=junction_segments(points,tri,refs,{1},{3000,6001})
+        self.assertEqual(len(both),4);self.assertAlmostEqual(
+            np.linalg.norm(both[:,3:]-both[:,:3],axis=1).sum(),16.)
+        # PhysicalSegments are unchanged: junction edges touch the cut and stay excluded.
+        _,_,_,physical,_=surface_features(points,tri,refs,{1})
+        self.assertEqual(len(physical),0)
+        with self.assertRaises(ValueError):junction_segments(points,tri,refs,{1},{1,3000})
+        with self.assertRaises(ValueError):junction_segments(points,tri,refs,{1},set())
+        with self.assertRaises(ValueError):junction_segments(points,tri,refs,{1},{3100})
+        # A coplanar label seam inside the cut surface is not a junction: relabel the
+        # upper x=0 half as a second cut label.
+        split=refs.copy();split[np.flatnonzero(refs==1)[-8:-4]]=2
+        np.testing.assert_allclose(junction_segments(points,tri,split,{1,2},{3000}),segments)
+        # A lifted interface (dihedral with itself) still meets the box on the same lines.
+        lifted=junction_segments(*self._split_box(lift=1e-3),{1},{3000})
+        self.assertEqual(len(lifted),3)
+
+    def test_junction_segments_follow_full_3d_rotation(self):
+        points,tri,refs=self._split_box()
+        plain=junction_segments(points,tri,refs,{1},{3000})
+        axis=np.array([1.,-2.,.5]);axis/=np.linalg.norm(axis);angle=.77
+        cross=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+        q=np.eye(3)*np.cos(angle)+(1-np.cos(angle))*np.outer(axis,axis)+np.sin(angle)*cross
+        shift=np.array([5.,-1.,2.])
+        moved=junction_segments(points@q.T+shift,tri,refs,{1},{3000})
+        expected=(plain.reshape(-1,2,3)@q.T+shift).reshape(-1,6)
+        self.assertEqual(len(moved),len(plain))
+        for segment in expected:
+            flipped=np.r_[segment[3:],segment[:3]]
+            self.assertTrue(any(np.allclose(segment,m,atol=1e-12) or np.allclose(flipped,m,atol=1e-12)
+                                for m in moved))
+        metric=volume_metric(np.array([[2.,0.,2.],[2.,0.,2.03]]),plain,np.zeros((0,3)),.005,.05,.4)
+        rotated=volume_metric(np.array([[2.,0.,2.],[2.,0.,2.03]])@q.T+shift,moved,np.zeros((0,3)),.005,.05,.4)
+        np.testing.assert_allclose(rotated,q@metric@q.T,rtol=1e-10,atol=1e-8)
 
     def test_protected_radial_band_keeps_old_metric(self):
         s=[[-1.,0,0,1,0,0]];corners=[[-1.,0,0],[1,0,0]]

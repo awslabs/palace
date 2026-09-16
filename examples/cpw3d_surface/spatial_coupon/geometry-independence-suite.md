@@ -63,6 +63,34 @@ aligned with neither (`AlignedWithFeature`; `FeatureSegments` records both
 counts and `FootprintSegmentProvenance` the source). The four-edge device
 footprint's tilted trench walls, which the detector previously counted as 42
 diagonal bands, are footprint edges.
+Modeling statement (four-edge physics main run, 80 sources vs the graded_v2
+reference): the lines where the Dirichlet cut surface meets a dielectric step or
+material interface - the trench floor and walls and the un-etched
+substrate-vacuum plane meeting the coupon box - are the recipe's dominant
+under-resolved feature (13 wide hats on the z = -0.05 / 0 rings off by 0.4-4% in
+energy and up to 25% in SA participation; one ordinary AMR cycle put 100% of its
+235 marks within 0.3 um of the cut/trench junction line and repaired most of it).
+They are therefore feature lines with the process-edge band. The seed makes
+every curve of a material-interface surface (substrate volume on one side,
+vacuum on the other) that lies on the outer box a feature curve
+(`JunctionCurves` in the census: count and total length), so the frozen cut
+surface carries the anisotropic band; the metric stage derives the same lines
+from the seed's shared edges (a non-coplanar edge with a cut-surface triangle
+and a material-interface triangle; roles from the contract's `CutSurfaceRoles`
+and two-material `AdjacentMaterialSets`, `material_interface_attributes`),
+chains them like the physical graph and records them as `JunctionSegments`
+(segments, count, total length, label sets, provenance, rule). They receive
+exactly the `PhysicalSegments` band law (NormalSize transverse band with the
+ProtectedDistance/FarGrowth grading, TangentialSize along the line,
+SurfaceProtectionRadius freeze); `PhysicalSegments` are unchanged and precede
+them in the metric intersection order (`BandSegmentOrder`). The stage contract
+requires the recipe's segments to be self-consistent, to name the contract's
+cut and interface labels, and to total the census's junction-curve length
+within `COPLANAR_TOLERANCE`. The trace-diagonal detector treats a band aligned
+with a junction line as a feature band (`AlignedWithJunctionSegment`;
+`FeatureSegments.Junction`). Cut/cut box edges and cut/conductor edges are not
+junctions (the AMR probe marked nothing there). No size was added: the four-edge
+junction set is 22 segments totalling 60.5 um on the box faces.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

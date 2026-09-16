@@ -6,6 +6,7 @@
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import meshio
 import numpy as np
 
 from mesh_stage_contract import footprint_provenance, footprint_segments
+from semantic_mesh_contract import cut_surface_attributes, material_interface_attributes
 from transform_coupon_source_contract import (read_transform, transform_semantic_contract,
                                                 transformed_supports)
 
@@ -87,6 +89,14 @@ def main():
                                   "Tolerance": census["FootprintCollinearTolerance"],
                                   "Polygons": len(census["FootprintPolygons"]),
                                   "Segments": footprint_segments(census)},
+            # The fixture seed's junction lines are the census's CAD junction curves.
+            "JunctionSegments": {
+                "Segments": census["JunctionCurves"]["Segments"],
+                "Count": len(census["JunctionCurves"]["Segments"]),
+                "TotalLength": sum(math.dist(segment[:3], segment[3:])
+                                   for segment in census["JunctionCurves"]["Segments"]),
+                "CutSurfaceAttributes": sorted(cut_surface_attributes(semantic)),
+                "MaterialInterfaceAttributes": sorted(material_interface_attributes(semantic))},
             "NormalSize": args.normal, "TangentialSize": args.tangent,
             "CornerIsotropyRadius": args.tangent,
             "TruePhysicalCorners": semantic["SemanticCorners"],

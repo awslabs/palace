@@ -6,6 +6,7 @@
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import meshio
@@ -52,7 +53,18 @@ def produce(output, transform, scale=1.0):
     meshio.write(output, mesh, file_format="gmsh22", binary=False)
 
 
-def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None):
+def junction_curves(scale):
+    """The fixture's cut-surface/material-interface junction lines: the three edges of
+    the interface triangle [0, 1, 2] shared with the cut triangles of the first tet."""
+    a, b, c = [0.0, 0.0, 0.0], [.08 * scale, 0.0, 0.0], [0.0, .001 * scale, 0.0]
+    segments = [[*a, *b], [*b, *c], [*c, *a]]
+    return {"Count": len(segments),
+            "TotalLength": sum(math.dist(segment[:3], segment[3:]) for segment in segments),
+            "Segments": segments, "Rule": "fixture"}
+
+
+def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None,
+                  scale=1.0):
     """Recorded corner-ball census of the fixture seed (schema of the production seeder)."""
     contract = json.loads(contract_path.read_text())
     corners = contract["SemanticCorners"]
@@ -76,6 +88,7 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                                                   "MaximumDeviationLocalScale": 10.0,
                                                   "MaximumRelativeDeviation": 0.0,
                                                   "Tolerance": 1e-6}}],
+        "JunctionCurves": junction_curves(scale),
         "InterfaceAreaUnits": "um^2",
         # One row per contract boundary label, as written in the fixture seed.
         "InterfaceAreas": [{"Attribute": 1, "Name": "surface_1", "Triangles": 7,
@@ -116,7 +129,7 @@ def main():
         parser.error("corner census output must be fresh")
     produce(args.output, json.loads(args.transform.read_text()), args.scale)
     corner_census(args.corner_census, args.semantic_contract, args.corner_isotropy_radius,
-                  args.lc_fine, args.etch_boundary)
+                  args.lc_fine, args.etch_boundary, args.scale)
 
 
 if __name__ == "__main__":

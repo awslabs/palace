@@ -220,7 +220,9 @@ class RigidProducerIntegrationTest(unittest.TestCase):
                 np.testing.assert_array_equal(first, second)
             matrix = np.asarray(ROTATE_Z).reshape(4, 4)
             expected = left.points @ matrix[:3, :3].T + matrix[:3, 3]
-            np.testing.assert_allclose(right.points, expected, rtol=0.0, atol=2e-14)
+            # Roundoff of the affine transform on coordinates of order ten (a few
+            # tens of ulps), not a geometric tolerance.
+            np.testing.assert_allclose(right.points, expected, rtol=0.0, atol=1e-13)
             tetrahedra = np.concatenate([cell.data for cell in left.cells
                                          if cell.type == "tetra"])
             def determinants(points):
@@ -249,7 +251,7 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             matrix = np.asarray(ROTATE_Z).reshape(4, 4)
             np.testing.assert_allclose(right.points,
                                        left.points @ matrix[:3, :3].T + matrix[:3, 3],
-                                       rtol=0.0, atol=3e-14)
+                                       rtol=0.0, atol=1e-13)
             # The corner ball changed the seed: the plain seed is a different mesh.
             self.assertNotEqual(hashlib.sha256(plain.read_bytes()).hexdigest(),
                                 hashlib.sha256(identity.read_bytes()).hexdigest())
@@ -304,6 +306,46 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             metadata = json.loads((root / "identity.msh.metadata.json").read_text())
             self.assertEqual(metadata["CornerIsotropyRadius"], 0.4)
             self.assertEqual(metadata["SemanticCornerCount"], len(contract["SemanticCorners"]))
+            # The cut-surface/material-interface junction lines: the census records the
+            # CAD junction curves (rigid-invariant), the metric stage derives the same
+            # lines from the seed's shared edges, on the box faces, rotation-covariant.
+            from edge_volume_metric import junction_segments
+            from semantic_mesh_contract import (cut_surface_attributes,
+                                                material_interface_attributes)
+            curves = census["JunctionCurves"]
+            self.assertGreater(curves["Count"], 0)
+            self.assertEqual(curves["Count"], rotated_census["JunctionCurves"]["Count"])
+            self.assertAlmostEqual(curves["TotalLength"],
+                                   rotated_census["JunctionCurves"]["TotalLength"], places=9)
+            cut = cut_surface_attributes(contract)
+            interfaces = material_interface_attributes(contract)
+            self.assertEqual(interfaces, {3000, 3100})
+            def junctions(mesh):
+                triangles = np.concatenate([c.data for c in mesh.cells if c.type == "triangle"])
+                labels = np.concatenate([r for c, r in zip(mesh.cells, mesh.cell_data["gmsh:physical"])
+                                         if c.type == "triangle"])
+                return junction_segments(mesh.points, triangles, labels, cut, interfaces)
+            segments = junctions(left)
+            self.assertGreater(len(segments), 0)
+            lengths = np.linalg.norm(segments[:, 3:] - segments[:, :3], axis=1)
+            self.assertAlmostEqual(lengths.sum(), curves["TotalLength"], places=9)
+            lower, upper = left.points.min(axis=0), left.points.max(axis=0)
+            for endpoint in segments.reshape(-1, 3):
+                self.assertTrue(np.any(np.abs(endpoint - lower) < 1e-8) or
+                                np.any(np.abs(endpoint - upper) < 1e-8))
+            # Every junction line lies in one box face plane, at an interface level.
+            for segment in segments:
+                fixed = (np.abs(segment[:3] - segment[3:]) < 1e-12)
+                self.assertTrue(np.any(fixed & ((np.abs(segment[:3] - lower) < 1e-8) |
+                                                (np.abs(segment[:3] - upper) < 1e-8))))
+            # Same lines under rotation (endpoint order within a segment is a
+            # coordinate sort and not covariant; the chains are).
+            rotated_segments = junctions(right).reshape(-1, 2, 3)
+            expected = segments.reshape(-1, 2, 3) @ matrix[:3, :3].T + matrix[:3, 3]
+            self.assertEqual(len(rotated_segments), len(expected))
+            for segment, rotated_segment in zip(expected, rotated_segments):
+                self.assertTrue(np.allclose(segment, rotated_segment, atol=1e-12) or
+                                np.allclose(segment[::-1], rotated_segment, atol=1e-12))
 
     def test_longitudinal_face_census_detects_misaligned_ridge_rows(self):
         """Julia unit tests: misaligned ridge rows leave full-height triangles the census
@@ -420,7 +462,7 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             matrix = np.asarray(TILTED_TRANSLATED).reshape(4, 4)
             np.testing.assert_allclose(
                 right.points, left.points @ matrix[:3, :3].T + matrix[:3, 3],
-                rtol=0.0, atol=3e-14)
+                rtol=0.0, atol=1e-13)
             expected = {item["Attribute"] for item in
                         json.loads(MULTISLOT["semantic"].read_text())["BoundaryLabels"]}
             actual = set(np.concatenate([

@@ -5,10 +5,12 @@
 """Validation for reusable canonical-build and per-placement publication DAGs."""
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from edge_volume_metric import COPLANAR_TOLERANCE
-from semantic_mesh_contract import boundary_attributes
+from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
+                                    material_interface_attributes)
 
 
 CANONICAL_STAGE_ORDER = (
@@ -457,6 +459,41 @@ def validate_footprint_segments(recipe, census):
     return record
 
 
+def validate_junction_segments(recipe, census):
+    """The metric recipe's JunctionSegments are the cut-surface/material-interface
+    junction lines of the seed: finite nondegenerate segments whose count and total
+    length are self-consistent, whose label sets are the recipe contract's cut and
+    two-material interface labels, and whose total length equals the census's CAD
+    junction curves within the shared dimensionless tolerance."""
+    record = recipe.get("JunctionSegments")
+    semantic = recipe.get("SemanticContract")
+    if (not isinstance(record, dict) or not isinstance(record.get("Segments"), list) or
+            not record["Segments"] or not isinstance(semantic, dict)):
+        raise ValueError("Restoration recipe lacks the junction segments")
+    total = 0.0
+    for segment in record["Segments"]:
+        if (not isinstance(segment, list) or len(segment) != 6 or
+                any(isinstance(value, bool) or not isinstance(value, (int, float)) or
+                    not math.isfinite(value) for value in segment)):
+            raise ValueError("Restoration recipe junction segment is invalid")
+        length = math.dist(segment[:3], segment[3:])
+        if length <= 0:
+            raise ValueError("Restoration recipe junction segment is degenerate")
+        total += length
+    if (record.get("Count") != len(record["Segments"]) or
+            abs(_recipe_number(record, "TotalLength") - total) > 1e-12 * total or
+            record.get("CutSurfaceAttributes") != sorted(cut_surface_attributes(semantic)) or
+            record.get("MaterialInterfaceAttributes") !=
+            sorted(material_interface_attributes(semantic))):
+        raise ValueError("Restoration recipe junction segments are inconsistent with their contract")
+    curves = census.get("JunctionCurves")
+    if (not isinstance(curves, dict) or
+            abs(_recipe_number(curves, "TotalLength") - total) > COPLANAR_TOLERANCE * total or
+            _count(curves.get("Count"), "Seed census junction curves") <= 0):
+        raise ValueError("Seed census junction curves differ from the recipe junction segments")
+    return record
+
+
 def validate_footprint_polygons(census):
     """The seed simplified every etch footprint polygon (device or producer default)
     with the shared collinearity tolerance before CAD face creation and recorded the
@@ -549,6 +586,7 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
         raise ValueError("Seed census interface-area labels differ from the semantic contract")
     validate_footprint_polygons(census)
     validate_footprint_segments(recipe, census)
+    validate_junction_segments(recipe, census)
     # The ridge-to-ridge face census (interior nodes and full-height triangles) is
     # recorded for every seed; its values are reported, not gated.
     for row in census["LongitudinalFaces"]:

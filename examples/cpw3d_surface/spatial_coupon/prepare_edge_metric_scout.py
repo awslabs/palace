@@ -12,13 +12,13 @@ import json
 from pathlib import Path
 import meshio
 import numpy as np
-from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,surface_features,
-                                volume_metric,segment_distances)
+from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,junction_segments,
+                                surface_features,volume_metric,segment_distances)
 from mesh_array_io import read_mesh,sha
 from mesh_stage_contract import footprint_provenance,footprint_segments
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
-                                    load_semantic_contract, simple_sharp_contract,
-                                    volume_attributes)
+                                    load_semantic_contract, material_interface_attributes,
+                                    simple_sharp_contract, volume_attributes)
 
 
 def _near_segment(point, segments, tolerance):
@@ -176,6 +176,47 @@ def footprint_segment_record(census, semantic_contract, semantic_contract_sha256
                     "PhysicalSegments and receive no size of their own"}
 
 
+def junction_segment_record(segments, semantic_contract, census=None):
+    """Recipe record of the cut-surface/material-interface junction lines.
+
+    The lines where the Dirichlet cut surface meets a dielectric step or
+    material interface (trench floor, trench walls, un-etched substrate-vacuum
+    plane) are the features the physics pilot found under-resolved (100% of the
+    AMR marks within 0.3 um of the cut/trench junction).  They are derived from
+    the semantic contract's roles (CutSurfaceRoles and two-material adjacency)
+    applied to the seed's non-coplanar shared edges, and they receive exactly the
+    PhysicalSegments band law.  When the bound seed census records the CAD
+    junction curves, their total length must agree with the mesh-derived
+    segments within the shared dimensionless tolerance.
+    """
+    segments = np.asarray(segments, dtype=float).reshape(-1, 6)
+    lengths = np.linalg.norm(segments[:, 3:] - segments[:, :3], axis=1)
+    if not len(segments) or not np.all(np.isfinite(segments)) or np.any(lengths <= 0):
+        raise ValueError('Junction segments must be finite and nondegenerate')
+    total = float(lengths.sum())
+    if census is not None:
+        curves = census.get('JunctionCurves')
+        if (not isinstance(curves, dict) or not isinstance(curves.get('TotalLength'), (int, float)) or
+                isinstance(curves.get('TotalLength'), bool) or
+                abs(float(curves['TotalLength']) - total) > COPLANAR_TOLERANCE * total):
+            raise ValueError('Seed census junction curves differ from the seed-derived junction segments')
+    return {'Segments': segments.tolist(), 'Count': int(len(segments)), 'TotalLength': total,
+            'CutSurfaceAttributes': sorted(cut_surface_attributes(semantic_contract)),
+            'MaterialInterfaceAttributes': sorted(material_interface_attributes(semantic_contract)),
+            'Provenance': 'seed shared edges that are geometric features (not coplanar within '
+                          'COPLANAR_TOLERANCE) with a cut-surface triangle and a material-'
+                          'interface triangle, chained into straight segments; roles from the '
+                          'bound semantic contract (CutSurfaceRoles; labels whose '
+                          'AdjacentMaterialSets contain two materials), no coordinates or '
+                          'label numbers assumed',
+            'Rule': 'junction segments receive exactly the PhysicalSegments band law: '
+                    'NormalSize transverse band with ProtectedDistance/FarGrowth grading, '
+                    'TangentialSize along the line, SurfaceProtectionRadius freeze of the '
+                    'incident seed surface; they are aligned features for the trace-diagonal '
+                    'audit; PhysicalSegments are unchanged and precede them in the metric '
+                    'intersection order'}
+
+
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
             semantic_contract=None, transformed_supports=None, maximum_elements=None,
             footprint_census=None, semantic_contract_sha256=None):
@@ -208,6 +249,13 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         validate_transformed_supports(transformed_supports, semantic_contract, segments)
     footprint=(None if footprint_census is None else
                footprint_segment_record(footprint_census,semantic_contract,semantic_contract_sha256))
+    # The cut/trench junction lines are metric sources like the physical edges;
+    # the metric intersection order (physical, then junction) is part of the recipe.
+    junctions=junction_segments(mesh.points,triangles,triangle_refs,
+                                cut_surface_attributes(semantic_contract),
+                                material_interface_attributes(semantic_contract))
+    junction_record=junction_segment_record(junctions,semantic_contract,footprint_census)
+    band_segments=np.vstack((np.asarray(segments,dtype=float).reshape(-1,6),junctions))
     semantic_corners=np.asarray(semantic_contract['SemanticCorners'],dtype=float).reshape(-1,3)
     # The contract corners are physical plan-view junctions.  Require them to be
     # represented by the seed instead of silently replacing them with CAD
@@ -236,7 +284,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         for i,j in ((0,1),(1,2),(2,0))]),axis=0)
     if protect_surface>0:
         distance=np.full(len(mesh.points),np.inf)
-        for segment in segments:distance=np.minimum(distance,segment_distances(mesh.points,segment)[0])
+        for segment in band_segments:distance=np.minimum(distance,segment_distances(mesh.points,segment)[0])
         # Distance is 1-Lipschitz. This lower bound protects every triangle that
         # could intersect the anisotropic edge band, rather than relying only on
         # its centroid.
@@ -251,7 +299,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     np.savetxt(path/'fixed-triangles.txt',np.flatnonzero(fixed)+1,fmt='%d')
     with (path/'metric.f64').open('wb') as f:
         for start in range(0,len(mesh.points),100000):
-            metric=volume_metric(mesh.points[start:start+100000],segments,corners,normal,tangent,effective_far,
+            metric=volume_metric(mesh.points[start:start+100000],band_segments,corners,normal,tangent,effective_far,
                                  protected_distance=protected_distance,far_growth=effective_far_growth,
                                  isotropic_corners=semantic_corners,isotropy_radius=tangent)
             if np.any(np.linalg.eigvalsh(metric)<=0):raise ValueError('Metric is not SPD')
@@ -285,6 +333,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                         'non-coplanar features only; reference-turn pins are not semantic '
                         'corners or protected supports',
             'PhysicalSegments':segments.tolist(),'TruePhysicalCorners':semantic_corners.tolist(),
+            'JunctionSegments':junction_record,
+            'BandSegmentOrder':'PhysicalSegments then JunctionSegments',
             'SurfaceFeatureCorners':corners.tolist(),
             'PlanarSupports':{str(10000+i):{'Attribute':int(row[0]),'Normal':row[1:4].tolist(),'Offset':float(row[4])} for i,row in enumerate(exact_planes)},
             'PlanarSupportEquivalence':{'Tolerance':COPLANAR_TOLERANCE,
@@ -294,7 +344,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     if footprint is not None:recipe['FootprintSegments']=footprint
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
-    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments')},indent=2))
+    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments')},indent=2))
+    print(json.dumps({'JunctionSegments':{k:v for k,v in junction_record.items() if k!='Segments'}},indent=2))
     return recipe
 
 

@@ -234,6 +234,67 @@ def feature_chains(points,edges,lower,upper,tolerance=1e-8,cut_nodes=None):
     return np.asarray(segments),np.asarray(corners).reshape(-1,3)
 
 
+def _shared_edges(points,triangles):
+    """Sorted edge table of a triangle set: (pairs, owner, start, is_feature).
+
+    `pairs[order]`/`owner` list every (edge, incident triangle) pair sorted by
+    edge, `start` the first row of each distinct edge, and `is_feature` whether
+    the incident triangles of that edge are not coplanar within
+    COPLANAR_TOLERANCE (the sine of the normal angle is orientation-free and
+    the plane offset is scaled by the local triangle size, so the test is
+    dimensionless).
+    """
+    p=np.asarray(points);tri=np.asarray(triangles)
+    xyz=p[tri];n=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);length=np.linalg.norm(n,axis=1)
+    if np.any(length<=0):raise ValueError('Degenerate surface triangle')
+    n/=length[:,None]
+    diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1)
+                              for i,j in ((0,1),(1,2),(2,0))]),axis=0)
+    pairs=np.sort(tri[:,[(0,1),(1,2),(2,0)]].reshape(-1,2),axis=1)
+    owner=np.repeat(np.arange(len(tri)),3)
+    order=np.lexsort((pairs[:,1],pairs[:,0]));pairs=pairs[order];owner=owner[order]
+    start=np.r_[0,np.flatnonzero(np.any(pairs[1:]!=pairs[:-1],axis=1))+1]
+    first=np.repeat(owner[start],np.diff(np.r_[start,len(owner)]))
+    normal_deviation=np.linalg.norm(np.cross(n[first],n[owner]),axis=1)
+    plane_offset=np.max(abs(np.einsum('ij,ikj->ik',n[first],xyz[owner]-xyz[first][:,:1])),axis=1)
+    plane_offset/=np.maximum(diameter[first],diameter[owner])
+    deviation=np.maximum(normal_deviation,plane_offset)
+    is_feature=np.maximum.reduceat(deviation,start)>COPLANAR_TOLERANCE
+    return pairs,owner,start,is_feature
+
+
+def junction_segments(points,triangles,references,cut_references,interface_references,
+                      tolerance=1e-8):
+    """Straight lines where the cut (Dirichlet) surface meets a material interface.
+
+    A shared edge is a junction edge when it is a geometric feature (incident
+    triangles not coplanar within COPLANAR_TOLERANCE) shared by at least one
+    cut-surface triangle and one material-interface triangle: the trench floor
+    and walls and the un-etched substrate-vacuum plane meeting the coupon box.
+    Cut/cut box edges and cut/conductor edges are not junctions.  Collinear
+    junction edges are merged into straight segments exactly like the physical
+    feature graph; every junction node lies on the cut, so no corner results.
+    Returns the (k, 6) segments in graph-traversal order.  Fails closed when the
+    seed has no such edge: a coupon whose interfaces reach the box always has
+    them, so their absence is a labeling or geometry error.
+    """
+    p=np.asarray(points);tri=np.asarray(triangles);refs=np.asarray(references)
+    cut=set(cut_references);interface=set(interface_references)
+    if not cut or not interface or cut&interface:
+        raise ValueError('Cut-surface and material-interface labels must be disjoint nonempty sets')
+    if not cut<=set(refs) or not interface<=set(refs):
+        raise ValueError('Cut-surface and material-interface labels must be seed labels')
+    pairs,owner,start,is_feature=_shared_edges(p,tri)
+    on_cut=np.logical_or.reduceat(np.isin(refs[owner],list(cut)),start)
+    on_interface=np.logical_or.reduceat(np.isin(refs[owner],list(interface)),start)
+    edges=pairs[start][is_feature&on_cut&on_interface]
+    if not len(edges):
+        raise ValueError('The seed has no cut-surface/material-interface junction edge')
+    nodes=set(map(int,edges.ravel()))
+    segments,_=feature_chains(p,edges,p.min(axis=0),p.max(axis=0),tolerance,cut_nodes=nodes)
+    return segments
+
+
 def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     """Feature graph of a conforming piecewise-planar, reference-labeled complex.
 
@@ -249,25 +310,8 @@ def surface_features(points,triangles,references,cut_references,tolerance=1e-8):
     cut_references=set(cut_references)
     if not cut_references or not cut_references <= set(refs):
         raise ValueError('Cut-surface references must be a nonempty label subset')
-    xyz=p[tri];n=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);length=np.linalg.norm(n,axis=1)
-    if np.any(length<=0):raise ValueError('Degenerate surface triangle')
-    n/=length[:,None]
-    diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1)
-                              for i,j in ((0,1),(1,2),(2,0))]),axis=0)
-    pairs=np.sort(tri[:,[(0,1),(1,2),(2,0)]].reshape(-1,2),axis=1)
-    owner=np.repeat(np.arange(len(tri)),3)
-    order=np.lexsort((pairs[:,1],pairs[:,0]));pairs=pairs[order];owner=owner[order]
-    on_matching=np.repeat(np.isin(refs,list(cut_references)),3)[order]
-    start=np.r_[0,np.flatnonzero(np.any(pairs[1:]!=pairs[:-1],axis=1))+1]
-    # Compare every triangle incident to an edge with the first one: the sine
-    # of the normal angle is orientation-free, and the plane offset is scaled
-    # by the local triangle size so the test is dimensionless.
-    first=np.repeat(owner[start],np.diff(np.r_[start,len(owner)]))
-    normal_deviation=np.linalg.norm(np.cross(n[first],n[owner]),axis=1)
-    plane_offset=np.max(abs(np.einsum('ij,ikj->ik',n[first],xyz[owner]-xyz[first][:,:1])),axis=1)
-    plane_offset/=np.maximum(diameter[first],diameter[owner])
-    deviation=np.maximum(normal_deviation,plane_offset)
-    is_feature=np.maximum.reduceat(deviation,start)>COPLANAR_TOLERANCE
+    pairs,owner,start,is_feature=_shared_edges(p,tri)
+    on_matching=np.isin(refs[owner],list(cut_references))
     features=pairs[start][is_feature]
     # Use labeled matching support, not a global-axis bounding box. This remains
     # valid for a rigidly rotated coupon and identifies artificial cut endpoints.

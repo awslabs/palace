@@ -57,7 +57,8 @@ def _segment_alignment(direction, segments):
     return alignment
 
 
-def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segments=()):
+def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segments=(),
+                           junction_segments=()):
     """Find long, narrow short-edge bands on one planar labeled support.
 
     A connected set spanning several orthogonal supports is not a geometric
@@ -67,12 +68,15 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     also bounded by twice the audited transverse target, so ordinary
     coarse-surface triangulation cannot masquerade as propagated trace sizing.
 
-    Legitimate feature segments are the signature (metal) edges and the
-    simplified etch footprint edges recorded from the bound seed census: etch
-    footprint edges are physical dielectric step edges (trench wall/floor and
-    wall/surface junctions) that legitimately carry the NormalSize band.  A
-    band aligned with either is a feature band; only a band aligned with
-    neither counts as a diagonal over-refinement.
+    Legitimate feature segments are the signature (metal) edges, the
+    simplified etch footprint edges recorded from the bound seed census (etch
+    footprint edges are physical dielectric step edges - trench wall/floor and
+    wall/surface junctions - that legitimately carry the NormalSize band), and
+    the cut-surface/material-interface junction lines recorded by the bound
+    metric stage (where the trench floor/walls and the un-etched plane meet the
+    Dirichlet cut; they carry the same band).  A band aligned with any of them
+    is a feature band; only a band aligned with none counts as a diagonal
+    over-refinement.
     """
     triangles, labels = blocks(mesh, "triangle")
     xyz = mesh.points[triangles]
@@ -102,6 +106,7 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             short_by_patch.setdefault(int(patch[owners[0]]), []).append(edge)
     segments = np.asarray(physical_segments, dtype=float).reshape(-1, 2, 3)
     footprint = np.asarray(footprint_segments, dtype=float).reshape(-1, 2, 3)
+    junction = np.asarray(junction_segments, dtype=float).reshape(-1, 2, 3)
     bands, components = 0, []
     for patch_id, short in short_by_patch.items():
         adjacency = {}
@@ -135,18 +140,23 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             direction = axes[0]
             alignment = _segment_alignment(direction, segments)
             footprint_alignment = _segment_alignment(direction, footprint)
+            junction_alignment = _segment_alignment(direction, junction)
             aligned = alignment > 1 - 1e-6
             footprint_aligned = footprint_alignment > 1 - 1e-6
-            bands += int(line_like and not (aligned or footprint_aligned))
+            junction_aligned = junction_alignment > 1 - 1e-6
+            feature_aligned = aligned or footprint_aligned or junction_aligned
+            bands += int(line_like and not feature_aligned)
             owner = int(np.flatnonzero(patch == patch_id)[0])
             components.append({
                 "Attribute": int(labels[owner]), "Plane": planes[patch_id].tolist(),
                 "Endpoints": [points[first].tolist(), points[last].tolist()],
                 "Span": span, "RMSWidth": width, "PhysicalSegmentAlignment": alignment,
                 "FootprintSegmentAlignment": footprint_alignment,
+                "JunctionSegmentAlignment": junction_alignment,
                 "LineLike": line_like, "AlignedWithPhysicalSegment": aligned,
                 "AlignedWithFootprintSegment": footprint_aligned,
-                "AlignedWithFeature": aligned or footprint_aligned,
+                "AlignedWithJunctionSegment": junction_aligned,
+                "AlignedWithFeature": feature_aligned,
                 "Vertices": len(component)})
     return {"GlobalDiagonalBands": bands,
             "ShortInternalEdges": sum(map(len, short_by_patch.values())),
@@ -155,10 +165,12 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                                   "MaximumPropagatedShortEdge": 2.0 * float(normal_size)},
             "FeatureSegments": {"Signature": int(len(segments)),
                                 "Footprint": int(len(footprint)),
+                                "Junction": int(len(junction)),
                                 "Rule": "a band is a diagonal over-refinement only when aligned "
-                                        "with neither a signature edge nor a simplified etch "
+                                        "with none of: a signature edge, a simplified etch "
                                         "footprint edge (physical dielectric step edges that "
-                                        "legitimately carry the NormalSize band)"},
+                                        "legitimately carry the NormalSize band), a cut-surface/"
+                                        "material-interface junction line (same band)"},
             "LongShortEdgeComponents": components}
 
 
@@ -664,6 +676,17 @@ def _footprint_segments(restoration_recipe_path):
     return segments.reshape(-1, 2, 3), record.get("Provenance")
 
 
+def _junction_segments(restoration_recipe_path):
+    """Cut-surface/material-interface junction lines recorded by the bound metric stage."""
+    record = json.loads(Path(restoration_recipe_path).read_text()).get("JunctionSegments")
+    if not isinstance(record, dict) or not isinstance(record.get("Segments"), list):
+        raise ValueError("Restoration recipe lacks the junction segments")
+    segments = np.asarray(record["Segments"], dtype=float)
+    if segments.ndim != 2 or segments.shape[1] != 6 or not np.all(np.isfinite(segments)):
+        raise ValueError("Restoration recipe junction segments are invalid")
+    return segments.reshape(-1, 2, 3)
+
+
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
                     ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8):
@@ -692,6 +715,10 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     homogeneous_footprint = np.concatenate(
         (footprint, np.ones((*footprint.shape[:2], 1))), axis=2)
     transformed_footprint = (homogeneous_footprint @ matrix.T)[..., :3].reshape(-1, 6)
+    junction = _junction_segments(restoration_recipe_path)
+    homogeneous_junction = np.concatenate(
+        (junction, np.ones((*junction.shape[:2], 1))), axis=2)
+    transformed_junction = (homogeneous_junction @ matrix.T)[..., :3].reshape(-1, 6)
     corners = np.asarray(transformed_recipe["TruePhysicalCorners"], dtype=float).reshape(-1, 3)
     if len(corners):
         homogeneous_corners = np.column_stack((corners, np.ones(len(corners))))
@@ -741,7 +768,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                                      "Transverse2P90": percentiles[2][2]},
               "TraceDiagonal": {**_global_diagonal_bands(
                   mesh, transformed_recipe["PhysicalSegments"],
-                  transformed_recipe["NormalSize"], transformed_footprint),
+                  transformed_recipe["NormalSize"], transformed_footprint,
+                  transformed_junction),
                   "FootprintSegmentProvenance": footprint_provenance},
               "MeshQuality": _tetra_quality(mesh)}
     base["Measurements"] = actual

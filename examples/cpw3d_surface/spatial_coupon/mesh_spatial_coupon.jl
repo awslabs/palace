@@ -2121,6 +2121,9 @@ function generate_spatial_coupon(;
 
     matching = Int32[]
     boundary_groups = Dict{Int, Vector{Int32}}()
+    # Material interfaces: interior surfaces with a substrate volume on one side
+    # and a vacuum volume on the other (trench floor and walls, un-etched plane).
+    interface_surfaces = Int32[]
     for (dim, tag) in gmsh.model.getEntities(2)
         up, _ = gmsh.model.getAdjacencies(dim, tag)
         adjacent_substrate = [volume for volume in up if volume in substrate_set]
@@ -2142,6 +2145,7 @@ function generate_spatial_coupon(;
                     abs(zmin - edge.point[3]) < tolerance &&
                     abs(zmax - edge.point[3]) < tolerance ? 3000 + edge.slot :
                     3100 + edge.slot
+                push!(interface_surfaces, tag)
             elseif !isempty(adjacent_substrate)
                 owner = nearest_metal_edge(edges, facets, point, radius, tolerance)
                 attribute = metal_surface_attribute(5000, owner.slot, owner.conductor)
@@ -2159,6 +2163,7 @@ function generate_spatial_coupon(;
                 attribute = metal_surface_attribute(4000, owner.slot, owner.conductor)
             elseif !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
                 attribute = 3000 + edge.slot
+                push!(interface_surfaces, tag)
             end
         end
         attribute > 0 && push!(get!(boundary_groups, attribute, Int32[]), tag)
@@ -2208,6 +2213,25 @@ function generate_spatial_coupon(;
     end
     sort!(feature_curves)
     isempty(feature_curves) && error("No physical process-feature curves were generated")
+    # The lines where a material interface meets the outer box (the cut/trench and
+    # cut/un-etched-plane junctions) are feature curves with the same band as the
+    # process edges: the physics pilot located every AMR mark within 0.3 um of
+    # them. They are curves of interface surfaces lying on the outer box.
+    junction_curves = Int32[]
+    for surface in interface_surfaces
+        for (curve_dim, curve) in gmsh.model.getBoundary([(2, surface)], false, false, false)
+            curve_dim == 1 || continue
+            on_outer_box(gmsh.model.getBoundingBox(curve_dim, curve), lower, upper,
+                         outer_tolerance) || continue
+            push!(junction_curves, curve)
+        end
+    end
+    sort!(unique!(junction_curves))
+    isempty(junction_curves) &&
+        error("No cut-surface/material-interface junction curves were generated")
+    junction_length = sum(gmsh.model.occ.getMass(1, curve) for curve in junction_curves)
+    append!(feature_curves, junction_curves)
+    sort!(unique!(feature_curves))
     longitudinal_curves = Int32[]
     corner_curves = Int32[]
     corner_grading_slope = (lc_far - lc_fine) / (process_core_width - process_fine_width)
@@ -2243,6 +2267,7 @@ function generate_spatial_coupon(;
     println(
         "Spatial mesh features: candidates=$(length(candidate_curves)), " *
         "physical=$(length(feature_curves)), " *
+        "junction=$(length(junction_curves)) (length $junction_length), " *
         "longitudinal=$(length(longitudinal_curves)), " *
         "corner_isotropic_longitudinal=$(length(corner_curves)), " *
         "discarded_coplanar_seams=$(length(discarded_seams)), " *
@@ -2331,8 +2356,11 @@ function generate_spatial_coupon(;
     corner_reach = corner_isotropy ?
         corner_law_reach(corner_isotropy_radius, lc_fine, lc_tangent, corner_grading_slope) :
         0.0
+    # The ridge-to-ridge face census concerns the process edges' faces (metal
+    # sidewalls), not the box faces the junction curves bound.
     face_rows = corner_isotropy ?
-        longitudinal_face_census(longitudinal_curves, semantic_corners, corner_reach) :
+        longitudinal_face_census(setdiff(longitudinal_curves, junction_curves),
+                                 semantic_corners, corner_reach) :
         Dict{String, Any}[]
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
@@ -2399,6 +2427,13 @@ function generate_spatial_coupon(;
                 "GradingTransitionWidth" => process_core_width - process_fine_width,
                 "LongitudinalCurves" => length(longitudinal_curves),
                 "CornerIsotropicLongitudinalCurves" => length(corner_curves),
+                "JunctionCurves" => Dict{String, Any}(
+                    "Count" => length(junction_curves),
+                    "TotalLength" => junction_length,
+                    "Rule" => "curves of material-interface surfaces (substrate on one " *
+                              "side, vacuum on the other) lying on the outer box: the " *
+                              "cut-surface junctions of the trench floor/walls and the " *
+                              "un-etched plane; feature curves with the process-edge band"),
                 "CornerLawReach" => corner_reach,
                 "LongitudinalFaceHistogramBins" => LONGITUDINAL_FACE_HISTOGRAM_BINS,
                 "LongitudinalFaces" => face_rows,

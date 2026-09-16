@@ -213,6 +213,21 @@ def cut_surface_attributes(contract):
             if item["Role"] in roles}
 
 
+def material_interface_attributes(contract):
+    """Boundary labels whose triangles separate two volume materials.
+
+    These are the dielectric interfaces (the etched trench floor and walls and
+    the un-etched substrate-vacuum plane): an adjacency set with two materials
+    means both materials meet across the same triangle.  Cut-surface roles are
+    excluded even when their adjacency lists both materials, because each cut
+    triangle touches one material (`AdjacentMaterialSets` [[1], [2]]); conductor
+    labels touch one material and are excluded by the same rule.
+    """
+    cut = cut_surface_attributes(contract)
+    return {attribute for attribute, sets in boundary_adjacency(contract).items()
+            if attribute not in cut and any(len(values) >= 2 for values in sets)}
+
+
 def simple_sharp_contract():
     """Explicit compatibility contract for the historical one-slot scout."""
     return validate_semantic_contract({

@@ -507,6 +507,9 @@ def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None
     if 'PhysicalSegments' in local_recipe:
         segments=np.asarray(local_recipe['PhysicalSegments'],dtype=float).reshape(-1,2,3)
         local_recipe['PhysicalSegments']=((segments-translation)@rotation).tolist()
+    if isinstance(local_recipe.get('JunctionSegments'),dict):
+        segments=np.asarray(local_recipe['JunctionSegments']['Segments'],dtype=float).reshape(-1,2,3)
+        local_recipe['JunctionSegments']['Segments']=((segments-translation)@rotation).reshape(-1,6).tolist()
     for support in local_recipe['PlanarSupports'].values():
         global_normal=np.asarray(support['Normal'],dtype=float)
         support['Normal']=(rotation.T@global_normal).tolist()

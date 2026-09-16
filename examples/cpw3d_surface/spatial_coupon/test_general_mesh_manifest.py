@@ -1045,6 +1045,14 @@ class GeneralMeshManifestTest(unittest.TestCase):
             tampered(rewrite_census(SemanticCorners=[[9., 9., 9.]]), "census-corners")
             tampered(rewrite_census(LongitudinalFaces=None), "census-faces-omitted")
             tampered(rewrite_census(LongitudinalFaces=[{"Surface": 1}]), "census-faces-incomplete")
+            # The recipe's junction segments must be the census's CAD junction curves.
+            census_data = json.loads(
+                Path(seed_report["Artifacts"]["seed-corner-census"]["Path"]).read_text())
+            curves = census_data["JunctionCurves"]
+            tampered(rewrite_census(JunctionCurves=None), "census-junction-omitted")
+            tampered(rewrite_census(JunctionCurves={**curves, "TotalLength": 2 * curves["TotalLength"]}),
+                     "census-junction-length")
+            tampered(rewrite_census(JunctionCurves={**curves, "Count": 0}), "census-junction-count")
 
             # The metric stage must have frozen the seed corner balls it received.
             from mesh_stage_contract import validate_protected_corner_balls
@@ -1059,6 +1067,33 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     if value is None: data.pop(key, None)
                     else: data[key] = value
                 return data
+
+            from mesh_stage_contract import validate_junction_segments
+            junction = recipe_data["JunctionSegments"]
+            self.assertEqual(validate_junction_segments(recipe_data, census_data), junction)
+            self.assertEqual(junction["CutSurfaceAttributes"], [1])
+            self.assertEqual(junction["MaterialInterfaceAttributes"], [3])
+            for description, data in (
+                    ("junction-omitted", recipe_without(JunctionSegments=None)),
+                    ("junction-dropped", recipe_without(JunctionSegments={
+                        **junction, "Segments": junction["Segments"][1:],
+                        "Count": junction["Count"] - 1})),
+                    ("junction-count", recipe_without(JunctionSegments={
+                        **junction, "Count": junction["Count"] + 1})),
+                    ("junction-length", recipe_without(JunctionSegments={
+                        **junction, "TotalLength": 2 * junction["TotalLength"]})),
+                    ("junction-degenerate", recipe_without(JunctionSegments={
+                        **junction, "Segments": junction["Segments"][:-1] + [[0., 0., 0., 0., 0., 0.]]})),
+                    ("junction-cut-labels", recipe_without(JunctionSegments={
+                        **junction, "CutSurfaceAttributes": [3]})),
+                    ("junction-interface-labels", recipe_without(JunctionSegments={
+                        **junction, "MaterialInterfaceAttributes": [1, 3]}))):
+                with self.assertRaises(ValueError, msg=description):
+                    validate_junction_segments(data, census_data)
+                path = root / f"recipe-{description}.json"
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError, msg=description):
+                    validate_seed_corner_isotropy(seed_report, path)
 
             for description, data in (
                     ("omitted", recipe_without(ProtectedCornerBalls=None)),
@@ -1387,6 +1422,19 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                          footprint_segments=[[[0., 0., 0.], [0., 1., 0.]]])
         self.assertEqual(neither["GlobalDiagonalBands"], 1)
         self.assertFalse(neither["LongShortEdgeComponents"][0]["AlignedWithFeature"])
+        # A band along a cut-surface/material-interface junction line carries the same
+        # band legitimately: aligned with the junction only -> not counted.
+        junction = _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
+                                          footprint_segments=[[[0., 0., 0.], [0., 1., 0.]]],
+                                          junction_segments=[[[0., 0., 0.], direction]])
+        self.assertEqual(junction["GlobalDiagonalBands"], 0)
+        component = junction["LongShortEdgeComponents"][0]
+        self.assertFalse(component["AlignedWithPhysicalSegment"])
+        self.assertFalse(component["AlignedWithFootprintSegment"])
+        self.assertTrue(component["AlignedWithJunctionSegment"])
+        self.assertTrue(component["AlignedWithFeature"])
+        self.assertEqual(junction["FeatureSegments"]["Junction"], 1)
+        self.assertEqual(neither["FeatureSegments"]["Junction"], 0)
         with self.assertRaisesRegex(ValueError, "Degenerate feature segment"):
             _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
                                    footprint_segments=[[[0., 0., 0.], [0., 0., 0.]]])
