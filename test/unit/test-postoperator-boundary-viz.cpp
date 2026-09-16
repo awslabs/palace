@@ -1037,9 +1037,15 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CheckStats("J_s_imag", CompareVectorField(ReadBoundaryChecked("J_s_imag", 3), pmesh, lod,
                                             J_imag_legacy, rtol, atol));
 
-  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op, eps_scaling);
-  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(B, mat_op, invmu_scaling);
-  PoyntingVectorCoefficient S_legacy(E, B, mat_op, invmu_scaling);
+  // The written energy densities and Poynting vector are the time averages for the complex
+  // eigenmode fields: 1/2 of the raw same-phase coefficient sums, on top of the unit
+  // scaling.
+  constexpr double time_average = 0.5;
+  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(
+      E, mat_op, time_average * eps_scaling);
+  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(
+      B, mat_op, time_average * invmu_scaling);
+  PoyntingVectorCoefficient S_legacy(E, B, mat_op, time_average * invmu_scaling);
   CheckStats("U_e boundary", CompareScalarField(ReadBoundaryChecked("U_e", 1), pmesh, lod,
                                                 Ue_legacy, rtol, atol));
   CheckStats("U_m boundary", CompareScalarField(ReadBoundaryChecked("U_m", 1), pmesh, lod,
@@ -1181,9 +1187,15 @@ TEST_CASE_METHOD(test::SharedTempDir,
              CompareVectorField(ReadBoundaryChecked("J_s_imag", 2), pmesh, lod,
                                 J_imag_legacy, rtol, atol));
 
-  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op, eps_scaling);
-  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(B, mat_op, invmu_scaling);
-  PoyntingVectorCoefficient S_legacy(E, B, mat_op, invmu_scaling);
+  // The written energy densities and Poynting vector are the time averages for the complex
+  // eigenmode fields: 1/2 of the raw same-phase coefficient sums, on top of the unit
+  // scaling.
+  constexpr double time_average = 0.5;
+  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(
+      E, mat_op, time_average * eps_scaling);
+  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(
+      B, mat_op, time_average * invmu_scaling);
+  PoyntingVectorCoefficient S_legacy(E, B, mat_op, time_average * invmu_scaling);
   CheckStats("U_e boundary 2D", CompareScalarField(ReadBoundaryChecked("U_e", 1), pmesh,
                                                    lod, Ue_legacy, rtol, atol));
   CheckStats("U_m boundary 2D", CompareScalarField(ReadBoundaryChecked("U_m", 1), pmesh,

@@ -1123,16 +1123,18 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
 
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
+    // Incident voltage and current of the excited port: peak amplitudes of the unit time-
+    // averaged power wave for the frequency domain, instantaneous amplitudes scaled by the
+    // pulse envelope for the time domain.
+    constexpr bool time_harmonic = (solver_t == ProblemType::DRIVEN);
     for (const auto &[idx, data] : lumped_port_op)
     {
       // Cast to avoid compiler warnings about types.
       if (static_cast<std::size_t>(data.excitation) == m_ex_idx)
       {
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
-        double V_inc = data.GetExcitationVoltage() * Jcoeff;
-        double I_inc = (std::abs(V_inc) > 0.0)
-                           ? data.GetExcitationPower() * Jcoeff * Jcoeff / V_inc
-                           : 0.0;
+        double V_inc = data.GetExcitationVoltage(time_harmonic) * Jcoeff;
+        double I_inc = data.GetExcitationCurrent(time_harmonic) * Jcoeff;
 
         port_V->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
             << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc);
@@ -1371,16 +1373,14 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
       port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
     }
 
-    // Per-excitation total-field impedance Z[i][j] = (V · conj(V)) / (2 P_avg).
-    // GetPower returns the full Poynting integral ∫(E × H*)·n dS (without the
-    // 1/2 time-averaging factor), so Z = (V · conj(V)) / P. This is direction-
-    // specific (sign of P depends on whether the field at port i is incoming or
-    // outgoing): Re{Z[i][i]} > 0 at the driven port, but Re{Z[i][j]} for i ≠ j
-    // can be negative when port i is a passive receiver of power leaving the
-    // domain.
+    // Per-excitation total-field impedance Z[i][j] = (V · conj(V)) / (2 P_avg), with
+    // GetPower returning the time-averaged power P_avg = 1/2 ∫(E × H*)·n dS of the peak
+    // phasors. This is direction-specific (sign of P depends on whether the field at port
+    // i is incoming or outgoing): Re{Z[i][i]} > 0 at the driven port, but Re{Z[i][j]} for
+    // i ≠ j can be negative when port i is a passive receiver of power leaving the domain.
     if (std::abs(data.P) > 0.0)
     {
-      auto Z = (data.V * std::conj(data.V)) / data.P;
+      auto Z = std::norm(data.V) / (2.0 * data.P);
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }

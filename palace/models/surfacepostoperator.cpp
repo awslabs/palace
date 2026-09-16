@@ -12,6 +12,7 @@
 #include "models/materialoperator.hpp"
 #include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
@@ -313,11 +314,16 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
 {
   // For complex-valued fields, output the separate real and imaginary parts for the time-
   // harmonic quantity. For power flux (Poynting vector), output only the stationary real
-  // part and not the part which has double the frequency.
+  // part and not the part which has double the frequency, time-averaged over one period
+  // for complex peak phasors (the electric and magnetic fluxes are linear in the fields
+  // and carry no such factor).
   auto it = flux_surfs.find(idx);
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown surface flux postprocessing index requested!");
   const bool has_imag = (E) ? E->HasImag() : B->HasImag();
+  const double power_weight = (it->second.type == SurfaceFlux::POWER)
+                                  ? electromagnetics::TimeAverageWeight(has_imag)
+                                  : 1.0;
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
@@ -334,7 +340,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   }
   if (func && func->IsValid())
   {
-    return func->EvalFlux(E, B);
+    return power_weight * func->EvalFlux(E, B);
   }
   if (IsSupportedSurfaceFluxDimension(mesh))
   {
@@ -359,7 +365,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     }
   }
   Mpi::GlobalSum(1, &dot, (E) ? E->GetComm() : B->GetComm());
-  return dot;
+  return power_weight * dot;
 }
 
 double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
@@ -373,9 +379,12 @@ double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
 double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
                                                             const GridFunction &E) const
 {
+  // The interface energy integrands are 1/2 t ε |E|² (and variants); for complex peak
+  // phasors the reported energy is the time average over one period.
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
               "Unknown interface dielectric postprocessing index requested!");
+  const double weight = electromagnetics::TimeAverageWeight(E.HasImag());
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
@@ -391,7 +400,7 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   }
   if (func && func->IsValid())
   {
-    return func->Eval(E);
+    return weight * func->Eval(E);
   }
   if (IsSupportedSurfaceFunctionalDimension(mesh))
   {
@@ -401,7 +410,7 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   auto f = it->second.GetCoefficient(E, mat_op);
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
-  return dot;
+  return weight * dot;
 }
 
 double
