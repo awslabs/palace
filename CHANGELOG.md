@@ -17,12 +17,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
+    by including complex terms in the real-valued preconditioner, or using an exact
+    complex-valued preconditioner when `"ComplexCoarseSolve"` is true. Numeric wave ports
+    can override this choice per port with `"ComplexCoarseSolve"`, without changing the full
+    3D system preconditioner. SchemaVer 1-7-0
+    [PR 921](https://github.com/awslabs/palace/pull/921).
+
 #### Bug Fixes
 
   - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
     integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
   - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
     or leading to incorrect results. [PR 927](https://github.com/awslabs/palace/pull/927).
+  - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
+    port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
+    [PR 921](https://github.com/awslabs/palace/pull/921).
 
 #### Performance Improvements
 
