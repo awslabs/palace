@@ -63,8 +63,25 @@ def junction_curves(scale):
             "Segments": segments, "Rule": "fixture"}
 
 
+def trace_basis_sizing(basis_paths, ratio, scale):
+    """Fixture record of the trace-basis cut-surface size rule (schema of the production
+    seeder): the bound input digests, the dimensionless ratio and one mesh-frame basis
+    triangle on the fixture's cut face."""
+    if basis_paths is None:
+        return None
+    digests = {role: hashlib.sha256(path.read_bytes()).hexdigest()
+               for role, path in zip(("BasisContract", "TraceVertices", "TraceTriangles",
+                                      "ProcessLibrary"), basis_paths)}
+    return {"Ratio": ratio, "RatioIsDimensionless": True, "Rule": "fixture",
+            "InputSHA256": digests, "Lower": [0.0, 0.0, -.001 * scale],
+            "Upper": [10.001 * scale, .001 * scale, .001 * scale],
+            "Triangles": 1, "BasisEdgesBelowFarSize": 1, "MinimumRequestedSize": ratio * .001 * scale,
+            "MeshSizeMinimum": min(ratio * .001 * scale, .1), "GradingSlope": 1.0,
+            "MeshFrameTriangles": [[[0.0, 0.0, 0.0], [.08 * scale, 0.0, 0.0], [0.0, 0.0, .001 * scale]]]}
+
+
 def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None,
-                  scale=1.0):
+                  scale=1.0, basis_paths=None, ratio=None):
     """Recorded corner-ball census of the fixture seed (schema of the production seeder)."""
     contract = json.loads(contract_path.read_text())
     corners = contract["SemanticCorners"]
@@ -89,6 +106,7 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                                                   "MaximumRelativeDeviation": 0.0,
                                                   "Tolerance": 1e-6}}],
         "JunctionCurves": junction_curves(scale),
+        "TraceBasisSizing": trace_basis_sizing(basis_paths, ratio, scale),
         "InterfaceAreaUnits": "um^2",
         # One row per contract boundary label, as written in the fixture seed.
         "InterfaceAreas": [{"Attribute": 1, "Name": "surface_1", "Triangles": 7,
@@ -119,9 +137,25 @@ def main():
     parser.add_argument("--corner-census", type=Path, required=True)
     # The device etch footprint is consumed only when the case binds one.
     parser.add_argument("--etch-boundary", type=Path)
+    # The trace basis (and its dimensionless size ratio) only when the case binds one.
+    parser.add_argument("--trace-basis-contract", type=Path)
+    parser.add_argument("--trace-vertices", type=Path)
+    parser.add_argument("--trace-triangles", type=Path)
+    parser.add_argument("--process-library", type=Path)
+    parser.add_argument("--trace-basis-size-ratio", type=float)
     args = parser.parse_args()
     if args.etch_boundary is not None and not args.etch_boundary.is_file():
         parser.error("the bound retained etch footprint must exist")
+    basis_paths = (args.trace_basis_contract, args.trace_vertices, args.trace_triangles,
+                   args.process_library)
+    if any(path is not None for path in basis_paths):
+        if any(path is None or not path.is_file() for path in basis_paths) or \
+                args.trace_basis_size_ratio is None:
+            parser.error("the trace basis needs all four bound files and its size ratio")
+    elif args.trace_basis_size_ratio is not None:
+        parser.error("a trace basis size ratio needs the bound trace basis")
+    else:
+        basis_paths = None
     if any(not path.is_file() for path in (args.signature, args.mask, args.boundary,
                                            args.semantic_contract)):
         parser.error("signature, mask, boundary, and semantic contract inputs must exist")
@@ -129,7 +163,8 @@ def main():
         parser.error("corner census output must be fresh")
     produce(args.output, json.loads(args.transform.read_text()), args.scale)
     corner_census(args.corner_census, args.semantic_contract, args.corner_isotropy_radius,
-                  args.lc_fine, args.etch_boundary, args.scale)
+                  args.lc_fine, args.etch_boundary, args.scale, basis_paths,
+                  args.trace_basis_size_ratio)
 
 
 if __name__ == "__main__":

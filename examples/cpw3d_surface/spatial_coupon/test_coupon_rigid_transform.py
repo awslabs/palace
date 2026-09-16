@@ -446,6 +446,77 @@ class RigidProducerIntegrationTest(unittest.TestCase):
                 "--corner-census", str(root / "absent-census.json")],
                 expect_failure="absent from the seed CAD")
 
+    def test_trace_basis_sizes_the_cut_surface_and_is_recorded_and_covariant(self):
+        """The bound trace basis (TraceBasisSizeRatio 4 keeps this coarse seed fast) sizes
+        the frozen cut surface by the per-triangle rule, is recorded in the census with the
+        mesh-frame triangles the metric stage reproduces, and is source-local (a placed
+        seed records the same rule); partial or inconsistent bindings fail closed."""
+        from trace_basis import cut_surface_size_report, load_trace_basis
+        basis_options = ["--trace-basis-contract", str(SOURCE / "basis-contract.json"),
+                         "--trace-vertices", str(SOURCE / "trace-vertices.csv"),
+                         "--trace-triangles", str(SOURCE / "trace-triangles.csv"),
+                         "--process-library", str(SOURCE / "process-library.json")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plain = self.produce(root, "plain", IDENTITY,
+                                 corner_isotropy=self.corner_isotropy(root, "plain"))
+            sized = self.produce(root, "sized", IDENTITY,
+                                 corner_isotropy=self.corner_isotropy(root, "sized") +
+                                 basis_options + ["--trace-basis-size-ratio", "4"])
+            rotated = self.produce(root, "rotated", ROTATE_Z,
+                                   corner_isotropy=self.corner_isotropy(root, "rotated", ROTATE_Z) +
+                                   basis_options + ["--trace-basis-size-ratio", "4"])
+            basis = load_trace_basis(SOURCE / "basis-contract.json", SOURCE / "trace-vertices.csv",
+                                     SOURCE / "trace-triangles.csv", SOURCE / "process-library.json")
+            plain_census = json.loads((root / "plain-census.json").read_text())
+            census = json.loads((root / "sized-census.json").read_text())
+            rotated_census = json.loads((root / "rotated-census.json").read_text())
+            self.assertIsNone(plain_census["TraceBasisSizing"])
+            record = census["TraceBasisSizing"]
+            self.assertEqual(record["Ratio"], 4.0); self.assertTrue(record["RatioIsDimensionless"])
+            self.assertEqual(record["InputSHA256"], basis["InputSHA256"])
+            self.assertEqual(record["Triangles"], len(basis["Triangles"]))
+            np.testing.assert_array_equal(np.asarray(record["MeshFrameTriangles"]),
+                                          basis["Points"][basis["Triangles"]])
+            self.assertEqual(record["FarSize"], 0.6)
+            self.assertLess(record["MeshSizeMinimum"], 0.2)
+            self.assertAlmostEqual(record["MeshSizeMinimum"], record["MinimumRequestedSize"])
+            self.assertGreater(record["BasisEdgesBelowFarSize"], 0)
+            # Source-local record: the placed seed records exactly the same rule.
+            self.assertEqual(rotated_census["TraceBasisSizing"], record)
+
+            def cut_report(path):
+                mesh = meshio.read(path)
+                triangles = np.concatenate([c.data for c in mesh.cells if c.type == "triangle"])
+                labels = np.concatenate([r for c, r in zip(mesh.cells, mesh.cell_data["gmsh:physical"])
+                                         if c.type == "triangle"])
+                return cut_surface_size_report(mesh.points, triangles[labels == 1], basis, 4.0, 0.6)
+            before, after = cut_report(plain), cut_report(sized)
+            # The far size is kept where no narrow hat is: the median cut size is unchanged
+            # in kind (coarse), while every narrow basis triangle is now resolved to the
+            # requested size (Gmsh honours a size field to within a modest overshoot).
+            self.assertGreater(before["MaximumExtentOverRequested"], 2.0)
+            self.assertLess(after["MaximumExtentOverRequested"], 1.5)
+            self.assertGreater(after["Median"], 0.5 * before["Median"])
+            self.assertGreater(after["CutTriangles"], before["CutTriangles"])
+            # Fail closed: partial options, no contract, invalid ratio, another coupon's basis.
+            self.produce(root, "partial", IDENTITY,
+                         corner_isotropy=self.corner_isotropy(root, "partial") + basis_options[:6],
+                         expect_failure="together")
+            self.produce(root, "no-contract", IDENTITY, corner_isotropy=basis_options,
+                         expect_failure="corner isotropy")
+            self.produce(root, "bad-ratio", IDENTITY,
+                         corner_isotropy=self.corner_isotropy(root, "bad-ratio") + basis_options +
+                         ["--trace-basis-size-ratio", "0"], expect_failure="positive finite")
+            other = HERE / "testdata" / "ten-edge-6791f1c84123"
+            self.produce(root, "other-box", IDENTITY,
+                         corner_isotropy=self.corner_isotropy(root, "other-box") + [
+                             "--trace-basis-contract", str(other / "basis-contract.json"),
+                             "--trace-vertices", str(other / "trace-vertices.csv"),
+                             "--trace-triangles", str(other / "trace-triangles.csv"),
+                             "--process-library", str(other / "process-library.json")],
+                         expect_failure="differs from the coupon box")
+
     def test_multislot_tilted_translation_preserves_exact_slot_conductor_labels(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

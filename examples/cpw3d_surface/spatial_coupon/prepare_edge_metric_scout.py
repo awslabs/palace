@@ -9,16 +9,19 @@ provenance: the caller must independently check geometry and topology afterwards
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 import meshio
 import numpy as np
-from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,junction_segments,
-                                surface_features,volume_metric,segment_distances)
+from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,intersect_metrics,
+                                junction_segments,surface_features,volume_metric,segment_distances)
 from mesh_array_io import read_mesh,sha
 from mesh_stage_contract import footprint_provenance,footprint_segments
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     load_semantic_contract, material_interface_attributes,
                                     simple_sharp_contract, volume_attributes)
+from trace_basis import (basis_statistics, cut_surface_size_report, load_trace_basis,
+                         trace_basis_sizes, transform_trace_basis)
 
 
 def _near_segment(point, segments, tolerance):
@@ -217,9 +220,63 @@ def junction_segment_record(segments, semantic_contract, census=None):
                     'intersection order'}
 
 
+TRACE_BASIS_RULE=('cut-surface element size <= TraceBasisSizeRatio x the shortest edge of the '
+                  'basis triangle containing the point (per-triangle rule: the hat of a basis '
+                  'vertex varies linearly over the whole triangle, so its support is resolved '
+                  'where it varies only when the whole triangle is discretized at that scale); '
+                  'the seed applies it on the frozen cut surface, the metric applies '
+                  'min(FarSize, size + FarGrowth x distance to the triangle) to the volume so '
+                  'the existing far/grading law is kept away from narrow hats; the only new '
+                  'parameter is the dimensionless ratio')
+
+
+def trace_basis_sizing_record(basis, ratio, census, semantic_contract, exact_planes, points,
+                              cut_triangles, far_size, growth, tolerance=1e-8):
+    """Bind the trace basis to the seed and record the cut-surface size rule.
+
+    The census must record the same basis (input digests, ratio, mesh-frame
+    triangles) - the seed sized the frozen cut surface with it - and every basis
+    vertex, placed by the contract's rigid transform, must lie on a cut-surface
+    plane of the seed.  Returns (placed basis, recipe record).
+    """
+    if not np.isfinite(ratio) or ratio<=0:
+        raise ValueError('TraceBasisSizeRatio must be a positive finite dimensionless number')
+    record=census.get('TraceBasisSizing') if isinstance(census,dict) else None
+    source_triangles=np.asarray(basis['Points'])[np.asarray(basis['Triangles'])]
+    scale=float(np.max(np.asarray(basis['Upper'])-np.asarray(basis['Lower'])))
+    if (not isinstance(record,dict) or record.get('Ratio')!=ratio or
+            record.get('InputSHA256')!=basis['InputSHA256'] or
+            not isinstance(record.get('MeshFrameTriangles'),list)):
+        raise ValueError('Seed census trace basis sizing differs from the bound trace basis')
+    recorded=np.asarray(record['MeshFrameTriangles'],dtype=float)
+    if (recorded.shape!=source_triangles.shape or
+            not np.allclose(recorded,source_triangles,rtol=0.,atol=tolerance*scale)):
+        raise ValueError('Seed census trace basis triangles differ from the bound trace basis')
+    placement=semantic_contract.get('RigidTransform',[1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.])
+    placed=transform_trace_basis(basis,placement)
+    cut=cut_surface_attributes(semantic_contract)
+    planes=exact_planes[np.isin(exact_planes[:,0],list(cut))]
+    if not len(planes):raise ValueError('Seed has no cut-surface planar support')
+    offsets=np.abs(placed['Points']@planes[:,1:4].T-planes[:,4][None,:])
+    if np.any(offsets.min(axis=1)>tolerance*scale):
+        raise ValueError('Trace basis vertices do not lie on the seed cut-surface planes')
+    statistics=basis_statistics(placed,ratio,far_size)
+    report=cut_surface_size_report(points,cut_triangles,placed,ratio,far_size)
+    return placed,{'Ratio':float(ratio),'RatioIsDimensionless':True,'Rule':TRACE_BASIS_RULE,
+                   'Model':basis['Model'],'Frame':np.asarray(basis['Frame']).tolist(),
+                   'InputSHA256':basis['InputSHA256'],
+                   'Lower':np.asarray(basis['Lower']).tolist(),'Upper':np.asarray(basis['Upper']).tolist(),
+                   **statistics,'FarSize':float(far_size),'Growth':float(growth),
+                   'SeedMeshSizeMinimum':record.get('MeshSizeMinimum'),
+                   'SeedGradingSlope':record.get('GradingSlope'),
+                   'CutSurfaceSize':report,
+                   'MeshFrameTriangles':source_triangles.tolist()}
+
+
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
             semantic_contract=None, transformed_supports=None, maximum_elements=None,
-            footprint_census=None, semantic_contract_sha256=None):
+            footprint_census=None, semantic_contract_sha256=None, trace_basis=None,
+            trace_basis_size_ratio=1.0):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
         raise ValueError('Invalid grading/protection controls')
     path=Path(path)
@@ -266,6 +323,15 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     normals=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);normals/=np.linalg.norm(normals,axis=1)[:,None]
     pivot=np.argmax(abs(normals),axis=1);normals*=np.sign(normals[np.arange(len(normals)),pivot])[:,None]
     exact_planes,patch=cluster_planar_supports(triangle_refs,normals,xyz)
+    cut_mask=np.isin(triangle_refs,list(cut_surface_attributes(semantic_contract)))
+    if trace_basis is None:
+        if isinstance(footprint_census,dict) and footprint_census.get('TraceBasisSizing') is not None:
+            raise ValueError('Seed census records a trace basis the metric stage does not bind')
+        placed_basis,trace_record=None,None
+    else:
+        placed_basis,trace_record=trace_basis_sizing_record(
+            trace_basis,trace_basis_size_ratio,footprint_census,semantic_contract,exact_planes,
+            mesh.points,triangles[cut_mask],effective_far,effective_far_growth)
     # Separate planar supports during adaptation. Restore original physical labels
     # only after independently checking/projecting each support intersection.
     patch_references=(10000+patch).astype(np.int32)
@@ -279,7 +345,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     # Medit version 2 is unambiguous; output can still use native MMG .meshb.
     meshio.write(path/'seed.mesh',inputs,file_format='medit')
     np.savetxt(path/'pins.txt',pins+1,fmt='%d')
-    fixed=np.isin(triangle_refs,list(cut_surface_attributes(semantic_contract)))
+    fixed=cut_mask.copy()
     diameter=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1)
         for i,j in ((0,1),(1,2),(2,0))]),axis=0)
     if protect_surface>0:
@@ -302,6 +368,14 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             metric=volume_metric(mesh.points[start:start+100000],band_segments,corners,normal,tangent,effective_far,
                                  protected_distance=protected_distance,far_growth=effective_far_growth,
                                  isotropic_corners=semantic_corners,isotropy_radius=tangent)
+            if placed_basis is not None:
+                # Trace rule blended into the far/grading law: an isotropic cap where
+                # a narrow basis triangle is near; the far size elsewhere (no change).
+                sizes=trace_basis_sizes(mesh.points[start:start+100000],placed_basis,
+                                        trace_basis_size_ratio,effective_far,effective_far_growth)
+                active=sizes<effective_far
+                cap=np.eye(3)[None,:,:]/sizes[active,None,None]**2
+                metric[active]=intersect_metrics(metric[active],cap)
             if np.any(np.linalg.eigvalsh(metric)<=0):raise ValueError('Metric is not SPD')
             # Native C API order, explicitly NOT the Medit .sol file order.
             metric[:,[0,0,0,1,1,2],[0,1,2,1,2,2]].astype('<f8').tofile(f)
@@ -343,9 +417,14 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                        'within the tolerance; shared with the planar-patch audits'},
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     if footprint is not None:recipe['FootprintSegments']=footprint
+    if trace_record is not None:recipe['TraceBasisSizing']=trace_record
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
-    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments')},indent=2))
+    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments','TraceBasisSizing')},indent=2))
     print(json.dumps({'JunctionSegments':{k:v for k,v in junction_record.items() if k!='Segments'}},indent=2))
+    if trace_record is not None:
+        print(json.dumps({'TraceBasisSizing':{k:(v if k!='CutSurfaceSize' else
+            {kk:vv for kk,vv in v.items() if kk!='BasisTrianglesBelowFarSize'})
+            for k,v in trace_record.items() if k not in ('MeshFrameTriangles','RequestedSizes','Rule')}},indent=2))
     return recipe
 
 
@@ -364,17 +443,36 @@ def main():
                    help='required transformed source-support contract with --semantic-contract')
     p.add_argument('--seed-census',type=Path,
                    help='required seed corner census (simplified footprint polygons) with --semantic-contract')
+    p.add_argument('--trace-basis-contract',type=Path,help='bound trace basis contract (basis-contract.json)')
+    p.add_argument('--trace-vertices',type=Path,help='bound trace basis vertices (trace-vertices.csv)')
+    p.add_argument('--trace-triangles',type=Path,help='bound trace basis triangles (trace-triangles.csv)')
+    p.add_argument('--process-library',type=Path,help='bound process library (frame of the trace basis)')
+    p.add_argument('--trace-basis-size-ratio',type=float,default=1.0,
+                   help='dimensionless TraceBasisSizeRatio of the cut-surface size rule (default 1.0: '
+                        'at least one element per basis edge); only with the four trace basis inputs')
     a=p.parse_args();m=read_mesh(a.mesh)
     if not (bool(a.semantic_contract) == bool(a.transformed_supports) == bool(a.seed_census)):
         p.error('--semantic-contract, --transformed-supports and --seed-census are required together')
+    basis_paths=(a.trace_basis_contract,a.trace_vertices,a.trace_triangles,a.process_library)
+    if any(path is not None for path in basis_paths) and (
+            any(path is None for path in basis_paths) or not a.semantic_contract):
+        p.error('--trace-basis-contract, --trace-vertices, --trace-triangles and --process-library '
+                'are required together with --semantic-contract')
+    if '--trace-basis-size-ratio' in sys.argv and basis_paths[0] is None:
+        p.error('--trace-basis-size-ratio requires the bound trace basis inputs')
+    basis=(load_trace_basis(*basis_paths) if basis_paths[0] is not None else None)
     semantic=(load_semantic_contract(a.semantic_contract) if a.semantic_contract
               else simple_sharp_contract())
     supports=(json.loads(a.transformed_supports.read_text()) if a.transformed_supports else None)
     census=(json.loads(a.seed_census.read_text()) if a.seed_census else None)
     r=prepare(m,a.output,a.normal,a.tangent,a.far,
         a.protected_distance,a.far_growth,a.protect_surface,semantic,supports,
-        a.maximum_elements,census,sha(a.semantic_contract) if a.semantic_contract else None)
+        a.maximum_elements,census,sha(a.semantic_contract) if a.semantic_contract else None,
+        basis,a.trace_basis_size_ratio)
     r['SeedArtifact']=str(a.mesh.resolve());r['SeedArtifactSHA256']=sha(a.mesh)
+    if basis is not None:
+        r['TraceBasisSizing']['Inputs']={name:{'Path':str(path.resolve()),'SHA256':sha(path)}
+            for name,path in zip(('BasisContract','TraceVertices','TraceTriangles','ProcessLibrary'),basis_paths)}
     if a.transformed_supports:
         r['TransformedSupportsArtifact']=str(a.transformed_supports.resolve())
         r['TransformedSupportsSHA256']=sha(a.transformed_supports)

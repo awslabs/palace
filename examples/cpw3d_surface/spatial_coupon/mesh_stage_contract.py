@@ -47,8 +47,21 @@ STAGE_INPUTS = {
 }
 # Inputs a stage binds only when the case declares them. The device etch footprint
 # (retained-etch.csv) is bound for seed generation exactly when the case declares
-# a RetainedEtch source; otherwise the case records the producer default.
-STAGE_OPTIONAL_INPUTS = {"seed-generation": {"source-retained-etch"}}
+# a RetainedEtch source; otherwise the case records the producer default. The
+# trace basis (basis contract, trace vertices/triangles, process library for its
+# frame) is bound for seed generation and metric preparation exactly when the case
+# declares all four roles; the seed sizes the frozen cut surface with it and the
+# metric records the rule.
+TRACE_BASIS_INPUTS = {"source-basis-contract": "BasisContract",
+                      "source-trace-vertices": "TraceVertices",
+                      "source-trace-triangles": "TraceTriangles",
+                      "source-process-library": "ProcessLibrary"}
+TRACE_BASIS_OPTIONS = {"--trace-basis-contract": "source-basis-contract",
+                       "--trace-vertices": "source-trace-vertices",
+                       "--trace-triangles": "source-trace-triangles",
+                       "--process-library": "source-process-library"}
+STAGE_OPTIONAL_INPUTS = {"seed-generation": {"source-retained-etch", *TRACE_BASIS_INPUTS},
+                         "metric-preparation": set(TRACE_BASIS_INPUTS)}
 STAGE_OUTPUTS = {
     "canonical-source-validation": {"canonical-semantic-contract", "canonical-supports"},
     "seed-generation": {"seed-mesh", "seed-corner-census"},
@@ -114,7 +127,9 @@ STAGE_BINDING_OPTIONS = {
 # Options bound to an optional input: required with the bound path when the input
 # is bound, forbidden when it is not (an undeclared footprint is fail-closed).
 STAGE_OPTIONAL_BINDING_OPTIONS = {
-    "seed-generation": {"--etch-boundary": ("Inputs", "source-retained-etch")},
+    "seed-generation": {"--etch-boundary": ("Inputs", "source-retained-etch"),
+                        **{option: ("Inputs", name) for option, name in TRACE_BASIS_OPTIONS.items()}},
+    "metric-preparation": {option: ("Inputs", name) for option, name in TRACE_BASIS_OPTIONS.items()},
 }
 # Bound inputs/outputs that are consumed positionally and must occur in argv.
 STAGE_BINDING_ARGUMENTS = {
@@ -608,6 +623,94 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
     return census
 
 
+TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
+
+
+def bound_trace_basis(report):
+    """Digests of the trace basis inputs a stage bound, keyed by source role, or None
+    when it bound none; a partial binding fails closed."""
+    inputs = report["Inputs"]
+    present = {name for name in TRACE_BASIS_INPUTS if name in inputs}
+    if not present:
+        return None
+    if present != set(TRACE_BASIS_INPUTS):
+        raise ValueError("Stage bound an incomplete trace basis")
+    return {role: inputs[name]["SHA256"] for name, role in TRACE_BASIS_INPUTS.items()}
+
+
+def _optional_ratio(command, bound):
+    positions = [index for index, value in enumerate(command) if value == TRACE_BASIS_RATIO_OPTION]
+    if not bound:
+        if positions:
+            raise ValueError("Stage command passes a trace basis size ratio without a bound trace basis")
+        return None
+    try:
+        ratio = float(_option_value(command, TRACE_BASIS_RATIO_OPTION))
+    except ValueError as error:
+        raise ValueError(f"Stage command {TRACE_BASIS_RATIO_OPTION} is not a bound number: {error}") from error
+    if not math.isfinite(ratio) or ratio <= 0:
+        raise ValueError("Trace basis size ratio must be a positive finite number")
+    return ratio
+
+
+def validate_trace_basis_sizing(seed_report, metric_report, recipe, census):
+    """The seed and the metric stage bind the same trace basis (or none); when bound,
+    both commands pass the same dimensionless TraceBasisSizeRatio, the census and the
+    recipe record that ratio, the bound input digests and the same mesh-frame basis
+    triangles, and the recipe records the cut-surface size statistics."""
+    seed_basis = bound_trace_basis(seed_report)
+    metric_basis = bound_trace_basis(metric_report)
+    if seed_basis != metric_basis:
+        raise ValueError("Seed and metric stages bound different trace bases")
+    seed_ratio = _optional_ratio(seed_report["Command"], seed_basis is not None)
+    metric_ratio = _optional_ratio(metric_report["Command"], metric_basis is not None)
+    record = recipe.get("TraceBasisSizing")
+    census_record = census.get("TraceBasisSizing")
+    if seed_basis is None:
+        if record is not None or census_record is not None:
+            raise ValueError("Trace basis sizing recorded without a bound trace basis")
+        return None
+    if (not isinstance(record, dict) or not isinstance(census_record, dict) or
+            seed_ratio != metric_ratio or _recipe_number(record, "Ratio") != seed_ratio or
+            _recipe_number(census_record, "Ratio") != seed_ratio or
+            record.get("RatioIsDimensionless") is not True or
+            record.get("InputSHA256") != seed_basis or census_record.get("InputSHA256") != seed_basis):
+        raise ValueError("Trace basis sizing records differ from the bound trace basis and ratio")
+    recipe_triangles = record.get("MeshFrameTriangles")
+    census_triangles = census_record.get("MeshFrameTriangles")
+    if (not isinstance(recipe_triangles, list) or not recipe_triangles or
+            not isinstance(census_triangles, list) or
+            len(recipe_triangles) != len(census_triangles) or
+            record.get("Triangles") != len(recipe_triangles)):
+        raise ValueError("Trace basis sizing triangles are missing or inconsistent")
+    scale = 0.0
+    for name in ("Lower", "Upper"):
+        values = record.get(name)
+        if (not isinstance(values, list) or len(values) != 3 or
+                any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                    for v in values)):
+            raise ValueError("Trace basis sizing box is invalid")
+    scale = max(u - l for l, u in zip(record["Lower"], record["Upper"]))
+    if scale <= 0:
+        raise ValueError("Trace basis sizing box is invalid")
+    for first, second in zip(recipe_triangles, census_triangles):
+        if (not isinstance(first, list) or not isinstance(second, list) or len(first) != 3 or
+                len(second) != 3 or any(
+                    not isinstance(a, list) or not isinstance(b, list) or len(a) != 3 or len(b) != 3 or
+                    any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
+                        for x in a + b) or
+                    any(abs(x - y) > 1e-8 * scale for x, y in zip(a, b))
+                    for a, b in zip(first, second))):
+            raise ValueError("Trace basis sizing triangles differ between the seed census and the recipe")
+    sizes = record.get("CutSurfaceSize")
+    if (not isinstance(sizes, dict) or
+            any(_recipe_number(sizes, name) <= 0 for name in ("Minimum", "Median", "Maximum")) or
+            _count(sizes.get("CutTriangles"), "Cut-surface triangles") <= 0 or
+            _count(record.get("BasisEdgesBelowFarSize"), "Basis edges below the far size") < 0):
+        raise ValueError("Trace basis sizing lacks the cut-surface size statistics")
+    return record
+
+
 def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
                            launcher_sha256=None, expected_tool_sha256=None):
     reports, digests = _validate_reports(report_paths, CANONICAL_STAGE_ORDER,
@@ -645,6 +748,10 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
     if any(actual != expected for actual, expected in links):
         raise ValueError("Canonical mesh stage input/output digest chain is broken")
     validate_seed_corner_isotropy(seed_stage, metric["Artifacts"]["restoration-recipe"]["Path"])
+    validate_trace_basis_sizing(
+        seed_stage, metric,
+        json.loads(Path(metric["Artifacts"]["restoration-recipe"]["Path"]).read_text()),
+        json.loads(Path(seed_stage["Artifacts"]["seed-corner-census"]["Path"]).read_text()))
     return reports, digests
 
 

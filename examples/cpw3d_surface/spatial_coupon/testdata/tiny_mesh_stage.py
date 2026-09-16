@@ -63,6 +63,12 @@ def main():
     parser.add_argument("--tangent", type=float)
     # Bound seed census whose simplified footprint edges the recipe records.
     parser.add_argument("--seed-census", type=Path)
+    # The trace basis (and its dimensionless size ratio) only when the case binds one.
+    parser.add_argument("--trace-basis-contract", type=Path)
+    parser.add_argument("--trace-vertices", type=Path)
+    parser.add_argument("--trace-triangles", type=Path)
+    parser.add_argument("--process-library", type=Path)
+    parser.add_argument("--trace-basis-size-ratio", type=float)
     args = parser.parse_args()
     if args.stage == "metric":
         if (args.mmg_seed is None or args.pins is None or args.recipe is None or
@@ -81,6 +87,19 @@ def main():
             parser.error("metric requires the bound --seed-census")
         semantic = json.loads(args.semantic_contract.read_text())
         census = json.loads(args.seed_census.read_text())
+        basis_paths = (args.trace_basis_contract, args.trace_vertices, args.trace_triangles,
+                       args.process_library)
+        trace_record = None
+        if any(path is not None for path in basis_paths):
+            if any(path is None or not path.is_file() for path in basis_paths) or \
+                    args.trace_basis_size_ratio is None:
+                parser.error("metric needs all four bound trace basis files and the size ratio")
+            # The recipe records the census's rule with the cut-surface size statistics.
+            trace_record = {**census["TraceBasisSizing"],
+                            "CutSurfaceSize": {"CutTriangles": 7, "Minimum": .001,
+                                               "Median": .08, "Maximum": .08}}
+        elif args.trace_basis_size_ratio is not None:
+            parser.error("a trace basis size ratio needs the bound trace basis")
         args.recipe.write_text(json.dumps({
             "SeedSHA256": digest(args.source),
             "SemanticContract": semantic,
@@ -110,7 +129,8 @@ def main():
             "FarSize": 1.0,
             "FarFieldBudgetPolicy": {"Name": "seed-fraction-far-field-v1",
                 "RequestedFarSize": 1.0, "Pressure": 1.0,
-                "EffectiveFarSize": 1.0}}) + "\n")
+                "EffectiveFarSize": 1.0},
+            **({"TraceBasisSizing": trace_record} if trace_record is not None else {})}) + "\n")
     elif args.stage == "adapt":
         if (args.metric is None or not args.metric.is_file() or
                 args.pins is None or not args.pins.is_file() or

@@ -99,6 +99,9 @@ def _is_rigid_transform(transform, tolerance=1e-12):
 
 
 PRODUCER_DEFAULT_ETCH_FOOTPRINT = "producer-default"
+# The trace basis is bound (seed cut-surface sizing and metric record) exactly when
+# a case freezes all four roles; a partial set fails preflight.
+TRACE_BASIS_ROLES = ("BasisContract", "TraceVertices", "TraceTriangles", "ProcessLibrary")
 
 
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
@@ -157,6 +160,10 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
             raise ValueError(f"{case['Id']} must declare exactly one etch footprint: "
                              f"a RetainedEtch file or EtchFootprint "
                              f"\"{PRODUCER_DEFAULT_ETCH_FOOTPRINT}\"")
+        declared_basis = {role for role in TRACE_BASIS_ROLES if role in files}
+        if declared_basis and declared_basis != set(TRACE_BASIS_ROLES):
+            raise ValueError(f"{case['Id']} must freeze all trace basis roles "
+                             f"{list(TRACE_BASIS_ROLES)} or none")
         variants = case.get("Variants")
         if not isinstance(variants, list) or not variants:
             raise ValueError(f"{case['Id']} has no variants")
@@ -274,6 +281,15 @@ def _validate_source_transformation(reports, binding, source_paths):
         raise ValueError("seed did not consume the immutable retained etch footprint")
 
     metric = reports["metric-preparation"]
+    from mesh_stage_contract import TRACE_BASIS_INPUTS
+    declared_basis = {role: binding["InputSHA256"].get(role) for role in TRACE_BASIS_ROLES}
+    for stage_name, stage_inputs in (("seed", seed_inputs), ("metric", metric["Inputs"])):
+        for name, role in TRACE_BASIS_INPUTS.items():
+            if declared_basis[role] is None:
+                if name in stage_inputs:
+                    raise ValueError(f"{stage_name} bound a trace basis the case does not declare")
+            elif stage_inputs.get(name, {}).get("SHA256") != declared_basis[role]:
+                raise ValueError(f"{stage_name} did not consume the immutable trace basis {role}")
     recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
     recipe = json.loads(recipe_path.read_text())
     seed_semantic = Path(reports["seed-generation"]["Inputs"]["canonical-semantic-contract"]["Path"])

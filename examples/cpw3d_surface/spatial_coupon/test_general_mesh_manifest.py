@@ -63,6 +63,15 @@ IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 # Fixture corner-isotropy prescription shared by the seed and metric stages.
 NORMAL_SIZE = 0.1
 CORNER_ISOTROPY_RADIUS = 0.5
+# Fixture trace basis: immutable roles, their stage input names/options and the
+# dimensionless TraceBasisSizeRatio both stages pass.
+TRACE_BASIS_FILES = {"BasisContract": "basis-contract.json", "TraceVertices": "trace-vertices.csv",
+                     "TraceTriangles": "trace-triangles.csv", "ProcessLibrary": "process-library.json"}
+TRACE_BASIS_BINDINGS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
+                        "TraceVertices": ("source-trace-vertices", "--trace-vertices"),
+                        "TraceTriangles": ("source-trace-triangles", "--trace-triangles"),
+                        "ProcessLibrary": ("source-process-library", "--process-library")}
+TRACE_BASIS_SIZE_RATIO = 1.0
 ANGLE = 0.63
 ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
             math.sin(ANGLE), math.cos(ANGLE), 0, 0,
@@ -70,7 +79,7 @@ ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
 
 
 class GeneralMeshManifestTest(unittest.TestCase):
-    def write_case(self, root, name, edges, *, scale, retained_etch=False):
+    def write_case(self, root, name, edges, *, scale, retained_etch=False, trace_basis=False):
         directory = root / name; directory.mkdir()
         signature = directory / "signature.csv"
         with signature.open("w", newline="") as stream:
@@ -124,6 +133,11 @@ class GeneralMeshManifestTest(unittest.TestCase):
             (directory / "retained-etch.csv").write_text("Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n")
             names["RetainedEtch"] = "retained-etch.csv"
             source_extra = {}
+        if trace_basis:
+            # A trace basis bound as immutable sources (fixture content, hashed only).
+            for role, filename in TRACE_BASIS_FILES.items():
+                (directory / filename).write_text(f"{role} fixture of {name}\n")
+                names[role] = filename
         files = {role: {"Name": filename, "SHA256": sha256(directory / filename)}
                  for role, filename in names.items()}
         return {"Id": name, "Variants": [{"Id": "identity", "Transform": list(IDENTITY)},
@@ -144,7 +158,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
         require_native_fixture()
         cases = [self.write_case(root, "base", 1, scale=1),
                  self.write_case(root, "subdivided", 2, scale=2, retained_etch=True),
-                 self.write_case(root, "six-edge-supplemental", 6, scale=3)]
+                 self.write_case(root, "six-edge-supplemental", 6, scale=3, trace_basis=True)]
         tools = [(MESHER.name, MESHER), (STAGER.name, STAGER),
                  (TRANSFORMER.name, TRANSFORMER),
                  (AUDITOR.name, AUDITOR), (BOUNDED.name, BOUNDED)]
@@ -241,12 +255,20 @@ class GeneralMeshManifestTest(unittest.TestCase):
             census = root / f"{canonical_stem}-corner-census.json"
             etch = (directory / case["Source"]["Files"]["RetainedEtch"]["Name"]
                     if "RetainedEtch" in case["Source"]["Files"] else None)
+            # The trace basis is bound to the seed and the metric stage when declared.
+            basis_inputs, basis_options = {}, []
+            if "BasisContract" in case["Source"]["Files"]:
+                for role, (name, option) in TRACE_BASIS_BINDINGS.items():
+                    path = directory / case["Source"]["Files"][role]["Name"]
+                    basis_inputs[name] = path; basis_options += [option, str(path)]
+                basis_options += ["--trace-basis-size-ratio", str(TRACE_BASIS_SIZE_RATIO)]
             launch(canonical_stem, canonical_reports, "seed-generation",
                 {"source-signature": directory / "signature.csv",
                  "source-boundary": directory / "boundary.csv",
                  "source-mask": directory / "mask.csv",
                  "canonical-semantic-contract": canonical_semantic,
-                 **({"source-retained-etch": etch} if etch is not None else {})},
+                 **({"source-retained-etch": etch} if etch is not None else {}),
+                 **basis_inputs},
                 {"seed-mesh": seed, "seed-corner-census": census},
                 {"runtime": sys.executable, "mesher": MESHER},
                 [sys.executable, str(MESHER), str(seed), str(identity_transform),
@@ -255,11 +277,12 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--semantic-contract", str(canonical_semantic),
                  "--corner-isotropy-radius", str(CORNER_ISOTROPY_RADIUS),
                  "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
-                 *(["--etch-boundary", str(etch)] if etch is not None else [])])
+                 *(["--etch-boundary", str(etch)] if etch is not None else []),
+                 *basis_options])
             launch(canonical_stem, canonical_reports, "metric-preparation",
                 {"seed-mesh": seed, "seed-corner-census": census,
                  "canonical-semantic-contract": canonical_semantic,
-                 "canonical-supports": canonical_supports},
+                 "canonical-supports": canonical_supports, **basis_inputs},
                 {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
                  "fixed-triangles": fixed, "restoration-recipe": recipe},
                 {"runtime": sys.executable, "metric-preparer": STAGER},
@@ -268,7 +291,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
                  "--transformed-supports", str(canonical_supports),
                  "--seed-census", str(census),
-                 "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS)])
+                 "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS),
+                 *basis_options])
             launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
                 {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
                  "fixed-triangles": fixed, "restoration-recipe": recipe},
@@ -729,6 +753,164 @@ class GeneralMeshManifestTest(unittest.TestCase):
     def _substitute(self, command, option, replacement):
         command = list(command); command[command.index(option) + 1] = str(replacement)
         return command
+
+    def test_trace_basis_is_bound_to_seed_and_metric_together_or_not_at_all(self):
+        from mesh_stage_contract import (bound_trace_basis, validate_canonical_dag,
+                                         validate_trace_basis_sizing)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            plain_case, basis_case = manifest["Cases"][0], manifest["Cases"][2]
+            self.assertTrue(set(TRACE_BASIS_FILES) <= set(basis_case["Source"]["Files"]))
+            self.assertFalse(set(TRACE_BASIS_FILES) & set(plain_case["Source"]["Files"]))
+            # A case freezing some but not all trace basis roles fails preflight.
+            for role in TRACE_BASIS_FILES:
+                candidate = copy.deepcopy(manifest)
+                del candidate["Cases"][2]["Source"]["Files"][role]
+                with self.assertRaisesRegex(ValueError, "trace basis roles", msg=role):
+                    validate_manifest(candidate, manifest_path)
+            validate_manifest(manifest, manifest_path)
+
+            def reports_for(case_id):
+                reports = {stage: json.loads(
+                    (root / f"{case_id}--canonical-{stage}.log.json").read_text())
+                           for stage in CANONICAL_STAGE_ORDER}
+                reports["proper-rigid-publication"] = json.loads(
+                    (root / f"{case_id}--identity-proper-rigid-publication.log.json").read_text())
+                case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
+                paths = {role: root / case_id / item["Name"]
+                         for role, item in case["Source"]["Files"].items()}
+                binding = {"Transform": IDENTITY, "InputSHA256": {
+                    role: item["SHA256"] for role, item in case["Source"]["Files"].items()}}
+                return reports, binding, paths
+
+            reports, binding, paths = reports_for(basis_case["Id"])
+            _validate_source_transformation(reports, binding, paths)
+            seed, metric = reports["seed-generation"], reports["metric-preparation"]
+            recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
+            census_path = Path(seed["Artifacts"]["seed-corner-census"]["Path"])
+            recipe, census = json.loads(recipe_path.read_text()), json.loads(census_path.read_text())
+            expected = {role: basis_case["Source"]["Files"][role]["SHA256"] for role in TRACE_BASIS_FILES}
+            self.assertEqual(bound_trace_basis(seed), expected)
+            self.assertEqual(bound_trace_basis(metric), expected)
+            record = validate_trace_basis_sizing(seed, metric, recipe, census)
+            self.assertEqual(record["Ratio"], TRACE_BASIS_SIZE_RATIO)
+            self.assertTrue(record["RatioIsDimensionless"])
+            self.assertEqual(record["InputSHA256"], expected)
+            self.assertEqual(census["TraceBasisSizing"]["InputSHA256"], expected)
+            stage_paths = {stage: root / f"{basis_case['Id']}--canonical-{stage}.log.json"
+                           for stage in CANONICAL_STAGE_ORDER}
+            validate_canonical_dag(stage_paths, root / f"{basis_case['Id']}--canonical.msh")
+
+            def rewrite(report, changes, name):
+                path = root / f"trace-basis-{name}.json"; path.write_text(json.dumps(changes))
+                return path
+
+            def rejected(seed_report=seed, metric_report=metric, recipe_data=recipe,
+                         census_data=census, message="", description=""):
+                with self.assertRaisesRegex(ValueError, message, msg=description):
+                    validate_trace_basis_sizing(seed_report, metric_report, recipe_data, census_data)
+
+            def without_option(report, option, count=2):
+                report = copy.deepcopy(report); index = report["Command"].index(option)
+                del report["Command"][index:index + count]; return report
+
+            def with_option_value(report, option, value):
+                report = copy.deepcopy(report)
+                report["Command"][report["Command"].index(option) + 1] = value; return report
+
+            # Seed without the basis while the metric binds it (and vice versa).
+            seed_unbound = copy.deepcopy(seed)
+            for name, _ in TRACE_BASIS_BINDINGS.values():
+                del seed_unbound["Inputs"][name]
+            rejected(seed_report=seed_unbound, message="different trace bases", description="seed unbound")
+            metric_unbound = copy.deepcopy(metric)
+            for name, _ in TRACE_BASIS_BINDINGS.values():
+                del metric_unbound["Inputs"][name]
+            rejected(metric_report=metric_unbound, message="different trace bases", description="metric unbound")
+            # Partial binding, substituted digest, different ratios, missing ratio option.
+            partial = copy.deepcopy(seed); del partial["Inputs"]["source-trace-vertices"]
+            rejected(seed_report=partial, message="incomplete trace basis")
+            substituted = copy.deepcopy(metric)
+            substituted["Inputs"]["source-basis-contract"]["SHA256"] = "0" * 64
+            rejected(metric_report=substituted, message="different trace bases")
+            rejected(metric_report=with_option_value(metric, "--trace-basis-size-ratio", "2.0"),
+                     message="ratio")
+            rejected(seed_report=without_option(seed, "--trace-basis-size-ratio"), message="ratio")
+            rejected(seed_report=with_option_value(seed, "--trace-basis-size-ratio", "-1"),
+                     message="positive finite")
+            # Records: ratio, digests, triangles and statistics must match the binding.
+            for description, changes in (
+                    ("ratio", {"Ratio": 2 * TRACE_BASIS_SIZE_RATIO}),
+                    ("dimensionless", {"RatioIsDimensionless": False}),
+                    ("digest", {"InputSHA256": {**expected, "TraceVertices": "1" * 64}}),
+                    ("triangles", {"MeshFrameTriangles": [[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]]}),
+                    ("count", {"Triangles": 2}),
+                    ("statistics", {"CutSurfaceSize": None}),
+                    ("edges", {"BasisEdgesBelowFarSize": -1})):
+                rejected(recipe_data={**recipe, "TraceBasisSizing": {**recipe["TraceBasisSizing"], **changes}},
+                         description=f"recipe {description}")
+            rejected(recipe_data={**recipe, "TraceBasisSizing": None}, description="recipe omitted")
+            for description, changes in (
+                    ("ratio", {"Ratio": 2 * TRACE_BASIS_SIZE_RATIO}),
+                    ("digest", {"InputSHA256": {**expected, "ProcessLibrary": "2" * 64}}),
+                    ("triangles", {"MeshFrameTriangles": [[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]]})):
+                rejected(census_data={**census, "TraceBasisSizing": {**census["TraceBasisSizing"], **changes}},
+                         description=f"census {description}")
+            rejected(census_data={**census, "TraceBasisSizing": None}, description="census omitted")
+            # The DAG validator applies the same rule through the bound reports.
+            tampered_recipe = rewrite(metric, {**recipe, "TraceBasisSizing": None}, "recipe-omitted")
+            tampered_metric = copy.deepcopy(metric)
+            tampered_metric["Artifacts"]["restoration-recipe"] = {
+                "Path": str(tampered_recipe), "SHA256": sha256(tampered_recipe)}
+            tampered_metric_path = rewrite(metric, tampered_metric, "metric-report")
+            with self.assertRaises(ValueError):
+                validate_canonical_dag({**stage_paths, "metric-preparation": tampered_metric_path},
+                                       root / f"{basis_case['Id']}--canonical.msh")
+            # Manifest binding: the seed/metric must consume exactly the declared basis.
+            undeclared = copy.deepcopy(binding)
+            for role in TRACE_BASIS_FILES:
+                del undeclared["InputSHA256"][role]
+            with self.assertRaisesRegex(ValueError, "does not declare"):
+                _validate_source_transformation(reports, undeclared, paths)
+            swapped = copy.deepcopy(binding); swapped["InputSHA256"]["TraceTriangles"] = "3" * 64
+            with self.assertRaisesRegex(ValueError, "immutable trace basis"):
+                _validate_source_transformation(reports, swapped, paths)
+            # A case without a basis: nothing bound, nothing recorded, no ratio option.
+            plain_reports, plain_binding, plain_paths = reports_for(plain_case["Id"])
+            plain_seed, plain_metric = plain_reports["seed-generation"], plain_reports["metric-preparation"]
+            plain_recipe = json.loads(Path(plain_metric["Artifacts"]["restoration-recipe"]["Path"]).read_text())
+            plain_census = json.loads(Path(plain_seed["Artifacts"]["seed-corner-census"]["Path"]).read_text())
+            self.assertIsNone(bound_trace_basis(plain_seed))
+            self.assertIsNone(validate_trace_basis_sizing(plain_seed, plain_metric, plain_recipe, plain_census))
+            self.assertIsNone(plain_census["TraceBasisSizing"])
+            self.assertNotIn("TraceBasisSizing", plain_recipe)
+            with_ratio = copy.deepcopy(plain_seed); with_ratio["Command"] += ["--trace-basis-size-ratio", "1.0"]
+            rejected(seed_report=with_ratio, metric_report=plain_metric, recipe_data=plain_recipe,
+                     census_data=plain_census, message="without a bound trace basis")
+            rejected(seed_report=plain_seed, metric_report=plain_metric,
+                     recipe_data={**plain_recipe, "TraceBasisSizing": recipe["TraceBasisSizing"]},
+                     census_data=plain_census, message="without a bound trace basis")
+            bound_plain = copy.deepcopy(plain_reports)
+            bound_plain["seed-generation"]["Inputs"].update(
+                {name: {"Path": str(paths[role]), "SHA256": expected[role]}
+                 for role, (name, _) in TRACE_BASIS_BINDINGS.items()})
+            with self.assertRaisesRegex(ValueError, "does not declare"):
+                _validate_source_transformation(bound_plain, plain_binding, plain_paths)
+            # Stage command bindings: the options must name the bound inputs exactly.
+            from mesh_stage_contract import validate_command_bindings
+            inputs = {name: item["Path"] for name, item in seed["Inputs"].items()}
+            artifacts = {name: item["Path"] for name, item in seed["Artifacts"].items()}
+            validate_command_bindings("seed-generation", seed["Command"], inputs, artifacts,
+                                      seed["WorkingDirectory"])
+            with self.assertRaisesRegex(ValueError, "differs from its bound input"):
+                validate_command_bindings(
+                    "seed-generation", with_option_value(seed, "--trace-vertices", "/other.csv")["Command"],
+                    inputs, artifacts, seed["WorkingDirectory"])
+            with self.assertRaisesRegex(ValueError, "without a bound"):
+                validate_command_bindings("seed-generation", seed["Command"],
+                                          {k: v for k, v in inputs.items() if k != "source-trace-vertices"},
+                                          artifacts, seed["WorkingDirectory"])
 
     def test_stage_commands_must_consume_exactly_the_bound_source_and_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:

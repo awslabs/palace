@@ -1767,6 +1767,215 @@ function matching_trace_lines(occ, path, lower, upper, tolerance; mode="all")
     return lines
 end
 
+# ---------------------------------------------------------------------------
+# Trace-basis cut-surface sizing.
+#
+# The bound trace basis (basis-contract.json, trace-vertices.csv,
+# trace-triangles.csv) is the closed box triangulation whose vertex hats are the
+# response sources; its vertices are stored in the process-library frame and
+# mapped to the mesh frame exactly as the campaign producer does (local z = the
+# process normal, local x = the gap direction of the first edge). The size rule
+# has one parameter, TraceBasisSizeRatio (dimensionless): on the cut surface the
+# element size must not exceed the ratio times the shortest edge of the basis
+# triangle containing the point (the hat of a basis vertex varies linearly over
+# the whole triangle, so its support is resolved where it varies only when the
+# whole triangle is discretized at that scale). Away from the surface the size
+# grows with the process-band grading slope up to lc_far, so far from narrow hats
+# the far size stays. It composes with the scalar background field through
+# Gmsh's size callback, which needs a named function (closure trampolines are
+# unsupported on aarch64), hence the module-level state.
+const TRACE_BASIS_TRIANGLES = NTuple{9, Float64}[]  # narrow triangles (requested < lc_far)
+const TRACE_BASIS_SIZES = Float64[]                 # ratio x shortest edge of each
+const TRACE_BASIS_FAR = Ref(Inf)
+const TRACE_BASIS_SLOPE = Ref(0.0)
+const TRACE_BASIS_CALLBACK_ROOTS = Any[]
+
+function process_frame(library, model_name)
+    library isa AbstractDict && library["Models"] isa AbstractVector ||
+        error("Process library lacks Models")
+    models = [model for model in library["Models"] if get(model, "Name", nothing) == model_name]
+    length(models) == 1 || error("Process library must contain the trace basis model exactly once")
+    model = models[1]
+    entries = get(model, "Topology", nothing) == "SpatialEdgeCluster" ? get(model, "Edges", nothing) :
+              get(model, "Arms", nothing)
+    entries isa AbstractVector && !isempty(entries) ||
+        error("Process library model has no complete edge geometry")
+    normal = collect(Float64, entries[1]["ProcessNormal"])
+    gap = collect(Float64, entries[1]["GapDirection"])
+    length(normal) == 3 && length(gap) == 3 && all(isfinite, normal) && all(isfinite, gap) &&
+        norm(normal) > 0 && norm(gap) > 0 || error("Process library edge frame vectors are invalid")
+    normal ./= norm(normal); gap ./= norm(gap)
+    abs(dot(normal, gap)) <= 1.0e-9 || error("ProcessNormal and GapDirection must be orthogonal")
+    axis_y = cross(normal, gap); axis_y ./= norm(axis_y)
+    return vcat(gap', axis_y', normal')
+end
+
+function read_trace_basis(contract_path, vertices_path, triangles_path, library_path;
+                          tolerance=1.0e-8)
+    contract = parse_json(read(contract_path, String))
+    contract isa AbstractDict && get(contract, "Version", nothing) == 1 &&
+        get(contract, "Model", nothing) isa AbstractString && get(contract, "Geometry", nothing) isa AbstractDict ||
+        error("Unsupported trace basis contract")
+    geometry = contract["Geometry"]
+    get(geometry, "OffBoxTriangles", nothing) == 0 && get(geometry, "ClosedOrientedSurface", nothing) === true ||
+        error("Unsupported trace basis contract")
+    lower = ntuple(d -> Float64(geometry["Lower"][d]), 3)
+    upper = ntuple(d -> Float64(geometry["Upper"][d]), 3)
+    all(isfinite, lower) && all(isfinite, upper) && all(upper[d] > lower[d] for d in 1:3) ||
+        error("Trace basis contract box is invalid")
+    frame = process_frame(parse_json(read(library_path, String)), contract["Model"])
+    vertex_data, vertex_header = readdlm(vertices_path, ',', header=true)
+    vertex_columns = Dict(String(name) => i for (i, name) in enumerate(vec(vertex_header)))
+    all(haskey(vertex_columns, key) for key in ("vertex", "x", "y", "z", "basis", "conductor")) ||
+        error("Trace vertices must have vertex,x,y,z,basis,conductor columns")
+    triangle_data, triangle_header = readdlm(triangles_path, ',', header=true)
+    triangle_columns = Dict(String(name) => i for (i, name) in enumerate(vec(triangle_header)))
+    all(haskey(triangle_columns, key) for key in ("triangle", "vertex_i", "vertex_j", "vertex_k")) ||
+        error("Trace triangles must have triangle,vertex_i,vertex_j,vertex_k columns")
+    vertex_count = size(vertex_data, 1); triangle_count = size(triangle_data, 1)
+    [signature_integer(vertex_data[i, vertex_columns["vertex"]], "trace vertex") for i in 1:vertex_count] ==
+        collect(1:vertex_count) || error("Trace vertices must be numbered contiguously from one")
+    [signature_integer(triangle_data[i, triangle_columns["triangle"]], "trace triangle") for i in 1:triangle_count] ==
+        collect(1:triangle_count) || error("Trace triangles must be numbered contiguously from one")
+    vertex_count == geometry["Vertices"] && triangle_count == geometry["Triangles"] ||
+        error("Trace basis files differ from the contract geometry counts")
+    scale = maximum(upper[d] - lower[d] for d in 1:3)
+    points = NTuple{3, Float64}[]
+    for i in 1:vertex_count
+        canonical = ntuple(d -> Float64(vertex_data[i, vertex_columns[("x", "y", "z")[d]]]), 3)
+        all(isfinite, canonical) || error("Trace vertex coordinates must be finite")
+        point = ntuple(r -> sum(frame[r, d] * canonical[d] for d in 1:3), 3)
+        on_face = any(abs(point[d] - lower[d]) <= tolerance * scale ||
+                      abs(point[d] - upper[d]) <= tolerance * scale for d in 1:3)
+        inside = all(lower[d] - tolerance * scale <= point[d] <= upper[d] + tolerance * scale for d in 1:3)
+        on_face && inside || error("Trace basis vertices are not on the contract box surface")
+        push!(points, point)
+    end
+    triangles = NTuple{3, Int}[]
+    for i in 1:triangle_count
+        triangle = ntuple(k -> signature_integer(
+            triangle_data[i, triangle_columns[("vertex_i", "vertex_j", "vertex_k")[k]]], "trace vertex index"), 3)
+        all(1 <= v <= vertex_count for v in triangle) && length(unique(triangle)) == 3 ||
+            error("Trace triangle connectivity is invalid")
+        a, b, c = (points[v] for v in triangle)
+        norm(cross(collect(b .- a), collect(c .- a))) > 0 || error("Degenerate trace basis triangle")
+        any(all(abs(points[v][d] - lower[d]) <= tolerance * scale for v in triangle) ||
+            all(abs(points[v][d] - upper[d]) <= tolerance * scale for v in triangle) for d in 1:3) ||
+            error("Trace basis triangle is not in one box face plane")
+        push!(triangles, triangle)
+    end
+    hashes = Dict{String, Any}(
+        "BasisContract" => bytes2hex(sha256(read(contract_path))),
+        "TraceVertices" => bytes2hex(sha256(read(vertices_path))),
+        "TraceTriangles" => bytes2hex(sha256(read(triangles_path))),
+        "ProcessLibrary" => bytes2hex(sha256(read(library_path))))
+    return (; points, triangles, lower, upper, frame, model=String(contract["Model"]), hashes)
+end
+
+trace_basis_edge_lengths(points, triangle) = ntuple(
+    k -> norm(collect(points[triangle[mod1(k + 1, 3)]] .- points[triangle[k]])), 3)
+
+# Euclidean distance from a point to the triangle (a, b, c): the plane projection
+# when it falls inside, otherwise the nearest edge.
+function point_triangle_distance(p, a, b, c)
+    ab = b .- a; ac = c .- a; d = p .- a
+    daa = dot(ab, ab); dab = dot(ab, ac); dbb = dot(ac, ac)
+    dpa = dot(d, ab); dpb = dot(d, ac)
+    denominator = daa * dbb - dab * dab
+    v = (dbb * dpa - dab * dpb) / denominator
+    w = (daa * dpb - dab * dpa) / denominator
+    if v >= 0.0 && w >= 0.0 && v + w <= 1.0
+        n = cross(collect(ab), collect(ac))
+        return abs(dot(d, n)) / norm(n)
+    end
+    best = Inf
+    for (first, last) in ((a, b), (b, c), (c, a))
+        vector = last .- first; delta = p .- first
+        t = clamp(dot(delta, vector) / dot(vector, vector), 0.0, 1.0)
+        best = min(best, norm(collect(delta .- t .* vector)))
+    end
+    return best
+end
+
+# Size prescribed by the narrow basis triangles at (x, y, z), never above `lc`.
+function trace_basis_size(x, y, z, lc)
+    size = min(lc, TRACE_BASIS_FAR[])
+    slope = TRACE_BASIS_SLOPE[]
+    @inbounds for index in eachindex(TRACE_BASIS_TRIANGLES)
+        requested = TRACE_BASIS_SIZES[index]
+        requested < size || continue
+        t = TRACE_BASIS_TRIANGLES[index]
+        a = (t[1], t[2], t[3]); b = (t[4], t[5], t[6]); c = (t[7], t[8], t[9])
+        # Bounding-box distance lower bound before the exact distance.
+        bound = 0.0
+        for d in 1:3
+            low = min(a[d], b[d], c[d]); high = max(a[d], b[d], c[d])
+            excess = max(low - (x, y, z)[d], (x, y, z)[d] - high, 0.0)
+            bound += excess * excess
+        end
+        requested + slope * sqrt(bound) < size || continue
+        size = min(size, requested + slope * point_triangle_distance((x, y, z), a, b, c))
+    end
+    return size
+end
+
+function trace_basis_size_callback(dim, tag, x, y, z, lc, data)::Cdouble
+    return trace_basis_size(x, y, z, lc)
+end
+
+function install_trace_basis_callback!()
+    callback = @cfunction(trace_basis_size_callback, Cdouble,
+                          (Cint, Cint, Cdouble, Cdouble, Cdouble, Cdouble, Ptr{Cvoid}))
+    push!(TRACE_BASIS_CALLBACK_ROOTS, callback)
+    ierr = Ref{Cint}()
+    ccall((:gmshModelMeshSetSizeCallback, gmsh.lib), Cvoid,
+          (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cint}), callback, C_NULL, ierr)
+    ierr[] == 0 || error(gmsh.logger.getLastError())
+    return nothing
+end
+
+# Loads the narrow basis triangles into the callback state; returns the census record.
+function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
+    isfinite(ratio) && ratio > 0.0 || error("Trace basis size ratio must be a positive finite number")
+    empty!(TRACE_BASIS_TRIANGLES); empty!(TRACE_BASIS_SIZES)
+    TRACE_BASIS_FAR[] = lc_far; TRACE_BASIS_SLOPE[] = slope
+    requested = Float64[]
+    edges = Dict{Tuple{Int, Int}, Float64}()
+    for triangle in basis.triangles
+        lengths = trace_basis_edge_lengths(basis.points, triangle)
+        push!(requested, ratio * minimum(lengths))
+        for k in 1:3
+            key = minmax(triangle[k], triangle[mod1(k + 1, 3)])
+            edges[key] = lengths[k]
+        end
+        if requested[end] < lc_far
+            push!(TRACE_BASIS_TRIANGLES, ntuple(i -> basis.points[triangle[(i - 1) ÷ 3 + 1]][mod1(i, 3)], 9))
+            push!(TRACE_BASIS_SIZES, requested[end])
+        end
+    end
+    edge_lengths = collect(values(edges))
+    return Dict{String, Any}(
+        "Ratio" => ratio,
+        "RatioIsDimensionless" => true,
+        "Rule" => "cut-surface element size <= TraceBasisSizeRatio x the shortest edge of " *
+                  "the basis triangle containing the point (per-triangle rule: the hat " *
+                  "varies over the whole triangle), graded away from the surface with the " *
+                  "process-band slope up to FarSize; the only parameter is the dimensionless " *
+                  "ratio, applied through the Gmsh size callback on top of the background field",
+        "Model" => basis.model,
+        "Frame" => [collect(basis.frame[r, :]) for r in 1:3],
+        "InputSHA256" => basis.hashes,
+        "Lower" => collect(basis.lower), "Upper" => collect(basis.upper),
+        "Vertices" => length(basis.points), "Triangles" => length(basis.triangles),
+        "UniqueEdges" => length(edge_lengths),
+        "MinimumBasisEdge" => minimum(edge_lengths),
+        "BasisEdgesBelowFarSize" => count(<(lc_far), edge_lengths),
+        "TrianglesBelowFarSize" => length(TRACE_BASIS_TRIANGLES),
+        "MinimumRequestedSize" => minimum(requested),
+        "FarSize" => lc_far, "GradingSlope" => slope,
+        "MeshFrameTriangles" => [[collect(basis.points[v]) for v in triangle] for triangle in basis.triangles])
+end
+
 function generate_spatial_coupon(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
@@ -1799,6 +2008,11 @@ function generate_spatial_coupon(;
     semantic_contract::Union{Nothing, String}=nothing,
     corner_isotropy_radius::Float64=0.0,
     corner_census::Union{Nothing, String}=nothing,
+    trace_basis_contract::Union{Nothing, String}=nothing,
+    trace_vertices::Union{Nothing, String}=nothing,
+    trace_triangles::Union{Nothing, String}=nothing,
+    process_library::Union{Nothing, String}=nothing,
+    trace_basis_size_ratio::Float64=1.0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -1836,6 +2050,19 @@ function generate_spatial_coupon(;
     # semantic corner, graded to the far size with the process-band slope.
     semantic_corners = corner_isotropy ? read_semantic_corners(semantic_contract, transform) :
                        NTuple{3, Float64}[]
+    trace_basis_paths = (trace_basis_contract, trace_vertices, trace_triangles, process_library)
+    trace_basis_bound = all(path -> path !== nothing, trace_basis_paths)
+    trace_basis_bound || all(path -> path === nothing, trace_basis_paths) ||
+        error("Trace basis sizing requires --trace-basis-contract, --trace-vertices, " *
+              "--trace-triangles and --process-library together")
+    isfinite(trace_basis_size_ratio) && trace_basis_size_ratio > 0.0 ||
+        error("Trace basis size ratio must be a positive finite number")
+    # The trace rule composes with the scalar corner-isotropy background field
+    # through the size callback; it is recorded in the census, so it needs both.
+    !trace_basis_bound || corner_isotropy ||
+        error("Trace basis sizing requires the semantic contract corner isotropy and census")
+    trace_basis = trace_basis_bound ? read_trace_basis(trace_basis_contract, trace_vertices,
+                                                       trace_triangles, process_library) : nothing
 
     edges = read_edges(signature)
     if length(unique(edge.slot for edge in edges)) > 1 &&
@@ -1849,6 +2076,11 @@ function generate_spatial_coupon(;
         error("A classified plan-view boundary requires the corresponding mask facets")
     lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
     tolerance = 1.0e-7 * radius
+    if trace_basis !== nothing
+        all(abs(trace_basis.lower[d] - lower[d]) <= tolerance &&
+            abs(trace_basis.upper[d] - upper[d]) <= tolerance for d in 1:3) ||
+            error("Trace basis box differs from the coupon box")
+    end
     outer_tolerance = 1.0e-4 * radius
     validate_plan_view_geometry(edges, radius, tolerance, facets)
     layers = layer_groups(edges, tolerance)
@@ -2264,6 +2496,21 @@ function generate_spatial_coupon(;
         end
     end
     isempty(corner_curves) || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
+    trace_basis_record = trace_basis === nothing ? nothing :
+        prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far, corner_grading_slope)
+    # The only size below lc_fine any field can ask for is the trace rule's, so the
+    # Gmsh floor follows the smallest requested trace size (recorded in the census).
+    mesh_size_minimum = trace_basis_record === nothing ? lc_fine :
+        min(lc_fine, trace_basis_record["MinimumRequestedSize"])
+    if trace_basis_record !== nothing
+        trace_basis_record["MeshSizeMinimum"] = mesh_size_minimum
+        install_trace_basis_callback!()
+        println("Trace basis sizing: ratio=$(trace_basis_size_ratio), triangles=" *
+                "$(trace_basis_record["Triangles"]), below far=$(trace_basis_record["TrianglesBelowFarSize"]), " *
+                "basis edges below far=$(trace_basis_record["BasisEdgesBelowFarSize"]), " *
+                "minimum requested=$(trace_basis_record["MinimumRequestedSize"]), " *
+                "mesh size minimum=$mesh_size_minimum")
+    end
     println(
         "Spatial mesh features: candidates=$(length(candidate_curves)), " *
         "physical=$(length(feature_curves)), " *
@@ -2322,7 +2569,7 @@ function generate_spatial_coupon(;
         gmsh.model.mesh.field.setAsBackgroundMesh(2)
     end
     for (name, value) in [
-        ("Mesh.MeshSizeMin", lc_fine),
+        ("Mesh.MeshSizeMin", mesh_size_minimum),
         ("Mesh.MeshSizeMax", lc_far),
         ("Mesh.Algorithm3D", 1),
         ("Mesh.MeshSizeExtendFromBoundary", 0),
@@ -2343,6 +2590,7 @@ function generate_spatial_coupon(;
         return gmsh.finalize()
     end
     gmsh.model.mesh.generate(3)
+    trace_basis_record === nothing || gmsh.model.mesh.removeSizeCallback()
     # Reject oversized linear meshes before allocating their high-order nodes.
     _, linear_tags, _ = gmsh.model.mesh.getElements(3)
     sum(length(tags) for tags in linear_tags) <= max_elements ||
@@ -2454,6 +2702,7 @@ function generate_spatial_coupon(;
                         Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
                                 for polygon in footprint_polygons]; init=0.0)),
                 "FootprintPolygons" => footprint_polygons,
+                "TraceBasisSizing" => trace_basis_record,
                 "InterfaceAreas" => area_rows,
                 "Corners" => census_rows))
             println(stream)
@@ -2549,7 +2798,12 @@ function parse_options(args)
         "--semantic-contract" => ("semantic_contract", String),
         "--corner-isotropy-radius" => ("corner_isotropy_radius", Float64),
         "--corner-census" => ("corner_census", String),
-        "--etch-boundary" => ("etch_boundary", String)
+        "--etch-boundary" => ("etch_boundary", String),
+        "--trace-basis-contract" => ("trace_basis_contract", String),
+        "--trace-vertices" => ("trace_vertices", String),
+        "--trace-triangles" => ("trace_triangles", String),
+        "--process-library" => ("process_library", String),
+        "--trace-basis-size-ratio" => ("trace_basis_size_ratio", Float64)
     )
     index = 4
     while index <= length(args)
@@ -2608,6 +2862,11 @@ if abspath(PROGRAM_FILE) == @__FILE__
         semantic_contract = get(options, "semantic_contract", nothing),
         corner_isotropy_radius = get(options, "corner_isotropy_radius", 0.0),
         corner_census   = get(options, "corner_census", nothing),
-        etch_boundary   = get(options, "etch_boundary", nothing)
+        etch_boundary   = get(options, "etch_boundary", nothing),
+        trace_basis_contract = get(options, "trace_basis_contract", nothing),
+        trace_vertices  = get(options, "trace_vertices", nothing),
+        trace_triangles = get(options, "trace_triangles", nothing),
+        process_library = get(options, "process_library", nothing),
+        trace_basis_size_ratio = get(options, "trace_basis_size_ratio", 1.0)
     )
 end

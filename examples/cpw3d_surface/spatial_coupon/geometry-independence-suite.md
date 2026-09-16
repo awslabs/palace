@@ -91,6 +91,52 @@ with a junction line as a feature band (`AlignedWithJunctionSegment`;
 `FeatureSegments.Junction`). Cut/cut box edges and cut/conductor edges are not
 junctions (the AMR probe marked nothing there). No size was added: the four-edge
 junction set is 22 segments totalling 60.5 um on the box faces.
+Trace-aware cut-surface sizing (same physics run): nine 22-48 nm-wide hats at
+x ~ 1.93-2.0 on the y = 8 side are unresolved by the ~0.13-0.16 um cut-surface
+elements (energy up to -21%), and the z = -0.05 and z = 0 source rings are only
+0.05 um apart. The cut surface is frozen from the seed, so the seed sizes it from
+the bound trace basis: a case that freezes `BasisContract`, `TraceVertices`,
+`TraceTriangles` and `ProcessLibrary` (all four or none; `TRACE_BASIS_ROLES`)
+binds them to seed generation and metric preparation as
+`source-basis-contract` / `source-trace-vertices` / `source-trace-triangles` /
+`source-process-library` (`--trace-basis-contract`, `--trace-vertices`,
+`--trace-triangles`, `--process-library`, required together with the semantic
+contract; forbidden otherwise). The basis vertices are in the process-library
+frame and are placed in the mesh frame exactly as the campaign producer does
+(`trace_basis.process_frame`: local z = process normal, local x = gap direction
+of the first edge); the basis box must equal the coupon box and every vertex
+must lie on the seed's cut-surface planes. Rule (`TraceBasisSizeRatio`, the
+only new parameter, dimensionless, default 1.0 = at least one element per basis
+edge; `--trace-basis-size-ratio`, passed identically by both stages): on the
+cut surface the element size must not exceed the ratio times the shortest edge
+of the basis triangle containing the point - a per-triangle rule, because the
+hat of a basis vertex varies linearly over the whole incident triangle, so its
+support is resolved where the hat varies only when the whole triangle is
+discretized at that scale (the per-edge alternative resolves only the edges).
+The seed applies it through the Gmsh size callback on top of the scalar
+corner-isotropy background (`min(background, ratio x shortest edge + slope x
+distance to the triangle)` with the process-band grading slope, capped by
+`lc_far`; `Mesh.MeshSizeMin` follows the smallest requested size, the only
+sub-`lc_fine` request any field can make) and records `TraceBasisSizing` in the
+census (ratio, rule, frame, input digests, box, counts, basis edges below the
+far size, minimum requested size, mesh-frame triangles, mesh size minimum,
+slope). The metric stage binds the same files, requires the census record to
+match (digests, ratio, triangles), caps the volume metric isotropically by
+`min(FarSize, ratio x shortest edge + FarGrowth x distance)` so the existing
+far/grading law is kept away from narrow hats (MMG's hmin = NormalSize still
+floors the volume metric; the frozen cut triangles keep the seed's sizes), and
+records `TraceBasisSizing` in the recipe with the statistics: unique basis
+edges, edges below the far size, triangles below it, minimum requested size,
+and `CutSurfaceSize` (min/median/max longest edge of the seed's cut triangles;
+per narrow basis triangle the largest extent of the cut triangles centred in it
+along its shortest-edge direction over the requested size - reported, not
+gated). The stage contract requires both stages to bind the same basis or
+none, the same ratio in both commands and both records, equal input digests,
+equal mesh-frame triangles and the statistics; the manifest requires the seed
+and metric inputs to be exactly the case's frozen files. Without a bound basis
+nothing is sized, recorded or passed. The four-edge basis has 234 unique edges,
+46 below the 0.16 um far size (minimum 0.0217 um, 76 of 156 triangles); the
+ten-edge basis 774 edges, 146 below (minimum 0.0492 um, 244 of 516).
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
