@@ -257,7 +257,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
                  *(["--etch-boundary", str(etch)] if etch is not None else [])])
             launch(canonical_stem, canonical_reports, "metric-preparation",
-                {"seed-mesh": seed, "canonical-semantic-contract": canonical_semantic,
+                {"seed-mesh": seed, "seed-corner-census": census,
+                 "canonical-semantic-contract": canonical_semantic,
                  "canonical-supports": canonical_supports},
                 {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
                  "fixed-triangles": fixed, "restoration-recipe": recipe},
@@ -266,6 +267,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--mmg-seed", str(mmg_seed), "--pins", str(pins), "--fixed-triangles", str(fixed),
                  "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
                  "--transformed-supports", str(canonical_supports),
+                 "--seed-census", str(census),
                  "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS)])
             launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
                 {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
@@ -640,6 +642,58 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     "Path": str(mutated_path), "SHA256": sha256(mutated_path)}
                 with self.assertRaisesRegex(ValueError, message, msg=description):
                     validate_seed_corner_isotropy(mutated_report, recipe_path)
+            # The metric recipe records the census's simplified footprint edges with
+            # their provenance; a missing, re-sourced or edited record fails closed,
+            # and the metric stage must bind exactly the seed's census.
+            from mesh_stage_contract import footprint_segments, validate_footprint_segments
+            recipe_data = json.loads(Path(recipe_path).read_text())
+            self.assertEqual(recipe_data["FootprintSegments"]["Provenance"],
+                             etch_case["Source"]["Files"]["RetainedEtch"]["SHA256"])
+            self.assertEqual(recipe_data["FootprintSegments"]["Segments"],
+                             footprint_segments(census))
+            self.assertEqual(len(recipe_data["FootprintSegments"]["Segments"]), 4)
+            validate_footprint_segments(recipe_data, census)
+            for description, mutate in (
+                    ("missing", lambda data: data.pop("FootprintSegments")),
+                    ("provenance", lambda data: data["FootprintSegments"].__setitem__(
+                        "Provenance", "producer-default")),
+                    ("segment", lambda data: data["FootprintSegments"]["Segments"][0].__setitem__(
+                        0, 0.5)),
+                    ("dropped", lambda data: data["FootprintSegments"]["Segments"].pop()),
+                    ("tolerance", lambda data: data["FootprintSegments"].__setitem__(
+                        "Tolerance", 1e-5))):
+                mutated = copy.deepcopy(recipe_data); mutate(mutated)
+                with self.assertRaisesRegex(ValueError, "FootprintSegments differ",
+                                            msg=description):
+                    validate_footprint_segments(mutated, census)
+                mutated_path = root / f"recipe-footprint-{description}.json"
+                mutated_path.write_text(json.dumps(mutated))
+                with self.assertRaisesRegex(ValueError, "FootprintSegments differ",
+                                            msg=description):
+                    validate_seed_corner_isotropy(seed, mutated_path)
+            metric = reports["metric-preparation"]
+            self.assertEqual(metric["Inputs"]["seed-corner-census"]["SHA256"],
+                             census_item["SHA256"])
+            other_census = copy.deepcopy(reports)
+            other_census["metric-preparation"]["Inputs"]["seed-corner-census"] = {
+                "Path": str(tampered_path), "SHA256": sha256(tampered_path)}
+            paths_by_stage = {stage: root / f"subdivided--canonical-{stage}.log.json"
+                              for stage in stage_contract.CANONICAL_STAGE_ORDER}
+            rebound = root / "metric-other-census.log.json"
+            rebound.write_text(json.dumps(other_census["metric-preparation"]))
+            # (rejected by the command binding before the digest-chain link is reached)
+            with self.assertRaisesRegex(ValueError, "seed-census"):
+                validate_canonical_dag({**paths_by_stage, "metric-preparation": rebound},
+                                       root / "subdivided--canonical.msh")
+            metric_inputs = {name: item["Path"] for name, item in metric["Inputs"].items()}
+            metric_artifacts = {name: item["Path"] for name, item in metric["Artifacts"].items()}
+            validate_command_bindings("metric-preparation", metric["Command"], metric_inputs,
+                                      metric_artifacts, metric["WorkingDirectory"])
+            with self.assertRaises(ValueError):
+                validate_command_bindings(
+                    "metric-preparation", metric["Command"],
+                    dict(metric_inputs, **{"seed-corner-census": str(tampered_path)}),
+                    metric_artifacts, metric["WorkingDirectory"])
             # The seed command must pass exactly the bound path, and never an
             # undeclared footprint.
             input_paths = {name: item["Path"] for name, item in seed["Inputs"].items()}
@@ -1317,6 +1371,25 @@ class GeneralMeshManifestTest(unittest.TestCase):
         self.assertEqual(physical["GlobalDiagonalBands"], 0)
         self.assertTrue(physical["LongShortEdgeComponents"][0][
             "AlignedWithPhysicalSegment"])
+        # A band along a simplified etch footprint edge is a feature band too (a
+        # physical dielectric step edge), not a diagonal: aligned with the footprint
+        # only -> not counted; aligned with neither -> counted.
+        footprint = _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
+                                           footprint_segments=[[[0., 0., 0.], direction]])
+        self.assertEqual(footprint["GlobalDiagonalBands"], 0)
+        component = footprint["LongShortEdgeComponents"][0]
+        self.assertFalse(component["AlignedWithPhysicalSegment"])
+        self.assertTrue(component["AlignedWithFootprintSegment"])
+        self.assertTrue(component["AlignedWithFeature"])
+        self.assertEqual(footprint["FeatureSegments"]["Signature"], 1)
+        self.assertEqual(footprint["FeatureSegments"]["Footprint"], 1)
+        neither = _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
+                                         footprint_segments=[[[0., 0., 0.], [0., 1., 0.]]])
+        self.assertEqual(neither["GlobalDiagonalBands"], 1)
+        self.assertFalse(neither["LongShortEdgeComponents"][0]["AlignedWithFeature"])
+        with self.assertRaisesRegex(ValueError, "Degenerate feature segment"):
+            _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
+                                   footprint_segments=[[[0., 0., 0.], [0., 0., 0.]]])
 
     def test_diagonal_detector_does_not_aggregate_orthogonal_supports(self):
         # Each support carries only a sub-half-diameter chain.  They meet along

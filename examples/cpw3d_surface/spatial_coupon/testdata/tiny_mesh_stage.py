@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import meshio
 import numpy as np
 
+from mesh_stage_contract import footprint_provenance, footprint_segments
 from transform_coupon_source_contract import (read_transform, transform_semantic_contract,
                                                 transformed_supports)
 
@@ -58,6 +59,8 @@ def main():
     # Metric-stage corner isotropy prescription recorded in the recipe.
     parser.add_argument("--normal", type=float)
     parser.add_argument("--tangent", type=float)
+    # Bound seed census whose simplified footprint edges the recipe records.
+    parser.add_argument("--seed-census", type=Path)
     args = parser.parse_args()
     if args.stage == "metric":
         if (args.mmg_seed is None or args.pins is None or args.recipe is None or
@@ -72,10 +75,18 @@ def main():
             parser.error("metric requires transformed semantic/support inputs")
         if args.normal is None or args.tangent is None:
             parser.error("metric requires --normal and --tangent")
+        if args.seed_census is None or not args.seed_census.is_file():
+            parser.error("metric requires the bound --seed-census")
         semantic = json.loads(args.semantic_contract.read_text())
+        census = json.loads(args.seed_census.read_text())
         args.recipe.write_text(json.dumps({
             "SeedSHA256": digest(args.source),
             "SemanticContract": semantic,
+            "FootprintSegments": {"Provenance": footprint_provenance(census),
+                                  "EtchBoundary": census["EtchBoundary"],
+                                  "Tolerance": census["FootprintCollinearTolerance"],
+                                  "Polygons": len(census["FootprintPolygons"]),
+                                  "Segments": footprint_segments(census)},
             "NormalSize": args.normal, "TangentialSize": args.tangent,
             "CornerIsotropyRadius": args.tangent,
             "TruePhysicalCorners": semantic["SemanticCorners"],

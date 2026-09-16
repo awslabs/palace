@@ -31,7 +31,7 @@ STAGE_INPUTS = {
                                     "source-boundary", "source-mask", "canonical-transform"},
     "seed-generation": {"source-signature", "source-boundary", "source-mask",
                         "canonical-semantic-contract"},
-    "metric-preparation": {"seed-mesh", "canonical-semantic-contract",
+    "metric-preparation": {"seed-mesh", "seed-corner-census", "canonical-semantic-contract",
                            "canonical-supports"},
     "native-adaptation-mmg": {"mmg-seed", "metric", "pins", "fixed-triangles",
                               "restoration-recipe"},
@@ -88,7 +88,8 @@ STAGE_BINDING_OPTIONS = {
                         "--corner-census": ("Artifacts", "seed-corner-census")},
     "metric-preparation": {
         "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
-        "--transformed-supports": ("Inputs", "canonical-supports")},
+        "--transformed-supports": ("Inputs", "canonical-supports"),
+        "--seed-census": ("Inputs", "seed-corner-census")},
     "native-adaptation-mmg": {"--fixed-triangles": ("Inputs", "fixed-triangles")},
     "label-restoration": {
         "--source-local-output": ("Artifacts", "source-local-restored-mesh")},
@@ -412,6 +413,50 @@ def validate_protected_corner_balls(recipe):
     return balls
 
 
+PRODUCER_DEFAULT_FOOTPRINT_PROVENANCE = "producer-default"
+
+
+def footprint_provenance(census):
+    """Provenance of the census footprint: the bound retained-etch SHA-256 or the
+    producer default."""
+    digest = census.get("EtchBoundarySHA256")
+    if digest is None:
+        if census.get("EtchBoundary") != PRODUCER_DEFAULT_FOOTPRINT_PROVENANCE:
+            raise ValueError("Seed census footprint provenance is neither a bound file nor the default")
+        return PRODUCER_DEFAULT_FOOTPRINT_PROVENANCE
+    if (not isinstance(digest, str) or len(digest) != 64 or
+            any(character not in "0123456789abcdef" for character in digest)):
+        raise ValueError("Seed census footprint hash is invalid")
+    return digest
+
+
+def footprint_segments(census):
+    """Every edge of every simplified footprint polygon as a 3D segment
+    [x0, y0, z, x1, y1, z] on the polygon's process plane, in census order."""
+    segments = []
+    for polygon in validate_footprint_polygons(census):
+        points, plane = polygon["Points"], float(polygon["Plane"])
+        for index, point in enumerate(points):
+            following = points[(index + 1) % len(points)]
+            segments.append([float(point[0]), float(point[1]), plane,
+                             float(following[0]), float(following[1]), plane])
+    return segments
+
+
+def validate_footprint_segments(recipe, census):
+    """The metric recipe's FootprintSegments must be exactly the bound census's
+    simplified footprint edges with their provenance and tolerance."""
+    record = recipe.get("FootprintSegments")
+    if (not isinstance(record, dict) or
+            record.get("Provenance") != footprint_provenance(census) or
+            record.get("EtchBoundary") != census.get("EtchBoundary") or
+            record.get("Tolerance") != census.get("FootprintCollinearTolerance") or
+            record.get("Segments") != footprint_segments(census) or
+            record.get("Polygons") != len(census["FootprintPolygons"])):
+        raise ValueError("Restoration recipe FootprintSegments differ from the bound seed census")
+    return record
+
+
 def validate_footprint_polygons(census):
     """The seed simplified every etch footprint polygon (device or producer default)
     with the shared collinearity tolerance before CAD face creation and recorded the
@@ -503,6 +548,7 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
     if len(labels) != len(set(labels)) or set(labels) != boundary_attributes(semantic):
         raise ValueError("Seed census interface-area labels differ from the semantic contract")
     validate_footprint_polygons(census)
+    validate_footprint_segments(recipe, census)
     # The ridge-to-ridge face census (interior nodes and full-height triangles) is
     # recorded for every seed; its values are reported, not gated.
     for row in census["LongitudinalFaces"]:
@@ -540,6 +586,8 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
         (seed_stage["Inputs"]["canonical-semantic-contract"]["SHA256"],
          source["Artifacts"]["canonical-semantic-contract"]["SHA256"]),
         (metric["Inputs"]["seed-mesh"]["SHA256"], seed),
+        (metric["Inputs"]["seed-corner-census"]["SHA256"],
+         seed_stage["Artifacts"]["seed-corner-census"]["SHA256"]),
         (metric["Inputs"]["canonical-semantic-contract"]["SHA256"],
          source["Artifacts"]["canonical-semantic-contract"]["SHA256"]),
         (metric["Inputs"]["canonical-supports"]["SHA256"],

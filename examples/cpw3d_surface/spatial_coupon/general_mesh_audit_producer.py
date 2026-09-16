@@ -45,7 +45,19 @@ def _base(kind, case, variant, mesh, input_hashes, transform, command):
             "Producer": _producer()}
 
 
-def _global_diagonal_bands(mesh, physical_segments, normal_size):
+def _segment_alignment(direction, segments):
+    """Largest |cos| between a band direction and the given feature segments."""
+    alignment = 0.0
+    for segment in np.asarray(segments, dtype=float).reshape(-1, 2, 3):
+        tangent = segment[1] - segment[0]
+        length = np.linalg.norm(tangent)
+        if length <= 0:
+            raise ValueError("Degenerate feature segment")
+        alignment = max(alignment, float(abs(np.dot(direction, tangent / length))))
+    return alignment
+
+
+def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segments=()):
     """Find long, narrow short-edge bands on one planar labeled support.
 
     A connected set spanning several orthogonal supports is not a geometric
@@ -54,6 +66,13 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
     plane-equivalence rule (cluster_coplanar_triangles).  The short scale is
     also bounded by twice the audited transverse target, so ordinary
     coarse-surface triangulation cannot masquerade as propagated trace sizing.
+
+    Legitimate feature segments are the signature (metal) edges and the
+    simplified etch footprint edges recorded from the bound seed census: etch
+    footprint edges are physical dielectric step edges (trench wall/floor and
+    wall/surface junctions) that legitimately carry the NormalSize band.  A
+    band aligned with either is a feature band; only a band aligned with
+    neither counts as a diagonal over-refinement.
     """
     triangles, labels = blocks(mesh, "triangle")
     xyz = mesh.points[triangles]
@@ -82,6 +101,7 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
                 length <= threshold + threshold_tolerance):
             short_by_patch.setdefault(int(patch[owners[0]]), []).append(edge)
     segments = np.asarray(physical_segments, dtype=float).reshape(-1, 2, 3)
+    footprint = np.asarray(footprint_segments, dtype=float).reshape(-1, 2, 3)
     bands, components = 0, []
     for patch_id, short in short_by_patch.items():
         adjacency = {}
@@ -113,25 +133,32 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size):
             width = float(singular[1] / math.sqrt(len(points))) if len(singular) > 1 else 0.0
             line_like = width <= 2.0 * threshold
             direction = axes[0]
-            alignment = 0.0
-            for segment in segments:
-                tangent = segment[1] - segment[0]
-                tangent /= np.linalg.norm(tangent)
-                alignment = max(alignment, float(abs(np.dot(direction, tangent))))
+            alignment = _segment_alignment(direction, segments)
+            footprint_alignment = _segment_alignment(direction, footprint)
             aligned = alignment > 1 - 1e-6
-            bands += int(line_like and not aligned)
+            footprint_aligned = footprint_alignment > 1 - 1e-6
+            bands += int(line_like and not (aligned or footprint_aligned))
             owner = int(np.flatnonzero(patch == patch_id)[0])
             components.append({
                 "Attribute": int(labels[owner]), "Plane": planes[patch_id].tolist(),
                 "Endpoints": [points[first].tolist(), points[last].tolist()],
                 "Span": span, "RMSWidth": width, "PhysicalSegmentAlignment": alignment,
+                "FootprintSegmentAlignment": footprint_alignment,
                 "LineLike": line_like, "AlignedWithPhysicalSegment": aligned,
+                "AlignedWithFootprintSegment": footprint_aligned,
+                "AlignedWithFeature": aligned or footprint_aligned,
                 "Vertices": len(component)})
     return {"GlobalDiagonalBands": bands,
             "ShortInternalEdges": sum(map(len, short_by_patch.values())),
             "MedianSurfaceEdgeLength": median, "ShortEdgeThreshold": threshold,
             "SizeFieldEvidence": {"NormalSize": float(normal_size),
                                   "MaximumPropagatedShortEdge": 2.0 * float(normal_size)},
+            "FeatureSegments": {"Signature": int(len(segments)),
+                                "Footprint": int(len(footprint)),
+                                "Rule": "a band is a diagonal over-refinement only when aligned "
+                                        "with neither a signature edge nor a simplified etch "
+                                        "footprint edge (physical dielectric step edges that "
+                                        "legitimately carry the NormalSize band)"},
             "LongShortEdgeComponents": components}
 
 
@@ -626,9 +653,20 @@ def _signature_segments(path):
     return segments
 
 
+def _footprint_segments(restoration_recipe_path):
+    """Simplified etch footprint edges recorded by the bound metric stage."""
+    record = json.loads(Path(restoration_recipe_path).read_text()).get("FootprintSegments")
+    if not isinstance(record, dict) or not isinstance(record.get("Segments"), list):
+        raise ValueError("Restoration recipe lacks the footprint segments")
+    segments = np.asarray(record["Segments"], dtype=float)
+    if segments.ndim != 2 or segments.shape[1] != 6 or not np.all(np.isfinite(segments)):
+        raise ValueError("Restoration recipe footprint segments are invalid")
+    return segments.reshape(-1, 2, 3), record.get("Provenance")
+
+
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
-                    ownership_quadrature_path, corner_tolerance=1e-8):
+                    ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8):
     mesh = read_mesh(mesh_path)
     contract = load_semantic_contract(contract_path)
     report, _ = analyze(mesh, contract, require_material_names=True)
@@ -650,6 +688,10 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     segments = np.asarray(_signature_segments(signature_path), dtype=float).reshape(-1, 2, 3)
     homogeneous = np.concatenate((segments, np.ones((*segments.shape[:2], 1))), axis=2)
     transformed_recipe["PhysicalSegments"] = (homogeneous @ matrix.T)[..., :3].reshape(-1, 6).tolist()
+    footprint, footprint_provenance = _footprint_segments(restoration_recipe_path)
+    homogeneous_footprint = np.concatenate(
+        (footprint, np.ones((*footprint.shape[:2], 1))), axis=2)
+    transformed_footprint = (homogeneous_footprint @ matrix.T)[..., :3].reshape(-1, 6)
     corners = np.asarray(transformed_recipe["TruePhysicalCorners"], dtype=float).reshape(-1, 3)
     if len(corners):
         homogeneous_corners = np.column_stack((corners, np.ones(len(corners))))
@@ -697,13 +739,15 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                                      "TangentialP50": percentiles[1][0],
                                      "Transverse1P90": percentiles[2][1],
                                      "Transverse2P90": percentiles[2][2]},
-              "TraceDiagonal": _global_diagonal_bands(
+              "TraceDiagonal": {**_global_diagonal_bands(
                   mesh, transformed_recipe["PhysicalSegments"],
-                  transformed_recipe["NormalSize"]),
+                  transformed_recipe["NormalSize"], transformed_footprint),
+                  "FootprintSegmentProvenance": footprint_provenance},
               "MeshQuality": _tetra_quality(mesh)}
     base["Measurements"] = actual
     base["Topology"] = report
     base["ReferenceMeshSHA256"] = sha256(reference_mesh_path)
+    base["RestorationRecipeSHA256"] = sha256(restoration_recipe_path)
     base["OwnershipReportSHA256"] = sha256(ownership_report_path)
     base["OwnershipQuadratureSHA256"] = sha256(ownership_quadrature_path)
     return base
@@ -877,11 +921,12 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
     elif kind == "mesh-topology-quality":
         reports, _ = validate_stage_dag(stage_reports, mesh)
         reference = reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
+        restoration_recipe = reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"]
         publication = reports["proper-rigid-publication"]["Artifacts"]
         ownership = publication["ownership-partition"]["Path"]
         quadrature = publication["ownership-quadrature-partition"]["Path"]
         record = topology_record(base, mesh, contract, recipe, process, signature,
-                                 reference, ownership, quadrature)
+                                 reference, ownership, quadrature, restoration_recipe)
         record["Dependencies"] = {"SemanticContract": sha256(contract),
                                   "MeshRecipe": sha256(recipe), "Process": sha256(process),
                                   "Signature": sha256(signature)}

@@ -215,12 +215,13 @@ def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
     # Recover reference and ownership paths from the independently validated
     # embedded stage bindings.
     reference = bounded["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
+    restoration_recipe = bounded["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"]
     publication = bounded["proper-rigid-publication"]["Artifacts"]
     ownership = publication["ownership-partition"]["Path"]
     quadrature = publication["ownership-quadrature-partition"]["Path"]
     topology = topology_record(dict(base), mesh_path, source_paths["SemanticContract"],
         source_paths["MeshRecipe"], source_paths["Process"], source_paths["Signature"],
-        reference, ownership, quadrature)["Measurements"]
+        reference, ownership, quadrature, restoration_recipe)["Measurements"]
     complexity = complexity_record(dict(base), mesh_path, source_paths["SemanticContract"],
                                    source_paths["MeshRecipe"])["Measurements"]
     invariants = invariants_record(dict(base), mesh_path)["Measurements"]
@@ -415,6 +416,8 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     publication = bounded["proper-rigid-publication"]["Artifacts"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
+            topology.get("RestorationRecipeSHA256") !=
+            bounded["metric-preparation"]["Artifacts"]["restoration-recipe"]["SHA256"] or
             topology.get("OwnershipReportSHA256") !=
             publication["ownership-partition"]["SHA256"] or
             topology.get("OwnershipQuadratureSHA256") !=

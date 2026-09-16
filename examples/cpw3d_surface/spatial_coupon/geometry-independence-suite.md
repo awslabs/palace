@@ -46,6 +46,23 @@ every simplified polygon (`FootprintPolygons`: conductor, plane, hole, points,
 removed vertex indices, maximum deviation with its local scale) and a summary
 (`FootprintSimplification`); the contract requires the deviation to stay within
 tolerance x local scale (reported otherwise, not gated).
+Modeling statement (supervisor decision 18(c)): etch footprint edges - the
+trench wall/floor and wall/surface junctions of the device retained etch or of
+the producer-default collars - are physical dielectric step edges. They are
+legitimate feature segments alongside the signature (metal) edges, and they
+legitimately carry the `NormalSize` band (the seed-derived `PhysicalSegments`
+already give it to them; SA sensitivity at trench/cut junctions per the physics
+pilot). No size is attached to them separately. The metric stage binds the seed
+census and records the simplified footprint edges in the recipe as
+`FootprintSegments` (provenance = the bound retained-etch SHA-256 or
+`producer-default`, tolerance, polygon count, `[x0, y0, z, x1, y1, z]` segments
+on the process plane); the stage contract requires them to equal the census's
+polygon edges. The trace-diagonal detector treats a band aligned with a
+signature edge or a footprint edge as a feature band and flags only bands
+aligned with neither (`AlignedWithFeature`; `FeatureSegments` records both
+counts and `FootprintSegmentProvenance` the source). The four-edge device
+footprint's tilted trench walls, which the detector previously counted as 42
+diagonal bands, are footprint edges.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
@@ -371,7 +388,9 @@ remain unchanged.
 Every stage command must name exactly its bound inputs and outputs: seed
 generation binds the source signature/boundary/mask, the canonical semantic
 contract (`--semantic-contract`) and its corner census (`--corner-census`),
-canonical publication binds
+metric preparation binds the seed mesh, the canonical semantic contract and
+supports (`--semantic-contract/--transformed-supports`) and the seed census
+(`--seed-census`), canonical publication binds
 the source process/signature/boundary (`--process/--signature/--boundary`), and
 proper-rigid publication binds source semantic/signature/boundary/mask/process,
 the canonical build record and every ownership/semantic/support output. Named

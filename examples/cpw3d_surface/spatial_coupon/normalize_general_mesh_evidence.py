@@ -144,6 +144,8 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
     publication = bounded["proper-rigid-publication"]["Artifacts"]
     if (topology.get("ReferenceMeshSHA256") !=
             bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
+            topology.get("RestorationRecipeSHA256") !=
+            bounded["metric-preparation"]["Artifacts"]["restoration-recipe"]["SHA256"] or
             topology.get("OwnershipReportSHA256") !=
             publication["ownership-partition"]["SHA256"] or
             topology.get("OwnershipQuadratureSHA256") !=

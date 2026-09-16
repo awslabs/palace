@@ -15,6 +15,7 @@ import numpy as np
 from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,surface_features,
                                 volume_metric,segment_distances)
 from mesh_array_io import read_mesh,sha
+from mesh_stage_contract import footprint_provenance,footprint_segments
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     load_semantic_contract, simple_sharp_contract,
                                     volume_attributes)
@@ -150,8 +151,34 @@ def protected_corner_ball_triangles(points, triangles, semantic_corners, radius)
     return inside.any(axis=1), inside.sum(axis=0)
 
 
+def footprint_segment_record(census, semantic_contract, semantic_contract_sha256):
+    """Recipe record of the seed's simplified etch footprint edges (decision 18(c)).
+
+    Etch footprint edges are physical dielectric step edges (trench wall/floor
+    and wall/surface junctions) and legitimately carry the NormalSize band that
+    the seed-derived PhysicalSegments already give them; recording them from the
+    bound census lets the audits distinguish a band along a footprint edge from
+    a diagonal over-refinement.  No size is attached to them here.
+    """
+    if (not isinstance(census, dict) or census.get("Version") != 1 or
+            census.get("SemanticContractSHA256") != semantic_contract_sha256 or
+            census.get("RigidTransform") != semantic_contract.get("RigidTransform")):
+        raise ValueError("Seed census does not belong to the bound semantic contract")
+    return {"Provenance": footprint_provenance(census),
+            "EtchBoundary": census.get("EtchBoundary"),
+            "Tolerance": census.get("FootprintCollinearTolerance"),
+            "Polygons": len(census["FootprintPolygons"]),
+            "Segments": footprint_segments(census),
+            "Rule": "simplified etch footprint polygon edges (device retained etch or "
+                    "producer default) are physical dielectric step edges: legitimate "
+                    "feature segments for the audits alongside the signature edges; "
+                    "they carry the NormalSize band through the seed-derived "
+                    "PhysicalSegments and receive no size of their own"}
+
+
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
-            semantic_contract=None, transformed_supports=None, maximum_elements=None):
+            semantic_contract=None, transformed_supports=None, maximum_elements=None,
+            footprint_census=None, semantic_contract_sha256=None):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
         raise ValueError('Invalid grading/protection controls')
     path=Path(path)
@@ -179,6 +206,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         mesh.points,triangles,triangle_refs,cut_surface_attributes(semantic_contract))
     if transformed_supports is not None:
         validate_transformed_supports(transformed_supports, semantic_contract, segments)
+    footprint=(None if footprint_census is None else
+               footprint_segment_record(footprint_census,semantic_contract,semantic_contract_sha256))
     semantic_corners=np.asarray(semantic_contract['SemanticCorners'],dtype=float).reshape(-1,3)
     # The contract corners are physical plan-view junctions.  Require them to be
     # represented by the seed instead of silently replacing them with CAD
@@ -263,8 +292,9 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                        'the normal angle and point offset relative to max(local size, distance) '
                        'within the tolerance; shared with the planar-patch audits'},
             'SemanticContract':semantic_contract,'LibraryQualified':False}
+    if footprint is not None:recipe['FootprintSegments']=footprint
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
-    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners')},indent=2))
+    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments')},indent=2))
     return recipe
 
 
@@ -281,20 +311,25 @@ def main():
                           help='use the explicit historical 1/3100/5001/6001 compatibility contract')
     p.add_argument('--transformed-supports',type=Path,
                    help='required transformed source-support contract with --semantic-contract')
+    p.add_argument('--seed-census',type=Path,
+                   help='required seed corner census (simplified footprint polygons) with --semantic-contract')
     a=p.parse_args();m=read_mesh(a.mesh)
-    if bool(a.semantic_contract) != bool(a.transformed_supports):
-        p.error('--semantic-contract and --transformed-supports are required together')
+    if not (bool(a.semantic_contract) == bool(a.transformed_supports) == bool(a.seed_census)):
+        p.error('--semantic-contract, --transformed-supports and --seed-census are required together')
     semantic=(load_semantic_contract(a.semantic_contract) if a.semantic_contract
               else simple_sharp_contract())
     supports=(json.loads(a.transformed_supports.read_text()) if a.transformed_supports else None)
+    census=(json.loads(a.seed_census.read_text()) if a.seed_census else None)
     r=prepare(m,a.output,a.normal,a.tangent,a.far,
         a.protected_distance,a.far_growth,a.protect_surface,semantic,supports,
-        a.maximum_elements)
+        a.maximum_elements,census,sha(a.semantic_contract) if a.semantic_contract else None)
     r['SeedArtifact']=str(a.mesh.resolve());r['SeedArtifactSHA256']=sha(a.mesh)
     if a.transformed_supports:
         r['TransformedSupportsArtifact']=str(a.transformed_supports.resolve())
         r['TransformedSupportsSHA256']=sha(a.transformed_supports)
         r['TransformedSupports']=supports
+    if a.seed_census:
+        r['SeedCensusArtifact']=str(a.seed_census.resolve());r['SeedCensusSHA256']=sha(a.seed_census)
     if a.mesh.suffix=='.toml':
         import tomllib
         data=tomllib.loads(a.mesh.read_text())

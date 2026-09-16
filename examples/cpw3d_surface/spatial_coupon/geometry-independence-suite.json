@@ -24,12 +24,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "b75d371f5265483bb557479300b0263f74faeb44b5a8d11611f05016b40ea054"
+      "SHA256": "6f5f8139bfd3efbb1f6699f4b443ef365086104d5c5fbf988e16b766bf6088fc"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "c5eec50e1dc2c15355ee4711ca924dede092f08982384363c6fec3e000acb1dc"
+      "SHA256": "17bb6d50544a0a77762f1944b40649305a01e4e3ee381b5e112884f1d74b1ecf"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -39,7 +39,7 @@
     {
       "Name": "prepare_edge_metric_scout.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "3e774ad65b677c6a726e455c30e3ad704d3299d48ffa4fb9330f0c2782441460"
+      "SHA256": "0eca7a6fefbb8706785c876ef4da570e2734a53ceaeefa04d1172253b83c87f4"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -64,12 +64,12 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "fb0c207f0206be3e84edceecb020fdd4eecf170578f1d52af35d1bbf19930f83"
+      "SHA256": "957db9f3ca937f899b07567196803a6ecbabe8a3b88cbca0db280468e7a69aa1"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "173de5bc800d8ef9b5a5d760077ce983b4d66be43eabff54118d2f59b7ea28e7"
+      "SHA256": "3ca570327396d62882df142e54783cca4254fea743f8163ee5396b06fbbc1b76"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1533,7 +1533,7 @@
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "3e774ad65b677c6a726e455c30e3ad704d3299d48ffa4fb9330f0c2782441460"
+      "metric-preparer": "0eca7a6fefbb8706785c876ef4da570e2734a53ceaeefa04d1172253b83c87f4"
     },
     "native-adaptation-mmg": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
