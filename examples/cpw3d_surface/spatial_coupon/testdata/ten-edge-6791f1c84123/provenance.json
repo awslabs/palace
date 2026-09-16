@@ -37,5 +37,22 @@
       2
     ],
     "DerivedSemanticContract": "semantic-contract.json"
+  },
+  "EtchFootprint": "producer-default",
+  "RetainedEtch": null,
+  "EtchFootprintNote": "inputs/09 has no retained-etch.csv and campaign.json EtchBoundary is None for 09-fabricated: the graded_v2 ten-edge reference used the frozen producer's default etch footprint, so this case records the producer default explicitly (exporting the default as a bound file is a P2 follow-up)",
+  "RemoteRetainedEtchSurvey": {
+    "Scope": "retained-etch.csv presence under /data/home/simlap/transmon_library_graded_v2_20260911/inputs (soca-green-job, 2026-09-15)",
+    "WithRetainedEtch": {
+      "07": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
+    },
+    "WithoutRetainedEtch": [
+      "05",
+      "06",
+      "08",
+      "09",
+      "10"
+    ],
+    "CampaignEtchBoundary": "campaign.json sets EtchBoundary only for 07-fabricated (inputs/07/retained-etch.csv, itself exported from transmon_library_graded_20260910/meshes/07-retained-etch/footprint.csv); every other case, including 09-fabricated, is None"
   }
 }

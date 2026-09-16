@@ -98,6 +98,9 @@ def _is_rigid_transform(transform, tolerance=1e-12):
             abs(determinant - 1.0) <= tolerance)
 
 
+PRODUCER_DEFAULT_ETCH_FOOTPRINT = "producer-default"
+
+
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     if manifest.get("Version") != 2 or not isinstance(manifest.get("Cases"), list):
         raise ValueError("Unsupported generality-suite manifest")
@@ -146,6 +149,14 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
             raise ValueError(f"{case['Id']} lacks a required immutable role")
         if "MeshRecipe" not in files:
             raise ValueError(f"{case['Id']} lacks a frozen mesh recipe")
+        # The etched footprint is a recorded choice, never an omission: either a
+        # bound RetainedEtch file or the explicit producer default.
+        declared_default = "EtchFootprint" in source
+        if ("RetainedEtch" in files) == declared_default or (
+                declared_default and source["EtchFootprint"] != PRODUCER_DEFAULT_ETCH_FOOTPRINT):
+            raise ValueError(f"{case['Id']} must declare exactly one etch footprint: "
+                             f"a RetainedEtch file or EtchFootprint "
+                             f"\"{PRODUCER_DEFAULT_ETCH_FOOTPRINT}\"")
         variants = case.get("Variants")
         if not isinstance(variants, list) or not variants:
             raise ValueError(f"{case['Id']} has no variants")
@@ -252,6 +263,14 @@ def _validate_source_transformation(reports, binding, source_paths):
     actual_supports = json.loads(supports_path.read_text())
     if actual_semantic != expected_semantic or actual_supports != expected_supports:
         raise ValueError("transformed semantic/support artifact differs from source transform")
+
+    seed_inputs = reports["seed-generation"]["Inputs"]
+    retained_etch = binding["InputSHA256"].get("RetainedEtch")
+    if retained_etch is None:
+        if "source-retained-etch" in seed_inputs:
+            raise ValueError("seed bound an etch footprint the case does not declare")
+    elif seed_inputs.get("source-retained-etch", {}).get("SHA256") != retained_etch:
+        raise ValueError("seed did not consume the immutable retained etch footprint")
 
     metric = reports["metric-preparation"]
     recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])

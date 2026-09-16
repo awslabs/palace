@@ -12,7 +12,8 @@ import signal
 import subprocess
 import time
 
-from mesh_stage_contract import (STAGE_INPUTS, STAGE_OUTPUTS, STAGE_TOOLS, binding,
+from mesh_stage_contract import (STAGE_INPUTS, STAGE_OPTIONAL_INPUTS, STAGE_OUTPUTS,
+                                 STAGE_TOOLS, binding,
                                  sha256, validate_command_bindings, validate_tool_invocation)
 
 
@@ -86,7 +87,10 @@ def main():
         if inputs or tools or any("=" in value for value in args.artifact):
             parser.error("named inputs, artifacts, and tools require --stage")
     else:
-        if set(inputs) != STAGE_INPUTS[args.stage] or set(artifacts) != STAGE_OUTPUTS[args.stage]:
+        optional = STAGE_OPTIONAL_INPUTS.get(args.stage, frozenset())
+        if (not STAGE_INPUTS[args.stage] <= set(inputs) or
+                not set(inputs) <= STAGE_INPUTS[args.stage] | optional or
+                set(artifacts) != STAGE_OUTPUTS[args.stage]):
             parser.error("stage input/output names do not match the frozen stage contract")
         if set(tools) != STAGE_TOOLS[args.stage] or any(not path.is_file()
                                                          for path in tools.values()):

@@ -4,6 +4,7 @@
 
 """Write a real two-material Gmsh mesh for evidence-chain regression tests."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -51,13 +52,20 @@ def produce(output, transform, scale=1.0):
     meshio.write(output, mesh, file_format="gmsh22", binary=False)
 
 
-def corner_census(output, contract_path, radius, isotropic_size):
+def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None):
     """Recorded corner-ball census of the fixture seed (schema of the production seeder)."""
     contract = json.loads(contract_path.read_text())
     corners = contract["SemanticCorners"]
     output.write_text(json.dumps({
         "Version": 1, "Frame": "SourceLocal", "SemanticCorners": corners,
         "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size,
+        "EtchBoundary": "producer-default" if etch_boundary is None else str(etch_boundary),
+        "EtchBoundarySHA256": None if etch_boundary is None else
+                              hashlib.sha256(etch_boundary.read_bytes()).hexdigest(),
+        "InterfaceAreaUnits": "um^2",
+        "InterfaceAreas": [{"Attribute": 1, "Name": "matching_surface", "Triangles": 2,
+                            "Area": 2.0},
+                           {"Attribute": 3, "Name": "surface_3", "Triangles": 2, "Area": 1.0}],
         "Corners": [{"Corner": index, "Point": corner, "BallEdges": 0}
                     for index, corner in enumerate(corners)],
         "LongitudinalFaces": [{"Surface": 1, "Triangles": 2, "InteriorNodes": 0,
@@ -80,7 +88,11 @@ def main():
     parser.add_argument("--corner-isotropy-radius", type=float, required=True)
     parser.add_argument("--lc-fine", type=float, required=True)
     parser.add_argument("--corner-census", type=Path, required=True)
+    # The device etch footprint is consumed only when the case binds one.
+    parser.add_argument("--etch-boundary", type=Path)
     args = parser.parse_args()
+    if args.etch_boundary is not None and not args.etch_boundary.is_file():
+        parser.error("the bound retained etch footprint must exist")
     if any(not path.is_file() for path in (args.signature, args.mask, args.boundary,
                                            args.semantic_contract)):
         parser.error("signature, mask, boundary, and semantic contract inputs must exist")
@@ -88,7 +100,7 @@ def main():
         parser.error("corner census output must be fresh")
     produce(args.output, json.loads(args.transform.read_text()), args.scale)
     corner_census(args.corner_census, args.semantic_contract, args.corner_isotropy_radius,
-                  args.lc_fine)
+                  args.lc_fine, args.etch_boundary)
 
 
 if __name__ == "__main__":

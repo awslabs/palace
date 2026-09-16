@@ -70,7 +70,7 @@ ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
 
 
 class GeneralMeshManifestTest(unittest.TestCase):
-    def write_case(self, root, name, edges, *, scale):
+    def write_case(self, root, name, edges, *, scale, retained_etch=False):
         directory = root / name; directory.mkdir()
         signature = directory / "signature.csv"
         with signature.open("w", newline="") as stream:
@@ -118,6 +118,12 @@ class GeneralMeshManifestTest(unittest.TestCase):
         names = {"Signature": "signature.csv", "Boundary": "boundary.csv", "Mask": "mask.csv",
                  "Process": "process.toml", "SemanticContract": "semantic.json",
                  "MeshRecipe": "recipe.json"}
+        source_extra = {"EtchFootprint": "producer-default"}
+        if retained_etch:
+            # A device etch footprint bound as an immutable source (fixture content).
+            (directory / "retained-etch.csv").write_text("Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n")
+            names["RetainedEtch"] = "retained-etch.csv"
+            source_extra = {}
         files = {role: {"Name": filename, "SHA256": sha256(directory / filename)}
                  for role, filename in names.items()}
         return {"Id": name, "Variants": [{"Id": "identity", "Transform": list(IDENTITY)},
@@ -132,12 +138,12 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     "MaximumComplexityRatio": 1.01},
                 "Source": {"Directory": name, "SignatureRole": "Signature",
                            "SignatureColumns": ["Index", "Slot", "Conductor"],
-                           "Files": files}, "TestScale": scale}
+                           "Files": files, **source_extra}, "TestScale": scale}
 
     def make_suite(self, root):
         require_native_fixture()
         cases = [self.write_case(root, "base", 1, scale=1),
-                 self.write_case(root, "subdivided", 2, scale=2),
+                 self.write_case(root, "subdivided", 2, scale=2, retained_etch=True),
                  self.write_case(root, "six-edge-supplemental", 6, scale=3)]
         tools = [(MESHER.name, MESHER), (STAGER.name, STAGER),
                  (TRANSFORMER.name, TRANSFORMER),
@@ -233,11 +239,14 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  str(directory / "semantic.json"), "--signature", str(directory / "signature.csv"),
                  "--boundary", str(directory / "boundary.csv"), "--mask", str(directory / "mask.csv")])
             census = root / f"{canonical_stem}-corner-census.json"
+            etch = (directory / case["Source"]["Files"]["RetainedEtch"]["Name"]
+                    if "RetainedEtch" in case["Source"]["Files"] else None)
             launch(canonical_stem, canonical_reports, "seed-generation",
                 {"source-signature": directory / "signature.csv",
                  "source-boundary": directory / "boundary.csv",
                  "source-mask": directory / "mask.csv",
-                 "canonical-semantic-contract": canonical_semantic},
+                 "canonical-semantic-contract": canonical_semantic,
+                 **({"source-retained-etch": etch} if etch is not None else {})},
                 {"seed-mesh": seed, "seed-corner-census": census},
                 {"runtime": sys.executable, "mesher": MESHER},
                 [sys.executable, str(MESHER), str(seed), str(identity_transform),
@@ -245,7 +254,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--mask", str(directory / "mask.csv"), "--boundary", str(directory / "boundary.csv"),
                  "--semantic-contract", str(canonical_semantic),
                  "--corner-isotropy-radius", str(CORNER_ISOTROPY_RADIUS),
-                 "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census)])
+                 "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
+                 *(["--etch-boundary", str(etch)] if etch is not None else [])])
             launch(canonical_stem, canonical_reports, "metric-preparation",
                 {"seed-mesh": seed, "canonical-semantic-contract": canonical_semantic,
                  "canonical-supports": canonical_supports},
@@ -506,6 +516,99 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "did not consume"):
                         _validate_source_transformation(reports, binding, source_paths)
             recipe_path.write_text(json.dumps(original))
+
+    def test_etch_footprint_is_a_bound_source_or_an_explicit_producer_default(self):
+        from mesh_stage_contract import (validate_canonical_dag, validate_command_bindings,
+                                         validate_seed_corner_isotropy)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest = self.make_suite(root)
+            self.produce_matrix(root, manifest_path, manifest)
+            default_case, etch_case = manifest["Cases"][0], manifest["Cases"][1]
+            self.assertEqual(default_case["Source"]["EtchFootprint"], "producer-default")
+            self.assertIn("RetainedEtch", etch_case["Source"]["Files"])
+            # A case declaring neither, both, or another footprint word fails closed.
+            for description, mutate in (
+                    ("neither", lambda source: source.pop("EtchFootprint")),
+                    ("both", lambda source: source["Files"].__setitem__(
+                        "RetainedEtch", etch_case["Source"]["Files"]["RetainedEtch"])),
+                    ("other", lambda source: source.__setitem__("EtchFootprint", "device"))):
+                candidate = copy.deepcopy(manifest); mutate(candidate["Cases"][0]["Source"])
+                with self.assertRaisesRegex(ValueError, "etch footprint", msg=description):
+                    validate_manifest(candidate, manifest_path)
+            validate_manifest(manifest, manifest_path)
+            stage_contract = __import__("mesh_stage_contract")
+
+            def reports_for(case_id):
+                reports = {stage: json.loads(
+                    (root / f"{case_id}--canonical-{stage}.log.json").read_text())
+                           for stage in stage_contract.CANONICAL_STAGE_ORDER}
+                reports["proper-rigid-publication"] = json.loads(
+                    (root / f"{case_id}--identity-proper-rigid-publication.log.json").read_text())
+                case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
+                paths = {role: root / case_id / item["Name"]
+                         for role, item in case["Source"]["Files"].items()}
+                binding = {"Transform": IDENTITY, "InputSHA256": {
+                    role: item["SHA256"] for role, item in case["Source"]["Files"].items()}}
+                return reports, binding, paths
+
+            # The bound footprint is consumed: recorded in the seed census by hash.
+            reports, binding, paths = reports_for("subdivided")
+            _validate_source_transformation(reports, binding, paths)
+            seed = reports["seed-generation"]
+            census = validate_seed_corner_isotropy(
+                seed, reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"])
+            self.assertEqual(census["EtchBoundarySHA256"],
+                             etch_case["Source"]["Files"]["RetainedEtch"]["SHA256"])
+            # Substituted footprint: the immutable hash differs from what the seed bound.
+            substituted = copy.deepcopy(binding)
+            substituted["InputSHA256"]["RetainedEtch"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "retained etch"):
+                _validate_source_transformation(reports, substituted, paths)
+            # Omitted: the case declares a footprint the seed stage did not bind.
+            omitted = copy.deepcopy(reports)
+            del omitted["seed-generation"]["Inputs"]["source-retained-etch"]
+            with self.assertRaisesRegex(ValueError, "retained etch"):
+                _validate_source_transformation(omitted, binding, paths)
+            # Tampered census: the recorded footprint hash differs from the bound input.
+            census_item = seed["Artifacts"]["seed-corner-census"]
+            tampered = json.loads(Path(census_item["Path"]).read_text())
+            tampered["EtchBoundarySHA256"] = "1" * 64
+            tampered_path = root / "census-etch-tampered.json"
+            tampered_path.write_text(json.dumps(tampered))
+            tampered_report = copy.deepcopy(seed)
+            tampered_report["Artifacts"]["seed-corner-census"] = {
+                "Path": str(tampered_path), "SHA256": sha256(tampered_path)}
+            with self.assertRaisesRegex(ValueError, "etch footprint"):
+                validate_seed_corner_isotropy(
+                    tampered_report,
+                    reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"])
+            # The seed command must pass exactly the bound path, and never an
+            # undeclared footprint.
+            input_paths = {name: item["Path"] for name, item in seed["Inputs"].items()}
+            artifact_paths = {name: item["Path"] for name, item in seed["Artifacts"].items()}
+            validate_command_bindings("seed-generation", seed["Command"], input_paths,
+                                      artifact_paths, seed["WorkingDirectory"])
+            other = dict(input_paths, **{"source-retained-etch": str(root / "base" / "boundary.csv")})
+            with self.assertRaises(ValueError):
+                validate_command_bindings("seed-generation", seed["Command"], other,
+                                          artifact_paths, seed["WorkingDirectory"])
+            undeclared = {name: path for name, path in input_paths.items()
+                          if name != "source-retained-etch"}
+            with self.assertRaisesRegex(ValueError, "without a bound"):
+                validate_command_bindings("seed-generation", seed["Command"], undeclared,
+                                          artifact_paths, seed["WorkingDirectory"])
+            # A producer-default case: the seed binds no footprint and says so.
+            reports, binding, paths = reports_for("base")
+            _validate_source_transformation(reports, binding, paths)
+            default_census = validate_seed_corner_isotropy(
+                reports["seed-generation"],
+                reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"])
+            self.assertEqual(default_census["EtchBoundary"], "producer-default")
+            undeclared_bound = copy.deepcopy(reports)
+            undeclared_bound["seed-generation"]["Inputs"]["source-retained-etch"] = \
+                copy.deepcopy(seed["Inputs"]["source-retained-etch"])
+            with self.assertRaisesRegex(ValueError, "does not declare"):
+                _validate_source_transformation(undeclared_bound, binding, paths)
 
     def _stage_report(self, root, name):
         path = root / f"{name}.log.json"

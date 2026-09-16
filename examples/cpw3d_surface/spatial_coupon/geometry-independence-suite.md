@@ -13,6 +13,25 @@ gates.
 Every runnable case requires SHA-256-frozen `Signature`, `Boundary`, `Mask`,
 `Process`, `SemanticContract`, and `MeshRecipe` roles. Expected materials,
 labels/adjacency, corners, and protected supports come only from that contract.
+The device etch footprint is a recorded choice, never an omission: a case
+declares either a SHA-256-frozen `RetainedEtch` file (`retained-etch.csv`, the
+same plan-view loop format the graded_v2 producer consumed through
+`--etch-boundary`) or `EtchFootprint: "producer-default"`; a case with neither,
+both, or another word fails preflight. When a `RetainedEtch` is declared, seed
+generation binds it as the `source-retained-etch` input and its command must
+pass exactly that path to `--etch-boundary`; without one, `--etch-boundary` is
+forbidden and the seed census records `EtchBoundary: "producer-default"`. The
+census also records the footprint's SHA-256 and the per-label interface areas
+(`InterfaceAreas`, um^2) measured from the seed, so the footprint is asserted
+from the mesh (reported, not gated; no expected-areas input exists). Only remote
+campaign input `07` (four-edge) carries a `retained-etch.csv`
+(`49fe5072...86d6`; graded_v2 `campaign.json` binds it for `07-fabricated`
+only); `05`, `06`, `08`, `09` (ten-edge) and `10` have none and their graded_v2
+references used the producer default, which the ten-edge case therefore records
+explicitly. With the bound footprint the four-edge seed's areas are 3000 =
+11.9259 um^2 and 3100 = 210.5627 um^2 against the graded_v2 reference 11.926 /
+210.563 (the producer default gave a 2 x 2 square and 218.0). Exporting a
+producer-default footprint as a bound file is a P2 follow-up.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

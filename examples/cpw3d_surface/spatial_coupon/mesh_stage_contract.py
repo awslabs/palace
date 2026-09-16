@@ -40,6 +40,10 @@ STAGE_INPUTS = {
         "source-semantic-contract", "source-signature", "source-boundary", "source-mask",
         "source-process"},
 }
+# Inputs a stage binds only when the case declares them. The device etch footprint
+# (retained-etch.csv) is bound for seed generation exactly when the case declares
+# a RetainedEtch source; otherwise the case records the producer default.
+STAGE_OPTIONAL_INPUTS = {"seed-generation": {"source-retained-etch"}}
 STAGE_OUTPUTS = {
     "canonical-source-validation": {"canonical-semantic-contract", "canonical-supports"},
     "seed-generation": {"seed-mesh", "seed-corner-census"},
@@ -100,6 +104,11 @@ STAGE_BINDING_OPTIONS = {
         "--transformed-supports": ("Artifacts", "transformed-supports"),
         "--ownership": ("Artifacts", "ownership-partition"),
         "--ownership-quadrature": ("Artifacts", "ownership-quadrature-partition")},
+}
+# Options bound to an optional input: required with the bound path when the input
+# is bound, forbidden when it is not (an undeclared footprint is fail-closed).
+STAGE_OPTIONAL_BINDING_OPTIONS = {
+    "seed-generation": {"--etch-boundary": ("Inputs", "source-retained-etch")},
 }
 # Bound inputs/outputs that are consumed positionally and must occur in argv.
 STAGE_BINDING_ARGUMENTS = {
@@ -212,6 +221,11 @@ def validate_command_bindings(stage, command, inputs, artifacts, working_directo
     bound = {"Inputs": inputs, "Artifacts": artifacts}
     for option, (section, name) in STAGE_BINDING_OPTIONS.get(stage, {}).items():
         _require_path_option(command, option, bound[section][name], working_directory)
+    for option, (section, name) in STAGE_OPTIONAL_BINDING_OPTIONS.get(stage, {}).items():
+        if name in bound[section]:
+            _require_path_option(command, option, bound[section][name], working_directory)
+        elif option in command:
+            raise ValueError(f"Stage command passes {option} without a bound {name} input")
     for section, name in STAGE_BINDING_ARGUMENTS.get(stage, set()):
         _require_path_argument(command, bound[section][name], f"{section.lower()} {name}",
                                working_directory)
@@ -232,8 +246,9 @@ def binding(path):
     return {"Path": str(path), "SHA256": sha256(path)}
 
 
-def _validate_bindings(items, expected, description):
-    if not isinstance(items, dict) or set(items) != expected:
+def _validate_bindings(items, expected, description, optional=frozenset()):
+    if (not isinstance(items, dict) or not expected <= set(items) or
+            not set(items) <= expected | set(optional)):
         raise ValueError(f"{description} names do not match the frozen stage contract")
     for name, item in items.items():
         if (not isinstance(item, dict) or not item.get("Path") or not item.get("SHA256") or
@@ -254,7 +269,8 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
     if launcher_name is not None and (producer.get("Name") != launcher_name or
                                       producer.get("SHA256") != launcher_sha256):
         raise ValueError("Stage launcher identity differs from the frozen launcher")
-    _validate_bindings(report.get("Inputs"), STAGE_INPUTS[stage], "stage input")
+    _validate_bindings(report.get("Inputs"), STAGE_INPUTS[stage], "stage input",
+                       STAGE_OPTIONAL_INPUTS.get(stage, frozenset()))
     _validate_bindings(report.get("Artifacts"), STAGE_OUTPUTS[stage], "stage output")
     tools = report.get("Tools")
     if not isinstance(tools, dict) or set(tools) != STAGE_TOOLS[stage]:
@@ -411,6 +427,22 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
             not isinstance(census.get("Corners"), list) or
             not isinstance(census.get("LongitudinalFaces"), list)):
         raise ValueError("Seed corner census has an unsupported schema")
+    # The etched footprint the seed used must be the bound one (or the recorded
+    # producer default) and its per-label interface areas are recorded.
+    etch = seed_report["Inputs"].get("source-retained-etch")
+    if etch is None:
+        if census.get("EtchBoundary") != "producer-default":
+            raise ValueError("Seed census names an etch footprint the stage did not bind")
+    elif census.get("EtchBoundarySHA256") != etch["SHA256"]:
+        raise ValueError("Seed census etch footprint differs from the bound retained etch")
+    areas = census.get("InterfaceAreas")
+    if (not isinstance(areas, list) or not areas or
+            any(not isinstance(row, dict) or isinstance(row.get("Attribute"), bool) or
+                not isinstance(row.get("Attribute"), int) or
+                not isinstance(row.get("Area"), (int, float)) or
+                isinstance(row.get("Area"), bool) or not row["Area"] > 0
+                for row in areas)):
+        raise ValueError("Seed census lacks positive per-label interface areas")
     # The ridge-to-ridge face census (interior nodes and full-height triangles) is
     # recorded for every seed; its values are reported, not gated.
     for row in census["LongitudinalFaces"]:

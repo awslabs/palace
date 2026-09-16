@@ -576,6 +576,37 @@ function sorted_median(values)
     return isodd(n) ? sorted[(n + 1) ÷ 2] : 0.5 * (sorted[n ÷ 2] + sorted[n ÷ 2 + 1])
 end
 
+# Area of every physical surface label of the linear seed (source-local frame),
+# so the etched footprint is asserted from the mesh rather than assumed from
+# the producer's inputs. Reported, not gated.
+function interface_areas()
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(coordinates, 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    rows = Dict{String, Any}[]
+    for (dim, attribute) in gmsh.model.getPhysicalGroups(2)
+        area = 0.0
+        triangles = 0
+        for entity in gmsh.model.getEntitiesForPhysicalGroup(dim, attribute)
+            _, element_tags, element_nodes = gmsh.model.mesh.getElements(2, entity)
+            for (tags, block) in zip(element_tags, element_nodes)
+                isempty(tags) && continue
+                nodes_per_element = length(block) ÷ length(tags)
+                for start in 1:nodes_per_element:length(block)
+                    a, b, c = (points[:, index[block[start + i]]] for i in 0:2)
+                    area += 0.5 * norm(cross(b .- a, c .- a))
+                    triangles += 1
+                end
+            end
+        end
+        push!(rows, Dict{String, Any}("Attribute" => Int(attribute),
+                                      "Name" => gmsh.model.getPhysicalName(dim, attribute),
+                                      "Triangles" => triangles, "Area" => area))
+    end
+    sort!(rows; by=row -> row["Attribute"])
+    return rows
+end
+
 # Bins of the along-edge histogram of a longitudinal face's interior nodes; a
 # census resolution constant, not a mesh target.
 const LONGITUDINAL_FACE_HISTOGRAM_BINS = 10
@@ -2170,6 +2201,7 @@ function generate_spatial_coupon(;
     face_rows = corner_isotropy ?
         longitudinal_face_census(longitudinal_curves, semantic_corners, corner_reach) :
         Dict{String, Any}[]
+    area_rows = corner_isotropy ? interface_areas() : Dict{String, Any}[]
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
@@ -2218,7 +2250,7 @@ function generate_spatial_coupon(;
         open(corner_census, "w") do stream
             write_json(stream, Dict{String, Any}(
                 "Version" => 1, "Frame" => "SourceLocal",
-                "Scope" => "Seed corner-ball census; reported, not a qualification gate",
+                "Scope" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
                 "SemanticContract" => semantic_contract,
                 "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
                 "RigidTransform" => vec(transform'),
@@ -2233,6 +2265,11 @@ function generate_spatial_coupon(;
                 "CornerLawReach" => corner_reach,
                 "LongitudinalFaceHistogramBins" => LONGITUDINAL_FACE_HISTOGRAM_BINS,
                 "LongitudinalFaces" => face_rows,
+                "InterfaceAreaUnits" => "um^2",
+                "EtchBoundary" => etch_boundary === nothing ? "producer-default" : etch_boundary,
+                "EtchBoundarySHA256" => etch_boundary === nothing ? nothing :
+                                        bytes2hex(sha256(read(etch_boundary))),
+                "InterfaceAreas" => area_rows,
                 "Corners" => census_rows))
             println(stream)
         end
@@ -2242,6 +2279,10 @@ function generate_spatial_coupon(;
                     "min/median/max=$(row["EdgeMinimum"])/$(row["EdgeMedian"])/$(row["EdgeMaximum"]) " *
                     "over sqrt2*hn=$(row["EdgesOverSqrt2IsotropicSize"]) " *
                     "incident aspect=$(row["IncidentMaximumAspect"])")
+        end
+        for row in area_rows
+            println("  interface $(row["Attribute"]) $(row["Name"]): triangles=$(row["Triangles"]) " *
+                    "area=$(row["Area"]) um^2")
         end
         for row in face_rows
             println("  longitudinal face $(row["Surface"]) $(row["PhysicalGroups"]): " *
@@ -2314,7 +2355,8 @@ function parse_options(args)
         "--interface-ownership-report" => ("interface_ownership_report", String),
         "--semantic-contract" => ("semantic_contract", String),
         "--corner-isotropy-radius" => ("corner_isotropy_radius", Float64),
-        "--corner-census" => ("corner_census", String)
+        "--corner-census" => ("corner_census", String),
+        "--etch-boundary" => ("etch_boundary", String)
     )
     index = 4
     while index <= length(args)
@@ -2372,6 +2414,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         transform       = get(options, "transform", copy(IDENTITY_RIGID_TRANSFORM)),
         semantic_contract = get(options, "semantic_contract", nothing),
         corner_isotropy_radius = get(options, "corner_isotropy_radius", 0.0),
-        corner_census   = get(options, "corner_census", nothing)
+        corner_census   = get(options, "corner_census", nothing),
+        etch_boundary   = get(options, "etch_boundary", nothing)
     )
 end

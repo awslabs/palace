@@ -24,7 +24,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "38c78323308fcf124859d2212633707ad51b8a911580fc3d883c5ea3fdcb2585"
+      "SHA256": "b75d371f5265483bb557479300b0263f74faeb44b5a8d11611f05016b40ea054"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -59,7 +59,7 @@
     {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "75bd2c07786bf68f65b63e74800159634cc5bd3c601a1c011aa39426df98c212"
+      "SHA256": "87279b7e61a47169d89b2b000b1f822225b4ab91b3363a28127a250035351f39"
     },
     {
       "Name": "general_mesh_audit_producer.py",
@@ -69,7 +69,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "5dae31139da7f5757cf886e4088fcb320ae6d0f6a5dda8b5cd46ef9939570166"
+      "SHA256": "84889390feba6e18c6795501797769537bb21abe852fd77fee1f5fae917d1b5c"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -243,7 +243,8 @@
             "Name": "generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       }
     },
     {
@@ -353,7 +354,8 @@
             "Name": "generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       }
     },
     {
@@ -463,7 +465,8 @@
             "Name": "generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       }
     },
     {
@@ -573,7 +576,8 @@
             "Name": "generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       }
     },
     {
@@ -683,7 +687,8 @@
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       },
       "Provenance": "current three-edge 419576fdab24 input snapshot; outputs untouched"
     },
@@ -805,7 +810,7 @@
           },
           "Provenance": {
             "Name": "provenance.json",
-            "SHA256": "7aea276ead95ce55562aab2d561b7c6bbdca59690d1c946189bb3f6b7531bb3d"
+            "SHA256": "4fb45b71a58e1be0f395b429ad6c6874a1785e65016514e52f81a86f98d6027e"
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
@@ -814,6 +819,10 @@
           "MeshRecipe": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          },
+          "RetainedEtch": {
+            "Name": "retained-etch.csv",
+            "SHA256": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
           }
         }
       },
@@ -927,7 +936,8 @@
             "Name": "generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       }
     },
     {
@@ -1048,7 +1058,7 @@
           },
           "Provenance": {
             "Name": "provenance.json",
-            "SHA256": "6c4afb3a0dfabe96b86cfbd0e93c75500b05376bf438af73146fa51b058e033d"
+            "SHA256": "9bf88dd74bbfb24518a01a85d424a4076675de4493fa45f25ca761e7389cd0f2"
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
@@ -1058,7 +1068,8 @@
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       },
       "Provenance": "RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/09; campaign.json maps input 09 to spatialedgecluster_edgecount-10_6791f1c84123; 10 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied"
     },
@@ -1169,7 +1180,8 @@
             "Name": "mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       },
       "Provenance": "Generated only from run_general_mesh_suite.py fixture source under the repository Apache-2.0 license; no field archive"
     },
@@ -1280,7 +1292,8 @@
             "Name": "mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       },
       "Provenance": "Generated only from run_general_mesh_suite.py fixture source under the repository Apache-2.0 license; no field archive"
     },
@@ -1391,7 +1404,8 @@
             "Name": "mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       },
       "Provenance": "Generated only from run_general_mesh_suite.py fixture source under the repository Apache-2.0 license; no field archive"
     },
@@ -1502,7 +1516,8 @@
             "Name": "mesh-recipe.json",
             "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
           }
-        }
+        },
+        "EtchFootprint": "producer-default"
       },
       "Provenance": "Generated only from run_general_mesh_suite.py fixture source under the repository Apache-2.0 license; no field archive"
     }
@@ -1514,7 +1529,7 @@
     },
     "seed-generation": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "mesher": "9fb4dad8c0ed2a9aec8b0868b7a60e857287c6a9dd14106a719bda524f2e694f"
+      "mesher": "a26094d4ff42bd001ceef1a1540936ad42a5b4ae612b97a4261b850c4837bf90"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
