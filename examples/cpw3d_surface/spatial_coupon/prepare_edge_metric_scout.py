@@ -21,7 +21,7 @@ from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     load_semantic_contract, material_interface_attributes,
                                     simple_sharp_contract, volume_attributes)
 from trace_basis import (basis_statistics, cut_surface_size_report, load_trace_basis,
-                         trace_basis_sizes, transform_trace_basis)
+                         trace_basis_sizes, transform_trace_basis, unique_edges)
 
 
 def _near_segment(point, segments, tolerance):
@@ -417,7 +417,17 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                        'within the tolerance; shared with the planar-patch audits'},
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     if footprint is not None:recipe['FootprintSegments']=footprint
-    if trace_record is not None:recipe['TraceBasisSizing']=trace_record
+    if trace_record is not None:
+        recipe['TraceBasisSizing']=trace_record
+        # The bound basis edges in the metric frame: a band lying on one of them is
+        # source-driven for the trace-diagonal audit (supervisor decision 21).
+        edges=unique_edges(placed_basis['Points'],placed_basis['Triangles'])
+        recipe['TraceBasisEdges']={'InputSHA256':trace_basis['InputSHA256'],'Count':int(len(edges)),
+            'Segments':edges.reshape(-1,6).tolist(),
+            'Rule':'unique edges of the bound trace basis (metric frame); the trace-diagonal audit '
+                   'treats a line-like band as source-driven only when it lies on one of them '
+                   '(direction aligned and both endpoints within 2 x ShortEdgeThreshold of the '
+                   'edge segment) and reports such bands separately'}
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
     print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments','TraceBasisSizing')},indent=2))
     print(json.dumps({'JunctionSegments':{k:v for k,v in junction_record.items() if k!='Segments'}},indent=2))

@@ -98,6 +98,9 @@ def main():
             trace_record = {**census["TraceBasisSizing"],
                             "CutSurfaceSize": {"CutTriangles": 7, "Minimum": .001,
                                                "Median": .08, "Maximum": .08}}
+            triangle = census["TraceBasisSizing"]["MeshFrameTriangles"][0]
+            trace_edges = {"InputSHA256": census["TraceBasisSizing"]["InputSHA256"], "Count": 3,
+                           "Segments": [[*triangle[a], *triangle[b]] for a, b in ((0, 1), (1, 2), (2, 0))]}
         elif args.trace_basis_size_ratio is not None:
             parser.error("a trace basis size ratio needs the bound trace basis")
         args.recipe.write_text(json.dumps({
@@ -130,7 +133,8 @@ def main():
             "FarFieldBudgetPolicy": {"Name": "seed-fraction-far-field-v1",
                 "RequestedFarSize": 1.0, "Pressure": 1.0,
                 "EffectiveFarSize": 1.0},
-            **({"TraceBasisSizing": trace_record} if trace_record is not None else {})}) + "\n")
+            **({"TraceBasisSizing": trace_record, "TraceBasisEdges": trace_edges}
+               if trace_record is not None else {})}) + "\n")
     elif args.stage == "adapt":
         if (args.metric is None or not args.metric.is_file() or
                 args.pins is None or not args.pins.is_file() or

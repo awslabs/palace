@@ -137,6 +137,34 @@ and metric inputs to be exactly the case's frozen files. Without a bound basis
 nothing is sized, recorded or passed. The four-edge basis has 234 unique edges,
 46 below the 0.16 um far size (minimum 0.0217 um, 76 of 156 triangles); the
 ten-edge basis 774 edges, 146 below (minimum 0.0492 um, 244 of 516).
+Supervisor decision 21 (trace-basis bands in the diagonal detector): the
+four-edge narrow-hat basis triangles are slivers (0.022-0.048 um base, 11.4 um
+long, fanning from (1.93..2, 8) to (-6, 0) on the bottom and top faces) and the
+per-triangle rule puts a 0.02-0.05 um band along their long edges, which the
+detector counted as two diagonal over-refinements (first build under the rule:
+identity failed `trace-diagonal-overrefinement`, rotate-z passed only because
+three edges crossed the 0.05 threshold at roundoff and split the component).
+The detector exists to reject ARBITRARY trace-diagonal refinement (the
+swept-prism era artifact); a band that lies on a bound trace-basis edge is
+source-driven: the hat gradient across the sliver is part of the imposed
+Dirichlet data along the whole sliver, resolving it is required to represent
+the source (the -21%/-18% energies of sources 10/11/74/75 are exactly that
+under-representation), and the graded_v2 reference resolved the same slivers
+with CAD trace diagonals. The metric stage records the bound basis's unique
+edges as `TraceBasisEdges` (input digests, count, metric-frame segments; the
+contract requires them to be exactly the recorded basis triangles' edges); the
+detector treats a line-like band as source-driven only when it lies ON one of
+them - direction aligned AND both band endpoints within 2 x ShortEdgeThreshold
+of the edge segment, not its line (`OnTraceBasisEdge`; position-aware, stricter
+than the direction-only signature/footprint/junction checks) - and reports such
+bands separately (`TraceBasisEdgeBands`: count, total span, maximum RMS width;
+`LineLikeBandsAlignedWith` per feature class) so the arbitrary-diagonal guard
+stays visible. Unaligned bands must still be zero (gate unchanged); with no
+bound basis the behaviour is unchanged. P2 (recorded, not fixed): the
+detector's components are formed from edges at or below the threshold, so a
+band whose edges sit at the threshold can split into sub-half-diameter pieces
+under a rigid motion (three edges of 16,819 crossed 0.05 by roundoff in the
+rotate-z variant); a tolerance-consistent component rule is a follow-up.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

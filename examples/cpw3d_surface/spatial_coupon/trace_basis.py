@@ -143,11 +143,17 @@ def triangle_edge_lengths(points, triangles):
                      for i, j in ((0, 1), (1, 2), (2, 0))], axis=1)
 
 
-def unique_edge_lengths(points, triangles):
+def unique_edges(points, triangles):
+    """The (k, 2, 3) endpoint coordinates of every distinct basis edge, in sorted
+    vertex-index order."""
     triangles = np.asarray(triangles, dtype=int)
     edges = np.unique(np.sort(triangles[:, [(0, 1), (1, 2), (2, 0)]].reshape(-1, 2), axis=1), axis=0)
-    points = np.asarray(points, dtype=float)
-    return np.linalg.norm(points[edges[:, 0]] - points[edges[:, 1]], axis=1)
+    return np.asarray(points, dtype=float)[edges]
+
+
+def unique_edge_lengths(points, triangles):
+    edges = unique_edges(points, triangles)
+    return np.linalg.norm(edges[:, 0] - edges[:, 1], axis=1)
 
 
 def requested_sizes(points, triangles, ratio):

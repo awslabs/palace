@@ -57,8 +57,26 @@ def _segment_alignment(direction, segments):
     return alignment
 
 
+def _on_basis_edge(direction, endpoints, basis_edges, reach):
+    """Whether a band lies on one bound trace-basis edge: direction aligned with the
+    edge and both band endpoints within `reach` of that edge segment (not its line)."""
+    endpoints = np.asarray(endpoints, dtype=float).reshape(2, 3)
+    for segment in np.asarray(basis_edges, dtype=float).reshape(-1, 2, 3):
+        vector = segment[1] - segment[0]
+        length = np.linalg.norm(vector)
+        if length <= 0:
+            raise ValueError("Degenerate trace basis edge")
+        if abs(np.dot(direction, vector / length)) <= 1 - 1e-6:
+            continue
+        delta = endpoints - segment[0]
+        parameter = np.clip((delta @ vector) / (length * length), 0.0, 1.0)
+        if np.all(np.linalg.norm(delta - parameter[:, None] * vector, axis=1) <= reach):
+            return True
+    return False
+
+
 def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segments=(),
-                           junction_segments=()):
+                           junction_segments=(), trace_basis_edges=()):
     """Find long, narrow short-edge bands on one planar labeled support.
 
     A connected set spanning several orthogonal supports is not a geometric
@@ -74,9 +92,14 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     wall/surface junctions - that legitimately carry the NormalSize band), and
     the cut-surface/material-interface junction lines recorded by the bound
     metric stage (where the trench floor/walls and the un-etched plane meet the
-    Dirichlet cut; they carry the same band).  A band aligned with any of them
-    is a feature band; only a band aligned with none counts as a diagonal
-    over-refinement.
+    Dirichlet cut; they carry the same band).  When a trace basis is bound, a
+    band that lies ON one of its edges (direction aligned and both endpoints
+    within twice the short-edge threshold of the edge segment) is source-driven,
+    not arbitrary: the hat gradient across a sliver basis triangle is part of
+    the imposed Dirichlet data along the whole sliver (supervisor decision 21);
+    such bands are reported separately so the arbitrary-diagonal guard stays
+    visible.  A band aligned with any feature is a feature band; only a band
+    aligned with none counts as a diagonal over-refinement.
     """
     triangles, labels = blocks(mesh, "triangle")
     xyz = mesh.points[triangles]
@@ -107,7 +130,10 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     segments = np.asarray(physical_segments, dtype=float).reshape(-1, 2, 3)
     footprint = np.asarray(footprint_segments, dtype=float).reshape(-1, 2, 3)
     junction = np.asarray(junction_segments, dtype=float).reshape(-1, 2, 3)
+    basis_edges = np.asarray(trace_basis_edges, dtype=float).reshape(-1, 2, 3)
     bands, components = 0, []
+    basis_bands = {"Count": 0, "TotalSpan": 0.0, "MaximumRMSWidth": 0.0}
+    aligned_counts = {"Signature": 0, "Footprint": 0, "Junction": 0, "TraceBasis": 0}
     for patch_id, short in short_by_patch.items():
         adjacency = {}
         for first, last in short:
@@ -144,8 +170,17 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             aligned = alignment > 1 - 1e-6
             footprint_aligned = footprint_alignment > 1 - 1e-6
             junction_aligned = junction_alignment > 1 - 1e-6
-            feature_aligned = aligned or footprint_aligned or junction_aligned
+            basis_aligned = bool(len(basis_edges)) and _on_basis_edge(
+                direction, (points[first], points[last]), basis_edges, 2.0 * threshold)
+            feature_aligned = aligned or footprint_aligned or junction_aligned or basis_aligned
             bands += int(line_like and not feature_aligned)
+            if line_like:
+                for name, flag in (("Signature", aligned), ("Footprint", footprint_aligned),
+                                   ("Junction", junction_aligned), ("TraceBasis", basis_aligned)):
+                    aligned_counts[name] += int(flag)
+                if basis_aligned:
+                    basis_bands["Count"] += 1; basis_bands["TotalSpan"] += span
+                    basis_bands["MaximumRMSWidth"] = max(basis_bands["MaximumRMSWidth"], width)
             owner = int(np.flatnonzero(patch == patch_id)[0])
             components.append({
                 "Attribute": int(labels[owner]), "Plane": planes[patch_id].tolist(),
@@ -156,6 +191,7 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                 "LineLike": line_like, "AlignedWithPhysicalSegment": aligned,
                 "AlignedWithFootprintSegment": footprint_aligned,
                 "AlignedWithJunctionSegment": junction_aligned,
+                "OnTraceBasisEdge": basis_aligned,
                 "AlignedWithFeature": feature_aligned,
                 "Vertices": len(component)})
     return {"GlobalDiagonalBands": bands,
@@ -166,11 +202,17 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             "FeatureSegments": {"Signature": int(len(segments)),
                                 "Footprint": int(len(footprint)),
                                 "Junction": int(len(junction)),
+                                "TraceBasis": int(len(basis_edges)),
                                 "Rule": "a band is a diagonal over-refinement only when aligned "
                                         "with none of: a signature edge, a simplified etch "
                                         "footprint edge (physical dielectric step edges that "
                                         "legitimately carry the NormalSize band), a cut-surface/"
-                                        "material-interface junction line (same band)"},
+                                        "material-interface junction line (same band), a bound "
+                                        "trace-basis edge the band lies on (direction aligned and "
+                                        "both endpoints within 2 x ShortEdgeThreshold of the edge "
+                                        "segment; source-driven, decision 21)"},
+            "LineLikeBandsAlignedWith": aligned_counts,
+            "TraceBasisEdgeBands": basis_bands,
             "LongShortEdgeComponents": components}
 
 
@@ -687,6 +729,20 @@ def _junction_segments(restoration_recipe_path):
     return segments.reshape(-1, 2, 3)
 
 
+def _trace_basis_edges(restoration_recipe_path):
+    """Unique edges of the bound trace basis recorded by the metric stage (empty when
+    the case binds no trace basis)."""
+    record = json.loads(Path(restoration_recipe_path).read_text()).get("TraceBasisEdges")
+    if record is None:
+        return np.zeros((0, 2, 3)), None
+    if not isinstance(record, dict) or not isinstance(record.get("Segments"), list):
+        raise ValueError("Restoration recipe trace basis edges are invalid")
+    segments = np.asarray(record["Segments"], dtype=float)
+    if segments.ndim != 2 or segments.shape[1] != 6 or not np.all(np.isfinite(segments)):
+        raise ValueError("Restoration recipe trace basis edges are invalid")
+    return segments.reshape(-1, 2, 3), record.get("InputSHA256")
+
+
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
                     ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8):
@@ -719,6 +775,10 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     homogeneous_junction = np.concatenate(
         (junction, np.ones((*junction.shape[:2], 1))), axis=2)
     transformed_junction = (homogeneous_junction @ matrix.T)[..., :3].reshape(-1, 6)
+    basis_edges, basis_provenance = _trace_basis_edges(restoration_recipe_path)
+    homogeneous_basis = np.concatenate(
+        (basis_edges, np.ones((*basis_edges.shape[:2], 1))), axis=2)
+    transformed_basis = (homogeneous_basis @ matrix.T)[..., :3].reshape(-1, 6)
     corners = np.asarray(transformed_recipe["TruePhysicalCorners"], dtype=float).reshape(-1, 3)
     if len(corners):
         homogeneous_corners = np.column_stack((corners, np.ones(len(corners))))
@@ -769,8 +829,9 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "TraceDiagonal": {**_global_diagonal_bands(
                   mesh, transformed_recipe["PhysicalSegments"],
                   transformed_recipe["NormalSize"], transformed_footprint,
-                  transformed_junction),
-                  "FootprintSegmentProvenance": footprint_provenance},
+                  transformed_junction, transformed_basis),
+                  "FootprintSegmentProvenance": footprint_provenance,
+                  "TraceBasisEdgeProvenance": basis_provenance},
               "MeshQuality": _tetra_quality(mesh)}
     base["Measurements"] = actual
     base["Topology"] = report

@@ -851,6 +851,19 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 rejected(recipe_data={**recipe, "TraceBasisSizing": {**recipe["TraceBasisSizing"], **changes}},
                          description=f"recipe {description}")
             rejected(recipe_data={**recipe, "TraceBasisSizing": None}, description="recipe omitted")
+            # The audit's source-driven band lines: exactly the basis edges, bound by digest.
+            edges = recipe["TraceBasisEdges"]
+            self.assertEqual(edges["Count"], len(edges["Segments"]))
+            self.assertEqual(edges["InputSHA256"], expected)
+            for description, changes in (
+                    ("digest", {"InputSHA256": {**expected, "BasisContract": "4" * 64}}),
+                    ("dropped", {"Segments": edges["Segments"][1:], "Count": edges["Count"] - 1}),
+                    ("count", {"Count": edges["Count"] + 1}),
+                    ("moved", {"Segments": [[v + 1.0 for v in segment] for segment in edges["Segments"]]})):
+                rejected(recipe_data={**recipe, "TraceBasisEdges": {**edges, **changes}},
+                         message="trace basis edge", description=f"edges {description}")
+            rejected(recipe_data={k: v for k, v in recipe.items() if k != "TraceBasisEdges"},
+                     message="trace basis edge", description="edges omitted")
             for description, changes in (
                     ("ratio", {"Ratio": 2 * TRACE_BASIS_SIZE_RATIO}),
                     ("digest", {"InputSHA256": {**expected, "ProcessLibrary": "2" * 64}}),
@@ -885,6 +898,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertIsNone(validate_trace_basis_sizing(plain_seed, plain_metric, plain_recipe, plain_census))
             self.assertIsNone(plain_census["TraceBasisSizing"])
             self.assertNotIn("TraceBasisSizing", plain_recipe)
+            self.assertNotIn("TraceBasisEdges", plain_recipe)
             with_ratio = copy.deepcopy(plain_seed); with_ratio["Command"] += ["--trace-basis-size-ratio", "1.0"]
             rejected(seed_report=with_ratio, metric_report=plain_metric, recipe_data=plain_recipe,
                      census_data=plain_census, message="without a bound trace basis")
@@ -1617,6 +1631,54 @@ class GeneralMeshManifestTest(unittest.TestCase):
         self.assertTrue(component["AlignedWithFeature"])
         self.assertEqual(junction["FeatureSegments"]["Junction"], 1)
         self.assertEqual(neither["FeatureSegments"]["Junction"], 0)
+        # Decision 21: a band lying ON a bound trace-basis edge (direction aligned and
+        # both endpoints within 2 x threshold of the edge segment) is source-driven and
+        # reported separately; the same band beside a parallel basis edge, or with no
+        # basis bound, is still a diagonal over-refinement.
+        unaligned = [[[0., 0., 0.], [1., 0., 0.]]]
+        far_edge = [[[-2., 0., 0.], [-2., 0., 0.] + 3 * np.asarray(direction)]]
+        on_edge = [[[-0.05, -0.02, 0.], (np.asarray([-0.05, -0.02, 0.]) + 1.1 * np.asarray(direction)).tolist()]]
+        accepted = _global_diagonal_bands(mesh, unaligned, .025, trace_basis_edges=on_edge)
+        self.assertEqual(accepted["GlobalDiagonalBands"], 0)
+        component = accepted["LongShortEdgeComponents"][0]
+        self.assertTrue(component["OnTraceBasisEdge"]); self.assertTrue(component["AlignedWithFeature"])
+        self.assertFalse(component["AlignedWithPhysicalSegment"])
+        self.assertEqual(accepted["TraceBasisEdgeBands"]["Count"], 1)
+        self.assertAlmostEqual(accepted["TraceBasisEdgeBands"]["TotalSpan"], component["Span"])
+        self.assertEqual(accepted["LineLikeBandsAlignedWith"],
+                         {"Signature": 0, "Footprint": 0, "Junction": 0, "TraceBasis": 1})
+        self.assertEqual(accepted["FeatureSegments"]["TraceBasis"], 1)
+        # Parallel but 2 um away: direction matches, position does not.
+        shifted = np.asarray(on_edge) + np.array([0., 2., 0.])
+        rejected = _global_diagonal_bands(mesh, unaligned, .025, trace_basis_edges=shifted.tolist())
+        self.assertEqual(rejected["GlobalDiagonalBands"], 1)
+        self.assertFalse(rejected["LongShortEdgeComponents"][0]["OnTraceBasisEdge"])
+        self.assertEqual(rejected["TraceBasisEdgeBands"]["Count"], 0)
+        # An edge on the band's line but ending before the band: the segment, not the line.
+        short_edge = [[[-0.05, -0.02, 0.], (np.asarray([-0.05, -0.02, 0.]) + 0.4 * np.asarray(direction)).tolist()]]
+        self.assertEqual(_global_diagonal_bands(mesh, unaligned, .025,
+                                                trace_basis_edges=short_edge)["GlobalDiagonalBands"], 1)
+        self.assertEqual(_global_diagonal_bands(mesh, unaligned, .025,
+                                                trace_basis_edges=far_edge)["GlobalDiagonalBands"], 1)
+        self.assertEqual(neither["FeatureSegments"]["TraceBasis"], 0)
+        self.assertEqual(neither["TraceBasisEdgeBands"]["Count"], 0)
+        with self.assertRaisesRegex(ValueError, "Degenerate trace basis edge"):
+            _global_diagonal_bands(mesh, unaligned, .025, trace_basis_edges=[[[0., 0., 0.], [0., 0., 0.]]])
+        # Rotation covariance of the on-edge classification.
+        angle = 0.9; q = np.array([[math.cos(angle), -math.sin(angle), 0.],
+                                   [math.sin(angle), math.cos(angle), 0.], [0., 0., 1.]])
+        shift = np.array([3., -1., 2.])
+        rotated_mesh = meshio.Mesh(points @ q.T + shift, [("triangle", triangles)],
+                                   cell_data={"gmsh:physical": [np.ones(len(triangles), int)]})
+        rotated = _global_diagonal_bands(
+            rotated_mesh, (np.asarray(unaligned) @ q.T + shift).tolist(), .025,
+            trace_basis_edges=(np.asarray(on_edge) @ q.T + shift).tolist())
+        self.assertEqual(rotated["GlobalDiagonalBands"], 0)
+        self.assertTrue(rotated["LongShortEdgeComponents"][0]["OnTraceBasisEdge"])
+        rotated_shifted = _global_diagonal_bands(
+            rotated_mesh, (np.asarray(unaligned) @ q.T + shift).tolist(), .025,
+            trace_basis_edges=(shifted @ q.T + shift).tolist())
+        self.assertEqual(rotated_shifted["GlobalDiagonalBands"], 1)
         with self.assertRaisesRegex(ValueError, "Degenerate feature segment"):
             _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
                                    footprint_segments=[[[0., 0., 0.], [0., 0., 0.]]])

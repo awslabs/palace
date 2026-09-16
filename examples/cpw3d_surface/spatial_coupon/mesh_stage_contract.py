@@ -708,6 +708,43 @@ def validate_trace_basis_sizing(seed_report, metric_report, recipe, census):
             _count(sizes.get("CutTriangles"), "Cut-surface triangles") <= 0 or
             _count(record.get("BasisEdgesBelowFarSize"), "Basis edges below the far size") < 0):
         raise ValueError("Trace basis sizing lacks the cut-surface size statistics")
+    _validate_trace_basis_edges(recipe, recipe_triangles, seed_basis, scale)
+    return record
+
+
+def _validate_trace_basis_edges(recipe, triangles, digests, scale):
+    """The recipe's TraceBasisEdges (the audit's source-driven band lines) are exactly
+    the unique edges of the recorded basis triangles placed by the recipe's contract
+    transform, with the bound input digests."""
+    record = recipe.get("TraceBasisEdges")
+    if (not isinstance(record, dict) or record.get("InputSHA256") != digests or
+            not isinstance(record.get("Segments"), list)):
+        raise ValueError("Restoration recipe lacks the bound trace basis edges")
+    placement = recipe.get("SemanticContract", {}).get(
+        "RigidTransform", [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.])
+    matrix = [[float(placement[4 * row + column]) for column in range(4)] for row in range(4)]
+    def place(point):
+        return [sum(matrix[row][column] * point[column] for column in range(3)) + matrix[row][3]
+                for row in range(3)]
+    expected = {}
+    for triangle in triangles:
+        placed = [tuple(place(point)) for point in triangle]
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            key = tuple(sorted((placed[a], placed[b])))
+            expected[key] = None
+    segments = record["Segments"]
+    if record.get("Count") != len(segments) or len(segments) != len(expected):
+        raise ValueError("Restoration recipe trace basis edges differ from the basis triangles")
+    keys = list(expected)
+    for segment in segments:
+        if (not isinstance(segment, list) or len(segment) != 6 or
+                any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                    for v in segment)):
+            raise ValueError("Restoration recipe trace basis edge is invalid")
+        ends = tuple(sorted((tuple(segment[:3]), tuple(segment[3:]))))
+        if not any(all(abs(x - y) <= 1e-8 * scale for p, q in zip(ends, key) for x, y in zip(p, q))
+                   for key in keys):
+            raise ValueError("Restoration recipe trace basis edges differ from the basis triangles")
     return record
 
 
