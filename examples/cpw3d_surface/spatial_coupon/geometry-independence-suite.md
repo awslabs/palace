@@ -238,7 +238,33 @@ triangle counts); the stage contract requires it, with the recipe's
 fixed-triangle total (reported, not gated). The far-field budget policy depends
 only on the seed element count and is unaffected; the ownership and covariance
 audits see the same frozen cut/matching surface everywhere, since the corner
-balls on a cut were the only previously unfrozen cut triangles. Label restoration compares repair displacements to the bound with a
+balls on a cut were the only previously unfrozen cut triangles.
+
+Label restoration first removes MMG's sub-`hmin` corner insertions
+(`_collapse_corner_ball_vertices`): inside every contract corner ball
+(`CornerIsotropyRadius`), a free interior vertex (no planar support, not pinned)
+whose shortest incident edge is below the recipe `NormalSize` (the `hmin` MMG was
+given) is collapsed onto the corner vertex, a non-free neighbor, or a free ring
+vertex of the corner at or beyond `hmin`, whichever valid cavity has the best
+worst cell; a collapse stands only when every remapped cavity cell keeps a
+positive orientation and a scaled Jacobian of at least the 0.02 quality target
+(new cavity cells have no original floor) and its worst cell is no worse than
+the cells it replaces (a collapse onto the corner itself was measured to be
+valid yet leave an aspect-54 sliver where a ring vertex gave 3.4), a corner's
+collapses are committed together and rolled back if its corner-incident aspect
+did not improve, no vertex moves and no boundary triangle changes. The only threshold
+is the recipe `hmin` already handed to MMG; the cells that survive keep their
+original floors and the unchanged 0.75 x `NormalSize` smoothing, 4.0 corner gate
+and 0.01 scaled-Jacobian gate follow. The restoration report records
+`CornerBallCollapses` (per corner: collapsed vertices, aspect before and after
+the collapse, rolled-back count), `CollapsedCornerVertices`,
+`CornerAspectsBeforeCollapse` and `CollapseMinimumSize`. Measured on the
+frozen-ball WIP adaptations: four-edge corners [7.19, 11.90, 10.59, 5.19] ->
+after collapse [5.13, 4.89, 4.77, 5.01] (27/12/35/20 collapsed vertices);
+ten-edge [10.99, 11.95, 5.28, 5.29, 10.19, 9.18, 5.94, 9.89, 7.38, 10.50] ->
+[6.18, 4.96, 5.28, 4.05, 4.46, 4.71, 4.42, 4.89, 4.77, 5.43] (15-25 collapsed
+vertices per corner; corner 2 rolled back: its worst cell's free vertex sits at
+0.034, above `hmin`). The smoothing then proceeds from these ranges. Label restoration compares repair displacements to the bound with a
 roundoff-only relative allowance (`DISPLACEMENT_ROUNDOFF_TOLERANCE`, 1e-12) so
 a vertex clamped onto the displacement ball is not misreported as an overshoot;
 a true overshoot is a rejected component, never an exception. Semantic corners

@@ -86,6 +86,112 @@ def _pinned_vertices(points,recipe,tolerance=1e-10):
     return frozenset(map(int,index))
 
 
+def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_supports,
+                                   pinned_nodes,recipe,quality_target):
+    """Collapse MMG-inserted free vertices below the adapter's minimum size in the
+    semantic corner balls.
+
+    MMG places free interior vertices at about NormalSize / 2 next to a required
+    corner vertex, below the hmin it was given, and the resulting corner cells are
+    beyond the bounded smoothing. A free vertex (no planar support, not pinned)
+    inside CornerIsotropyRadius of a contract corner whose shortest incident edge
+    is below the recipe NormalSize is collapsed onto the corner when adjacent,
+    otherwise onto its nearest non-free neighbor. A collapse stands only when every
+    remapped cavity cell keeps a positive orientation and a scaled Jacobian of at
+    least quality_target; a corner's collapses are committed together and rolled
+    back if its corner-incident aspect did not improve. No vertex moves and no
+    boundary triangle changes. Returns the compacted points, tetrahedra and
+    references, the old-to-new vertex map (-1 for removed vertices) and the
+    per-corner collapsed-vertex counts.
+    """
+    minimum_size=recipe.get('NormalSize')
+    if not isinstance(minimum_size,(int,float)) or not np.isfinite(minimum_size) or minimum_size<=0:
+        raise ValueError('Restoration recipe lacks a valid NormalSize')
+    corner_radius=recipe.get('CornerIsotropyRadius')
+    if not isinstance(corner_radius,(int,float)) or not np.isfinite(corner_radius) or corner_radius<=0:
+        raise ValueError('Restoration recipe lacks a valid corner isotropy radius')
+    corners=np.asarray(recipe['TruePhysicalCorners'],dtype=float).reshape(-1,3)
+    tetrahedra=np.array(tetrahedra,dtype=int,copy=True)
+    alive=np.ones(len(tetrahedra),dtype=bool)
+    removed=np.zeros(len(points),dtype=bool)
+    free=np.ones(len(points),dtype=bool)
+    free[list(node_supports)]=False
+    free[list(pinned_nodes)]=False
+    tree=cKDTree(points)
+    collapsed=[]
+    for corner in corners:
+        corner_node=[int(i) for i in tree.query_ball_point(corner,1e-10)]
+        if len(corner_node)!=1:raise ValueError('Semantic corner is absent during corner collapse')
+        corner_node=corner_node[0]
+        ball=np.asarray(sorted(int(i) for i in tree.query_ball_point(corner,corner_radius)),dtype=int)
+        cells=np.flatnonzero(alive&np.any(np.isin(tetrahedra,ball),axis=1))
+        # Working copies: the corner's collapses commit together or not at all.
+        working=tetrahedra[cells].copy();working_alive=np.ones(len(cells),dtype=bool)
+        working_removed=[]
+        incident_before=np.any(working==corner_node,axis=1)
+        aspect_before=float(_tetra_quality(points,working[incident_before])[1].max())
+        candidates=[int(v) for v in ball if v!=corner_node and free[v]]
+        candidates.sort(key=lambda v:float(np.linalg.norm(points[v]-corner)))
+        for vertex in candidates:
+            incident=np.flatnonzero(working_alive&np.any(working==vertex,axis=1))
+            if not len(incident):continue
+            neighbors=np.unique(working[incident]);neighbors=neighbors[neighbors!=vertex]
+            lengths=np.linalg.norm(points[neighbors]-points[vertex],axis=1)
+            if float(lengths.min())>=minimum_size:continue
+            # Targets in order: the corner itself, then the nearest non-free
+            # neighbors, then the corner's own ring vertices at or beyond the
+            # minimum size (free vertices that MMG placed correctly).
+            targets=[]
+            if corner_node in neighbors:targets.append(corner_node)
+            order=np.argsort(lengths)
+            targets+=[int(n) for n in neighbors[order] if not free[n] and n!=corner_node]
+            ring=set(int(n) for n in np.unique(working[working_alive&np.any(working==corner_node,axis=1)]))
+            targets+=[int(n) for n in neighbors[order] if free[n] and int(n) in ring and
+                      np.linalg.norm(points[n]-corner)>=minimum_size]
+            # Among the valid cavities, commit the one with the best worst cell, and
+            # only if it is no worse than the cells it replaces: a collapse onto
+            # the corner itself can be valid yet leave a far worse sliver than a
+            # collapse onto a nearby ring vertex.
+            local_before=float(_tetra_quality(points,working[incident])[1].max())
+            best=None
+            for target in targets:
+                keep=incident[~np.any(working[incident]==target,axis=1)]
+                cavity=working[keep].copy();cavity[cavity==vertex]=target
+                if not len(cavity):continue
+                # A flattened cavity cell has a zero singular value; its aspect is
+                # not used because the orientation test rejects it.
+                with np.errstate(divide='ignore',invalid='ignore'):
+                    scaled,aspects,determinant=_tetra_quality(points,cavity)
+                if (np.any(determinant<=0) or float(scaled.min())<quality_target or
+                        float(aspects.max())>local_before):continue
+                score=(float(aspects.max()),-float(scaled.min()))
+                if best is None or score<best[0]:best=(score,keep,cavity)
+            if best is None:continue
+            _,keep,cavity=best
+            working[keep]=cavity
+            working_alive[np.setdiff1d(incident,keep)]=False
+            working_removed.append(vertex)
+        incident_after=working_alive&np.any(working==corner_node,axis=1)
+        aspect_after=float(_tetra_quality(points,working[incident_after])[1].max())
+        if working_removed and aspect_after<aspect_before:
+            tetrahedra[cells]=working;alive[cells]=working_alive
+            removed[working_removed]=True
+            collapsed.append({'Point':corner.tolist(),'CollapsedVertices':len(working_removed),
+                              'AspectBefore':aspect_before,'AspectAfter':aspect_after})
+        else:
+            collapsed.append({'Point':corner.tolist(),'CollapsedVertices':0,
+                              'AspectBefore':aspect_before,'AspectAfter':aspect_before,
+                              'RolledBack':len(working_removed)})
+    if np.any(np.isin(tetrahedra[alive],np.flatnonzero(removed))):
+        raise ValueError('Collapsed vertex survived in the connectivity')
+    vertex_map=np.full(len(points),-1,dtype=int)
+    vertex_map[~removed]=np.arange(int(np.sum(~removed)))
+    compact_points=points[~removed]
+    compact_tetrahedra=vertex_map[tetrahedra[alive]]
+    compact_refs=np.asarray(tetrahedron_refs)[alive]
+    return compact_points,compact_tetrahedra,compact_refs,vertex_map,collapsed
+
+
 def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scaled,
                     maximum_corner_aspect,maximum_displacement,pinned_nodes=frozenset()):
     """Constrained post-adaptation repair on frozen planar CAD supports.
@@ -323,25 +429,43 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
         points[nodes]+=correction;moved+=int(np.sum(np.any(correction!=0,axis=1)))
         if np.max(abs(points[nodes]@a.T-b))>1e-10:raise ValueError('Inconsistent planar intersection')
     tetrahedra=np.concatenate([block.data for block in mesh.cells if block.type=='tetra'])
+    tetrahedron_refs=np.concatenate([np.asarray(ref) for block,ref in zip(mesh.cells,refs)
+                                     if block.type=='tetra'])
     if np.any(_tetra_quality(points,tetrahedra)[2]<=0):
         raise ValueError('Projection inverted a tetrahedron')
-    quality={}
+    quality={};vertex_map=np.arange(len(points))
     controls=(minimum_scaled,maximum_corner_aspect,maximum_quality_displacement)
     if any(value is not None for value in controls):
         if any(value is None for value in controls):
             raise ValueError('All post-adaptation quality controls are required together')
         # Pins are matched on the native adapted coordinates, which the adapter
         # preserved exactly; projection may still correct them onto their supports.
+        pinned_nodes=_pinned_vertices(mesh.points,recipe)
+        if not (np.isfinite(minimum_scaled) and 0<minimum_scaled<1):
+            raise ValueError('Invalid post-adaptation quality controls')
+        points,tetrahedra,tetrahedron_refs,vertex_map,collapsed=_collapse_corner_ball_vertices(
+            points,tetrahedra,tetrahedron_refs,node_supports,pinned_nodes,recipe,
+            2.*minimum_scaled)
+        node_supports={int(vertex_map[node]):ids for node,ids in node_supports.items()}
+        pinned_nodes=frozenset(int(vertex_map[node]) for node in pinned_nodes)
+        if -1 in node_supports or -1 in pinned_nodes:
+            raise ValueError('Corner collapse removed a supported or pinned vertex')
         quality=_quality_repair(points,tetrahedra,node_supports,supports,recipe,
                                 minimum_scaled,maximum_corner_aspect,
-                                maximum_quality_displacement,
-                                pinned_nodes=_pinned_vertices(mesh.points,recipe))
+                                maximum_quality_displacement,pinned_nodes=pinned_nodes)
+        quality.update({'CornerBallCollapses':collapsed,
+                        'CollapsedCornerVertices':int(sum(item['CollapsedVertices']
+                                                          for item in collapsed)),
+                        'CornerAspectsBeforeCollapse':[item['AspectBefore'] for item in collapsed],
+                        'CollapseMinimumSize':float(recipe['NormalSize'])})
     cells=[];attributes=[]
     for block,ref in zip(mesh.cells,refs):
-        if block.type not in ('tetra','triangle'):continue
-        attributes.append(ref if block.type=='tetra' else
-                          np.array([supports[int(r)]['Attribute'] for r in ref]))
-        cells.append((block.type,block.data))
+        if block.type!='triangle':continue
+        triangles=vertex_map[block.data]
+        if np.any(triangles<0):raise ValueError('Corner collapse removed a boundary vertex')
+        attributes.append(np.array([supports[int(r)]['Attribute'] for r in ref]))
+        cells.append(('triangle',triangles))
+    attributes.append(tetrahedron_refs);cells.append(('tetra',tetrahedra))
     semantic=recipe.get('SemanticContract')
     if not isinstance(semantic,dict):raise ValueError('Restoration recipe lacks semantic contract')
     field_data={item['Material']:np.array([item['Attribute'],3],dtype=int)

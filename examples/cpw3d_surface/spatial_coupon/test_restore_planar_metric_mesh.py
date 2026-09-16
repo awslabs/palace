@@ -11,6 +11,7 @@ import restore_planar_metric_mesh
 from restore_planar_metric_mesh import (
     DISPLACEMENT_ROUNDOFF_TOLERANCE,
     _bounded_offset,
+    _collapse_corner_ball_vertices,
     _movement_basis,
     _pinned_vertices,
     _quality_repair,
@@ -446,6 +447,110 @@ class PlanarMetricQualityRepairTest(unittest.TestCase):
             _quality_repair(points, tetrahedra, node_supports, supports,
                             {k: v for k, v in recipe.items() if k != "CornerIsotropyRadius"},
                             .01, 4., .01875)
+
+
+def _corner_ball_with_inserted_vertex(height, ring=8, radius=.025):
+    """A corner vertex at the origin, a ring of supported vertices at the isotropic
+    size, a supported apex, and one free interior vertex on the axis at `height`
+    (MMG's sub-hmin insertion when height < NormalSize)."""
+    angles = 2. * np.pi * np.arange(ring) / ring
+    points = np.vstack([[0., 0., 0.],
+                        np.column_stack([radius * np.cos(angles), radius * np.sin(angles),
+                                         np.full(ring, radius)]),
+                        [0., 0., 2. * radius], [0., 0., height]])
+    corner, apex, free = 0, ring + 1, ring + 2
+    tetrahedra = []
+    for i in range(ring):
+        a, b = 1 + i, 1 + (i + 1) % ring
+        tetrahedra.append([corner, a, b, free])
+        tetrahedra.append([free, a, b, apex])
+    tetrahedra = np.array(tetrahedra)
+    _, _, determinant = _tetra_quality(points, tetrahedra)
+    assert np.all(determinant > 0)
+    supports = {100: {"Normal": [0., 0., 1.], "Offset": 0., "Attribute": 6001}}
+    node_supports = {node: {100} for node in range(ring + 2)}
+    recipe = {"NormalSize": radius, "CornerIsotropyRadius": 4. * radius,
+              "TruePhysicalCorners": [[0., 0., 0.]],
+              "SemanticContract": {"CutSurfaceRoles": [], "BoundaryLabels": []}}
+    return points, tetrahedra, supports, node_supports, recipe, free
+
+
+class CornerBallCollapseTest(unittest.TestCase):
+    def test_sub_hmin_free_vertex_is_collapsed_onto_the_corner_with_valid_cavity(self):
+        points, tetrahedra, supports, node_supports, recipe, free = \
+            _corner_ball_with_inserted_vertex(.012)
+        refs = np.arange(len(tetrahedra))
+        before = float(_tetra_quality(points, tetrahedra[np.any(tetrahedra == 0, axis=1)])[1].max())
+        new_points, new_tetrahedra, new_refs, vertex_map, collapsed = \
+            _collapse_corner_ball_vertices(points, tetrahedra, refs, node_supports,
+                                           frozenset(), recipe, .02)
+        self.assertEqual(collapsed[0]["CollapsedVertices"], 1)
+        self.assertLess(collapsed[0]["AspectAfter"], before)
+        self.assertEqual(vertex_map[free], -1)
+        self.assertEqual(len(new_points), len(points) - 1)
+        # The cells joining the free vertex to the corner vanish; the others remap.
+        self.assertEqual(len(new_tetrahedra), len(tetrahedra) // 2)
+        self.assertTrue(np.all(new_refs % 2 == 1))
+        scaled, _, determinant = _tetra_quality(new_points, new_tetrahedra)
+        self.assertTrue(np.all(determinant > 0))
+        self.assertGreaterEqual(float(scaled.min()), .02)
+        # Every supported (boundary) vertex survives at its coordinates, unmoved.
+        for node in node_supports:
+            self.assertGreaterEqual(vertex_map[node], 0)
+            np.testing.assert_array_equal(new_points[vertex_map[node]], points[node])
+        # The corner keeps exactly the remapped cells; their aspect is the report's.
+        incident = new_tetrahedra[np.any(new_tetrahedra == vertex_map[0], axis=1)]
+        self.assertEqual(len(incident), len(tetrahedra) // 2)
+        self.assertAlmostEqual(float(_tetra_quality(new_points, incident)[1].max()),
+                               collapsed[0]["AspectAfter"])
+
+    def test_vertex_at_or_above_hmin_and_supported_or_pinned_vertices_are_kept(self):
+        for height, pinned, supported in ((.03, frozenset(), False),
+                                          (.012, frozenset(), True),
+                                          (.012, None, False)):
+            points, tetrahedra, supports, node_supports, recipe, free = \
+                _corner_ball_with_inserted_vertex(height)
+            if supported:
+                node_supports[free] = {100}
+            pinned_nodes = frozenset({free}) if pinned is None else pinned
+            new_points, new_tetrahedra, new_refs, vertex_map, collapsed = \
+                _collapse_corner_ball_vertices(points, tetrahedra, np.arange(len(tetrahedra)),
+                                               node_supports, pinned_nodes, recipe, .02)
+            self.assertEqual(collapsed[0]["CollapsedVertices"], 0)
+            np.testing.assert_array_equal(new_tetrahedra, tetrahedra)
+            np.testing.assert_array_equal(vertex_map, np.arange(len(points)))
+            self.assertEqual(len(new_points), len(points))
+
+    def test_corner_ball_collapse_is_rotation_covariant_and_fails_closed(self):
+        points, tetrahedra, supports, node_supports, recipe, free = \
+            _corner_ball_with_inserted_vertex(.012)
+        angle = .61
+        rotation = np.array([[np.cos(angle), -np.sin(angle), 0.],
+                             [np.sin(angle), np.cos(angle), 0.], [0., 0., 1.]])
+        tilt = np.array([[1., 0., 0.], [0., np.cos(.3), -np.sin(.3)],
+                         [0., np.sin(.3), np.cos(.3)]])
+        rotation = tilt @ rotation
+        shift = np.array([2., -1., .5])
+        moved_recipe = dict(recipe, TruePhysicalCorners=[(rotation @ [0., 0., 0.] + shift).tolist()])
+        plain = _collapse_corner_ball_vertices(points, tetrahedra, np.arange(len(tetrahedra)),
+                                               node_supports, frozenset(), recipe, .02)
+        moved = _collapse_corner_ball_vertices(points @ rotation.T + shift, tetrahedra,
+                                               np.arange(len(tetrahedra)), node_supports,
+                                               frozenset(), moved_recipe, .02)
+        np.testing.assert_array_equal(moved[1], plain[1])
+        np.testing.assert_array_equal(moved[3], plain[3])
+        self.assertEqual(moved[4][0]["CollapsedVertices"], plain[4][0]["CollapsedVertices"])
+        np.testing.assert_allclose(moved[0], plain[0] @ rotation.T + shift, rtol=0., atol=1e-14)
+        for missing in ("NormalSize", "CornerIsotropyRadius"):
+            with self.assertRaises(ValueError):
+                _collapse_corner_ball_vertices(points, tetrahedra, np.arange(len(tetrahedra)),
+                                               node_supports, frozenset(),
+                                               {k: v for k, v in recipe.items() if k != missing},
+                                               .02)
+        with self.assertRaisesRegex(ValueError, "absent"):
+            _collapse_corner_ball_vertices(points, tetrahedra, np.arange(len(tetrahedra)),
+                                           node_supports, frozenset(),
+                                           dict(recipe, TruePhysicalCorners=[[1., 1., 1.]]), .02)
 
 
 if __name__ == "__main__":
