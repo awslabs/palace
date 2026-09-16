@@ -1030,6 +1030,59 @@ class GeneralMeshManifestTest(unittest.TestCase):
                          {"Components": 1, "BoundaryLoops": 2, "Holes": 1,
                           "LoopsPerComponent": [2]})
 
+    def test_protected_footprint_resolves_pinch_vertices_per_wedge(self):
+        """Two sub-regions of one label touching at a vertex are a legitimate planar
+        topology: each wedge gets its own vertex copy, loops close, geometry is kept."""
+        from general_mesh_audit_producer import _split_pinch_vertices
+        points = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [-1., 0., 0.],
+                           [0., -1., 0.], [1., 1., 0.], [-1., 1., 0.], [1., -1., 0.]])
+        bow_tie = points[[[0, 1, 2], [0, 3, 4]]]
+        pinches = []
+        segments, topology = _normalized_footprint_boundary(bow_tie, pinches)
+        self.assertEqual(topology, {"Components": 2, "BoundaryLoops": 2, "Holes": 0,
+                                    "LoopsPerComponent": [1, 1]})
+        self.assertEqual(pinches, [[0., 0., 0.]])
+        self.assertEqual(len(segments), 6)
+        three_fans = points[[[0, 1, 5], [0, 6, 3], [0, 4, 7]]]
+        pinches = []
+        _, topology = _normalized_footprint_boundary(three_fans, pinches)
+        self.assertEqual(topology, {"Components": 3, "BoundaryLoops": 3, "Holes": 0,
+                                    "LoopsPerComponent": [1, 1, 1]})
+        self.assertEqual(pinches, [[0., 0., 0.]])
+        # The pinch vertex stays a segment endpoint even where the boundary runs
+        # straight through it, so the geometry comparison sees it.
+        straight = points[[[0, 1, 5], [0, 6, 3]]]
+        segments, _ = _normalized_footprint_boundary(straight)
+        self.assertTrue(any(np.array_equal(end, [0., 0., 0.])
+                            for segment in segments for end in segment))
+        diagnostics = {}
+        distance, left, right = _footprint_boundary_comparison(bow_tie, bow_tie, diagnostics)
+        self.assertEqual(distance, 0.)
+        self.assertEqual(left, right)
+        self.assertEqual(diagnostics["PinchVertices"],
+                         {"Reference": 1, "Candidate": 1,
+                          "ReferenceCoordinates": [[0., 0., 0.]],
+                          "CandidateCoordinates": [[0., 0., 0.]]})
+        # Non-pinched patches are untouched by the split.
+        square = np.array([[[0., 0., 0.], [1., 0., 0.], [1., 1., 0.]],
+                           [[0., 0., 0.], [1., 1., 0.], [0., 1., 0.]]])
+        unique, inverse = np.unique(square.reshape(-1, 3), axis=0, return_inverse=True)
+        split_points, split_triangles, coordinates = _split_pinch_vertices(
+            unique, inverse.reshape(-1, 3))
+        np.testing.assert_array_equal(split_points, unique)
+        np.testing.assert_array_equal(split_triangles, inverse.reshape(-1, 3))
+        self.assertEqual(coordinates, [])
+        segments, topology = _normalized_footprint_boundary(square)
+        self.assertEqual(len(segments), 4)
+        self.assertEqual(topology, {"Components": 1, "BoundaryLoops": 1, "Holes": 0,
+                                    "LoopsPerComponent": [1]})
+        # A nonmanifold patch (an edge shared by three triangles) still fails closed.
+        nonmanifold = np.array([[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+                                [[0., 0., 0.], [1., 0., 0.], [0., -1., 0.]],
+                                [[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]]])
+        with self.assertRaisesRegex(ValueError, "Nonmanifold"):
+            _normalized_footprint_boundary(nonmanifold)
+
     def test_diagonal_detector_includes_declared_maximum_and_rejects_semantic_lines(self):
         def strip(angle, length=1.0, width=.4):
             columns = int(round(length / .05)) + 1
