@@ -128,7 +128,8 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
   measurement_cache.farfield.thetaphis =
       nondim_measurement_cache.farfield.thetaphis;  // NONE
-  measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+  // The far field r E_∞ is a field times a distance, i.e. a voltage.
+  measurement_cache.farfield.E_field = units.Dimensionalize<Units::ValueType::VOLTAGE>(
       nondim_measurement_cache.farfield.E_field);
 
   // Mode analysis data: stored nondimensional, dimensionalize here.
@@ -270,7 +271,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   }
 
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
-  measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+  measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::VOLTAGE>(
       dim_measurement_cache.farfield.E_field);
 
   // Mode analysis data is already in SI units (computed dimensional).

@@ -162,6 +162,16 @@ auto RandomMeasurement(int ndomain = 5)
                                    (1 + randd(9999)) / 10000, 1e9 / (1 + randd(9999))});
   }
 
+  int nfarfield = 5;
+  for (int i = 0; i < nfarfield; i++)
+  {
+    cache.farfield.thetaphis.emplace_back(randd(180), randd(360));
+    cache.farfield.E_field.push_back(
+        {std::complex((1 + randd(99)) / 100, randd(100) / 100),
+         std::complex((1 + randd(99)) / 100, randd(100) / 100),
+         std::complex((1 + randd(99)) / 100, randd(100) / 100)});
+  }
+
   return cache;
 }
 
@@ -363,6 +373,29 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(c.tandelta, Catch::Matchers::WithinRel(dc.tandelta));
     CHECK_THAT(c.energy_participation, Catch::Matchers::WithinRel(dc.energy_participation));
     CHECK_THAT(c.quality_factor, Catch::Matchers::WithinRel(dc.quality_factor));
+  }
+
+  REQUIRE(dim_cache.farfield.E_field.size() == cache.farfield.E_field.size());
+  REQUIRE(non_dim_cache.farfield.E_field.size() == cache.farfield.E_field.size());
+  for (std::size_t i = 0; i < cache.farfield.E_field.size(); i++)
+  {
+    CHECK(cache.farfield.thetaphis[i] == dim_cache.farfield.thetaphis[i]);
+    CHECK(cache.farfield.thetaphis[i] == non_dim_cache.farfield.thetaphis[i]);
+    for (std::size_t d = 0; d < 3; d++)
+    {
+      const auto &c = cache.farfield.E_field[i][d];
+      const auto &ndc = non_dim_cache.farfield.E_field[i][d];
+      CHECK_THAT(std::abs(c), Catch::Matchers::WithinRel(std::abs(ndc)));
+      CHECK_THAT(std::arg(c), Catch::Matchers::WithinRel(std::arg(ndc)));
+
+      // The far field r E_∞ is a field times a distance: it must dimensionalize like the
+      // probe E field (V/m) times the length scale (m), i.e. as a voltage.
+      const auto &dc = dim_cache.farfield.E_field[i][d];
+      const auto e_scale = units.GetScaleFactor<Units::ValueType::FIELD_E>();
+      const auto l_scale = units.GetScaleFactor<Units::ValueType::LENGTH>();
+      CHECK_THAT(std::abs(dc), Catch::Matchers::WithinRel(std::abs(c) * e_scale * l_scale));
+      CHECK_THAT(std::arg(dc), Catch::Matchers::WithinRel(std::arg(c)));
+    }
   }
 }
 
