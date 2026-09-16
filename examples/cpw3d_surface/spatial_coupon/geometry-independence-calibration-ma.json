@@ -1,0 +1,565 @@
+{
+  "Version": 2,
+  "RepositoryRoot": "../../..",
+  "Scope": "CALIBRATION ONLY (MA/MS metal-edge-layer h-study, supervisor decision 22): mesh-only qualification of labeled calibration variants of the four-edge case; NOT the production geometry-independence suite; nothing here changes a production default, gate or manifest",
+  "Calibration": {
+    "Purpose": "p_MA -10% / p_MS -1.4% offsets of the canonical four-edge coupon vs the graded_v2 reference are half p-convergence and half an h-limit of the metal edge/sidewall layer (6001: 6,423 tris at 0.113 um vs ~1.0M in the reference; physics-02). These variants refine that layer through EXISTING recipe parameters only.",
+    "Decision": "SUPERVISOR-DECISIONS.md item 22 (2026-09-16)",
+    "ProductionManifest": "geometry-independence-suite.json",
+    "GateDeviations": {
+      "MinimumAchievedAspect": {
+        "Production": 1.5,
+        "Calibration": 0.9,
+        "Kind": "anisotropy-DESIGN gate (checks metric intent, not mesh quality)",
+        "Reason": "V1 halves the tangential size to the sidewall interior-row spacing (0.05), so TangentialP50 / max transverse P90 is ~1.0 by construction (production 0.0946 / 0.0500 = 1.89); every physical gate (MinimumScaledJacobian, MaximumCornerAspect, MaximumProtectedMeasureError, ownership closure, trace-diagonal, MaximumElements, MaximumSeconds, MaximumRSSGiB) keeps its production value",
+        "ProductionUse": "FORBIDDEN: this gate value can never be used by the production suite; test_general_mesh_manifest asserts the production manifest keeps 1.5"
+      }
+    },
+    "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration",
+    "Verification": "per case only (verify_canonical_case_entries.py); the ScalingComparisons below are schema placeholders required by validate_manifest and are never evaluated as a matrix"
+  },
+  "Gates": {
+    "CornerTolerance": 1e-08,
+    "MaximumNormalFactor": 2.0,
+    "MinimumAchievedAspect": 0.9,
+    "MinimumScaledJacobian": 0.01,
+    "MaximumJacobianCondition": 1000.0,
+    "MaximumSeconds": 1800,
+    "MaximumRSSGiB": 8.0,
+    "MaximumElements": 4000000,
+    "MaximumCornerAspect": 4.0,
+    "MinimumNoncornerAspect": 1.5,
+    "MaximumProtectedMeasureError": 1e-08
+  },
+  "Tools": [
+    {
+      "Name": "run_general_mesh_suite.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/run_general_mesh_suite.py",
+      "SHA256": "b94cf208d4607a6fb048cc8300f6f13a203724c17bfb9402b7f6e6ab73eef6fa"
+    },
+    {
+      "Name": "general_mesh_manifest.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
+      "SHA256": "fe7fef2557b2898daee6e9cbd1cdab24a5f8d17ae90e1d72147683ffe5cc0130"
+    },
+    {
+      "Name": "verify_canonical_case_entries.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
+      "SHA256": "dfe60b4b3e48bb02b33cb41a42945c89361fa52e43382451383fd5007c3c31e5"
+    },
+    {
+      "Name": "normalize_general_mesh_evidence.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
+      "SHA256": "17bb6d50544a0a77762f1944b40649305a01e4e3ee381b5e112884f1d74b1ecf"
+    },
+    {
+      "Name": "semantic_mesh_contract.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/semantic_mesh_contract.py",
+      "SHA256": "37400032e5b99035849c50930be2b7cbd4e8f710aa135819faaf4b13453b6026"
+    },
+    {
+      "Name": "trace_basis.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
+      "SHA256": "6226884a7384d5e53c066873980f87b57829f8f405682c9d55f82dc2a436d4c8"
+    },
+    {
+      "Name": "prepare_edge_metric_scout.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
+      "SHA256": "fa09d854fb23f1312f80e9f2edc009c72bed4b4c780e8530c6d0947d1cb95d81"
+    },
+    {
+      "Name": "audit_edge_metric_mesh.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/audit_edge_metric_mesh.py",
+      "SHA256": "ffd44ca0d3ff870e47f7ae6916e511751ffe75a568c80e5e21992036dfd5ddd3"
+    },
+    {
+      "Name": "edge_volume_metric.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/edge_volume_metric.py",
+      "SHA256": "a9ca06633e544c359016ce38502752af482fd0309c936309b13ff09eaf8c63f0"
+    },
+    {
+      "Name": "mesh_array_io.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/mesh_array_io.py",
+      "SHA256": "2d6fb69f789c3eed65f54a1a9b5d9b0895c352766a08a2ad1896b87cf4b101c1"
+    },
+    {
+      "Name": "run_bounded_mesher.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
+      "SHA256": "87279b7e61a47169d89b2b000b1f822225b4ab91b3363a28127a250035351f39"
+    },
+    {
+      "Name": "general_mesh_audit_producer.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
+      "SHA256": "279f772596a530bbe3a3b29d85a81c9bf55af021e231310a3584cd6bb31e2e59"
+    },
+    {
+      "Name": "mesh_stage_contract.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
+      "SHA256": "64e680ced7c6c2658558ab78dd793cadae5e94c1a5765e5c8d8c26e54af7cae5"
+    },
+    {
+      "Name": "canonical_mesh_build.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/canonical_mesh_build.py",
+      "SHA256": "a0ce58d4b54304545104bf7c81419dcdd93d0351a7d33df87f05fd682f883210"
+    },
+    {
+      "Name": "run_native_mmg_adaptation.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/run_native_mmg_adaptation.py",
+      "SHA256": "7d59ec514a9a8314bd3b8e4aef11e6f323d0e628a5c0f83ece8a9921d2de57a1"
+    },
+    {
+      "Name": "publish_rigid_coupon_mesh.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
+      "SHA256": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731"
+    },
+    {
+      "Name": "audit_rigid_coupon_ownership.jl",
+      "Path": "examples/cpw3d_surface/spatial_coupon/audit_rigid_coupon_ownership.jl",
+      "SHA256": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
+    },
+    {
+      "Name": "transform_coupon_source_contract.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/transform_coupon_source_contract.py",
+      "SHA256": "7db8024676a18eee9da65770b5d99ea8ce0e1e57f9abd27d52aa2de2049b3f47"
+    },
+    {
+      "Name": "label_interface_patches.jl",
+      "Path": "examples/cpw3d_surface/spatial_coupon/label_interface_patches.jl",
+      "SHA256": "ed3f9e08b934ccd300519c12da8cf250fcddd2ebe7697f2b8c9a31dccee0619c"
+    },
+    {
+      "Name": "mesh_spatial_coupon_edge_cluster.jl",
+      "Path": "examples/cpw3d_surface/spatial_coupon/mesh_spatial_coupon_edge_cluster.jl",
+      "SHA256": "b43a7d2b25239c46196173be08b14d32bde1238a33a9f239144d05ce8f9b3b76"
+    }
+  ],
+  "StageToolSHA256": {
+    "canonical-source-validation": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "source-validator": "7db8024676a18eee9da65770b5d99ea8ce0e1e57f9abd27d52aa2de2049b3f47"
+    },
+    "seed-generation": {
+      "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "mesher": "e93b4a9b39abf837e5fcb7c1a0076528f56230e5ae06debfb2c64a5ab97c931f"
+    },
+    "metric-preparation": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "metric-preparer": "fa09d854fb23f1312f80e9f2edc009c72bed4b4c780e8530c6d0947d1cb95d81"
+    },
+    "native-adaptation-mmg": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "adaptation-wrapper": "7d59ec514a9a8314bd3b8e4aef11e6f323d0e628a5c0f83ece8a9921d2de57a1",
+      "adapter-mmg": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",
+      "mmg-library": "a97d9580837712e79c637b0a7228f44c51e446ef32471a1104894e7fe7e378d5"
+    },
+    "label-restoration": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "label-restorer": "018f3410070b45b5ba34c508a49eb9df0e6f23562f925ab45f78e63aba1db5b1"
+    },
+    "canonical-gmsh-publication": {
+      "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "publisher": "2906a5395ec957d1e4328183242ee9d7660ad8c23e7413af6e870c07629440d4"
+    },
+    "proper-rigid-publication": {
+      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
+      "rigid-publisher": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731",
+      "ownership-runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
+    }
+  },
+  "ScalingComparisons": [
+    {
+      "Id": "calibration-placeholder-feature-scaling",
+      "Kind": "feature-scaling",
+      "Reference": [
+        "four-edge-calib-ma-v1",
+        "identity"
+      ],
+      "Compared": [
+        "four-edge-calib-ma-v2",
+        "identity"
+      ],
+      "MaximumNormalizedDOFRatio": 2.0
+    },
+    {
+      "Id": "calibration-placeholder-cad-subdivision",
+      "Kind": "cad-subdivision-sensitivity",
+      "Reference": [
+        "four-edge-calib-ma-v1",
+        "identity"
+      ],
+      "Compared": [
+        "four-edge-calib-ma-v2",
+        "identity"
+      ],
+      "MaximumNormalizedDOFRatio": 2.0
+    }
+  ],
+  "Cases": [
+    {
+      "Id": "four-edge-calib-ma-v1",
+      "InventoryStatus": "Calibration",
+      "Frozen": true,
+      "Features": [
+        "4-edge",
+        "single-slot",
+        "single-conductor",
+        "calibration-ma"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "217d15e21136c2e745456835f0aadc626f991e33ee910333b3edfedc43543549"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "81172a499268938d0dcb2d405584f425a3aabbae8ca764469d99e4696bbcde34"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "415150d8a05c317b2d5d319509bda4f30fb07cc0ea5947527814ed0d40db84ac"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "5a8f6332495c504ddab13d3525c323124ec8cf9d38cda481458af23547740d32"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "4fb45b71a58e1be0f395b429ad6c6874a1785e65016514e52f81a86f98d6027e"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "686771fda45a5c1fce819121317cc55de3a3eabc12510350192ea39ff4e522c7"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          },
+          "RetainedEtch": {
+            "Name": "retained-etch.csv",
+            "SHA256": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
+          }
+        }
+      },
+      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; V1: seed tangential size along the metal edges halved (--lc-tangent .05); metric --tangent stays 0.1 because the stage contract binds it to CornerIsotropyRadius and the protected corner-ball radius). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
+      "Calibration": {
+        "Label": "V1: seed tangential size along the metal edges halved (--lc-tangent .05); metric --tangent stays 0.1 because the stage contract binds it to CornerIsotropyRadius and the protected corner-ball radius",
+        "BaseCase": "four-edge-9d2cb9bbb3fe",
+        "SeedCommandOptions": {
+          "--lc-tangent": 0.05
+        },
+        "MetricCommandOptions": {},
+        "ProductionValues": {
+          "--lc-tangent": 0.1,
+          "--far-growth": 1.0
+        },
+        "UnchangedProductionParameters": {
+          "seed": {
+            "--lc-fine": 0.025,
+            "--lc-far": 0.16,
+            "--corner-isotropy-radius": 0.1,
+            "--trace-basis-size-ratio": 1.0,
+            "--radius": 2,
+            "--metal-thickness": 0.1,
+            "--overetch": 0.05,
+            "--max-elements": 4000000
+          },
+          "metric": {
+            "--normal": 0.025,
+            "--tangent": 0.1,
+            "--far": 0.16,
+            "--protected-distance": 0.05,
+            "--protect-surface": 0.05,
+            "--maximum-elements": 4000000,
+            "--trace-basis-size-ratio": 1.0
+          },
+          "adaptation": {
+            "--hmin": 0.025,
+            "--hgrad": 1.15,
+            "--hausd": 1e-08
+          },
+          "restoration": {
+            "--max-displacement-over-normal": 0.25,
+            "--minimum-scaled-jacobian": 0.01,
+            "--maximum-corner-aspect": 4,
+            "--maximum-quality-displacement-over-normal": 0.75
+          }
+        }
+      }
+    },
+    {
+      "Id": "four-edge-calib-ma-v2",
+      "InventoryStatus": "Calibration",
+      "Frozen": true,
+      "Features": [
+        "4-edge",
+        "single-slot",
+        "single-conductor",
+        "calibration-ma"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "217d15e21136c2e745456835f0aadc626f991e33ee910333b3edfedc43543549"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "81172a499268938d0dcb2d405584f425a3aabbae8ca764469d99e4696bbcde34"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "415150d8a05c317b2d5d319509bda4f30fb07cc0ea5947527814ed0d40db84ac"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "5a8f6332495c504ddab13d3525c323124ec8cf9d38cda481458af23547740d32"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "4fb45b71a58e1be0f395b429ad6c6874a1785e65016514e52f81a86f98d6027e"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "686771fda45a5c1fce819121317cc55de3a3eabc12510350192ea39ff4e522c7"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          },
+          "RetainedEtch": {
+            "Name": "retained-etch.csv",
+            "SHA256": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
+          }
+        }
+      },
+      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; V2: V1 plus metric --far-growth 0.5 (the normal size beyond the 0.05 protected distance grows at half the production rate, widening the graded layer around every metal edge and junction line from 0.135 um to 0.22 um); the metal-face interior size cannot be halved by any existing parameter without halving the global far size (~21M tets, 5x the 4,000,000 cap) - supervisor decision 22). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
+      "Calibration": {
+        "Label": "V2: V1 plus metric --far-growth 0.5 (the normal size beyond the 0.05 protected distance grows at half the production rate, widening the graded layer around every metal edge and junction line from 0.135 um to 0.22 um); the metal-face interior size cannot be halved by any existing parameter without halving the global far size (~21M tets, 5x the 4,000,000 cap) - supervisor decision 22",
+        "BaseCase": "four-edge-9d2cb9bbb3fe",
+        "SeedCommandOptions": {
+          "--lc-tangent": 0.05
+        },
+        "MetricCommandOptions": {
+          "--far-growth": 0.5
+        },
+        "ProductionValues": {
+          "--lc-tangent": 0.1,
+          "--far-growth": 1.0
+        },
+        "UnchangedProductionParameters": {
+          "seed": {
+            "--lc-fine": 0.025,
+            "--lc-far": 0.16,
+            "--corner-isotropy-radius": 0.1,
+            "--trace-basis-size-ratio": 1.0,
+            "--radius": 2,
+            "--metal-thickness": 0.1,
+            "--overetch": 0.05,
+            "--max-elements": 4000000
+          },
+          "metric": {
+            "--normal": 0.025,
+            "--tangent": 0.1,
+            "--far": 0.16,
+            "--protected-distance": 0.05,
+            "--protect-surface": 0.05,
+            "--maximum-elements": 4000000,
+            "--trace-basis-size-ratio": 1.0
+          },
+          "adaptation": {
+            "--hmin": 0.025,
+            "--hgrad": 1.15,
+            "--hausd": 1e-08
+          },
+          "restoration": {
+            "--max-displacement-over-normal": 0.25,
+            "--minimum-scaled-jacobian": 0.01,
+            "--maximum-corner-aspect": 4,
+            "--maximum-quality-displacement-over-normal": 0.75
+          }
+        }
+      }
+    }
+  ],
+  "PhysicalCovarianceToleranceBasis": "Frozen before rerun: exact CAD supports use 1e-8 um/relative; material volume and boundary measure use 5e-4 relative (sub-percent mesh discretization); quality and local anisotropy distribution changes use 0.35 relative; complexity uses a 1.10 ratio. Solver QoI is excluded."
+}

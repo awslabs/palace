@@ -1950,6 +1950,42 @@ class GeneralMeshManifestTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze(read_mesh(mesh), wrong, require_material_names=True)
 
+    def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
+        # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries
+        # MinimumAchievedAspect 0.9 (anisotropy-design gate); the production suite keeps
+        # 1.5, has no Calibration block anywhere, and every calibration case is labeled.
+        production_path = HERE / "geometry-independence-suite.json"
+        calibration_path = HERE / "geometry-independence-calibration-ma.json"
+        production = json.loads(production_path.read_text())
+        calibration = json.loads(calibration_path.read_text())
+        self.assertEqual(production["Gates"]["MinimumAchievedAspect"], 1.5)
+        self.assertNotIn("Calibration", production)
+        for case in production["Cases"]:
+            self.assertNotIn("Calibration", case)
+            self.assertNotIn("calib-ma", case["Id"])
+            self.assertNotEqual(case["InventoryStatus"], "Calibration")
+        deviations = calibration["Calibration"]["GateDeviations"]
+        self.assertEqual(set(deviations), {"MinimumAchievedAspect"})
+        self.assertEqual(deviations["MinimumAchievedAspect"]["Production"], 1.5)
+        self.assertEqual(deviations["MinimumAchievedAspect"]["Calibration"], 0.9)
+        self.assertIn("FORBIDDEN", deviations["MinimumAchievedAspect"]["ProductionUse"])
+        self.assertEqual(calibration["Gates"]["MinimumAchievedAspect"], 0.9)
+        self.assertEqual({key: value for key, value in calibration["Gates"].items()
+                          if key != "MinimumAchievedAspect"},
+                         {key: value for key, value in production["Gates"].items()
+                          if key != "MinimumAchievedAspect"})
+        self.assertEqual(calibration["Tools"], production["Tools"])
+        self.assertEqual(calibration["StageToolSHA256"], production["StageToolSHA256"])
+        base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
+        for case in calibration["Cases"]:
+            self.assertIn("calib-ma", case["Id"])
+            self.assertEqual(case["InventoryStatus"], "Calibration")
+            self.assertEqual(case["Calibration"]["BaseCase"], base["Id"])
+            self.assertEqual(case["Source"], base["Source"])
+            self.assertEqual(case["Variants"], base["Variants"])
+            self.assertEqual(case["TransformComparison"], base["TransformComparison"])
+        validate_manifest(calibration, calibration_path)
+
     def test_remote_verified_contracts_match_source_model_and_physical_corners(self):
         manifest = json.loads((HERE / "geometry-independence-suite.json").read_text())
         for case_id, expected_model, expected_edges in (

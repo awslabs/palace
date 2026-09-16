@@ -10,6 +10,15 @@ gates.
 
 ## Frozen inputs and required matrix
 
+`geometry-independence-suite.json` is the only production manifest.
+`geometry-independence-calibration-ma.json` is a separately labeled CALIBRATION
+manifest (supervisor decision 22: MA/MS metal-edge-layer h-study) whose two
+cases re-mesh the four-edge inputs with the recipe parameters listed in their
+`Calibration` blocks (V1 seed `--lc-tangent .05`; V2 additionally metric
+`--far-growth 0.5`); it mirrors the production tools and gates except the
+labeled anisotropy-design gate `MinimumAchievedAspect 0.9`, which can never be
+used by the production suite (asserted by `test_general_mesh_manifest.py`).
+
 Every runnable case requires SHA-256-frozen `Signature`, `Boundary`, `Mask`,
 `Process`, `SemanticContract`, and `MeshRecipe` roles. Expected materials,
 labels/adjacency, corners, and protected supports come only from that contract.
