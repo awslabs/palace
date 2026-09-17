@@ -162,6 +162,12 @@ def main():
             parser.error("restore requires --recipe and --source-local-output")
         rewrite(args.source, args.source_local_output, False)
         rewrite(args.source, args.output, False)
+        # The restorer's own report next to its output: it found the recipe's
+        # required tetrahedra (the fixture adapter keeps the one listed cell).
+        recipe = json.loads(args.recipe.read_text())
+        args.output.with_suffix(".projection.json").write_text(json.dumps(
+            {"RequiredTetrahedra": recipe["RequiredTetrahedra"]["Count"],
+             "RequiredVertices": 4, "MinimumScaledJacobianAfter": 0.5}) + "\n")
     elif args.stage == "publish":
         if args.ownership is None or args.ownership_quadrature is None:
             parser.error("publish requires ownership and quadrature ownership")

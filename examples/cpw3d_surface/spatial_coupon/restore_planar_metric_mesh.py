@@ -14,7 +14,7 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 
-from edge_volume_metric import recipe_local_normal_size,segment_distances
+from edge_volume_metric import edge_layer_required_reach,recipe_local_normal_size,segment_distances
 from mesh_array_io import read_mesh
 from transform_coupon_source_contract import validate_rigid_transform
 
@@ -57,13 +57,13 @@ def local_size_bounds(points,recipe,ratio):
 
 
 def frozen_edge_layer_vertices(points,node_supports,recipe):
-    """Supported (surface) vertices inside the seed edge layer footprint: the layer
-    rows are frozen seed surface which the adapter preserved and the repair must
-    not move at all.  The footprint is LayerThickness plus one EdgeSize of margin
-    around every recorded span."""
+    """Supported (surface) vertices inside the seed edge layer: the layer rows are
+    frozen seed surface which the adapter preserved and the repair must not move at
+    all.  The footprint is the recipe's one recorded layer reach (RequiredReach =
+    LayerThickness x (1 + RowZigzag) + EdgeSize) around every recorded span."""
     layer=recipe.get('EdgeLayer')
     if not isinstance(layer,dict):return frozenset()
-    reach=float(layer['LayerThickness'])+float(layer['EdgeSize'])
+    reach=edge_layer_required_reach(layer)
     supported=np.fromiter(node_supports,dtype=int,count=len(node_supports))
     if not len(supported):return frozenset()
     distance=np.full(len(supported),np.inf)
@@ -479,7 +479,7 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             'MaximumFinalQualityDisplacementOverLocalBound':maximum_final_over_bound,
             'QualityDisplacementBoundUm':(float(maximum_displacement[0]) if np.all(
                 maximum_displacement==maximum_displacement[0]) else _bound_statistics(maximum_displacement)),
-            'FrozenEdgeLayerVertices':len(frozen_nodes),
+            'FrozenVertices':len(frozen_nodes),
             'MinimumScaledJacobianBefore':float(_tetra_quality(original,tetrahedra)[0].min()),
             'MinimumScaledJacobianAfter':float(final_scaled.min()),
             'CornerAspectsBefore':corner_before,'CornerAspectsAfter':corner_after,
@@ -542,7 +542,13 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
             raise ValueError('Invalid post-adaptation quality controls')
         local_size=local_bound_size(points,recipe)
         required_nodes,required_cells=required_tetrahedron_vertices(mesh)
-        frozen_nodes=frozen_edge_layer_vertices(points,node_supports,recipe)|required_nodes
+        # MMG must have kept every listed required tetrahedron (the recipe count).
+        required_record=recipe.get('RequiredTetrahedra')
+        if isinstance(required_record,dict) and required_cells!=required_record.get('Count'):
+            raise ValueError(f'Adapted mesh carries {required_cells} required tetrahedra, the '
+                             f'recipe lists {required_record.get("Count")}')
+        frozen_surface=frozen_edge_layer_vertices(points,node_supports,recipe)
+        frozen_nodes=frozen_surface|required_nodes
         corner_ball=np.zeros(len(points),dtype=bool)
         for corner in np.asarray(recipe['TruePhysicalCorners'],dtype=float).reshape(-1,3):
             corner_ball|=np.linalg.norm(points-corner,axis=1)<=float(recipe['CornerIsotropyRadius'])
@@ -561,6 +567,7 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
                                 repair_bound,pinned_nodes=pinned_nodes,frozen_nodes=frozen_nodes)
         required=np.fromiter(required_nodes,dtype=int,count=len(required_nodes))
         quality.update({'RequiredTetrahedra':required_cells,'RequiredVertices':len(required_nodes),
+                        'FrozenEdgeLayerSurfaceVertices':len(frozen_surface),
                         'MaximumRequiredVertexCorrectionUm':(float(np.max(np.linalg.norm(
                             points[vertex_map[required]]-mesh.points[required],axis=1)))
                             if required.size else 0.),

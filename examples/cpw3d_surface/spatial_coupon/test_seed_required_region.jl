@@ -99,3 +99,57 @@ end
     @test length(descent_directions(Matrix{Float64}(I, 3, 3)[:, 1:1])) == 2
     @test all(abs(norm(d) - 1.0) < 1e-12 for d in descent_directions(Matrix{Float64}(I, 3, 3)))
 end
+
+# A corner fan plus a layer needle whose repair carries its free apex across the
+# layer reach: the record counts the required set of the FINAL positions.
+function fan_with_layer_needle()
+    points, tetrahedra, triangles = corner_fan(0.0125)
+    n = size(points, 2)
+    layer = hcat([1.5, 0.0, 0.030], [1.55, 0.0, 0.030], [1.5, 0.02, 0.030],
+                 [1.525, 0.007, 0.0302],
+                 [1.5, 0.0, 0.06], [1.55, 0.0, 0.06], [1.5, 0.02, 0.06])
+    points = hcat(points, layer)
+    needle = (n + 1, n + 2, n + 3, n + 4)
+    neighbor = (n + 5, n + 7, n + 6, n + 4)
+    return points, vcat(tetrahedra, [needle, neighbor]), triangles, needle, neighbor
+end
+
+@testset "required set is recomputed on the moved positions and gated there" begin
+    points, tetrahedra, triangles, needle, neighbor = fan_with_layer_needle()
+    spans = [([1.0, 0.0, 0.0], [2.0, 0.0, 0.0])]
+    edge_size, thickness, zigzag = 0.004, 0.028, 0.05
+    reach = thickness * (1.0 + zigzag) + edge_size
+    corners = [(0.0, 0.0, 0.0)]
+    before, _ = required_region_cells(points, tetrahedra, corners, 0.1, spans, reach)
+    # The needle (vertices within reach) and its neighbor (sharing the apex) are
+    # required before any move; the neighbor's other vertices are beyond reach.
+    @test before[length(tetrahedra) - 1] && before[length(tetrahedra)]
+    @test tetrahedron_scaled_jacobian([points[:, i] for i in needle]) < 0.02
+    record, moved = optimize_required_region!(points, tetrahedra, triangles, corners, 0.1,
+                                              0.025, spans, edge_size, 2.0, thickness, zigzag,
+                                              4.0, 0.01, 0.75, 1e-9)
+    after, _ = required_region_cells(points, tetrahedra, corners, 0.1, spans, reach)
+    @test record["RequiredTetrahedra"] == count(after)
+    @test record["RequiredTetrahedraBeforeMoves"] == count(before)
+    @test record["RequiredCellsBelowGateAfter"] == 0
+    @test record["LayerRequiredReach"] == reach
+    @test tetrahedron_scaled_jacobian([points[:, i] for i in needle]) >= 0.02
+    @test !isempty(moved)
+    # The apex left the reach: the neighbor is no longer required and the record
+    # says so (a second recomputation ran because the set changed).
+    if !after[length(tetrahedra)]
+        @test record["RequiredTetrahedra"] == count(before) - 1
+        @test record["RequiredSetRecomputations"] == 2
+    else
+        @test record["RequiredSetRecomputations"] == 1
+    end
+    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    # Without any layer the set is the corner ball only and never changes.
+    points0, tetrahedra0, triangles0 = corner_fan(0.0125)
+    record0, _ = optimize_required_region!(points0, tetrahedra0, triangles0, corners, 0.1, 0.025,
+                                           Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0,
+                                           0.0, zigzag, 4.0, 0.01, 0.75, 1e-9)
+    @test record0["RequiredTetrahedra"] == length(tetrahedra0) == record0["RequiredTetrahedraBeforeMoves"]
+    @test record0["LayerRequiredReach"] === nothing
+    @test record0["RequiredSetRecomputations"] == 1
+end

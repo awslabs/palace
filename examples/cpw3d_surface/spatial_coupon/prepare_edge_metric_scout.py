@@ -14,7 +14,7 @@ from pathlib import Path
 import meshio
 import numpy as np
 from edge_volume_metric import (COPLANAR_TOLERANCE,REQUIRED_TETRAHEDRA_RULE,cluster_coplanar_triangles,
-                                edge_layer_reach,edge_layer_required_reach,intersect_metrics,
+                                edge_layer_reach,edge_layer_required_reach,EDGE_LAYER_CELL_RULE,intersect_metrics,
                                 junction_segments,required_tetrahedra,surface_features,volume_metric,
                                 segment_distances)
 from mesh_array_io import read_mesh,sha
@@ -277,7 +277,7 @@ def edge_layer_record(census,edge_size,growth_ratio,aspect,normal,protect_surfac
     total=float(np.linalg.norm(spans[:,3:]-spans[:,:3],axis=1).sum())
     if abs(total-float(layer['TotalSpanLength']))>COPLANAR_TOLERANCE*total:
         raise ValueError('Seed census edge layer span length is inconsistent')
-    return {'EdgeSize':float(edge_size),'GrowthRatio':float(growth_ratio),'Aspect':float(aspect),
+    record={'EdgeSize':float(edge_size),'GrowthRatio':float(growth_ratio),'Aspect':float(aspect),
             'EdgeSizeOverNormalSize':float(edge_size/normal),
             'Reach':edge_layer_reach(normal,edge_size,growth_ratio),
             'Layers':len(offsets),'RowOffsets':[float(value) for value in offsets],
@@ -295,6 +295,11 @@ def edge_layer_record(census,edge_size,growth_ratio,aspect,normal,protect_surfac
                            'SpanLength':curve['SpanLength'],'CurveLength':curve['CurveLength']}
                           for curve in curves],
             'MinimumSize':float(edge_size),'Rule':EDGE_LAYER_RULE}
+    # The one recorded layer reach: a tetrahedron with a vertex within it belongs to
+    # the layer (required region, restorer, audit statistics and layer quality rule).
+    record['RequiredReach']=edge_layer_required_reach(record)
+    record['LayerCellRule']=EDGE_LAYER_CELL_RULE
+    return record
 
 
 TRACE_BASIS_RULE=('cut-surface element size <= TraceBasisSizeRatio x the shortest edge of the '

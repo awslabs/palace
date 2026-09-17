@@ -610,7 +610,7 @@ class LocalSizeBoundTest(unittest.TestCase):
         report = _quality_repair(points, tetrahedra, node_supports, supports, recipe,
                                  .01, 4., .01875, frozen_nodes=frozenset({1, 2}))
         np.testing.assert_array_equal(points[[0, 1, 2]], original[[0, 1, 2]])
-        self.assertEqual(report["FrozenEdgeLayerVertices"], 2)
+        self.assertEqual(report["FrozenVertices"], 2)
         self.assertEqual(report["QualityDisplacementBoundUm"], .01875)
         with self.assertRaises(ValueError):
             _quality_repair(points, tetrahedra, node_supports, supports, recipe, .01, 4.,
@@ -696,6 +696,11 @@ class RequiredTetrahedraTest(unittest.TestCase):
                                     [len(tetrahedra)])
             with self.assertRaisesRegex(ValueError, "out of range"):
                 read_medit_binary(path.with_name("bad.meshb"))
+            # Version 4 (64-bit counts) is rejected instead of being mis-parsed.
+            data = bytearray(path.read_bytes()); data[4:8] = (4).to_bytes(4, "little")
+            path.with_name("v4.meshb").write_bytes(bytes(data))
+            with self.assertRaisesRegex(ValueError, "version 4"):
+                read_medit_binary(path.with_name("v4.meshb"))
 
     def test_required_vertices_are_neither_collapsed_nor_moved(self):
         points, tetrahedra, supports, node_supports, recipe, free = \
@@ -730,3 +735,11 @@ class RequiredTetrahedraTest(unittest.TestCase):
         _, _, report = restore_in_source_frame(mesh([]), recipe, (.25, "local"), .01, 20., (.75, "local"))
         self.assertEqual(report["RequiredTetrahedra"], 0)
         self.assertGreater(report["CollapsedCornerVertices"], 0)
+        # With a recipe record the adapted mesh must carry exactly the listed count.
+        listed = {**recipe, "RequiredTetrahedra": {"Count": 1}}
+        _, _, report = restore_in_source_frame(mesh([0]), listed, (.25, "local"), .01, 20., (.75, "local"))
+        self.assertEqual(report["RequiredTetrahedra"], 1)
+        with self.assertRaisesRegex(ValueError, "recipe lists 1"):
+            restore_in_source_frame(mesh([0, 1]), listed, (.25, "local"), .01, 20., (.75, "local"))
+        with self.assertRaisesRegex(ValueError, "recipe lists 1"):
+            restore_in_source_frame(mesh([]), listed, (.25, "local"), .01, 20., (.75, "local"))

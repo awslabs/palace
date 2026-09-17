@@ -2249,16 +2249,24 @@ class RequiredRegionContractTest(unittest.TestCase):
                       "PerSpan": [{"Span": spans[0], "Tetrahedra": 3}] if layer else []}}
         if layer:
             recipe["EdgeLayer"] = {"EdgeSize": .004, "LayerThickness": .028, "RowZigzag": .05,
+                                   "RequiredReach": .028 * 1.05 + .004,
                                    "Spans": spans, "SpanCount": 1}
+        # The census counts the set recomputed on the final seed positions: exactly
+        # the recipe count (the pre-move set may differ and is reported).
         census = {"SeedQualityOptimization": {
             "MaximumCornerAspect": 4., "MinimumScaledJacobian": .01,
-            "DisplacementBoundOverNormal": .75, "RequiredTetrahedra": 5,
+            "DisplacementBoundOverNormal": .75, "RequiredTetrahedra": 5 if layer else 3,
+            "RequiredTetrahedraBeforeMoves": 6 if layer else 3,
             "RequiredCellsBelowGateAfter": 0, "CornerAspectsAfter": [3.4, 3.74],
             "RequiredMinimumScaledJacobianAfter": .02}}
         seed = {"Command": ["julia", "mesh_spatial_coupon.jl", "sig.csv", "fabricated", "seed.msh",
                             *self.GATES]}
+        restored = root / f"restored-{layer}.msh"
+        restored.with_suffix(".projection.json").write_text(json.dumps(
+            {"RequiredTetrahedra": 5 if layer else 3, "RequiredVertices": 12}))
         restoration = {"Command": ["python3", "restore_planar_metric_mesh.py", "adapted.meshb",
-                                   "recipe.json", "restored.msh", *self.GATES]}
+                                   "recipe.json", str(restored), *self.GATES],
+                       "Artifacts": {"restored-mesh": {"Path": str(restored), "SHA256": "0" * 64}}}
         required = root / f"required-tetrahedra-{layer}.txt"
         required.write_text("3\n7\n40\n41\n99\n" if layer else "3\n7\n40\n")
         return seed, restoration, recipe, census, required
@@ -2307,6 +2315,8 @@ class RequiredRegionContractTest(unittest.TestCase):
                      recipe_data=with_record(PerCorner=[{"Point": [0., 0., 0.], "Tetrahedra": 2},
                                                         {"Point": [10., 0., 0.], "Tetrahedra": 0}]))
             rejected("differs from the recipe edge layer", recipe_data=with_record(LayerRequiredReach=.032))
+            recorded_reach = copy.deepcopy(recipe); recorded_reach["EdgeLayer"]["RequiredReach"] = .032
+            rejected("differs from the recipe edge layer", recipe_data=recorded_reach)
             rejected("differs from the recipe edge layer", recipe_data=with_record(PerSpan=[]))
             rejected("differs from the recipe edge layer",
                      recipe_data=with_record(PerSpan=[{"Span": [0., 0., 0., 1., 0., 0.], "Tetrahedra": 3}]))
@@ -2327,6 +2337,17 @@ class RequiredRegionContractTest(unittest.TestCase):
             rejected("does not record a gated", census_data=with_quality(CornerAspectsAfter=[3.4]))
             rejected("below the scaled-Jacobian gate",
                      census_data=with_quality(RequiredMinimumScaledJacobianAfter=.009))
+            # The seed must have gated exactly the listed set (the pre-move count is
+            # only reported) and the restorer must have found exactly that many
+            # required cells in the adapted mesh.
+            rejected("does not record a gated", census_data=with_quality(RequiredTetrahedra=6))
+            rejected("does not record a gated", census_data=with_quality(RequiredTetrahedra=4))
+            stale = copy.deepcopy(restoration)
+            stale["Artifacts"]["restored-mesh"]["Path"] = str(root / "stale.msh")
+            (root / "stale.projection.json").write_text(json.dumps({"RequiredTetrahedra": 4}))
+            rejected("different number of required tetrahedra", restoration_report=stale)
+            (root / "stale.projection.json").write_text(json.dumps({"RequiredVertices": 4}))
+            rejected("Restored required tetrahedra", restoration_report=stale)
 
 
 class EdgeLayerContractTest(unittest.TestCase):

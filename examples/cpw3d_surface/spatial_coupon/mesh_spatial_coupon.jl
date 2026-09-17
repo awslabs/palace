@@ -845,35 +845,55 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
     return achieved(), moves
 end
 
-# Optimize the seed's required region in place (Gmsh node coordinates) and gate
-# it. Fails closed when a corner exceeds maximum_corner_aspect or a required cell
-# stays below minimum_scaled_jacobian. Returns the census record.
-function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_size,
-                                        growth_ratio, layer_thickness, row_zigzag,
-                                        maximum_corner_aspect, minimum_scaled_jacobian,
-                                        displacement_ratio, tolerance)
-    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
-    points = reshape(copy(coordinates), 3, :)
-    original = copy(points)
-    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
-    _, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
-    tetrahedra = Vector{NTuple{4, Int}}()
+# Cells of a mesh (Gmsh element blocks of one dimension) as vertex-index tuples.
+function gmsh_linear_cells(index, dimension, ::Val{width}) where {width}
+    _, element_tags, element_nodes = gmsh.model.mesh.getElements(dimension)
+    cells = Vector{NTuple{width, Int}}()
     for (tags, block) in zip(element_tags, element_nodes)
         isempty(tags) && continue
         nodes_per_element = length(block) ÷ length(tags)
+        # Only the vertex nodes define the linear cells (high-order nodes follow).
         for start in 1:nodes_per_element:length(block)
-            push!(tetrahedra, ntuple(i -> index[block[start + i - 1]], 4))
+            push!(cells, ntuple(i -> index[block[start + i - 1]], Val(width)))
         end
     end
-    _, triangle_tags, triangle_nodes = gmsh.model.mesh.getElements(2)
-    triangles = Vector{NTuple{3, Int}}()
-    for (tags, block) in zip(triangle_tags, triangle_nodes)
-        isempty(tags) && continue
-        nodes_per_element = length(block) ÷ length(tags)
-        for start in 1:nodes_per_element:length(block)
-            push!(triangles, ntuple(i -> index[block[start + i - 1]], 3))
+    return cells
+end
+
+# Below-target cells of a target set grouped into vertex-sharing components.
+function below_target_components(cells, tetrahedra, incident, value_of, target)
+    bad = Set(k for k in cells if value_of(k) < target)
+    components = Vector{Vector{Int}}()
+    while !isempty(bad)
+        first = pop!(bad)
+        component = [first]; stack = [first]
+        while !isempty(stack)
+            k = pop!(stack)
+            for i in tetrahedra[k], j in incident[i]
+                if j in bad
+                    delete!(bad, j); push!(component, j); push!(stack, j)
+                end
+            end
         end
+        push!(components, sort!(component))
     end
+    return components
+end
+
+# Optimize the required region of a linear tetrahedral mesh in place and gate it.
+# The required set is the metric stage's rule evaluated on the FINAL vertex
+# positions: the moves can carry vertices across the corner-ball radius or the
+# layer reach, so after the first pass the set is recomputed; a changed set gets
+# one more scaled-Jacobian pass and is recomputed again, and the gates are judged
+# on that final set, which is the set the metric stage will list (the census
+# count must equal the recipe count). Fails closed when a corner exceeds
+# maximum_corner_aspect or a required cell stays below minimum_scaled_jacobian.
+# Returns (census record, indices of the moved vertices).
+function optimize_required_region!(points, tetrahedra, triangles, corners, radius, lc_fine,
+                                   spans, edge_size, growth_ratio, layer_thickness, row_zigzag,
+                                   maximum_corner_aspect, minimum_scaled_jacobian,
+                                   displacement_ratio, tolerance)
+    original = copy(points)
     reach = isempty(spans) ? 0.0 : layer_thickness * (1.0 + row_zigzag) + edge_size
     required, span_distance = required_region_cells(points, tetrahedra, corners, radius, spans,
                                                     reach)
@@ -888,7 +908,8 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
                        for cell in tetrahedra]
     all(>(0.0), original_scaled) || error("Seed contains a nonpositive tetrahedron")
     floors = min.(original_scaled, scaled_target)
-    # Local prescribed size: lc_fine, EdgeSize-graded inside the layer reach.
+    # Local prescribed size: lc_fine, EdgeSize-graded inside the layer reach (the
+    # bounds are set once, from the original positions).
     bounds = [displacement_ratio * (isempty(spans) ? lc_fine :
               min(lc_fine, edge_size + (growth_ratio - 1.0) * span_distance[i]))
               for i in axes(points, 2)]
@@ -908,31 +929,27 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
                                             bounds, targets, :aspect, corner_target)
         push!(corner_after, after); push!(corner_moves, moves)
     end
-    required_cells = findall(required)
     scaled_of(k) = tetrahedron_scaled_jacobian([points[:, i] for i in tetrahedra[k]])
+    required_cells = findall(required)
+    required_before_moves = length(required_cells)
     required_before = minimum(scaled_of(k) for k in required_cells; init=Inf)
     below_before = count(k -> scaled_of(k) < scaled_target, required_cells)
-    # Components of below-target required cells sharing a vertex; repaired together.
-    bad = Set(k for k in required_cells if scaled_of(k) < scaled_target)
-    components = Vector{Vector{Int}}()
-    while !isempty(bad)
-        first = pop!(bad)
-        component = [first]; stack = [first]
-        while !isempty(stack)
-            k = pop!(stack)
-            for i in tetrahedra[k], j in incident[i]
-                if j in bad
-                    delete!(bad, j); push!(component, j); push!(stack, j)
-                end
-            end
+    # Components of below-target required cells sharing a vertex are repaired
+    # together; then the required set is recomputed on the moved positions and a
+    # changed set gets one more pass (see above).
+    repair_moves = 0; components = 0; recomputations = 0
+    for pass in 1:2
+        for component in below_target_components(required_cells, tetrahedra, incident,
+                                                 scaled_of, scaled_target)
+            _, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases,
+                                            floors, bounds, component, :scaled, scaled_target)
+            repair_moves += moves; components += 1
         end
-        push!(components, sort!(component))
-    end
-    repair_moves = 0
-    for component in components
-        _, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors,
-                                        bounds, component, :scaled, scaled_target)
-        repair_moves += moves
+        recomputed, _ = required_region_cells(points, tetrahedra, corners, radius, spans, reach)
+        recomputed_cells = findall(recomputed)
+        recomputations += 1
+        recomputed_cells == required_cells && break
+        required_cells = recomputed_cells
     end
     required_after = minimum(scaled_of(k) for k in required_cells; init=Inf)
     below_after = count(k -> scaled_of(k) < scaled_target, required_cells)
@@ -941,22 +958,23 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
     moved = findall(>(0.0), displacement)
     all(displacement[i] <= bounds[i] * (1.0 + 1.0e-12) for i in moved) ||
         error("Seed quality optimization exceeded its displacement bound")
-    for i in moved
-        gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
-    end
     record = Dict{String, Any}(
         "Rule" => "seed cells inside the corner balls (centroid within CornerIsotropyRadius) " *
-                  "and the edge layer (a vertex within LayerThickness x (1 + RowZigzag) + " *
-                  "EdgeSize of a span) are MMG required tetrahedra whose quality after " *
-                  "adaptation is the seed's; the seed repairs them by bounded coordinate " *
-                  "descent (surface vertices in their planes, DisplacementBoundOverNormal x " *
-                  "the local prescribed size, touched cells keep min(original, target) " *
-                  "scaled Jacobian) and fails closed on the gates",
+                  "and the edge layer (a vertex within LayerRequiredReach = LayerThickness x " *
+                  "(1 + RowZigzag) + EdgeSize of a span) are MMG required tetrahedra whose " *
+                  "quality after adaptation is the seed's; the seed repairs them by bounded " *
+                  "coordinate descent (surface vertices in their planes, " *
+                  "DisplacementBoundOverNormal x the local prescribed size, touched cells " *
+                  "keep min(original, target) scaled Jacobian), recomputes the set on the " *
+                  "moved positions (one more pass if it changed) and fails closed on the " *
+                  "gates judged on the final set, which the metric stage lists",
         "MaximumCornerAspect" => maximum_corner_aspect, "CornerAspectTarget" => corner_target,
         "MinimumScaledJacobian" => minimum_scaled_jacobian, "ScaledJacobianTarget" => scaled_target,
         "DisplacementBoundOverNormal" => displacement_ratio,
         "LayerRequiredReach" => isempty(spans) ? nothing : reach,
         "RequiredTetrahedra" => length(required_cells),
+        "RequiredTetrahedraBeforeMoves" => required_before_moves,
+        "RequiredSetRecomputations" => recomputations,
         "CornerAspectsBefore" => corner_before, "CornerAspectsAfter" => corner_after,
         "CornerMoves" => corner_moves,
         "RequiredMinimumScaledJacobianBefore" => required_before,
@@ -964,13 +982,14 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
         "RequiredCellsBelowTargetBefore" => below_before,
         "RequiredCellsBelowTargetAfter" => below_after,
         "RequiredCellsBelowGateAfter" => below_gate,
-        "RepairComponents" => length(components), "RepairMoves" => repair_moves,
+        "RepairComponents" => components, "RepairMoves" => repair_moves,
         "MovedVertices" => length(moved),
         "MaximumDisplacement" => isempty(moved) ? 0.0 : maximum(displacement[moved]),
         "MaximumDisplacementOverBound" =>
             isempty(moved) ? 0.0 : maximum(displacement[i] / bounds[i] for i in moved))
     println("Seed required-region optimization: corners $(corner_before) -> $(corner_after), " *
-            "required cells $(length(required_cells)) min scaled Jacobian $(required_before) -> " *
+            "required cells $(required_before_moves) -> $(length(required_cells)) " *
+            "($(recomputations) recomputations) min scaled Jacobian $(required_before) -> " *
             "$(required_after) (below target $(below_before) -> $(below_after)), " *
             "moved vertices $(length(moved))")
     all(<=(maximum_corner_aspect), corner_after) ||
@@ -979,6 +998,28 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
     below_gate == 0 ||
         error("Seed required region keeps $(below_gate) cells below the scaled-Jacobian gate " *
               "$(minimum_scaled_jacobian) after optimization (minimum $(required_after))")
+    return record, moved
+end
+
+# Optimize the seed's required region in place (Gmsh node coordinates) and gate
+# it; returns the census record.
+function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_size,
+                                        growth_ratio, layer_thickness, row_zigzag,
+                                        maximum_corner_aspect, minimum_scaled_jacobian,
+                                        displacement_ratio, tolerance)
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(copy(coordinates), 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    tetrahedra = gmsh_linear_cells(index, 3, Val(4))
+    triangles = gmsh_linear_cells(index, 2, Val(3))
+    record, moved = optimize_required_region!(points, tetrahedra, triangles, corners, radius,
+                                              lc_fine, spans, edge_size, growth_ratio,
+                                              layer_thickness, row_zigzag, maximum_corner_aspect,
+                                              minimum_scaled_jacobian, displacement_ratio,
+                                              tolerance)
+    for i in moved
+        gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
+    end
     return record
 end
 

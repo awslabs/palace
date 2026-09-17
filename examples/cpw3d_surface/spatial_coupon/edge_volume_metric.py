@@ -146,6 +146,13 @@ REQUIRED_TETRAHEDRA_RULE=('MMG required tetrahedra (kept verbatim, vertices fixe
                           'seed layer is kept without holes); MMG adapts only outside them')
 
 
+EDGE_LAYER_CELL_RULE=('edge-layer cell: a tetrahedron with at least one vertex within '
+                      'RequiredReach = LayerThickness x (1 + RowZigzag) + EdgeSize of a recorded '
+                      'span (the seed rows and the cells touching them); the same set is the '
+                      'required region the metric stage lists, the cells the restorer keeps fixed '
+                      'and the cells the audits report as the layer')
+
+
 def edge_layer_required_reach(layer):
     """Distance from a span within which a vertex belongs to the seed edge layer:
     the outermost row (zigzagged nodes RowZigzag farther out) plus one EdgeSize."""
@@ -153,7 +160,24 @@ def edge_layer_required_reach(layer):
     zigzag=float(layer.get('RowZigzag') or 0.)
     if not np.all(np.isfinite([thickness,edge_size,zigzag])) or thickness<=0 or edge_size<=0 or zigzag<0:
         raise ValueError('Invalid edge layer thickness/zigzag for the required reach')
-    return thickness*(1.+zigzag)+edge_size
+    reach=thickness*(1.+zigzag)+edge_size
+    recorded=layer.get('RequiredReach')
+    if recorded is not None and recorded!=reach:
+        raise ValueError('Recorded edge layer RequiredReach differs from its definition')
+    return reach
+
+
+def edge_layer_cells(points,tetrahedra,spans,reach):
+    """Boolean mask of EDGE_LAYER_CELL_RULE: tetrahedra with a vertex within reach
+    of a span (empty spans: no layer cells)."""
+    points=np.asarray(points,dtype=float);tetrahedra=np.asarray(tetrahedra,dtype=int)
+    mask=np.zeros(len(tetrahedra),dtype=bool)
+    spans=np.asarray(spans,dtype=float).reshape(-1,6)
+    if not len(spans):return mask
+    if not np.isfinite(reach) or reach<=0:raise ValueError('Invalid edge layer required reach')
+    distance=np.full(len(points),np.inf)
+    for span in spans:distance=np.minimum(distance,segment_distances(points,span)[0])
+    return np.any(distance[tetrahedra]<=reach,axis=1)
 
 
 def required_tetrahedra(points,tetrahedra,corners,corner_radius,layer_spans=None,layer_reach=None):

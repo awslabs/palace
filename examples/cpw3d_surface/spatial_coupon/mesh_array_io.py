@@ -62,6 +62,9 @@ def read_medit_binary(path):
         if magic.size!=1 or version.size!=1 or magic.item()!=1 or version.item() not in (1,2,3,4):
             raise ValueError('Not a binary Medit mesh')
         version=version.item()
+        # Version 4 stores 64-bit counts; this reader reads 32-bit counts and MMG
+        # 5.6 never writes version 4, so it is rejected rather than mis-parsed.
+        if version==4:raise ValueError('Binary Medit version 4 (64-bit counts) is not supported')
         position_type='<i8' if version>=3 else '<i4'
         real_type='<f4' if version==1 else '<f8'
         if np.fromfile(f,count=1,dtype='<i4').item()!=3:raise ValueError('Binary Medit mesh lacks its dimension')

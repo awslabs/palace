@@ -325,6 +325,22 @@ reported as `AchievedAnisotropy.EdgeLayer` with their own percentiles); the
 rule is keyed on the recipe's EdgeLayer record, never on a case, gate values
 are unchanged (production 1.5, calibration 0.9), and the layer's design
 statement remains the bound EdgeLayer aspect rule.
+Review of 836a1c19f (P1/P2, 2026-09-17): the seed optimizer gated the required
+set computed before its vertex moves (4 nm root: 199,572 gated, 199,992 listed
+by the metric stage on the moved seed), so `optimize_required_region!` now
+recomputes the set on the moved positions, runs one more scaled-Jacobian pass
+when the membership changed and judges the gates on the final set (census
+`RequiredTetrahedra`, with `RequiredTetrahedraBeforeMoves` and
+`RequiredSetRecomputations` reported); `validate_required_region` requires
+census count == recipe `Count` == the label restorer's `RequiredTetrahedra`
+(its `.projection.json` report; the restorer itself fails closed when the
+adapted mesh carries a different count). There is one recorded layer reach,
+`EdgeLayer.RequiredReach` = LayerThickness x (1 + RowZigzag) + EdgeSize
+(`edge_volume_metric.EDGE_LAYER_CELL_RULE`: a tetrahedron with a vertex within
+it is a layer cell), used by the required region, the restorer's frozen surface
+vertices and the audits' layer exclusion alike (the audit previously used the
+centroid within LayerThickness + EdgeSize). `read_medit_binary` rejects Medit
+version 4 (64-bit counts) instead of mis-parsing it.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

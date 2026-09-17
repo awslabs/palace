@@ -72,6 +72,6 @@
   },
   "Verification": {
     "resolve_mmg_library": "run_native_mmg_adaptation.resolve_mmg_library(executable) resolves LinkReference @rpath/libmmg3d.5.dylib to MMGLibraryPath with MMGLibrarySHA256",
-    "test_adapt_edge_metric": "EDGE_METRIC_ADAPTER_EXE=<executable> python3 -m unittest test_adapt_edge_metric (3 tests)"
+    "test_adapt_edge_metric": "EDGE_METRIC_ADAPTER_EXE=<executable> python3 -m unittest test_adapt_edge_metric (4 tests)"
   }
 }

@@ -18,7 +18,8 @@ import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 
 from audit_edge_metric_mesh import analyze, blocks, directional_widths, planar_patch_key
-from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles,
+from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_CELL_RULE,
+                                cluster_coplanar_triangles, edge_layer_required_reach,
                                 match_equivalent_planes, plane_deviation)
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
@@ -818,7 +819,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
         spans = np.asarray(layer["Spans"], dtype=float).reshape(-1, 2, 3)
         homogeneous_spans = np.concatenate((spans, np.ones((*spans.shape[:2], 1))), axis=2)
         layer_spans = (homogeneous_spans @ matrix.T)[..., :3].reshape(-1, 6)
-        layer_reach = float(layer["LayerThickness"]) + float(layer["EdgeSize"])
+        layer_reach = edge_layer_required_reach(layer)
     widths = directional_widths(mesh, transformed_recipe, layer_spans, layer_reach)
     samples = next((value for value in widths.values() if value["Cells"]), None)
     if samples is None:
@@ -833,8 +834,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                             "TangentialP50": layer_percentiles[1][0] if layer_percentiles else None,
                             "Transverse1P90": layer_percentiles[2][1] if layer_percentiles else None,
                             "Transverse2P90": layer_percentiles[2][2] if layer_percentiles else None,
-                            "Rule": "cells with centroid within LayerThickness + EdgeSize of a "
-                                    "recorded edge-layer span; excluded from the band anisotropy "
+                            "Rule": EDGE_LAYER_CELL_RULE + "; excluded from the band anisotropy "
                                     "statistics, whose design gate judges the metric-driven band; "
                                     "the layer's design statement is the bound EdgeLayer aspect "
                                     "rule (mesh_stage_contract.validate_edge_layer)"}

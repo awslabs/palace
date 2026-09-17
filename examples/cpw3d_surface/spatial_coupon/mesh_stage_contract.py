@@ -738,18 +738,31 @@ def _required_indices(path, tetrahedra):
     return indices
 
 
+def _restoration_quality_report(restoration_report):
+    """The label restorer's own report (next to its restored-mesh artifact)."""
+    restored = Path(restoration_report["Artifacts"]["restored-mesh"]["Path"])
+    report = json.loads(restored.with_suffix(".projection.json").read_text())
+    if not isinstance(report, dict):
+        raise ValueError("Label restoration report is not a record")
+    return report
+
+
 def validate_required_region(seed_report, restoration_report, recipe, census, required_path):
     """The metric stage's required tetrahedra are the recipe's corner balls and edge
     layer, the list is the recorded one, and the seed stage optimized and gated the
     same region with the restorer's gate values.
 
     The recipe RequiredTetrahedra record names the rule, CornerIsotropyRadius, one
-    count per semantic corner (each positive), the layer reach LayerThickness x
-    (1 + RowZigzag) + EdgeSize and one count per span when a layer is recorded (no
-    reach and no spans otherwise); the list has exactly Count sorted unique seed
-    indices.  The seed command passes the three gate options with the restorer's
-    values; the census SeedQualityOptimization record carries them, no required cell
-    below the scaled-Jacobian gate and every corner aspect within the corner gate.
+    count per semantic corner (each positive), the layer reach LayerRequiredReach =
+    LayerThickness x (1 + RowZigzag) + EdgeSize (also the recipe EdgeLayer
+    RequiredReach) and one count per span when a layer is recorded (no reach and no
+    spans otherwise); the list has exactly Count sorted unique seed indices.  The
+    seed command passes the three gate options with the restorer's values; the
+    census SeedQualityOptimization record carries them, gated exactly Count cells
+    (the set recomputed on the final seed positions), no required cell below the
+    scaled-Jacobian gate and every corner aspect within the corner gate; the label
+    restorer found exactly Count required tetrahedra in the adapted mesh (MMG kept
+    them all).
     """
     record = recipe.get("RequiredTetrahedra")
     corners = recipe.get("TruePhysicalCorners")
@@ -778,6 +791,7 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
         reach = (_recipe_number(layer, "LayerThickness") *
                  (1.0 + _recipe_number(layer, "RowZigzag")) + _recipe_number(layer, "EdgeSize"))
         if (_recipe_number(record, "LayerRequiredReach") != reach or
+                _recipe_number(layer, "RequiredReach") != reach or
                 len(record["PerSpan"]) != layer.get("SpanCount") or
                 any(not isinstance(row, dict) or
                     _count(row.get("Tetrahedra"), "Required span tetrahedra") <= 0
@@ -801,7 +815,7 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
             _recipe_number(quality, "DisplacementBoundOverNormal") !=
             gates["--maximum-quality-displacement-over-normal"] or
             _count(quality.get("RequiredCellsBelowGateAfter"), "Required cells below the gate") != 0 or
-            _count(quality.get("RequiredTetrahedra"), "Seed required tetrahedra") <= 0 or
+            _count(quality.get("RequiredTetrahedra"), "Seed required tetrahedra") != len(indices) or
             not isinstance(quality.get("CornerAspectsAfter"), list) or
             len(quality["CornerAspectsAfter"]) != len(corners) or
             any(isinstance(value, bool) or not isinstance(value, (int, float)) or
@@ -811,6 +825,10 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
     if (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
             gates["--minimum-scaled-jacobian"]):
         raise ValueError("Seed required region is below the scaled-Jacobian gate")
+    restoration = _restoration_quality_report(restoration_report)
+    if _count(restoration.get("RequiredTetrahedra"), "Restored required tetrahedra") != len(indices):
+        raise ValueError("Label restoration found a different number of required tetrahedra "
+                         "than the recipe record")
     return record
 
 

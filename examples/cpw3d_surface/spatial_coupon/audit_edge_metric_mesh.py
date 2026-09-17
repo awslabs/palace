@@ -9,7 +9,7 @@ import meshio
 import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from edge_volume_metric import (cluster_coplanar_triangles,match_equivalent_planes,
+from edge_volume_metric import (cluster_coplanar_triangles,edge_layer_cells,match_equivalent_planes,
                                 segment_distances)
 from mesh_array_io import read_mesh
 from semantic_mesh_contract import (boundary_adjacency, boundary_attributes,
@@ -138,11 +138,12 @@ def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
     """Tangential / transverse extents of the band cells (centroid within 1 or 3
     NormalSize of a physical segment, away from the corners) as 10/50/90 percentiles.
 
-    With a recorded edge layer (supervisor decision 31) the cells whose centroid
-    lies within layer_reach (LayerThickness + EdgeSize) of a layer span are the
-    layer's own statistics ('EdgeLayer', same percentiles) and are excluded from the
-    band statistics: the band anisotropy design gate judges the metric-driven band,
-    the layer's design statement is the bound EdgeLayer aspect rule.
+    With a recorded edge layer (supervisor decision 31) the layer cells
+    (edge_volume_metric.EDGE_LAYER_CELL_RULE: a vertex within layer_reach, the
+    recipe's RequiredReach, of a layer span) are the layer's own statistics
+    ('EdgeLayer', same percentiles) and are excluded from the band statistics: the
+    band anisotropy design gate judges the metric-driven band, the layer's design
+    statement is the bound EdgeLayer aspect rule.
     """
     t,_=blocks(mesh,'tetra');xyz=mesh.points[t];center=xyz.mean(axis=1)
     segments=recipe['PhysicalSegments'];corners=np.asarray(recipe['TruePhysicalCorners'])
@@ -151,11 +152,8 @@ def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
         r,_=segment_distances(center,s);mask=r<distance;which[mask]=i;distance[mask]=r[mask]
     dc=np.full(len(t),np.inf)
     for c in corners:dc=np.minimum(dc,np.linalg.norm(center-c,axis=1))
-    in_layer=np.zeros(len(t),dtype=bool)
-    if layer_spans is not None:
-        if not np.isfinite(layer_reach) or layer_reach<=0:raise ValueError('Invalid edge layer reach')
-        for span in np.asarray(layer_spans,dtype=float).reshape(-1,6):
-            in_layer|=segment_distances(center,span)[0]<=layer_reach
+    in_layer=(np.zeros(len(t),dtype=bool) if layer_spans is None else
+              edge_layer_cells(mesh.points,t,layer_spans,layer_reach))
     fine=recipe['NormalSize'];tangent=recipe['TangentialSize'];reports={}
     def percentiles(ids):
         widths=[]
