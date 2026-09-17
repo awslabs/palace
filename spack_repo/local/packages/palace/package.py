@@ -270,6 +270,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="a28bf879ecf197856d24ef5427d493f84a159224c22e7cd17ec977e06a222ffb",
                     when="@4.9.0",
                 ),
+                # https://github.com/mfem/mfem/pull/5502
+                # NCMesh: fix 8-bit reference-counter overflow at high-valence
+                # vertices. Pulled directly from the PR head commit. Remove once
+                # merged upstream and MFEM is bumped.
+                patch(
+                    "https://github.com/mfem/mfem/commit/"
+                    "3091ba40b238c4008b67216314bb26da6738b833.diff",
+                    sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")
