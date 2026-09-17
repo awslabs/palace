@@ -1,11 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import copy
 import unittest
 import numpy as np
-from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, feature_chains,
-                                intersect_metrics, junction_segments, match_equivalent_planes,
-                                plane_deviation, surface_features, volume_metric)
-from prepare_edge_metric_scout import budget_aware_far_policy, protected_corner_ball_triangles
+from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, edge_layer_reach,
+                                feature_chains, intersect_metrics, junction_segments,
+                                local_normal_size, match_equivalent_planes, plane_deviation,
+                                recipe_local_normal_size, surface_features, volume_metric)
+from prepare_edge_metric_scout import (budget_aware_far_policy, edge_layer_record,
+                                       protected_corner_ball_triangles)
 
 class EdgeVolumeMetricTest(unittest.TestCase):
     def test_two_transverse_directions_and_corner_recovery(self):
@@ -371,6 +374,105 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         self.assertIsNone(match_equivalent_planes(reference,displaced))
         self.assertEqual(match_equivalent_planes(np.zeros((0,8)),np.zeros((0,8))),[])
         self.assertEqual(COPLANAR_TOLERANCE,1e-6)
+
+    def test_edge_layer_law_is_geometric_growth_from_edge_size_then_the_band_law(self):
+        # hn along the normal of a layer span: EdgeSize + (q - 1) r up to the reach
+        # where it equals NormalSize, then the band law (RadialGrowth to the
+        # protected distance, FarGrowth beyond) shifted by the reach; continuous.
+        segment=[[-1,0,0,1,0,0]];r=np.array([0.,.001,.012,.024,.03,.074,.1,.244,.3])
+        p=np.column_stack((np.zeros_like(r),np.zeros_like(r),r))
+        m=volume_metric(p,segment,[],.025,.1,.16,protected_distance=.05,far_growth=.5,
+                        edge_layer_segments=segment,edge_size=.001,growth_ratio=2.)
+        hn=1/np.sqrt(np.linalg.eigvalsh(m).max(axis=1))
+        self.assertEqual(edge_layer_reach(.025,.001,2.),.024)
+        np.testing.assert_allclose(hn,[.001,.002,.013,.025,.031,.075,.088,.16,.16],rtol=1e-12)
+        # Without the layer (or with EdgeSize = NormalSize, reach 0) the law is unchanged.
+        plain=volume_metric(p,segment,[],.025,.1,.16,protected_distance=.05,far_growth=.5)
+        np.testing.assert_allclose(volume_metric(p,segment,[],.025,.1,.16,protected_distance=.05,
+            far_growth=.5,edge_layer_segments=segment,edge_size=.025),plain)
+        self.assertEqual(edge_layer_reach(.025,.025,2.),0.)
+        hn_plain=1/np.sqrt(np.linalg.eigvalsh(plain).max(axis=1))
+        np.testing.assert_allclose(hn_plain,np.minimum(.16,.025+np.minimum(r,.05)+.5*np.maximum(0,r-.05)),
+                                   rtol=1e-12)
+        # The layer law only refines: the layered metric dominates the plain one.
+        self.assertGreater(np.linalg.eigvalsh(m-plain).min(),-1e-9)
+        # A ratio of 1.5 gives 8 rows below NormalSize and a reach of 48 nm.
+        self.assertEqual(edge_layer_reach(.025,.001,1.5),(.025-.001)/.5)
+        for controls in ((.025,0.,2.),(.025,.03,2.),(.025,.001,1.)):
+            with self.assertRaises(ValueError):edge_layer_reach(*controls)
+
+    def test_edge_layer_tangential_size_is_capped_at_aspect_times_hn(self):
+        # ht in the layer is min(band ht, Aspect x hn): a tetrahedron corner with
+        # three tangential edges has scaled Jacobian (hn/ht)^2, so the gate bounds
+        # the anisotropy; beyond ~31 nm the cap exceeds the band's 0.1 and blends.
+        segment=[[-1,0,0,1,0,0]];r=np.array([0.,.001,.007,.024,.03,.06])
+        p=np.column_stack((np.zeros_like(r),np.zeros_like(r),r))
+        m=volume_metric(p,segment,[],.025,.1,.16,protected_distance=.05,far_growth=.5,
+                        edge_layer_segments=segment,edge_size=.001,growth_ratio=2.,edge_layer_aspect=4.)
+        hn=1/np.sqrt(np.linalg.eigvalsh(m).max(axis=1));ht=1/np.sqrt(m[:,0,0])
+        np.testing.assert_allclose(hn,[.001,.002,.008,.025,.031,.061],rtol=1e-12)
+        np.testing.assert_allclose(ht,[.004,.008,.032,.1,.106,.136],rtol=1e-12)
+        uncapped=volume_metric(p,segment,[],.025,.1,.16,protected_distance=.05,far_growth=.5,
+                               edge_layer_segments=segment,edge_size=.001,growth_ratio=2.)
+        np.testing.assert_allclose(1/np.sqrt(uncapped[:,0,0]),[.1,.1,.1,.1,.106,.136],rtol=1e-12)
+        with self.assertRaises(ValueError):
+            volume_metric(p,segment,[],.025,.1,.16,edge_layer_segments=segment,edge_size=.001,
+                          edge_layer_aspect=.5)
+
+    def test_local_normal_size_is_the_smallest_prescribed_size_at_each_point(self):
+        band=[[-1,0,0,1,0,0]];layer=[[0,0,0,1,0,0]];corners=[[-1,0,0]]
+        p=np.array([[.5,0,.001],[-.5,0,.001],[-1,0,.05],[.5,0,.06],[.5,0,.5],[-.5,0,.3]])
+        size=local_normal_size(p,band,.025,.16,1.,.05,.5,corners,.1,layer,.001,2.)
+        # On the layer span: EdgeSize law; on the plain band: NormalSize law; in the
+        # corner ball: at most NormalSize; far away: the far size.
+        np.testing.assert_allclose(size,[.002,.026,.025,.061,.16,.16],rtol=1e-12)
+        recipe={'PhysicalSegments':band,'JunctionSegments':{'Segments':[]},'NormalSize':.025,
+                'FarSize':.16,'RadialGrowth':1.,'ProtectedDistance':.05,'FarGrowth':.5,
+                'TruePhysicalCorners':corners,'CornerIsotropyRadius':.1,
+                'EdgeLayer':{'Spans':layer,'EdgeSize':.001,'GrowthRatio':2.}}
+        np.testing.assert_allclose(recipe_local_normal_size(p,recipe),size)
+        # Source-local recipes store segments as endpoint pairs.
+        nested=dict(recipe,PhysicalSegments=np.asarray(band).reshape(-1,2,3).tolist())
+        np.testing.assert_allclose(recipe_local_normal_size(p,nested),size)
+        del recipe['EdgeLayer']
+        np.testing.assert_allclose(recipe_local_normal_size(p,recipe),[.026,.026,.025,.08,.16,.16],rtol=1e-12)
+
+    def test_edge_layer_record_binds_the_seed_census_and_the_frozen_band(self):
+        band=np.array([[0,0,.1,10,0,.1],[0,0,0,10,0,0]],dtype=float)
+        census={'EdgeLayer':{'EdgeSize':.001,'GrowthRatio':2.,'Aspect':4.,'NormalSize':.025,
+            'TangentialSize':.05,'Layers':5,'RowOffsets':[.001,.003,.007,.015,.031],
+            'LayerThickness':.031,'RowZigzag':.05,'TangentialSubdivision':16,
+            'RowSubdivisions':[16,8,4,2,1],'RowTangentialSpacings':[.003125,.00625,.0125,.025,.05],
+            'TaperSubdivisions':[2,4,8],'CornerTaperOffset':.287,'RidgeNodesAdded':30,
+            'Curves':[{'Curve':7,'Start':[1,0,.1],'End':[9,0,.1],'SpanLength':8.,'CurveLength':10.,
+                       'Faces':[{'Face':1,'Rows':5,'RowNodes':100},{'Face':2,'Rows':5,'RowNodes':100}]}],
+            'TotalSpanLength':8.,'Rows':10,'RowNodes':200}}
+        contract={'RigidTransform':[1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]}
+        record=edge_layer_record(census,.001,2.,4.,.025,.05,contract,band)
+        self.assertEqual(record['Reach'],.024);self.assertEqual(record['LayerThickness'],.031)
+        self.assertEqual(record['Spans'],[[1,0,.1,9,0,.1]]);self.assertEqual(record['SeedRowNodes'],200)
+        self.assertEqual(record['SeedRows'],10);self.assertEqual(record['MinimumSize'],.001)
+        self.assertEqual(record['Aspect'],4.)
+        # Placed by the contract's rigid transform (rotation about z by 90 degrees).
+        rotated=dict(contract,RigidTransform=[0.,-1.,0.,0.,1.,0.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.])
+        rotated_band=np.array([[0,0,.1,0,10,.1],[0,0,0,0,10,0]],dtype=float)
+        np.testing.assert_allclose(edge_layer_record(census,.001,2.,4.,.025,.05,rotated,rotated_band)['Spans'],
+                                   [[0,1,.1,0,9,.1]],atol=1e-12)
+        def rejected(message,**changes):
+            mutated=copy.deepcopy(census);mutated['EdgeLayer'].update(changes)
+            with self.assertRaisesRegex(ValueError,message):
+                edge_layer_record(mutated,.001,2.,4.,.025,.05,contract,band)
+        rejected('EdgeSize',EdgeSize=.002);rejected('GrowthRatio',GrowthRatio=1.5)
+        rejected('Aspect',Aspect=8.);rejected('NormalSize',NormalSize=.0125)
+        rejected('rows are incomplete',Layers=4);rejected('rows are incomplete',LayerThickness=.03)
+        rejected('inconsistent',TotalSpanLength=7.)
+        rejected('does not lie on a band segment',Curves=[dict(census['EdgeLayer']['Curves'][0],Start=[1,.5,.1])])
+        with self.assertRaisesRegex(ValueError,'thicker than the surface protection radius'):
+            edge_layer_record(census,.001,2.,4.,.025,.03,contract,band)
+        with self.assertRaisesRegex(ValueError,'records no edge layer'):
+            edge_layer_record({},.001,2.,4.,.025,.05,contract,band)
+        with self.assertRaisesRegex(ValueError,'Aspect'):
+            edge_layer_record(census,.001,2.,.5,.025,.05,contract,band)
 
     def test_bad_controls_fail_closed(self):
         for controls in ((0,.1,1),(.1,.01,1),(.1,2,1)):

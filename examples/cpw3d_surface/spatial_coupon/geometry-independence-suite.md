@@ -206,6 +206,54 @@ rotate-z four-edge variant now reports identity's 2/41/2/2 line-like bands
 with 2 basis bands (span 22.8757 um), and the ten-edge variants stay at 0
 bands (12,309 short edges both). Unit tests cover construction roundoff at the
 threshold and the rotated-square band.
+Supervisor decisions 27-29 (seeded transverse edge layer, 2026-09-16): the
+metal-air participation is edge-singular (|E|^2 ~ r^-2/3) and NormalSize 0.025
+is 25x too coarse right at the metal edges, so the seed can carry a geometric
+transverse layer (`--edge-size` EdgeSize, `--edge-growth-ratio` GrowthRatio,
+`--edge-layer-aspect` EdgeLayerAspect; production passes none, i.e. EdgeSize 0)
+on every face bounding a metal edge (longitudinal feature curve of a metal
+surface family, junction curves excluded): one embedded explicit node row per
+layer of size EdgeSize x GrowthRatio^(k-1) below NormalSize at the cumulative
+layer distance from the ridge, inside the ridge span on the `lc_tangent` grid
+outside the corner size law. The scaled Jacobian of a tetrahedron whose corner
+has three tangential edges is (hn/ht)^2, so `MinimumScaledJacobian` 0.01
+(repair target 0.02) bounds the layer anisotropy to roughly 5 - nm resolution
+has to come from a thin layer with nested tangential refinement, not from 50
+nm-long slivers (prisms would not have this limit; not pursued): inside the
+span the ridge grid is subdivided by the smallest power of two with spacing <=
+Aspect x EdgeSize, row k by the nested power of two with spacing <= Aspect x
+its size, the subdivision halves interval by interval towards the span ends
+(the taper, no rows there), and every second row node is 5% of the offset
+farther out (perfectly aligned rows form Delaunay-degenerate rectangles that
+left zero-volume tets in the boundary recovery). The census records
+`EdgeLayer` (sizes, rows, subdivisions, taper, corner taper offset, spans per
+curve, row nodes). The metric stage binds the census layer (`--edge-size`,
+`--edge-growth-ratio`, `--edge-layer-aspect` equal; LayerThickness within
+`SurfaceProtectionRadius`, so the frozen band covers the layer; every span on
+a band segment) and prescribes the continuous form of the same layers along
+the spans: hn(r) = EdgeSize + (GrowthRatio - 1) r up to the reach (NormalSize
+- EdgeSize) / (GrowthRatio - 1), then the ordinary band law; tangential size
+capped at Aspect x hn blending into the band's; spans intersected after the
+band segments; seed cells within the protection radius of a span are excluded
+from the far-field budget policy's seed load (recorded) so the far field is
+not coarsened by the transient layer seed; the adapter hmin is EdgeSize. The
+restoration's CAD-correction, repair-displacement and corner-collapse bounds
+are relative to the local prescribed size at each vertex capped at NormalSize
+(`local_bound_size`: production bounds unchanged, EdgeSize-based inside the
+layer; per-vertex bound statistics in the report) and the layer's frozen
+surface vertices never move. `mesh_stage_contract.validate_edge_layer` binds
+the seed command, the metric command, the census, the recipe and the adapter
+hmin to one layer or none (`validate_canonical_dag`). Measured on four-edge
+(V2 + layer, `edge_layer_census.py`): at EdgeSize 1 nm / Aspect 4 the layer
+is surface-driven (rows 3.125/6.25/12.5/25/50 nm) and costs ~1.3M tets
+(4.70M total, over the cap) with 1,955 cells below 0.02 in 1,522 repair
+components; at 4 nm (rows 12.5/25/50 nm at 4/12/28 nm) 3.57M tets, layer
+285k, 4 cells below 0.01 / 135 below 0.02, the metric law followed
+(transverse P50 4.0/4.2/8.0/17/29 nm by shell); the 4 nm build failed the
+label-restoration corner gate at (0, 8, 0) (aspect 5.39 after MMG, the
+collapse rolled back and the bounded move repair cannot fix a corner cell with
+three constrained vertices; identical with the previous restorer), so no
+edge-layer case is qualified yet.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

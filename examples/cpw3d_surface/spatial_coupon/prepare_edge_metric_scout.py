@@ -13,8 +13,9 @@ import sys
 from pathlib import Path
 import meshio
 import numpy as np
-from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,intersect_metrics,
-                                junction_segments,surface_features,volume_metric,segment_distances)
+from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,edge_layer_reach,
+                                intersect_metrics,junction_segments,surface_features,volume_metric,
+                                segment_distances)
 from mesh_array_io import read_mesh,sha
 from mesh_stage_contract import footprint_provenance,footprint_segments
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
@@ -220,6 +221,81 @@ def junction_segment_record(segments, semantic_contract, census=None):
                     'intersection order'}
 
 
+EDGE_LAYER_RULE=('the seed carries a geometric transverse layer on every face bounding a metal '
+                 'edge (rows of size EdgeSize x GrowthRatio^(k-1) below NormalSize, tangentially '
+                 'refined with the ridge grid so every layer cell has aspect <= Aspect: a '
+                 'tetrahedron corner with three tangential edges has scaled Jacobian (hn/ht)^2, '
+                 'which bounds the anisotropy under the scaled-Jacobian gate); the metric '
+                 'prescribes the continuous form of the same layers, tangential size capped at '
+                 'Aspect x hn(r) blending into the band law, '
+                 'along the recorded spans, hn(r) = EdgeSize + (GrowthRatio - 1) r up to '
+                 'Reach = (NormalSize - EdgeSize) / (GrowthRatio - 1) where it equals NormalSize, '
+                 'then the ordinary band law (RadialGrowth to ProtectedDistance, FarGrowth beyond) '
+                 'continues; the spans are intersected after the NormalSize band segments; the '
+                 'seed rows lie within the frozen band (LayerThickness <= SurfaceProtectionRadius) '
+                 'so MMG cannot alter the layer surface; the adapter hmin is EdgeSize')
+
+
+def edge_layer_record(census,edge_size,growth_ratio,aspect,normal,protect_surface,
+                      semantic_contract,band_segments,tolerance=1e-8):
+    """Bind the seed's edge layer to the metric stage and record its spans.
+
+    The bound census must record the same EdgeSize/GrowthRatio/NormalSize, at
+    least one layer and one span, a layer thickness inside the surface protection
+    radius (the frozen band must cover the whole layer footprint), and every span
+    (placed by the contract's rigid transform) must lie on a band segment.
+    Returns the recipe record; the spans are in the metric frame.
+    """
+    layer=census.get('EdgeLayer') if isinstance(census,dict) else None
+    if not isinstance(layer,dict):raise ValueError('Seed census records no edge layer')
+    if not np.isfinite(aspect) or aspect<1:raise ValueError('EdgeLayerAspect must be at least 1')
+    for name,value in (('EdgeSize',edge_size),('GrowthRatio',growth_ratio),('Aspect',aspect),
+                       ('NormalSize',normal)):
+        if layer.get(name)!=value:
+            raise ValueError(f'Seed census edge layer {name} differs from the metric stage')
+    offsets=layer.get('RowOffsets');curves=layer.get('Curves')
+    if (not isinstance(offsets,list) or not offsets or layer.get('Layers')!=len(offsets) or
+            not isinstance(curves,list) or not curves or
+            not all(isinstance(value,(int,float)) and not isinstance(value,bool) for value in offsets) or
+            layer.get('LayerThickness')!=offsets[-1]):
+        raise ValueError('Seed census edge layer rows are incomplete')
+    if not offsets[-1]<=protect_surface:
+        raise ValueError('Seed edge layer is thicker than the surface protection radius')
+    matrix=np.asarray(semantic_contract.get('RigidTransform',
+        [1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]),dtype=float).reshape(4,4)
+    spans=[];row_nodes=0
+    band=np.asarray(band_segments,dtype=float).reshape(-1,6)
+    for curve in curves:
+        start=np.asarray(curve['Start'],dtype=float)@matrix[:3,:3].T+matrix[:3,3]
+        end=np.asarray(curve['End'],dtype=float)@matrix[:3,:3].T+matrix[:3,3]
+        if not (_near_segment(start,band,tolerance) and _near_segment(end,band,tolerance)):
+            raise ValueError('Seed edge layer span does not lie on a band segment')
+        spans.append([*start.tolist(),*end.tolist()])
+        row_nodes+=sum(int(face['RowNodes']) for face in curve['Faces'])
+    spans=np.asarray(spans,dtype=float).reshape(-1,6)
+    total=float(np.linalg.norm(spans[:,3:]-spans[:,:3],axis=1).sum())
+    if abs(total-float(layer['TotalSpanLength']))>COPLANAR_TOLERANCE*total:
+        raise ValueError('Seed census edge layer span length is inconsistent')
+    return {'EdgeSize':float(edge_size),'GrowthRatio':float(growth_ratio),'Aspect':float(aspect),
+            'EdgeSizeOverNormalSize':float(edge_size/normal),
+            'Reach':edge_layer_reach(normal,edge_size,growth_ratio),
+            'Layers':len(offsets),'RowOffsets':[float(value) for value in offsets],
+            'LayerThickness':float(offsets[-1]),'RowZigzag':layer.get('RowZigzag'),
+            'SeedTangentialSize':layer.get('TangentialSize'),
+            'SeedTangentialSubdivision':layer.get('TangentialSubdivision'),
+            'SeedRowSubdivisions':layer.get('RowSubdivisions'),
+            'SeedRowTangentialSpacings':layer.get('RowTangentialSpacings'),
+            'SeedTaperSubdivisions':layer.get('TaperSubdivisions'),
+            'SeedCornerTaperOffset':layer.get('CornerTaperOffset'),
+            'SeedRidgeNodesAdded':layer.get('RidgeNodesAdded'),
+            'Spans':spans.tolist(),'SpanCount':int(len(spans)),'TotalSpanLength':total,
+            'SeedRows':layer.get('Rows'),'SeedRowNodes':row_nodes,
+            'SeedCurves':[{'Curve':curve['Curve'],'Faces':curve['Faces'],
+                           'SpanLength':curve['SpanLength'],'CurveLength':curve['CurveLength']}
+                          for curve in curves],
+            'MinimumSize':float(edge_size),'Rule':EDGE_LAYER_RULE}
+
+
 TRACE_BASIS_RULE=('cut-surface element size <= TraceBasisSizeRatio x the shortest edge of the '
                   'basis triangle containing the point (per-triangle rule: the hat of a basis '
                   'vertex varies linearly over the whole triangle, so its support is resolved '
@@ -276,7 +352,8 @@ def trace_basis_sizing_record(basis, ratio, census, semantic_contract, exact_pla
 def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,protect_surface=0.,
             semantic_contract=None, transformed_supports=None, maximum_elements=None,
             footprint_census=None, semantic_contract_sha256=None, trace_basis=None,
-            trace_basis_size_ratio=1.0):
+            trace_basis_size_ratio=1.0, edge_size=None, edge_growth_ratio=2.0,
+            edge_layer_aspect=4.0):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
         raise ValueError('Invalid grading/protection controls')
     path=Path(path)
@@ -290,10 +367,6 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     tetrahedron_refs=np.concatenate([r for c,r in zip(mesh.cells,refs) if c.type=='tetra'])
     if maximum_elements is None:
         maximum_elements = max(len(tetrahedra), 1)
-    far_policy=budget_aware_far_policy(
-        len(tetrahedra),maximum_elements,far,far_growth)
-    effective_far=far_policy['EffectiveFarSize']
-    effective_far_growth=far_policy['EffectiveFarGrowth']
     if semantic_contract is None:
         raise ValueError('A frozen semantic contract is required')
     if set(triangle_refs)!=boundary_attributes(semantic_contract):
@@ -313,6 +386,35 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                                 material_interface_attributes(semantic_contract))
     junction_record=junction_segment_record(junctions,semantic_contract,footprint_census)
     band_segments=np.vstack((np.asarray(segments,dtype=float).reshape(-1,6),junctions))
+    census_layer=(footprint_census.get('EdgeLayer') if isinstance(footprint_census,dict) else None)
+    if edge_size is None:
+        if isinstance(census_layer,dict) and census_layer.get('EdgeSize',0)>0:
+            raise ValueError('Seed census records an edge layer the metric stage does not bind')
+        edge_layer=None
+    else:
+        if not np.isfinite(edge_size) or not 0<edge_size<normal:
+            raise ValueError('EdgeSize must be positive and below NormalSize')
+        edge_layer=edge_layer_record(footprint_census,edge_size,edge_growth_ratio,edge_layer_aspect,
+                                     normal,protect_surface,semantic_contract,band_segments)
+    layer_spans=None if edge_layer is None else np.asarray(edge_layer['Spans'],dtype=float)
+    # The far-field budget policy predicts the adapted load from the seed; the
+    # seed cells inside the edge layer footprint (within the surface protection
+    # radius of a span) are re-meshed to the recorded layer metric and are not
+    # far-field load, so they are excluded.  Without a layer nothing changes.
+    layer_cells=0
+    if layer_spans is not None:
+        centroids=mesh.points[tetrahedra].mean(axis=1)
+        centroid_distance=np.full(len(tetrahedra),np.inf)
+        for span in layer_spans:
+            centroid_distance=np.minimum(centroid_distance,segment_distances(centroids,span)[0])
+        layer_cells=int(np.sum(centroid_distance<=protect_surface))
+    far_policy=budget_aware_far_policy(
+        max(len(tetrahedra)-layer_cells,1),maximum_elements,far,far_growth)
+    far_policy['SeedElementsInEdgeLayer']=layer_cells
+    far_policy['SeedLoadRule']=('seed tetrahedra minus those whose centroid lies within '
+                                'SurfaceProtectionRadius of an edge-layer span')
+    effective_far=far_policy['EffectiveFarSize']
+    effective_far_growth=far_policy['EffectiveFarGrowth']
     semantic_corners=np.asarray(semantic_contract['SemanticCorners'],dtype=float).reshape(-1,3)
     # The contract corners are physical plan-view junctions.  Require them to be
     # represented by the seed instead of silently replacing them with CAD
@@ -367,7 +469,9 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         for start in range(0,len(mesh.points),100000):
             metric=volume_metric(mesh.points[start:start+100000],band_segments,corners,normal,tangent,effective_far,
                                  protected_distance=protected_distance,far_growth=effective_far_growth,
-                                 isotropic_corners=semantic_corners,isotropy_radius=tangent)
+                                 isotropic_corners=semantic_corners,isotropy_radius=tangent,
+                                 edge_layer_segments=layer_spans,edge_size=edge_size,
+                                 growth_ratio=edge_growth_ratio,edge_layer_aspect=edge_layer_aspect)
             if placed_basis is not None:
                 # Trace rule blended into the far/grading law: an isotropic cap where
                 # a narrow basis triangle is near; the far size elsewhere (no change).
@@ -408,7 +512,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                         'corners or protected supports',
             'PhysicalSegments':segments.tolist(),'TruePhysicalCorners':semantic_corners.tolist(),
             'JunctionSegments':junction_record,
-            'BandSegmentOrder':'PhysicalSegments then JunctionSegments',
+            'BandSegmentOrder':('PhysicalSegments then JunctionSegments' if edge_layer is None else
+                                'PhysicalSegments then JunctionSegments then EdgeLayer spans'),
             'SurfaceFeatureCorners':corners.tolist(),
             'PlanarSupports':{str(10000+i):{'Attribute':int(row[0]),'Normal':row[1:4].tolist(),'Offset':float(row[4])} for i,row in enumerate(exact_planes)},
             'PlanarSupportEquivalence':{'Tolerance':COPLANAR_TOLERANCE,
@@ -417,6 +522,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                        'within the tolerance; shared with the planar-patch audits'},
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     if footprint is not None:recipe['FootprintSegments']=footprint
+    if edge_layer is not None:recipe['EdgeLayer']=edge_layer
     if trace_record is not None:
         recipe['TraceBasisSizing']=trace_record
         # The bound basis edges in the metric frame: a band lying on one of them is
@@ -429,7 +535,9 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                    '(direction aligned and both endpoints within 2 x ShortEdgeThreshold of the '
                    'edge segment) and reports such bands separately'}
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
-    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments','TraceBasisSizing')},indent=2))
+    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments','TraceBasisSizing','EdgeLayer')},indent=2))
+    if edge_layer is not None:
+        print(json.dumps({'EdgeLayer':{k:v for k,v in edge_layer.items() if k not in ('Spans','SeedCurves','Rule')}},indent=2))
     print(json.dumps({'JunctionSegments':{k:v for k,v in junction_record.items() if k!='Segments'}},indent=2))
     if trace_record is not None:
         print(json.dumps({'TraceBasisSizing':{k:(v if k!='CutSurfaceSize' else
@@ -457,6 +565,14 @@ def main():
     p.add_argument('--trace-vertices',type=Path,help='bound trace basis vertices (trace-vertices.csv)')
     p.add_argument('--trace-triangles',type=Path,help='bound trace basis triangles (trace-triangles.csv)')
     p.add_argument('--process-library',type=Path,help='bound process library (frame of the trace basis)')
+    p.add_argument('--edge-size',type=float,
+                   help='EdgeSize of the seed edge layer to bind and prescribe (below --normal); '
+                        'requires the seed census edge layer; the adapter hmin must equal it')
+    p.add_argument('--edge-growth-ratio',type=float,default=2.0,
+                   help='GrowthRatio of the geometric edge layer (must equal the seed value)')
+    p.add_argument('--edge-layer-aspect',type=float,default=4.0,
+                   help='EdgeLayerAspect: tangential/normal size cap inside the layer (must equal '
+                        'the seed value; the scaled Jacobian of a layer cell scales as (hn/ht)^2)')
     p.add_argument('--trace-basis-size-ratio',type=float,default=1.0,
                    help='dimensionless TraceBasisSizeRatio of the cut-surface size rule (default 1.0: '
                         'at least one element per basis edge); only with the four trace basis inputs')
@@ -470,6 +586,10 @@ def main():
                 'are required together with --semantic-contract')
     if '--trace-basis-size-ratio' in sys.argv and basis_paths[0] is None:
         p.error('--trace-basis-size-ratio requires the bound trace basis inputs')
+    if a.edge_size is not None and not a.seed_census:
+        p.error('--edge-size requires the bound seed census')
+    if any(option in sys.argv for option in ('--edge-growth-ratio','--edge-layer-aspect')) and a.edge_size is None:
+        p.error('--edge-growth-ratio and --edge-layer-aspect require --edge-size')
     basis=(load_trace_basis(*basis_paths) if basis_paths[0] is not None else None)
     semantic=(load_semantic_contract(a.semantic_contract) if a.semantic_contract
               else simple_sharp_contract())
@@ -478,7 +598,7 @@ def main():
     r=prepare(m,a.output,a.normal,a.tangent,a.far,
         a.protected_distance,a.far_growth,a.protect_surface,semantic,supports,
         a.maximum_elements,census,sha(a.semantic_contract) if a.semantic_contract else None,
-        basis,a.trace_basis_size_ratio)
+        basis,a.trace_basis_size_ratio,a.edge_size,a.edge_growth_ratio,a.edge_layer_aspect)
     r['SeedArtifact']=str(a.mesh.resolve());r['SeedArtifactSHA256']=sha(a.mesh)
     if basis is not None:
         r['TraceBasisSizing']['Inputs']={name:{'Path':str(path.resolve()),'SHA256':sha(path)}

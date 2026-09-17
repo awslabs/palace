@@ -14,6 +14,7 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 
+from edge_volume_metric import recipe_local_normal_size,segment_distances
 from transform_coupon_source_contract import validate_rigid_transform
 
 # A vertex saturated on the displacement ball is clamped to exactly the bound;
@@ -24,9 +25,50 @@ DISPLACEMENT_ROUNDOFF_TOLERANCE=1e-12
 
 
 def _within_displacement_bound(displacement,maximum_displacement):
+    """maximum_displacement is a scalar or the per-vertex bound of each displacement."""
     displacement=np.asarray(displacement,dtype=float)
     return bool(np.all(np.isfinite(displacement)) and np.all(
-        displacement<=maximum_displacement*(1.+DISPLACEMENT_ROUNDOFF_TOLERANCE)))
+        displacement<=np.asarray(maximum_displacement,dtype=float)*(1.+DISPLACEMENT_ROUNDOFF_TOLERANCE)))
+
+
+def _bound_statistics(values):
+    values=np.asarray(values,dtype=float).reshape(-1)
+    if not len(values):return {'Count':0}
+    return {'Count':int(len(values)),'MinimumUm':float(values.min()),'MedianUm':float(np.median(values)),
+            'MaximumUm':float(values.max())}
+
+
+def local_bound_size(points,recipe):
+    """The local length scale of the restoration bounds at every vertex: the recipe's
+    prescribed size (band/edge-layer law, corner balls) capped at NormalSize, so
+    far-field and band vertices keep their NormalSize-based bounds while edge-layer
+    vertices get EdgeSize-based ones."""
+    normal=recipe.get('NormalSize')
+    if not isinstance(normal,(int,float)) or not np.isfinite(normal) or normal<=0:
+        raise ValueError('Restoration recipe lacks a valid NormalSize')
+    return np.minimum(float(normal),recipe_local_normal_size(points,recipe))
+
+
+def local_size_bounds(points,recipe,ratio):
+    """Per-vertex displacement bounds ratio x local_bound_size."""
+    if not np.isfinite(ratio) or ratio<=0:raise ValueError('Invalid displacement bound ratio')
+    return ratio*local_bound_size(points,recipe)
+
+
+def frozen_edge_layer_vertices(points,node_supports,recipe):
+    """Supported (surface) vertices inside the seed edge layer footprint: the layer
+    rows are frozen seed surface which the adapter preserved and the repair must
+    not move at all.  The footprint is LayerThickness plus one EdgeSize of margin
+    around every recorded span."""
+    layer=recipe.get('EdgeLayer')
+    if not isinstance(layer,dict):return frozenset()
+    reach=float(layer['LayerThickness'])+float(layer['EdgeSize'])
+    supported=np.fromiter(node_supports,dtype=int,count=len(node_supports))
+    if not len(supported):return frozenset()
+    distance=np.full(len(supported),np.inf)
+    for span in np.asarray(layer['Spans'],dtype=float).reshape(-1,6):
+        distance=np.minimum(distance,segment_distances(points[supported],span)[0])
+    return frozenset(int(node) for node in supported[distance<=reach])
 
 
 def _tetra_quality(points,tetrahedra):
@@ -87,7 +129,7 @@ def _pinned_vertices(points,recipe,tolerance=1e-10):
 
 
 def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_supports,
-                                   pinned_nodes,recipe,quality_target):
+                                   pinned_nodes,recipe,quality_target,local_size=None):
     """Collapse MMG-inserted free vertices below the adapter's minimum size in the
     semantic corner balls.
 
@@ -95,8 +137,10 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
     corner vertex, below the hmin it was given, and the resulting corner cells are
     beyond the bounded smoothing. A free vertex (no planar support, not pinned)
     inside CornerIsotropyRadius of a contract corner whose shortest incident edge
-    is below the recipe NormalSize is collapsed onto the corner when adjacent,
-    otherwise onto its nearest non-free neighbor. A collapse stands only when every
+    is below the local prescribed size at the vertex (the recipe law: NormalSize
+    in the band and the corner balls, EdgeSize-graded in the edge layer) is
+    collapsed onto the corner when adjacent, otherwise onto its nearest non-free
+    neighbor. A collapse stands only when every
     remapped cavity cell keeps a positive orientation and a scaled Jacobian of at
     least quality_target; a corner's collapses are committed together and rolled
     back if its corner-incident aspect did not improve. No vertex moves and no
@@ -107,6 +151,11 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
     minimum_size=recipe.get('NormalSize')
     if not isinstance(minimum_size,(int,float)) or not np.isfinite(minimum_size) or minimum_size<=0:
         raise ValueError('Restoration recipe lacks a valid NormalSize')
+    # Without a local size field the threshold is the recipe NormalSize everywhere.
+    local_size=(np.full(len(points),float(minimum_size)) if local_size is None else
+                np.asarray(local_size,dtype=float))
+    if local_size.shape!=(len(points),) or not np.all(np.isfinite(local_size)) or np.any(local_size<=0):
+        raise ValueError('Local size must be a positive finite value per vertex')
     corner_radius=recipe.get('CornerIsotropyRadius')
     if not isinstance(corner_radius,(int,float)) or not np.isfinite(corner_radius) or corner_radius<=0:
         raise ValueError('Restoration recipe lacks a valid corner isotropy radius')
@@ -137,7 +186,7 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
             if not len(incident):continue
             neighbors=np.unique(working[incident]);neighbors=neighbors[neighbors!=vertex]
             lengths=np.linalg.norm(points[neighbors]-points[vertex],axis=1)
-            if float(lengths.min())>=minimum_size:continue
+            if float(lengths.min())>=local_size[vertex]:continue
             # Targets in order: the corner itself, then the nearest non-free
             # neighbors, then the corner's own ring vertices at or beyond the
             # minimum size (free vertices that MMG placed correctly).
@@ -147,7 +196,7 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
             targets+=[int(n) for n in neighbors[order] if not free[n] and n!=corner_node]
             ring=set(int(n) for n in np.unique(working[working_alive&np.any(working==corner_node,axis=1)]))
             targets+=[int(n) for n in neighbors[order] if free[n] and int(n) in ring and
-                      np.linalg.norm(points[n]-corner)>=minimum_size]
+                      np.linalg.norm(points[n]-corner)>=local_size[n]]
             # Among the valid cavities, commit the one with the best worst cell, and
             # only if it is no worse than the cells it replaces: a collapse onto
             # the corner itself can be valid yet leave a far worse sliver than a
@@ -193,12 +242,15 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
 
 
 def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scaled,
-                    maximum_corner_aspect,maximum_displacement,pinned_nodes=frozenset()):
+                    maximum_corner_aspect,maximum_displacement,pinned_nodes=frozenset(),
+                    frozen_nodes=frozenset()):
     """Constrained post-adaptation repair on frozen planar CAD supports.
 
-    Interior vertices may move freely within a bounded ball. Surface vertices
+    Interior vertices may move freely within a bounded ball (maximum_displacement
+    is the per-vertex bound, ratio x the local prescribed size). Surface vertices
     remain on their exact support, ridge vertices remain on support
-    intersections, and matching-surface and pinned vertices are fixed.
+    intersections, and matching-surface, pinned and frozen edge-layer vertices are
+    fixed.
     Semantic-corner neighborhoods are selected only from the frozen contract and
     repaired in alternating one-ring/two-ring passes over the vertices inside the
     corner ball; the best chained candidate is committed as one transaction only
@@ -206,9 +258,13 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     corner-aspect gate. A neighborhood without movable vertices is a recorded
     rejection, never an exception.
     """
+    # A scalar bound applies to every vertex; the restoration passes the local one.
+    maximum_displacement=np.broadcast_to(np.asarray(maximum_displacement,dtype=float),
+                                         (len(points),)).copy()
     if not (np.isfinite(minimum_scaled) and 0<minimum_scaled<1 and
             np.isfinite(maximum_corner_aspect) and maximum_corner_aspect>1 and
-            np.isfinite(maximum_displacement) and maximum_displacement>0):
+            maximum_displacement.shape==(len(points),) and
+            np.all(np.isfinite(maximum_displacement)) and np.all(maximum_displacement>0)):
         raise ValueError('Invalid post-adaptation quality controls')
     corner_radius=recipe.get('CornerIsotropyRadius')
     if not isinstance(corner_radius,(int,float)) or not np.isfinite(corner_radius) or corner_radius<=0:
@@ -220,6 +276,7 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     fixed_nodes={node for node,ids in node_supports.items()
                  if any(supports[i]['Attribute'] in cut_attributes for i in ids)}
     fixed_nodes|=set(pinned_nodes)
+    fixed_nodes|=set(frozen_nodes)
 
     original=points.copy();largest_step=0.;corner_before=[];corner_after=[]
     quality_target=2.*minimum_scaled
@@ -256,13 +313,13 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         # few ulps outside the optimizer bounds; SciPy rejects such an initial
         # point as infeasible, so clip it onto the bounds (no geometric effect).
         initial=np.clip(np.concatenate([
-            directions.T@(base[node]-original[node])/maximum_displacement
+            directions.T@(base[node]-original[node])/maximum_displacement[node]
             for node,directions in zip(active,bases)]),-.75,.75)
         def updated(value):
             candidate=base.copy()
             for i,(node,directions) in enumerate(zip(active,bases)):
                 offset=_bounded_offset(
-                    directions,value[offsets[i]:offsets[i+1]],maximum_displacement)
+                    directions,value[offsets[i]:offsets[i+1]],maximum_displacement[node])
                 candidate[node]=original[node]+offset
             return candidate
         def residual(value):
@@ -295,7 +352,7 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
         moved=np.flatnonzero(np.any(candidate!=points,axis=1))
         if not len(moved):return rejected()
         cumulative=np.linalg.norm(candidate[moved]-original[moved],axis=1)
-        if not _within_displacement_bound(cumulative,maximum_displacement):
+        if not _within_displacement_bound(cumulative,maximum_displacement[moved]):
             return rejected()
         if objective=='corner':
             # The corner-aspect gate, not the optimizer target, decides whether a
@@ -375,6 +432,10 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     if not _within_displacement_bound(final_displacement,maximum_displacement):
         raise ValueError('Final quality-repair displacement exceeds bound')
     maximum_final=float(final_displacement.max())
+    maximum_final_over_bound=float(np.max(final_displacement/maximum_displacement))
+    frozen=np.fromiter(frozen_nodes,dtype=int,count=len(frozen_nodes))
+    if frozen.size and np.any(points[frozen]!=original[frozen]):
+        raise ValueError('Quality repair moved a frozen edge-layer vertex')
     if np.any(final_determinant<=0) or final_scaled.min()<minimum_scaled:
         raise ValueError(f'Post-adaptation minimum scaled Jacobian is {final_scaled.min()}')
     # Plane/intersection constraints are algebraic, but recheck explicitly before
@@ -398,7 +459,10 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             'PinnedVerticesFixed':len(pinned_nodes),
             'MaximumQualityStepDisplacementUm':largest_step,
             'MaximumFinalQualityDisplacementUm':maximum_final,
-            'QualityDisplacementBoundUm':maximum_displacement,
+            'MaximumFinalQualityDisplacementOverLocalBound':maximum_final_over_bound,
+            'QualityDisplacementBoundUm':(float(maximum_displacement[0]) if np.all(
+                maximum_displacement==maximum_displacement[0]) else _bound_statistics(maximum_displacement)),
+            'FrozenEdgeLayerVertices':len(frozen_nodes),
             'MinimumScaledJacobianBefore':float(_tetra_quality(original,tetrahedra)[0].min()),
             'MinimumScaledJacobianAfter':float(final_scaled.min()),
             'CornerAspectsBefore':corner_before,'CornerAspectsAfter':corner_after,
@@ -407,6 +471,8 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
 
 def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
             maximum_corner_aspect=None,maximum_quality_displacement=None):
+    """maximum_displacement / maximum_quality_displacement are absolute bounds in um
+    or (ratio, 'local') pairs: ratio x the local prescribed size at every vertex."""
     supports={int(k):v for k,v in recipe['PlanarSupports'].items()}
     refs=mesh.cell_data['medit:ref'];node_supports={};seen=set()
     for block,attributes in zip(mesh.cells,refs):
@@ -418,14 +484,28 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
     if seen!=set(supports):raise ValueError('Lost planar support')
     groups={}
     for node,ids in node_supports.items():groups.setdefault(tuple(sorted(ids)),[]).append(node)
-    points=mesh.points.copy();largest=0.;moved=0
+    points=mesh.points.copy();largest=0.;largest_over_bound=0.;moved=0
+    def vertex_bounds(control):
+        if isinstance(control,tuple):
+            ratio,kind=control
+            if kind!='local':raise ValueError('Unknown displacement bound kind')
+            return local_size_bounds(points,recipe,ratio)
+        if not np.isfinite(control) or control<=0:raise ValueError('Invalid displacement bound')
+        return np.full(len(points),float(control))
+    correction_bound=vertex_bounds(maximum_displacement)
     for ids,nodes in groups.items():
         a=np.array([supports[i]['Normal'] for i in ids]);b=np.array([supports[i]['Offset'] for i in ids])
         # Normals of coincident supports can differ at floating-point roundoff.
         # Do not interpret that noise as a real extra intersection constraint.
         original=points[nodes].copy();correction=(b-original@a.T)@np.linalg.pinv(a,rcond=1e-10).T
-        largest=max(largest,float(np.linalg.norm(correction,axis=1).max()))
-        if largest>maximum_displacement:raise ValueError(f'CAD correction exceeds bound: {largest} > {maximum_displacement}')
+        magnitude=np.linalg.norm(correction,axis=1)
+        largest=max(largest,float(magnitude.max()))
+        over=magnitude/correction_bound[nodes]
+        largest_over_bound=max(largest_over_bound,float(over.max()))
+        if np.any(over>1.):
+            worst=int(np.argmax(over))
+            raise ValueError(f'CAD correction exceeds bound: {magnitude[worst]} > {correction_bound[nodes][worst]} '
+                             f'(local size bound at {points[nodes][worst].tolist()})')
         points[nodes]+=correction;moved+=int(np.sum(np.any(correction!=0,axis=1)))
         if np.max(abs(points[nodes]@a.T-b))>1e-10:raise ValueError('Inconsistent planar intersection')
     tetrahedra=np.concatenate([block.data for block in mesh.cells if block.type=='tetra'])
@@ -443,21 +523,36 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
         pinned_nodes=_pinned_vertices(mesh.points,recipe)
         if not (np.isfinite(minimum_scaled) and 0<minimum_scaled<1):
             raise ValueError('Invalid post-adaptation quality controls')
+        local_size=local_bound_size(points,recipe)
+        frozen_nodes=frozen_edge_layer_vertices(points,node_supports,recipe)
+        corner_ball=np.zeros(len(points),dtype=bool)
+        for corner in np.asarray(recipe['TruePhysicalCorners'],dtype=float).reshape(-1,3):
+            corner_ball|=np.linalg.norm(points-corner,axis=1)<=float(recipe['CornerIsotropyRadius'])
+        thresholds=_bound_statistics(local_size[corner_ball])
         points,tetrahedra,tetrahedron_refs,vertex_map,collapsed=_collapse_corner_ball_vertices(
             points,tetrahedra,tetrahedron_refs,node_supports,pinned_nodes,recipe,
-            2.*minimum_scaled)
+            2.*minimum_scaled,local_size)
         node_supports={int(vertex_map[node]):ids for node,ids in node_supports.items()}
         pinned_nodes=frozenset(int(vertex_map[node]) for node in pinned_nodes)
-        if -1 in node_supports or -1 in pinned_nodes:
-            raise ValueError('Corner collapse removed a supported or pinned vertex')
+        frozen_nodes=frozenset(int(vertex_map[node]) for node in frozen_nodes)
+        if -1 in node_supports or -1 in pinned_nodes or -1 in frozen_nodes:
+            raise ValueError('Corner collapse removed a supported, pinned or frozen vertex')
+        repair_bound=vertex_bounds(maximum_quality_displacement)
         quality=_quality_repair(points,tetrahedra,node_supports,supports,recipe,
                                 minimum_scaled,maximum_corner_aspect,
-                                maximum_quality_displacement,pinned_nodes=pinned_nodes)
+                                repair_bound,pinned_nodes=pinned_nodes,frozen_nodes=frozen_nodes)
         quality.update({'CornerBallCollapses':collapsed,
                         'CollapsedCornerVertices':int(sum(item['CollapsedVertices']
                                                           for item in collapsed)),
                         'CornerAspectsBeforeCollapse':[item['AspectBefore'] for item in collapsed],
-                        'CollapseMinimumSize':float(recipe['NormalSize'])})
+                        'CollapseThresholdUm':thresholds,
+                        'LocalSizeUm':_bound_statistics(local_size),
+                        'BoundRule':'CAD correction, quality repair displacement and corner '
+                                    'collapse thresholds are relative to the local prescribed '
+                                    'size at each vertex (recipe band/edge-layer law and corner '
+                                    'balls, capped at NormalSize), so only edge-layer vertices '
+                                    'get tighter bounds; frozen edge-layer surface vertices '
+                                    'are fixed'})
     cells=[];attributes=[]
     for block,ref in zip(mesh.cells,refs):
         if block.type!='triangle':continue
@@ -475,7 +570,9 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
                        for item in semantic['BoundaryLabels']})
     output=meshio.Mesh(points,cells,cell_data={'gmsh:physical':attributes,'gmsh:geometrical':attributes},
                        field_data=field_data)
-    return output,{'MaximumCorrectionUm':largest,'CorrectionBoundUm':maximum_displacement,
+    supported=np.fromiter(node_supports,dtype=int,count=len(node_supports))
+    return output,{'MaximumCorrectionUm':largest,'MaximumCorrectionOverLocalBound':largest_over_bound,
+                   'CorrectionBoundUm':_bound_statistics(correction_bound[supported]),
                    'MovedBoundaryVertices':moved,'PlanarSupports':len(supports),**quality,
                    'LibraryQualified':False}
 
@@ -510,6 +607,9 @@ def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None
     if isinstance(local_recipe.get('JunctionSegments'),dict):
         segments=np.asarray(local_recipe['JunctionSegments']['Segments'],dtype=float).reshape(-1,2,3)
         local_recipe['JunctionSegments']['Segments']=((segments-translation)@rotation).reshape(-1,6).tolist()
+    if isinstance(local_recipe.get('EdgeLayer'),dict):
+        spans=np.asarray(local_recipe['EdgeLayer']['Spans'],dtype=float).reshape(-1,2,3)
+        local_recipe['EdgeLayer']['Spans']=((spans-translation)@rotation).reshape(-1,6).tolist()
     for support in local_recipe['PlanarSupports'].values():
         global_normal=np.asarray(support['Normal'],dtype=float)
         support['Normal']=(rotation.T@global_normal).tolist()
@@ -541,16 +641,23 @@ def main():
     a=p.parse_args()
     if a.output.exists() or a.source_local_output.exists():raise ValueError('Do not overwrite candidates')
     recipe=json.loads(a.recipe.read_text())
+    # The -over-normal ratios bound every vertex relative to its LOCAL prescribed
+    # size (the recipe law evaluated at the vertex); an absolute bound stays global.
     maximum=(a.max_displacement if a.max_displacement is not None else
-             a.max_displacement_over_normal*float(recipe['NormalSize']))
-    if not np.isfinite(maximum) or maximum<=0:raise ValueError('Invalid displacement bound')
+             (a.max_displacement_over_normal,'local'))
+    if not isinstance(maximum,tuple) and (not np.isfinite(maximum) or maximum<=0):
+        raise ValueError('Invalid displacement bound')
+    if isinstance(maximum,tuple) and (not np.isfinite(maximum[0]) or maximum[0]<=0):
+        raise ValueError('Invalid displacement bound')
     quality_displacement=(None if a.maximum_quality_displacement_over_normal is None else
-                          a.maximum_quality_displacement_over_normal*float(recipe['NormalSize']))
+                          (a.maximum_quality_displacement_over_normal,'local'))
     mesh=meshio.read(a.input);local_output,output,report=restore_in_source_frame(
         mesh,recipe,maximum,a.minimum_scaled_jacobian,a.maximum_corner_aspect,
         quality_displacement)
     if a.max_displacement_over_normal is not None:
-        report['CorrectionBoundOverNormalSize']=a.max_displacement_over_normal
+        report['CorrectionBoundOverLocalSize']=a.max_displacement_over_normal
+    if a.maximum_quality_displacement_over_normal is not None:
+        report['QualityDisplacementBoundOverLocalSize']=a.maximum_quality_displacement_over_normal
     meshio.write(a.source_local_output,local_output,file_format='gmsh22',binary=True)
     meshio.write(a.output,output,file_format='gmsh22',binary=True)
     report['NativeInputSHA256']=hashlib.sha256(a.input.read_bytes()).hexdigest()

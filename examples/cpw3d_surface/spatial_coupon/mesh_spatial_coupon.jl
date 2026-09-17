@@ -515,6 +515,125 @@ function add_explicit_curve_mesh!(curve, parameters, coordinates, next_node, poi
     return length(interior)
 end
 
+# Metal surface families (thin-film metal, metal-substrate, metal-vacuum): the
+# feature curves bounding one of them are metal edges.
+const METAL_SURFACE_FAMILIES = (4, 5, 6)
+
+# Geometric transverse edge layer: the layer k (k = 1, 2, ...) has size
+# edge_size * ratio^(k - 1) and every layer strictly finer than the normal size
+# lc_fine is seeded, so the rows lie at the cumulative distances
+# edge_size * (ratio^k - 1) / (ratio - 1) from the edge.
+function edge_layer_row_offsets(edge_size, ratio, lc_fine)
+    offsets = Float64[]
+    size = edge_size
+    while size < lc_fine
+        push!(offsets, isempty(offsets) ? size : offsets[end] + size)
+        size *= ratio
+    end
+    return offsets
+end
+
+# Unit normal of a planar face from its boundary: the ridge tangent and the
+# first boundary point off the ridge line.
+function planar_face_normal(face, origin, tangent, tolerance)
+    for (curve_dim, curve) in gmsh.model.getBoundary([(2, face)], false, false, false)
+        curve_dim == 1 || continue
+        lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+        for parameter in range(lower[1], upper[1]; length=5)
+            point = gmsh.model.getValue(1, curve, [parameter])
+            offset = point .- origin
+            lateral = offset .- dot(offset, tangent) .* tangent
+            norm(lateral) > tolerance || continue
+            normal = cross(tangent, lateral)
+            return normal ./ norm(normal)
+        end
+    end
+    return error("Face $face has no boundary point off the ridge line")
+end
+
+# Smallest power of two n with spacing / n <= target (at least 1).
+function tangential_subdivision(spacing, target)
+    target > 0.0 || error("tangential subdivision target must be positive")
+    n = 1
+    while spacing / n > target
+        n *= 2
+    end
+    return n
+end
+
+# Explicit node rows parallel to a metal ridge on one adjacent planar face: one
+# row per geometric layer, each row's nodes on the ridge span grid subdivided by
+# the row's nested power of two (aligned rows keep the strips 2D-mesher
+# independent and their edges Delaunay). Every second node of a row is set
+# EDGE_LAYER_ROW_ZIGZAG of the row offset farther from the ridge: perfectly
+# aligned parallel rows form rectangles whose cocircular corners are
+# Delaunay-degenerate, and the boundary recovery was measured to leave
+# zero-volume tets in the face plane there; the zigzag makes every quad a
+# non-cyclic right trapezoid with a unique triangulation. A row is placed only
+# while the next layer still fits inside the face, so rows of different ridges
+# or a face narrower than the layer never collide. Returns the rows' record or
+# nothing when no row fits.
+const EDGE_LAYER_ROW_ZIGZAG = 0.05
+
+function edge_layer_row_nodes(span, offset, inward, subdivision)
+    columns = Vector{Float64}[]
+    for i in 1:(size(span, 2) - 1), j in 0:(subdivision - 1)
+        i == 1 && j == 0 && continue
+        push!(columns, span[:, i] .+ (j / subdivision) .* (span[:, i + 1] .- span[:, i]))
+    end
+    interior = isempty(columns) ? zeros(3, 0) : reduce(hcat, columns)
+    scale = [offset * (1.0 + EDGE_LAYER_ROW_ZIGZAG * (i % 2)) for i in axes(interior, 2)]
+    return interior .+ inward * scale'
+end
+
+function add_edge_layer_rows!(occ, face, ridge_xyz, offsets, tolerance)
+    size(ridge_xyz, 2) >= 2 || return nothing
+    origin = ridge_xyz[:, 1]
+    tangent = ridge_xyz[:, end] .- origin
+    tangent ./= norm(tangent)
+    normal = planar_face_normal(face, origin, tangent, tolerance)
+    inward = cross(normal, tangent)
+    middle = ridge_xyz[:, (size(ridge_xyz, 2) + 1) ÷ 2]
+    probe = 2 * offsets[1]
+    if gmsh.model.isInside(2, face, middle .+ probe .* inward, false) == 0
+        gmsh.model.isInside(2, face, middle .- probe .* inward, false) == 0 && return nothing
+        inward = -inward
+    end
+    rows = Int32[]
+    for offset in offsets
+        fits = all(gmsh.model.isInside(2, face, ridge_xyz[:, i] .+ (2offset) .* inward,
+                                       false) == 1
+                   for i in (1, (size(ridge_xyz, 2) + 1) ÷ 2, size(ridge_xyz, 2)))
+        fits || break
+        first_point = occ.addPoint((ridge_xyz[:, 1] .+ offset .* inward)...)
+        last_point = occ.addPoint((ridge_xyz[:, end] .+ offset .* inward)...)
+        push!(rows, occ.addLine(first_point, last_point))
+    end
+    isempty(rows) && return nothing
+    return Dict{String, Any}("Face" => Int(face), "Rows" => rows, "Inward" => collect(inward))
+end
+
+# Mesh the embedded rows explicitly with the subdivided span grid positions
+# offset into the face; the rows were created in the same order as the offsets.
+function mesh_edge_layer_rows!(record, span, offsets, subdivisions, next_node, point_nodes)
+    inward = record["Inward"]
+    for (row, offset, subdivision) in zip(record["Rows"], offsets, subdivisions)
+        lower, upper = gmsh.model.getParametrizationBounds(1, row)
+        start = gmsh.model.getValue(1, row, [lower[1]])
+        first_point = span[:, 1] .+ offset .* inward
+        last_point = span[:, end] .+ offset .* inward
+        length_along = norm(last_point .- first_point)
+        forward = norm(start .- first_point) <= norm(start .- last_point)
+        interior = edge_layer_row_nodes(span, offset, inward, subdivision)
+        fractions = [dot(interior[:, i] .- first_point, last_point .- first_point) /
+                     length_along^2 for i in axes(interior, 2)]
+        parameters = [forward ? lower[1] + f * (upper[1] - lower[1]) :
+                                upper[1] - f * (upper[1] - lower[1]) for f in fractions]
+        add_explicit_curve_mesh!(row, parameters, vec(interior), next_node, point_nodes)
+    end
+    return length(record["Rows"])
+end
+
 function tetrahedron_aspect(xyz)
     jacobian = hcat(xyz[2] .- xyz[1], xyz[3] .- xyz[1], xyz[4] .- xyz[1])
     singular = svdvals(jacobian)
@@ -2013,6 +2132,9 @@ function generate_spatial_coupon(;
     trace_triangles::Union{Nothing, String}=nothing,
     process_library::Union{Nothing, String}=nothing,
     trace_basis_size_ratio::Float64=1.0,
+    edge_size::Float64=0.0,
+    edge_growth_ratio::Float64=2.0,
+    edge_layer_aspect::Float64=4.0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -2063,6 +2185,21 @@ function generate_spatial_coupon(;
         error("Trace basis sizing requires the semantic contract corner isotropy and census")
     trace_basis = trace_basis_bound ? read_trace_basis(trace_basis_contract, trace_vertices,
                                                        trace_triangles, process_library) : nothing
+    # Geometric transverse edge layer seeded on the metal-edge faces (EdgeSize at the
+    # edge, ratio per layer, up to the normal size lc_fine); it needs the ridge grid
+    # (lc_tangent) and is recorded in the census for the metric stage.
+    edge_size >= 0.0 || error("edge size must be nonnegative")
+    edge_layer = edge_size > 0.0
+    !edge_layer || edge_size < lc_fine ||
+        error("edge size must be smaller than the fine (normal) mesh size")
+    isfinite(edge_growth_ratio) && edge_growth_ratio > 1.0 ||
+        error("edge growth ratio must exceed 1")
+    isfinite(edge_layer_aspect) && edge_layer_aspect >= 1.0 ||
+        error("edge layer aspect must be at least 1")
+    !edge_layer || (lc_tangent > 0.0 && corner_isotropy) ||
+        error("The edge layer requires --lc-tangent and the semantic contract corner census")
+    edge_layer_offsets = edge_layer ?
+        edge_layer_row_offsets(edge_size, edge_growth_ratio, lc_fine) : Float64[]
 
     edges = read_edges(signature)
     if length(unique(edge.slot for edge in edges)) > 1 &&
@@ -2469,6 +2606,12 @@ function generate_spatial_coupon(;
     corner_grading_slope = (lc_far - lc_fine) / (process_core_width - process_fine_width)
     next_node = Ref(0)
     point_nodes = Dict{Int32, Int}()
+    # Interior ridge node parameters and coordinates (curve order) of every
+    # longitudinal curve; the mesh is assigned after the edge layer curves are
+    # known, because a layer ridge is subdivided inside its span.
+    ridge_parameters = Dict{Int32, Vector{Float64}}()
+    ridge_nodes = Dict{Int32, Matrix{Float64}}()
+    transfinite_curves = Set{Int32}()
     if lc_tangent > 0.0
         for curve in feature_curves
             lower_parameter, upper_parameter =
@@ -2485,15 +2628,138 @@ function generate_spatial_coupon(;
                 if placed === nothing
                     curve_length = gmsh.model.occ.getMass(1, curve)
                     point_count = max(2, ceil(Int, curve_length / lc_tangent) + 1)
-                    gmsh.model.mesh.setTransfiniteCurve(curve, point_count)
+                    grid = collect(range(lower_parameter[1], upper_parameter[1];
+                                         length=point_count))[2:(end - 1)]
+                    ridge_parameters[curve] = grid
+                    ridge_nodes[curve] = reshape(gmsh.model.getValue(1, curve, grid), 3, :)
+                    push!(transfinite_curves, curve)
                 else
-                    # Transfinite spacing cannot follow the corner ball; place the
-                    # curve nodes explicitly and keep them through generation.
-                    add_explicit_curve_mesh!(curve, placed..., next_node, point_nodes)
-                    push!(corner_curves, curve)
+                    ridge_parameters[curve] = placed[1]
+                    ridge_nodes[curve] = reshape(placed[2], 3, :)
                 end
             end
         end
+    end
+    # Edge layer: on every face bounding a metal edge (a longitudinal feature
+    # curve of a metal surface family, junction curves excluded), one embedded row
+    # per geometric layer along the ridge span on the lc_tangent grid outside the
+    # corner size law. Inside the span the ridge and the rows are refined
+    # tangentially so that every layer cell keeps an aspect of at most
+    # EdgeLayerAspect (a tetrahedron with one corner whose three edges are all
+    # tangential has a scaled Jacobian of (hn/ht)^2, so the scaled-Jacobian gate
+    # bounds the layer anisotropy): the ridge grid interval is subdivided by
+    # TangentialSubdivision = the smallest power of two with
+    # lc_tangent / n <= EdgeLayerAspect x EdgeSize, row k by the nested power of
+    # two with lc_tangent / m <= EdgeLayerAspect x (its layer size), and the
+    # ridge subdivision halves interval by interval towards the span ends (the
+    # taper), where no row is seeded. Prisms would not have the aspect limit;
+    # they were not pursued.
+    edge_layer_curves = Dict{String, Any}[]
+    edge_layer_records = Tuple{Dict{String, Any}, Matrix{Float64}}[]
+    edge_layer_subdivision = 0
+    edge_layer_row_subdivisions = Int[]
+    edge_layer_taper = Int[]
+    edge_layer_ridge_nodes = 0
+    if edge_layer
+        edge_layer_subdivision = tangential_subdivision(lc_tangent, edge_layer_aspect * edge_size)
+        edge_layer_row_subdivisions = [
+            min(edge_layer_subdivision,
+                tangential_subdivision(lc_tangent,
+                                       edge_layer_aspect * edge_size * edge_growth_ratio^(k - 1)))
+            for k in eachindex(edge_layer_offsets)]
+        edge_layer_taper = [2^j for j in 1:(round(Int, log2(edge_layer_subdivision)) - 1)]
+        junction_set = Set(junction_curves)
+        for curve in longitudinal_curves
+            curve in junction_set && continue
+            records = get(curve_surfaces, curve, Tuple{Int, Int32}[])
+            any(surface_family(first(record)) in METAL_SURFACE_FAMILIES
+                for record in records) || continue
+            xyz = ridge_nodes[curve]
+            on_grid = [corner_curve_size(Tuple(xyz[:, i]), semantic_corners,
+                                         corner_isotropy_radius, lc_fine, lc_tangent,
+                                         corner_grading_slope) >= lc_tangent
+                       for i in axes(xyz, 2)]
+            grid_indices = findall(on_grid)
+            taper = length(edge_layer_taper)
+            length(grid_indices) >= 2taper + 2 || continue
+            grid_indices == collect(grid_indices[1]:grid_indices[end]) ||
+                error("Longitudinal curve $curve has a non-contiguous lc_tangent grid")
+            row_indices = grid_indices[(1 + taper):(end - taper)]
+            span = xyz[:, row_indices]
+            faces = Dict{String, Any}[]
+            for face in sort!(unique(last(record) for record in records))
+                record = add_edge_layer_rows!(occ, face, span, edge_layer_offsets, tolerance)
+                record === nothing && continue
+                record["RowNodes"] = sum(size(edge_layer_row_nodes(span, offset, record["Inward"],
+                                                                   subdivision), 2)
+                                         for (offset, subdivision) in
+                                             zip(edge_layer_offsets[1:length(record["Rows"])],
+                                                 edge_layer_row_subdivisions))
+                push!(faces, record)
+                push!(edge_layer_records, (record, span))
+            end
+            isempty(faces) && continue
+            # The ridge mesh: grid nodes everywhere, the span intervals subdivided
+            # (taper at both ends, full subdivision under the rows).
+            parameters = ridge_parameters[curve]
+            refined = Float64[]
+            for i in eachindex(parameters)
+                push!(refined, parameters[i])
+                i in grid_indices[1]:(grid_indices[end] - 1) || continue
+                position = i - grid_indices[1] + 1
+                from_end = grid_indices[end] - i
+                n = position <= taper ? edge_layer_taper[position] :
+                    from_end <= taper ? edge_layer_taper[from_end] : edge_layer_subdivision
+                for j in 1:(n - 1)
+                    push!(refined, parameters[i] + j / n * (parameters[i + 1] - parameters[i]))
+                end
+            end
+            ridge_parameters[curve] = refined
+            edge_layer_ridge_nodes += length(refined) - length(parameters)
+            push!(edge_layer_curves, Dict{String, Any}(
+                "Curve" => Int(curve), "Start" => collect(span[:, 1]),
+                "End" => collect(span[:, end]), "SpanLength" => norm(span[:, end] .- span[:, 1]),
+                "CurveLength" => gmsh.model.occ.getMass(1, curve),
+                "GridNodes" => size(span, 2), "TaperIntervalsPerEnd" => taper,
+                "RidgeNodesAdded" => length(refined) - length(parameters),
+                "Faces" => [Dict{String, Any}("Face" => face["Face"],
+                                              "Rows" => length(face["Rows"]),
+                                              "RowNodes" => face["RowNodes"])
+                            for face in faces]))
+        end
+        isempty(edge_layer_records) && error("No edge layer row fits on any metal-edge face")
+        occ.synchronize()
+    end
+    layer_curve_set = Set{Int32}(Int32(row["Curve"]) for row in edge_layer_curves)
+    for curve in longitudinal_curves
+        if curve in transfinite_curves && !(curve in layer_curve_set)
+            gmsh.model.mesh.setTransfiniteCurve(curve, length(ridge_parameters[curve]) + 2)
+        else
+            # Transfinite spacing cannot follow the corner ball or the layer
+            # subdivision; place the curve nodes explicitly and keep them through
+            # generation.
+            parameters = ridge_parameters[curve]
+            add_explicit_curve_mesh!(curve, parameters, gmsh.model.getValue(1, curve, parameters),
+                                     next_node, point_nodes)
+            push!(corner_curves, curve)
+        end
+    end
+    if edge_layer
+        for (record, span) in edge_layer_records
+            gmsh.model.mesh.embed(1, record["Rows"], 2, record["Face"])
+            mesh_edge_layer_rows!(record, span, edge_layer_offsets, edge_layer_row_subdivisions,
+                                  next_node, point_nodes)
+        end
+        println("Edge layer: edge_size=$edge_size, growth_ratio=$edge_growth_ratio, " *
+                "aspect=$edge_layer_aspect, layers=$(length(edge_layer_offsets)), " *
+                "row_offsets=$(edge_layer_offsets), " *
+                "tangential_subdivision=$edge_layer_subdivision, " *
+                "row_subdivisions=$edge_layer_row_subdivisions, taper=$edge_layer_taper, " *
+                "curves=$(length(edge_layer_curves)), " *
+                "rows=$(sum(length(record["Rows"]) for (record, _) in edge_layer_records)), " *
+                "row_nodes=$(sum(record["RowNodes"] for (record, _) in edge_layer_records)), " *
+                "ridge_nodes_added=$edge_layer_ridge_nodes, " *
+                "span_length=$(sum(row["SpanLength"] for row in edge_layer_curves))")
     end
     isempty(corner_curves) || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
     trace_basis_record = trace_basis === nothing ? nothing :
@@ -2635,10 +2901,20 @@ function generate_spatial_coupon(;
         println("High-order mesh minimum scaled Jacobian: $minimum_jacobian")
     end
     all_volume_tags=reduce(vcat,gmsh.model.mesh.getElements(3)[2];init=UInt64[])
-    minimum_signed_inverse_condition=minimum(
-        gmsh.model.mesh.getElementQualities(all_volume_tags,"minSICN"))
-    minimum_signed_inverse_condition>1e-10 ||
-        error("Spatial coupon has invalid or near-singular elements: minSICN=$minimum_signed_inverse_condition")
+    volume_qualities=gmsh.model.mesh.getElementQualities(all_volume_tags,"minSICN")
+    minimum_signed_inverse_condition=minimum(volume_qualities)
+    if !(minimum_signed_inverse_condition>1e-10)
+        # Locate the degenerate cells before failing: their centroids tell which
+        # construction (edge layer rows, corner ball, trace planes) produced them.
+        degenerate=all_volume_tags[volume_qualities .<= 1e-10]
+        for tag in degenerate[1:min(end, 8)]
+            _,nodes,_,_=gmsh.model.mesh.getElement(tag)
+            centroid=sum(gmsh.model.mesh.getNode(node)[1] for node in nodes) ./ length(nodes)
+            println("Degenerate volume element $tag at $centroid")
+        end
+        error("Spatial coupon has invalid or near-singular elements: " *
+              "minSICN=$minimum_signed_inverse_condition, count=$(length(degenerate))")
+    end
     if mesh_postprocess !== nothing
         # Ownership contracts are planar source-local data.  Classify and certify
         # every interface element in that frame before applying the final rigid
@@ -2702,6 +2978,47 @@ function generate_spatial_coupon(;
                         Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
                                 for polygon in footprint_polygons]; init=0.0)),
                 "FootprintPolygons" => footprint_polygons,
+                "EdgeLayer" => Dict{String, Any}(
+                    "EdgeSize" => edge_size,
+                    "GrowthRatio" => edge_growth_ratio,
+                    "Aspect" => edge_layer_aspect,
+                    "NormalSize" => lc_fine,
+                    "TangentialSize" => lc_tangent,
+                    "Layers" => length(edge_layer_offsets),
+                    "RowOffsets" => edge_layer_offsets,
+                    "LayerThickness" => isempty(edge_layer_offsets) ? 0.0 : edge_layer_offsets[end],
+                    "TangentialSubdivision" => edge_layer_subdivision,
+                    "RowSubdivisions" => edge_layer_row_subdivisions,
+                    "RowTangentialSpacings" =>
+                        [lc_tangent / n for n in edge_layer_row_subdivisions],
+                    "TaperSubdivisions" => edge_layer_taper,
+                    "CornerTaperOffset" => corner_reach + length(edge_layer_taper) * lc_tangent,
+                    "RowZigzag" => EDGE_LAYER_ROW_ZIGZAG,
+                    "Rule" => "on every face bounding a metal edge (longitudinal feature " *
+                              "curve of a metal surface family, junction curves excluded) " *
+                              "one embedded explicit node row per geometric layer of size " *
+                              "EdgeSize x GrowthRatio^(k-1) below NormalSize, at the " *
+                              "cumulative layer distance from the edge; inside the row span " *
+                              "the ridge lc_tangent grid is subdivided by TangentialSubdivision " *
+                              "(smallest power of two with spacing <= Aspect x EdgeSize) and " *
+                              "row k by the nested power of two with spacing <= Aspect x its " *
+                              "size, so every layer cell has aspect <= Aspect (a tetrahedron " *
+                              "corner with three tangential edges has scaled Jacobian " *
+                              "(hn/ht)^2); the ridge subdivision halves interval by interval " *
+                              "(TaperSubdivisions) towards the span ends, where no row is " *
+                              "seeded; rows start at the ridge grid outside the corner size " *
+                              "law after the taper (CornerTaperOffset from a semantic corner); " *
+                              "every second row node is RowZigzag of the offset farther out (no " *
+                              "Delaunay-degenerate rectangles); rows stop where the next " *
+                              "layer leaves the face",
+                    "Curves" => edge_layer_curves,
+                    "TotalSpanLength" =>
+                        sum(Float64[row["SpanLength"] for row in edge_layer_curves]),
+                    "Rows" =>
+                        sum(Int[length(record["Rows"]) for (record, _) in edge_layer_records]),
+                    "RowNodes" =>
+                        sum(Int[record["RowNodes"] for (record, _) in edge_layer_records]),
+                    "RidgeNodesAdded" => edge_layer_ridge_nodes),
                 "TraceBasisSizing" => trace_basis_record,
                 "InterfaceAreas" => area_rows,
                 "Corners" => census_rows))
@@ -2750,6 +3067,10 @@ function generate_spatial_coupon(;
         println(stream, "  \"ProcessGradingPower\": $process_grading_power,")
         println(stream, "  \"CornerIsotropyRadius\": $corner_isotropy_radius,")
         println(stream, "  \"CornerIsotropicSize\": $(corner_isotropy ? lc_fine : 0.0),")
+        println(stream, "  \"EdgeSize\": $edge_size,")
+        println(stream, "  \"EdgeGrowthRatio\": $edge_growth_ratio,")
+        println(stream, "  \"EdgeLayerAspect\": $edge_layer_aspect,")
+        println(stream, "  \"EdgeLayerRows\": $(length(edge_layer_offsets)),")
         println(stream, "  \"SemanticCornerCount\": $(length(semantic_corners)),")
         println(stream, "  \"RigidTransform\": [$(join(vec(transform'), ", "))],")
         println(stream, "  \"Algorithm3D\": $(Int(gmsh.option.getNumber("Mesh.Algorithm3D"))),")
@@ -2803,7 +3124,10 @@ function parse_options(args)
         "--trace-vertices" => ("trace_vertices", String),
         "--trace-triangles" => ("trace_triangles", String),
         "--process-library" => ("process_library", String),
-        "--trace-basis-size-ratio" => ("trace_basis_size_ratio", Float64)
+        "--trace-basis-size-ratio" => ("trace_basis_size_ratio", Float64),
+        "--edge-size" => ("edge_size", Float64),
+        "--edge-growth-ratio" => ("edge_growth_ratio", Float64),
+        "--edge-layer-aspect" => ("edge_layer_aspect", Float64)
     )
     index = 4
     while index <= length(args)
@@ -2867,6 +3191,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
         trace_vertices  = get(options, "trace_vertices", nothing),
         trace_triangles = get(options, "trace_triangles", nothing),
         process_library = get(options, "process_library", nothing),
-        trace_basis_size_ratio = get(options, "trace_basis_size_ratio", 1.0)
+        trace_basis_size_ratio = get(options, "trace_basis_size_ratio", 1.0),
+        edge_size = get(options, "edge_size", 0.0),
+        edge_growth_ratio = get(options, "edge_growth_ratio", 2.0),
+        edge_layer_aspect = get(options, "edge_layer_aspect", 4.0)
     )
 end

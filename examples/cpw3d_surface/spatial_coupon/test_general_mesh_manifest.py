@@ -2148,5 +2148,88 @@ class SemanticContractTest(unittest.TestCase):
                 "MetricSurfaceRoles": [], "CutSurfaceRoles": [], "UnmatchedPolicy": "Error"})
 
 
+class EdgeLayerContractTest(unittest.TestCase):
+    """The seed, metric and adapter commands honor one edge layer or none."""
+
+    @staticmethod
+    def layer_fixture():
+        offsets = [.001, .003, .007, .015, .031]
+        layer = {"EdgeSize": .001, "GrowthRatio": 2.0, "Aspect": 4.0, "Reach": .024, "Layers": 5,
+                 "RowOffsets": offsets, "LayerThickness": .031, "Spans": [[1, 0, .1, 9, 0, .1]],
+                 "SpanCount": 1, "TotalSpanLength": 8.0, "SeedRows": 10, "SeedRowNodes": 200}
+        recipe = {"NormalSize": .025, "SurfaceProtectionRadius": .05, "EdgeLayer": layer}
+        census = {"EdgeLayer": {"EdgeSize": .001, "GrowthRatio": 2.0, "Aspect": 4.0,
+                                "NormalSize": .025, "Layers": 5, "RowOffsets": offsets,
+                                "LayerThickness": .031, "TotalSpanLength": 8.0, "Rows": 10,
+                                "RowNodes": 200, "Curves": [{"Curve": 7}]}}
+        seed = {"Command": ["julia", "mesh_spatial_coupon.jl", "sig.csv", "fabricated", "seed.msh",
+                            "--lc-fine", ".025", "--edge-size", ".001", "--edge-growth-ratio", "2",
+                            "--edge-layer-aspect", "4"]}
+        metric = {"Command": ["python3", "prepare_edge_metric_scout.py", "seed.msh", "metric",
+                              "--normal", ".025", "--edge-size", ".001", "--edge-growth-ratio", "2.0",
+                              "--edge-layer-aspect", "4.0"]}
+        adaptation = {"Command": ["python3", "run_native_mmg_adaptation.py", "--hmin", ".001",
+                                  "--hgrad", "1.15"]}
+        return seed, metric, adaptation, recipe, census
+
+    def test_edge_layer_is_bound_across_seed_metric_and_adapter_or_absent(self):
+        from mesh_stage_contract import validate_edge_layer
+        seed, metric, adaptation, recipe, census = self.layer_fixture()
+        self.assertEqual(validate_edge_layer(seed, metric, adaptation, recipe, census),
+                         recipe["EdgeLayer"])
+        # The ratio and aspect may be left at their documented defaults.
+        defaults = copy.deepcopy(seed); del defaults["Command"][-4:]
+        default_metric = copy.deepcopy(metric); del default_metric["Command"][-4:]
+        validate_edge_layer(defaults, default_metric, adaptation, recipe, census)
+
+        def rejected(message, seed_report=seed, metric_report=metric, adaptation_report=adaptation,
+                     recipe_data=recipe, census_data=census):
+            with self.assertRaisesRegex(ValueError, message):
+                validate_edge_layer(seed_report, metric_report, adaptation_report, recipe_data,
+                                    census_data)
+
+        def with_value(report, option, value):
+            report = copy.deepcopy(report)
+            report["Command"][report["Command"].index(option) + 1] = value; return report
+
+        def with_layer(record, **changes):
+            record = copy.deepcopy(record); record["EdgeLayer"].update(changes); return record
+
+        rejected("Seed command --edge-size", seed_report=with_value(seed, "--edge-size", ".002"))
+        rejected("Seed command --edge-growth-ratio", seed_report=with_value(seed, "--edge-growth-ratio", "1.5"))
+        rejected("Seed command --edge-layer-aspect", seed_report=with_value(seed, "--edge-layer-aspect", "8"))
+        rejected("Metric command --edge-size", metric_report=with_value(metric, "--edge-size", ".0005"))
+        rejected("Metric command --edge-layer-aspect", metric_report=with_value(metric, "--edge-layer-aspect", "5"))
+        rejected("--hmin differs", adaptation_report=with_value(adaptation, "--hmin", ".025"))
+        rejected("census edge layer EdgeSize", census_data=with_layer(census, EdgeSize=.002))
+        rejected("census edge layer Rows", census_data=with_layer(census, Rows=9))
+        rejected("census edge layer rows differ", census_data=with_layer(census, RowNodes=199))
+        rejected("do not follow", recipe_data=with_layer(recipe, RowOffsets=[.001, .003, .007, .015, .03],
+                                                         LayerThickness=.03),
+                 census_data=with_layer(census, RowOffsets=[.001, .003, .007, .015, .03], LayerThickness=.03))
+        rejected("do not follow", recipe_data=with_layer(recipe, Reach=.02))
+        rejected("thicker than the frozen band", recipe_data=dict(recipe, SurfaceProtectionRadius=.03))
+        rejected("spans differ", recipe_data=with_layer(recipe, SpanCount=2))
+        rejected("sizes are invalid", recipe_data=with_layer(recipe, EdgeSize=.03),
+                 census_data=with_layer(census, EdgeSize=.03))
+        rejected("record is missing", census_data={})
+        # Without a recipe layer: no seed layer, no metric layer options, hmin = NormalSize.
+        plain_recipe = {k: v for k, v in recipe.items() if k != "EdgeLayer"}
+        plain_seed = copy.deepcopy(seed); del plain_seed["Command"][-6:]
+        plain_metric = copy.deepcopy(metric); del plain_metric["Command"][-6:]
+        plain_adaptation = with_value(adaptation, "--hmin", ".025")
+        self.assertIsNone(validate_edge_layer(plain_seed, plain_metric, plain_adaptation, plain_recipe, {}))
+        validate_edge_layer(plain_seed, plain_metric, plain_adaptation, plain_recipe,
+                            {"EdgeLayer": {"EdgeSize": 0.0}})
+        rejected("Seed command seeds an edge layer", seed_report=seed, metric_report=plain_metric,
+                 adaptation_report=plain_adaptation, recipe_data=plain_recipe, census_data={})
+        rejected("Metric command binds an edge layer", seed_report=plain_seed, metric_report=metric,
+                 adaptation_report=plain_adaptation, recipe_data=plain_recipe, census_data={})
+        rejected("census records an edge layer", seed_report=plain_seed, metric_report=plain_metric,
+                 adaptation_report=plain_adaptation, recipe_data=plain_recipe)
+        rejected("--hmin differs", seed_report=plain_seed, metric_report=plain_metric,
+                 adaptation_report=adaptation, recipe_data=plain_recipe, census_data={})
+
+
 if __name__ == "__main__":
     unittest.main()

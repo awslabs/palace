@@ -49,7 +49,7 @@
     {
       "Name": "prepare_edge_metric_scout.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "fa09d854fb23f1312f80e9f2edc009c72bed4b4c780e8530c6d0947d1cb95d81"
+      "SHA256": "fecc8a606c01bbdc111a4a274edd8551bbfbdddb3dde0ae76aef0d52f67d4927"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -59,7 +59,7 @@
     {
       "Name": "edge_volume_metric.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/edge_volume_metric.py",
-      "SHA256": "a9ca06633e544c359016ce38502752af482fd0309c936309b13ff09eaf8c63f0"
+      "SHA256": "a45a1eb39be2530c776b52da23647f0c8a1ac4254d6841e2e13a3240f5e9e6e2"
     },
     {
       "Name": "mesh_array_io.py",
@@ -79,7 +79,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "64e680ced7c6c2658558ab78dd793cadae5e94c1a5765e5c8d8c26e54af7cae5"
+      "SHA256": "5c8822e2363b99f308f9c0bf9dcedfcb29eeb23aa3eec7f1383bd17316fefb54"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1539,11 +1539,11 @@
     },
     "seed-generation": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "mesher": "e93b4a9b39abf837e5fcb7c1a0076528f56230e5ae06debfb2c64a5ab97c931f"
+      "mesher": "2e6454304d27696d68a250cc04d9ee95325d3cbffea6d3c57cd0c29127b7167a"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "fa09d854fb23f1312f80e9f2edc009c72bed4b4c780e8530c6d0947d1cb95d81"
+      "metric-preparer": "fecc8a606c01bbdc111a4a274edd8551bbfbdddb3dde0ae76aef0d52f67d4927"
     },
     "native-adaptation-mmg": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -1553,7 +1553,7 @@
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "018f3410070b45b5ba34c508a49eb9df0e6f23562f925ab45f78e63aba1db5b1"
+      "label-restorer": "aab4212b61fad44066941a149faf45fea04f66a1e87030f138b0823ef9f614d3"
     },
     "canonical-gmsh-publication": {
       "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",

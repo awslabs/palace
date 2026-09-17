@@ -137,9 +137,57 @@ def segment_distances(points,segment):
     return np.linalg.norm(delta-axial[:,None]*tangent,axis=1),tangent
 
 
+def edge_layer_reach(normal_size,edge_size,growth_ratio):
+    """Distance from an edge at which the geometric edge-layer law reaches NormalSize.
+
+    The layer law hn(r) = EdgeSize + (GrowthRatio - 1) r is the continuous form of
+    geometric layers (layer k has size EdgeSize GrowthRatio^(k-1) and starts where
+    the law equals that size); beyond the reach the ordinary band law continues
+    from NormalSize, so the whole law is continuous.  Zero when EdgeSize equals
+    NormalSize (no layer).
+    """
+    if not np.all(np.isfinite([normal_size,edge_size,growth_ratio])) or not (
+            0<edge_size<=normal_size and growth_ratio>1):
+        raise ValueError('Invalid edge layer controls')
+    return float((normal_size-edge_size)/(growth_ratio-1.))
+
+
+def band_sizes(r,dc,edge_size,reach,growth_ratio,normal_size,tangent_size,far_size,
+               radial_growth,corner_growth,protected_distance,far_growth,aspect=None):
+    """Normal and tangential sizes of one band segment at distances r (to the
+    segment) and dc (to the nearest true corner).  With `aspect` (edge-layer
+    spans) the tangential size is capped at aspect x hn: a tetrahedron corner
+    whose three edges are tangential has a scaled Jacobian of (hn/ht)^2, so the
+    layer anisotropy is bounded by the scaled-Jacobian gate; the cap blends into
+    the band's tangential law where aspect x hn exceeds it."""
+    beyond=np.maximum(0.,r-reach)
+    growth=(growth_ratio-1.)*np.minimum(r,reach)+radial_growth*np.minimum(beyond,protected_distance)+\
+        far_growth*np.maximum(0.,beyond-protected_distance)
+    hn=np.minimum(far_size,edge_size+growth)
+    band_growth=radial_growth*np.minimum(beyond,protected_distance)+far_growth*np.maximum(0.,beyond-protected_distance)
+    ht=np.maximum(hn,np.minimum(np.minimum(far_size,tangent_size+band_growth),
+                                normal_size+corner_growth*dc))
+    if aspect is not None:ht=np.maximum(hn,np.minimum(ht,aspect*hn))
+    return hn,ht
+
+
+def _band_sources(segments,normal_size,edge_layer_segments,edge_size,growth_ratio,aspect=None):
+    """(segment, edge size at r = 0, reach, ratio, aspect cap) rows in metric
+    intersection order: the NormalSize band segments, then the edge-layer spans."""
+    sources=[(segment,normal_size,0.,2.,None) for segment in segments]
+    if edge_layer_segments is not None and len(edge_layer_segments):
+        reach=edge_layer_reach(normal_size,edge_size,growth_ratio)
+        if aspect is not None and (not np.isfinite(aspect) or aspect<1):
+            raise ValueError('Edge layer aspect must be at least 1')
+        sources+=[(segment,edge_size,reach,growth_ratio,aspect)
+                  for segment in np.asarray(edge_layer_segments,dtype=float).reshape(-1,6)]
+    return sources
+
+
 def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
                   radial_growth=1.,corner_growth=.25,protected_distance=0.,far_growth=None,
-                  isotropic_corners=None,isotropy_radius=None):
+                  isotropic_corners=None,isotropy_radius=None,edge_layer_segments=None,
+                  edge_size=None,growth_ratio=2.,edge_layer_aspect=None):
     points=np.asarray(points,dtype=float);segments=np.asarray(segments,dtype=float).reshape(-1,6)
     corners=np.asarray(corners,dtype=float).reshape(-1,3)
     isotropic_corners=(corners if isotropic_corners is None else
@@ -148,6 +196,7 @@ def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
     if points.ndim!=2 or points.shape[1]!=3 or not np.all(np.isfinite(points)):
         raise ValueError('Expected finite 3D points')
     if far_growth is None:far_growth=radial_growth
+    if edge_size is None:edge_size=normal_size
     if not np.all(np.isfinite([normal_size,tangent_size,far_size,radial_growth,corner_growth,
                               protected_distance,far_growth,isotropy_radius])) or not (
             0<normal_size<=tangent_size<=far_size and radial_growth>0 and corner_growth>0 and
@@ -156,15 +205,19 @@ def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
     if (not len(segments) or not np.all(np.isfinite(segments)) or
             not np.all(np.isfinite(corners)) or not np.all(np.isfinite(isotropic_corners))):
         raise ValueError('Invalid physical feature geometry')
+    if edge_layer_segments is not None and len(edge_layer_segments):
+        layer=np.asarray(edge_layer_segments,dtype=float).reshape(-1,6)
+        if not np.all(np.isfinite(layer)):raise ValueError('Invalid edge layer spans')
     dc=np.full(len(points),np.inf)
     for c in corners:dc=np.minimum(dc,np.linalg.norm(points-c,axis=1))
     metric=np.broadcast_to(np.eye(3)/far_size**2,(len(points),3,3)).copy()
-    for segment in segments:  # Input feature order is part of the recorded recipe.
+    # Input feature order is part of the recorded recipe: band segments, then the
+    # edge-layer spans (EdgeSize at the edge, geometric growth to NormalSize).
+    for segment,h0,reach,ratio,aspect in _band_sources(segments,normal_size,edge_layer_segments,
+                                                       edge_size,growth_ratio,edge_layer_aspect):
         r,t=segment_distances(points,segment)
-        growth=radial_growth*np.minimum(r,protected_distance)+far_growth*np.maximum(0.,r-protected_distance)
-        hn=np.minimum(far_size,normal_size+growth)
-        ht=np.maximum(hn,np.minimum(np.minimum(far_size,tangent_size+growth),
-                                    normal_size+corner_growth*dc))
+        hn,ht=band_sizes(r,dc,h0,reach,ratio,normal_size,tangent_size,far_size,radial_growth,
+                         corner_growth,protected_distance,far_growth,aspect)
         active=hn<far_size
         hn,ht=hn[active],ht[active]
         candidate=np.eye(3)[None,:,:]/hn[:,None,None]**2 + (
@@ -182,6 +235,53 @@ def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
         isotropic=np.broadcast_to(np.eye(3)/normal_size**2,(int(active.sum()),3,3))
         metric[active]=intersect_metrics(metric[active],isotropic)
     return metric
+
+
+def local_normal_size(points,segments,normal_size,far_size,radial_growth=1.,protected_distance=0.,
+                      far_growth=None,isotropic_corners=None,isotropy_radius=0.,
+                      edge_layer_segments=None,edge_size=None,growth_ratio=2.):
+    """Smallest prescribed size at every point: the band law's normal size over
+    all band segments and edge-layer spans, NormalSize inside the isotropic
+    corner balls, the far size elsewhere.  It is the local length scale the
+    restoration bounds (CAD correction, repair displacement, sub-hmin collapse)
+    are relative to."""
+    points=np.asarray(points,dtype=float).reshape(-1,3)
+    if far_growth is None:far_growth=radial_growth
+    if edge_size is None:edge_size=normal_size
+    if not np.all(np.isfinite(points)):raise ValueError('Expected finite 3D points')
+    size=np.full(len(points),float(far_size))
+    for segment,h0,reach,ratio,_ in _band_sources(np.asarray(segments,dtype=float).reshape(-1,6),
+                                                  normal_size,edge_layer_segments,edge_size,
+                                                  growth_ratio):
+        r,_=segment_distances(points,segment)
+        hn,_=band_sizes(r,np.zeros(len(points)),h0,reach,ratio,normal_size,normal_size,far_size,
+                        radial_growth,1.,protected_distance,far_growth)
+        size=np.minimum(size,hn)
+    if isotropy_radius>0 and isotropic_corners is not None and len(isotropic_corners):
+        for corner in np.asarray(isotropic_corners,dtype=float).reshape(-1,3):
+            size[np.linalg.norm(points-corner,axis=1)<=isotropy_radius]=np.minimum(
+                size[np.linalg.norm(points-corner,axis=1)<=isotropy_radius],normal_size)
+    if not np.all(np.isfinite(size)) or np.any(size<=0):raise ValueError('Invalid local size')
+    return size
+
+
+def recipe_local_normal_size(points,recipe):
+    """local_normal_size evaluated with a restoration recipe's recorded law."""
+    # Recorded segments are (k, 6) rows or (k, 2, 3) endpoint pairs (source-local
+    # recipes store the latter); both flatten to six coordinates.
+    def rows(values):return [np.asarray(value,dtype=float).reshape(6) for value in values]
+    segments=rows(recipe['PhysicalSegments'])
+    junctions=recipe.get('JunctionSegments')
+    if isinstance(junctions,dict):segments+=rows(junctions['Segments'])
+    layer=recipe.get('EdgeLayer')
+    layer_segments=edge_size=None;growth_ratio=2.
+    if isinstance(layer,dict):
+        layer_segments=rows(layer['Spans']);edge_size=float(layer['EdgeSize']);growth_ratio=float(layer['GrowthRatio'])
+    return local_normal_size(points,segments,float(recipe['NormalSize']),float(recipe['FarSize']),
+                             float(recipe.get('RadialGrowth',1.)),float(recipe.get('ProtectedDistance',0.)),
+                             float(recipe.get('FarGrowth',recipe.get('RadialGrowth',1.))),
+                             recipe.get('TruePhysicalCorners'),float(recipe.get('CornerIsotropyRadius',0.)),
+                             layer_segments,edge_size,growth_ratio)
 
 
 def _continues_straight(v,w):

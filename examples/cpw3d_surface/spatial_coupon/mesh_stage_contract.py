@@ -623,6 +623,98 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
     return census
 
 
+# Edge layer options of the seed and metric commands bound to the recipe's
+# EdgeLayer record (seed and metric prescribe one layer: EdgeSize, GrowthRatio,
+# EdgeLayerAspect); the adapter hmin must be the layer's EdgeSize.
+EDGE_LAYER_SEED_OPTIONS = {"--edge-size": "EdgeSize", "--edge-growth-ratio": "GrowthRatio",
+                           "--edge-layer-aspect": "Aspect"}
+EDGE_LAYER_METRIC_OPTIONS = {"--edge-size": "EdgeSize", "--edge-growth-ratio": "GrowthRatio",
+                             "--edge-layer-aspect": "Aspect"}
+EDGE_LAYER_DEFAULTS = {"GrowthRatio": 2.0, "Aspect": 4.0}
+ADAPTATION_MINIMUM_SIZE_OPTION = "--hmin"
+
+
+def _option_or_default(command, option, default):
+    positions = [index for index, value in enumerate(command) if value == option]
+    if not positions:
+        if default is None:
+            raise ValueError(f"Stage command must provide {option}")
+        return default
+    try:
+        return float(_option_value(command, option))
+    except ValueError as error:
+        raise ValueError(f"Stage command {option} is not a bound number: {error}") from error
+
+
+def validate_edge_layer(seed_report, metric_report, adaptation_report, recipe, census):
+    """The seed, the metric stage and the adapter honor one edge layer or none.
+
+    With a recipe EdgeLayer record the seed and metric commands pass EdgeSize,
+    GrowthRatio and EdgeLayerAspect equal to the record (ratio/aspect may be the
+    documented defaults), the census records the same layer (sizes, rows, span
+    length, row nodes), the recipe reach and thickness follow from the sizes,
+    the layer lies inside the frozen band, and the adapter hmin is EdgeSize.
+    Without the record, neither command asks for a layer and the census records
+    none; the adapter hmin is then the recipe NormalSize.
+    """
+    layer = recipe.get("EdgeLayer")
+    seed_command = seed_report["Command"]
+    metric_command = metric_report["Command"]
+    census_layer = census.get("EdgeLayer") if isinstance(census, dict) else None
+    normal = _recipe_number(recipe, "NormalSize")
+    if layer is None:
+        if _option_or_default(seed_command, "--edge-size", 0.0) != 0.0:
+            raise ValueError("Seed command seeds an edge layer the recipe does not record")
+        if any(option in metric_command for option in EDGE_LAYER_METRIC_OPTIONS):
+            raise ValueError("Metric command binds an edge layer the recipe does not record")
+        if isinstance(census_layer, dict) and census_layer.get("EdgeSize", 0.0) != 0.0:
+            raise ValueError("Seed census records an edge layer the recipe does not record")
+        minimum = normal
+    else:
+        if not isinstance(layer, dict) or not isinstance(census_layer, dict):
+            raise ValueError("Edge layer recipe or census record is missing")
+        edge_size = _recipe_number(layer, "EdgeSize")
+        ratio = _recipe_number(layer, "GrowthRatio")
+        aspect = _recipe_number(layer, "Aspect")
+        if not 0 < edge_size < normal or ratio <= 1 or aspect < 1:
+            raise ValueError("Edge layer sizes are invalid")
+        for command, options, stage in ((seed_command, EDGE_LAYER_SEED_OPTIONS, "Seed"),
+                                        (metric_command, EDGE_LAYER_METRIC_OPTIONS, "Metric")):
+            for option, name in options.items():
+                value = _option_or_default(command, option, EDGE_LAYER_DEFAULTS.get(name))
+                if value != _recipe_number(layer, name):
+                    raise ValueError(f"{stage} command {option} differs from the recipe edge layer {name}")
+        for name in ("EdgeSize", "GrowthRatio", "Aspect", "Layers", "LayerThickness",
+                     "TotalSpanLength", "Rows"):
+            if census_layer.get(name) != layer.get(name if name != "Rows" else "SeedRows"):
+                raise ValueError(f"Seed census edge layer {name} differs from the recipe")
+        if (census_layer.get("RowOffsets") != layer.get("RowOffsets") or
+                census_layer.get("RowNodes") != layer.get("SeedRowNodes") or
+                census_layer.get("NormalSize") != normal):
+            raise ValueError("Seed census edge layer rows differ from the recipe")
+        offsets = layer["RowOffsets"]
+        expected = []
+        size = edge_size
+        while size < normal:
+            expected.append(expected[-1] + size if expected else size)
+            size *= ratio
+        if (len(offsets) != len(expected) or
+                any(abs(a - b) > 1e-12 * normal for a, b in zip(offsets, expected)) or
+                _recipe_number(layer, "Reach") != (normal - edge_size) / (ratio - 1.0) or
+                _recipe_number(layer, "LayerThickness") != offsets[-1]):
+            raise ValueError("Edge layer rows do not follow EdgeSize and GrowthRatio")
+        if offsets[-1] > _recipe_number(recipe, "SurfaceProtectionRadius"):
+            raise ValueError("Edge layer is thicker than the frozen band")
+        spans = layer.get("Spans")
+        if (not isinstance(spans, list) or len(spans) != len(census_layer.get("Curves", [])) or
+                layer.get("SpanCount") != len(spans)):
+            raise ValueError("Edge layer spans differ from the seed census curves")
+        minimum = edge_size
+    if _option_or_default(adaptation_report["Command"], ADAPTATION_MINIMUM_SIZE_OPTION, None) != minimum:
+        raise ValueError("Adaptation command --hmin differs from the recipe minimum size")
+    return layer
+
+
 TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
 
 
@@ -792,10 +884,10 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
     if any(actual != expected for actual, expected in links):
         raise ValueError("Canonical mesh stage input/output digest chain is broken")
     validate_seed_corner_isotropy(seed_stage, metric["Artifacts"]["restoration-recipe"]["Path"])
-    validate_trace_basis_sizing(
-        seed_stage, metric,
-        json.loads(Path(metric["Artifacts"]["restoration-recipe"]["Path"]).read_text()),
-        json.loads(Path(seed_stage["Artifacts"]["seed-corner-census"]["Path"]).read_text()))
+    recipe = json.loads(Path(metric["Artifacts"]["restoration-recipe"]["Path"]).read_text())
+    census = json.loads(Path(seed_stage["Artifacts"]["seed-corner-census"]["Path"]).read_text())
+    validate_trace_basis_sizing(seed_stage, metric, recipe, census)
+    validate_edge_layer(seed_stage, metric, adaptation, recipe, census)
     return reports, digests
 
 

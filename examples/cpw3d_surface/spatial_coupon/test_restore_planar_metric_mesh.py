@@ -18,6 +18,8 @@ from restore_planar_metric_mesh import (
     _tetra_quality,
     _transactional_quality_commit,
     _within_displacement_bound,
+    frozen_edge_layer_vertices,
+    local_size_bounds,
     restore_in_source_frame,
 )
 
@@ -551,6 +553,83 @@ class CornerBallCollapseTest(unittest.TestCase):
             _collapse_corner_ball_vertices(points, tetrahedra, np.arange(len(tetrahedra)),
                                            node_supports, frozenset(),
                                            dict(recipe, TruePhysicalCorners=[[1., 1., 1.]]), .02)
+
+
+class LocalSizeBoundTest(unittest.TestCase):
+    """Restoration bounds are relative to the local prescribed size at each vertex."""
+
+    @staticmethod
+    def recipe():
+        return {"PhysicalSegments": [[-1., 0., 0., 1., 0., 0.]],
+                "JunctionSegments": {"Segments": []}, "NormalSize": .025, "FarSize": .16,
+                "RadialGrowth": 1., "ProtectedDistance": .05, "FarGrowth": .5,
+                "TruePhysicalCorners": [[-1., 0., 0.]], "CornerIsotropyRadius": .1,
+                "EdgeLayer": {"Spans": [[0., 0., 0., 1., 0., 0.]], "EdgeSize": .001,
+                              "GrowthRatio": 2., "LayerThickness": .031}}
+
+    def test_bounds_follow_the_local_size_and_layer_surface_vertices_are_frozen(self):
+        recipe = self.recipe()
+        points = np.array([[.5, 0., .001], [-.5, 0., .001], [.5, 0., .5], [.5, 0., .03],
+                           [.5, 0., .033], [-.5, 0., .02]])
+        # EdgeSize law on the span (2 nm); everywhere else the NormalSize cap (the
+        # band law and the far size never tighten a bound below production's).
+        np.testing.assert_allclose(local_size_bounds(points, recipe, .25),
+                                   [.0005, .00625, .00625, .00625, .00625, .00625])
+        with self.assertRaises(ValueError):
+            local_size_bounds(points, recipe, 0.)
+        node_supports = {0: {100}, 1: {100}, 2: {100}, 3: {100}, 4: {100}}
+        # Supported vertices within LayerThickness + EdgeSize (32 nm) of a span are
+        # frozen; the plain-band vertex and the vertex beyond the footprint are not,
+        # nor is an interior (unsupported) vertex.
+        self.assertEqual(frozen_edge_layer_vertices(points, node_supports, recipe), {0, 3})
+        self.assertEqual(frozen_edge_layer_vertices(points, {5: {100}}, recipe), frozenset())
+        plain = {k: v for k, v in recipe.items() if k != "EdgeLayer"}
+        self.assertEqual(frozen_edge_layer_vertices(points, node_supports, plain), frozenset())
+        np.testing.assert_allclose(local_size_bounds(points, plain, .75), [.75 * .025] * 6)
+
+    def test_quality_repair_honors_per_vertex_bounds_and_fixes_frozen_vertices(self):
+        points, tetrahedra, supports, node_supports, recipe = _single_tetrahedron_repair_case(.0002)
+        original = points.copy()
+        # A per-vertex bound: the apex may move up to 0.01875, the surface vertices
+        # only 1e-6, so the sidewall vertices stay within their tiny ball.
+        bound = np.array([1e-6, 1e-6, 1e-6, .01875])
+        report = _quality_repair(points, tetrahedra, node_supports, supports, recipe,
+                                 .01, 4., bound)
+        displacement = np.linalg.norm(points - original, axis=1)
+        self.assertTrue(np.all(displacement <= bound * (1. + DISPLACEMENT_ROUNDOFF_TOLERANCE)))
+        self.assertGreater(displacement[3], 1e-6)
+        self.assertEqual(report["QualityDisplacementBoundUm"]["MinimumUm"], 1e-6)
+        self.assertEqual(report["QualityDisplacementBoundUm"]["MaximumUm"], .01875)
+        self.assertLessEqual(report["MaximumFinalQualityDisplacementOverLocalBound"],
+                             1. + DISPLACEMENT_ROUNDOFF_TOLERANCE)
+        # Frozen edge-layer surface vertices never move, even with a large bound.
+        points, tetrahedra, supports, node_supports, recipe = _single_tetrahedron_repair_case(.0002)
+        original = points.copy()
+        report = _quality_repair(points, tetrahedra, node_supports, supports, recipe,
+                                 .01, 4., .01875, frozen_nodes=frozenset({1, 2}))
+        np.testing.assert_array_equal(points[[0, 1, 2]], original[[0, 1, 2]])
+        self.assertEqual(report["FrozenEdgeLayerVertices"], 2)
+        self.assertEqual(report["QualityDisplacementBoundUm"], .01875)
+        with self.assertRaises(ValueError):
+            _quality_repair(points, tetrahedra, node_supports, supports, recipe, .01, 4.,
+                            np.array([.01, .01]))
+
+    def test_corner_collapse_threshold_is_the_local_size(self):
+        points, tetrahedra, supports, node_supports, recipe, free = \
+            _corner_ball_with_inserted_vertex(.012)
+        refs = np.arange(len(tetrahedra))
+        # With a local size below the vertex's shortest edge nothing is collapsed;
+        # with the recipe NormalSize (default) the sub-hmin vertex is.
+        small = np.full(len(points), .005)
+        kept = _collapse_corner_ball_vertices(points, tetrahedra, refs, node_supports,
+                                              frozenset(), recipe, .02, small)
+        self.assertEqual(kept[4][0]["CollapsedVertices"], 0)
+        collapsed = _collapse_corner_ball_vertices(points, tetrahedra, refs, node_supports,
+                                                   frozenset(), recipe, .02)
+        self.assertEqual(collapsed[4][0]["CollapsedVertices"], 1)
+        with self.assertRaises(ValueError):
+            _collapse_corner_ball_vertices(points, tetrahedra, refs, node_supports, frozenset(),
+                                           recipe, .02, small[:-1])
 
 
 if __name__ == "__main__":
