@@ -707,6 +707,22 @@ function tetrahedron_scaled_jacobian(xyz)
     return dot(a, cross(b, c)) / (norm(a) * norm(b) * norm(c))
 end
 
+# Longest edge over shortest height (altitude): the edge-layer quality rule's
+# aspect (edge_volume_metric.tetrahedron_edge_aspect; the shortest height is
+# |det| / (2 x largest face area)). Infinite for a flat cell.
+function tetrahedron_edge_aspect(xyz)
+    a = xyz[2] .- xyz[1]; b = xyz[3] .- xyz[1]; c = xyz[4] .- xyz[1]
+    determinant = abs(dot(a, cross(b, c)))
+    longest = maximum(norm(xyz[i] .- xyz[j]) for i in 1:4 for j in (i + 1):4)
+    area = maximum(0.5 * norm(cross(xyz[q] .- xyz[p], xyz[r] .- xyz[p]))
+                   for (p, q, r) in ((2, 3, 4), (1, 3, 4), (1, 2, 4), (1, 2, 3)))
+    return determinant > 0.0 ? longest * 2.0 * area / determinant : Inf
+end
+
+# Scaled Jacobian below which a layer cell is flat to roundoff
+# (edge_volume_metric.EDGE_LAYER_ORIENTATION_FLOOR).
+const EDGE_LAYER_ORIENTATION_FLOOR = 1.0e-12
+
 # 3D point-to-segment distance (the plan-view point_segment_distance below is 2D).
 function span_point_distance(point, start, stop)
     v = stop .- start
@@ -716,9 +732,12 @@ function span_point_distance(point, start, stop)
     return norm(point .- start .- (axial / span_length) .* v)
 end
 
-# The metric stage's REQUIRED_TETRAHEDRA_RULE on the seed (same regions, same reach).
+# The metric stage's REQUIRED_TETRAHEDRA_RULE on the seed (same regions, same
+# reach); the third result is the layer part (EDGE_LAYER_CELL_RULE: a vertex
+# within the reach of a span).
 function required_region_cells(points, tetrahedra, corners, radius, spans, reach)
     required = falses(length(tetrahedra))
+    in_layer = falses(length(tetrahedra))
     span_distance = fill(Inf, size(points, 2))
     if !isempty(spans)
         for i in axes(points, 2), (start, stop) in spans
@@ -727,12 +746,12 @@ function required_region_cells(points, tetrahedra, corners, radius, spans, reach
     end
     for (k, cell) in enumerate(tetrahedra)
         centroid = sum(points[:, i] for i in cell) ./ 4
-        if any(norm(centroid .- collect(corner)) <= radius for corner in corners) ||
-           (!isempty(spans) && any(span_distance[i] <= reach for i in cell))
+        in_layer[k] = !isempty(spans) && any(span_distance[i] <= reach for i in cell)
+        if in_layer[k] || any(norm(centroid .- collect(corner)) <= radius for corner in corners)
             required[k] = true
         end
     end
-    return required, span_distance
+    return required, span_distance, in_layer
 end
 
 # Movement basis of every surface vertex: null space of its triangle normals.
@@ -776,35 +795,41 @@ function descent_directions(basis)
 end
 
 # Greedy bounded coordinate descent on one target set: minimize the maximum
-# aspect (:aspect, through its p-norm proxy) or raise the minimum scaled
-# Jacobian (:scaled) of the target cells until the goal is met on the true
-# maximum/minimum. Returns (achieved true value, accepted moves).
+# aspect (:aspect, the Jacobian condition number; :edge_aspect, the layer rule's
+# longest edge over shortest height; both through their p-norm proxy) or raise
+# the minimum scaled Jacobian (:scaled) of the target cells until the goal is met
+# on the true maximum/minimum. Every touched cell keeps its scaled-Jacobian floor
+# and, with `ceilings` (per cell, Inf = none), its edge-aspect ceiling: a repair
+# may never flatten a neighbouring layer cell. Returns (achieved true value,
+# accepted moves).
 function optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors, bounds,
-                              targets, objective::Symbol, goal)
+                              targets, objective::Symbol, goal; ceilings=nothing)
     function cell_xyz(cell)
         return [points[:, i] for i in cell]
     end
+    aspect_of = objective === :edge_aspect ? tetrahedron_edge_aspect : tetrahedron_aspect
     function value()
-        if objective === :aspect
-            aspects = [tetrahedron_aspect(cell_xyz(tetrahedra[k])) for k in targets]
+        if objective === :aspect || objective === :edge_aspect
+            aspects = [aspect_of(cell_xyz(tetrahedra[k])) for k in targets]
             scale = maximum(aspects)
             return scale * sum((aspects ./ scale) .^ SEED_ASPECT_PROXY_POWER)^(1 / SEED_ASPECT_PROXY_POWER)
         end
         return -minimum(tetrahedron_scaled_jacobian(cell_xyz(tetrahedra[k])) for k in targets)
     end
     function achieved()
-        if objective === :aspect
-            return maximum(tetrahedron_aspect(cell_xyz(tetrahedra[k])) for k in targets)
+        if objective === :aspect || objective === :edge_aspect
+            return maximum(aspect_of(cell_xyz(tetrahedra[k])) for k in targets)
         end
         return -value()
     end
+    minimizing = objective === :aspect || objective === :edge_aspect
     vertices = unique(i for k in targets for i in tetrahedra[k])
     movable = [(i, get(bases, i, Matrix{Float64}(I, 3, 3))) for i in vertices]
     filter!(pair -> size(pair[2], 2) > 0, movable)
     current = value()
     moves = 0
     for _ in 1:60
-        (objective === :aspect ? achieved() <= goal : achieved() >= goal) && break
+        (minimizing ? achieved() <= goal : achieved() >= goal) && break
         improved = false
         for (vertex, basis) in movable
             cells = incident[vertex]
@@ -820,7 +845,9 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
                         for k in cells
                             xyz = cell_xyz(tetrahedra[k])
                             scaled = tetrahedron_scaled_jacobian(xyz)
-                            if !(scaled > 0.0) || scaled < floors[k] - 1.0e-9
+                            if !(scaled > 0.0) || scaled < floors[k] - 1.0e-9 ||
+                               (ceilings !== nothing && isfinite(ceilings[k]) &&
+                                tetrahedron_edge_aspect(xyz) > ceilings[k] * (1.0 + 1.0e-9))
                                 accepted = false
                                 break
                             end
@@ -880,23 +907,131 @@ function below_target_components(cells, tetrahedra, incident, value_of, target)
     return components
 end
 
+# Collapse the seed's own sub-hmin insertions inside the layer (layer quality rule
+# only): a free interior vertex (in no surface triangle) within the layer reach
+# whose shortest incident edge is below EdgeSize - the layer's minimum size and
+# the adapter hmin, so such an edge is below the prescribed metric everywhere -
+# is merged onto one of its neighbours: among the valid cavities (every remapped
+# cell keeps a positive orientation above EDGE_LAYER_ORIENTATION_FLOOR) the one
+# with the smallest maximum edge aspect, accepted only when that maximum is no
+# worse than the worst cell it replaces - the restorer's corner-ball collapse
+# rule (decision 15a). The bounded descent then repairs the cavity further.
+# Bounded moves alone cannot repair the cells around such a vertex (measured: a
+# Gmsh volume vertex 0.3 nm from a row node and 0.04 nm under the face plane,
+# 13 cells at aspect 1150, every direction inverting a cell or staying above
+# 300; the collapse onto the row node gives a worst cell of 235). Mutates
+# `tetrahedra` in place (cells containing both vertices are deleted, the others
+# remapped) and returns (deleted original indices, Dict(original index =>
+# remapped cell), collapsed vertex count, shortest collapsed edge).
+function collapse_short_layer_edges!(points, tetrahedra, triangles, span_distance, reach,
+                                     edge_size, maximum_edge_aspect)
+    surface = falses(size(points, 2))
+    for triangle in triangles, i in triangle
+        surface[i] = true
+    end
+    incident = [Int[] for _ in axes(points, 2)]
+    for (k, cell) in enumerate(tetrahedra), i in cell
+        push!(incident[i], k)
+    end
+    deleted = Set{Int}()
+    remapped = Dict{Int, NTuple{4, Int}}()
+    current(k) = get(remapped, k, tetrahedra[k])
+    collapsed = 0; shortest = Inf
+    candidates = [i for i in axes(points, 2)
+                  if !surface[i] && span_distance[i] <= reach && !isempty(incident[i])]
+    for v in candidates
+        cells = [k for k in incident[v] if !(k in deleted)]
+        isempty(cells) && continue
+        neighbours = unique(j for k in cells for j in current(k) if j != v)
+        lengths = [norm(points[:, j] .- points[:, v]) for j in neighbours]
+        shortest_length = minimum(lengths)
+        shortest_length < edge_size || continue
+        replaced_worst = maximum(tetrahedron_edge_aspect([points[:, i] for i in current(k)])
+                                 for k in cells)
+        best = nothing; best_aspect = Inf; w = 0
+        for target in neighbours
+            candidate = Dict{Int, NTuple{4, Int}}()
+            valid = true; worst = 0.0
+            for k in cells
+                cell = current(k)
+                target in cell && continue
+                replaced = ntuple(i -> cell[i] == v ? target : cell[i], 4)
+                xyz = [points[:, i] for i in replaced]
+                if !(tetrahedron_scaled_jacobian(xyz) > EDGE_LAYER_ORIENTATION_FLOOR)
+                    valid = false
+                    break
+                end
+                worst = max(worst, tetrahedron_edge_aspect(xyz))
+                candidate[k] = replaced
+            end
+            # A collapse must leave remapped cells covering the cavity.
+            if valid && !isempty(candidate) && worst < best_aspect
+                best, best_aspect, w = candidate, worst, target
+            end
+        end
+        (best === nothing || best_aspect > replaced_worst) && continue
+        cavity = best
+        for k in cells
+            if w in current(k)
+                push!(deleted, k)
+            else
+                remapped[k] = cavity[k]
+                push!(incident[w], k)
+            end
+        end
+        collapsed += 1; shortest = min(shortest, shortest_length)
+    end
+    for k in keys(remapped)
+        k in deleted && delete!(remapped, k)
+    end
+    for (k, cell) in remapped
+        tetrahedra[k] = cell
+    end
+    removed = sort!(collect(deleted))
+    deleteat!(tetrahedra, removed)
+    return removed, remapped, collapsed, shortest
+end
+
 # Optimize the required region of a linear tetrahedral mesh in place and gate it.
 # The required set is the metric stage's rule evaluated on the FINAL vertex
 # positions: the moves can carry vertices across the corner-ball radius or the
 # layer reach, so after the first pass the set is recomputed; a changed set gets
-# one more scaled-Jacobian pass and is recomputed again, and the gates are judged
-# on that final set, which is the set the metric stage will list (the census
-# count must equal the recipe count). Fails closed when a corner exceeds
-# maximum_corner_aspect or a required cell stays below minimum_scaled_jacobian.
-# Returns (census record, indices of the moved vertices).
+# one more pass and is recomputed again, and the gates are judged on that final
+# set, which is the set the metric stage will list (the census count must equal
+# the recipe count). With edge_layer_maximum_aspect > 0 (the layer quality rule,
+# supervisor decision 32, calibration only) the layer cells (a vertex within the
+# reach) are gated by positive orientation above EDGE_LAYER_ORIENTATION_FLOOR and
+# by longest edge / shortest height <= the bound (repaired by bounded descent on
+# that aspect, target 0.95 x the bound) and the scaled-Jacobian gate judges the
+# other required cells; with 0 every required cell is gated by the scaled
+# Jacobian. Fails closed when a corner exceeds maximum_corner_aspect, a
+# scaled-Jacobian-gated cell stays below minimum_scaled_jacobian or a layer cell
+# fails the rule. Returns (census record, indices of the moved vertices).
 function optimize_required_region!(points, tetrahedra, triangles, corners, radius, lc_fine,
                                    spans, edge_size, growth_ratio, layer_thickness, row_zigzag,
                                    maximum_corner_aspect, minimum_scaled_jacobian,
-                                   displacement_ratio, tolerance)
+                                   displacement_ratio, tolerance;
+                                   edge_layer_maximum_aspect=0.0)
     original = copy(points)
     reach = isempty(spans) ? 0.0 : layer_thickness * (1.0 + row_zigzag) + edge_size
-    required, span_distance = required_region_cells(points, tetrahedra, corners, radius, spans,
-                                                    reach)
+    layer_rule = edge_layer_maximum_aspect > 0.0
+    layer_rule && isempty(spans) &&
+        error("The edge layer quality rule needs a seeded edge layer")
+    required, span_distance, in_layer = required_region_cells(points, tetrahedra, corners,
+                                                              radius, spans, reach)
+    removed = Int[]; remapped = Dict{Int, NTuple{4, Int}}(); collapsed = 0; shortest = Inf
+    aspect_before_collapse = !layer_rule ? 0.0 :
+        maximum((tetrahedron_edge_aspect([points[:, i] for i in tetrahedra[k]])
+                 for k in findall(in_layer)); init=0.0)
+    if layer_rule
+        removed, remapped, collapsed, shortest = collapse_short_layer_edges!(
+            points, tetrahedra, triangles, span_distance, reach, edge_size,
+            edge_layer_maximum_aspect)
+        if collapsed > 0
+            required, span_distance, in_layer = required_region_cells(points, tetrahedra, corners,
+                                                                      radius, spans, reach)
+        end
+    end
     incident = [Int[] for _ in axes(points, 2)]
     for (k, cell) in enumerate(tetrahedra), i in cell
         push!(incident[i], k)
@@ -908,6 +1043,20 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                        for cell in tetrahedra]
     all(>(0.0), original_scaled) || error("Seed contains a nonpositive tetrahedron")
     floors = min.(original_scaled, scaled_target)
+    # Under the layer rule a layer cell's guards are the rule's: orientation above
+    # the roundoff floor and max(original edge aspect, target) as its ceiling
+    # through every pass (corner, scaled-Jacobian and aspect repairs alike); its
+    # vertex-0 scaled Jacobian is not a quality measure there (a layer cell's value
+    # depends on which vertex is first, and a floor of min(original, target) was
+    # measured to block every aspect repair).
+    ceilings = fill(Inf, length(tetrahedra))
+    if layer_rule
+        for k in findall(in_layer)
+            floors[k] = EDGE_LAYER_ORIENTATION_FLOOR
+            ceilings[k] = max(tetrahedron_edge_aspect([points[:, i] for i in tetrahedra[k]]),
+                              0.95 * edge_layer_maximum_aspect)
+        end
+    end
     # Local prescribed size: lc_fine, EdgeSize-graded inside the layer reach (the
     # bounds are set once, from the original positions).
     bounds = [displacement_ratio * (isempty(spans) ? lc_fine :
@@ -926,38 +1075,100 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             continue
         end
         after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors,
-                                            bounds, targets, :aspect, corner_target)
+                                            bounds, targets, :aspect, corner_target;
+                                            ceilings=ceilings)
         push!(corner_after, after); push!(corner_moves, moves)
     end
     scaled_of(k) = tetrahedron_scaled_jacobian([points[:, i] for i in tetrahedra[k]])
+    edge_aspect_of(k) = tetrahedron_edge_aspect([points[:, i] for i in tetrahedra[k]])
     required_cells = findall(required)
     required_before_moves = length(required_cells)
-    required_before = minimum(scaled_of(k) for k in required_cells; init=Inf)
-    below_before = count(k -> scaled_of(k) < scaled_target, required_cells)
-    # Components of below-target required cells sharing a vertex are repaired
+    # Under the layer rule the scaled-Jacobian gate judges the required cells
+    # outside the layer; the layer cells are judged by the rule.
+    scaled_gated(cells, layer) = layer_rule ? [k for k in cells if !layer[k]] : cells
+    layer_cells = layer_rule ? findall(in_layer) : Int[]
+    gated_cells = scaled_gated(required_cells, in_layer)
+    required_before = minimum(scaled_of(k) for k in gated_cells; init=Inf)
+    below_before = count(k -> scaled_of(k) < scaled_target, gated_cells)
+    layer_aspect_target = 0.95 * edge_layer_maximum_aspect
+    layer_aspect_before = maximum(edge_aspect_of(k) for k in layer_cells; init=0.0)
+    layer_above_before = count(k -> edge_aspect_of(k) > layer_aspect_target, layer_cells)
+    layer_minimum_before = minimum(scaled_of(k) for k in layer_cells; init=Inf)
+    # Components of below-target scaled-Jacobian-gated cells (and, under the rule,
+    # of layer cells above the aspect target) sharing a vertex are repaired
     # together; then the required set is recomputed on the moved positions and a
     # changed set gets one more pass (see above).
     repair_moves = 0; components = 0; recomputations = 0
+    layer_repair_moves = 0; layer_components = 0
     for pass in 1:2
-        for component in below_target_components(required_cells, tetrahedra, incident,
+        for component in below_target_components(gated_cells, tetrahedra, incident,
                                                  scaled_of, scaled_target)
             _, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases,
-                                            floors, bounds, component, :scaled, scaled_target)
+                                            floors, bounds, component, :scaled, scaled_target;
+                                            ceilings=ceilings)
             repair_moves += moves; components += 1
         end
-        recomputed, _ = required_region_cells(points, tetrahedra, corners, radius, spans, reach)
+        for component in below_target_components(layer_cells, tetrahedra, incident,
+                                                 k -> -edge_aspect_of(k), -layer_aspect_target)
+            _, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases,
+                                            floors, bounds, component, :edge_aspect,
+                                            layer_aspect_target; ceilings=ceilings)
+            layer_repair_moves += moves; layer_components += 1
+        end
+        recomputed, _, recomputed_layer = required_region_cells(points, tetrahedra, corners,
+                                                                radius, spans, reach)
         recomputed_cells = findall(recomputed)
         recomputations += 1
-        recomputed_cells == required_cells && break
+        changed = recomputed_cells != required_cells ||
+                  (layer_rule && findall(recomputed_layer) != layer_cells)
         required_cells = recomputed_cells
+        in_layer = recomputed_layer
+        layer_cells = layer_rule ? findall(in_layer) : Int[]
+        gated_cells = scaled_gated(required_cells, in_layer)
+        changed || break
     end
-    required_after = minimum(scaled_of(k) for k in required_cells; init=Inf)
-    below_after = count(k -> scaled_of(k) < scaled_target, required_cells)
-    below_gate = count(k -> scaled_of(k) < minimum_scaled_jacobian, required_cells)
+    required_after = minimum(scaled_of(k) for k in gated_cells; init=Inf)
+    below_after = count(k -> scaled_of(k) < scaled_target, gated_cells)
+    below_gate = count(k -> scaled_of(k) < minimum_scaled_jacobian, gated_cells)
+    layer_aspect_after = maximum(edge_aspect_of(k) for k in layer_cells; init=0.0)
+    layer_above_after = count(k -> edge_aspect_of(k) > layer_aspect_target, layer_cells)
+    layer_above_bound = count(k -> edge_aspect_of(k) > edge_layer_maximum_aspect, layer_cells)
+    layer_minimum_after = minimum(scaled_of(k) for k in layer_cells; init=Inf)
+    layer_flat = count(k -> !(scaled_of(k) > EDGE_LAYER_ORIENTATION_FLOOR), layer_cells)
     displacement = [norm(points[:, i] .- original[:, i]) for i in axes(points, 2)]
     moved = findall(>(0.0), displacement)
     all(displacement[i] <= bounds[i] * (1.0 + 1.0e-12) for i in moved) ||
         error("Seed quality optimization exceeded its displacement bound")
+    layer_record = !layer_rule ? nothing : Dict{String, Any}(
+        "Rule" => "inside the recorded edge layer (a vertex within LayerRequiredReach of a " *
+                  "span) a cell passes when its scaled Jacobian exceeds the roundoff floor " *
+                  "(positive orientation) and its longest edge over its shortest height is " *
+                  "at most MaximumEdgeAspect (repaired by bounded descent on that aspect, " *
+                  "target 0.95 x the bound); the scaled-Jacobian gate judges the required " *
+                  "cells outside the layer; the layer scaled Jacobian is a diagnostic " *
+                  "(supervisor decision 32, calibration only)",
+        "MaximumEdgeAspect" => edge_layer_maximum_aspect,
+        "EdgeAspectTarget" => layer_aspect_target,
+        "ScaledJacobianRoundoffFloor" => EDGE_LAYER_ORIENTATION_FLOOR,
+        "LayerCells" => length(layer_cells),
+        "MaximumEdgeAspectBeforeCollapse" => aspect_before_collapse,
+        "CollapsedVertices" => collapsed, "CollapsedCells" => length(removed),
+        "RemappedCells" => length(remapped),
+        "ShortestCollapsedEdge" => isfinite(shortest) ? shortest : nothing,
+        "CollapseRule" => "free interior seed vertices within the layer reach with an incident " *
+                          "edge shorter than EdgeSize (the adapter hmin) are merged onto the " *
+                          "neighbour whose cavity (every remapped cell positively oriented " *
+                          "above the roundoff floor) has the smallest maximum edge aspect, no " *
+                          "worse than the cells it replaces, before the bounded descent",
+        "MaximumEdgeAspectBefore" => layer_aspect_before,
+        "MaximumEdgeAspectAfter" => layer_aspect_after,
+        "CellsAboveTargetBefore" => layer_above_before,
+        "CellsAboveTargetAfter" => layer_above_after,
+        "CellsAboveBoundAfter" => layer_above_bound,
+        "CellsBelowRoundoffFloorAfter" => layer_flat,
+        "MinimumScaledJacobianBefore" => layer_minimum_before,
+        "MinimumScaledJacobian" => layer_minimum_after,
+        "RepairComponents" => layer_components, "RepairMoves" => layer_repair_moves)
     record = Dict{String, Any}(
         "Rule" => "seed cells inside the corner balls (centroid within CornerIsotropyRadius) " *
                   "and the edge layer (a vertex within LayerRequiredReach = LayerThickness x " *
@@ -967,7 +1178,11 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                   "DisplacementBoundOverNormal x the local prescribed size, touched cells " *
                   "keep min(original, target) scaled Jacobian), recomputes the set on the " *
                   "moved positions (one more pass if it changed) and fails closed on the " *
-                  "gates judged on the final set, which the metric stage lists",
+                  "gates judged on the final set, which the metric stage lists; under the " *
+                  "EdgeLayerQualityRule the scaled-Jacobian statistics cover the required " *
+                  "cells outside the layer (ScaledJacobianGateCells)",
+        "EdgeLayerQualityRule" => layer_record,
+        "ScaledJacobianGateCells" => length(gated_cells),
         "MaximumCornerAspect" => maximum_corner_aspect, "CornerAspectTarget" => corner_target,
         "MinimumScaledJacobian" => minimum_scaled_jacobian, "ScaledJacobianTarget" => scaled_target,
         "DisplacementBoundOverNormal" => displacement_ratio,
@@ -998,27 +1213,79 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     below_gate == 0 ||
         error("Seed required region keeps $(below_gate) cells below the scaled-Jacobian gate " *
               "$(minimum_scaled_jacobian) after optimization (minimum $(required_after))")
-    return record, moved
+    if layer_rule
+        println("Seed edge-layer quality rule: $(length(layer_cells)) layer cells, collapsed " *
+                "$(collapsed) sub-EdgeSize vertices ($(length(removed)) cells removed, " *
+                "$(length(remapped)) remapped), maximum edge aspect $(layer_aspect_before) -> " *
+                "$(layer_aspect_after) (bound $(edge_layer_maximum_aspect)), minimum scaled " *
+                "Jacobian (diagnostic) $(layer_minimum_after)")
+        layer_flat == 0 ||
+            error("Seed edge layer keeps $(layer_flat) cells flat to roundoff (scaled Jacobian " *
+                  "<= $(EDGE_LAYER_ORIENTATION_FLOOR))")
+        layer_above_bound == 0 ||
+            error("Seed edge layer keeps $(layer_above_bound) cells above the edge aspect bound " *
+                  "$(edge_layer_maximum_aspect) after optimization (maximum $(layer_aspect_after))")
+    end
+    return record, moved, removed, remapped
 end
 
-# Optimize the seed's required region in place (Gmsh node coordinates) and gate
-# it; returns the census record.
+# Optimize the seed's required region in place (Gmsh node coordinates and, under
+# the layer rule, the collapsed cells' connectivity) and gate it; returns the
+# census record.
+# The volume tetrahedra with their Gmsh element tags and volume entity tags.
+function gmsh_volume_cells(index)
+    cells = Vector{NTuple{4, Int}}(); tags = UInt[]; entities = Int[]
+    for (_, entity) in gmsh.model.getEntities(3)
+        _, element_tags, element_nodes = gmsh.model.mesh.getElements(3, entity)
+        for (block_tags, block) in zip(element_tags, element_nodes)
+            isempty(block_tags) && continue
+            nodes_per_element = length(block) ÷ length(block_tags)
+            for (n, start) in enumerate(1:nodes_per_element:length(block))
+                push!(cells, ntuple(i -> index[block[start + i - 1]], Val(4)))
+                push!(tags, block_tags[n]); push!(entities, entity)
+            end
+        end
+    end
+    return cells, tags, entities
+end
+
 function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_size,
                                         growth_ratio, layer_thickness, row_zigzag,
                                         maximum_corner_aspect, minimum_scaled_jacobian,
-                                        displacement_ratio, tolerance)
+                                        displacement_ratio, tolerance, edge_layer_maximum_aspect)
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(copy(coordinates), 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
-    tetrahedra = gmsh_linear_cells(index, 3, Val(4))
+    tetrahedra, tags, entities = gmsh_volume_cells(index)
     triangles = gmsh_linear_cells(index, 2, Val(3))
-    record, moved = optimize_required_region!(points, tetrahedra, triangles, corners, radius,
-                                              lc_fine, spans, edge_size, growth_ratio,
-                                              layer_thickness, row_zigzag, maximum_corner_aspect,
-                                              minimum_scaled_jacobian, displacement_ratio,
-                                              tolerance)
+    record, moved, removed, remapped = optimize_required_region!(
+        points, tetrahedra, triangles, corners, radius, lc_fine, spans, edge_size, growth_ratio,
+        layer_thickness, row_zigzag, maximum_corner_aspect, minimum_scaled_jacobian,
+        displacement_ratio, tolerance; edge_layer_maximum_aspect=edge_layer_maximum_aspect)
     for i in moved
         gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
+    end
+    # Collapsed cells: delete the vanished ones, replace the remapped ones (same
+    # entity, fresh element tags); the orphan vertices are dropped by the writer.
+    if !isempty(removed) || !isempty(remapped)
+        by_entity = Dict{Int, Vector{UInt}}()
+        for k in vcat(removed, collect(keys(remapped)))
+            push!(get!(by_entity, entities[k], UInt[]), tags[k])
+        end
+        for (entity, element_tags) in by_entity
+            gmsh.model.mesh.removeElements(3, entity, element_tags)
+        end
+        next_tag = gmsh.model.mesh.getMaxElementTag()
+        added = Dict{Int, Vector{Int}}()
+        for (k, cell) in remapped
+            append!(get!(added, entities[k], Int[]), [Int(node_tags[i]) for i in cell])
+        end
+        for (entity, nodes) in added
+            count = length(nodes) ÷ 4
+            gmsh.model.mesh.addElementsByType(entity, 4, collect((next_tag + 1):(next_tag + count)),
+                                              nodes)
+            next_tag += count
+        end
     end
     return record
 end
@@ -2472,6 +2739,7 @@ function generate_spatial_coupon(;
     maximum_corner_aspect::Float64=0.0,
     minimum_scaled_jacobian::Float64=0.0,
     quality_displacement_over_normal::Float64=0.0,
+    edge_layer_maximum_aspect::Float64=0.0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -2516,6 +2784,14 @@ function generate_spatial_coupon(;
     (!seed_quality_gates || (maximum_corner_aspect > 1.0 && minimum_scaled_jacobian < 1.0)) ||
         error("Seed quality gates must satisfy MaximumCornerAspect > 1 and " *
               "MinimumScaledJacobian < 1")
+    # The edge-layer quality rule (decision 32, calibration only) needs the seed
+    # gates and an edge layer to apply to.
+    isfinite(edge_layer_maximum_aspect) && edge_layer_maximum_aspect >= 0.0 ||
+        error("edge layer maximum aspect must be a nonnegative finite number")
+    edge_layer_maximum_aspect == 0.0 || (edge_layer_maximum_aspect > 1.0 && seed_quality_gates &&
+                                         edge_size > 0.0) ||
+        error("--edge-layer-maximum-aspect requires a bound above 1, the seed quality gates " *
+              "and --edge-size")
     # The seed honors the same isotropic corner ball the metric stage prescribes:
     # NormalSize (lc_fine) inside CornerIsotropyRadius around every contract
     # semantic corner, graded to the far size with the process-band slope.
@@ -3221,7 +3497,7 @@ function generate_spatial_coupon(;
             edge_size, edge_growth_ratio,
             isempty(edge_layer_offsets) ? 0.0 : edge_layer_offsets[end],
             EDGE_LAYER_ROW_ZIGZAG, maximum_corner_aspect, minimum_scaled_jacobian,
-            quality_displacement_over_normal, tolerance) :
+            quality_displacement_over_normal, tolerance, edge_layer_maximum_aspect) :
         nothing
     census_rows = corner_isotropy ?
         seed_corner_census(semantic_corners, corner_isotropy_radius, lc_fine, tolerance) :
@@ -3430,6 +3706,7 @@ function generate_spatial_coupon(;
         println(stream, "  \"EdgeSize\": $edge_size,")
         println(stream, "  \"EdgeGrowthRatio\": $edge_growth_ratio,")
         println(stream, "  \"EdgeLayerAspect\": $edge_layer_aspect,")
+        println(stream, "  \"EdgeLayerMaximumAspect\": $edge_layer_maximum_aspect,")
         println(stream, "  \"EdgeLayerRows\": $(length(edge_layer_offsets)),")
         println(stream, "  \"SemanticCornerCount\": $(length(semantic_corners)),")
         println(stream, "  \"RigidTransform\": [$(join(vec(transform'), ", "))],")
@@ -3491,7 +3768,8 @@ function parse_options(args)
         "--maximum-corner-aspect" => ("maximum_corner_aspect", Float64),
         "--minimum-scaled-jacobian" => ("minimum_scaled_jacobian", Float64),
         "--maximum-quality-displacement-over-normal" =>
-            ("quality_displacement_over_normal", Float64)
+            ("quality_displacement_over_normal", Float64),
+        "--edge-layer-maximum-aspect" => ("edge_layer_maximum_aspect", Float64)
     )
     index = 4
     while index <= length(args)
@@ -3562,6 +3840,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         maximum_corner_aspect = get(options, "maximum_corner_aspect", 0.0),
         minimum_scaled_jacobian = get(options, "minimum_scaled_jacobian", 0.0),
         quality_displacement_over_normal =
-            get(options, "quality_displacement_over_normal", 0.0)
+            get(options, "quality_displacement_over_normal", 0.0),
+        edge_layer_maximum_aspect = get(options, "edge_layer_maximum_aspect", 0.0)
     )
 end

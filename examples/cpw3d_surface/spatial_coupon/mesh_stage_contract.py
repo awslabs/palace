@@ -8,7 +8,8 @@ import json
 import math
 from pathlib import Path
 
-from edge_volume_metric import COPLANAR_TOLERANCE
+from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_ORIENTATION_FLOOR,
+                                EDGE_LAYER_QUALITY_RULE)
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     material_interface_attributes)
 
@@ -726,6 +727,9 @@ def validate_edge_layer(seed_report, metric_report, adaptation_report, recipe, c
 # with equal values.
 REQUIRED_REGION_GATE_OPTIONS = ("--maximum-corner-aspect", "--minimum-scaled-jacobian",
                                 "--maximum-quality-displacement-over-normal")
+# The edge-layer quality rule (supervisor decision 32, calibration manifests only):
+# both commands carry the same bound, or neither; it needs a recipe edge layer.
+EDGE_LAYER_QUALITY_RULE_OPTION = "--edge-layer-maximum-aspect"
 
 
 def _required_indices(path, tetrahedra):
@@ -829,7 +833,50 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
     if _count(restoration.get("RequiredTetrahedra"), "Restored required tetrahedra") != len(indices):
         raise ValueError("Label restoration found a different number of required tetrahedra "
                          "than the recipe record")
+    validate_edge_layer_quality_rule(seed_report, restoration_report, layer, quality, restoration)
     return record
+
+
+def validate_edge_layer_quality_rule(seed_report, restoration_report, layer, quality, restoration):
+    """The seed and the label restorer apply the same edge-layer quality rule bound
+    (EDGE_LAYER_QUALITY_RULE_OPTION) or none.  With a bound: the recipe records an
+    edge layer, the census SeedQualityOptimization.EdgeLayerQualityRule records that
+    bound with no layer cell above it or below the roundoff floor, and the restorer's
+    EdgeLayerQuality passes with the same bound.  Without: neither record carries a
+    rule.  Returns the bound or None."""
+    seed_value = _option_or_default(seed_report["Command"], EDGE_LAYER_QUALITY_RULE_OPTION, 0.0)
+    restorer_value = _option_or_default(restoration_report["Command"],
+                                        EDGE_LAYER_QUALITY_RULE_OPTION, 0.0)
+    if seed_value != restorer_value:
+        raise ValueError(f"Seed command {EDGE_LAYER_QUALITY_RULE_OPTION} differs from the "
+                         "label-restoration command")
+    seed_rule = quality.get("EdgeLayerQualityRule")
+    restorer_rule = restoration.get("EdgeLayerQuality")
+    if seed_value == 0.0:
+        if seed_rule is not None or restorer_rule is not None:
+            raise ValueError("Edge layer quality rule recorded without the bound option")
+        return None
+    if layer is None:
+        raise ValueError("Edge layer quality rule without a recipe edge layer")
+    if not math.isfinite(seed_value) or seed_value <= 1.0:
+        raise ValueError("Edge layer maximum edge aspect must be a finite bound above 1")
+    if (not isinstance(seed_rule, dict) or
+            _recipe_number(seed_rule, "MaximumEdgeAspect") != seed_value or
+            _recipe_number(seed_rule, "ScaledJacobianRoundoffFloor") != EDGE_LAYER_ORIENTATION_FLOOR or
+            _count(seed_rule.get("LayerCells"), "Seed layer cells") <= 0 or
+            _count(seed_rule.get("CellsAboveBoundAfter"), "Layer cells above the bound") != 0 or
+            _count(seed_rule.get("CellsBelowRoundoffFloorAfter"), "Flat layer cells") != 0 or
+            _recipe_number(seed_rule, "MaximumEdgeAspectAfter") > seed_value):
+        raise ValueError("Seed census does not record a gated edge-layer quality rule")
+    if (not isinstance(restorer_rule, dict) or restorer_rule.get("Passes") is not True or
+            _recipe_number(restorer_rule, "MaximumEdgeAspectBound") != seed_value or
+            _recipe_number(restorer_rule, "ScaledJacobianRoundoffFloor") != EDGE_LAYER_ORIENTATION_FLOOR or
+            _recipe_number(restorer_rule, "MaximumEdgeAspect") > seed_value or
+            restorer_rule.get("PositiveOrientation") is not True or
+            _count(restorer_rule.get("Cells"), "Restored layer cells") <= 0 or
+            restorer_rule.get("Rule") != EDGE_LAYER_QUALITY_RULE):
+        raise ValueError("Label restoration does not record a passing edge-layer quality rule")
+    return seed_value
 
 
 TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"

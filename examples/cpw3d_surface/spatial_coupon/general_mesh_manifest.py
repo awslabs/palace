@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 
 from audit_edge_metric_mesh import analyze
+from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
 from mesh_array_io import read_mesh
 from canonical_mesh_build import same_canonical_build, validate_build_record
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, PLACEMENT_STAGE_ORDER, STAGE_ORDER,
@@ -104,6 +105,43 @@ PRODUCER_DEFAULT_ETCH_FOOTPRINT = "producer-default"
 TRACE_BASIS_ROLES = ("BasisContract", "TraceVertices", "TraceTriangles", "ProcessLibrary")
 
 
+# The seeded edge layer of a calibration case is declared under its Calibration
+# block (Calibration.EdgeLayer); the layer-local quality rule (decision 32) is the
+# manifest gate Gates.EdgeLayerQualityRule, allowed only in a calibration manifest
+# that labels it as a gate deviation.
+EDGE_LAYER_CASE_KEY = "EdgeLayer"
+EDGE_LAYER_QUALITY_RULE_GATE = "EdgeLayerQualityRule"
+EDGE_LAYER_QUALITY_RULE_OPTION = "--edge-layer-maximum-aspect"
+
+
+def validate_edge_layer_quality_rule_gate(manifest):
+    """Gates.EdgeLayerQualityRule (if present) is a labeled calibration-only rule:
+    a finite MaximumEdgeAspect > 1, a ScaledJacobianRoundoffFloor in (0,
+    MinimumScaledJacobian), and the manifest's Calibration.GateDeviations names it
+    with ProductionUse FORBIDDEN.  A manifest without a Calibration block cannot
+    carry it.  Returns the rule or None."""
+    gates = manifest.get("Gates", {})
+    rule = gates.get(EDGE_LAYER_QUALITY_RULE_GATE)
+    if rule is None:
+        return None
+    calibration = manifest.get("Calibration")
+    if not isinstance(calibration, dict):
+        raise ValueError("A production manifest cannot carry an edge-layer quality rule")
+    deviation = calibration.get("GateDeviations", {}).get(EDGE_LAYER_QUALITY_RULE_GATE)
+    if (not isinstance(rule, dict) or
+            not _finite_number(rule.get("MaximumEdgeAspect"), positive=True) or
+            rule["MaximumEdgeAspect"] <= 1.0 or
+            not _finite_number(rule.get("ScaledJacobianRoundoffFloor"), positive=True) or
+            not rule["ScaledJacobianRoundoffFloor"] < gates.get("MinimumScaledJacobian", 0.0) or
+            not isinstance(deviation, dict) or
+            "FORBIDDEN" not in str(deviation.get("ProductionUse", "")) or
+            deviation.get("Calibration") != rule["MaximumEdgeAspect"] or
+            deviation.get("Production") is not None):
+        raise ValueError("Edge-layer quality rule gate is invalid or not labeled as a "
+                         "calibration-only deviation")
+    return rule
+
+
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     if manifest.get("Version") != 2 or not isinstance(manifest.get("Cases"), list):
         raise ValueError("Unsupported generality-suite manifest")
@@ -120,6 +158,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
                       "MaximumElements")
     if any(not _finite_number(gates.get(name), nonnegative=True) for name in required_gates):
         raise ValueError("Manifest has missing or invalid mesh gates")
+    validate_edge_layer_quality_rule_gate(manifest)
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     tools = manifest.get("Tools")
     if not isinstance(tools, list) or not tools:
@@ -145,7 +184,16 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         raise ValueError("Manifest must freeze every stage tool digest")
     matrix = set()
     comparison_kinds = set()
+    calibration_manifest = "Calibration" in manifest
     for case in manifest["Cases"]:
+        # A seeded edge layer and its calibration-only gate rule exist only in a
+        # labeled calibration manifest: a production case never declares either.
+        if not calibration_manifest and any(
+                key in case for key in ("Calibration", EDGE_LAYER_CASE_KEY)):
+            raise ValueError(f"{case['Id']} declares a calibration or edge-layer block in a "
+                             f"production manifest")
+        if EDGE_LAYER_CASE_KEY in case:
+            raise ValueError(f"{case['Id']} must declare its edge layer under Calibration")
         source = case.get("Source", {})
         files = source.get("Files")
         if not isinstance(files, dict) or any(role not in files for role in REQUIRED_ROLES):
@@ -605,12 +653,31 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         failures.append("trace-diagonal-overrefinement")
 
     quality = evidence.get("MeshQuality", {})
-    if (not isinstance(quality.get("Samples"), int) or quality.get("Samples", 0) <= 0 or
-            quality.get("PositiveOrientation") is not True or
-            not _finite_number(quality.get("MinimumScaledJacobian"), nonnegative=True) or
-            quality.get("MinimumScaledJacobian", -1) < gates["MinimumScaledJacobian"] or
-            not _finite_number(quality.get("MaximumJacobianCondition"), positive=True) or
-            quality.get("MaximumJacobianCondition", math.inf) > gates["MaximumJacobianCondition"]):
+    judged = quality
+    rule = gates.get(EDGE_LAYER_QUALITY_RULE_GATE)
+    layer = quality.get("EdgeLayer") if isinstance(quality, dict) else None
+    if rule is not None and isinstance(layer, dict) and layer.get("Cells", 0) > 0:
+        # Decision 32 (calibration only): the recorded layer's cells are judged by
+        # orientation above the roundoff floor and the edge-aspect bound; every
+        # other quality gate judges the cells outside the layer.  Without the rule
+        # the whole mesh (layer included) is judged as before.
+        judged = quality.get("OutsideEdgeLayer", {})
+        if (not isinstance(judged.get("Samples"), int) or
+                judged["Samples"] + layer["Cells"] != quality.get("Samples") or
+                layer.get("PositiveOrientation") is not True or
+                not _finite_number(layer.get("MinimumScaledJacobian")) or
+                layer["MinimumScaledJacobian"] <= rule["ScaledJacobianRoundoffFloor"] or
+                not _finite_number(layer.get("MaximumEdgeAspect"), positive=True) or
+                layer["MaximumEdgeAspect"] > rule["MaximumEdgeAspect"] or
+                not _finite_number(layer.get("Reach"), positive=True) or
+                layer.get("Rule") != EDGE_LAYER_QUALITY_RULE):
+            failures.append("edge-layer-quality")
+    if (not isinstance(judged.get("Samples"), int) or judged.get("Samples", 0) <= 0 or
+            judged.get("PositiveOrientation") is not True or
+            not _finite_number(judged.get("MinimumScaledJacobian"), nonnegative=True) or
+            judged.get("MinimumScaledJacobian", -1) < gates["MinimumScaledJacobian"] or
+            not _finite_number(judged.get("MaximumJacobianCondition"), positive=True) or
+            judged.get("MaximumJacobianCondition", math.inf) > gates["MaximumJacobianCondition"]):
         failures.append("mesh-quality-jacobian")
     resources = evidence.get("Resources", {})
     resource_names = ("Seconds", "PeakRSSGiB", "Elements")

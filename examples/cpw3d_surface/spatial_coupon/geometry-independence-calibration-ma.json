@@ -4,7 +4,7 @@
   "Scope": "CALIBRATION ONLY (MA/MS metal-edge-layer h-study, supervisor decision 22): mesh-only qualification of labeled calibration variants of the four-edge case; NOT the production geometry-independence suite; nothing here changes a production default, gate or manifest",
   "Calibration": {
     "Purpose": "p_MA -10% / p_MS -1.4% offsets of the canonical four-edge coupon vs the graded_v2 reference are half p-convergence and half an h-limit of the metal edge/sidewall layer (6001: 6,423 tris at 0.113 um vs ~1.0M in the reference; physics-02). These variants refine that layer through EXISTING recipe parameters only.",
-    "Decision": "SUPERVISOR-DECISIONS.md items 22 (V1/V2, 2026-09-16), 27-29 (seeded transverse edge layer, 2026-09-16) and 30 (required tetrahedra, seed-side gates, 2026-09-16)",
+    "Decision": "SUPERVISOR-DECISIONS.md items 22 (V1/V2, 2026-09-16), 27-29 (seeded transverse edge layer, 2026-09-16), 30 (required tetrahedra, seed-side gates, 2026-09-16) and 32 (1 nm x 50 nm layer with the layer-local quality rule, 2026-09-17)",
     "ProductionManifest": "geometry-independence-suite.json",
     "GateDeviations": {
       "MinimumAchievedAspect": {
@@ -13,6 +13,15 @@
         "Kind": "anisotropy-DESIGN gate (checks metric intent, not mesh quality)",
         "Reason": "V1 halves the tangential size to the sidewall interior-row spacing (0.05), so TangentialP50 / max transverse P90 is ~1.0 by construction (production 0.0946 / 0.0500 = 1.89); every physical gate (MinimumScaledJacobian, MaximumCornerAspect, MaximumProtectedMeasureError, ownership closure, trace-diagonal, MaximumElements, MaximumSeconds, MaximumRSSGiB) keeps its production value",
         "ProductionUse": "FORBIDDEN: this gate value can never be used by the production suite; test_general_mesh_manifest asserts the production manifest keeps 1.5"
+      },
+      "EdgeLayerQualityRule": {
+        "Production": null,
+        "Calibration": 100.0,
+        "Kind": "layer-local QUALITY gate rule (supervisor decision 32): inside the recorded edge layer (edge_volume_metric.EDGE_LAYER_CELL_RULE: a tetrahedron with a vertex within EdgeLayer.RequiredReach of a span) a cell is gated by positive orientation above the recorded roundoff floor and by longest edge / shortest height <= MaximumEdgeAspect instead of MinimumScaledJacobian; MinimumScaledJacobian, MaximumJacobianCondition and every other gate keep their production values on every cell outside the layer",
+        "Reason": "a layer tetrahedron of EdgeSize x lc_tangent has a scaled Jacobian of (EdgeSize / lc_tangent)^2 by construction (1 nm x 50 nm: 4e-4, measured 21,626 layer cells below 0.01 on the first 1 nm probe), so MinimumScaledJacobian 0.01 cannot judge the user-directed O(1 nm) transverse layer without nested tangential subdivision; the rule judges what matters for a positive, non-degenerate anisotropic layer cell (orientation and a bounded edge aspect) and reports the layer scaled Jacobian as a diagnostic",
+        "Derivation": "MaximumEdgeAspect = 2 x lc_tangent / EdgeSize = 2 x 0.05 / 0.001 = 100: the longest layer edge is the ridge-grid diagonal sqrt(2) x lc_tangent = 70.7 nm and the shortest height is the first slab EdgeSize = 1 nm (the row zigzag moves nodes outward), so the design aspect is sqrt(2) x 50 = 70.7 and the factor 2 leaves 1.41 for the zigzag (1.05) and the Delaunay split of the slabs; the roundoff floor 1e-12 on the scaled Jacobian marks a cell flat to double precision (the design minimum is 4e-4)",
+        "Applies": "every case of this manifest with a recorded EdgeLayer; the seed (--edge-layer-maximum-aspect on mesh_spatial_coupon.jl) and the label restorer (same option) of a case declaring Calibration.EdgeLayerQualityRule gate the layer with the same bound (verify_canonical_case_entries.validate_edge_layer_quality_rule_binding); the audit producer reports MeshQuality.EdgeLayer / MeshQuality.OutsideEdgeLayer and general_mesh_manifest.audit_manifest_evidence judges them (edge-layer-quality, mesh-quality-jacobian outside)",
+        "ProductionUse": "FORBIDDEN: a production manifest (no Calibration block) cannot carry Gates.EdgeLayerQualityRule and none of its cases may declare a Calibration or EdgeLayer block (general_mesh_manifest.validate_manifest fails preflight closed); test_general_mesh_manifest asserts it"
       }
     },
     "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration",
@@ -33,7 +42,12 @@
     "MaximumElements": 4000000,
     "MaximumCornerAspect": 4.0,
     "MinimumNoncornerAspect": 1.5,
-    "MaximumProtectedMeasureError": 1e-08
+    "MaximumProtectedMeasureError": 1e-08,
+    "EdgeLayerQualityRule": {
+      "MaximumEdgeAspect": 100.0,
+      "ScaledJacobianRoundoffFloor": 1e-12,
+      "Rule": "calibration only (decision 32): cells inside the recorded edge layer pass on positive orientation (scaled Jacobian > ScaledJacobianRoundoffFloor) and longest edge / shortest height <= MaximumEdgeAspect; all other gates apply outside the layer; see Calibration.GateDeviations.EdgeLayerQualityRule"
+    }
   },
   "Tools": [
     {
@@ -44,12 +58,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "fe7fef2557b2898daee6e9cbd1cdab24a5f8d17ae90e1d72147683ffe5cc0130"
+      "SHA256": "770f6b0156bed295d2aca12e5c00d5d523c391da27a3d06a2608b8ec0732e43e"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "5df3217f01c7ff84b86746dedd078e1526d9f09eefc964603ceaa3f22827ceba"
+      "SHA256": "f9aac5a69006275d3eccd56733f1d5b28b05e0b60217d17041e8566c89b5d22b"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -79,7 +93,7 @@
     {
       "Name": "edge_volume_metric.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/edge_volume_metric.py",
-      "SHA256": "c0815cb6b4510c371b638a16d511585314e8b5a4a92baa367a035d5d610a89cb"
+      "SHA256": "749879a74ee72e305c1f778d784489dfdc211b616ae07d8b1775b7d9a3471162"
     },
     {
       "Name": "mesh_array_io.py",
@@ -94,12 +108,12 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "9e46964a93c63e47a6b084b6c4c8640be0a37224f120ddd5c4f0f6360ac5be6c"
+      "SHA256": "913210369623f670551f0899200e34e91052df1248d8899b7af9be3f99fa3586"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "8ac413e3d7e8cc42bd0992664eb6198091694b8ee310fd89bb10291d69bc697a"
+      "SHA256": "00885d1802a04a16f88bd7662961f2f543ac8720636abd7924e9bb9c0c09134a"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -144,7 +158,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "fca17125f0c9060daa6470ae97546ac8c756c5bfad6d294ae2508b6dfa32dd93"
+      "mesher": "6542c2402fe97fa93ce9191b9e3579c01aa075ef7acb053b7e2a729971316e19"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -158,7 +172,7 @@
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "5ecfce70b40d15f4ced65544a1fdc17f9126bb590e89ffd7890eb4e68aa04d1c"
+      "label-restorer": "45e9cc1549f6615ac1724d125e51c0740b1315318a6e2e6c83559e077fa17651"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
@@ -813,6 +827,273 @@
             "Root": "/tmp/edge-layer-work-20260916/seed-b",
             "Built": false
           }
+        }
+      }
+    },
+    {
+      "Id": "four-edge-calib-ma-el1nm-50",
+      "InventoryStatus": "Calibration",
+      "Frozen": true,
+      "Features": [
+        "4-edge",
+        "single-slot",
+        "single-conductor",
+        "calibration-ma",
+        "calibration-ma-edge-layer",
+        "calibration-ma-edge-layer-quality-rule"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "217d15e21136c2e745456835f0aadc626f991e33ee910333b3edfedc43543549"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "81172a499268938d0dcb2d405584f425a3aabbae8ca764469d99e4696bbcde34"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "415150d8a05c317b2d5d319509bda4f30fb07cc0ea5947527814ed0d40db84ac"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "5a8f6332495c504ddab13d3525c323124ec8cf9d38cda481458af23547740d32"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "4fb45b71a58e1be0f395b429ad6c6874a1785e65016514e52f81a86f98d6027e"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "686771fda45a5c1fce819121317cc55de3a3eabc12510350192ea39ff4e522c7"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          },
+          "RetainedEtch": {
+            "Name": "retained-etch.csv",
+            "SHA256": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
+          }
+        }
+      },
+      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; EDGE LAYER 1 nm x 50 nm (supervisor decision 32, user directive): V2 (seed --lc-tangent .05, metric --far-growth 0.5) plus a seeded geometric transverse edge layer on every metal-edge face: EdgeSize 0.001 growing by GrowthRatio 2 per layer up to NormalSize 0.025 (rows at 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm), NO nested tangential subdivision: EdgeLayerAspect = lc_tangent / EdgeSize = 50 keeps the rows on the 50 nm ridge grid (TangentialSubdivision 1, no taper) and caps the metric tangential size at 50 hn on the spans (= the band's 50 nm at the edge); matching metric law (hn = EdgeSize + r up to the reach 0.024, then the V2 band law), adapter hmin = EdgeSize, layer surface frozen; the corner balls and the layer are MMG required tetrahedra (decision 30); layer cells excluded from the far-field budget policy's seed load; the layer-local quality rule Gates.EdgeLayerQualityRule (MaximumEdgeAspect 100 = 2 x lc_tangent / EdgeSize) gates the layer cells by orientation and edge aspect in the seed (--edge-layer-maximum-aspect 100), the label restorer (same option) and the audits; every gate outside the layer at its production value; tests the user's O(1 nm) hypothesis directly: physics-04 on the 4 nm layer moved p_MA -9.0% -> -7.05% with the p4->p5 increment unchanged. RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
+      "Calibration": {
+        "Label": "EDGE LAYER 1 nm x 50 nm (supervisor decision 32, user directive): V2 (seed --lc-tangent .05, metric --far-growth 0.5) plus a seeded geometric transverse edge layer on every metal-edge face: EdgeSize 0.001 growing by GrowthRatio 2 per layer up to NormalSize 0.025 (rows at 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm), NO nested tangential subdivision: EdgeLayerAspect = lc_tangent / EdgeSize = 50 keeps the rows on the 50 nm ridge grid (TangentialSubdivision 1, no taper) and caps the metric tangential size at 50 hn on the spans (= the band's 50 nm at the edge); matching metric law (hn = EdgeSize + r up to the reach 0.024, then the V2 band law), adapter hmin = EdgeSize, layer surface frozen; the corner balls and the layer are MMG required tetrahedra (decision 30); layer cells excluded from the far-field budget policy's seed load; the layer-local quality rule Gates.EdgeLayerQualityRule (MaximumEdgeAspect 100 = 2 x lc_tangent / EdgeSize) gates the layer cells by orientation and edge aspect in the seed (--edge-layer-maximum-aspect 100), the label restorer (same option) and the audits; every gate outside the layer at its production value; tests the user's O(1 nm) hypothesis directly: physics-04 on the 4 nm layer moved p_MA -9.0% -> -7.05% with the p4->p5 increment unchanged",
+        "BaseCase": "four-edge-9d2cb9bbb3fe",
+        "SeedCommandOptions": {
+          "--lc-tangent": 0.05,
+          "--edge-size": 0.001,
+          "--edge-layer-aspect": 50.0,
+          "--edge-layer-maximum-aspect": 100.0
+        },
+        "MetricCommandOptions": {
+          "--far-growth": 0.5,
+          "--edge-size": 0.001,
+          "--edge-layer-aspect": 50.0
+        },
+        "ProductionValues": {
+          "--lc-tangent": 0.1,
+          "--far-growth": 1.0,
+          "--edge-size": 0.0,
+          "--edge-growth-ratio": 2.0,
+          "--edge-layer-aspect": 4.0,
+          "--edge-layer-maximum-aspect": 0.0,
+          "--hmin": 0.025
+        },
+        "UnchangedProductionParameters": {
+          "seed": {
+            "--lc-fine": 0.025,
+            "--lc-far": 0.16,
+            "--corner-isotropy-radius": 0.1,
+            "--trace-basis-size-ratio": 1.0,
+            "--radius": 2,
+            "--metal-thickness": 0.1,
+            "--overetch": 0.05,
+            "--max-elements": 4000000,
+            "--edge-growth-ratio": 2.0,
+            "--maximum-corner-aspect": 4,
+            "--minimum-scaled-jacobian": 0.01,
+            "--maximum-quality-displacement-over-normal": 0.75
+          },
+          "metric": {
+            "--normal": 0.025,
+            "--tangent": 0.1,
+            "--far": 0.16,
+            "--protected-distance": 0.05,
+            "--protect-surface": 0.05,
+            "--maximum-elements": 4000000,
+            "--trace-basis-size-ratio": 1.0,
+            "--edge-growth-ratio": 2.0
+          },
+          "adaptation": {
+            "--hgrad": 1.15,
+            "--hausd": 1e-08
+          },
+          "restoration": {
+            "--max-displacement-over-normal": 0.25,
+            "--minimum-scaled-jacobian": 0.01,
+            "--maximum-corner-aspect": 4,
+            "--maximum-quality-displacement-over-normal": 0.75
+          }
+        },
+        "Decision": "SUPERVISOR-DECISIONS.md item 32 (2026-09-17, user directive): test the O(1 nm) hypothesis directly with EdgeSize 1 nm, growth 2 (rows 1/3/7/15/31 nm), tangential = lc_tangent (50 nm, no nested subdivision), frozen as required tetrahedra (decision 30); calibration-only gate change inside the recorded edge layer: layer cells are gated by positive orientation and a recorded maximum edge aspect instead of MinimumScaledJacobian 0.01, which scales as (hn/ht)^2 ~ 4e-4 here by construction; all gates unchanged outside the layer and in production; the achieved-anisotropy design gate on the band next to the layer is adjudicated by physics (decision 31 outcome)",
+        "AdaptationCommandOptions": {
+          "--hmin": 0.001
+        },
+        "EdgeLayer": {
+          "EdgeSize": 0.001,
+          "GrowthRatio": 2.0,
+          "Aspect": 50.0,
+          "NormalSize": 0.025,
+          "EdgeSizeOverNormalSize": 0.04,
+          "Reach": 0.024,
+          "RowOffsets": [
+            0.001,
+            0.003,
+            0.007,
+            0.015,
+            0.031
+          ],
+          "LayerSizes": [
+            0.001,
+            0.002,
+            0.004,
+            0.008,
+            0.016
+          ],
+          "TangentialSubdivision": 1,
+          "RowTangentialSpacings": [
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05
+          ],
+          "TaperSubdivisions": [],
+          "MetricLaw": "hn(r) = min(FarSize, EdgeSize + (GrowthRatio - 1) min(r, Reach) + min(max(0, r - Reach), ProtectedDistance) + FarGrowth max(0, r - Reach - ProtectedDistance)); ht = min(band ht, Aspect hn) on the layer spans; EdgeSize/GrowthRatio/Aspect are bound between the seed command, the metric command, the seed census and the recipe by mesh_stage_contract.validate_edge_layer; adapter hmin = EdgeSize",
+          "ScaledJacobianArgument": "a tetrahedron whose corner has three tangential edges of length ht and volume hn^2 ht / 6 has scaled Jacobian (hn/ht)^2 = (1/50)^2 = 4e-4 in the first slab; the layer is therefore judged by Gates.EdgeLayerQualityRule (orientation + edge aspect <= 100), not by MinimumScaledJacobian, which keeps gating every cell outside the layer",
+          "FarFieldPolicy": "seed cells whose centroid lies within SurfaceProtectionRadius of a layer span are excluded from the far-field budget policy seed load (they are re-meshed to the recorded layer metric), so the far size stays 0.16 as on V2",
+          "RequiredTetrahedra": "decision 30: seed tetrahedra with centroid within CornerIsotropyRadius of a semantic corner and seed tetrahedra with a vertex within LayerThickness x (1 + RowZigzag) + EdgeSize of a layer span are MMG required tetrahedra (metric stage artifact required-tetrahedra.txt bound as an adaptation input; adapter flag --required-tetrahedra; recipe RequiredTetrahedra record with per-corner/per-span counts); MMG keeps them verbatim (vertex order included), the restorer freezes their vertices, and the seed stage optimizes and gates the same region with the restorer's gate values (bounded coordinate descent: surface vertices in their planes, 0.75 x the local prescribed size)",
+          "CornerTaperOffset": "no taper (TangentialSubdivision 1): rows start at the ridge grid outside the corner size law (CornerLawReach 0.137 um from a semantic corner); the isotropic corner balls stay at NormalSize",
+          "LayerThickness": 0.031,
+          "RowZigzag": 0.05,
+          "RequiredReach": 0.03355,
+          "FirstOneNanometerProbe": {
+            "EdgeSize": 0.001,
+            "Aspect": "lc_tangent (50 nm rows, no subdivision)",
+            "AdaptedTetrahedra": 3322132,
+            "TransverseP50ByShellNm": [
+              1.05,
+              2.1,
+              4.2,
+              16,
+              32
+            ],
+            "LayerCellsBelow0.01": 21626,
+            "FlatCellsFixedByRowZigzag": 8,
+            "Root": "/tmp/edge-layer-work-20260916/seed-a (before required tetrahedra and the layer rule)",
+            "Built": false
+          }
+        },
+        "RestorationCommandOptions": {
+          "--edge-layer-maximum-aspect": 100.0
+        },
+        "EdgeLayerQualityRule": {
+          "MaximumEdgeAspect": 100.0,
+          "ScaledJacobianRoundoffFloor": 1e-12,
+          "Derivation": "2 x lc_tangent / EdgeSize = 2 x 0.05 / 0.001 (see Calibration.GateDeviations.EdgeLayerQualityRule)",
+          "Commands": "seed --edge-layer-maximum-aspect 100; label restoration --edge-layer-maximum-aspect 100; bound equal by mesh_stage_contract.validate_edge_layer_quality_rule and to the manifest gate by verify_canonical_case_entries"
         }
       }
     }

@@ -341,6 +341,39 @@ it is a layer cell), used by the required region, the restorer's frozen surface
 vertices and the audits' layer exclusion alike (the audit previously used the
 centroid within LayerThickness + EdgeSize). `read_medit_binary` rejects Medit
 version 4 (64-bit counts) instead of mis-parsing it.
+Supervisor decision 32 (2026-09-17, user directive): the 1 nm x 50 nm layer
+(EdgeSize 0.001, growth 2, rows 1/3/7/15/31 nm, tangential = lc_tangent 0.05
+with no nested subdivision, EdgeLayerAspect = lc_tangent / EdgeSize = 50) has
+layer cells whose scaled Jacobian is (EdgeSize / lc_tangent)^2 ~ 4e-4 by
+construction, so MinimumScaledJacobian 0.01 cannot judge it. The calibration
+manifest, and only it, carries the layer-local quality rule
+`Gates.EdgeLayerQualityRule` (`edge_volume_metric.EDGE_LAYER_QUALITY_RULE`):
+inside the recorded edge layer (`EDGE_LAYER_CELL_RULE`) a cell passes when its
+scaled Jacobian exceeds the roundoff floor 1e-12 (positive orientation) and its
+longest edge over its shortest height (`tetrahedron_edge_aspect`) is at most
+`MaximumEdgeAspect` = 2 x lc_tangent / EdgeSize = 100 (design aspect: the
+ridge-grid diagonal sqrt(2) x 50 nm over the 1 nm first slab = 70.7; factor 2
+for the row zigzag and the Delaunay slab split); the layer minimum scaled
+Jacobian and its cells per decade are reported as diagnostics; every other gate
+(MinimumScaledJacobian, MaximumJacobianCondition, corners, protected surfaces,
+ownership, diagonal, resources) judges every cell outside the layer at its
+production value. The rule is applied consistently: the seed optimizer
+(`--edge-layer-maximum-aspect`, bounded descent on the edge aspect of layer
+components above 0.95 x the bound, scaled-Jacobian passes on the other
+required cells, fails closed), the label restorer (same option: layer cells are
+never repair targets, gated by `edge_layer_quality`, and every layer cell must
+be an MMG required cell), the audit producer (`MeshQuality.EdgeLayer` /
+`MeshQuality.OutsideEdgeLayer`), `general_mesh_manifest.audit_manifest_evidence`
+(`edge-layer-quality`; `mesh-quality-jacobian` on the outside statistics when
+the manifest carries the rule, on the whole mesh otherwise) and the verifier
+(`validate_edge_layer_quality_rule_binding`: the seed and restorer of a case
+declaring `Calibration.EdgeLayerQualityRule` execute exactly the manifest bound;
+every other case neither). Production is protected structurally:
+`validate_manifest` refuses `Gates.EdgeLayerQualityRule` in a manifest without a
+`Calibration` block and refuses any production case with a `Calibration` or
+`EdgeLayer` block (preflight fails closed); `test_general_mesh_manifest` asserts
+both and the gate negatives (a layer cell with negative orientation or an
+aspect above the bound fails; a non-layer cell below 0.01 still fails).
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

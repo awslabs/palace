@@ -153,3 +153,111 @@ end
     @test record0["LayerRequiredReach"] === nothing
     @test record0["RequiredSetRecomputations"] == 1
 end
+
+# The edge-layer quality rule (decision 32): a 1.1 nm x 2 nm x 250 nm layer sliver
+# on the span whose scaled Jacobian is far below the gate by construction (every
+# vertex within 2 nm of the span, so the bounded repair moves at most ~2 nm; no
+# edge below EdgeSize, so nothing is collapsed).
+function fan_with_layer_slab(height)
+    points, tetrahedra, triangles = corner_fan(0.0125)
+    n = size(points, 2)
+    slab = hcat([1.5, 0.0, 0.0], [1.75, 0.0, 0.0], [1.75, 0.002, 0.0], [1.75, 0.002, height])
+    return hcat(points, slab), vcat(tetrahedra, [(n + 1, n + 2, n + 3, n + 4)]), triangles
+end
+
+function positively_oriented(points, cell)
+    return tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 ? cell :
+           (cell[1], cell[3], cell[2], cell[4])
+end
+
+@testset "edge layer quality rule gates orientation and edge aspect, not the scaled Jacobian" begin
+    spans = [([1.0, 0.0, 0.0], [2.0, 0.0, 0.0])]
+    corners = [(0.0, 0.0, 0.0)]
+    edge_size, thickness, zigzag = 0.001, 0.031, 0.05
+    points, tetrahedra, triangles = fan_with_layer_slab(0.0011)
+    slab = tetrahedra[end]
+    @test tetrahedron_scaled_jacobian([points[:, i] for i in slab]) < 0.01
+    @test tetrahedron_edge_aspect([points[:, i] for i in slab]) > 200.0
+    # Without the rule the slab is a scaled-Jacobian-gated required cell and the
+    # bounded repair (0.75 x ~2 nm) cannot lift it to the gate: fails closed.
+    @test_throws ErrorException optimize_required_region!(
+        copy(points), copy(tetrahedra), triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
+        thickness, zigzag, 4.0, 0.01, 0.75, 1e-9)
+    # With the rule the slab is gated by orientation and edge aspect: the aspect
+    # repair lifts the apex within the bound and the scaled Jacobian is a diagnostic.
+    moved_points = copy(points); moved_cells = copy(tetrahedra)
+    record, moved, removed, remapped = optimize_required_region!(
+        moved_points, moved_cells, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
+        thickness, zigzag, 4.0, 0.01, 0.75, 1e-9; edge_layer_maximum_aspect=200.0)
+    rule = record["EdgeLayerQualityRule"]
+    @test rule["LayerCells"] == 1 && rule["CollapsedVertices"] == 0
+    @test isempty(removed) && isempty(remapped) && moved_cells == tetrahedra
+    @test rule["MaximumEdgeAspect"] == 200.0 && rule["EdgeAspectTarget"] == 190.0
+    @test rule["MaximumEdgeAspectBefore"] > 200.0
+    @test rule["MaximumEdgeAspectAfter"] <= 200.0 && rule["CellsAboveBoundAfter"] == 0
+    @test rule["MinimumScaledJacobian"] < 0.01
+    @test rule["ScaledJacobianRoundoffFloor"] == 1.0e-12
+    @test record["ScaledJacobianGateCells"] == record["RequiredTetrahedra"] - 1
+    @test record["RequiredCellsBelowGateAfter"] == 0
+    @test tetrahedron_edge_aspect([moved_points[:, i] for i in slab]) <= 200.0
+    @test tetrahedron_scaled_jacobian([moved_points[:, i] for i in slab]) > 0.0
+    @test !isempty(moved)
+    # A bound the bounded repair cannot reach fails closed.
+    @test_throws ErrorException optimize_required_region!(
+        copy(points), copy(tetrahedra), triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
+        thickness, zigzag, 4.0, 0.01, 0.75, 1e-9; edge_layer_maximum_aspect=1.5)
+    # The rule needs a seeded layer.
+    points0, tetrahedra0, triangles0 = corner_fan(0.0125)
+    @test_throws ErrorException optimize_required_region!(
+        points0, tetrahedra0, triangles0, corners, 0.1, 0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, zigzag, 4.0, 0.01, 0.75, 1e-9;
+        edge_layer_maximum_aspect=100.0)
+    # Edge aspect: unit right tetrahedron sqrt(6); a 50 x 50 x 1 slab ~ 70.7.
+    @test tetrahedron_edge_aspect([[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]) ≈ sqrt(6)
+    @test tetrahedron_edge_aspect([[0.0, 0, 0], [50.0, 0, 0], [0, 50.0, 0], [0, 0, 1.0]]) ≈ 70.7389567 atol=1e-6
+    @test tetrahedron_edge_aspect([[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0], [1.0, 1.0, 0]]) == Inf
+end
+
+# A seed volume vertex 0.28 nm from a row node (below EdgeSize = the adapter hmin)
+# inside the layer: collapsed onto that node; the cell containing both vanishes,
+# the other incident cell is remapped, and the survivors satisfy the rule.
+@testset "sub-EdgeSize seed vertices inside the layer are collapsed onto their neighbour" begin
+    spans = [([1.0, 0.0, 0.0], [2.0, 0.0, 0.0])]
+    corners = [(0.0, 0.0, 0.0)]
+    edge_size, thickness, zigzag = 0.001, 0.031, 0.05
+    points, tetrahedra, triangles = corner_fan(0.0125)
+    n = size(points, 2)
+    extra = hcat([1.5, 0.0, 0.0], [1.55, 0.0, 0.0], [1.55, 0.002, 0.0], [1.5, 0.0002, 0.0002],
+                 [1.55, 0.002, 0.003])
+    points = hcat(points, extra)
+    w, p2, p3, v, q = n + 1, n + 2, n + 3, n + 4, n + 5
+    flat = positively_oriented(points, (w, p2, p3, v))
+    other = positively_oriented(points, (v, p2, p3, q))
+    tetrahedra = vcat(tetrahedra, [flat, other])
+    # The slab base is a face (row nodes are surface vertices, never collapsed).
+    triangles = vcat(triangles, [(w, p2, p3)])
+    cells_before = length(tetrahedra)
+    @test tetrahedron_edge_aspect([points[:, i] for i in flat]) > 200.0
+    record, moved, removed, remapped = optimize_required_region!(
+        points, tetrahedra, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
+        thickness, zigzag, 4.0, 0.01, 0.75, 1e-9; edge_layer_maximum_aspect=200.0)
+    rule = record["EdgeLayerQualityRule"]
+    @test rule["CollapsedVertices"] == 1 && rule["CollapsedCells"] == 1 && rule["RemappedCells"] == 1
+    @test rule["ShortestCollapsedEdge"] ≈ norm(extra[:, 4] .- extra[:, 1])
+    @test removed == [cells_before - 1]           # the flat cell (first appended) vanished
+    @test length(tetrahedra) == cells_before - 1
+    @test !(v in Iterators.flatten(tetrahedra))   # the collapsed vertex is orphaned
+    @test rule["LayerCells"] == 1 && rule["CellsAboveBoundAfter"] == 0
+    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    # The remapped cell is the other cell with v replaced by w.
+    @test tetrahedra[end] == ntuple(i -> other[i] == v ? w : other[i], 4)
+    # Without the rule nothing is collapsed (the scaled-Jacobian repair moves the
+    # free vertex instead) and no rule record is written.
+    points2, tetrahedra2, _ = corner_fan(0.0125)
+    points2 = hcat(points2, extra); tetrahedra2 = vcat(tetrahedra2, [flat, other])
+    record2, _, removed2, remapped2 = optimize_required_region!(
+        points2, tetrahedra2, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
+        thickness, zigzag, 4.0, 0.01, 0.75, 1e-9)
+    @test record2["EdgeLayerQualityRule"] === nothing
+    @test isempty(removed2) && isempty(remapped2) && length(tetrahedra2) == cells_before
+end

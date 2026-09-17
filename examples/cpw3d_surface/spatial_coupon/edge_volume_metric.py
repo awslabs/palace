@@ -167,6 +167,74 @@ def edge_layer_required_reach(layer):
     return reach
 
 
+# Layer-local quality rule (supervisor decision 32; calibration manifests only): a
+# layer cell of EdgeSize x lc_tangent has a scaled Jacobian of (hn/ht)^2 by
+# construction, so inside the recorded layer the quality gate is positive
+# orientation above a roundoff floor and a bound on the longest edge over the
+# shortest height; MinimumScaledJacobian and every other gate apply outside.
+EDGE_LAYER_QUALITY_RULE=('inside the recorded edge layer (EDGE_LAYER_CELL_RULE) a tetrahedron passes '
+                         'when its orientation is positive above the roundoff floor (scaled '
+                         'Jacobian > ScaledJacobianRoundoffFloor) and its longest edge over its '
+                         'shortest height (altitude) is at most MaximumEdgeAspect; the scaled '
+                         'Jacobian of a layer cell scales as (EdgeSize / tangential size)^2 by '
+                         'construction and is reported as a diagnostic; MinimumScaledJacobian, '
+                         'MaximumJacobianCondition and every other gate apply to every cell outside '
+                         'the layer; bound in a calibration manifest (Gates.EdgeLayerQualityRule) and '
+                         'never in production')
+# A cell whose scaled Jacobian is below this is flat to double-precision roundoff
+# (the layer's smallest design value is (EdgeSize / tangential size)^2 ~ 1e-4).
+EDGE_LAYER_ORIENTATION_FLOOR=1e-12
+
+
+def tetrahedron_edge_aspect(points,tetrahedra):
+    """Longest edge over shortest height (altitude) of every tetrahedron, with the
+    signed determinant (6 x volume) and the scaled Jacobian (vertex-0 corner)."""
+    xyz=np.asarray(points,dtype=float)[np.asarray(tetrahedra,dtype=int)]
+    jacobian=np.stack((xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0],xyz[:,3]-xyz[:,0]),axis=2)
+    determinant=np.linalg.det(jacobian)
+    scaled=determinant/np.prod(np.linalg.norm(jacobian,axis=1),axis=1)
+    pairs=((0,1),(0,2),(0,3),(1,2),(1,3),(2,3))
+    longest=np.max(np.stack([np.linalg.norm(xyz[:,i]-xyz[:,j],axis=1) for i,j in pairs],axis=1),axis=1)
+    faces=((1,2,3),(0,2,3),(0,1,3),(0,1,2))
+    area=np.max(np.stack([.5*np.linalg.norm(np.cross(xyz[:,b]-xyz[:,a],xyz[:,c]-xyz[:,a]),axis=1)
+                          for a,b,c in faces],axis=1),axis=1)
+    # height_i = 3 V / area_i = |det| / (2 area_i); the shortest uses the largest face.
+    with np.errstate(divide='ignore',invalid='ignore'):
+        aspect=np.where(np.abs(determinant)>0,longest*2.*area/np.abs(determinant),np.inf)
+    return aspect,determinant,scaled
+
+
+def edge_layer_quality(points,tetrahedra,in_layer,maximum_edge_aspect,
+                       floor=EDGE_LAYER_ORIENTATION_FLOOR):
+    """Statistics of EDGE_LAYER_QUALITY_RULE on the masked layer cells: orientation
+    above the floor, longest-edge/shortest-height aspect against the bound, the
+    scaled-Jacobian diagnostic (minimum and cells per decade).  Passes is True
+    when every layer cell satisfies the rule."""
+    in_layer=np.asarray(in_layer,dtype=bool)
+    if np.isnan(maximum_edge_aspect) or maximum_edge_aspect<=1:
+        raise ValueError('Edge layer maximum edge aspect must exceed 1')
+    if not 0<floor<1:raise ValueError('Edge layer orientation floor must lie in (0, 1)')
+    cells=np.asarray(tetrahedra,dtype=int)[in_layer]
+    if not len(cells):
+        return {'Cells':0,'MaximumEdgeAspect':None,'MaximumEdgeAspectBound':float(maximum_edge_aspect),
+                'ScaledJacobianRoundoffFloor':float(floor),'PositiveOrientation':True,
+                'MinimumDeterminant':None,'MinimumScaledJacobian':None,'CellsAboveAspectBound':0,
+                'CellsByScaledJacobianDecade':{},'Passes':True,'Rule':EDGE_LAYER_QUALITY_RULE}
+    aspect,determinant,scaled=tetrahedron_edge_aspect(points,cells)
+    decades={}
+    for lower,upper in ((0.,1e-5),(1e-5,1e-4),(1e-4,1e-3),(1e-3,1e-2),(1e-2,1e-1),(1e-1,1.)):
+        decades[f'[{lower:g}, {upper:g})']=int(np.sum((scaled>=lower)&(scaled<upper)))
+    oriented=bool(np.all(scaled>floor))
+    above=int(np.sum(aspect>maximum_edge_aspect))
+    return {'Cells':int(len(cells)),'MaximumEdgeAspect':float(aspect.max()),
+            'MaximumEdgeAspectBound':float(maximum_edge_aspect),
+            'EdgeAspectQuantiles':np.quantile(aspect,(0.,.5,.9,.99,1.)).tolist(),
+            'ScaledJacobianRoundoffFloor':float(floor),'PositiveOrientation':oriented,
+            'MinimumDeterminant':float(determinant.min()),'MinimumScaledJacobian':float(scaled.min()),
+            'CellsAboveAspectBound':above,'CellsByScaledJacobianDecade':decades,
+            'Passes':bool(oriented and above==0),'Rule':EDGE_LAYER_QUALITY_RULE}
+
+
 def edge_layer_cells(points,tetrahedra,spans,reach):
     """Boolean mask of EDGE_LAYER_CELL_RULE: tetrahedra with a vertex within reach
     of a span (empty spans: no layer cells)."""

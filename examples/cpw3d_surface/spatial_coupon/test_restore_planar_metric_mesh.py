@@ -637,6 +637,98 @@ class LocalSizeBoundTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+class EdgeLayerQualityRuleTest(unittest.TestCase):
+    """Decision 32: layer cells (fixed required cells) are gated by orientation and
+    edge aspect, never repaired; the scaled-Jacobian gate judges the other cells."""
+
+    @staticmethod
+    def two_cells(layer_height, other_height):
+        # Cell 0: a 1 nm x 50 nm layer sliver on the frozen support plane y = 0
+        # (scaled Jacobian ~ (hn/ht)^2); cell 1: an ordinary cell sharing no vertex;
+        # cell 2: a well-shaped cell at the semantic corner (5, 0, 0), away from both.
+        points = np.array([[0., 0., 0.], [.05, 0., 0.], [.05, 0., .05], [.05, layer_height, .05],
+                           [1., 0., 0.], [1.05, 0., 0.], [1., 0., .05], [1.01, other_height, .01],
+                           [5., 0., 0.], [5.05, 0., 0.], [5., 0., .05], [5.01, .02, .01]])
+        tetrahedra = np.array([[0, 2, 1, 3], [4, 6, 5, 7], [8, 10, 9, 11]])
+        supports = {100: {"Normal": [0., 1., 0.], "Offset": 0., "Attribute": 6001}}
+        node_supports = {i: {100} for i in (0, 1, 2, 4, 5, 6, 8, 9, 10)}
+        recipe = {"SemanticContract": {"CutSurfaceRoles": [],
+                                       "BoundaryLabels": [{"Role": "physical-sidewall", "Attribute": 6001}]},
+                  "TruePhysicalCorners": [[5., 0., 0.]], "CornerIsotropyRadius": .1}
+        return points, tetrahedra, supports, node_supports, recipe
+
+    def repair(self, layer_height, other_height, bound=100., layer=(True, False, False),
+               freeze_other=False):
+        points, tetrahedra, supports, node_supports, recipe = self.two_cells(layer_height, other_height)
+        scaled, aspect, _ = _tetra_quality(points, tetrahedra)
+        frozen = frozenset(range(4)) | (frozenset({4, 5, 6, 7}) if freeze_other else frozenset())
+        report = _quality_repair(points, tetrahedra, node_supports, supports, recipe, .01, 40.,
+                                 np.full(len(points), .01875), frozen_nodes=frozen,
+                                 layer_cells=np.array(layer), layer_maximum_aspect=bound)
+        return scaled, report
+
+    def test_layer_cells_pass_on_orientation_and_aspect_while_the_rest_keeps_the_gate(self):
+        scaled, report = self.repair(.001, .02)
+        self.assertLess(scaled[0], .01)                       # the sliver would fail the gate
+        layer = report["EdgeLayerQuality"]
+        self.assertTrue(layer["Passes"]); self.assertEqual(layer["Cells"], 1)
+        self.assertAlmostEqual(layer["MaximumEdgeAspect"], 70.74, places=1)
+        self.assertLess(layer["MinimumScaledJacobian"], .01)  # diagnostic only
+        self.assertEqual(report["ScaledJacobianGateCells"], 2)
+        self.assertGreaterEqual(report["MinimumScaledJacobianAfter"], .01)
+        self.assertEqual(report["QualityRepairComponents"], 0)
+        # Negatives: aspect above the bound (0.5 nm sliver: ~141); a layer cell flat to
+        # roundoff / inverted; a non-layer cell below the gate still fails.
+        with self.assertRaisesRegex(ValueError, "fail the layer quality rule"):
+            self.repair(.0005, .02)
+        self.assertTrue(self.repair(.0005, .02, bound=150.)[1]["EdgeLayerQuality"]["Passes"])
+        with self.assertRaisesRegex(ValueError, "fail the layer quality rule|inverted"):
+            self.repair(1e-15, .02)
+        with self.assertRaisesRegex(ValueError, "inverted"):
+            self.repair(-.001, .02)
+        # A non-layer cell below the gate is repaired when it can move ...
+        self.assertGreaterEqual(self.repair(.001, .0001)[1]["MinimumScaledJacobianAfter"], .01)
+        # ... and fails the gate when it cannot (frozen cell): the rule never exempts it.
+        with self.assertRaisesRegex(ValueError, "minimum scaled Jacobian"):
+            self.repair(.001, .0001, freeze_other=True)
+        # The same sliver without the rule fails the whole-mesh gate (its vertices are frozen).
+        points, tetrahedra, supports, node_supports, recipe = self.two_cells(.001, .02)
+        with self.assertRaisesRegex(ValueError, "minimum scaled Jacobian"):
+            _quality_repair(points, tetrahedra, node_supports, supports, recipe, .01, 40.,
+                            np.full(len(points), .01875), frozen_nodes=frozenset(range(4)))
+        with self.assertRaisesRegex(ValueError, "together"):
+            _quality_repair(points, tetrahedra, node_supports, supports, recipe, .01, 40.,
+                            np.full(len(points), .01875), layer_cells=np.array([True, False, False]))
+
+    def test_restore_refuses_the_rule_without_a_recorded_layer_or_the_quality_controls(self):
+        points, tetrahedra, supports, node_supports, recipe = self.two_cells(.001, .02)
+        triangles = np.array([[0, 1, 2], [4, 6, 5], [8, 10, 9]])
+        recipe = {**recipe, "PlanarSupports": {"100": supports[100]}, "NormalSize": .025,
+                  "FarSize": .1, "PhysicalSegments": [], "PinnedVertices": [],
+                  "SemanticContract": {**recipe["SemanticContract"],
+                                       "VolumeMaterials": [{"Material": "vacuum", "Attribute": 7}]}}
+        mesh = meshio.Mesh(points.copy(), [("triangle", triangles), ("tetra", tetrahedra)],
+                           cell_data={"medit:ref": [np.array([100, 100, 100]), np.full(3, 7)],
+                                      "medit:required": [np.zeros(3, dtype=np.int32),
+                                                         np.array([1, 0, 0], dtype=np.int32)]})
+        with self.assertRaisesRegex(ValueError, "without a recorded edge layer"):
+            restore_in_source_frame(mesh, recipe, (.25, "local"), .01, 40., (.75, "local"), 100.)
+        with self.assertRaisesRegex(ValueError, "requires the post-adaptation quality controls"):
+            restore_in_source_frame(mesh, recipe, (.25, "local"), edge_layer_maximum_aspect=100.)
+        layered = {**recipe, "EdgeLayer": {"Spans": [[0., 0., 0., .1, 0., 0.]], "EdgeSize": .001,
+                                           "GrowthRatio": 2., "LayerThickness": .031, "RowZigzag": .05},
+                   "RequiredTetrahedra": {"Count": 1}}
+        _, _, report = restore_in_source_frame(mesh, layered, (.25, "local"), .01, 40., (.75, "local"), 100.)
+        self.assertTrue(report["EdgeLayerQuality"]["Passes"])
+        self.assertEqual(report["EdgeLayerQuality"]["Cells"], 1)
+        self.assertEqual(report["ScaledJacobianGateCells"], 2)
+        # A layer cell MMG did not keep as required is refused.
+        mesh.cell_data["medit:required"][1][:] = 0
+        with self.assertRaisesRegex(ValueError, "not required tetrahedra"):
+            restore_in_source_frame(mesh, {**layered, "RequiredTetrahedra": {"Count": 0}},
+                                    (.25, "local"), .01, 40., (.75, "local"), 100.)
+
+
 class RequiredTetrahedraTest(unittest.TestCase):
     """MMG's kept-verbatim seed cells are read from the native output and frozen."""
 

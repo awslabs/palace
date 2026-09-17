@@ -14,7 +14,8 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 
-from edge_volume_metric import edge_layer_required_reach,recipe_local_normal_size,segment_distances
+from edge_volume_metric import (edge_layer_cells,edge_layer_quality,edge_layer_required_reach,
+                                recipe_local_normal_size,segment_distances)
 from mesh_array_io import read_mesh
 from transform_coupon_source_contract import validate_rigid_transform
 
@@ -260,7 +261,7 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
 
 def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scaled,
                     maximum_corner_aspect,maximum_displacement,pinned_nodes=frozenset(),
-                    frozen_nodes=frozenset()):
+                    frozen_nodes=frozenset(),layer_cells=None,layer_maximum_aspect=None):
     """Constrained post-adaptation repair on frozen planar CAD supports.
 
     Interior vertices may move freely within a bounded ball (maximum_displacement
@@ -268,6 +269,11 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     remain on their exact support, ridge vertices remain on support
     intersections, and matching-surface, pinned and frozen edge-layer vertices are
     fixed.
+    With `layer_cells` (mask) and `layer_maximum_aspect` the edge-layer quality
+    rule (edge_volume_metric.EDGE_LAYER_QUALITY_RULE) gates the layer cells by
+    orientation above the roundoff floor and the longest-edge/shortest-height
+    aspect; they are never repair targets (their vertices are fixed) and the
+    scaled-Jacobian gate judges the cells outside the layer.
     Semantic-corner neighborhoods are selected only from the frozen contract and
     repaired in alternating one-ring/two-ring passes over the vertices inside the
     corner ball; the best chained candidate is committed as one transaction only
@@ -283,6 +289,15 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             maximum_displacement.shape==(len(points),) and
             np.all(np.isfinite(maximum_displacement)) and np.all(maximum_displacement>0)):
         raise ValueError('Invalid post-adaptation quality controls')
+    if (layer_cells is None)!=(layer_maximum_aspect is None):
+        raise ValueError('Edge layer quality rule needs the layer cells and the aspect bound together')
+    outside=np.ones(len(tetrahedra),dtype=bool)
+    if layer_cells is not None:
+        layer_cells=np.asarray(layer_cells,dtype=bool)
+        if layer_cells.shape!=(len(tetrahedra),):raise ValueError('Edge layer cell mask does not match the mesh')
+        if not (np.isfinite(layer_maximum_aspect) and layer_maximum_aspect>1):
+            raise ValueError('Edge layer maximum edge aspect must exceed 1')
+        outside=~layer_cells
     corner_radius=recipe.get('CornerIsotropyRadius')
     if not isinstance(corner_radius,(int,float)) or not np.isfinite(corner_radius) or corner_radius<=0:
         raise ValueError('Restoration recipe lacks a valid corner isotropy radius')
@@ -425,7 +440,7 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
                        'target-missed-gate-satisfied')})
 
     scaled,_,_= _tetra_quality(points,tetrahedra)
-    bad=set(map(int,np.flatnonzero(scaled<quality_target)))
+    bad=set(map(int,np.flatnonzero((scaled<quality_target)&outside)))
     components=[]
     while bad:
         first=bad.pop();component={first};vertices=set(map(int,tetrahedra[first]))
@@ -453,8 +468,16 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
     frozen=np.fromiter(frozen_nodes,dtype=int,count=len(frozen_nodes))
     if frozen.size and np.any(points[frozen]!=original[frozen]):
         raise ValueError('Quality repair moved a frozen edge-layer vertex')
-    if np.any(final_determinant<=0) or final_scaled.min()<minimum_scaled:
-        raise ValueError(f'Post-adaptation minimum scaled Jacobian is {final_scaled.min()}')
+    if np.any(final_determinant<=0) or final_scaled[outside].min()<minimum_scaled:
+        raise ValueError(f'Post-adaptation minimum scaled Jacobian is {final_scaled[outside].min()}')
+    layer_quality=None
+    if layer_cells is not None:
+        layer_quality=edge_layer_quality(points,tetrahedra,layer_cells,layer_maximum_aspect)
+        if not layer_quality['Passes']:
+            raise ValueError('Edge layer cells fail the layer quality rule: orientation '
+                             f'{layer_quality["PositiveOrientation"]}, maximum edge aspect '
+                             f'{layer_quality["MaximumEdgeAspect"]} > {layer_maximum_aspect} on '
+                             f'{layer_quality["CellsAboveAspectBound"]} cells')
     # Plane/intersection constraints are algebraic, but recheck explicitly before
     # publication so optimizer roundoff cannot silently move protected geometry.
     support_error=0.
@@ -480,16 +503,22 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
             'QualityDisplacementBoundUm':(float(maximum_displacement[0]) if np.all(
                 maximum_displacement==maximum_displacement[0]) else _bound_statistics(maximum_displacement)),
             'FrozenVertices':len(frozen_nodes),
-            'MinimumScaledJacobianBefore':float(_tetra_quality(original,tetrahedra)[0].min()),
-            'MinimumScaledJacobianAfter':float(final_scaled.min()),
+            'MinimumScaledJacobianBefore':float(_tetra_quality(original,tetrahedra)[0][outside].min()),
+            'MinimumScaledJacobianAfter':float(final_scaled[outside].min()),
+            'ScaledJacobianGateCells':int(outside.sum()),
+            'EdgeLayerQuality':layer_quality,
             'CornerAspectsBefore':corner_before,'CornerAspectsAfter':corner_after,
             'MaximumSupportConstraintError':support_error}
 
 
 def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
-            maximum_corner_aspect=None,maximum_quality_displacement=None):
+            maximum_corner_aspect=None,maximum_quality_displacement=None,
+            edge_layer_maximum_aspect=None):
     """maximum_displacement / maximum_quality_displacement are absolute bounds in um
-    or (ratio, 'local') pairs: ratio x the local prescribed size at every vertex."""
+    or (ratio, 'local') pairs: ratio x the local prescribed size at every vertex.
+    edge_layer_maximum_aspect turns on the edge-layer quality rule for the recipe's
+    recorded layer (required with the other quality controls; refused without a
+    recorded layer)."""
     supports={int(k):v for k,v in recipe['PlanarSupports'].items()}
     refs=mesh.cell_data['medit:ref'];node_supports={};seen=set()
     for block,attributes in zip(mesh.cells,refs):
@@ -535,6 +564,9 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
     if any(value is not None for value in controls):
         if any(value is None for value in controls):
             raise ValueError('All post-adaptation quality controls are required together')
+    elif edge_layer_maximum_aspect is not None:
+        raise ValueError('Edge layer quality rule requires the post-adaptation quality controls')
+    if any(value is not None for value in controls):
         # Pins are matched on the native adapted coordinates, which the adapter
         # preserved exactly; projection may still correct them onto their supports.
         pinned_nodes=_pinned_vertices(mesh.points,recipe)
@@ -562,9 +594,28 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
         if -1 in node_supports or -1 in pinned_nodes or -1 in frozen_nodes:
             raise ValueError('Corner collapse removed a supported, pinned or frozen vertex')
         repair_bound=vertex_bounds(maximum_quality_displacement)
+        layer_cells=None
+        if edge_layer_maximum_aspect is not None:
+            layer=recipe.get('EdgeLayer')
+            if not isinstance(layer,dict):
+                raise ValueError('Edge layer quality rule requested without a recorded edge layer')
+            layer_cells=edge_layer_cells(points,tetrahedra,layer['Spans'],edge_layer_required_reach(layer))
+            # The layer cells are exactly the seed's required layer cells: MMG may not
+            # have created a cell with a vertex inside the reach.
+            required_mask=np.zeros(len(tetrahedra),dtype=bool)
+            flags=mesh.cell_data.get('medit:required')
+            if flags is not None:
+                kept=np.concatenate([np.asarray(flag)==1 for block,flag in zip(mesh.cells,flags)
+                                     if block.type=='tetra'])
+                required_mask=np.zeros(len(tetrahedra),dtype=bool);required_mask[np.flatnonzero(kept)]=True
+            if not layer_cells.any():raise ValueError('Recorded edge layer has no cells')
+            if np.any(layer_cells&~required_mask):
+                raise ValueError(f'{int(np.sum(layer_cells&~required_mask))} edge-layer cells are not '
+                                 'required tetrahedra')
         quality=_quality_repair(points,tetrahedra,node_supports,supports,recipe,
                                 minimum_scaled,maximum_corner_aspect,
-                                repair_bound,pinned_nodes=pinned_nodes,frozen_nodes=frozen_nodes)
+                                repair_bound,pinned_nodes=pinned_nodes,frozen_nodes=frozen_nodes,
+                                layer_cells=layer_cells,layer_maximum_aspect=edge_layer_maximum_aspect)
         required=np.fromiter(required_nodes,dtype=int,count=len(required_nodes))
         quality.update({'RequiredTetrahedra':required_cells,'RequiredVertices':len(required_nodes),
                         'FrozenEdgeLayerSurfaceVertices':len(frozen_surface),
@@ -610,7 +661,8 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
 
 
 def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None,
-                            maximum_corner_aspect=None,maximum_quality_displacement=None):
+                            maximum_corner_aspect=None,maximum_quality_displacement=None,
+                            edge_layer_maximum_aspect=None):
     """Restore in the source-local frame and return local and published meshes.
 
     MMG may produce a different valid unstructured topology after a rigid source
@@ -653,7 +705,8 @@ def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None
             local_semantic[name]=((points-translation)@rotation).tolist()
     local_semantic['RigidTransform']=[1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]
     restored,report=restore(local_mesh,local_recipe,maximum_displacement,minimum_scaled,
-                            maximum_corner_aspect,maximum_quality_displacement)
+                            maximum_corner_aspect,maximum_quality_displacement,
+                            edge_layer_maximum_aspect)
     published=copy.deepcopy(restored)
     published.points=np.asarray(restored.points)@rotation.T+translation
     report.update({'RestorationFrame':'SourceLocal',
@@ -669,6 +722,10 @@ def main():
     p.add_argument('--minimum-scaled-jacobian',type=float)
     p.add_argument('--maximum-corner-aspect',type=float)
     p.add_argument('--maximum-quality-displacement-over-normal',type=float)
+    p.add_argument('--edge-layer-maximum-aspect',type=float,
+                   help='edge-layer quality rule (calibration only): inside the recorded edge layer '
+                        'gate positive orientation and longest-edge/shortest-height aspect <= this '
+                        'bound instead of the scaled Jacobian; requires the other quality controls')
     p.add_argument('--source-local-output',type=Path,required=True)
     a=p.parse_args()
     if a.output.exists() or a.source_local_output.exists():raise ValueError('Do not overwrite candidates')
@@ -685,7 +742,7 @@ def main():
                           (a.maximum_quality_displacement_over_normal,'local'))
     mesh=read_mesh(a.input);local_output,output,report=restore_in_source_frame(
         mesh,recipe,maximum,a.minimum_scaled_jacobian,a.maximum_corner_aspect,
-        quality_displacement)
+        quality_displacement,a.edge_layer_maximum_aspect)
     if a.max_displacement_over_normal is not None:
         report['CorrectionBoundOverLocalSize']=a.max_displacement_over_normal
     if a.maximum_quality_displacement_over_normal is not None:

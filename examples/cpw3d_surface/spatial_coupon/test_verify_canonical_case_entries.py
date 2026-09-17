@@ -193,6 +193,8 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
     def _declare_calibration(manifest_path, case_id, seed, metric, production, adaptation=None):
         """Label `case_id` as a calibration case with the given declared option values."""
         manifest = json.loads(manifest_path.read_text())
+        # A case may carry a Calibration block only in a labeled calibration manifest.
+        manifest.setdefault("Calibration", {"Purpose": "fixture calibration manifest"})
         case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
         case["Calibration"] = {"Label": "fixture calibration", "BaseCase": case_id,
                                "SeedCommandOptions": seed, "MetricCommandOptions": metric,
@@ -255,7 +257,9 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
                   "metric-preparation": {"Command": ["python3", "metric.py", "--normal",
                                                      ".025", "--far-growth", "0.5"]},
                   "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin",
-                                                        ".025"]}}
+                                                        ".025"]},
+                  "label-restoration": {"Command": ["python3", "restore.py",
+                                                    "--minimum-scaled-jacobian", ".01"]}}
         case = {"Calibration": {"SeedCommandOptions": {"--lc-tangent": 0.05},
                                 "MetricCommandOptions": {"--far-growth": 0.5},
                                 "ProductionValues": {"--lc-tangent": 0.1, "--far-growth": 1.0}}}
@@ -300,6 +304,48 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ends with option"):
             validate_calibration_commands(case, {
                 **stages, "metric-preparation": {"Command": ["python3", "--far-growth"]}})
+        # The label-restoration command is bound the same way (RestorationCommandOptions).
+        restored = {"Calibration": {"RestorationCommandOptions": {"--edge-layer-maximum-aspect": 100.},
+                                    "SeedCommandOptions": {"--edge-layer-maximum-aspect": 100.},
+                                    "ProductionValues": {"--edge-layer-maximum-aspect": 0.}}}
+        ruled = {**stages,
+                 "seed-generation": {"Command": ["julia", "seed.jl", "--edge-layer-maximum-aspect", "100"]},
+                 "label-restoration": {"Command": ["python3", "restore.py", "--edge-layer-maximum-aspect", "100"]}}
+        validate_calibration_commands(restored, ruled)
+        with self.assertRaisesRegex(ValueError, "label-restoration command does not execute"):
+            validate_calibration_commands(restored, {**ruled, "label-restoration": stages["label-restoration"]})
+
+    def test_edge_layer_quality_rule_binds_seed_and_restorer_to_the_manifest_gate(self):
+        from verify_canonical_case_entries import validate_edge_layer_quality_rule_binding
+        rule = {"MaximumEdgeAspect": 100., "ScaledJacobianRoundoffFloor": 1e-12}
+        calibration = {"Gates": {"EdgeLayerQualityRule": rule}}
+        production = {"Gates": {}}
+        def stages(seed=(), restorer=()):
+            return {"seed-generation": {"Command": ["julia", "seed.jl", *seed]},
+                    "label-restoration": {"Command": ["python3", "restore.py", *restorer]}}
+        option = ("--edge-layer-maximum-aspect", "100")
+        declaring = {"Calibration": {"EdgeLayerQualityRule": {"MaximumEdgeAspect": 100.}}}
+        plain = {"Calibration": {}}
+        # Declaring case: both stages execute the manifest bound exactly once.
+        self.assertEqual(validate_edge_layer_quality_rule_binding(
+            calibration, declaring, stages(option, option)), 100.)
+        # Non-declaring cases (4 nm layer, production cases) execute it in neither stage.
+        self.assertIsNone(validate_edge_layer_quality_rule_binding(calibration, plain, stages()))
+        self.assertIsNone(validate_edge_layer_quality_rule_binding(production, {}, stages()))
+        def rejected(message, manifest, case, bounded):
+            with self.assertRaisesRegex(ValueError, message):
+                validate_edge_layer_quality_rule_binding(manifest, case, bounded)
+        rejected("exactly once", calibration, declaring, stages(option, ()))
+        rejected("exactly once", calibration, declaring, stages((), option))
+        rejected("exactly once", calibration, declaring,
+                 stages(option, ("--edge-layer-maximum-aspect", "90")))
+        rejected("exactly once", calibration, declaring, stages(option + option, option))
+        rejected("exactly once", calibration,
+                 {"Calibration": {"EdgeLayerQualityRule": {"MaximumEdgeAspect": 90.}}},
+                 stages(option, option))
+        rejected("without a declared edge-layer quality rule", calibration, plain, stages(option, option))
+        rejected("without a declared edge-layer quality rule", production, {}, stages(option, option))
+        rejected("manifest gates lack", production, declaring, stages(option, option))
 
 
 if __name__ == "__main__":

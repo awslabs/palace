@@ -29,13 +29,14 @@ from general_mesh_audit_producer import (KINDS, VARIANT_AUDITS_KIND,
 from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, build_record,
                                   build_record_from_stage_reports)
 from general_mesh_manifest import (_physical_comparison_failures,
-                                   _validate_source_transformation, run_manifest, sha256,
-                                   validate_manifest)
+                                   _validate_source_transformation, audit_manifest_evidence,
+                                   run_manifest, sha256, validate_manifest)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, validate_stage_report,
                                  validate_tool_invocation)
 from normalize_general_mesh_evidence import normalize
-from semantic_mesh_contract import (derive_feature_topology, validate_semantic_contract)
+from semantic_mesh_contract import (derive_feature_topology, load_semantic_contract,
+                                    validate_semantic_contract)
 from testdata.build_tiny_native_adapter import build as build_native_fixture, compiler
 
 
@@ -2003,15 +2004,55 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertNotIn("calib-ma", case["Id"])
             self.assertNotEqual(case["InventoryStatus"], "Calibration")
         deviations = calibration["Calibration"]["GateDeviations"]
-        self.assertEqual(set(deviations), {"MinimumAchievedAspect"})
+        self.assertEqual(set(deviations), {"MinimumAchievedAspect", "EdgeLayerQualityRule"})
         self.assertEqual(deviations["MinimumAchievedAspect"]["Production"], 1.5)
         self.assertEqual(deviations["MinimumAchievedAspect"]["Calibration"], 0.9)
         self.assertIn("FORBIDDEN", deviations["MinimumAchievedAspect"]["ProductionUse"])
         self.assertEqual(calibration["Gates"]["MinimumAchievedAspect"], 0.9)
+        # Decision 32: the layer-local quality rule is a calibration-only gate; the
+        # production suite has no such gate and no case with a layer.
+        self.assertNotIn("EdgeLayerQualityRule", production["Gates"])
+        rule = calibration["Gates"]["EdgeLayerQualityRule"]
+        self.assertEqual(rule["MaximumEdgeAspect"], 100.0)   # 2 x lc_tangent / EdgeSize
+        self.assertEqual(rule["ScaledJacobianRoundoffFloor"], 1e-12)
+        self.assertIsNone(deviations["EdgeLayerQualityRule"]["Production"])
+        self.assertEqual(deviations["EdgeLayerQualityRule"]["Calibration"], 100.0)
+        self.assertIn("FORBIDDEN", deviations["EdgeLayerQualityRule"]["ProductionUse"])
+        deviating = {"MinimumAchievedAspect", "EdgeLayerQualityRule"}
         self.assertEqual({key: value for key, value in calibration["Gates"].items()
-                          if key != "MinimumAchievedAspect"},
+                          if key not in deviating},
                          {key: value for key, value in production["Gates"].items()
-                          if key != "MinimumAchievedAspect"})
+                          if key not in deviating})
+        with tempfile.TemporaryDirectory() as temporary:
+            forged = Path(temporary) / "geometry-independence-suite.json"
+            def rejected(mutate, message):
+                manifest = copy.deepcopy(production); mutate(manifest)
+                forged.write_text(json.dumps(manifest))
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_manifest(manifest, forged, check_available_files=False)
+            # A production manifest cannot carry the rule ...
+            rejected(lambda m: m["Gates"].__setitem__("EdgeLayerQualityRule", rule),
+                     "production manifest cannot carry")
+            # ... nor a case with an EdgeLayer or Calibration block (preflight fails).
+            rejected(lambda m: m["Cases"][0].__setitem__("EdgeLayer", {"EdgeSize": .001}),
+                     "calibration or edge-layer block in a production manifest")
+            rejected(lambda m: m["Cases"][0].__setitem__("Calibration",
+                                                         calibration["Cases"][0]["Calibration"]),
+                     "calibration or edge-layer block in a production manifest")
+            # In the calibration manifest the rule must be labeled and consistent.
+            def rejected_calibration(mutate, message):
+                manifest = copy.deepcopy(calibration); mutate(manifest)
+                forged.write_text(json.dumps(manifest))
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_manifest(manifest, forged, check_available_files=False)
+            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"].pop("EdgeLayerQualityRule"),
+                                 "not labeled")
+            rejected_calibration(lambda m: m["Gates"]["EdgeLayerQualityRule"].__setitem__(
+                "MaximumEdgeAspect", 90.), "not labeled")
+            rejected_calibration(lambda m: m["Gates"]["EdgeLayerQualityRule"].__setitem__(
+                "ScaledJacobianRoundoffFloor", .01), "not labeled")
+            rejected_calibration(lambda m: m["Cases"][-1].__setitem__("EdgeLayer", {}),
+                                 "must declare its edge layer under Calibration")
         self.assertEqual(calibration["Tools"], production["Tools"])
         self.assertEqual(calibration["StageToolSHA256"], production["StageToolSHA256"])
         base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
@@ -2198,6 +2239,67 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertEqual(remote["ten-edge-6791f1c84123"]["DiscoveredEdgeCount"], 10)
 
 
+class EdgeLayerQualityGateTest(unittest.TestCase):
+    """Decision 32: under Gates.EdgeLayerQualityRule the recorded layer's cells are
+    judged by orientation and edge aspect, every other cell by the production
+    quality gates; without the rule the whole mesh is judged as before."""
+
+    def setUp(self):
+        manifest = json.loads((HERE / "geometry-independence-calibration-ma.json").read_text())
+        self.gates = manifest["Gates"]
+        self.production_gates = json.loads(
+            (HERE / "geometry-independence-suite.json").read_text())["Gates"]
+        case = manifest["Cases"][0]
+        self.contract = load_semantic_contract(
+            HERE / case["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
+        self.binding = {"CaseId": case["Id"], "Variant": "identity",
+                        "Transform": case["Variants"][0]["Transform"],
+                        "TransformSHA256": "x", "InputSHA256": {"Process": "p", "SemanticContract": "s",
+                                                                "MeshRecipe": "r"},
+                        "ToolSHA256": {}, "StageToolSHA256": {}}
+
+    def quality(self, layer_scaled=4e-4, layer_aspect=70.7, layer_oriented=True,
+                outside_scaled=.02, outside_condition=200.):
+        from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
+        return {"Samples": 1000, "PositiveOrientation": layer_oriented,
+                "MinimumScaledJacobian": min(layer_scaled, outside_scaled),
+                "MaximumJacobianCondition": max(outside_condition, 900.),
+                "OutsideEdgeLayer": {"Samples": 900, "PositiveOrientation": True,
+                                     "MinimumScaledJacobian": outside_scaled,
+                                     "MaximumJacobianCondition": outside_condition},
+                "EdgeLayer": {"Cells": 100, "Reach": .03355, "PositiveOrientation": layer_oriented,
+                              "MinimumScaledJacobian": layer_scaled, "MinimumDeterminant": 1e-12,
+                              "MaximumEdgeAspect": layer_aspect, "Rule": EDGE_LAYER_QUALITY_RULE}}
+
+    def failures(self, quality, gates=None):
+        names = audit_manifest_evidence({"MeshQuality": quality}, gates or self.gates,
+                                        self.contract, self.binding)
+        return {name for name in names if name in ("edge-layer-quality", "mesh-quality-jacobian")}
+
+    def test_layer_rule_judges_layer_cells_and_production_gates_judge_the_rest(self):
+        # A 1 nm x 50 nm layer (scaled Jacobian 4e-4, aspect 70.7) passes under the rule ...
+        self.assertEqual(self.failures(self.quality()), set())
+        # ... and fails the whole-mesh scaled-Jacobian gate under the production gates.
+        self.assertEqual(self.failures(self.quality(), self.production_gates),
+                         {"mesh-quality-jacobian"})
+        # Negatives: a layer cell with negative orientation; a layer cell flat to
+        # roundoff; an aspect above the bound; a non-layer cell below 0.01; a
+        # non-layer condition above the gate; inconsistent sample counts.
+        self.assertEqual(self.failures(self.quality(layer_oriented=False)), {"edge-layer-quality"})
+        self.assertEqual(self.failures(self.quality(layer_scaled=1e-13)), {"edge-layer-quality"})
+        self.assertEqual(self.failures(self.quality(layer_aspect=100.5)), {"edge-layer-quality"})
+        self.assertEqual(self.failures(self.quality(layer_aspect=100.)), set())
+        self.assertEqual(self.failures(self.quality(outside_scaled=.009)), {"mesh-quality-jacobian"})
+        self.assertEqual(self.failures(self.quality(outside_condition=1001.)), {"mesh-quality-jacobian"})
+        inconsistent = self.quality(); inconsistent["OutsideEdgeLayer"]["Samples"] = 899
+        self.assertEqual(self.failures(inconsistent), {"edge-layer-quality"})
+        # A mesh without a recorded layer is judged whole under either gate set.
+        plain = self.quality(); plain["EdgeLayer"] = None; plain["MinimumScaledJacobian"] = .02
+        plain["MaximumJacobianCondition"] = 200.
+        self.assertEqual(self.failures(plain), set())
+        self.assertEqual(self.failures(plain, self.production_gates), set())
+
+
 class SemanticContractTest(unittest.TestCase):
     def test_finite_segments_distinguish_subdivision_from_separated_collinear_features(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -2348,6 +2450,61 @@ class RequiredRegionContractTest(unittest.TestCase):
             rejected("different number of required tetrahedra", restoration_report=stale)
             (root / "stale.projection.json").write_text(json.dumps({"RequiredVertices": 4}))
             rejected("Restored required tetrahedra", restoration_report=stale)
+
+    def test_edge_layer_quality_rule_is_bound_between_seed_and_restorer(self):
+        from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
+        from mesh_stage_contract import validate_required_region
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            seed, restoration, recipe, census, required = self.fixture(root)
+            option = ["--edge-layer-maximum-aspect", "100"]
+            seed_rule = {"MaximumEdgeAspect": 100., "ScaledJacobianRoundoffFloor": 1e-12,
+                         "LayerCells": 3, "CellsAboveBoundAfter": 0, "CellsBelowRoundoffFloorAfter": 0,
+                         "MaximumEdgeAspectAfter": 71.2, "MinimumScaledJacobian": 4e-4}
+            restorer_rule = {"Passes": True, "MaximumEdgeAspectBound": 100.,
+                             "ScaledJacobianRoundoffFloor": 1e-12, "MaximumEdgeAspect": 71.2,
+                             "PositiveOrientation": True, "Cells": 3, "Rule": EDGE_LAYER_QUALITY_RULE}
+            def ruled(seed_option=option, restorer_option=option, seed_record=seed_rule,
+                      restorer_record=restorer_rule, recipe_data=recipe):
+                seed_report = copy.deepcopy(seed); seed_report["Command"] += seed_option
+                restoration_report = copy.deepcopy(restoration)
+                restoration_report["Command"] += restorer_option
+                restored = root / "ruled.msh"
+                restoration_report["Artifacts"]["restored-mesh"]["Path"] = str(restored)
+                report = {"RequiredTetrahedra": 5, "EdgeLayerQuality": restorer_record}
+                restored.with_suffix(".projection.json").write_text(json.dumps(report))
+                census_data = copy.deepcopy(census)
+                census_data["SeedQualityOptimization"]["EdgeLayerQualityRule"] = seed_record
+                return validate_required_region(seed_report, restoration_report, recipe_data,
+                                                census_data, required)
+            self.assertEqual(ruled(), recipe["RequiredTetrahedra"])
+            def rejected(message, **changes):
+                with self.assertRaisesRegex(ValueError, message):
+                    ruled(**changes)
+            rejected("differs from the label-restoration command", restorer_option=[])
+            rejected("differs from the label-restoration command",
+                     restorer_option=["--edge-layer-maximum-aspect", "90"])
+            rejected("recorded without the bound option", seed_option=[], restorer_option=[])
+            rejected("does not record a gated edge-layer", seed_record=None)
+            rejected("does not record a gated edge-layer", seed_record={**seed_rule, "MaximumEdgeAspect": 90.})
+            rejected("does not record a gated edge-layer", seed_record={**seed_rule, "CellsAboveBoundAfter": 1})
+            rejected("does not record a gated edge-layer",
+                     seed_record={**seed_rule, "CellsBelowRoundoffFloorAfter": 1})
+            rejected("does not record a gated edge-layer", seed_record={**seed_rule, "LayerCells": 0})
+            rejected("does not record a passing edge-layer", restorer_record=None)
+            rejected("does not record a passing edge-layer", restorer_record={**restorer_rule, "Passes": False})
+            rejected("does not record a passing edge-layer",
+                     restorer_record={**restorer_rule, "MaximumEdgeAspect": 100.5})
+            rejected("does not record a passing edge-layer",
+                     restorer_record={**restorer_rule, "MaximumEdgeAspectBound": 90.})
+            rejected("finite bound above 1", seed_option=["--edge-layer-maximum-aspect", "1"],
+                     restorer_option=["--edge-layer-maximum-aspect", "1"])
+            without_layer = {k: v for k, v in recipe.items() if k != "EdgeLayer"}
+            without_layer["RequiredTetrahedra"] = {**recipe["RequiredTetrahedra"],
+                                                   "LayerRequiredReach": None, "PerSpan": [],
+                                                   "PerCorner": [{"Point": [0., 0., 0.], "Tetrahedra": 3},
+                                                                 {"Point": [10., 0., 0.], "Tetrahedra": 2}]}
+            rejected("without a recipe edge layer", recipe_data=without_layer)
 
 
 class EdgeLayerContractTest(unittest.TestCase):

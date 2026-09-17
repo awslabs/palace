@@ -23,7 +23,8 @@ import signal
 import sys
 
 from canonical_mesh_build import same_canonical_build
-from general_mesh_manifest import (_check_artifact, _finite_number,
+from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUALITY_RULE_OPTION,
+                                   _check_artifact, _finite_number,
                                    _physical_comparison_failures, _validate_bound_records,
                                    _validate_mesh, audit_manifest_evidence, canonical_sha256,
                                    sha256, validate_manifest)
@@ -32,7 +33,8 @@ from semantic_mesh_contract import load_semantic_contract, validate_feature_topo
 PRODUCTION_FUNCTIONS = ["validate_manifest", "validate_feature_topology",
                         "audit_manifest_evidence", "_check_artifact", "_validate_mesh",
                         "_validate_bound_records", "same_canonical_build",
-                        "_physical_comparison_failures"]
+                        "_physical_comparison_failures", "validate_calibration_commands",
+                        "validate_edge_layer_quality_rule_binding"]
 _EXPECTED_ERRORS = (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError)
 # A calibration case (labeled calibration manifest) declares the recipe options that
 # differ from production per stage command; the canonical cache key does not encode
@@ -40,7 +42,11 @@ _EXPECTED_ERRORS = (KeyError, OSError, TypeError, ValueError, json.JSONDecodeErr
 # A stage whose block is absent declares no calibration option for that stage.
 CALIBRATION_STAGE_OPTIONS = {"seed-generation": "SeedCommandOptions",
                              "metric-preparation": "MetricCommandOptions",
-                             "native-adaptation-mmg": "AdaptationCommandOptions"}
+                             "native-adaptation-mmg": "AdaptationCommandOptions",
+                             "label-restoration": "RestorationCommandOptions"}
+# The edge-layer quality rule (decision 32) is a manifest gate; the seed and the
+# label restorer of a case declaring Calibration.EdgeLayerQualityRule execute its bound.
+EDGE_LAYER_QUALITY_RULE_STAGES = ("seed-generation", "label-restoration")
 
 
 def _option_values(command, option):
@@ -93,6 +99,33 @@ def validate_calibration_commands(case, bounded_stages):
                                  f"{option} away from its production value {value}")
 
 
+def validate_edge_layer_quality_rule_binding(manifest, case, bounded_stages):
+    """Gates.EdgeLayerQualityRule (calibration manifests only) binds the seed and
+    label-restoration commands: a case declaring Calibration.EdgeLayerQualityRule
+    with the same MaximumEdgeAspect executes `--edge-layer-maximum-aspect` at exactly
+    that value in both stages; every other case (and every case of a manifest without
+    the gate) executes the option in neither.  Raises ValueError otherwise."""
+    rule = manifest.get("Gates", {}).get(EDGE_LAYER_QUALITY_RULE_GATE)
+    declared = case.get("Calibration", {}).get(EDGE_LAYER_QUALITY_RULE_GATE)
+    executed = {stage: _option_values(bounded_stages[stage]["Command"],
+                                      EDGE_LAYER_QUALITY_RULE_OPTION)
+                for stage in EDGE_LAYER_QUALITY_RULE_STAGES}
+    if rule is None or declared is None:
+        if declared is not None:
+            raise ValueError("case declares an edge-layer quality rule the manifest gates lack")
+        if any(values for values in executed.values()):
+            raise ValueError(f"stage command executes {EDGE_LAYER_QUALITY_RULE_OPTION} without a "
+                             "declared edge-layer quality rule")
+        return None
+    bound = float(rule["MaximumEdgeAspect"])
+    if (not isinstance(declared, dict) or declared.get("MaximumEdgeAspect") != bound or
+            any(values != [bound] for values in executed.values())):
+        raise ValueError(f"seed and label-restoration commands must execute "
+                         f"{EDGE_LAYER_QUALITY_RULE_OPTION} {bound} exactly once "
+                         f"(executed {executed})")
+    return bound
+
+
 def _immutable_inputs(manifest_path, repository, case):
     """Hash-check every immutable input of the case; returns (hashes, paths)."""
     directory = Path(case["Source"]["Directory"])
@@ -137,6 +170,7 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
     bounded_record = json.loads(_check_artifact(evidence_path.parent, bounded_item,
                                                 "audit record").read_text())
     validate_calibration_commands(case, bounded_record["BoundedStages"])
+    validate_edge_layer_quality_rule_binding(manifest, case, bounded_record["BoundedStages"])
     if shared["variant_digests"] & variant_digests:
         raise ValueError("variant audit/placement records must be content-distinct")
     shared["variant_digests"].update(variant_digests)

@@ -57,6 +57,39 @@ class DirectionalWidthsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             directional_widths(mesh, recipe, layer_spans=[[1., 0., 0., 1.4, 0., 0.]], layer_reach=0.)
 
+    def test_mesh_quality_reports_layer_and_outside_regions(self):
+        # Decision 32: the quality audit reports the recorded layer's cells (orientation,
+        # edge aspect, scaled Jacobian as a diagnostic) and the cells outside it
+        # separately; the whole-mesh statistics are unchanged.
+        from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
+        from general_mesh_audit_producer import _tetra_quality
+        mesh = band_mesh()
+        # Orient every box tetrahedron positively (the fixture's split is unoriented).
+        cells = mesh.cells[0].data
+        xyz = mesh.points[cells]
+        negative = np.linalg.det(np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
+                                           xyz[:, 3] - xyz[:, 0]), axis=2)) < 0
+        cells[negative] = cells[negative][:, [0, 2, 1, 3]]
+        plain = _tetra_quality(mesh)
+        self.assertTrue(plain["PositiveOrientation"])
+        self.assertIsNone(plain["EdgeLayer"]); self.assertNotIn("OutsideEdgeLayer", plain)
+        quality = _tetra_quality(mesh, [[1., 0., 0., 1.4, 0., 0.]], .005)
+        self.assertEqual({k: v for k, v in quality.items() if k not in ("EdgeLayer", "OutsideEdgeLayer")},
+                         {k: v for k, v in plain.items() if k != "EdgeLayer"})
+        layer, outside = quality["EdgeLayer"], quality["OutsideEdgeLayer"]
+        self.assertEqual(layer["Cells"], 240); self.assertEqual(outside["Samples"], 240)
+        self.assertEqual(layer["Cells"] + outside["Samples"], quality["Samples"])
+        self.assertTrue(layer["PositiveOrientation"]); self.assertGreater(layer["MinimumDeterminant"], 0.)
+        # 1 nm x 10 nm x 1 nm boxes split into tets: longest edge sqrt(102) nm over a
+        # height between the box height (1 nm) and its diagonal split (1/sqrt(2) nm).
+        diagonal = np.sqrt(.01**2 + 2 * .001**2)
+        self.assertGreaterEqual(layer["MaximumEdgeAspect"], diagonal / .001 - 1e-9)
+        self.assertLessEqual(layer["MaximumEdgeAspect"], diagonal / (.001 / np.sqrt(2)) + 1e-9)
+        self.assertLess(layer["MinimumScaledJacobian"], .01)          # diagnostic
+        self.assertEqual(sum(layer["CellsByScaledJacobianDecade"].values()), 240)
+        self.assertEqual(layer["Reach"], .005); self.assertEqual(layer["Rule"], EDGE_LAYER_QUALITY_RULE)
+        self.assertGreater(outside["MinimumScaledJacobian"], .1)       # isotropic 25 nm cubes
+
 
 if __name__ == "__main__":
     unittest.main()

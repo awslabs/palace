@@ -19,7 +19,8 @@ from scipy.spatial import ConvexHull, QhullError
 
 from audit_edge_metric_mesh import analyze, blocks, directional_widths, planar_patch_key
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_CELL_RULE,
-                                cluster_coplanar_triangles, edge_layer_required_reach,
+                                cluster_coplanar_triangles, edge_layer_cells,
+                                edge_layer_quality, edge_layer_required_reach,
                                 match_equivalent_planes, plane_deviation)
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
@@ -243,7 +244,13 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             "LongShortEdgeComponents": components}
 
 
-def _tetra_quality(mesh):
+def _tetra_quality(mesh, layer_spans=None, layer_reach=None):
+    """Whole-mesh Jacobian statistics; with recorded edge-layer spans also the
+    per-region statistics: 'OutsideEdgeLayer' (the cells MinimumScaledJacobian and
+    MaximumJacobianCondition judge under a layer quality rule) and 'EdgeLayer'
+    (EDGE_LAYER_QUALITY_RULE statistics: orientation above the roundoff floor,
+    longest-edge/shortest-height aspect, scaled Jacobian as a DIAGNOSTIC).  The
+    aspect bound is the manifest's; the record carries the measured maximum."""
     tetrahedra, _ = blocks(mesh, "tetra")
     xyz = mesh.points[tetrahedra]
     jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
@@ -257,12 +264,27 @@ def _tetra_quality(mesh):
             np.any(singular[:, -1] <= 0)):
         raise ValueError("Invalid tetrahedral Jacobian audit")
     quantiles = (0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0)
-    return {"Samples": len(tetrahedra),
-            "PositiveOrientation": bool(np.all(determinant > 0.0)),
-            "MinimumScaledJacobian": float(scaled.min()),
-            "MaximumJacobianCondition": float(condition.max()),
-            "ScaledJacobianQuantiles": np.quantile(scaled, quantiles).tolist(),
-            "JacobianConditionQuantiles": np.quantile(condition, quantiles).tolist()}
+    def statistics(selected):
+        return {"Samples": int(selected.sum()),
+                "PositiveOrientation": bool(np.all(determinant[selected] > 0.0)),
+                "MinimumScaledJacobian": float(scaled[selected].min()),
+                "MaximumJacobianCondition": float(condition[selected].max()),
+                "ScaledJacobianQuantiles": np.quantile(scaled[selected], quantiles).tolist(),
+                "JacobianConditionQuantiles": np.quantile(condition[selected], quantiles).tolist()}
+    record = statistics(np.ones(len(tetrahedra), dtype=bool))
+    record["EdgeLayer"] = None
+    if layer_spans is not None:
+        in_layer = edge_layer_cells(mesh.points, tetrahedra, layer_spans, layer_reach)
+        if in_layer.any() and not in_layer.all():
+            record["OutsideEdgeLayer"] = statistics(~in_layer)
+        # The measured layer aspect is compared with the manifest bound by the gate
+        # evaluation; the producer records the statistics against a bound of +inf.
+        layer = edge_layer_quality(mesh.points, tetrahedra, in_layer, math.inf)
+        layer.pop("MaximumEdgeAspectBound"); layer.pop("CellsAboveAspectBound"); layer.pop("Passes")
+        layer["Reach"] = float(layer_reach)
+        layer["CellRule"] = EDGE_LAYER_CELL_RULE
+        record["EdgeLayer"] = layer
+    return record
 
 
 def _point_aspects(mesh, points):
@@ -884,7 +906,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                   transformed_junction, transformed_basis),
                   "FootprintSegmentProvenance": footprint_provenance,
                   "TraceBasisEdgeProvenance": basis_provenance},
-              "MeshQuality": _tetra_quality(mesh)}
+              "MeshQuality": _tetra_quality(mesh, layer_spans, layer_reach)}
     base["Measurements"] = actual
     base["Topology"] = report
     base["ReferenceMeshSHA256"] = sha256(reference_mesh_path)
