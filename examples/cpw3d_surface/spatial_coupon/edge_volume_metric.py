@@ -289,6 +289,42 @@ def edge_layer_reach(normal_size,edge_size,growth_ratio):
     return float((normal_size-edge_size)/(growth_ratio-1.))
 
 
+CORNER_GRADING_RULE=('corner grading (supervisor decision 33): inside every semantic corner ball '
+                     '(CornerIsotropyRadius) the isotropic size is min(NormalSize, CornerSize + '
+                     '(GrowthRatio - 1) x distance to the corner) - the edge-layer law with '
+                     'CornerSize for EdgeSize: geometric shells of size CornerSize x GrowthRatio^(k-1) '
+                     'at the cumulative radii CornerSize (GrowthRatio^k - 1) / (GrowthRatio - 1), '
+                     'NormalSize from the Reach = (NormalSize - CornerSize) / (GrowthRatio - 1) to the '
+                     'ball radius; the seed carries the same grading (its cells are MMG required '
+                     'tetrahedra) and the metric prescribes it; without a CornerSize the ball is '
+                     'uniformly NormalSize')
+
+
+def corner_ball_size(distance,normal_size,corner_size=None,growth_ratio=2.):
+    """Isotropic size prescribed at `distance` from a semantic corner inside its
+    ball: NormalSize without corner grading, min(NormalSize, CornerSize +
+    (GrowthRatio - 1) distance) with it (CORNER_GRADING_RULE)."""
+    distance=np.asarray(distance,dtype=float)
+    if corner_size is None:return np.full(distance.shape,float(normal_size))
+    if not np.all(np.isfinite([corner_size,growth_ratio])) or not 0<corner_size<normal_size or growth_ratio<=1:
+        raise ValueError('Invalid corner grading controls')
+    return np.minimum(float(normal_size),corner_size+(growth_ratio-1.)*distance)
+
+
+def corner_grading_record(normal_size,corner_size,growth_ratio,radius):
+    """The recipe's CornerGrading record; the grading must reach NormalSize inside
+    the ball."""
+    reach=edge_layer_reach(normal_size,corner_size,growth_ratio)
+    if not reach<=radius:raise ValueError('Corner grading does not reach NormalSize inside the ball')
+    offsets=[];size=float(corner_size)
+    while size<normal_size:
+        offsets.append(offsets[-1]+size if offsets else size);size*=growth_ratio
+    return {'CornerSize':float(corner_size),'GrowthRatio':float(growth_ratio),'NormalSize':float(normal_size),
+            'Radius':float(radius),'Reach':reach,'ShellRadii':offsets+[float(radius)],
+            'ShellSizes':[float(corner_size*growth_ratio**k) for k in range(len(offsets))]+[float(normal_size)],
+            'Rule':CORNER_GRADING_RULE}
+
+
 def band_sizes(r,dc,edge_size,reach,growth_ratio,normal_size,tangent_size,far_size,
                radial_growth,corner_growth,protected_distance,far_growth,aspect=None):
     """Normal and tangential sizes of one band segment at distances r (to the
@@ -324,7 +360,7 @@ def _band_sources(segments,normal_size,edge_layer_segments,edge_size,growth_rati
 def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
                   radial_growth=1.,corner_growth=.25,protected_distance=0.,far_growth=None,
                   isotropic_corners=None,isotropy_radius=None,edge_layer_segments=None,
-                  edge_size=None,growth_ratio=2.,edge_layer_aspect=None):
+                  edge_size=None,growth_ratio=2.,edge_layer_aspect=None,corner_size=None):
     points=np.asarray(points,dtype=float);segments=np.asarray(segments,dtype=float).reshape(-1,6)
     corners=np.asarray(corners,dtype=float).reshape(-1,3)
     isotropic_corners=(corners if isotropic_corners is None else
@@ -362,26 +398,28 @@ def volume_metric(points,segments,corners,normal_size,tangent_size,far_size,
         metric[active]=intersect_metrics(metric[active],candidate)
     # A semantic junction is isotropic over one tangential target, not only at
     # one metric node.  This gives MMG a physically scaled ball in which all
-    # incident cells see the same SPD target.  CAD subdivisions and coupon-cut
+    # incident cells see the same SPD target (NormalSize, or the corner grading
+    # from CornerSize: CORNER_GRADING_RULE).  CAD subdivisions and coupon-cut
     # endpoints are absent because the caller supplies contract junctions only.
     if isotropy_radius>0 and len(isotropic_corners):
         semantic_distance=np.full(len(points),np.inf)
         for corner in isotropic_corners:
             semantic_distance=np.minimum(semantic_distance,np.linalg.norm(points-corner,axis=1))
         active=semantic_distance<=isotropy_radius
-        isotropic=np.broadcast_to(np.eye(3)/normal_size**2,(int(active.sum()),3,3))
+        size=corner_ball_size(semantic_distance[active],normal_size,corner_size,growth_ratio)
+        isotropic=np.eye(3)[None,:,:]/size[:,None,None]**2
         metric[active]=intersect_metrics(metric[active],isotropic)
     return metric
 
 
 def local_normal_size(points,segments,normal_size,far_size,radial_growth=1.,protected_distance=0.,
                       far_growth=None,isotropic_corners=None,isotropy_radius=0.,
-                      edge_layer_segments=None,edge_size=None,growth_ratio=2.):
+                      edge_layer_segments=None,edge_size=None,growth_ratio=2.,corner_size=None):
     """Smallest prescribed size at every point: the band law's normal size over
-    all band segments and edge-layer spans, NormalSize inside the isotropic
-    corner balls, the far size elsewhere.  It is the local length scale the
-    restoration bounds (CAD correction, repair displacement, sub-hmin collapse)
-    are relative to."""
+    all band segments and edge-layer spans, the corner law (NormalSize, or the
+    corner grading from CornerSize) inside the isotropic corner balls, the far
+    size elsewhere.  It is the local length scale the restoration bounds (CAD
+    correction, repair displacement, sub-hmin collapse) are relative to."""
     points=np.asarray(points,dtype=float).reshape(-1,3)
     if far_growth is None:far_growth=radial_growth
     if edge_size is None:edge_size=normal_size
@@ -396,8 +434,9 @@ def local_normal_size(points,segments,normal_size,far_size,radial_growth=1.,prot
         size=np.minimum(size,hn)
     if isotropy_radius>0 and isotropic_corners is not None and len(isotropic_corners):
         for corner in np.asarray(isotropic_corners,dtype=float).reshape(-1,3):
-            size[np.linalg.norm(points-corner,axis=1)<=isotropy_radius]=np.minimum(
-                size[np.linalg.norm(points-corner,axis=1)<=isotropy_radius],normal_size)
+            distance=np.linalg.norm(points-corner,axis=1);inside=distance<=isotropy_radius
+            size[inside]=np.minimum(size[inside],corner_ball_size(distance[inside],normal_size,
+                                                                  corner_size,growth_ratio))
     if not np.all(np.isfinite(size)) or np.any(size<=0):raise ValueError('Invalid local size')
     return size
 
@@ -414,11 +453,16 @@ def recipe_local_normal_size(points,recipe):
     layer_segments=edge_size=None;growth_ratio=2.
     if isinstance(layer,dict):
         layer_segments=rows(layer['Spans']);edge_size=float(layer['EdgeSize']);growth_ratio=float(layer['GrowthRatio'])
+    grading=recipe.get('CornerGrading');corner_size=None
+    if isinstance(grading,dict):
+        corner_size=float(grading['CornerSize'])
+        if float(grading['GrowthRatio'])!=growth_ratio:
+            raise ValueError('Corner grading ratio differs from the edge-layer growth ratio')
     return local_normal_size(points,segments,float(recipe['NormalSize']),float(recipe['FarSize']),
                              float(recipe.get('RadialGrowth',1.)),float(recipe.get('ProtectedDistance',0.)),
                              float(recipe.get('FarGrowth',recipe.get('RadialGrowth',1.))),
                              recipe.get('TruePhysicalCorners'),float(recipe.get('CornerIsotropyRadius',0.)),
-                             layer_segments,edge_size,growth_ratio)
+                             layer_segments,edge_size,growth_ratio,corner_size)
 
 
 def _continues_straight(v,w):

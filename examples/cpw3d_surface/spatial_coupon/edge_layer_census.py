@@ -6,8 +6,10 @@
 Measures, against the recipe's recorded edge-layer spans, the tetrahedra by
 distance from the spans (count, transverse edge sizes per shell, tangential
 edge size, scaled Jacobian minimum and the cells below 0.01 / 0.02) and the
-surface rows (transverse edge sizes per shell, tangential spacing).  Reported,
-not a gate: the physical gates are applied by the audits.
+surface rows (transverse edge sizes per shell, tangential spacing), and, per
+semantic corner ball, the edges and cells per shell of the recipe's corner law
+(corner_ball_census).  Reported, not a gate: the physical gates are applied by
+the audits.
 """
 import argparse
 import json
@@ -104,13 +106,61 @@ def edge_layer_census(mesh, recipe):
     return report
 
 
+def corner_ball_census(mesh, recipe):
+    """Per semantic corner and per shell of the recipe's corner law (CornerGrading
+    ShellRadii, or the single NormalSize ball): the tetrahedron edges by midpoint
+    distance (count, P50/P90 length against the law's size) and the cells by
+    centroid, with the scaled-Jacobian minimum and the cells by decade.  Reported,
+    not a gate."""
+    corners = np.asarray(recipe["TruePhysicalCorners"], dtype=float).reshape(-1, 3)
+    radius = float(recipe["CornerIsotropyRadius"])
+    normal = float(recipe["NormalSize"])
+    grading = recipe.get("CornerGrading")
+    if isinstance(grading, dict):
+        boundaries = [0.0] + [float(value) for value in grading["ShellRadii"]]
+        sizes = [float(value) for value in grading["ShellSizes"]]
+    else:
+        boundaries, sizes = [0.0, radius], [normal]
+    points = np.asarray(mesh.points, dtype=float)
+    tetrahedra = np.concatenate([c.data for c in mesh.cells if c.type == "tetra"])
+    xyz = points[tetrahedra]
+    centroids = xyz.mean(axis=1)
+    scaled, determinant = _scaled_jacobian(xyz)
+    rows = []
+    for corner in corners:
+        ball = np.flatnonzero(np.linalg.norm(centroids - corner, axis=1) <= radius)
+        edges = np.unique(np.sort(tetrahedra[ball][:, EDGE_PAIRS].reshape(-1, 2), axis=1), axis=0)
+        middle = np.linalg.norm(0.5 * (points[edges[:, 0]] + points[edges[:, 1]]) - corner, axis=1)
+        length = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        cell_distance = np.linalg.norm(centroids[ball] - corner, axis=1)
+        shells = []
+        for inner, outer, size in zip(boundaries[:-1], boundaries[1:], sizes):
+            shell = (middle > inner) & (middle <= outer)
+            cells = (cell_distance > inner) & (cell_distance <= outer)
+            shells.append({"InnerRadiusUm": inner, "OuterRadiusUm": outer, "TargetSizeUm": size,
+                           "Edges": int(shell.sum()), "Cells": int(cells.sum()),
+                           "EdgeP50Um": float(np.median(length[shell])) if shell.any() else None,
+                           "EdgeP90Um": float(np.percentile(length[shell], 90)) if shell.any() else None,
+                           "EdgesOverSqrt2TargetSize": int(np.sum(length[shell] > np.sqrt(2.0) * size)),
+                           "MinimumScaledJacobian": float(scaled[ball][cells].min()) if cells.any() else None})
+        rows.append({"Point": corner.tolist(), "Cells": int(len(ball)),
+                     "MinimumScaledJacobian": float(scaled[ball].min()) if len(ball) else None,
+                     "CellsBelow0.01": int(np.sum(scaled[ball] < 0.01)),
+                     "CellsBelow0.02": int(np.sum(scaled[ball] < 0.02)),
+                     "PositiveOrientation": bool(np.all(determinant[ball] > 0)), "Shells": shells})
+    return {"Radius": radius, "CornerSize": (float(grading["CornerSize"]) if isinstance(grading, dict) else None),
+            "ShellRadii": boundaries[1:], "ShellSizes": sizes, "Corners": rows}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mesh", type=Path)
     parser.add_argument("recipe", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = edge_layer_census(meshio.read(args.mesh), json.loads(args.recipe.read_text()))
+    mesh, recipe = meshio.read(args.mesh), json.loads(args.recipe.read_text())
+    report = edge_layer_census(mesh, recipe)
+    report["CornerBalls"] = corner_ball_census(mesh, recipe)
     report["Mesh"] = str(args.mesh.resolve())
     text = json.dumps(report, indent=2)
     print(text)

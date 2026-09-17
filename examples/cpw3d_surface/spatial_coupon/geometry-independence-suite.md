@@ -414,6 +414,41 @@ rule's "every layer cell is a required cell" check stays aligned when a collapse
 removes cells; the seed's Gmsh connectivity mutation
 (`apply_seed_cell_collapse!`) is pinned by a tiny-box round-trip test (written
 points == used points, written cells == census).
+Supervisor decision 33 (2026-09-17, user directive): physics-05's per-segment MA
+located the residual of control 1 (63% of its MA within 0.5 um of the outer
+corner (0, -2)) and of control 23 (77% within 0.5 um of the termination
+(10, 0)) in the un-layered corner regions - the 25 nm isotropic balls plus the
+0.137-0.187 um taper before the layer rows. Corner grading (`CornerGrading`,
+seed and metric option `--corner-size`, `mesh_stage_contract.validate_corner_grading`):
+inside every frozen corner ball (CornerIsotropyRadius 0.1 around each semantic
+corner) the uniform NormalSize is replaced by a geometric isotropic grading from
+CornerSize at the corner point growing by the edge-layer ratio to NormalSize -
+shells of size CornerSize x GrowthRatio^(k-1) ending at the cumulative radii
+CornerSize (GrowthRatio^k - 1) / (GrowthRatio - 1) (4 nm: sizes 4/8/16 nm to
+4/12/28 nm, NormalSize from the reach 0.021 to the radius), the edge layer's
+rows with CornerSize for EdgeSize. The seed carries the shells (Gmsh MathEval
+step field; the ridge nodes through a ball fall on the shell radii and a node
+sits on the ball boundary; the required-region optimizer's bounds are 0.75 x
+the shell size), the metric prescribes the continuous form min(NormalSize,
+CornerSize + (GrowthRatio - 1) d) (`edge_volume_metric.corner_ball_size`,
+which the shells never exceed) and the restorer's local size follows it; the
+corner-ball cells are MMG required tetrahedra, so the adapted corners are the
+seed's, gated by the seed (corner aspect <= 4, scaled Jacobian >= 0.01). With
+a layer the rows start at the ridge node on the ball boundary with no taper
+(census `EdgeLayer.LayerReachesCornerBall`, `UnlayeredEdgeLengthPerCorner`: per
+corner the distance to the nearest span end of each layered edge, 0.1 here
+against 0.187 before); a ball-boundary crossing within half NormalSize of a
+CAD vertex is not a node (a vertical corner edge of the metal thickness 0.1
+ends exactly on the radius; measured: a node at 0.9 nm from the top corner
+made six flat cells). `--corner-size 0` (absent) is the production ball
+(uniform NormalSize), which the EL4 and EL1 records keep. Seed census per
+corner: `Shells` (edges by midpoint distance, P50/P90 against the shell size,
+cells by centroid); `edge_layer_census.py` reports the same on the final mesh
+(`CornerBalls`). Case `four-edge-calib-ma-el4c` = EL4 + CornerSize 0.004:
+seed 1,507,725 tets (EL4 1,508,461), 200,354 required (EL4 199,992), shell
+edge P50 per corner 3.8-5.8 / 6.0-7.8 / 12.1-17.7 / 27.2-29.5 nm against
+4/8/16/25 nm, corners 3.76/3.29/3.72/3.23, un-layered length 0.1 at every
+layered edge.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

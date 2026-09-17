@@ -346,3 +346,62 @@ end
         gmsh.finalize()
     end
 end
+
+# Corner grading (supervisor decision 33): the shell law from CornerSize, its Gmsh
+# field expression, the ridge size law through a graded ball, the optimizer's
+# corner-graded local bounds and the un-layered edge length census.
+@testset "corner grading shells, field expression and local bounds" begin
+    grading = CornerGrading(0.004, 2.0, 0.025, 0.1)
+    @test corner_shell_radii(grading) ≈ [0.004, 0.012, 0.028, 0.1]
+    @test corner_grading_reach(grading) ≈ 0.021
+    @test [corner_ball_size(grading, d) for d in (0.0, 0.0039, 0.004, 0.0119, 0.012, 0.0279, 0.028, 0.09)] ≈
+          [0.004, 0.004, 0.008, 0.008, 0.016, 0.016, 0.025, 0.025]
+    plain = CornerGrading(0.0, 2.0, 0.025, 0.1)
+    @test corner_shell_radii(plain) == [0.1] && corner_grading_reach(plain) == 0.0
+    @test all(corner_ball_size(plain, d) == 0.025 for d in (0.0, 0.05, 0.1))
+    # The field expression is the staircase inside the ball (step(x) = 1 for x >= 0)
+    # and the band grading slope beyond the radius; without grading it is lc_fine.
+    expression = corner_size_expression("F2", grading, 0.16, 0.2)
+    @test expression == "min(0.16,min(0.025,0.004+0.004*step(F2-0.004)+0.008*step(F2-0.012)+" *
+                        "0.009000000000000001*step(F2-0.028))+(0.16-0.025)*max(F2-0.1,0)/0.2)"
+    @test corner_size_expression("F2", plain, 0.16, 0.2) == "min(0.16,0.025+(0.16-0.025)*max(F2-0.1,0)/0.2)"
+    # Ridge size through the ball: the shells inside, lc_fine at the radius, the
+    # band slope to lc_tangent outside.
+    corners = [(0.0, 0.0, 0.0)]
+    @test corner_curve_size([0.002, 0.0, 0.0], corners, grading, 0.05, 0.675) ≈ 0.004
+    @test corner_curve_size([0.02, 0.0, 0.0], corners, grading, 0.05, 0.675) ≈ 0.016
+    @test corner_curve_size([0.1, 0.0, 0.0], corners, grading, 0.05, 0.675) ≈ 0.025
+    @test corner_curve_size([0.137037, 0.0, 0.0], corners, grading, 0.05, 0.675) ≈ 0.05 atol=1e-6
+    @test corner_curve_size([0.05, 0.0, 0.0], corners, plain, 0.05, 0.675) ≈ 0.025
+    # Optimizer bounds follow the shells: the needle apex of the fan (12.5 nm from
+    # the corner, third shell of size 16 nm) may move 0.75 x 16 nm instead of
+    # 0.75 x lc_fine; the census records the CornerSize.
+    points, tetrahedra, triangles = corner_fan(0.0002)
+    record, moved, _, _ = optimize_required_region!(
+        points, tetrahedra, triangles, corners, 0.1, 0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, 0.05, 4.0, 0.01, 0.75, 1e-9;
+        corner_grading=grading)
+    @test record["CornerSize"] == 0.004
+    @test record["MaximumDisplacement"] > 0.0
+    @test record["MaximumDisplacement"] <= 0.75 * 0.016 * (1 + 1e-9)
+    @test record["MaximumDisplacementOverBound"] <= 1.0 + 1e-9
+    graded_displacement = record["MaximumDisplacement"]
+    points2, tetrahedra2, triangles2 = corner_fan(0.0002)
+    record2, _, _, _ = optimize_required_region!(
+        points2, tetrahedra2, triangles2, corners, 0.1, 0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, 0.05, 4.0, 0.01, 0.75, 1e-9)
+    @test record2["CornerSize"] == 0.0
+    @test record2["MaximumDisplacement"] >= graded_displacement
+    # Un-layered edge length per corner: the distance from a corner to the nearest
+    # span end of each layered curve ending at it (curves not ending there ignored).
+    curves = [Dict{String, Any}("Start" => [0.1, 0.0, 0.0], "End" => [9.9, 0.0, 0.0],
+                                "CurveEnds" => [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]),
+              Dict{String, Any}("Start" => [0.0, 0.12, 0.0], "End" => [0.0, 7.9, 0.0],
+                                "CurveEnds" => [[0.0, 0.0, 0.0], [0.0, 8.0, 0.0]])]
+    rows = unlayered_edge_length_per_corner([(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (5.0, 5.0, 0.0)],
+                                            curves, 0.1)
+    @test rows[1]["LayeredEdges"] == 2 && rows[1]["UnlayeredLengths"] ≈ [0.1, 0.12]
+    @test rows[1]["Maximum"] ≈ 0.12 && rows[1]["Minimum"] ≈ 0.1
+    @test rows[2]["LayeredEdges"] == 1 && rows[2]["Maximum"] ≈ 0.1
+    @test rows[3]["LayeredEdges"] == 0 && rows[3]["Maximum"] === nothing
+end

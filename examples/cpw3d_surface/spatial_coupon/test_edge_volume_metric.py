@@ -3,13 +3,14 @@
 import copy
 import unittest
 import numpy as np
-from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, edge_layer_reach,
+from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, corner_ball_size,
+                                corner_grading_record, edge_layer_reach,
                                 edge_layer_required_reach, feature_chains, intersect_metrics,
                                 junction_segments, local_normal_size, match_equivalent_planes,
                                 plane_deviation, recipe_local_normal_size, required_tetrahedra,
                                 surface_features, volume_metric)
-from prepare_edge_metric_scout import (budget_aware_far_policy, edge_layer_record,
-                                       protected_corner_ball_triangles)
+from prepare_edge_metric_scout import (bound_corner_grading, budget_aware_far_policy,
+                                       edge_layer_record, protected_corner_ball_triangles)
 
 class EdgeVolumeMetricTest(unittest.TestCase):
     def test_two_transverse_directions_and_corner_recovery(self):
@@ -437,6 +438,59 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         np.testing.assert_allclose(recipe_local_normal_size(p,nested),size)
         del recipe['EdgeLayer']
         np.testing.assert_allclose(recipe_local_normal_size(p,recipe),[.026,.026,.025,.08,.16,.16],rtol=1e-12)
+
+    def test_corner_grading_law_is_geometric_from_corner_size_inside_the_ball(self):
+        # Decision 33: inside the ball the isotropic size is min(NormalSize,
+        # CornerSize + (ratio - 1) d): 4 nm at the corner, 8 nm at 4 nm, 16 nm at
+        # 12 nm, NormalSize from the reach 21 nm; the metric and the local size follow.
+        np.testing.assert_allclose(corner_ball_size([0.,.004,.012,.021,.05],.025,.004,2.),
+                                   [.004,.008,.016,.025,.025],rtol=1e-12)
+        np.testing.assert_allclose(corner_ball_size([0.,.05],.025),[.025,.025])
+        record=corner_grading_record(.025,.004,2.,.1)
+        self.assertEqual(record['ShellRadii'],[.004,.012,.028,.1])
+        self.assertEqual(record['ShellSizes'],[.004,.008,.016,.025])
+        self.assertAlmostEqual(record['Reach'],.021)
+        with self.assertRaisesRegex(ValueError,'inside the ball'):
+            corner_grading_record(.025,.004,2.,.02)
+        for bad in ((.025,.03,2.,.1),(.025,0.,2.,.1),(.025,.004,1.,.1)):
+            with self.assertRaises(ValueError):corner_grading_record(*bad)
+        segments=[[-1.,0,0,1,0,0]];corner=[[-1.,0,0]]
+        points=np.array([[-1.,0,0],[-.996,0,0],[-.99,0,.005],[-.95,0,0],[-1.,0,.05],[0.,0,0]])
+        graded=volume_metric(points,segments,corner,.025,.1,.4,isotropic_corners=corner,
+                             isotropy_radius=.1,corner_size=.004,growth_ratio=2.)
+        plain=volume_metric(points,segments,corner,.025,.1,.4,isotropic_corners=corner,isotropy_radius=.1)
+        expected=[.004,.008,.004+np.hypot(.01,.005),.025,.025]
+        for row,size in zip(graded[:5],expected):
+            np.testing.assert_allclose(row,np.eye(3)/size**2,rtol=1e-12)
+        np.testing.assert_allclose(plain[:5],np.broadcast_to(np.eye(3)/.025**2,(5,3,3)))
+        np.testing.assert_allclose(graded[5],plain[5])   # outside the ball: unchanged
+        size=local_normal_size(points,segments,.025,.4,1.,.05,.5,corner,.1,corner_size=.004)
+        np.testing.assert_allclose(size[:5],expected,rtol=1e-12)
+        recipe={'PhysicalSegments':segments,'NormalSize':.025,'FarSize':.4,'RadialGrowth':1.,
+                'ProtectedDistance':.05,'FarGrowth':.5,'TruePhysicalCorners':corner,
+                'CornerIsotropyRadius':.1,'CornerGrading':{'CornerSize':.004,'GrowthRatio':2.}}
+        np.testing.assert_allclose(recipe_local_normal_size(points,recipe),size)
+        with self.assertRaisesRegex(ValueError,'ratio differs'):
+            recipe_local_normal_size(points,dict(recipe,EdgeLayer={'Spans':segments,'EdgeSize':.001,
+                                                                  'GrowthRatio':1.5}))
+        with self.assertRaises(ValueError):
+            volume_metric(points,segments,corner,.025,.1,.4,isotropic_corners=corner,
+                          isotropy_radius=.1,corner_size=.03)
+        # The metric stage binds the seed census grading (same size, ratio, normal,
+        # radius, shells) or refuses; a census grading the stage does not bind is refused.
+        census={'CornerGrading':{'CornerSize':.004,'GrowthRatio':2.,'NormalSize':.025,'Radius':.1,
+                                 'Reach':.021,'ShellRadii':[.004,.012,.028,.1]}}
+        self.assertEqual(bound_corner_grading(census,.004,2.,.025,.1)['ShellRadii'],[.004,.012,.028,.1])
+        self.assertIsNone(bound_corner_grading({'CornerGrading':{'CornerSize':0.}},None,2.,.025,.1))
+        self.assertIsNone(bound_corner_grading({},None,2.,.025,.1))
+        with self.assertRaisesRegex(ValueError,'does not bind'):bound_corner_grading(census,None,2.,.025,.1)
+        with self.assertRaisesRegex(ValueError,'differs from the metric stage'):
+            bound_corner_grading(census,.002,2.,.025,.1)
+        with self.assertRaisesRegex(ValueError,'differs from the metric stage'):
+            bound_corner_grading({'CornerGrading':{**census['CornerGrading'],'Radius':.05}},.004,2.,.025,.1)
+        with self.assertRaisesRegex(ValueError,'shells differ'):
+            bound_corner_grading({'CornerGrading':{**census['CornerGrading'],'ShellRadii':[.004,.1]}},.004,2.,.025,.1)
+        with self.assertRaisesRegex(ValueError,'below NormalSize'):bound_corner_grading(census,.03,2.,.025,.1)
 
     def test_edge_layer_record_binds_the_seed_census_and_the_frozen_band(self):
         band=np.array([[0,0,.1,10,0,.1],[0,0,0,10,0,0]],dtype=float)

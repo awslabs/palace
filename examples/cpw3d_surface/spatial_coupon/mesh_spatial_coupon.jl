@@ -411,18 +411,73 @@ function semantic_corner_points(corners, tolerance)
     return sort!(unique(tags))
 end
 
-function corner_size_expression(distance, lc_fine, lc_far, radius, transition_width)
-    # Isotropic fine size inside the corner ball, then the same linear grading
-    # slope as the process edge band up to the far size.
-    return "min($(lc_far),$(lc_fine)+($(lc_far)-$(lc_fine))*" *
+# Isotropic size law inside a corner ball (supervisor decision 33): with a
+# CornerSize the size grows geometrically from CornerSize at the corner point by
+# the recorded ratio to lc_fine (NormalSize) in shells - shell k (k = 1, 2, ...)
+# has size CornerSize ratio^(k-1) and ends at the cumulative radius
+# CornerSize (ratio^k - 1) / (ratio - 1), exactly the edge layer's rows with
+# CornerSize for EdgeSize (4 nm: sizes 4/8/16 nm to 4/12/28 nm, lc_fine beyond) -
+# and is lc_fine from the last shell (the grading reach (lc_fine - CornerSize) /
+# (ratio - 1)) to the ball radius; without a CornerSize (0, production) the ball
+# is uniformly lc_fine. The seed uses the shell (staircase) form, so the ridge
+# nodes through a corner fall on the shell radii and the corner cells have the
+# shell sizes; the metric stage prescribes the continuous form CornerSize +
+# (ratio - 1) d of the same law (edge_volume_metric.corner_ball_size), which the
+# shells never exceed.
+struct CornerGrading
+    corner_size::Float64
+    ratio::Float64
+    lc_fine::Float64
+    radius::Float64
+end
+
+corner_grading_reach(grading::CornerGrading) =
+    grading.corner_size > 0.0 ? (grading.lc_fine - grading.corner_size) / (grading.ratio - 1.0) : 0.0
+
+# Radii of the shell boundaries inside the ball: the cumulative geometric
+# offsets below lc_fine (edge_layer_row_offsets with CornerSize), then the radius.
+corner_shell_radii(grading::CornerGrading) =
+    grading.corner_size > 0.0 ?
+        vcat(edge_layer_row_offsets(grading.corner_size, grading.ratio, grading.lc_fine),
+             grading.radius) : [grading.radius]
+
+function corner_ball_size(grading::CornerGrading, distance)
+    grading.corner_size > 0.0 || return grading.lc_fine
+    size = grading.corner_size
+    for shell_radius in edge_layer_row_offsets(grading.corner_size, grading.ratio, grading.lc_fine)
+        distance >= shell_radius || break
+        size *= grading.ratio
+    end
+    return min(grading.lc_fine, size)
+end
+
+function corner_size_expression(distance, grading::CornerGrading, lc_far, transition_width)
+    # The corner law inside the ball (lc_fine uniformly, or the shells of the
+    # geometric grading from CornerSize: Gmsh MathEval step(x) is 1 for x >= 0),
+    # then the same linear grading slope as the process edge band up to the far
+    # size.
+    lc_fine, radius = grading.lc_fine, grading.radius
+    inside = "$(lc_fine)"
+    if grading.corner_size > 0.0
+        inside = "$(grading.corner_size)"
+        size = grading.corner_size
+        for shell_radius in edge_layer_row_offsets(grading.corner_size, grading.ratio, lc_fine)
+            next_size = min(lc_fine, size * grading.ratio)
+            inside *= "+$(next_size - size)*step($(distance)-$(shell_radius))"
+            size = next_size
+        end
+        inside = "min($(lc_fine),$(inside))"
+    end
+    return "min($(lc_far),$(inside)+($(lc_far)-$(lc_fine))*" *
            "max($(distance)-$(radius),0)/$(transition_width))"
 end
 
-# Tangential size of a longitudinal curve through the corner balls: lc_fine
-# inside a ball, the process-band grading slope up to lc_tangent outside.
-function corner_curve_size(point, corners, radius, lc_fine, lc_tangent, slope)
+# Tangential size of a longitudinal curve through the corner balls: the corner
+# law inside a ball, the process-band grading slope up to lc_tangent outside.
+function corner_curve_size(point, corners, grading::CornerGrading, lc_tangent, slope)
     distance = minimum(norm(point .- corner) for corner in corners)
-    return min(lc_tangent, lc_fine + slope * max(distance - radius, 0.0))
+    return min(lc_tangent, corner_ball_size(grading, distance) +
+                           slope * max(distance - grading.radius, 0.0))
 end
 
 # Samples per fine length for the size-weighted arclength quadrature that places
@@ -435,39 +490,86 @@ const CURVE_SIZE_SAMPLES_PER_FINE_LENGTH = 16
 # faces away from the corners exactly as without the corner ball (misaligned
 # ridge rows were measured to remove the sidewall interior nodes). Each gap
 # between kept grid nodes, or between a curve end and the first kept grid node,
-# is filled by size-weighted arclength quadrature of the law: lc_fine inside the
-# ball, the process-band grading slope up to lc_tangent. Returns nothing when the
-# curve is out of reach of every ball, so the caller keeps the ordinary
-# transfinite spacing unchanged.
-function corner_isotropic_curve_nodes(curve, corners, radius, lc_fine, lc_tangent, slope)
+# is filled by size-weighted arclength quadrature of the law: the corner law
+# inside the ball (lc_fine, or the geometric grading from CornerSize), the
+# process-band grading slope up to lc_tangent. Where a corner ball is graded the
+# ball boundary itself is a node of every curve crossing it
+# (ball_boundary_parameters), so an edge layer span can start exactly at the
+# ball radius. Returns nothing when the curve is out of reach of every ball, so
+# the caller keeps the ordinary transfinite spacing unchanged.
+function corner_isotropic_curve_nodes(curve, corners, grading::CornerGrading, lc_tangent, slope)
     lower, upper = gmsh.model.getParametrizationBounds(1, curve)
     intervals = max(1, ceil(Int, gmsh.model.occ.getMass(1, curve) / lc_tangent))
     grid = collect(range(lower[1], upper[1]; length=intervals + 1))
     xyz = reshape(gmsh.model.getValue(1, curve, grid), 3, :)
-    at_tangent = [corner_curve_size(Tuple(xyz[:, i]), corners, radius, lc_fine, lc_tangent,
+    at_tangent = [corner_curve_size(Tuple(xyz[:, i]), corners, grading, lc_tangent,
                                     slope) >= lc_tangent for i in axes(xyz, 2)]
     all(at_tangent) && return nothing
     anchors = [i for i in 1:(intervals + 1) if at_tangent[i] || i == 1 || i == intervals + 1]
     interior = Float64[]
     for (a, b) in zip(anchors[1:(end - 1)], anchors[2:end])
         if !(b == a + 1 && at_tangent[a] && at_tangent[b])
-            append!(interior, graded_curve_parameters(curve, grid[a], grid[b], corners, radius,
-                                                      lc_fine, lc_tangent, slope))
+            bounds = grading.corner_size > 0.0 ?
+                ball_boundary_parameters(curve, grid[a], grid[b], corners, grading) : Float64[]
+            stops = vcat(grid[a], bounds, grid[b])
+            for (from, to) in zip(stops[1:(end - 1)], stops[2:end])
+                append!(interior, graded_curve_parameters(curve, from, to, corners, grading,
+                                                          lc_tangent, slope))
+                to < grid[b] && push!(interior, to)
+            end
         end
         b <= intervals && push!(interior, grid[b])
     end
     return interior, gmsh.model.getValue(1, curve, interior)
 end
 
-# Interior parameters of the curve span [from, to] equidistributed in the
-# arclength integral of 1 / corner size law.
-function graded_curve_parameters(curve, from, to, corners, radius, lc_fine, lc_tangent, slope)
-    samples = max(64, ceil(Int, CURVE_SIZE_SAMPLES_PER_FINE_LENGTH *
-                              norm(gmsh.model.getValue(1, curve, [to]) .-
-                                   gmsh.model.getValue(1, curve, [from])) / lc_fine))
+# Parameters in (from, to) where the curve crosses a corner ball boundary
+# (distance to the nearest corner == radius), located by sampling and bisection.
+# A crossing closer than half the ball's boundary size (lc_fine) to a gap end is
+# not a node: a CAD vertex on or next to the ball boundary (the top of a
+# metal-thickness vertical corner edge when the thickness equals the radius) would
+# otherwise get a node at roundoff distance and degenerate cells.
+function ball_boundary_parameters(curve, from, to, corners, grading::CornerGrading)
+    radius = grading.radius
+    samples = 256
     parameters = collect(range(from, to; length=samples + 1))
     xyz = reshape(gmsh.model.getValue(1, curve, parameters), 3, :)
-    sizes = [corner_curve_size(Tuple(xyz[:, i]), corners, radius, lc_fine, lc_tangent, slope)
+    excess(i) = minimum(norm(xyz[:, i] .- collect(corner)) for corner in corners) - radius
+    excess_at(t) = minimum(norm(gmsh.model.getValue(1, curve, [t]) .- collect(corner))
+                           for corner in corners) - radius
+    crossings = Float64[]
+    for i in 1:samples
+        left, right = excess(i), excess(i + 1)
+        (left == 0.0 || sign(left) == sign(right)) && continue
+        lo, hi = parameters[i], parameters[i + 1]
+        for _ in 1:60
+            mid = 0.5 * (lo + hi)
+            if sign(excess_at(mid)) == sign(left)
+                lo = mid
+            else
+                hi = mid
+            end
+        end
+        crossing = 0.5 * (lo + hi)
+        from < crossing < to || continue
+        point = gmsh.model.getValue(1, curve, [crossing])
+        separation = min(norm(point .- xyz[:, 1]), norm(point .- xyz[:, end]))
+        separation >= 0.5 * grading.lc_fine && push!(crossings, crossing)
+    end
+    return crossings
+end
+
+# Interior parameters of the curve span [from, to] equidistributed in the
+# arclength integral of 1 / corner size law.
+function graded_curve_parameters(curve, from, to, corners, grading::CornerGrading, lc_tangent,
+                                 slope)
+    finest = grading.corner_size > 0.0 ? grading.corner_size : grading.lc_fine
+    samples = max(64, ceil(Int, CURVE_SIZE_SAMPLES_PER_FINE_LENGTH *
+                              norm(gmsh.model.getValue(1, curve, [to]) .-
+                                   gmsh.model.getValue(1, curve, [from])) / finest))
+    parameters = collect(range(from, to; length=samples + 1))
+    xyz = reshape(gmsh.model.getValue(1, curve, parameters), 3, :)
+    sizes = [corner_curve_size(Tuple(xyz[:, i]), corners, grading, lc_tangent, slope)
              for i in axes(xyz, 2)]
     cumulative = zeros(samples + 1)
     for i in 1:samples
@@ -640,8 +742,34 @@ function tetrahedron_aspect(xyz)
     return singular[1] / singular[end]
 end
 
-# Edge lengths and cell aspects of the linear seed inside each semantic corner ball.
-function seed_corner_census(corners, radius, isotropic_size, tolerance)
+# Edge lengths and cell aspects of the linear seed inside each semantic corner
+# ball, and per shell of the corner law (corner_shell_radii: the geometric shell
+# boundaries, then the radius) the ball edges by midpoint distance, their length
+# percentiles against the law's size at the shell, and the cells by centroid.
+function corner_shell_census(points, edges, cells, center, grading::CornerGrading)
+    boundaries = vcat(0.0, corner_shell_radii(grading))
+    rows = Dict{String, Any}[]
+    for (inner, outer) in zip(boundaries[1:(end - 1)], boundaries[2:end])
+        midpoint(a, b) = norm(0.5 .* (points[:, a] .+ points[:, b]) .- center)
+        lengths = sort!([norm(points[:, a] .- points[:, b]) for (a, b) in edges
+                         if inner < midpoint(a, b) <= outer])
+        centroid_count = count(cell -> inner < norm(sum(points[:, i] for i in cell) ./ 4 .- center) <= outer,
+                               cells)
+        target = corner_ball_size(grading, inner)
+        push!(rows, Dict{String, Any}(
+            "InnerRadius" => inner, "OuterRadius" => outer, "TargetSize" => target,
+            "Edges" => length(lengths), "Cells" => centroid_count,
+            "EdgeP50" => isempty(lengths) ? nothing : sorted_median(lengths),
+            "EdgeP90" => isempty(lengths) ? nothing :
+                         lengths[clamp(ceil(Int, 0.9 * length(lengths)), 1, length(lengths))],
+            "EdgeMaximum" => isempty(lengths) ? nothing : lengths[end],
+            "EdgesOverSqrt2TargetSize" => count(>(sqrt(2.0) * target), lengths)))
+    end
+    return rows
+end
+
+function seed_corner_census(corners, grading::CornerGrading, tolerance)
+    radius, isotropic_size = grading.radius, grading.lc_fine
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
@@ -684,7 +812,8 @@ function seed_corner_census(corners, radius, isotropic_size, tolerance)
             "IncidentMaximumAspect" => isempty(aspects) ? nothing : maximum(aspects),
             "RingRadiusMinimum" => isempty(ring_radii) ? nothing : minimum(ring_radii),
             "RingRadiusMaximum" => isempty(ring_radii) ? nothing : maximum(ring_radii),
-            "RingEdgesOverSqrt2IsotropicSize" => count(>(threshold), ring_radii)))
+            "RingEdgesOverSqrt2IsotropicSize" => count(>(threshold), ring_radii),
+            "Shells" => corner_shell_census(points, edges, ball, center, grading)))
     end
     return rows
 end
@@ -1011,7 +1140,8 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                                    spans, edge_size, growth_ratio, layer_thickness, row_zigzag,
                                    maximum_corner_aspect, minimum_scaled_jacobian,
                                    displacement_ratio, tolerance;
-                                   edge_layer_maximum_aspect=0.0)
+                                   edge_layer_maximum_aspect=0.0,
+                                   corner_grading=CornerGrading(0.0, growth_ratio, lc_fine, radius))
     original = copy(points)
     reach = isempty(spans) ? 0.0 : layer_thickness * (1.0 + row_zigzag) + edge_size
     layer_rule = edge_layer_maximum_aspect > 0.0
@@ -1056,10 +1186,15 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                               0.95 * edge_layer_maximum_aspect)
         end
     end
-    # Local prescribed size: lc_fine, EdgeSize-graded inside the layer reach (the
-    # bounds are set once, from the original positions).
-    bounds = [displacement_ratio * (isempty(spans) ? lc_fine :
-              min(lc_fine, edge_size + (growth_ratio - 1.0) * span_distance[i]))
+    # Local prescribed size: lc_fine, EdgeSize-graded inside the layer reach,
+    # CornerSize-graded inside a graded corner ball (the bounds are set once, from
+    # the original positions).
+    corner_distance = [minimum((norm(points[:, i] .- collect(corner)) for corner in corners);
+                               init=Inf) for i in axes(points, 2)]
+    bounds = [displacement_ratio * min(lc_fine,
+              isempty(spans) ? lc_fine : edge_size + (growth_ratio - 1.0) * span_distance[i],
+              corner_distance[i] <= radius ? corner_ball_size(corner_grading, corner_distance[i]) :
+                                             lc_fine)
               for i in axes(points, 2)]
     corner_before = Float64[]; corner_after = Float64[]; corner_moves = Int[]
     for corner in corners
@@ -1185,6 +1320,9 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "MaximumCornerAspect" => maximum_corner_aspect, "CornerAspectTarget" => corner_target,
         "MinimumScaledJacobian" => minimum_scaled_jacobian, "ScaledJacobianTarget" => scaled_target,
         "DisplacementBoundOverNormal" => displacement_ratio,
+        "LocalSizeRule" => "min(NormalSize, EdgeSize + (GrowthRatio - 1) x span distance " *
+                           "inside the layer, the corner law inside a corner ball)",
+        "CornerSize" => corner_grading.corner_size,
         "LayerRequiredReach" => isempty(spans) ? nothing : reach,
         "RequiredTetrahedra" => length(required_cells),
         "RequiredTetrahedraBeforeMoves" => required_before_moves,
@@ -1209,9 +1347,29 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     all(<=(maximum_corner_aspect), corner_after) ||
         error("Seed semantic-corner aspect exceeds the gate after optimization: " *
               "$(maximum(corner_after)) > $(maximum_corner_aspect)")
-    below_gate == 0 ||
+    if below_gate > 0
+        # Locate the failing cells for the report: centroid, nearest-corner distance,
+        # span distance, vertex surface flags and edge lengths of the worst ten.
+        surface = falses(size(points, 2))
+        for triangle in triangles, i in triangle
+            surface[i] = true
+        end
+        failing = sort([k for k in gated_cells if scaled_of(k) < minimum_scaled_jacobian];
+                       by=scaled_of)
+        moved_set = Set(moved)
+        for k in failing[1:min(10, end)]
+            cell = tetrahedra[k]
+            centroid = sum(points[:, i] for i in cell) ./ 4
+            lengths = [norm(points[:, cell[i]] .- points[:, cell[j]]) for i in 1:4 for j in (i + 1):4]
+            println("  below-gate cell $k: scaled Jacobian $(scaled_of(k)), centroid $(centroid), " *
+                    "corner distance $(minimum(norm(centroid .- collect(c)) for c in corners)), " *
+                    "span distance $(minimum(span_distance[i] for i in cell)), " *
+                    "surface vertices $(count(surface[i] for i in cell)), edges $(sort(lengths)), " *
+                    "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
+        end
         error("Seed required region keeps $(below_gate) cells below the scaled-Jacobian gate " *
               "$(minimum_scaled_jacobian) after optimization (minimum $(required_after))")
+    end
     if layer_rule
         println("Seed edge-layer quality rule: $(length(layer_cells)) layer cells, collapsed " *
                 "$(collapsed) sub-EdgeSize vertices ($(length(removed)) cells removed, " *
@@ -1251,7 +1409,9 @@ end
 function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_size,
                                         growth_ratio, layer_thickness, row_zigzag,
                                         maximum_corner_aspect, minimum_scaled_jacobian,
-                                        displacement_ratio, tolerance, edge_layer_maximum_aspect)
+                                        displacement_ratio, tolerance, edge_layer_maximum_aspect,
+                                        corner_grading=CornerGrading(0.0, growth_ratio, lc_fine,
+                                                                     radius))
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(copy(coordinates), 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
@@ -1260,7 +1420,8 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
     record, moved, removed, remapped = optimize_required_region!(
         points, tetrahedra, triangles, corners, radius, lc_fine, spans, edge_size, growth_ratio,
         layer_thickness, row_zigzag, maximum_corner_aspect, minimum_scaled_jacobian,
-        displacement_ratio, tolerance; edge_layer_maximum_aspect=edge_layer_maximum_aspect)
+        displacement_ratio, tolerance; edge_layer_maximum_aspect=edge_layer_maximum_aspect,
+        corner_grading=corner_grading)
     for i in moved
         gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
     end
@@ -1339,6 +1500,30 @@ end
 # Bins of the along-edge histogram of a longitudinal face's interior nodes; a
 # census resolution constant, not a mesh target.
 const LONGITUDINAL_FACE_HISTOGRAM_BINS = 10
+
+# Per semantic corner, the un-layered metal-edge length: for every layered curve
+# whose CAD endpoint is the corner, the distance from the corner to the span end
+# nearest to it (the edge between them carries no layer row), and the maximum.
+function unlayered_edge_length_per_corner(corners, layer_curves, radius)
+    rows = Dict{String, Any}[]
+    for (k, corner) in enumerate(corners)
+        center = collect(corner)
+        lengths = Float64[]
+        for row in layer_curves
+            ends = (Vector{Float64}(row["Start"]), Vector{Float64}(row["End"]))
+            for (curve_end, span_end) in zip(row["CurveEnds"], ends)
+                norm(Vector{Float64}(curve_end) .- center) <= 1.0e-9 * radius || continue
+                push!(lengths, norm(span_end .- center))
+            end
+        end
+        push!(rows, Dict{String, Any}(
+            "Corner" => k - 1, "Point" => center, "LayeredEdges" => length(lengths),
+            "UnlayeredLengths" => lengths,
+            "Maximum" => isempty(lengths) ? nothing : maximum(lengths),
+            "Minimum" => isempty(lengths) ? nothing : minimum(lengths)))
+    end
+    return rows
+end
 
 # Distance from a semantic corner beyond which the corner size law is lc_tangent,
 # so the seed is meant to be unchanged there.
@@ -2749,6 +2934,7 @@ function generate_spatial_coupon(;
     minimum_scaled_jacobian::Float64=0.0,
     quality_displacement_over_normal::Float64=0.0,
     edge_layer_maximum_aspect::Float64=0.0,
+    corner_size::Float64=0.0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -2834,6 +3020,17 @@ function generate_spatial_coupon(;
         error("The edge layer requires --lc-tangent and the semantic contract corner census")
     edge_layer_offsets = edge_layer ?
         edge_layer_row_offsets(edge_size, edge_growth_ratio, lc_fine) : Float64[]
+    # Corner grading (decision 33): CornerSize at every semantic corner point growing
+    # by the edge-layer ratio to lc_fine inside the corner ball (0 = uniform lc_fine,
+    # the production ball); the grading must reach lc_fine inside the ball.
+    isfinite(corner_size) && corner_size >= 0.0 || error("corner size must be nonnegative")
+    corner_size == 0.0 || corner_isotropy ||
+        error("--corner-size requires the semantic contract corner isotropy and census")
+    corner_size == 0.0 || corner_size < lc_fine ||
+        error("corner size must be smaller than the fine (normal) mesh size")
+    corner_grading = CornerGrading(corner_size, edge_growth_ratio, lc_fine, corner_isotropy_radius)
+    corner_size == 0.0 || corner_grading_reach(corner_grading) <= corner_isotropy_radius ||
+        error("The corner grading must reach the normal size inside the corner ball")
 
     edges = read_edges(signature)
     if length(unique(edge.slot for edge in edges)) > 1 &&
@@ -3257,7 +3454,7 @@ function generate_spatial_coupon(;
             if any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
                 push!(longitudinal_curves, curve)
                 placed = corner_isotropy ? corner_isotropic_curve_nodes(
-                    curve, semantic_corners, corner_isotropy_radius, lc_fine, lc_tangent,
+                    curve, semantic_corners, corner_grading, lc_tangent,
                     corner_grading_slope) : nothing
                 if placed === nothing
                     curve_length = gmsh.model.occ.getMass(1, curve)
@@ -3294,6 +3491,7 @@ function generate_spatial_coupon(;
     edge_layer_row_subdivisions = Int[]
     edge_layer_taper = Int[]
     edge_layer_ridge_nodes = 0
+    layer_to_ball = edge_layer && corner_size > 0.0
     if edge_layer
         edge_layer_subdivision = tangential_subdivision(lc_tangent, edge_layer_aspect * edge_size)
         edge_layer_row_subdivisions = [
@@ -3301,7 +3499,8 @@ function generate_spatial_coupon(;
                 tangential_subdivision(lc_tangent,
                                        edge_layer_aspect * edge_size * edge_growth_ratio^(k - 1)))
             for k in eachindex(edge_layer_offsets)]
-        edge_layer_taper = [2^j for j in 1:(round(Int, log2(edge_layer_subdivision)) - 1)]
+        edge_layer_taper = layer_to_ball ? Int[] :
+            [2^j for j in 1:(round(Int, log2(edge_layer_subdivision)) - 1)]
         junction_set = Set(junction_curves)
         for curve in longitudinal_curves
             curve in junction_set && continue
@@ -3309,17 +3508,31 @@ function generate_spatial_coupon(;
             any(surface_family(first(record)) in METAL_SURFACE_FAMILIES
                 for record in records) || continue
             xyz = ridge_nodes[curve]
-            on_grid = [corner_curve_size(Tuple(xyz[:, i]), semantic_corners,
-                                         corner_isotropy_radius, lc_fine, lc_tangent,
-                                         corner_grading_slope) >= lc_tangent
-                       for i in axes(xyz, 2)]
-            grid_indices = findall(on_grid)
+            corner_distance = [minimum(norm(xyz[:, i] .- collect(corner))
+                                       for corner in semantic_corners) for i in axes(xyz, 2)]
+            # Without corner grading the rows lie on the lc_tangent grid outside the
+            # corner size law, after the taper intervals; with corner grading
+            # (decision 33) the span starts at the ball boundary node (the graded
+            # ball is the transition: ~lc_fine ridge spacing at the radius against
+            # the first row's subdivision), so no ridge interval is left without rows
+            # outside the ball and no taper is needed.
+            grid_indices = layer_to_ball ?
+                findall(>=(corner_isotropy_radius * (1.0 - 1.0e-9)), corner_distance) :
+                findall([corner_curve_size(Tuple(xyz[:, i]), semantic_corners, corner_grading,
+                                           lc_tangent, corner_grading_slope) >= lc_tangent
+                         for i in axes(xyz, 2)])
             taper = length(edge_layer_taper)
             length(grid_indices) >= 2taper + 2 || continue
             grid_indices == collect(grid_indices[1]:grid_indices[end]) ||
-                error("Longitudinal curve $curve has a non-contiguous lc_tangent grid")
+                error("Longitudinal curve $curve has a non-contiguous edge layer span")
             row_indices = grid_indices[(1 + taper):(end - taper)]
             span = xyz[:, row_indices]
+            unlayered = (corner_distance[row_indices[1]], corner_distance[row_indices[end]])
+            # The curve's CAD endpoints in span order (the span runs with the curve's
+            # interior node order, from the lower parameter end).
+            curve_bounds = gmsh.model.getParametrizationBounds(1, curve)
+            curve_xyz = gmsh.model.getValue(1, curve, [curve_bounds[1][1], curve_bounds[2][1]])
+            curve_ends = [collect(curve_xyz[1:3]), collect(curve_xyz[4:6])]
             faces = Dict{String, Any}[]
             for face in sort!(unique(last(record) for record in records))
                 record = add_edge_layer_rows!(occ, face, span, edge_layer_offsets, tolerance)
@@ -3355,6 +3568,8 @@ function generate_spatial_coupon(;
                 "End" => collect(span[:, end]), "SpanLength" => norm(span[:, end] .- span[:, 1]),
                 "CurveLength" => gmsh.model.occ.getMass(1, curve),
                 "GridNodes" => size(span, 2), "TaperIntervalsPerEnd" => taper,
+                "CurveEnds" => curve_ends,
+                "UnlayeredLengthAtEnds" => collect(unlayered),
                 "RidgeNodesAdded" => length(refined) - length(parameters),
                 "Faces" => [Dict{String, Any}("Face" => face["Face"],
                                               "Rows" => length(face["Rows"]),
@@ -3398,10 +3613,12 @@ function generate_spatial_coupon(;
     isempty(corner_curves) || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
     trace_basis_record = trace_basis === nothing ? nothing :
         prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far, corner_grading_slope)
-    # The only size below lc_fine any field can ask for is the trace rule's, so the
-    # Gmsh floor follows the smallest requested trace size (recorded in the census).
+    # The sizes below lc_fine a field can ask for are the trace rule's and the corner
+    # grading's, so the Gmsh floor follows the smallest requested trace size
+    # (recorded in the census) and CornerSize.
     mesh_size_minimum = trace_basis_record === nothing ? lc_fine :
         min(lc_fine, trace_basis_record["MinimumRequestedSize"])
+    corner_size > 0.0 && (mesh_size_minimum = min(mesh_size_minimum, corner_size))
     if trace_basis_record !== nothing
         trace_basis_record["MeshSizeMinimum"] = mesh_size_minimum
         install_trace_basis_callback!()
@@ -3444,8 +3661,7 @@ function generate_spatial_coupon(;
             gmsh.model.mesh.field.setNumbers(2, "PointsList", Float64.(corner_point_tags))
             gmsh.model.mesh.field.add("MathEval", 3)
             gmsh.model.mesh.field.setString(3, "F", "min(F1," * corner_size_expression(
-                "F2", lc_fine, lc_far, corner_isotropy_radius,
-                process_core_width - process_fine_width) * ")")
+                "F2", corner_grading, lc_far, process_core_width - process_fine_width) * ")")
             background = 3
         end
         gmsh.model.mesh.field.setAsBackgroundMesh(background)
@@ -3462,7 +3678,7 @@ function generate_spatial_coupon(;
             gmsh.model.mesh.field.add("Distance", 3)
             gmsh.model.mesh.field.setNumbers(3, "PointsList", Float64.(corner_point_tags))
             size_expression = "min($(size_expression)," * corner_size_expression(
-                "F3", lc_fine, lc_far, corner_isotropy_radius, transition_width) * ")"
+                "F3", corner_grading, lc_far, transition_width) * ")"
         end
         gmsh.model.mesh.field.add("MathEval", 2)
         gmsh.model.mesh.field.setString(2, "F", size_expression)
@@ -3506,10 +3722,11 @@ function generate_spatial_coupon(;
             edge_size, edge_growth_ratio,
             isempty(edge_layer_offsets) ? 0.0 : edge_layer_offsets[end],
             EDGE_LAYER_ROW_ZIGZAG, maximum_corner_aspect, minimum_scaled_jacobian,
-            quality_displacement_over_normal, tolerance, edge_layer_maximum_aspect) :
+            quality_displacement_over_normal, tolerance, edge_layer_maximum_aspect,
+            corner_grading) :
         nothing
     census_rows = corner_isotropy ?
-        seed_corner_census(semantic_corners, corner_isotropy_radius, lc_fine, tolerance) :
+        seed_corner_census(semantic_corners, corner_grading, tolerance) :
         Dict{String, Any}[]
     corner_reach = corner_isotropy ?
         corner_law_reach(corner_isotropy_radius, lc_fine, lc_tangent, corner_grading_slope) :
@@ -3603,6 +3820,26 @@ function generate_spatial_coupon(;
                               "cut-surface junctions of the trench floor/walls and the " *
                               "un-etched plane; feature curves with the process-edge band"),
                 "CornerLawReach" => corner_reach,
+                "CornerGrading" => Dict{String, Any}(
+                    "CornerSize" => corner_size,
+                    "GrowthRatio" => edge_growth_ratio,
+                    "NormalSize" => lc_fine,
+                    "Radius" => corner_isotropy_radius,
+                    "Reach" => corner_grading_reach(corner_grading),
+                    "ShellRadii" => corner_shell_radii(corner_grading),
+                    "ShellSizes" => [corner_ball_size(corner_grading, inner)
+                                     for inner in vcat(0.0, corner_shell_radii(corner_grading)[1:(end - 1)])],
+                    "Rule" => corner_size > 0.0 ?
+                        "inside every corner ball the isotropic size grows geometrically from " *
+                        "CornerSize at the corner point in shells: shell k has size CornerSize x " *
+                        "GrowthRatio^(k-1) and ends at the cumulative radius CornerSize " *
+                        "(GrowthRatio^k - 1) / (GrowthRatio - 1) (ShellRadii, ShellSizes), " *
+                        "NormalSize from the Reach to the ball radius; the Gmsh background " *
+                        "field, the ridge node placement (nodes on the shell radii and on the " *
+                        "ball boundary) and the seed optimizer's local bounds follow the shells, " *
+                        "which never exceed the metric stage's continuous law min(NormalSize, " *
+                        "CornerSize + (GrowthRatio - 1) x distance) (supervisor decision 33)" :
+                        "uniform NormalSize inside every corner ball (no corner grading)"),
                 "LongitudinalFaceHistogramBins" => LONGITUDINAL_FACE_HISTOGRAM_BINS,
                 "LongitudinalFaces" => face_rows,
                 "InterfaceAreaUnits" => "um^2",
@@ -3636,7 +3873,11 @@ function generate_spatial_coupon(;
                     "RowTangentialSpacings" =>
                         [lc_tangent / n for n in edge_layer_row_subdivisions],
                     "TaperSubdivisions" => edge_layer_taper,
-                    "CornerTaperOffset" => corner_reach + length(edge_layer_taper) * lc_tangent,
+                    "CornerTaperOffset" => layer_to_ball ? corner_isotropy_radius :
+                                           corner_reach + length(edge_layer_taper) * lc_tangent,
+                    "LayerReachesCornerBall" => layer_to_ball,
+                    "UnlayeredEdgeLengthPerCorner" => unlayered_edge_length_per_corner(
+                        semantic_corners, edge_layer_curves, corner_isotropy_radius),
                     "RowZigzag" => EDGE_LAYER_ROW_ZIGZAG,
                     "Rule" => "on every face bounding a metal edge (longitudinal feature " *
                               "curve of a metal surface family, junction curves excluded) " *
@@ -3651,7 +3892,13 @@ function generate_spatial_coupon(;
                               "(hn/ht)^2); the ridge subdivision halves interval by interval " *
                               "(TaperSubdivisions) towards the span ends, where no row is " *
                               "seeded; rows start at the ridge grid outside the corner size " *
-                              "law after the taper (CornerTaperOffset from a semantic corner); " *
+                              "law after the taper (CornerTaperOffset from a semantic corner) " *
+                              "or, with corner grading (LayerReachesCornerBall), at the ridge " *
+                              "node on the corner ball boundary with no taper, so the " *
+                              "un-layered edge length per corner is the ball radius " *
+                              "(UnlayeredEdgeLengthPerCorner: per semantic corner, the " *
+                              "distances from the corner to the nearest span end of each " *
+                              "adjacent layered edge and their maximum); " *
                               "every second row node is RowZigzag of the offset farther out (no " *
                               "Delaunay-degenerate rectangles); rows stop where the next " *
                               "layer leaves the face",
@@ -3778,7 +4025,8 @@ function parse_options(args)
         "--minimum-scaled-jacobian" => ("minimum_scaled_jacobian", Float64),
         "--maximum-quality-displacement-over-normal" =>
             ("quality_displacement_over_normal", Float64),
-        "--edge-layer-maximum-aspect" => ("edge_layer_maximum_aspect", Float64)
+        "--edge-layer-maximum-aspect" => ("edge_layer_maximum_aspect", Float64),
+        "--corner-size" => ("corner_size", Float64)
     )
     index = 4
     while index <= length(args)
@@ -3850,6 +4098,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         minimum_scaled_jacobian = get(options, "minimum_scaled_jacobian", 0.0),
         quality_displacement_over_normal =
             get(options, "quality_displacement_over_normal", 0.0),
-        edge_layer_maximum_aspect = get(options, "edge_layer_maximum_aspect", 0.0)
+        edge_layer_maximum_aspect = get(options, "edge_layer_maximum_aspect", 0.0),
+        corner_size = get(options, "corner_size", 0.0)
     )
 end

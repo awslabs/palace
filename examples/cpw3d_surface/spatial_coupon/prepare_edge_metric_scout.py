@@ -14,6 +14,7 @@ from pathlib import Path
 import meshio
 import numpy as np
 from edge_volume_metric import (COPLANAR_TOLERANCE,REQUIRED_TETRAHEDRA_RULE,cluster_coplanar_triangles,
+                                corner_grading_record,
                                 edge_layer_reach,edge_layer_required_reach,EDGE_LAYER_CELL_RULE,intersect_metrics,
                                 junction_segments,required_tetrahedra,surface_features,volume_metric,
                                 segment_distances)
@@ -312,6 +313,28 @@ TRACE_BASIS_RULE=('cut-surface element size <= TraceBasisSizeRatio x the shortes
                   'parameter is the dimensionless ratio')
 
 
+def bound_corner_grading(census,corner_size,growth_ratio,normal,radius):
+    """Bind the seed's corner grading (census CornerGrading) to the metric stage:
+    both prescribe the same CornerSize (0 / absent = uniform NormalSize) with the
+    edge-layer growth ratio inside CornerIsotropyRadius.  Returns the recipe record
+    or None."""
+    grading=census.get('CornerGrading') if isinstance(census,dict) else None
+    seed_size=float(grading.get('CornerSize',0.)) if isinstance(grading,dict) else 0.
+    if corner_size is None:
+        if seed_size>0:raise ValueError('Seed census records a corner grading the metric stage does not bind')
+        return None
+    if not np.isfinite(corner_size) or not 0<corner_size<normal:
+        raise ValueError('CornerSize must be positive and below NormalSize')
+    if (not isinstance(grading,dict) or seed_size!=corner_size or
+            grading.get('GrowthRatio')!=growth_ratio or grading.get('NormalSize')!=normal or
+            grading.get('Radius')!=radius):
+        raise ValueError('Seed census corner grading differs from the metric stage')
+    record=corner_grading_record(normal,corner_size,growth_ratio,radius)
+    if grading.get('ShellRadii')!=record['ShellRadii'] or grading.get('Reach')!=record['Reach']:
+        raise ValueError('Seed census corner grading shells differ from the metric law')
+    return record
+
+
 def trace_basis_sizing_record(basis, ratio, census, semantic_contract, exact_planes, points,
                               cut_triangles, far_size, growth, tolerance=1e-8):
     """Bind the trace basis to the seed and record the cut-surface size rule.
@@ -359,7 +382,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             semantic_contract=None, transformed_supports=None, maximum_elements=None,
             footprint_census=None, semantic_contract_sha256=None, trace_basis=None,
             trace_basis_size_ratio=1.0, edge_size=None, edge_growth_ratio=2.0,
-            edge_layer_aspect=4.0):
+            edge_layer_aspect=4.0, corner_size=None):
     if not np.all(np.isfinite([protected_distance,far_growth,protect_surface])) or protected_distance<0 or far_growth<=0 or protect_surface<0:
         raise ValueError('Invalid grading/protection controls')
     path=Path(path)
@@ -403,6 +426,9 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         edge_layer=edge_layer_record(footprint_census,edge_size,edge_growth_ratio,edge_layer_aspect,
                                      normal,protect_surface,semantic_contract,band_segments)
     layer_spans=None if edge_layer is None else np.asarray(edge_layer['Spans'],dtype=float)
+    # Corner grading (decision 33): the seed's graded corner balls are bound and the
+    # metric prescribes the same law inside CornerIsotropyRadius (= tangent).
+    corner_grading=bound_corner_grading(footprint_census,corner_size,edge_growth_ratio,normal,tangent)
     # The far-field budget policy predicts the adapted load from the seed; the
     # seed cells inside the edge layer footprint (within the surface protection
     # radius of a span) are re-meshed to the recorded layer metric and are not
@@ -494,7 +520,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                                  protected_distance=protected_distance,far_growth=effective_far_growth,
                                  isotropic_corners=semantic_corners,isotropy_radius=tangent,
                                  edge_layer_segments=layer_spans,edge_size=edge_size,
-                                 growth_ratio=edge_growth_ratio,edge_layer_aspect=edge_layer_aspect)
+                                 growth_ratio=edge_growth_ratio,edge_layer_aspect=edge_layer_aspect,
+                                 corner_size=corner_size)
             if placed_basis is not None:
                 # Trace rule blended into the far/grading law: an isotropic cap where
                 # a narrow basis triangle is near; the far size elsewhere (no change).
@@ -547,6 +574,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'SemanticContract':semantic_contract,'LibraryQualified':False}
     if footprint is not None:recipe['FootprintSegments']=footprint
     if edge_layer is not None:recipe['EdgeLayer']=edge_layer
+    if corner_grading is not None:recipe['CornerGrading']=corner_grading
     if trace_record is not None:
         recipe['TraceBasisSizing']=trace_record
         # The bound basis edges in the metric frame: a band lying on one of them is
@@ -563,6 +591,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
     print(json.dumps({'RequiredTetrahedra':{k:v for k,v in required_record.items() if k not in ('PerSpan','Rule')}},indent=2))
     if edge_layer is not None:
         print(json.dumps({'EdgeLayer':{k:v for k,v in edge_layer.items() if k not in ('Spans','SeedCurves','Rule')}},indent=2))
+    if corner_grading is not None:
+        print(json.dumps({'CornerGrading':{k:v for k,v in corner_grading.items() if k!='Rule'}},indent=2))
     print(json.dumps({'JunctionSegments':{k:v for k,v in junction_record.items() if k!='Segments'}},indent=2))
     if trace_record is not None:
         print(json.dumps({'TraceBasisSizing':{k:(v if k!='CutSurfaceSize' else
@@ -601,6 +631,10 @@ def main():
     p.add_argument('--trace-basis-size-ratio',type=float,default=1.0,
                    help='dimensionless TraceBasisSizeRatio of the cut-surface size rule (default 1.0: '
                         'at least one element per basis edge); only with the four trace basis inputs')
+    p.add_argument('--corner-size',type=float,
+                   help='CornerSize of the seed corner grading to bind and prescribe (below --normal, '
+                        'growing by --edge-growth-ratio to --normal inside the corner balls); requires '
+                        'the seed census corner grading; absent = uniform NormalSize balls')
     a=p.parse_args();m=read_mesh(a.mesh)
     if not (bool(a.semantic_contract) == bool(a.transformed_supports) == bool(a.seed_census)):
         p.error('--semantic-contract, --transformed-supports and --seed-census are required together')
@@ -615,6 +649,8 @@ def main():
         p.error('--edge-size requires the bound seed census')
     if any(option in sys.argv for option in ('--edge-growth-ratio','--edge-layer-aspect')) and a.edge_size is None:
         p.error('--edge-growth-ratio and --edge-layer-aspect require --edge-size')
+    if a.corner_size is not None and not a.seed_census:
+        p.error('--corner-size requires the bound seed census')
     basis=(load_trace_basis(*basis_paths) if basis_paths[0] is not None else None)
     semantic=(load_semantic_contract(a.semantic_contract) if a.semantic_contract
               else simple_sharp_contract())
@@ -623,7 +659,8 @@ def main():
     r=prepare(m,a.output,a.normal,a.tangent,a.far,
         a.protected_distance,a.far_growth,a.protect_surface,semantic,supports,
         a.maximum_elements,census,sha(a.semantic_contract) if a.semantic_contract else None,
-        basis,a.trace_basis_size_ratio,a.edge_size,a.edge_growth_ratio,a.edge_layer_aspect)
+        basis,a.trace_basis_size_ratio,a.edge_size,a.edge_growth_ratio,a.edge_layer_aspect,
+        a.corner_size)
     r['SeedArtifact']=str(a.mesh.resolve());r['SeedArtifactSHA256']=sha(a.mesh)
     if basis is not None:
         r['TraceBasisSizing']['Inputs']={name:{'Path':str(path.resolve()),'SHA256':sha(path)}

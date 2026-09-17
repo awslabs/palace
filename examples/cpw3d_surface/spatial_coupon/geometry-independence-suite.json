@@ -49,7 +49,7 @@
     {
       "Name": "prepare_edge_metric_scout.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "f9c4d8c3b293983661372f491c97521734a29435b0bc341ee72db670567d7c14"
+      "SHA256": "3d5159133bb938095d47fffe34d53680babfe9cbfa41496a0bc6ea22af66a588"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -59,7 +59,7 @@
     {
       "Name": "edge_volume_metric.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/edge_volume_metric.py",
-      "SHA256": "749879a74ee72e305c1f778d784489dfdc211b616ae07d8b1775b7d9a3471162"
+      "SHA256": "61ba70ad5299f16d678812b21da78d12754e33e590d00f04db43aef320b5f78c"
     },
     {
       "Name": "mesh_array_io.py",
@@ -79,7 +79,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "00885d1802a04a16f88bd7662961f2f543ac8720636abd7924e9bb9c0c09134a"
+      "SHA256": "6e5c61c31f835c37143efc7108270705fd990e4c22161ece681fb46ebd225519"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1539,11 +1539,11 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "70a696f2ee2eaf997323cf99a001b4928211aba43d0c81d361ba9d39008d1204"
+      "mesher": "de72667c07e1bb21f77a4408f390b95d2b188e814147f65f76df6ed039703991"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "f9c4d8c3b293983661372f491c97521734a29435b0bc341ee72db670567d7c14"
+      "metric-preparer": "3d5159133bb938095d47fffe34d53680babfe9cbfa41496a0bc6ea22af66a588"
     },
     "native-adaptation-mmg": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",

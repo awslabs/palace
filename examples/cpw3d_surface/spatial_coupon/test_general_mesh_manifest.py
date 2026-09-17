@@ -2617,5 +2617,85 @@ class EdgeLayerContractTest(unittest.TestCase):
                  adaptation_report=adaptation, recipe_data=plain_recipe, census_data={})
 
 
+class CornerGradingContractTest(unittest.TestCase):
+    """Decision 33: the seed and the metric stage prescribe one corner grading
+    (CornerSize growing by the edge-layer ratio to NormalSize inside the corner
+    balls) or none; with a layer the rows reach the ball boundary."""
+
+    @staticmethod
+    def fixture():
+        grading = {"CornerSize": .004, "GrowthRatio": 2.0, "NormalSize": .025, "Radius": .1,
+                   "Reach": .021, "ShellRadii": [.004, .012, .028, .1], "ShellSizes": [.004, .008, .016, .025]}
+        recipe = {"NormalSize": .025, "CornerIsotropyRadius": .1, "CornerGrading": dict(grading),
+                  "TruePhysicalCorners": [[0., 0., 0.], [10., 0., 0.]]}
+        census = {"CornerGrading": dict(grading),
+                  "EdgeLayer": {"EdgeSize": .004, "LayerReachesCornerBall": True, "TaperSubdivisions": [],
+                                "UnlayeredEdgeLengthPerCorner": [
+                                    {"Corner": 0, "UnlayeredLengths": [.1, .1], "Maximum": .1},
+                                    {"Corner": 1, "UnlayeredLengths": [.1], "Maximum": .1}]}}
+        seed = {"Command": ["julia", "mesh_spatial_coupon.jl", "sig.csv", "fabricated", "seed.msh",
+                            "--lc-fine", ".025", "--edge-size", ".004", "--edge-growth-ratio", "2",
+                            "--corner-size", ".004"]}
+        metric = {"Command": ["python3", "prepare_edge_metric_scout.py", "seed.msh", "metric",
+                              "--normal", ".025", "--edge-size", ".004", "--corner-size", "0.004"]}
+        return seed, metric, recipe, census
+
+    def test_corner_grading_is_bound_across_seed_metric_census_and_recipe_or_absent(self):
+        from mesh_stage_contract import validate_corner_grading
+        seed, metric, recipe, census = self.fixture()
+        self.assertEqual(validate_corner_grading(seed, metric, recipe, census), recipe["CornerGrading"])
+
+        def rejected(message, seed_report=seed, metric_report=metric, recipe_data=recipe,
+                     census_data=census):
+            with self.assertRaisesRegex(ValueError, message):
+                validate_corner_grading(seed_report, metric_report, recipe_data, census_data)
+
+        def with_value(report, option, value):
+            report = copy.deepcopy(report)
+            report["Command"][report["Command"].index(option) + 1] = value; return report
+
+        def with_grading(record, **changes):
+            record = copy.deepcopy(record); record["CornerGrading"].update(changes); return record
+
+        rejected("differ from the recipe CornerSize", seed_report=with_value(seed, "--corner-size", ".002"))
+        rejected("differ from the recipe CornerSize", metric_report=with_value(metric, "--corner-size", ".008"))
+        rejected("differ from the recipe CornerSize", census_data=with_grading(census, CornerSize=.002))
+        rejected("--edge-growth-ratio differs", seed_report=with_value(seed, "--edge-growth-ratio", "1.5"))
+        rejected("do not follow", recipe_data=with_grading(recipe, ShellRadii=[.004, .012, .028]))
+        rejected("do not follow", recipe_data=with_grading(recipe, Reach=.02))
+        # The grading must reach NormalSize inside the ball (radius 0.02 < reach 0.021).
+        rejected("do not follow", recipe_data={**with_grading(recipe, Radius=.02), "CornerIsotropyRadius": .02},
+                 census_data=with_grading(census, Radius=.02))
+        rejected("census corner grading differs", census_data=with_grading(census, ShellRadii=[.004, .1]))
+        rejected("do not follow", recipe_data=with_grading(recipe, ShellSizes=[.004, .008, .016, .02]))
+        rejected("sizes are invalid", recipe_data=with_grading(recipe, CornerSize=.03),
+                 census_data=with_grading(census, CornerSize=.03),
+                 seed_report=with_value(seed, "--corner-size", ".03"),
+                 metric_report=with_value(metric, "--corner-size", ".03"))
+        # With a layer the rows must reach the ball (no taper, un-layered lengths recorded).
+        tapered = copy.deepcopy(census); tapered["EdgeLayer"]["LayerReachesCornerBall"] = False
+        rejected("reaching the corner balls", census_data=tapered)
+        tapered = copy.deepcopy(census); tapered["EdgeLayer"]["TaperSubdivisions"] = [2]
+        rejected("reaching the corner balls", census_data=tapered)
+        tapered = copy.deepcopy(census); del tapered["EdgeLayer"]["UnlayeredEdgeLengthPerCorner"][1]
+        rejected("reaching the corner balls", census_data=tapered)
+        # Without a layer the grading stands alone.
+        self.assertIsNotNone(validate_corner_grading(seed, metric, recipe,
+                                                     {"CornerGrading": census["CornerGrading"]}))
+        # Without a recipe record: no option anywhere, census none (0 or absent).
+        plain_recipe = {k: v for k, v in recipe.items() if k != "CornerGrading"}
+        plain_seed = copy.deepcopy(seed); del plain_seed["Command"][-2:]
+        plain_metric = copy.deepcopy(metric); del plain_metric["Command"][-2:]
+        self.assertIsNone(validate_corner_grading(plain_seed, plain_metric, plain_recipe, {}))
+        self.assertIsNone(validate_corner_grading(plain_seed, plain_metric, plain_recipe,
+                                                  {"CornerGrading": {"CornerSize": 0.0}}))
+        rejected("without a recipe CornerGrading", seed_report=seed, metric_report=plain_metric,
+                 recipe_data=plain_recipe, census_data={})
+        rejected("without a recipe CornerGrading", seed_report=plain_seed, metric_report=metric,
+                 recipe_data=plain_recipe, census_data={})
+        rejected("without a recipe CornerGrading", seed_report=plain_seed, metric_report=plain_metric,
+                 recipe_data=plain_recipe)
+
+
 if __name__ == "__main__":
     unittest.main()

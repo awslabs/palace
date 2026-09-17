@@ -722,6 +722,71 @@ def validate_edge_layer(seed_report, metric_report, adaptation_report, recipe, c
     return layer
 
 
+# Corner grading (supervisor decision 33): the seed and the metric stage prescribe
+# one CornerSize inside the corner balls or none (0 / absent = uniform NormalSize).
+CORNER_SIZE_OPTION = "--corner-size"
+
+
+def validate_corner_grading(seed_report, metric_report, recipe, census):
+    """The seed, the metric stage, the census and the recipe agree on the corner
+    grading.  With a recipe CornerGrading record: the seed and metric commands pass
+    --corner-size equal to its CornerSize (0 < CornerSize < NormalSize), its
+    GrowthRatio is the edge-layer growth ratio of both commands (or the default),
+    its radius is the recipe CornerIsotropyRadius, its Reach = (NormalSize -
+    CornerSize) / (GrowthRatio - 1) lies inside the radius, its ShellRadii are the
+    cumulative geometric offsets below NormalSize followed by the radius, and the
+    census CornerGrading records the same values; with a recorded edge layer, the
+    layer reaches the ball (census LayerReachesCornerBall, no taper) and records
+    UnlayeredEdgeLengthPerCorner.  Without the record neither command passes a
+    corner size and the census records none.  Returns the record or None."""
+    grading = recipe.get("CornerGrading")
+    seed_value = _option_or_default(seed_report["Command"], CORNER_SIZE_OPTION, 0.0)
+    metric_value = _option_or_default(metric_report["Command"], CORNER_SIZE_OPTION, 0.0)
+    census_grading = census.get("CornerGrading") if isinstance(census, dict) else None
+    census_size = (float(census_grading.get("CornerSize", 0.0))
+                   if isinstance(census_grading, dict) else 0.0)
+    if grading is None:
+        if seed_value != 0.0 or metric_value != 0.0 or census_size != 0.0:
+            raise ValueError("Corner grading requested without a recipe CornerGrading record")
+        return None
+    normal = _recipe_number(recipe, "NormalSize")
+    radius = _recipe_number(recipe, "CornerIsotropyRadius")
+    corner_size = _recipe_number(grading, "CornerSize")
+    ratio = _recipe_number(grading, "GrowthRatio")
+    if not 0.0 < corner_size < normal or ratio <= 1.0:
+        raise ValueError("Corner grading sizes are invalid")
+    if seed_value != corner_size or metric_value != corner_size or census_size != corner_size:
+        raise ValueError("Seed command, metric command and census differ from the recipe CornerSize")
+    for command, stage in ((seed_report["Command"], "Seed"), (metric_report["Command"], "Metric")):
+        if _option_or_default(command, "--edge-growth-ratio", EDGE_LAYER_DEFAULTS["GrowthRatio"]) != ratio:
+            raise ValueError(f"{stage} command --edge-growth-ratio differs from the corner grading ratio")
+    expected = []
+    size = corner_size
+    while size < normal:
+        expected.append(expected[-1] + size if expected else size)
+        size *= ratio
+    reach = (normal - corner_size) / (ratio - 1.0)
+    sizes = [corner_size * ratio**k for k in range(len(expected))] + [normal]
+    if (_recipe_number(grading, "NormalSize") != normal or _recipe_number(grading, "Radius") != radius or
+            _recipe_number(grading, "Reach") != reach or not reach <= radius or
+            grading.get("ShellRadii") != expected + [radius] or grading.get("ShellSizes") != sizes):
+        raise ValueError("Corner grading shells do not follow CornerSize, GrowthRatio and the radius")
+    if (not isinstance(census_grading, dict) or
+            any(census_grading.get(name) != grading.get(name)
+                for name in ("CornerSize", "GrowthRatio", "NormalSize", "Radius", "Reach", "ShellRadii",
+                             "ShellSizes"))):
+        raise ValueError("Seed census corner grading differs from the recipe")
+    layer = census.get("EdgeLayer") if isinstance(census, dict) else None
+    if isinstance(layer, dict) and layer.get("EdgeSize", 0.0) != 0.0:
+        rows = layer.get("UnlayeredEdgeLengthPerCorner")
+        if (layer.get("LayerReachesCornerBall") is not True or layer.get("TaperSubdivisions") != [] or
+                not isinstance(rows, list) or len(rows) != len(recipe.get("TruePhysicalCorners", [])) or
+                any(not isinstance(row, dict) or not isinstance(row.get("UnlayeredLengths"), list)
+                    for row in rows)):
+            raise ValueError("Seed census edge layer does not record the layer reaching the corner balls")
+    return grading
+
+
 # Quality gates the seed stage enforces on the MMG required region (decision 30)
 # and the label restorer enforces on the adapted mesh: both commands carry them,
 # with equal values.
@@ -1052,6 +1117,7 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
     census = json.loads(Path(seed_stage["Artifacts"]["seed-corner-census"]["Path"]).read_text())
     validate_trace_basis_sizing(seed_stage, metric, recipe, census)
     validate_edge_layer(seed_stage, metric, adaptation, recipe, census)
+    validate_corner_grading(seed_stage, metric, recipe, census)
     validate_required_region(seed_stage, restoration, recipe, census,
                              metric["Artifacts"]["required-tetrahedra"]["Path"])
     return reports, digests
