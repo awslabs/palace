@@ -374,6 +374,28 @@ every other case neither). Production is protected structurally:
 `EdgeLayer` block (preflight fails closed); `test_general_mesh_manifest` asserts
 both and the gate negatives (a layer cell with negative orientation or an
 aspect above the bound fails; a non-layer cell below 0.01 still fails).
+Measured on the four-edge 1 nm seed (`four-edge-calib-ma-el1nm-50`, root
+`/tmp/coupon-calibration-ma-el1nm-50-dd9f57120-20260917-110949`): 81,821 layer
+cells with edge aspects P50 10.6 / P90 70.7 (the design value) / P99 104.5 /
+maximum 1,154 before repair; the tail is Gmsh's volume split (interior vertices
+0.3 nm from a row node under the face plane, 13 cells at 1,150 that no bounded
+move can fix), so the seed optimizer first collapses free interior layer
+vertices with an incident edge below EdgeSize onto the neighbour whose cavity
+has the best worst edge aspect (9 vertices, 44 cells removed, 56 remapped;
+`collapse_short_layer_edges!`) and then descends on the remaining components
+with the layer cells' scaled-Jacobian floors replaced by the orientation floor
+(their vertex-0 scaled Jacobian is not a quality measure and was measured to
+block every aspect repair): maximum 1,154 -> 827 -> 95.0, 0 cells above 100,
+layer minimum scaled Jacobian 3.0e-4 (diagnostic), +12 s of seed time. MMG kept
+all 84,653 required cells (census == recipe == restoration), adaptation
+3,137,539 tets in 49 s, restoration 0 components / 0 collapses in 29 s, corners
+3.71/3.80/3.42/3.84, outside-layer minimum scaled Jacobian 0.0428, protected
+1.0e-10, ownership closed, 0 diagonal bands, identity and rotate-z covariant;
+transverse tet-edge P50 per shell 0-2/2-5/5-10/10-25 nm = 1.05/2.1/4.2/16.8 nm
+at 50 nm tangential. Every physical gate passes on both variants; the
+calibration design gate `achieved-anisotropy` fails on the band next to the
+layer (TangentialP50 55.8 nm vs transverse P90 46/77 nm), the EL4 outcome that
+decision 31 leaves to physics.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
