@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_POST_OPERATOR_CSV_HPP
 #define PALACE_MODELS_POST_OPERATOR_CSV_HPP
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
@@ -240,8 +241,12 @@ class PostOperatorCSV
 protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
-  bool reload_table = false;        // Driven simulation with non-default restart.
-  bool defer_table_writes = false;  // Adaptive driven output is flushed at finalization.
+  bool reload_table = false;  // Driven simulation with non-default restart.
+  // Adaptive driven output is buffered and rewritten at most once per flush interval (and
+  // at finalization), so an interrupted sweep still leaves usable tables.
+  bool defer_table_writes = false;
+  std::chrono::steady_clock::time_point last_deferred_flush;
+  void FlushDeferredTables();
 
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
@@ -420,8 +425,8 @@ protected:
   auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
 
 public:
-  // Flush tables buffered during an adaptive driven sweep. Other solver modes continue to
-  // write eagerly and this is a no-op for them.
+  // Flush tables buffered during an adaptive driven sweep. Other solver modes write eagerly
+  // and this is a no-op for them.
   void FinalizeCSVData();
 
   // Print all data from nondim_measurement_cache.

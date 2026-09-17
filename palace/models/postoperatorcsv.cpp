@@ -462,6 +462,12 @@ void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
   if (!defer_table_writes)
   {
     table.WriteFullTableTrunc();
+    return;
+  }
+  constexpr auto flush_interval = std::chrono::seconds(10);
+  if (std::chrono::steady_clock::now() - last_deferred_flush >= flush_interval)
+  {
+    FlushDeferredTables();
   }
 }
 
@@ -483,12 +489,8 @@ void PostOperatorCSV<solver_t>::WriteTable(std::optional<TableWithCSVFile> &tabl
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::FinalizeCSVData()
+void PostOperatorCSV<solver_t>::FlushDeferredTables()
 {
-  if (!defer_table_writes)
-  {
-    return;
-  }
   WriteTable(domain_E);
   WriteTable(surface_F);
   WriteTable(surface_Q);
@@ -509,6 +511,16 @@ void PostOperatorCSV<solver_t>::FinalizeCSVData()
   WriteTable(mode_V);
   WriteTable(port_EPR);
   WriteTable(port_Q);
+  last_deferred_flush = std::chrono::steady_clock::now();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::FinalizeCSVData()
+{
+  if (defer_table_writes)
+  {
+    FlushDeferredTables();
+  }
 }
 
 template <ProblemType solver_t>
@@ -1870,6 +1882,7 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
     nr_expected_measurement_rows = solver.driven.sample_f.size();
     reload_table = (solver.driven.restart != 1);
     defer_table_writes = (solver.driven.adaptive_tol > 0.0);
+    last_deferred_flush = std::chrono::steady_clock::now();
 
     row_i = std::size_t(solver.driven.restart - 1) % nr_expected_measurement_rows;
     ex_idx_i = std::size_t(solver.driven.restart - 1) / nr_expected_measurement_rows;
