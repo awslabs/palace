@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added machine-readable schema compatibility data to the installed schema files and
+    generated the developer documentation table from the same source
+    [PR 881](https://github.com/awslabs/palace/pull/881).
   - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
     by including complex terms in the real-valued preconditioner, or using an exact
     complex-valued preconditioner when `"ComplexCoarseSolve"` is true. Numeric wave ports
