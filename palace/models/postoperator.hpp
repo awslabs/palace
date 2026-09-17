@@ -256,8 +256,11 @@ public:
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Whether this solve requests any field output. Drivers use this to release solver
-  // memory before constructing the field-output evaluators only when necessary.
+  // memory before constructing the field-output evaluators only when necessary, and the
+  // adaptive online sweep uses it to choose an ordering that keeps frequency-dependent port
+  // state hot across excitations.
   bool WillWriteFields() const { return ShouldWriteFields(); }
+  bool WillWriteFields(int step) const { return ShouldWriteFields(step); }
 
 protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
@@ -559,11 +562,6 @@ public:
                        [](const auto &p) { return p.second.has_current; });
   }
   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
-
-  // Whether this solve requests any full-field output. Adaptive online sweeps can use this
-  // to choose an ordering that keeps frequency-dependent port state hot across excitations.
-  bool HasFieldOutput() const { return ShouldWriteFields(); }
-  bool HasFieldOutput(int step) const { return ShouldWriteFields(step); }
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

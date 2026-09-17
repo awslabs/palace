@@ -2245,10 +2245,11 @@ auto PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
                    max_error / std::max(max_reference, 1.0e-300));
     }
   }
+  const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
   for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
   {
     auto &vi = measurement_cache.lumped_port_vi[idx];
-    vi.V = data.GetVoltage(*E);
+    vi.V = port_voltages.at(idx);
     vi.I_RLC[0] = (std::abs(data.R) > 0.0)
                       ? vi.V / data.GetCharacteristicImpedance(omega.real(),
                                                                LumpedPortData::Branch::R)
@@ -2263,7 +2264,7 @@ auto PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
                       : 0.0;
     vi.I =
         std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(), std::complex<double>{0.0, 0.0});
-    vi.S = data.GetSParameter(*E);
+    vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
     if (std::abs(data.L) > 0.0)
     {
       vi.inductor_energy = 0.5 * std::abs(data.L) * std::norm(vi.I_RLC[1]);
