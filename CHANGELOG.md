@@ -51,6 +51,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     932](https://github.com/awslabs/palace/pull/932).
   - Reduced repeated work in PROM construction [PR
     930](https://github.com/awslabs/palace/pull/930).
+  - Adaptive driven sweeps now buffer CSV output tables in memory during the online phase
+    and write them once at the end of the sweep, instead of rewriting the growing tables at
+    every output frequency.
 
 #### Build system
 
