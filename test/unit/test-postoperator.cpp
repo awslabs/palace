@@ -613,8 +613,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto vi = post_op.MeasureLumpedPortForTest(1, E, B, 1.0);
     const auto &port = space_op.GetLumpedPortOp().GetPort(1);
     REQUIRE(std::abs(vi.V) > 0.0);
-    CHECK_THAT(std::abs(vi.S - vi.V / std::sqrt(port.GetExcitationRefResistance())),
+    // S = V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the unit time-
+    // averaged power wave referenced to the port reference resistance.
+    CHECK_THAT(std::abs(vi.S - vi.V / port.GetReferenceVoltage()),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(vi.V)));
+    CHECK_THAT(port.GetReferenceVoltage(),
+               Catch::Matchers::WithinRel(
+                   std::sqrt(2.0 * port.GetExcitationRefResistance()), 1.0e-12));
 
     GridFunction E_gf(space_op.GetNDSpace(), true);
     E_gf.Real().SetFromTrueDofs(E.Real());
@@ -622,6 +627,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto S_legacy = port.GetSParameter(E_gf);
     CHECK_THAT(std::abs(vi.S - S_legacy),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
+
+    // The stored inductor energy is the time average 1/4 L |I_L|² for the peak phasor
+    // branch current I_L = V / (iωL) (the physical definition, written out explicitly).
+    REQUIRE(std::abs(vi.I_RLC[1]) > 0.0);
+    CHECK_THAT(vi.inductor_energy,
+               Catch::Matchers::WithinRel(0.25 * std::abs(port.L) * std::norm(vi.I_RLC[1]),
+                                          1.0e-12));
   }
 
   SECTION("Eigenmode")

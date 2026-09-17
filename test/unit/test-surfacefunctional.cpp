@@ -1230,9 +1230,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
   mfem::Array<int> marker(pmesh.bdr_attributes.Max());
   marker = 0;
   marker[7 - 1] = 1;
+  // The measured interface energy is the time average of the raw 1/2 t ε |E|² integrand
+  // for the complex mode fields (the domain energy below is likewise time-averaged).
   InterfaceDielectricCoefficient<InterfaceDielectric::SA> legacy(E, mat_op, interface.t,
                                                                  interface.epsilon_r);
-  const double interface_energy = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
+  const double interface_energy =
+      0.5 * RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
   DomainPostOperator domain_post(iodata.domains.postpro, mat_op, fem_op.GetNDSpace(),
                                  fem_op.GetCurlSpace());
   const double domain_energy = domain_post.GetElectricFieldEnergy(E);

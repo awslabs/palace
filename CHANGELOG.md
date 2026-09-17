@@ -29,6 +29,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     3D system preconditioner. SchemaVer 1-7-0
     [PR 921](https://github.com/awslabs/palace/pull/921).
 
+#### Interface Changes
+
+  - Frequency domain outputs now follow the standard peak-phasor convention: every
+    quadratic quantity (domain, subdomain, interface and lumped-element energies, port and
+    surface power, `U_e`/`U_m`/`S` visualization fields, wave-port `Z[i][j]`) is the time
+    average over one period (factor 1/2 relative to the product of the peak phasors), and
+    all port families (lumped, wave, Floquet) are excited with 1 W of *time-averaged*
+    incident power (for a 50 Ω lumped port, `V_inc = 10` V and `I_inc = 0.2` A peak). Previously
+    lumped and wave ports carried 1 W of peak-product (0.5 W time-averaged) power and the
+    quadratic outputs were twice the time averages. Fields, voltages, currents, S- and
+    Z-parameters, Q, κ, EPR and participation ratios, error indicators, and time domain and
+    static outputs are unchanged in meaning; absolute energies, powers and (for lumped/wave
+    driven problems) field amplitudes change by 1/2 or √2 accordingly. See the developer
+    notes on phasor and power conventions.
+
 #### Bug Fixes
 
   - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line

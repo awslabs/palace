@@ -62,7 +62,9 @@ Additionally, when surface current excitations are present, the excitations are 
 `surface-I.csv`.
 
 For frequency domain problems, the values output are the complex-valued peak voltages and
-currents, computed from the field phasors.
+currents, computed from the field phasors. Quadratic quantities (powers, energies, Poynting
+vectors) are reported as time averages over one period, so that a matched port excited with the
+default normalization delivers a time-averaged incident power of 1 W.
 
 ## Domain postprocessing
 
@@ -162,11 +164,16 @@ interface. In addition, the constitutive parameters can be discontinuous between
 For example,
 
 ```math
-U_e = \frac{1}{2} \bm{E}^{*} \bm{\epsilon} \bm{E}, \qquad
-U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
-\bm{S} = \operatorname{Re}\!\left\{\bm{E} \times
-\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}.
+U_e = \frac{1}{4} \bm{E}^{*} \bm{\epsilon} \bm{E}, \qquad
+U_m = \frac{1}{4} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
+\bm{S} = \frac{1}{2} \operatorname{Re}\!\left\{\bm{E} \times
+\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}
 ```
+
+for the complex peak phasors of a frequency domain solution (time-averaged quantities), or
+``U_e = \frac{1}{2} \bm{E}\cdot\bm{\epsilon}\bm{E}``, ``U_m = \frac{1}{2} \bm{B}\cdot\bm{\mu}^{-1}\bm{B}``,
+and ``\bm{S} = \bm{E}\times\bm{\mu}^{-1}\bm{B}`` for the real-valued instantaneous fields of a
+time domain or static solution.
 
 A jump in ``\bm{\epsilon}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
 density or the Poynting vector, even where the conforming trace of a primary field is

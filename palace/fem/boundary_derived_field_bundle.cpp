@@ -115,7 +115,8 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
     const mfem::ParFiniteElementSpace &rt_fespace_,
     std::shared_ptr<const FaceSamplingPlan> sampling_plan_,
     std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_, const GridFunction &E_,
-    const GridFunction &B_, double electric_scaling, double magnetic_scaling)
+    const GridFunction &B_, double electric_scaling, double magnetic_scaling,
+    double quadratic_weight)
   : mesh(&mesh_), mat_op(&mat_op_), nd_fespace(&nd_fespace_), rt_fespace(&rt_fespace_),
     E(&E_), B(&B_), sampling_plan(std::move(sampling_plan_)),
     trace_cache(std::move(trace_cache_)), impl(std::make_unique<Impl>())
@@ -302,11 +303,13 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
 
       std::vector<CeedIntScalar> ctx(9);
       ctx[0].second = route.normal_sign;
-      ctx[1].second = electric_scaling;  // Surface charge.
-      ctx[2].second = magnetic_scaling;  // Surface current.
-      ctx[3].second = electric_scaling;  // Electric energy.
-      ctx[4].second = magnetic_scaling;  // Magnetic energy.
-      ctx[5].second = magnetic_scaling;  // Poynting vector.
+      // The linear surface charge and current carry only the unit scalings; the quadratic
+      // energy and Poynting entries additionally carry the owner's time-average weight.
+      ctx[1].second = electric_scaling;                     // Surface charge.
+      ctx[2].second = magnetic_scaling;                     // Surface current.
+      ctx[3].second = quadratic_weight * electric_scaling;  // Electric energy.
+      ctx[4].second = quadratic_weight * magnetic_scaling;  // Magnetic energy.
+      ctx[5].second = quadratic_weight * magnetic_scaling;  // Poynting vector.
       ctx[6].second = route.average_scale;
       ctx[7].first = 9;
       ctx.insert(ctx.end(), epsilon_ctx.begin(), epsilon_ctx.end());

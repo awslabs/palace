@@ -115,7 +115,8 @@ public:
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);
 
-  // Get surface integrals computing electric or magnetic field flux through a boundary.
+  // Get surface integrals computing electric or magnetic field flux, or the real power flux
+  // (time-averaged for complex-valued fields), through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
                                       const GridFunction *B) const;
 
@@ -125,7 +126,8 @@ public:
                 const GridFunction &E, const GridFunction &B,
                 std::complex<double> omega) const;
 
-  // Get surface integrals computing interface dielectric energy.
+  // Get surface integrals computing interface dielectric energy (time-averaged for
+  // complex-valued fields).
   double GetInterfaceLossTangent(int idx) const;
   double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
 
