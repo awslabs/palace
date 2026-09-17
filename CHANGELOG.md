@@ -38,6 +38,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
     port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
     [PR 921](https://github.com/awslabs/palace/pull/921).
+  - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
+    `Lc / Z₀` and so depended on the characteristic length `Lc`.
+    [PR 936](https://github.com/awslabs/palace/pull/936).
 
 #### Performance Improvements
 
