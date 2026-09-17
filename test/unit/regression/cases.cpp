@@ -322,6 +322,10 @@ palace::test::CustomCheck CompareRomEigenvalues(double bkwd_max, double rtol_re,
       if (std::abs(im_ref) > atol_im)
       {
         CHECK_THAT(q_a, Catch::Matchers::WithinRel(q_ref, rtol_q));
+        // Root reporting uses the eigenmode convention Q = |f| / (2|Im f|) (full complex
+        // magnitude), not |Re f| / (2|Im f|); verify the reported column follows it.
+        const double q_conv = std::sqrt(re_a * re_a + im_a * im_a) / (2.0 * std::abs(im_a));
+        CHECK_THAT(q_a, Catch::Matchers::WithinRel(q_conv, 1.0e-6));
       }
     }
     REQUIRE(n_ref_phys > 0);             // reference must contain a converged eigenpair
@@ -1400,6 +1404,19 @@ TEST_CASE("cavity2d_eigenmode", "[Serial][Parallel][GPU][Regression]")
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d.json", "eigenmode", opts);
+}
+
+// NonlinearType: SLP with no nonlinear term must fall back to the linear eigensolver (not
+// abort on a null A2), giving the same eigenvalues as cavity2d_eigenmode.
+TEST_CASE("cavity2d_eigenmode_slp", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_slp.json", "eigenmode_slp", opts);
 }
 
 // Coarse 2D driven tolerances (partition- and platform-sensitive).

@@ -4,19 +4,8 @@
 #include "waveportoperator.hpp"
 #include <algorithm>
 #include <limits>
-#include "fem/bilinearform.hpp"
-#include "linalg/amg.hpp"
-#include "linalg/ams.hpp"
-#include "linalg/arpack.hpp"
-#include "linalg/blockprecond.hpp"
-#include "linalg/gmg.hpp"
-#include "linalg/hypre.hpp"
-#include "linalg/iterative.hpp"
-#include "linalg/mumps.hpp"
-#include "linalg/rap.hpp"
-#include "linalg/solver.hpp"
-
 #include <fmt/ranges.h>
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
@@ -26,9 +15,12 @@
 #include "linalg/arpack.hpp"
 #include "linalg/blockprecond.hpp"
 #include "linalg/gmg.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/mumps.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "models/farfieldboundaryoperator.hpp"
