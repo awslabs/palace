@@ -35,8 +35,8 @@ function compatibility_table(entries::Vector)::String
             [
                 "`$(entry["schema_version"])`",
                 "`$(entry["first_palace_release"])`",
-                entry["notes"],
-            ],
+                entry["notes"]
+            ]
         )
     end
 
@@ -51,8 +51,8 @@ function compatibility_table(entries::Vector)::String
 end
 
 function generate_schema_compatibility_table(;
-    compatibility_path::String = COMPATIBILITY_PATH,
-    notes_path::String = NOTES_PATH,
+    compatibility_path::String=COMPATIBILITY_PATH,
+    notes_path::String=NOTES_PATH
 )
     data = JSON.parsefile(compatibility_path)
     haskey(data, "schema_versions") ||
