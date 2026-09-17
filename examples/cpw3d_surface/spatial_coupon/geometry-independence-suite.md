@@ -396,6 +396,24 @@ at 50 nm tangential. Every physical gate passes on both variants; the
 calibration design gate `achieved-anisotropy` fails on the band next to the
 layer (TangentialP50 55.8 nm vs transverse P90 46/77 nm), the EL4 outcome that
 decision 31 leaves to physics.
+The rule is case-keyed (`general_mesh_manifest.case_gates`, used by the verifier
+and the suite runner alike): a case that does not declare
+`Calibration.EdgeLayerQualityRule` is never judged by it, since its seed and
+restorer never executed the bound. The 4 nm layer case
+(`four-edge-calib-ma-edge-layer-4nm`, 3,450,085 tets, identity SHA 22d6d926...)
+therefore stays under its scaled-Jacobian-gated record ("physical gates pass
+under the SJ gate", design gate pending physics, decision 31/32 rulings): it is
+judged by MinimumScaledJacobian 0.01 on its whole mesh, exactly as when it was
+verified, and it is not re-verified under the layer rule (its layer set has
+slivers at edge aspect 761 with vertex-0 scaled Jacobian >= 0.02 that the rule
+would fail and a rebuild with the seed collapse/descent would be needed to
+pass). The manifest Gates, rule included, remain the canonical cache key of
+every build of the manifest. The restorer computes the adapter's required flags
+before the corner-ball collapse and compacts them with the cells, so the layer
+rule's "every layer cell is a required cell" check stays aligned when a collapse
+removes cells; the seed's Gmsh connectivity mutation
+(`apply_seed_cell_collapse!`) is pinned by a tiny-box round-trip test (written
+points == used points, written cells == census).
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

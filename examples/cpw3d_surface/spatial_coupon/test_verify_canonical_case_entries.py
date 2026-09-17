@@ -315,6 +315,45 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "label-restoration command does not execute"):
             validate_calibration_commands(restored, {**ruled, "label-restoration": stages["label-restoration"]})
 
+    def test_variants_are_judged_by_the_case_gates_not_the_manifest_wide_rule(self):
+        """A calibration manifest carrying Gates.EdgeLayerQualityRule judges a case that
+        does not declare the rule (its stages never executed the bound) without it,
+        while the manifest Gates remain the binding of the build record."""
+        import verify_canonical_case_entries as verifier
+        normal = fixture_suite.NORMAL_SIZE
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self.fixture(root)
+            self._declare_calibration(manifest_path, "base", {"--lc-fine": normal},
+                                      {"--normal": normal},
+                                      {"--lc-fine": 2 * normal, "--normal": 2 * normal})
+            labeled = json.loads(manifest_path.read_text())
+            rule = {"MaximumEdgeAspect": 100., "ScaledJacobianRoundoffFloor": 1e-12}
+            labeled["Gates"]["EdgeLayerQualityRule"] = rule
+            labeled["Calibration"]["GateDeviations"] = {"EdgeLayerQualityRule": {
+                "Production": None, "Calibration": 100., "ProductionUse": "FORBIDDEN"}}
+            manifest_path.write_text(json.dumps(labeled, indent=2) + "\n")
+            judged = []
+            original = verifier.audit_manifest_evidence
+            def recording(evidence, gates, contract, binding):
+                judged.append((gates, binding["Gates"]))
+                return original(evidence, gates, contract, binding)
+            verifier.audit_manifest_evidence = recording
+            try:
+                report = verify_case(manifest_path, audits, "base")
+            finally:
+                verifier.audit_manifest_evidence = original
+            # The manifest Gates are the build's cache key: adding the rule changes the
+            # key of the fixture build (a binding error, not a gate failure), which is
+            # exactly why the rule must stay in the binding while the judgement is
+            # case-keyed.
+            self.assertTrue(all("cache key" in failure or "canonical build" in failure
+                                for failure in report["Failures"]), report["Failures"])
+            self.assertEqual(len(judged), len(labeled["Cases"][0]["Variants"]))
+            for gates, binding_gates in judged:
+                self.assertNotIn("EdgeLayerQualityRule", gates)
+                self.assertEqual(binding_gates, labeled["Gates"])
+                self.assertIn("EdgeLayerQualityRule", binding_gates)
+
     def test_edge_layer_quality_rule_binds_seed_and_restorer_to_the_manifest_gate(self):
         from verify_canonical_case_entries import validate_edge_layer_quality_rule_binding
         rule = {"MaximumEdgeAspect": 100., "ScaledJacobianRoundoffFloor": 1e-12}

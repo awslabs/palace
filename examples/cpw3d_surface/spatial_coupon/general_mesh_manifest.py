@@ -142,6 +142,23 @@ def validate_edge_layer_quality_rule_gate(manifest):
     return rule
 
 
+def case_gates(manifest, case):
+    """The gates that judge one case's evidence.  The calibration-only edge-layer
+    quality rule (Gates.EdgeLayerQualityRule) judges only a case declaring
+    Calibration.EdgeLayerQualityRule, whose seed and label restorer executed its
+    bound (verify_canonical_case_entries.validate_edge_layer_quality_rule_binding);
+    every other case - a layer case without the declaration included (the 4 nm
+    layer case, judged by MinimumScaledJacobian on its whole mesh as recorded) - is
+    judged by the manifest gates without the rule.  The manifest's Gates stay the
+    canonical cache key of the build."""
+    gates = dict(manifest["Gates"])
+    calibration = case.get("Calibration")
+    calibration = calibration if isinstance(calibration, dict) else {}
+    if EDGE_LAYER_QUALITY_RULE_GATE in gates and calibration.get(EDGE_LAYER_QUALITY_RULE_GATE) is None:
+        del gates[EDGE_LAYER_QUALITY_RULE_GATE]
+    return gates
+
+
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     if manifest.get("Version") != 2 or not isinstance(manifest.get("Cases"), list):
         raise ValueError("Unsupported generality-suite manifest")
@@ -865,7 +882,8 @@ def run_manifest(args):
                            "InputSHA256": hashes, "ToolSHA256": tool_hashes,
                            "StageToolSHA256": manifest["StageToolSHA256"],
                            "Gates": manifest["Gates"]}
-                failures = audit_manifest_evidence(evidence, manifest["Gates"], contract, binding)
+                failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract,
+                                                   binding)
                 mesh_path = _check_artifact(path.parent, evidence.get("Mesh"), "audited mesh")
                 _validate_mesh(mesh_path, contract)
                 mesh_digest = evidence["Mesh"]["SHA256"]

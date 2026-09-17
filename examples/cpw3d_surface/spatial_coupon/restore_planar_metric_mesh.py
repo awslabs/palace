@@ -80,6 +80,8 @@ def required_tetrahedron_vertices(mesh):
     collapse or repair them; the seed stage gated their quality."""
     flags=mesh.cell_data.get('medit:required')
     if flags is None:return frozenset(),0
+    if any(np.asarray(flag).shape!=(len(block.data),) for block,flag in zip(mesh.cells,flags)):
+        raise ValueError('Required tetrahedron flags do not match the adapted cells')
     tetrahedra=[np.asarray(block.data)[np.asarray(flag)==1] for block,flag in zip(mesh.cells,flags)
                 if block.type=='tetra']
     if not tetrahedra:return frozenset(),0
@@ -162,8 +164,9 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
     least quality_target; a corner's collapses are committed together and rolled
     back if its corner-incident aspect did not improve. No vertex moves and no
     boundary triangle changes. Returns the compacted points, tetrahedra and
-    references, the old-to-new vertex map (-1 for removed vertices) and the
-    per-corner collapsed-vertex counts.
+    per-cell data (`tetrahedron_refs`: any array whose first axis is the cells,
+    compacted with them), the old-to-new vertex map (-1 for removed vertices) and
+    the per-corner collapsed-vertex counts.
     """
     minimum_size=recipe.get('NormalSize')
     if not isinstance(minimum_size,(int,float)) or not np.isfinite(minimum_size) or minimum_size<=0:
@@ -585,9 +588,22 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
         for corner in np.asarray(recipe['TruePhysicalCorners'],dtype=float).reshape(-1,3):
             corner_ball|=np.linalg.norm(points-corner,axis=1)<=float(recipe['CornerIsotropyRadius'])
         thresholds=_bound_statistics(local_size[corner_ball])
-        points,tetrahedra,tetrahedron_refs,vertex_map,collapsed=_collapse_corner_ball_vertices(
-            points,tetrahedra,tetrahedron_refs,node_supports,pinned_nodes,recipe,
+        # The adapter's required flags are per adapted cell: computed on the adapted
+        # cell order and compacted with the cells through the corner-ball collapse.
+        flags=mesh.cell_data.get('medit:required')
+        required_mask=(np.zeros(len(tetrahedra),dtype=bool) if flags is None else
+                       np.concatenate([np.asarray(flag)==1 for block,flag in zip(mesh.cells,flags)
+                                       if block.type=='tetra']))
+        if required_mask.shape!=(len(tetrahedra),) or int(required_mask.sum())!=required_cells:
+            raise ValueError('Required tetrahedron flags do not match the adapted cells')
+        cell_data=np.column_stack((np.asarray(tetrahedron_refs),required_mask.astype(int)))
+        points,tetrahedra,cell_data,vertex_map,collapsed=_collapse_corner_ball_vertices(
+            points,tetrahedra,cell_data,node_supports,pinned_nodes,recipe,
             2.*minimum_scaled,local_size,frozen_nodes)
+        tetrahedron_refs=cell_data[:,0].astype(np.asarray(tetrahedron_refs).dtype)
+        required_mask=cell_data[:,1]==1
+        if int(required_mask.sum())!=required_cells:
+            raise ValueError('Corner collapse removed a required tetrahedron')
         node_supports={int(vertex_map[node]):ids for node,ids in node_supports.items()}
         pinned_nodes=frozenset(int(vertex_map[node]) for node in pinned_nodes)
         frozen_nodes=frozenset(int(vertex_map[node]) for node in frozen_nodes)
@@ -601,13 +617,8 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
                 raise ValueError('Edge layer quality rule requested without a recorded edge layer')
             layer_cells=edge_layer_cells(points,tetrahedra,layer['Spans'],edge_layer_required_reach(layer))
             # The layer cells are exactly the seed's required layer cells: MMG may not
-            # have created a cell with a vertex inside the reach.
-            required_mask=np.zeros(len(tetrahedra),dtype=bool)
-            flags=mesh.cell_data.get('medit:required')
-            if flags is not None:
-                kept=np.concatenate([np.asarray(flag)==1 for block,flag in zip(mesh.cells,flags)
-                                     if block.type=='tetra'])
-                required_mask=np.zeros(len(tetrahedra),dtype=bool);required_mask[np.flatnonzero(kept)]=True
+            # have created a cell with a vertex inside the reach (required_mask is
+            # aligned with the collapsed cells).
             if not layer_cells.any():raise ValueError('Recorded edge layer has no cells')
             if np.any(layer_cells&~required_mask):
                 raise ValueError(f'{int(np.sum(layer_cells&~required_mask))} edge-layer cells are not '

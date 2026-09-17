@@ -27,14 +27,14 @@ from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUAL
                                    _check_artifact, _finite_number,
                                    _physical_comparison_failures, _validate_bound_records,
                                    _validate_mesh, audit_manifest_evidence, canonical_sha256,
-                                   sha256, validate_manifest)
+                                   case_gates, sha256, validate_manifest)
 from semantic_mesh_contract import load_semantic_contract, validate_feature_topology
 
 PRODUCTION_FUNCTIONS = ["validate_manifest", "validate_feature_topology",
                         "audit_manifest_evidence", "_check_artifact", "_validate_mesh",
                         "_validate_bound_records", "same_canonical_build",
                         "_physical_comparison_failures", "validate_calibration_commands",
-                        "validate_edge_layer_quality_rule_binding"]
+                        "validate_edge_layer_quality_rule_binding", "case_gates"]
 _EXPECTED_ERRORS = (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError)
 # A calibration case (labeled calibration manifest) declares the recipe options that
 # differ from production per stage command; the canonical cache key does not encode
@@ -157,7 +157,9 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
                "TransformSHA256": canonical_sha256(variant["Transform"]),
                "InputSHA256": hashes, "ToolSHA256": tools,
                "StageToolSHA256": manifest["StageToolSHA256"], "Gates": manifest["Gates"]}
-    failures = audit_manifest_evidence(evidence, manifest["Gates"], contract, binding)
+    # The manifest Gates are the build's cache key (binding); the case is judged by
+    # its own gates (the layer rule only where declared).
+    failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract, binding)
     mesh_path = _check_artifact(evidence_path.parent, evidence.get("Mesh"), "audited mesh")
     _validate_mesh(mesh_path, contract)
     if evidence["Mesh"]["SHA256"] in shared["meshes"]:

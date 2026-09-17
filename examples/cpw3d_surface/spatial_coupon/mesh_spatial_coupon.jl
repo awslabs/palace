@@ -924,7 +924,7 @@ end
 # remapped) and returns (deleted original indices, Dict(original index =>
 # remapped cell), collapsed vertex count, shortest collapsed edge).
 function collapse_short_layer_edges!(points, tetrahedra, triangles, span_distance, reach,
-                                     edge_size, maximum_edge_aspect)
+                                     edge_size)
     surface = falses(size(points, 2))
     for triangle in triangles, i in triangle
         surface[i] = true
@@ -1025,8 +1025,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                  for k in findall(in_layer)); init=0.0)
     if layer_rule
         removed, remapped, collapsed, shortest = collapse_short_layer_edges!(
-            points, tetrahedra, triangles, span_distance, reach, edge_size,
-            edge_layer_maximum_aspect)
+            points, tetrahedra, triangles, span_distance, reach, edge_size)
         if collapsed > 0
             required, span_distance, in_layer = required_region_cells(points, tetrahedra, corners,
                                                                       radius, spans, reach)
@@ -1265,8 +1264,17 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
     for i in moved
         gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
     end
-    # Collapsed cells: delete the vanished ones, replace the remapped ones (same
-    # entity, fresh element tags); the orphan vertices are dropped by the writer.
+    apply_seed_cell_collapse!(node_tags, tags, entities, removed, remapped)
+    return record
+end
+
+# Apply a seed collapse (collapse_short_layer_edges!) to the Gmsh model: the
+# vanished cells (`removed`, original indices) are deleted and the remapped ones
+# (original index => new vertex-index cell) are replaced in their volume entity
+# with fresh element tags; the orphaned vertices are dropped by the writer
+# (Mesh.SaveAll is off), so the written points are exactly the used points.
+# Returns the number of volume elements the model carries afterwards.
+function apply_seed_cell_collapse!(node_tags, tags, entities, removed, remapped)
     if !isempty(removed) || !isempty(remapped)
         by_entity = Dict{Int, Vector{UInt}}()
         for k in vcat(removed, collect(keys(remapped)))
@@ -1287,7 +1295,8 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
             next_tag += count
         end
     end
-    return record
+    _, volume_tags, _ = gmsh.model.mesh.getElements(3)
+    return sum(length(block) for block in volume_tags; init=0)
 end
 
 function sorted_median(values)

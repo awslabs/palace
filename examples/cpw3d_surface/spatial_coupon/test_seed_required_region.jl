@@ -261,3 +261,88 @@ end
     @test record2["EdgeLayerQualityRule"] === nothing
     @test isempty(removed2) && isempty(remapped2) && length(tetrahedra2) == cells_before
 end
+
+# The Gmsh connectivity mutation of the seed collapse (apply_seed_cell_collapse!)
+# round-trips through the seed's writer: a free interior vertex of a tiny box mesh
+# is collapsed onto a neighbour, the vanished cells are removed, the remapped cells
+# replaced, and the written MSH 2.2 file carries exactly the used points and the
+# census element count (no orphaned vertex, no lost or duplicated cell).
+@testset "Gmsh seed collapse round-trip: written points == used points, cells == census" begin
+    gmsh.initialize()
+    try
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("collapse-round-trip")
+        box = gmsh.model.occ.addBox(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        gmsh.model.occ.synchronize()
+        gmsh.model.addPhysicalGroup(3, [box], 1, "volume")
+        gmsh.model.addPhysicalGroup(2, [tag for (_, tag) in gmsh.model.getEntities(2)], 2, "wall")
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.2)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", 0.2)
+        gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+        gmsh.model.mesh.generate(3)
+        node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+        points = reshape(copy(coordinates), 3, :)
+        index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+        tetrahedra, tags, entities = gmsh_volume_cells(index)
+        triangles = gmsh_linear_cells(index, 2, Val(3))
+        surface = falses(size(points, 2))
+        for triangle in triangles, i in triangle
+            surface[i] = true
+        end
+        incident = [Int[] for _ in axes(points, 2)]
+        for (k, cell) in enumerate(tetrahedra), i in cell
+            push!(incident[i], k)
+        end
+        interior = [i for i in axes(points, 2) if !surface[i] && !isempty(incident[i])]
+        @test !isempty(interior)
+        # Collapse the interior vertex v onto its nearest interior neighbour w (a
+        # free-free edge, as collapse_short_layer_edges! produces): cells with both
+        # vertices vanish, the other cells of v are remapped onto w.
+        v = interior[1]
+        neighbours = unique(j for k in incident[v] for j in tetrahedra[k] if j != v && !surface[j])
+        @test !isempty(neighbours)
+        w = neighbours[argmin([norm(points[:, j] .- points[:, v]) for j in neighbours])]
+        removed = sort!([k for k in incident[v] if w in tetrahedra[k]])
+        remapped = Dict(k => ntuple(i -> tetrahedra[k][i] == v ? w : tetrahedra[k][i], 4)
+                        for k in incident[v] if !(w in tetrahedra[k]))
+        @test !isempty(removed) && !isempty(remapped)
+        expected_cells = length(tetrahedra) - length(removed)
+        for (k, cell) in remapped
+            tetrahedra[k] = cell
+        end
+        deleteat!(tetrahedra, removed)
+        @test length(tetrahedra) == expected_cells
+        @test !(v in Iterators.flatten(tetrahedra))
+        used = Set(i for cell in tetrahedra for i in cell)
+        expected_keys = Set(sort!([round.(points[:, i]; digits=9) for i in cell]) for cell in tetrahedra)
+        model_count = apply_seed_cell_collapse!(node_tags, tags, entities, removed, remapped)
+        @test model_count == expected_cells
+        path = joinpath(mktempdir(), "collapse-round-trip.msh")
+        gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+        gmsh.option.setNumber("Mesh.Binary", 1)
+        gmsh.write(path)
+        gmsh.model.remove()
+        gmsh.open(path)
+        written_tags, written_coordinates, _ = gmsh.model.mesh.getNodes()
+        written = reshape(written_coordinates, 3, :)
+        written_index = Dict(tag => i for (i, tag) in enumerate(written_tags))
+        _, written_element_tags, written_nodes = gmsh.model.mesh.getElements(3)
+        written_cells = Vector{NTuple{4, Int}}()
+        for (block_tags, block) in zip(written_element_tags, written_nodes)
+            for start in 1:4:length(block)
+                push!(written_cells, ntuple(i -> written_index[block[start + i - 1]], 4))
+            end
+        end
+        @test length(written_cells) == expected_cells
+        # Every written point is used by a volume cell (the orphaned v is dropped)
+        # and the written point count is the used point count.
+        written_used = Set(i for cell in written_cells for i in cell)
+        @test length(written_used) == size(written, 2) == length(used)
+        @test all(norm(written[:, i] .- points[:, v]) > 1e-9 for i in axes(written, 2))
+        written_keys = Set(sort!([round.(written[:, i]; digits=9) for i in cell])
+                           for cell in written_cells)
+        @test written_keys == expected_keys
+    finally
+        gmsh.finalize()
+    end
+end

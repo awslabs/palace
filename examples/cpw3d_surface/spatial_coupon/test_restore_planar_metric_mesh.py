@@ -835,3 +835,46 @@ class RequiredTetrahedraTest(unittest.TestCase):
             restore_in_source_frame(mesh([0, 1]), listed, (.25, "local"), .01, 20., (.75, "local"))
         with self.assertRaisesRegex(ValueError, "recipe lists 1"):
             restore_in_source_frame(mesh([]), listed, (.25, "local"), .01, 20., (.75, "local"))
+
+    def test_required_flags_stay_aligned_through_a_corner_ball_collapse(self):
+        """The layer-rule check (layer cells must be required cells) is evaluated
+        after the corner-ball collapse compacted the cells: the required flags are
+        carried through the compaction, so a collapse elsewhere in the mesh does not
+        misalign (or shift) the required layer cell."""
+        points, tetrahedra, supports, node_supports, recipe, free = \
+            _corner_ball_with_inserted_vertex(.012)
+        # A 1 nm x 50 nm layer cell (required, frozen) far from the corner ball, on
+        # the recorded span; the corner ball's free vertex is not required and
+        # collapses, removing cells ahead of the layer cell in the cell order.
+        layer_points = np.array([[5., 0., 0.], [5.05, 0., 0.], [5.05, 0., .05], [5.05, .001, .05]])
+        base = len(points)
+        points = np.vstack([points, layer_points])
+        tetrahedra = np.vstack([tetrahedra, [[base, base + 2, base + 1, base + 3]]])
+        triangles = np.array([[0, 1, 2], [base, base + 1, base + 2]])
+        normal = np.cross(points[1] - points[0], points[2] - points[0])
+        normal /= np.linalg.norm(normal)
+        recipe = {**recipe, "FarSize": .1, "PhysicalSegments": [], "PinnedVertices": [],
+                  "PlanarSupports": {"100": {"Normal": normal.tolist(),
+                                             "Offset": float(normal @ points[0]), "Attribute": 6001},
+                                     "101": {"Normal": [0., 1., 0.], "Offset": 0., "Attribute": 6002}},
+                  "SemanticContract": {"CutSurfaceRoles": [], "BoundaryLabels": [],
+                                       "VolumeMaterials": [{"Material": "vacuum", "Attribute": 7}]},
+                  "EdgeLayer": {"Spans": [[5., 0., 0., 5.1, 0., 0.]], "EdgeSize": .001,
+                                "GrowthRatio": 2., "LayerThickness": .031, "RowZigzag": .05},
+                  "RequiredTetrahedra": {"Count": 1}}
+        flags = np.zeros(len(tetrahedra), dtype=np.int32); flags[-1] = 1
+        mesh = meshio.Mesh(points.copy(), [("triangle", triangles), ("tetra", tetrahedra)],
+                           cell_data={"medit:ref": [np.array([100, 101]), np.full(len(tetrahedra), 7)],
+                                      "medit:required": [np.zeros(2, dtype=np.int32), flags]})
+        restored, _, report = restore_in_source_frame(mesh, recipe, (.25, "local"), .01, 20.,
+                                                      (.75, "local"), 100.)
+        self.assertGreater(report["CollapsedCornerVertices"], 0)
+        self.assertEqual(report["RequiredTetrahedra"], 1)
+        self.assertTrue(report["EdgeLayerQuality"]["Passes"])
+        self.assertEqual(report["EdgeLayerQuality"]["Cells"], 1)
+        restored_tetrahedra = next(block.data for block in restored.cells if block.type == "tetra")
+        self.assertLess(len(restored_tetrahedra), len(tetrahedra))
+        # Flags that do not match the adapted cells are refused before the collapse.
+        mesh.cell_data["medit:required"][1] = flags[:-1]
+        with self.assertRaisesRegex(ValueError, "do not match the adapted cells"):
+            restore_in_source_frame(mesh, recipe, (.25, "local"), .01, 20., (.75, "local"), 100.)

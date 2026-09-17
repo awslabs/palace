@@ -24,12 +24,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "770f6b0156bed295d2aca12e5c00d5d523c391da27a3d06a2608b8ec0732e43e"
+      "SHA256": "2ad786aaaae4ae40118cb6c8871934cd1adf174c94ec01c820a7775589f4db86"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "f9aac5a69006275d3eccd56733f1d5b28b05e0b60217d17041e8566c89b5d22b"
+      "SHA256": "ffda6594abc2f38bac453bb9de92741ffe0936e41102fefb5b74dd1e95b11020"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -1539,7 +1539,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "6542c2402fe97fa93ce9191b9e3579c01aa075ef7acb053b7e2a729971316e19"
+      "mesher": "70a696f2ee2eaf997323cf99a001b4928211aba43d0c81d361ba9d39008d1204"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -1553,7 +1553,7 @@
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "45e9cc1549f6615ac1724d125e51c0740b1315318a6e2e6c83559e077fa17651"
+      "label-restorer": "eadfae24a79b2fb8c9addacc335c47aa932dcb4756d3ff29e294cb801778c150"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

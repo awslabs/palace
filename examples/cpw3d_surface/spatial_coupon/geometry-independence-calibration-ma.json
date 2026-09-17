@@ -20,7 +20,7 @@
         "Kind": "layer-local QUALITY gate rule (supervisor decision 32): inside the recorded edge layer (edge_volume_metric.EDGE_LAYER_CELL_RULE: a tetrahedron with a vertex within EdgeLayer.RequiredReach of a span) a cell is gated by positive orientation above the recorded roundoff floor and by longest edge / shortest height <= MaximumEdgeAspect instead of MinimumScaledJacobian; MinimumScaledJacobian, MaximumJacobianCondition and every other gate keep their production values on every cell outside the layer",
         "Reason": "a layer tetrahedron of EdgeSize x lc_tangent has a scaled Jacobian of (EdgeSize / lc_tangent)^2 by construction (1 nm x 50 nm: 4e-4, measured 21,626 layer cells below 0.01 on the first 1 nm probe), so MinimumScaledJacobian 0.01 cannot judge the user-directed O(1 nm) transverse layer without nested tangential subdivision; the rule judges what matters for a positive, non-degenerate anisotropic layer cell (orientation and a bounded edge aspect) and reports the layer scaled Jacobian as a diagnostic",
         "Derivation": "MaximumEdgeAspect = 2 x lc_tangent / EdgeSize = 2 x 0.05 / 0.001 = 100: the longest layer edge is the ridge-grid diagonal sqrt(2) x lc_tangent = 70.7 nm and the shortest height is the first slab EdgeSize = 1 nm (the row zigzag moves nodes outward), so the design aspect is sqrt(2) x 50 = 70.7 and the factor 2 leaves 1.41 for the zigzag (1.05) and the Delaunay split of the slabs; the roundoff floor 1e-12 on the scaled Jacobian marks a cell flat to double precision (the design minimum is 4e-4)",
-        "Applies": "every case of this manifest with a recorded EdgeLayer; the seed (--edge-layer-maximum-aspect on mesh_spatial_coupon.jl) and the label restorer (same option) of a case declaring Calibration.EdgeLayerQualityRule gate the layer with the same bound (verify_canonical_case_entries.validate_edge_layer_quality_rule_binding); the audit producer reports MeshQuality.EdgeLayer / MeshQuality.OutsideEdgeLayer and general_mesh_manifest.audit_manifest_evidence judges them (edge-layer-quality, mesh-quality-jacobian outside)",
+        "Applies": "only a case of this manifest declaring Calibration.EdgeLayerQualityRule (general_mesh_manifest.case_gates: the verifier and the suite runner drop the rule from the gates judging every other case, which is judged by MinimumScaledJacobian on its whole mesh as before); the seed (--edge-layer-maximum-aspect on mesh_spatial_coupon.jl) and the label restorer (same option) of a declaring case gate the layer with the same bound (verify_canonical_case_entries.validate_edge_layer_quality_rule_binding); the audit producer reports MeshQuality.EdgeLayer / MeshQuality.OutsideEdgeLayer and general_mesh_manifest.audit_manifest_evidence judges them (edge-layer-quality, mesh-quality-jacobian outside); four-edge-calib-ma-edge-layer-4nm declares no rule and stays under its scaled-Jacobian-gated record (physical gates pass under the SJ gate; not re-verified under the rule)",
         "ProductionUse": "FORBIDDEN: a production manifest (no Calibration block) cannot carry Gates.EdgeLayerQualityRule and none of its cases may declare a Calibration or EdgeLayer block (general_mesh_manifest.validate_manifest fails preflight closed); test_general_mesh_manifest asserts it"
       }
     },
@@ -58,12 +58,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "770f6b0156bed295d2aca12e5c00d5d523c391da27a3d06a2608b8ec0732e43e"
+      "SHA256": "2ad786aaaae4ae40118cb6c8871934cd1adf174c94ec01c820a7775589f4db86"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "f9aac5a69006275d3eccd56733f1d5b28b05e0b60217d17041e8566c89b5d22b"
+      "SHA256": "ffda6594abc2f38bac453bb9de92741ffe0936e41102fefb5b74dd1e95b11020"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -158,7 +158,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "6542c2402fe97fa93ce9191b9e3579c01aa075ef7acb053b7e2a729971316e19"
+      "mesher": "70a696f2ee2eaf997323cf99a001b4928211aba43d0c81d361ba9d39008d1204"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -172,7 +172,7 @@
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "45e9cc1549f6615ac1724d125e51c0740b1315318a6e2e6c83559e077fa17651"
+      "label-restorer": "eadfae24a79b2fb8c9addacc335c47aa932dcb4756d3ff29e294cb801778c150"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

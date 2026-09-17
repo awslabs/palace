@@ -29,7 +29,7 @@ from general_mesh_audit_producer import (KINDS, VARIANT_AUDITS_KIND,
 from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, build_record,
                                   build_record_from_stage_reports)
 from general_mesh_manifest import (_physical_comparison_failures,
-                                   _validate_source_transformation, audit_manifest_evidence,
+                                   _validate_source_transformation, audit_manifest_evidence, case_gates,
                                    run_manifest, sha256, validate_manifest)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, validate_stage_report,
@@ -2298,6 +2298,33 @@ class EdgeLayerQualityGateTest(unittest.TestCase):
         plain["MaximumJacobianCondition"] = 200.
         self.assertEqual(self.failures(plain), set())
         self.assertEqual(self.failures(plain, self.production_gates), set())
+
+    def test_rule_is_case_keyed_on_the_calibration_declaration(self):
+        """case_gates: the rule judges only a case declaring
+        Calibration.EdgeLayerQualityRule (its stages executed the bound); the 4 nm
+        layer case, which declares none, is judged by MinimumScaledJacobian on its
+        whole mesh (its record), and a production case never sees the rule."""
+        manifest = json.loads((HERE / "geometry-independence-calibration-ma.json").read_text())
+        declared = next(case for case in manifest["Cases"]
+                        if case["Calibration"].get("EdgeLayerQualityRule") is not None)
+        undeclared = next(case for case in manifest["Cases"]
+                          if case["Id"] == "four-edge-calib-ma-edge-layer-4nm")
+        self.assertIn("EdgeLayer", undeclared["Calibration"])
+        self.assertNotIn("EdgeLayerQualityRule", undeclared["Calibration"])
+        self.assertEqual(case_gates(manifest, declared), manifest["Gates"])
+        without = case_gates(manifest, undeclared)
+        self.assertNotIn("EdgeLayerQualityRule", without)
+        self.assertEqual({key: value for key, value in manifest["Gates"].items()
+                          if key != "EdgeLayerQualityRule"}, without)
+        # The same 4e-4 layer passes for the declared case and fails the whole-mesh
+        # scaled-Jacobian gate for the undeclared one (never "edge-layer-quality").
+        self.assertEqual(self.failures(self.quality(), case_gates(manifest, declared)), set())
+        self.assertEqual(self.failures(self.quality(), without), {"mesh-quality-jacobian"})
+        production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        for case in production["Cases"]:
+            self.assertEqual(case_gates(production, case), production["Gates"])
+        # The manifest Gates (the build cache key) are not mutated.
+        self.assertIn("EdgeLayerQualityRule", manifest["Gates"])
 
 
 class SemanticContractTest(unittest.TestCase):
