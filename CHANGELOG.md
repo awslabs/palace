@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added machine-readable schema compatibility data to the installed schema files and
+    generated the developer documentation table from the same source
+    [PR 881](https://github.com/awslabs/palace/pull/881).
   - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
     by including complex terms in the real-valued preconditioner, or using an exact
     complex-valued preconditioner when `"ComplexCoarseSolve"` is true. Numeric wave ports
@@ -35,6 +38,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
     port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
     [PR 921](https://github.com/awslabs/palace/pull/921).
+  - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
+    `Lc / Z₀` and so depended on the characteristic length `Lc`.
+    [PR 936](https://github.com/awslabs/palace/pull/936).
 
 #### Performance Improvements
 
