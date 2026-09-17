@@ -501,8 +501,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   if (!post_op.HasFieldOutput())
   {
     // Port modes depend on frequency, not excitation. Frequency-major traversal keeps the
-    // one-frequency modal cache hot for every excitation and also fills one complete row
-    // of each deferred CSV table at a time.
+    // one-frequency modal cache hot for every excitation.
     for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
     {
       for (const auto &[excitation_idx, excitation_spec] : port_excitations)
