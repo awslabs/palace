@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added machine-readable schema compatibility data to the installed schema files and
+    generated the developer documentation table from the same source
+    [PR 881](https://github.com/awslabs/palace/pull/881).
   - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
     by including complex terms in the real-valued preconditioner, or using an exact
     complex-valued preconditioner when `"ComplexCoarseSolve"` is true. Numeric wave ports
@@ -38,6 +41,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices,
     which could assert or crash during adaptive mesh refinement.
     [PR 934](https://github.com/awslabs/palace/pull/934).
+  - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
+    `Lc / Z₀` and so depended on the characteristic length `Lc`.
+    [PR 936](https://github.com/awslabs/palace/pull/936).
 
 #### Performance Improvements
 
@@ -45,6 +51,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     932](https://github.com/awslabs/palace/pull/932).
   - Reduced repeated work in PROM construction [PR
     930](https://github.com/awslabs/palace/pull/930).
+
+#### Interface Changes
+
+  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
+    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
 
 ## [0.18.0] - 2026-09-09
 
