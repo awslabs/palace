@@ -52,6 +52,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Reduced repeated work in PROM construction [PR
     930](https://github.com/awslabs/palace/pull/930).
 
+#### Build system
+
+  - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
+    compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
+
 #### Interface Changes
 
   - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
