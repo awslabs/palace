@@ -172,13 +172,7 @@ ModeOperatorModel::ModeOperatorModel(
       }
       else
       {
-        const auto &ild = mat_op.GetInvLondonDepth();
-        mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
-        for (int k = 0; k < ild.SizeK(); k++)
-        {
-          ild_scalar(0, 0, k) = ild(0, 0, k);
-        }
-        london_n.AddCoefficient(attr_to_mat, ild_scalar);
+        london_n.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepth());
         london_n.NormalProjectedCoefficient(*normal);
       }
       ann.AddDomainIntegrator<MassIntegrator>(london_n);
