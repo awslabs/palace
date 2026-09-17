@@ -552,6 +552,10 @@ WavePortData::WavePortData(const json &port)
                           index));
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
+  if (auto it = port.find("ComplexCoarseSolve"); it != port.end())
+  {
+    complex_coarse_solve = it->get<bool>();
+  }
   eig_tol = port.value("EigenTol", eig_tol);
   max_size = port.value("MaxSize", max_size);
   verbose = port.value("Verbose", verbose);
