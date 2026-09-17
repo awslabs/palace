@@ -58,9 +58,9 @@ ModeEigenSolver::ModeEigenSolver(
     MPI_Comm solver_comm)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
-    surf_z_op(surf_z_op), farfield_op(farfield_op), surf_sigma_op(surf_sigma_op),
-    surf_rz_op(surf_rz_op), nd_fespace(nd_fespace), h1_fespace(h1_fespace),
-    dbc_tdof_list(dbc_tdof_list)
+    normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
+    surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), nd_fespace(nd_fespace),
+    h1_fespace(h1_fespace), dbc_tdof_list(dbc_tdof_list)
 {
   // Assemble Atn, Btn = -Atn^T, Btt locally (no BMO available on this path).
   std::tie(owned_Atnr, owned_Atni) =
@@ -95,7 +95,7 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
                                  EigenSolverBackend eigen_backend, int verbose)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose),
-    mat_op(bmo.GetMaterialOp()), surf_z_op(bmo.GetSurfZOp()),
+    mat_op(bmo.GetMaterialOp()), normal(nullptr), surf_z_op(bmo.GetSurfZOp()),
     farfield_op(bmo.GetFarfieldOp()), surf_sigma_op(bmo.GetSurfSigmaOp()),
     surf_rz_op(bmo.GetSurfRZOp()), nd_fespace(bmo.GetNDSpace()),
     h1_fespace(bmo.GetH1Space()), bmo(&bmo), dbc_tdof_list(dbc_tdof_list)

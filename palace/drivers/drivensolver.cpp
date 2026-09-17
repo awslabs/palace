@@ -465,7 +465,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Assemble and solve the PROM linear system.
     prom_op.SolvePROM(excitation_idx, omega, E);
     Mpi::Print("\n");
-    if (omega_i == 0 && post_op.HasFieldOutput())
+    if (omega_i == 0 && post_op.WillWriteFields())
     {
       // Switch ParaView subfolders once per excitation. Delay visualization setup until
       // the first online solution is ready.
@@ -473,7 +473,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
 
     if (post_op.HasReducedPostprocessing() &&
-        !post_op.HasFieldOutput(static_cast<int>(omega_i)))
+        !post_op.WillWriteFields(static_cast<int>(omega_i)))
     {
       post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
                                      prom_op.GetReducedSolution());
@@ -498,7 +498,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
   };
 
-  if (!post_op.HasFieldOutput())
+  if (!post_op.WillWriteFields())
   {
     // Port modes depend on frequency, not excitation. Frequency-major traversal keeps the
     // one-frequency modal cache hot for every excitation.

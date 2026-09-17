@@ -152,6 +152,9 @@ private:
 
   // Material operator and boundary operators (not owned).
   const MaterialOperator &mat_op;
+  // Outward surface normal for the WavePort submesh path (null for BoundaryMode). Only the
+  // operator model uses its value; the solver uses it to distinguish the two paths.
+  const mfem::Vector *normal;
   SurfaceImpedanceOperator &surf_z_op;
   FarfieldBoundaryOperator &farfield_op;
   SurfaceConductivityOperator &surf_sigma_op;
