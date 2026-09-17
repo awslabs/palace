@@ -1523,19 +1523,19 @@
           }
         }
       },
-      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and CornerSize 0.001 (shells 1/2/4/8/16 nm at 1/3/7/15/31 nm, NormalSize from the reach 0.024 to the radius 0.1), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value - supervisor decision 33 (corner grading then the clean 1 nm point, 2026-09-17, user directive). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
+      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and EL4c's corner shells unchanged, CornerSize 0.004 (shells 4/8/16 nm at 4/12/28 nm, NormalSize from the reach 0.021 to the radius 0.1; supervisor amendment of 2026-09-17: CornerSize = EdgeSize 0.001 failed the seed's production gates - corner (2,0,0) aspect 4.81 > 4 from a 0.41 nm Gmsh surface edge next to the 1 nm shell node and one layer/ball-junction cell at scaled Jacobian 0.0073 - so EL4c -> EL1c changes exactly the edge layer at fixed corners), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value - supervisor decision 33 (corner grading then the clean 1 nm point, 2026-09-17, user directive). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
       "Calibration": {
-        "Label": "EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and CornerSize 0.001 (shells 1/2/4/8/16 nm at 1/3/7/15/31 nm, NormalSize from the reach 0.024 to the radius 0.1), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value",
+        "Label": "EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and EL4c's corner shells unchanged, CornerSize 0.004 (shells 4/8/16 nm at 4/12/28 nm, NormalSize from the reach 0.021 to the radius 0.1; supervisor amendment of 2026-09-17: CornerSize = EdgeSize 0.001 failed the seed's production gates - corner (2,0,0) aspect 4.81 > 4 from a 0.41 nm Gmsh surface edge next to the 1 nm shell node and one layer/ball-junction cell at scaled Jacobian 0.0073 - so EL4c -> EL1c changes exactly the edge layer at fixed corners), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value",
         "BaseCase": "four-edge-9d2cb9bbb3fe",
         "SeedCommandOptions": {
           "--lc-tangent": 0.05,
           "--edge-size": 0.001,
-          "--corner-size": 0.001
+          "--corner-size": 0.004
         },
         "MetricCommandOptions": {
           "--far-growth": 0.5,
           "--edge-size": 0.001,
-          "--corner-size": 0.001
+          "--corner-size": 0.004
         },
         "ProductionValues": {
           "--lc-tangent": 0.1,
@@ -1584,7 +1584,7 @@
             "--maximum-quality-displacement-over-normal": 0.75
           }
         },
-        "Decision": "SUPERVISOR-DECISIONS.md item 33 (2026-09-17, user directive): EL1c = EL4c with EdgeSize 1 nm and aspect-4 nested rows (3.1 nm tangential) - the un-confounded h_e point (EL4 -> EL1 confounded transverse refinement 4 -> 1 nm with tangential coarsening 12.5 -> 50 nm and anisotropy 4 -> 50, and made p_MA worse) - under a CALIBRATION-ONLY element cap of 5,000,000 (production cap unchanged at 4,000,000; stage bounds 1800 s / 8 GiB unchanged); physics asks whether 4 -> 1 nm at fixed aspect 4 still moves edge-interior MA (sources 7, 80)",
+        "Decision": "SUPERVISOR-DECISIONS.md item 33 (2026-09-17, user directive): EL1c = EL4c with EdgeSize 1 nm and aspect-4 nested rows (3.1 nm tangential) - the un-confounded h_e point (EL4 -> EL1 confounded transverse refinement 4 -> 1 nm with tangential coarsening 12.5 -> 50 nm and anisotropy 4 -> 50, and made p_MA worse) - under a CALIBRATION-ONLY element cap of 5,000,000 (production cap unchanged at 4,000,000; stage bounds 1800 s / 8 GiB unchanged); physics asks whether 4 -> 1 nm at fixed aspect 4 still moves edge-interior MA (sources 7, 80); amended 2026-09-17 (supervisor, option C): CornerSize stays EL4c's 0.004 (CornerSize = EdgeSize was a convenience, not a requirement) so the step is un-confounded at fixed corner shells; P2 recorded: extend the sub-size edge collapse to corner-ball surface vertices and repair the layer/ball junction, with the two measured EL1c CornerSize-0.001 failure cells as the test cases",
         "AdaptationCommandOptions": {
           "--hmin": 0.001
         },
@@ -1647,22 +1647,18 @@
           "LayerReachesCornerBall": true
         },
         "CornerGrading": {
-          "CornerSize": 0.001,
+          "CornerSize": 0.004,
           "GrowthRatio": 2.0,
           "NormalSize": 0.025,
           "Radius": 0.1,
-          "Reach": 0.024,
+          "Reach": 0.021,
           "ShellRadii": [
-            0.001,
-            0.003,
-            0.007,
-            0.015,
-            0.031,
+            0.004,
+            0.012,
+            0.028,
             0.1
           ],
           "ShellSizes": [
-            0.001,
-            0.002,
             0.004,
             0.008,
             0.016,

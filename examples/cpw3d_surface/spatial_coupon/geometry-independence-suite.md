@@ -448,9 +448,13 @@ cells by centroid); `edge_layer_census.py` reports the same on the final mesh
 seed 1,507,725 tets (EL4 1,508,461), 200,354 required (EL4 199,992), shell
 edge P50 per corner 3.8-5.8 / 6.0-7.8 / 12.1-17.7 / 27.2-29.5 nm against
 4/8/16/25 nm, corners 3.76/3.29/3.72/3.23, un-layered length 0.1 at every
-layered edge. Case `four-edge-calib-ma-el1c` = EL4c with EdgeSize and
-CornerSize 0.001 (rows and shells 1/3/7/15/31 nm, aspect-4 nested rows
-3.125-50 nm; the un-confounded h_e step against EL4c) declares the labeled
+layered edge. Case `four-edge-calib-ma-el1c` = EL4c with EdgeSize 0.001
+(rows 1/3/7/15/31 nm, aspect-4 nested rows 3.125-50 nm) at EL4c's corner
+shells (CornerSize 0.004, unchanged, so EL4c -> EL1c changes exactly the edge
+layer; CornerSize 0.001 failed the seed's gates: corner aspect 4.81 from a
+0.41 nm Gmsh surface edge next to the 1 nm shell node, one layer/ball-junction
+cell at scaled Jacobian 0.0073 - the recorded P2 test cases for a corner-ball
+collapse) declares the labeled
 calibration-only element cap `Calibration.MaximumElements` 5,000,000
 (supervisor decision 33): `general_mesh_manifest.validate_case_element_cap`
 requires the manifest's `Calibration.GateDeviations.MaximumElements` to name
