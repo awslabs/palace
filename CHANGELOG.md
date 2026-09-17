@@ -53,7 +53,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     930](https://github.com/awslabs/palace/pull/930).
   - Adaptive driven sweeps now buffer CSV output tables in memory during the online phase
     and write them once at the end of the sweep, instead of rewriting the growing tables at
-    every output frequency.
+    every output frequency. [PR 938](https://github.com/awslabs/palace/pull/938).
 
 #### Build system
 
