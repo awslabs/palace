@@ -2004,7 +2004,8 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertNotIn("calib-ma", case["Id"])
             self.assertNotEqual(case["InventoryStatus"], "Calibration")
         deviations = calibration["Calibration"]["GateDeviations"]
-        self.assertEqual(set(deviations), {"MinimumAchievedAspect", "EdgeLayerQualityRule"})
+        self.assertEqual(set(deviations), {"MinimumAchievedAspect", "EdgeLayerQualityRule",
+                                           "MaximumElements"})
         self.assertEqual(deviations["MinimumAchievedAspect"]["Production"], 1.5)
         self.assertEqual(deviations["MinimumAchievedAspect"]["Calibration"], 0.9)
         self.assertIn("FORBIDDEN", deviations["MinimumAchievedAspect"]["ProductionUse"])
@@ -2023,6 +2024,39 @@ class GeneralMeshManifestTest(unittest.TestCase):
                           if key not in deviating},
                          {key: value for key, value in production["Gates"].items()
                           if key not in deviating})
+        # Decision 33: the element cap 5,000,000 is a per-case calibration deviation
+        # of the 1 nm aspect-4 case only; both manifests' Gates keep 4,000,000 (the
+        # production value and the build cache key) and production cases never
+        # carry a cap.
+        self.assertEqual(production["Gates"]["MaximumElements"], 4000000)
+        self.assertEqual(calibration["Gates"]["MaximumElements"], 4000000)
+        cap = deviations["MaximumElements"]
+        self.assertEqual((cap["Production"], cap["Calibration"]), (4000000, 5000000))
+        self.assertEqual(cap["Cases"], ["four-edge-calib-ma-el1c"])
+        self.assertIn("FORBIDDEN", cap["ProductionUse"])
+        for case in production["Cases"]:
+            self.assertEqual(case_gates(production, case)["MaximumElements"], 4000000)
+        for case in calibration["Cases"]:
+            expected = 5000000 if case["Id"] in cap["Cases"] else 4000000
+            self.assertEqual(case_gates(calibration, case)["MaximumElements"], expected)
+            self.assertEqual(case["Calibration"].get("MaximumElements"),
+                             5000000 if case["Id"] in cap["Cases"] else None)
+        capped = next(case for case in calibration["Cases"] if case["Id"] == cap["Cases"][0])
+        over = {"Resources": {"ExitCode": 0, "Seconds": 1., "PeakRSSGiB": 1., "Elements": 4500000,
+                              "CanonicalBuild": {"Seconds": 1., "PeakRSSGiB": 1.},
+                              "PlacementPublication": {"Seconds": 1., "PeakRSSGiB": 1.}}}
+        contract = load_semantic_contract(
+            HERE / capped["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
+        binding = {"CaseId": capped["Id"], "Variant": "identity",
+                   "Transform": capped["Variants"][0]["Transform"], "TransformSHA256": "x",
+                   "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
+                   "ToolSHA256": {}, "StageToolSHA256": {}}
+        self.assertNotIn("bounded-resources", audit_manifest_evidence(
+            over, case_gates(calibration, capped), contract, binding))
+        self.assertIn("bounded-resources", audit_manifest_evidence(
+            over, case_gates(calibration, calibration["Cases"][0]), contract, binding))
+        self.assertIn("bounded-resources", audit_manifest_evidence(
+            over, production["Gates"], contract, binding))
         with tempfile.TemporaryDirectory() as temporary:
             forged = Path(temporary) / "geometry-independence-suite.json"
             def rejected(mutate, message):
@@ -2053,6 +2087,26 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 "ScaledJacobianRoundoffFloor", .01), "not labeled")
             rejected_calibration(lambda m: m["Cases"][-1].__setitem__("EdgeLayer", {}),
                                  "must declare its edge layer under Calibration")
+            # The element cap must be labeled: deviation present, values equal, case
+            # named, above the manifest gate; the label names exactly the declaring cases.
+            def capped_case(m):
+                return next(case for case in m["Cases"] if case["Id"] == cap["Cases"][0])
+            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"].pop("MaximumElements"),
+                                 "not labeled as a calibration-only deviation")
+            rejected_calibration(lambda m: capped_case(m)["Calibration"].__setitem__("MaximumElements", 6000000),
+                                 "not labeled as a calibration-only deviation")
+            rejected_calibration(lambda m: capped_case(m)["Calibration"].__setitem__("MaximumElements", 3000000),
+                                 "not labeled as a calibration-only deviation")
+            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"]["MaximumElements"].__setitem__(
+                "Production", 5000000), "not labeled as a calibration-only deviation")
+            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"]["MaximumElements"].__setitem__(
+                "Cases", []), "not labeled as a calibration-only deviation")
+            rejected_calibration(lambda m: m["Cases"][0]["Calibration"].__setitem__("MaximumElements", 5000000),
+                                 "not labeled as a calibration-only deviation")
+            rejected_calibration(lambda m: capped_case(m)["Calibration"].pop("MaximumElements"),
+                                 "name exactly the cases declaring the cap")
+            rejected(lambda m: m["Cases"][0].__setitem__("Calibration", {"MaximumElements": 5000000}),
+                     "calibration or edge-layer block in a production manifest")
         self.assertEqual(calibration["Tools"], production["Tools"])
         self.assertEqual(calibration["StageToolSHA256"], production["StageToolSHA256"])
         base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")

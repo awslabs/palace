@@ -448,7 +448,16 @@ cells by centroid); `edge_layer_census.py` reports the same on the final mesh
 seed 1,507,725 tets (EL4 1,508,461), 200,354 required (EL4 199,992), shell
 edge P50 per corner 3.8-5.8 / 6.0-7.8 / 12.1-17.7 / 27.2-29.5 nm against
 4/8/16/25 nm, corners 3.76/3.29/3.72/3.23, un-layered length 0.1 at every
-layered edge.
+layered edge. Case `four-edge-calib-ma-el1c` = EL4c with EdgeSize and
+CornerSize 0.001 (rows and shells 1/3/7/15/31 nm, aspect-4 nested rows
+3.125-50 nm; the un-confounded h_e step against EL4c) declares the labeled
+calibration-only element cap `Calibration.MaximumElements` 5,000,000
+(supervisor decision 33): `general_mesh_manifest.validate_case_element_cap`
+requires the manifest's `Calibration.GateDeviations.MaximumElements` to name
+exactly the declaring cases with the production value 4,000,000, and
+`case_gates` judges only those cases by the cap; `Gates.MaximumElements` stays
+4,000,000 in both manifests (the build cache key, and the gate of every other
+case), no production case may declare a cap, and the stage bounds are unchanged.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

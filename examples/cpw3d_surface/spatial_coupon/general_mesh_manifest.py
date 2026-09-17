@@ -149,14 +149,46 @@ def case_gates(manifest, case):
     bound (verify_canonical_case_entries.validate_edge_layer_quality_rule_binding);
     every other case - a layer case without the declaration included (the 4 nm
     layer case, judged by MinimumScaledJacobian on its whole mesh as recorded) - is
-    judged by the manifest gates without the rule.  The manifest's Gates stay the
-    canonical cache key of the build."""
+    judged by the manifest gates without the rule.  A case declaring
+    Calibration.MaximumElements (a labeled calibration-only element cap,
+    validate_case_element_cap) is judged by that cap.  The manifest's Gates stay
+    the canonical cache key of the build."""
     gates = dict(manifest["Gates"])
     calibration = case.get("Calibration")
     calibration = calibration if isinstance(calibration, dict) else {}
     if EDGE_LAYER_QUALITY_RULE_GATE in gates and calibration.get(EDGE_LAYER_QUALITY_RULE_GATE) is None:
         del gates[EDGE_LAYER_QUALITY_RULE_GATE]
+    if calibration.get(ELEMENT_CAP_GATE) is not None:
+        gates[ELEMENT_CAP_GATE] = validate_case_element_cap(manifest, case)
     return gates
+
+
+# A calibration case may carry its own element cap (Calibration.MaximumElements,
+# supervisor decision 33: 5,000,000 for the 1 nm aspect-4 layer), labeled in the
+# manifest's Calibration.GateDeviations.MaximumElements naming the case; every
+# other case and every production case keeps the manifest gate.
+ELEMENT_CAP_GATE = "MaximumElements"
+
+
+def validate_case_element_cap(manifest, case):
+    """Calibration.MaximumElements of a case (if present) is a labeled calibration-only
+    deviation: an integer above the manifest gate, equal to the deviation's
+    Calibration value, the case named in the deviation's Cases, Production equal to
+    the manifest gate and ProductionUse FORBIDDEN.  Returns the cap or None."""
+    calibration = case.get("Calibration")
+    cap = calibration.get(ELEMENT_CAP_GATE) if isinstance(calibration, dict) else None
+    if cap is None:
+        return None
+    manifest_cap = manifest.get("Gates", {}).get(ELEMENT_CAP_GATE)
+    deviation = manifest.get("Calibration", {}).get("GateDeviations", {}).get(ELEMENT_CAP_GATE)
+    if (isinstance(cap, bool) or not isinstance(cap, int) or not isinstance(manifest_cap, int) or
+            cap <= manifest_cap or not isinstance(deviation, dict) or
+            deviation.get("Production") != manifest_cap or deviation.get("Calibration") != cap or
+            not isinstance(deviation.get("Cases"), list) or case.get("Id") not in deviation["Cases"] or
+            "FORBIDDEN" not in str(deviation.get("ProductionUse", ""))):
+        raise ValueError(f"{case.get('Id')} declares an element cap that is not labeled as a "
+                         f"calibration-only deviation")
+    return cap
 
 
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
@@ -211,6 +243,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
                              f"production manifest")
         if EDGE_LAYER_CASE_KEY in case:
             raise ValueError(f"{case['Id']} must declare its edge layer under Calibration")
+        validate_case_element_cap(manifest, case)
         source = case.get("Source", {})
         files = source.get("Files")
         if not isinstance(files, dict) or any(role not in files for role in REQUIRED_ROLES):
@@ -274,6 +307,14 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         if not _finite_number(comparison.get("MaximumNormalizedDOFRatio"), positive=True):
             raise ValueError("Scaling comparison has no positive bound")
         comparison_kinds.add(kind)
+    # A labeled element-cap deviation names exactly the cases declaring the cap.
+    cap_deviation = manifest.get("Calibration", {}).get("GateDeviations", {}).get(ELEMENT_CAP_GATE)
+    if cap_deviation is not None:
+        declaring = sorted(case["Id"] for case in manifest["Cases"]
+                           if isinstance(case.get("Calibration"), dict) and
+                           case["Calibration"].get(ELEMENT_CAP_GATE) is not None)
+        if not isinstance(cap_deviation, dict) or sorted(cap_deviation.get("Cases") or []) != declaring:
+            raise ValueError("Element cap deviation must name exactly the cases declaring the cap")
     if comparison_kinds != {"feature-scaling", "cad-subdivision-sensitivity"}:
         raise ValueError("Both feature and CAD-subdivision scaling controls are required")
     return repository, tool_hashes, matrix

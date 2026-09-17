@@ -1344,32 +1344,49 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             "($(recomputations) recomputations) min scaled Jacobian $(required_before) -> " *
             "$(required_after) (below target $(below_before) -> $(below_after)), " *
             "moved vertices $(length(moved))")
-    all(<=(maximum_corner_aspect), corner_after) ||
-        error("Seed semantic-corner aspect exceeds the gate after optimization: " *
-              "$(maximum(corner_after)) > $(maximum_corner_aspect)")
-    if below_gate > 0
-        # Locate the failing cells for the report: centroid, nearest-corner distance,
-        # span distance, vertex surface flags and edge lengths of the worst ten.
-        surface = falses(size(points, 2))
-        for triangle in triangles, i in triangle
-            surface[i] = true
+    # Failing cells are located for the report: centroid, nearest-corner distance,
+    # span distance, edge lengths and vertices (position, surface flag, moved flag).
+    surface = falses(size(points, 2))
+    for triangle in triangles, i in triangle
+        surface[i] = true
+    end
+    moved_set = Set(moved)
+    function describe(label, k, value)
+        cell = tetrahedra[k]
+        centroid = sum(points[:, i] for i in cell) ./ 4
+        lengths = [norm(points[:, cell[i]] .- points[:, cell[j]]) for i in 1:4 for j in (i + 1):4]
+        println("  $label cell $k: $(value), centroid $(centroid), " *
+                "corner distance $(minimum(norm(centroid .- collect(c)) for c in corners)), " *
+                "span distance $(minimum(span_distance[i] for i in cell)), " *
+                "surface vertices $(count(surface[i] for i in cell)), edges $(sort(lengths)), " *
+                "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
+    end
+    failures = String[]
+    if !all(<=(maximum_corner_aspect), corner_after)
+        for (corner, after) in zip(corners, corner_after)
+            after <= maximum_corner_aspect && continue
+            center = collect(corner)
+            incident = [k for (k, cell) in enumerate(tetrahedra)
+                        if any(norm(points[:, i] .- center) <= tolerance for i in cell)]
+            aspect_of(k) = tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
+            for k in sort(incident; by=aspect_of, rev=true)[1:min(6, end)]
+                describe("corner $(center) aspect", k, "aspect $(aspect_of(k))")
+            end
         end
+        push!(failures, "Seed semantic-corner aspect exceeds the gate after optimization: " *
+                        "$(maximum(corner_after)) > $(maximum_corner_aspect)")
+    end
+    if below_gate > 0
         failing = sort([k for k in gated_cells if scaled_of(k) < minimum_scaled_jacobian];
                        by=scaled_of)
-        moved_set = Set(moved)
         for k in failing[1:min(10, end)]
-            cell = tetrahedra[k]
-            centroid = sum(points[:, i] for i in cell) ./ 4
-            lengths = [norm(points[:, cell[i]] .- points[:, cell[j]]) for i in 1:4 for j in (i + 1):4]
-            println("  below-gate cell $k: scaled Jacobian $(scaled_of(k)), centroid $(centroid), " *
-                    "corner distance $(minimum(norm(centroid .- collect(c)) for c in corners)), " *
-                    "span distance $(minimum(span_distance[i] for i in cell)), " *
-                    "surface vertices $(count(surface[i] for i in cell)), edges $(sort(lengths)), " *
-                    "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
+            describe("below-gate", k, "scaled Jacobian $(scaled_of(k))")
         end
-        error("Seed required region keeps $(below_gate) cells below the scaled-Jacobian gate " *
-              "$(minimum_scaled_jacobian) after optimization (minimum $(required_after))")
+        push!(failures, "Seed required region keeps $(below_gate) cells below the " *
+                        "scaled-Jacobian gate $(minimum_scaled_jacobian) after optimization " *
+                        "(minimum $(required_after))")
     end
+    isempty(failures) || error(join(failures, "; "))
     if layer_rule
         println("Seed edge-layer quality rule: $(length(layer_cells)) layer cells, collapsed " *
                 "$(collapsed) sub-EdgeSize vertices ($(length(removed)) cells removed, " *
