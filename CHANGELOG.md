@@ -35,9 +35,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
     port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
     [PR 921](https://github.com/awslabs/palace/pull/921).
-  - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices
-    (valence a multiple of 256, or greater than 127), which could assert or crash during
-    adaptive mesh refinement. [PR 934](https://github.com/awslabs/palace/pull/934).
+  - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices,
+    which could assert or crash during adaptive mesh refinement.
+    [PR 934](https://github.com/awslabs/palace/pull/934).
 
 #### Performance Improvements
 
