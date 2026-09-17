@@ -19,9 +19,65 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added machine-readable schema compatibility data to the installed schema files and
+    generated the developer documentation table from the same source
+    [PR 881](https://github.com/awslabs/palace/pull/881).
+  - Improve BoundaryMode linear solver convergence when lossy boundary conditions are present
+    by including complex terms in the real-valued preconditioner, or using an exact
+    complex-valued preconditioner when `"ComplexCoarseSolve"` is true. Numeric wave ports
+    can override this choice per port with `"ComplexCoarseSolve"`, without changing the full
+    3D system preconditioner. SchemaVer 1-7-0
+    [PR 921](https://github.com/awslabs/palace/pull/921).
+
+#### Bug Fixes
+
+  - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
+    integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
+  - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
+    or leading to incorrect results. [PR 927](https://github.com/awslabs/palace/pull/927).
+  - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
+    port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
+    [PR 921](https://github.com/awslabs/palace/pull/921).
+  - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices,
+    which could assert or crash during adaptive mesh refinement.
+    [PR 934](https://github.com/awslabs/palace/pull/934).
+  - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
+    `Lc / Z₀` and so depended on the characteristic length `Lc`.
+    [PR 936](https://github.com/awslabs/palace/pull/936).
+
+#### Performance Improvements
+
+  - Reduced repeated work in complex operators [PR
+    932](https://github.com/awslabs/palace/pull/932).
+  - Reduced repeated work in PROM construction [PR
+    930](https://github.com/awslabs/palace/pull/930).
+
+#### Build system
+
+  - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
+    compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
+
+#### Interface Changes
+
+  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
+    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+
+## [0.18.0] - 2026-09-09
+
+#### New Features
+
   - Improved configuration schema validation errors to list valid enum values through nested
     schema alternatives and suggest the canonical capitalization for case-only mismatches
     [PR 890](https://github.com/awslabs/palace/pull/890).
+  - Added libCEED-based GPU evaluation for domain and boundary visualization fields in
+    ParaView and grid function output, preserving native primary-field spaces and
+    discontinuous element-local derived fields
+    [PR 825](https://github.com/awslabs/palace/pull/825).
+  - Added libCEED-based GPU evaluation for boundary postprocessing functionals, avoiding
+    host coefficient projection for energy, flux, current, port, and far-field reductions
+    [PR 824](https://github.com/awslabs/palace/pull/824).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
@@ -40,6 +96,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     treats it as a perfect conductor (PEC) allowing induced screening currents. The mode can
     be overridden per port with `config["Boundaries"]["SurfaceCurrent"][...]["InactiveMode"]`.
     SchemaVer 1-5-0 [PR 831](https://github.com/awslabs/palace/pull/831).
+  - Added flux-loop excitation support for magnetostatic simulations, enabling
+    flux-trapping analysis with surface-curl postprocessing, flux-only
+    inductance extraction, and corresponding examples.
+    [PR 461](https://github.com/awslabs/palace/pull/461).
   - Added support for magnetostatic inductance extraction with combined `SurfaceCurrent` and
     `FluxLoop` excitations, which was previously rejected. The self-inductance blocks come
     from the usual cross-energies, while the current-flux mutual inductance is measured from
@@ -59,7 +119,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added a `"Problem"`/`"Iteration"` field to the `palace.json` metadata file, recording the
     1-based index of the most recently completed adaptive mesh refinement (AMR) iteration
     (`1` for the initial solve, matching the `iterationXX` archive subdirectory).
-    [PR 902](https://github.com/awslabs/palace/pull/902)
+    [PR 906](https://github.com/awslabs/palace/pull/906).
+  - Emit a `SavedAdaptedMesh` block to `palace.json` when
+    `config["Model"]["Refinement"]["SaveAdaptMesh"]` is enabled and adaptation was performed,
+    recording the true (conforming) topological entity counts of the adapted mesh broken down
+    by element and face geometry (vertices, edges, faces per face geometry, and cells per
+    element geometry), together with the sorted domain and boundary attributes. The block is
+    written for every adapted mesh: the top-level `palace.json` describes the final mesh, and
+    (with `SaveAdaptIterations` also enabled) each `iterationX/palace.json` describes that
+    iteration's mesh, so each saved mesh is paired with a matching block.
+    [PR 911](https://github.com/awslabs/palace/pull/911).
 
 #### Interface Changes
 
@@ -90,9 +159,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Omit material terms with mathematically exact-zero coefficients from fine-level partial
     assembly while retaining the configured coarse sparse structure for symbolic reuse.
     [PR 876](https://github.com/awslabs/palace/pull/876).
+  - Reused screened magnetostatic operators and AMS preconditioners across
+    open-port excitations with the same inactive shorted-port set, avoiding
+    repeated assembly and setup during multi-port inductance sweeps.
+    [PR 879](https://github.com/awslabs/palace/pull/879).
 
 #### Bug Fixes
 
+  - Fixed a distributed NLEPS fallback crash when a rank has no essential true
+    degrees of freedom and the nonlinear eigensolver exhausts its initial
+    guesses. The solve now reports the unconverged result rather than
+    dereferencing a null DoF list.
+    [PR 922](https://github.com/awslabs/palace/pull/922).
   - Fixed `linalg::MatrixSqrt`/`MatrixPow` returning incorrect results for fully
     anisotropic material tensors (all three off-diagonal entries nonzero, e.g. a crystal
     with generically-rotated `MaterialAxes`). The closed-form 3x3 eigen-decomposition used
@@ -165,6 +243,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Added a circuit-extraction guide covering the reduced-order circuit
+    workflow, including the treatment of nonlinear frequency-dependent
+    boundary terms.
+    [PR 812](https://github.com/awslabs/palace/pull/812).
   - Corrected the configuration validation script name in the docs
     (`validate-config`). [PR 891](https://github.com/awslabs/palace/pull/891).
   - Clarified how to interpret the elapsed time report: indented rows are exclusive

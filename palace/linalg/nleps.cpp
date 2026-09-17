@@ -455,10 +455,16 @@ int QuasiNewtonSolver::Solve()
       eig = sigma;
       if (num_init_guess < 3)
       {
-        // Set purely random vector.
+        // Set purely random vector, zeroing the essential-BC true dofs. On a
+        // partitioned mesh GetEssentialTrueDofs() returns nullptr on ranks whose
+        // local partition owns no essential (Dirichlet/PEC) dofs, in which case
+        // there is nothing to zero on this rank.
         linalg::SetRandom(GetComm(), v);
-        linalg::SetSubVector(
-            v, *dynamic_cast<const ComplexParOperator *>(opK)->GetEssentialTrueDofs(), 0.0);
+        if (const auto *ess_tdof_list =
+                dynamic_cast<const ComplexParOperator *>(opK)->GetEssentialTrueDofs())
+        {
+          linalg::SetSubVector(v, *ess_tdof_list, 0.0);
+        }
       }
       else
       {

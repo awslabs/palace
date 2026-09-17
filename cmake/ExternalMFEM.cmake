@@ -457,6 +457,20 @@ download_mfem_patch(
   "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
   482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
 )
+# https://github.com/mfem/mfem/pull/5494
+# Source-only backport for MFEM 4.9.
+download_mfem_patch(
+  mfem_nc_partition_fixes.diff
+  "https://raw.githubusercontent.com/awslabs/palace/1382ca5e9f72369b33c0ff5e8e0a244ac6597f6a/extern/patch/mfem/mfem_nc_partition_fixes.diff"
+  a28bf879ecf197856d24ef5427d493f84a159224c22e7cd17ec977e06a222ffb
+)
+# https://github.com/mfem/mfem/pull/5502
+# NCMesh: fix 8-bit reference-counter overflow at high-valence vertices.
+download_mfem_patch(
+  mfem_pr5502.diff
+  "https://github.com/mfem/mfem/commit/3091ba40b238c4008b67216314bb26da6738b833.diff"
+  52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
