@@ -567,16 +567,20 @@ builds a per-port reduced model during the offline phase: each exact port mode c
 an HDM sample is added to a complex basis of port eigenvectors. Online, the boundary
 eigenvalue problem is projected onto this basis and solved densely (a Rayleigh-Ritz
 procedure); the mode is selected in the same way as the exact solver. The reduced
-eigenpair is accepted only if its full-space backward residual
-``\|\bm{B}\bm{x} - \lambda\bm{A}(\omega)\bm{x}\| / (\|\bm{B}\bm{x}\| +
-|\lambda|\,\|\bm{A}(\omega)\bm{x}\|)`` is below a tolerance derived from the port
-eigensolver tolerance and `"AdaptiveTol"`. Otherwise, or whenever the reduced problem does
-not yield the requested number of well-separated modes, the exact eigenvalue problem is
-solved instead and its eigenvector enriches the basis, up to a fixed capacity above the
-offline rank. Complex-frequency queries (from the eigenmode solver) always use the exact
-solver. At the end of the sweep, *Palace* prints per-port statistics: the basis size and
-capacity, the numbers of reduced and exact solves, the number of fallbacks, and the worst
-accepted residual.
+eigenpair ``(\lambda, \bm{x})`` is accepted only if its full-space backward residual
+
+```math
+\eta = \frac{\|\bm{B}\bm{x} - \lambda\bm{A}(\omega)\bm{x}\|}
+            {\|\bm{B}\bm{x}\| + |\lambda|\,\|\bm{A}(\omega)\bm{x}\|}
+```
+
+is below a tolerance derived from the port eigensolver tolerance and `"AdaptiveTol"`.
+Otherwise, or whenever the reduced problem does not yield the requested number of
+well-separated modes, the exact eigenvalue problem is solved instead and its eigenvector
+enriches the basis, up to a fixed capacity above the offline rank. Complex-frequency
+queries (from the eigenmode solver) always use the exact solver. At the end of the sweep,
+*Palace* prints per-port statistics: the basis size and capacity, the numbers of reduced
+and exact solves, the number of fallbacks, and the worst accepted residual.
 
 The sample-selection interpolation is based on the quadratic linearization and does not
 fully represent arbitrary non-quadratic frequency dependence. If the non-quadratic
