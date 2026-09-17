@@ -4,7 +4,7 @@
   "Scope": "CALIBRATION ONLY (MA/MS metal-edge-layer h-study, supervisor decision 22): mesh-only qualification of labeled calibration variants of the four-edge case; NOT the production geometry-independence suite; nothing here changes a production default, gate or manifest",
   "Calibration": {
     "Purpose": "p_MA -10% / p_MS -1.4% offsets of the canonical four-edge coupon vs the graded_v2 reference are half p-convergence and half an h-limit of the metal edge/sidewall layer (6001: 6,423 tris at 0.113 um vs ~1.0M in the reference; physics-02). These variants refine that layer through EXISTING recipe parameters only.",
-    "Decision": "SUPERVISOR-DECISIONS.md item 22 (2026-09-16)",
+    "Decision": "SUPERVISOR-DECISIONS.md items 22 (V1/V2, 2026-09-16), 27-29 (seeded transverse edge layer, 2026-09-16) and 30 (required tetrahedra, seed-side gates, 2026-09-16)",
     "ProductionManifest": "geometry-independence-suite.json",
     "GateDeviations": {
       "MinimumAchievedAspect": {
@@ -16,7 +16,11 @@
       }
     },
     "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration",
-    "Verification": "per case only (verify_canonical_case_entries.py); the ScalingComparisons below are schema placeholders required by validate_manifest and are never evaluated as a matrix"
+    "Verification": "per case only (verify_canonical_case_entries.py); the ScalingComparisons below are schema placeholders required by validate_manifest and are never evaluated as a matrix",
+    "EdgeLayerVariant": {
+      "Purpose": "decision 27 (user directive): O(1 nm) transverse resolution at the metal edges is required for the edge-singular MA participation; the seed carries a geometric transverse layer (EdgeSize, GrowthRatio) on every metal-edge face with nested tangential refinement (EdgeLayerAspect), the metric prescribes the same law and the layer surface is frozen; EdgeSize is the recorded h-parameter of the MA edge study (25 -> 4 -> 2 -> 1 nm)",
+      "CommandBinding": "verify_canonical_case_entries.py binds the declared seed/metric/adaptation options; mesh_stage_contract.validate_edge_layer binds EdgeSize/GrowthRatio/Aspect across the seed command, the metric command, the seed census, the recipe and the adapter hmin"
+    }
   },
   "Gates": {
     "CornerTolerance": 1e-08,
@@ -45,7 +49,7 @@
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "7a7166132dbe2c6bba330d580d77eacef80db27f38d813705fd263a97c0a0b25"
+      "SHA256": "5df3217f01c7ff84b86746dedd078e1526d9f09eefc964603ceaa3f22827ceba"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -65,22 +69,22 @@
     {
       "Name": "prepare_edge_metric_scout.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "fecc8a606c01bbdc111a4a274edd8551bbfbdddb3dde0ae76aef0d52f67d4927"
+      "SHA256": "adec8850293a061a71bbac6ec45729d109c777910f84c2f7561d0eacd7bf8429"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_edge_metric_mesh.py",
-      "SHA256": "ffd44ca0d3ff870e47f7ae6916e511751ffe75a568c80e5e21992036dfd5ddd3"
+      "SHA256": "e530b12335bf6eb65c1a098a26a0a87f4d0c3ac6bebef0f92944ee45fc6f8f73"
     },
     {
       "Name": "edge_volume_metric.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/edge_volume_metric.py",
-      "SHA256": "a45a1eb39be2530c776b52da23647f0c8a1ac4254d6841e2e13a3240f5e9e6e2"
+      "SHA256": "48e9cc96950da17059af610dc326b8e32562d2840181fd8ea1e09498621a913c"
     },
     {
       "Name": "mesh_array_io.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_array_io.py",
-      "SHA256": "2d6fb69f789c3eed65f54a1a9b5d9b0895c352766a08a2ad1896b87cf4b101c1"
+      "SHA256": "5b69e2ad881ed0f8f4a7e9e72534a0301ee9f2b4b2e2824b61dfb275a40bbb9d"
     },
     {
       "Name": "run_bounded_mesher.py",
@@ -90,12 +94,12 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "279f772596a530bbe3a3b29d85a81c9bf55af021e231310a3584cd6bb31e2e59"
+      "SHA256": "de126326fd4c065d7fb8a2870224ff028f8552ef73635ac22c82401970ecc387"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "5c8822e2363b99f308f9c0bf9dcedfcb29eeb23aa3eec7f1383bd17316fefb54"
+      "SHA256": "b896fbba8231da0b8912467f15448adbd7a0a6bf27e1b93d523a96f099350f97"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -105,7 +109,7 @@
     {
       "Name": "run_native_mmg_adaptation.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_native_mmg_adaptation.py",
-      "SHA256": "7d59ec514a9a8314bd3b8e4aef11e6f323d0e628a5c0f83ece8a9921d2de57a1"
+      "SHA256": "c34339d88f14f07963c9f5c1b93215ba7614edc0687fd923b23a55394054ba4c"
     },
     {
       "Name": "publish_rigid_coupon_mesh.py",
@@ -139,31 +143,31 @@
       "source-validator": "7db8024676a18eee9da65770b5d99ea8ce0e1e57f9abd27d52aa2de2049b3f47"
     },
     "seed-generation": {
-      "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
-      "mesher": "2e6454304d27696d68a250cc04d9ee95325d3cbffea6d3c57cd0c29127b7167a"
+      "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
+      "mesher": "f079db23d65cdd6d57aaf408c7253580a19f15c77db9b65f94395140dfa5407a"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "fecc8a606c01bbdc111a4a274edd8551bbfbdddb3dde0ae76aef0d52f67d4927"
+      "metric-preparer": "adec8850293a061a71bbac6ec45729d109c777910f84c2f7561d0eacd7bf8429"
     },
     "native-adaptation-mmg": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "adaptation-wrapper": "7d59ec514a9a8314bd3b8e4aef11e6f323d0e628a5c0f83ece8a9921d2de57a1",
-      "adapter-mmg": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",
+      "adaptation-wrapper": "c34339d88f14f07963c9f5c1b93215ba7614edc0687fd923b23a55394054ba4c",
+      "adapter-mmg": "72f741e3c024482822b1d704d3207890cf8720b787e0e4dddb4182444f919669",
       "mmg-library": "a97d9580837712e79c637b0a7228f44c51e446ef32471a1104894e7fe7e378d5"
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "aab4212b61fad44066941a149faf45fea04f66a1e87030f138b0823ef9f614d3"
+      "label-restorer": "abd3159b14d4971845ca10d4ab05b13f98a2ca65f5f3913588c8abe63b3f3f02"
     },
     "canonical-gmsh-publication": {
-      "runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "publisher": "2906a5395ec957d1e4328183242ee9d7660ad8c23e7413af6e870c07629440d4"
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
       "rigid-publisher": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731",
-      "ownership-runtime": "78afd751c146fa34bd18ae42d481c66b693c3cc5e5a49a601f0b0e3510b24081",
+      "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
     }
   },
@@ -556,6 +560,258 @@
             "--minimum-scaled-jacobian": 0.01,
             "--maximum-corner-aspect": 4,
             "--maximum-quality-displacement-over-normal": 0.75
+          }
+        }
+      }
+    },
+    {
+      "Id": "four-edge-calib-ma-edge-layer-4nm",
+      "InventoryStatus": "Calibration",
+      "Frozen": true,
+      "Features": [
+        "4-edge",
+        "single-slot",
+        "single-conductor",
+        "calibration-ma",
+        "calibration-ma-edge-layer"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "217d15e21136c2e745456835f0aadc626f991e33ee910333b3edfedc43543549"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "81172a499268938d0dcb2d405584f425a3aabbae8ca764469d99e4696bbcde34"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "415150d8a05c317b2d5d319509bda4f30fb07cc0ea5947527814ed0d40db84ac"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "5a8f6332495c504ddab13d3525c323124ec8cf9d38cda481458af23547740d32"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "4fb45b71a58e1be0f395b429ad6c6874a1785e65016514e52f81a86f98d6027e"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "686771fda45a5c1fce819121317cc55de3a3eabc12510350192ea39ff4e522c7"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          },
+          "RetainedEtch": {
+            "Name": "retained-etch.csv",
+            "SHA256": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
+          }
+        }
+      },
+      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; EDGE LAYER 4 nm: V2 (seed --lc-tangent .05, metric --far-growth 0.5) plus a seeded geometric transverse edge layer on every metal-edge face: EdgeSize 0.004 growing by GrowthRatio 2 per layer up to NormalSize 0.025 (rows at 4/12/28 nm, sizes 4/8/16 nm), tangential refinement inside the layer to EdgeLayerAspect 4 (ridge grid 0.05 subdivided by 4 -> 12.5 nm, rows 12.5/25/50 nm, taper 2 at the span ends; the scaled Jacobian of a tetrahedron corner with three tangential edges is (hn/ht)^2, so the MinimumScaledJacobian gate bounds the layer anisotropy), matching metric law (hn = EdgeSize + r up to the reach 0.021, then the V2 band law; tangential capped at 4 hn in the layer), adapter hmin = EdgeSize, layer surface frozen; restoration bounds relative to the local prescribed size; layer cells excluded from the far-field budget policy's seed load so the far field stays V2's; no gate value changes; decision 30: the seed cells inside the corner balls and the edge layer are MMG required tetrahedra (metric artifact required-tetrahedra.txt, adapter --required-tetrahedra), so their quality after adaptation is the seed's, which the seed stage optimizes and gates itself (--maximum-corner-aspect 4, --minimum-scaled-jacobian .01, --maximum-quality-displacement-over-normal .75, the restorer's values); the restorer freezes the required vertices - supervisor decisions 27 (user directive: O(1 nm) transverse resolution at metal edges), 28 (EdgeLayerAspect 4) and 29 (EdgeSize 4 nm as the first buildable h-step; 1 nm measured at 4.70M tets and 1,522 sub-0.02 repair components), 30 (corner balls and edge layer as MMG required tetrahedra; seed-side corner/scaled-Jacobian gates). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
+      "Calibration": {
+        "Label": "EDGE LAYER 4 nm: V2 (seed --lc-tangent .05, metric --far-growth 0.5) plus a seeded geometric transverse edge layer on every metal-edge face: EdgeSize 0.004 growing by GrowthRatio 2 per layer up to NormalSize 0.025 (rows at 4/12/28 nm, sizes 4/8/16 nm), tangential refinement inside the layer to EdgeLayerAspect 4 (ridge grid 0.05 subdivided by 4 -> 12.5 nm, rows 12.5/25/50 nm, taper 2 at the span ends; the scaled Jacobian of a tetrahedron corner with three tangential edges is (hn/ht)^2, so the MinimumScaledJacobian gate bounds the layer anisotropy), matching metric law (hn = EdgeSize + r up to the reach 0.021, then the V2 band law; tangential capped at 4 hn in the layer), adapter hmin = EdgeSize, layer surface frozen; restoration bounds relative to the local prescribed size; layer cells excluded from the far-field budget policy's seed load so the far field stays V2's; no gate value changes; decision 30: the seed cells inside the corner balls and the edge layer are MMG required tetrahedra (metric artifact required-tetrahedra.txt, adapter --required-tetrahedra), so their quality after adaptation is the seed's, which the seed stage optimizes and gates itself (--maximum-corner-aspect 4, --minimum-scaled-jacobian .01, --maximum-quality-displacement-over-normal .75, the restorer's values); the restorer freezes the required vertices",
+        "BaseCase": "four-edge-9d2cb9bbb3fe",
+        "SeedCommandOptions": {
+          "--lc-tangent": 0.05,
+          "--edge-size": 0.004
+        },
+        "MetricCommandOptions": {
+          "--far-growth": 0.5,
+          "--edge-size": 0.004
+        },
+        "ProductionValues": {
+          "--lc-tangent": 0.1,
+          "--far-growth": 1.0,
+          "--edge-size": 0.0,
+          "--edge-growth-ratio": 2.0,
+          "--edge-layer-aspect": 4.0,
+          "--hmin": 0.025
+        },
+        "UnchangedProductionParameters": {
+          "seed": {
+            "--lc-fine": 0.025,
+            "--lc-far": 0.16,
+            "--corner-isotropy-radius": 0.1,
+            "--trace-basis-size-ratio": 1.0,
+            "--radius": 2,
+            "--metal-thickness": 0.1,
+            "--overetch": 0.05,
+            "--max-elements": 4000000,
+            "--edge-growth-ratio": 2.0,
+            "--edge-layer-aspect": 4.0,
+            "--maximum-corner-aspect": 4,
+            "--minimum-scaled-jacobian": 0.01,
+            "--maximum-quality-displacement-over-normal": 0.75
+          },
+          "metric": {
+            "--normal": 0.025,
+            "--tangent": 0.1,
+            "--far": 0.16,
+            "--protected-distance": 0.05,
+            "--protect-surface": 0.05,
+            "--maximum-elements": 4000000,
+            "--trace-basis-size-ratio": 1.0,
+            "--edge-growth-ratio": 2.0,
+            "--edge-layer-aspect": 4.0
+          },
+          "adaptation": {
+            "--hgrad": 1.15,
+            "--hausd": 1e-08
+          },
+          "restoration": {
+            "--max-displacement-over-normal": 0.25,
+            "--minimum-scaled-jacobian": 0.01,
+            "--maximum-corner-aspect": 4,
+            "--maximum-quality-displacement-over-normal": 0.75
+          }
+        },
+        "Decision": "SUPERVISOR-DECISIONS.md items 27-30 (2026-09-16): NormalSize 0.025 is 25x too coarse for the edge-singular MA integrand (|E|^2 ~ r^-2/3); the seeded edge layer with EdgeSize as the recorded h-parameter (25 -> 4 -> 2 -> 1 nm) replaces the self-similar normal-size halving; at 1 nm / aspect 4 the layer measured 4,703,260 tets (layer 1.3M, surface-driven) with 1,955 cells below scaled Jacobian 0.02 in 1,522 repair components (probe root /tmp/edge-layer-work-20260916/seed-b), over the 4,000,000 cap and beyond the frozen restoration's repair budget, so 4 nm is built first; the first 4 nm build failed label restoration on an MMG corner outcome (semantic corner (0, 8, 0) at aspect 5.39, the fourth campaign blocked by MMG's corner output), so decision 30 makes the near-corner/near-edge region deterministic: the seed defines it and MMG keeps it verbatim",
+        "AdaptationCommandOptions": {
+          "--hmin": 0.004
+        },
+        "EdgeLayer": {
+          "EdgeSize": 0.004,
+          "GrowthRatio": 2.0,
+          "Aspect": 4.0,
+          "NormalSize": 0.025,
+          "EdgeSizeOverNormalSize": 0.16,
+          "Reach": 0.021,
+          "RowOffsets": [
+            0.004,
+            0.012,
+            0.028
+          ],
+          "LayerSizes": [
+            0.004,
+            0.008,
+            0.016
+          ],
+          "TangentialSubdivision": 4,
+          "RowTangentialSpacings": [
+            0.0125,
+            0.025,
+            0.05
+          ],
+          "TaperSubdivisions": [
+            2
+          ],
+          "MetricLaw": "hn(r) = min(FarSize, EdgeSize + (GrowthRatio - 1) min(r, Reach) + min(max(0, r - Reach), ProtectedDistance) + FarGrowth max(0, r - Reach - ProtectedDistance)); ht = min(band ht, Aspect hn) on the layer spans; EdgeSize/GrowthRatio/Aspect are bound between the seed command, the metric command, the seed census and the recipe by mesh_stage_contract.validate_edge_layer; adapter hmin = EdgeSize",
+          "ScaledJacobianArgument": "a tetrahedron whose corner has three tangential edges of length ht and volume hn^2 ht / 6 has scaled Jacobian (hn/ht)^2; MinimumScaledJacobian 0.01 (repair target 0.02) therefore bounds the layer anisotropy to roughly 5; prisms would not have this limit (not pursued)",
+          "FarFieldPolicy": "seed cells whose centroid lies within SurfaceProtectionRadius of a layer span are excluded from the far-field budget policy seed load (they are re-meshed to the recorded layer metric), so the far size stays 0.16 as on V2",
+          "RequiredTetrahedra": "decision 30: seed tetrahedra with centroid within CornerIsotropyRadius of a semantic corner and seed tetrahedra with a vertex within LayerThickness x (1 + RowZigzag) + EdgeSize of a layer span are MMG required tetrahedra (metric stage artifact required-tetrahedra.txt bound as an adaptation input; adapter flag --required-tetrahedra; recipe RequiredTetrahedra record with per-corner/per-span counts); MMG keeps them verbatim (vertex order included), the restorer freezes their vertices, and the seed stage optimizes and gates the same region with the restorer's gate values (bounded coordinate descent: surface vertices in their planes, 0.75 x the local prescribed size)",
+          "CornerTaperOffset": "rows start at the ridge grid outside the corner size law after the taper (CornerLawReach 0.137 + 1 x 0.05 = 0.187 um from a semantic corner); the isotropic corner balls stay at NormalSize (follow-up: 3D corner singularities remain under-resolved relative to the edges)",
+          "OneNanometerProbe": {
+            "EdgeSize": 0.001,
+            "Aspect": 4.0,
+            "SeedTetrahedra": 2110309,
+            "AdaptedTetrahedra": 4703260,
+            "LayerTetrahedraWithin50nm": 1228357,
+            "CellsBelow0.01": 97,
+            "CellsBelow0.02": 1955,
+            "RepairComponents": 1522,
+            "MinimumScaledJacobian": 0.00455,
+            "TransverseP50ByShellNm": [
+              1.05,
+              2.7,
+              5.5,
+              12.1,
+              22.3
+            ],
+            "Root": "/tmp/edge-layer-work-20260916/seed-b",
+            "Built": false
           }
         }
       }

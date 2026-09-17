@@ -5,7 +5,10 @@
 """Invoke the reviewed native MMG adapter with the metric recipe's bound hmax.
 
 The adapter's dynamically loaded MMG3D library is resolved from its link table and
-rpath entries, so the library actually executed is bound by path and SHA-256.
+rpath entries, so the library actually executed is bound by path and SHA-256.  The
+metric stage's required-tetrahedra list (seed corner balls and edge layer, kept
+verbatim by MMG) is a mandatory input; it is checked against the recipe record and
+bound by SHA-256 in the receipt.
 """
 import argparse
 import hashlib
@@ -130,13 +133,28 @@ def effective_far_size(recipe):
     return float(hmax)
 
 
+def required_tetrahedron_count(path, tetrahedra):
+    """Number of 1-based seed tetrahedron indices in the metric stage's list; the list
+    must be non-empty, in range, and free of duplicates (the adapter fails closed on
+    out-of-range indices; the wrapper refuses to launch it on a malformed list)."""
+    values = Path(path).read_text().split()
+    if not values or any(not value.isdigit() for value in values):
+        raise ValueError("Required tetrahedron list must be non-empty positive integers")
+    indices = [int(value) for value in values]
+    if (min(indices) < 1 or max(indices) > tetrahedra or len(set(indices)) != len(indices)):
+        raise ValueError("Required tetrahedron list is out of range or duplicated")
+    return len(indices)
+
+
 def run(adapter, seed, metric, pins, recipe_path, output, receipt, *, mmg_library, hmin,
-        hgrad, mode, fixed_triangles=None, hausd=1e-8):
+        hgrad, mode, required_tetrahedra, fixed_triangles=None, hausd=1e-8):
     paths = [Path(value).resolve() for value in
-             (adapter, seed, metric, pins, recipe_path, output, receipt, mmg_library)]
-    adapter, seed, metric, pins, recipe_path, output, receipt, mmg_library = paths
+             (adapter, seed, metric, pins, recipe_path, output, receipt, mmg_library,
+              required_tetrahedra)]
+    (adapter, seed, metric, pins, recipe_path, output, receipt, mmg_library,
+     required_tetrahedra) = paths
     if any(not path.is_file() for path in (adapter, seed, metric, pins, recipe_path,
-                                           mmg_library)):
+                                           mmg_library, required_tetrahedra)):
         raise ValueError("Every native-adaptation input, adapter, and MMG library must exist")
     if output.exists() or receipt.exists():
         raise ValueError("Native-adaptation outputs must be fresh")
@@ -154,6 +172,14 @@ def run(adapter, seed, metric, pins, recipe_path, output, receipt, *, mmg_librar
     hmax = effective_far_size(recipe)
     if hmax < hmin:
         raise ValueError("Policy hmax is smaller than hmin")
+    record_required = recipe.get("RequiredTetrahedra")
+    tetrahedra = recipe.get("Tetrahedra")
+    if (not isinstance(record_required, dict) or not isinstance(tetrahedra, int) or
+            isinstance(tetrahedra, bool) or tetrahedra <= 0):
+        raise ValueError("Metric recipe lacks the required-tetrahedra record")
+    required_count = required_tetrahedron_count(required_tetrahedra, tetrahedra)
+    if required_count != record_required.get("Count"):
+        raise ValueError("Required tetrahedron list differs from the recipe record")
     command = [str(adapter), str(seed), str(metric), str(pins), str(output),
                format(hmin, ".17g"), format(hmax, ".17g"), format(hgrad, ".17g"), mode]
     if mode in ("freeze-matching", "freeze-matching-no-move", "freeze-selected"):
@@ -162,13 +188,14 @@ def run(adapter, seed, metric, pins, recipe_path, output, receipt, *, mmg_librar
         command.extend([str(Path(fixed_triangles).resolve()), format(hausd, ".17g")])
     elif fixed_triangles is not None:
         raise ValueError("Fixed triangles are only valid for a selected-surface mode")
+    command.extend(["--required-tetrahedra", str(required_tetrahedra)])
     result = subprocess.run(command, check=False, env=environment)
     if result.returncode != 0 or not output.is_file():
         raise RuntimeError(f"Native MMG adapter failed with status {result.returncode}")
     if sha256(mmg_library) != library["SHA256"] or sha256(adapter) != adapter_sha256:
         raise RuntimeError("Adapter or MMG library changed during native adaptation")
     record = {
-        "Version": 2,
+        "Version": 3,
         "RecipeSHA256": sha256(recipe_path),
         "MetricSHA256": sha256(metric),
         "AdapterSHA256": adapter_sha256,
@@ -178,6 +205,8 @@ def run(adapter, seed, metric, pins, recipe_path, output, receipt, *, mmg_librar
         "LoaderSearchOverridesRemoved": removed,
         "EffectiveFarSize": hmax,
         "HmaxArgument": command[6],
+        "RequiredTetrahedraSHA256": sha256(required_tetrahedra),
+        "RequiredTetrahedra": required_count,
         "Command": command,
         "OutputSHA256": sha256(output),
     }
@@ -202,12 +231,15 @@ def main():
                         choices=("adapt", "no-move", "freeze-surface", "freeze-matching",
                                  "freeze-matching-no-move", "freeze-selected"))
     parser.add_argument("--fixed-triangles", type=Path)
+    parser.add_argument("--required-tetrahedra", type=Path, required=True,
+                        help="metric-stage list of seed tetrahedra MMG keeps verbatim")
     parser.add_argument("--hausd", type=float, default=1e-8)
     args = parser.parse_args()
     try:
         run(args.adapter, args.seed, args.metric, args.pins, args.recipe, args.output,
             args.receipt, mmg_library=args.mmg_library, hmin=args.hmin, hgrad=args.hgrad,
-            mode=args.mode, fixed_triangles=args.fixed_triangles, hausd=args.hausd)
+            mode=args.mode, required_tetrahedra=args.required_tetrahedra,
+            fixed_triangles=args.fixed_triangles, hausd=args.hausd)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as error:
         parser.error(str(error))
 

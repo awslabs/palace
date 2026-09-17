@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--pins", type=Path)
     parser.add_argument("--recipe", type=Path)
     parser.add_argument("--fixed-triangles", type=Path)
+    parser.add_argument("--required-tetrahedra", type=Path)
     parser.add_argument("--ownership", type=Path)
     parser.add_argument("--source-local-output", type=Path)
     parser.add_argument("--semantic-contract", type=Path)
@@ -69,16 +70,23 @@ def main():
     parser.add_argument("--trace-triangles", type=Path)
     parser.add_argument("--process-library", type=Path)
     parser.add_argument("--trace-basis-size-ratio", type=float)
+    # Label-restoration gates (the seed stage carries the same values).
+    parser.add_argument("--maximum-corner-aspect", type=float)
+    parser.add_argument("--minimum-scaled-jacobian", type=float)
+    parser.add_argument("--maximum-quality-displacement-over-normal", type=float)
     args = parser.parse_args()
     if args.stage == "metric":
         if (args.mmg_seed is None or args.pins is None or args.recipe is None or
-                args.fixed_triangles is None):
-            parser.error("metric requires MMG seed, pins, fixed triangles, and recipe")
+                args.fixed_triangles is None or args.required_tetrahedra is None):
+            parser.error("metric requires MMG seed, pins, fixed triangles, required "
+                         "tetrahedra, and recipe")
         args.output.write_text(json.dumps({"SeedSHA256": digest(args.source),
                                           "Metric": [1.0, 0.0, 1.0]}) + "\n")
         rewrite(args.source, args.mmg_seed, False)
         args.pins.write_text("1\n")
         args.fixed_triangles.write_text("1\n")
+        # The fixture seed's first tetrahedron stands for the corner balls.
+        args.required_tetrahedra.write_text("1\n")
         if args.semantic_contract is None or args.transformed_supports is None:
             parser.error("metric requires transformed semantic/support inputs")
         if args.normal is None or args.tangent is None:
@@ -126,6 +134,11 @@ def main():
             "ProtectedCornerBalls": {"Radius": args.tangent, "FrozenTriangles": 1,
                 "PerCorner": [{"Point": corner, "FrozenTriangles": 1}
                               for corner in semantic["SemanticCorners"]]},
+            "Tetrahedra": len(meshio.read(args.source).get_cells_type("tetra")),
+            "RequiredTetrahedra": {"Count": 1, "CornerRadius": args.tangent,
+                "PerCorner": [{"Point": corner, "Tetrahedra": 1}
+                              for corner in semantic["SemanticCorners"]],
+                "LayerRequiredReach": None, "PerSpan": [], "IndexBase": 1},
             "TransformedSupportsArtifact": str(args.transformed_supports.resolve()),
             "TransformedSupportsSHA256": digest(args.transformed_supports),
             "TransformedSupports": json.loads(args.transformed_supports.read_text()),
@@ -138,8 +151,10 @@ def main():
     elif args.stage == "adapt":
         if (args.metric is None or not args.metric.is_file() or
                 args.pins is None or not args.pins.is_file() or
-                args.fixed_triangles is None or not args.fixed_triangles.is_file()):
-            parser.error("adapt requires metric, pins, and fixed triangles")
+                args.fixed_triangles is None or not args.fixed_triangles.is_file() or
+                args.required_tetrahedra is None or not args.required_tetrahedra.is_file()):
+            parser.error("adapt requires metric, pins, fixed triangles, and required "
+                         "tetrahedra")
         rewrite(args.source, args.output, True)
     elif args.stage == "restore":
         if (args.recipe is None or not args.recipe.is_file() or

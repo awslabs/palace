@@ -253,7 +253,78 @@ components; at 4 nm (rows 12.5/25/50 nm at 4/12/28 nm) 3.57M tets, layer
 label-restoration corner gate at (0, 8, 0) (aspect 5.39 after MMG, the
 collapse rolled back and the bounded move repair cannot fix a corner cell with
 three constrained vertices; identical with the previous restorer), so no
-edge-layer case is qualified yet.
+edge-layer case was qualified by that build.
+Supervisor decision 30 (required tetrahedra, 2026-09-16): MMG's corner output
+had blocked four campaigns, so the near-corner/near-edge region is now
+deterministic - the seed defines it and MMG must not touch it. The metric
+stage emits the bound artifact `required-tetrahedra.txt` (1-based seed
+tetrahedron indices; `edge_volume_metric.required_tetrahedra`): every seed
+cell whose centroid lies within `CornerIsotropyRadius` of a semantic corner
+(also without an edge layer) and, with a layer, every seed cell with a vertex
+within LayerThickness x (1 + RowZigzag) + EdgeSize of a recorded span (the
+rows and the cells touching them, so the layer is kept without holes); the
+recipe `RequiredTetrahedra` record carries the rule, the radius, the reach and
+one count per corner and per span. The reviewed adapter takes the list as the
+flag `--required-tetrahedra FILE` (removed from the positional arguments, so
+every existing command shape is unchanged) and calls
+`MMG3D_Set_requiredTetrahedron` plus `MMG3D_Set_requiredVertex` for each
+listed cell (MMG 5.6 also tags the vertices itself, `MMG3D_set_reqBoundaries`),
+failing closed on out-of-range or malformed indices; the wrapper requires the
+list, checks it against the recipe record and binds it by SHA-256 in the
+receipt (`RequiredTetrahedraSHA256`, count); the stage contract binds it as a
+metric output and an adaptation input (`--required-tetrahedra`) and
+`validate_required_region` checks the record, the list and the seed gates
+below. MMG keeps the listed cells verbatim (vertex order included: the
+corner-incident aspects after adaptation equal the seed census's); MMG writes
+them under the binary Medit `RequiredTetrahedra` keyword (libMeshb code 12),
+which meshio mis-parses, so `mesh_array_io.read_medit_binary` reads the native
+output by keyword positions and flags the kept cells (`medit:required`); the
+restorer freezes their vertices (no collapse, no repair move; `RequiredTetrahedra`,
+`RequiredVertices`, `MaximumRequiredVertexCorrectionUm` in the report). Because
+the required region's quality after adaptation is the seed's, the seed stage
+satisfies the gates itself: `--maximum-corner-aspect`, `--minimum-scaled-jacobian`
+and `--maximum-quality-displacement-over-normal` (the restorer's values, bound
+equal by the contract) turn on `optimize_required_seed_region!` - the
+restorer's bounded rule on the seed (surface vertices in the null space of
+their triangle normals, three planes fix a vertex, ratio x the local
+prescribed size, touched cells keep min(original, 2 x gate) scaled Jacobian),
+as greedy coordinate descent (26 directions for a free vertex, 8 in a plane,
+2 on a line; halving steps down to 1/128 of the bound) on the corner-incident
+aspects through their 32-norm (a smooth proxy of the maximum that keeps
+descending where several cells tie for the worst; target 0.95 x the gate on
+the true maximum) and on components of required cells below 2 x the gate; the
+census records `SeedQualityOptimization` (before/after per corner, required
+minimum scaled Jacobian, moved vertices, bound usage) and the seed fails closed
+when a corner exceeds the gate or a required cell stays below it. Measured on
+the four-edge 4 nm seed: corners 3.41/4.63/3.42/8.69 -> 3.41/3.70/3.42/3.50,
+the 88 required cells below 0.02 (needles: 4-6 nm surface triangles joined to
+an interior vertex 48 nm away, minimum 0.0092) all lifted to >= 0.02 with 358
+vertices moved by at most 18.75 nm (the bound), +10 s of seed time; on the
+production seeds the corner balls alone are required (four-edge 2,882 cells,
+corners 3.27/4.89/6.25/8.16 -> 3.27/3.39/3.67/3.56; ten-edge 8,562 cells, worst
+corner 8.45 -> 3.75, all ten <= 3.86). MMG kept every required cell verbatim
+(the preserved 4 nm seed: 199,572 of 199,572, 3,450,791 tets in 46 s, every
+cell below 0.02 a seed cell) and the label restoration passes with 0 collapses
+and no corner repair (four-edge 222 s, ten-edge 181 s, 4 nm 35 s). The adapter
+build is recorded in `testdata/adapter-build.json` (command, compiler, flags,
+rpath, source/executable/dylib SHA-256); its manifest digest is refrozen only
+through `refreeze_manifest_tools.py --adapter-mmg PATH`, which accepts an
+executable only when the record names its digest and the repository's
+`adapt_edge_metric.cpp` digest. The machine's Julia launcher is refrozen the
+same way (`--julia-runtime PATH`, the three Julia runtime roles together).
+Supervisor decision 31 (2026-09-17): the achieved-anisotropy design gate
+(TangentialP50 >= MinimumAchievedAspect x transverse P90 over the band cells)
+is a statement about the metric-driven band, which a seeded edge layer
+contradicts by construction (decision 28 caps the layer's tangential size at
+Aspect x hn: 12.5 nm at the 4 nm rows against a 35 nm transverse P90 of the
+band sample). The audit producer therefore computes the band statistics over
+band cells outside a recorded edge layer (`directional_widths`: cells whose
+centroid lies within LayerThickness + EdgeSize of a restoration-recipe
+`EdgeLayer` span are excluded, counted as `ExcludedEdgeLayerCells`, and
+reported as `AchievedAnisotropy.EdgeLayer` with their own percentiles); the
+rule is keyed on the recipe's EdgeLayer record, never on a case, gate values
+are unchanged (production 1.5, calibration 0.9), and the layer's design
+statement remains the bound EdgeLayer aspect rule.
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and

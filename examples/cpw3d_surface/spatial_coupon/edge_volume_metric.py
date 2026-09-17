@@ -137,6 +137,51 @@ def segment_distances(points,segment):
     return np.linalg.norm(delta-axial[:,None]*tangent,axis=1),tangent
 
 
+REQUIRED_TETRAHEDRA_RULE=('MMG required tetrahedra (kept verbatim, vertices fixed): every seed '
+                          'tetrahedron whose centroid lies within CornerIsotropyRadius of a '
+                          'semantic corner (the seed corner ball is the corner discretization) '
+                          'and, with an edge layer, every seed tetrahedron with a vertex within '
+                          'LayerRequiredReach = LayerThickness x (1 + RowZigzag) + EdgeSize of '
+                          'a recorded span (the layer rows and the cells touching them, so the '
+                          'seed layer is kept without holes); MMG adapts only outside them')
+
+
+def edge_layer_required_reach(layer):
+    """Distance from a span within which a vertex belongs to the seed edge layer:
+    the outermost row (zigzagged nodes RowZigzag farther out) plus one EdgeSize."""
+    thickness=float(layer['LayerThickness']);edge_size=float(layer['EdgeSize'])
+    zigzag=float(layer.get('RowZigzag') or 0.)
+    if not np.all(np.isfinite([thickness,edge_size,zigzag])) or thickness<=0 or edge_size<=0 or zigzag<0:
+        raise ValueError('Invalid edge layer thickness/zigzag for the required reach')
+    return thickness*(1.+zigzag)+edge_size
+
+
+def required_tetrahedra(points,tetrahedra,corners,corner_radius,layer_spans=None,layer_reach=None):
+    """Boolean mask of the seed tetrahedra MMG must keep (REQUIRED_TETRAHEDRA_RULE),
+    the count per corner (centroid within corner_radius) and the count per span (a
+    vertex within layer_reach).  A tetrahedron is counted for every region it meets."""
+    points=np.asarray(points,dtype=float);tetrahedra=np.asarray(tetrahedra,dtype=int)
+    corners=np.asarray(corners,dtype=float).reshape(-1,3)
+    if not np.isfinite(corner_radius) or corner_radius<=0:
+        raise ValueError('Invalid corner isotropy radius')
+    mask=np.zeros(len(tetrahedra),dtype=bool)
+    centroids=points[tetrahedra].mean(axis=1)
+    per_corner=[]
+    for corner in corners:
+        inside=np.linalg.norm(centroids-corner,axis=1)<=corner_radius
+        per_corner.append(int(inside.sum()));mask|=inside
+    per_span=[]
+    if layer_spans is not None:
+        spans=np.asarray(layer_spans,dtype=float).reshape(-1,6)
+        if not np.isfinite(layer_reach) or layer_reach<=0:
+            raise ValueError('Invalid edge layer required reach')
+        for span in spans:
+            distance=segment_distances(points,span)[0]
+            inside=np.any(distance[tetrahedra]<=layer_reach,axis=1)
+            per_span.append(int(inside.sum()));mask|=inside
+    return mask,per_corner,per_span
+
+
 def edge_layer_reach(normal_size,edge_size,growth_ratio):
     """Distance from an edge at which the geometric edge-layer law reaches NormalSize.
 

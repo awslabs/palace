@@ -22,12 +22,33 @@ void Check(int result, const char *operation)
 
 int main(int argc, char **argv)
 {
+  // Optional flag: the metric stage's required-tetrahedra list (1-based seed tet
+  // indices). It is removed from the positional arguments so every existing
+  // command shape is accepted unchanged.
+  std::string required_tetrahedra_path;
+  std::vector<char *> positional;
+  for (int i = 0; i < argc; i++)
+  {
+    if (i > 0 && std::string(argv[i]) == "--required-tetrahedra")
+    {
+      if (i + 1 >= argc || !required_tetrahedra_path.empty())
+      {
+        std::cerr << "--required-tetrahedra takes exactly one file\n";
+        return 2;
+      }
+      required_tetrahedra_path = argv[++i];
+      continue;
+    }
+    positional.push_back(argv[i]);
+  }
+  argc = static_cast<int>(positional.size());
+  argv = positional.data();
   if (argc < 8 || argc > 11)
   {
     std::cerr << "input.meshb metric.f64 pins.txt output.meshb hmin hmax hgrad "
                  "[no-move|freeze-surface|freeze-matching|freeze-matching-no-move|freeze-"
                  "selected] "
-                 "[fixed-triangles.txt [hausd]]\n";
+                 "[fixed-triangles.txt [hausd]] [--required-tetrahedra required.txt]\n";
     return 2;
   }
   const std::string mode = argc >= 9 ? argv[8] : "adapt";
@@ -183,6 +204,38 @@ int main(int argc, char **argv)
       }
       std::cout << "Selected surface triangles frozen: " << fixed_count << std::endl;
     }
+    int required_count = 0;
+    if (!required_tetrahedra_path.empty())
+    {
+      // Seed tetrahedra MMG must keep verbatim (corner balls, edge layer). MMG 5.6
+      // marks the vertices of a required tetrahedron as required itself
+      // (MMG3D_set_reqBoundaries); they are marked here too so the intent does not
+      // depend on that library detail.
+      std::vector<int> tetrahedra(4ULL * ne), refs(ne), required(ne);
+      Check(MMG3D_Get_tetrahedra(mesh, tetrahedra.data(), refs.data(), required.data()),
+            "get tetrahedra");
+      std::ifstream list(required_tetrahedra_path);
+      int tetrahedron;
+      while (list >> tetrahedron)
+      {
+        if (tetrahedron < 1 || tetrahedron > ne)
+        {
+          throw std::runtime_error("Invalid required tetrahedron index");
+        }
+        Check(MMG3D_Set_requiredTetrahedron(mesh, tetrahedron), "required tetrahedron");
+        for (int j = 0; j < 4; j++)
+        {
+          Check(MMG3D_Set_requiredVertex(mesh, tetrahedra[4ULL * (tetrahedron - 1) + j]),
+                "required tetrahedron vertex");
+        }
+        required_count++;
+      }
+      if (!list.eof() || !required_count)
+      {
+        throw std::runtime_error("Missing or malformed required tetrahedron list");
+      }
+      std::cout << "Required tetrahedra: " << required_count << std::endl;
+    }
     Check(MMG3D_Set_iparameter(mesh, metric, MMG3D_IPARAM_verbose, 4), "verbose");
     Check(MMG3D_Set_iparameter(mesh, metric, MMG3D_IPARAM_mem, 6000), "memory");
     Check(MMG3D_Set_iparameter(mesh, metric, MMG3D_IPARAM_nosizreq, 1), "required sizes");
@@ -197,7 +250,7 @@ int main(int argc, char **argv)
     Check(MMG3D_Set_dparameter(mesh, metric, MMG3D_DPARAM_hausd, hausd), "hausd");
     std::cout << "Native tensor roundtrip passed; vertices=" << nv << " tets=" << ne
               << " triangles=" << nt << " feature edges=" << nedge << " pins=" << pin_count
-              << std::endl;
+              << " required tetrahedra=" << required_count << std::endl;
     const int result = MMG3D_mmg3dlib(mesh, metric);
     std::cout << "MMG_RESULT=" << result << std::endl;
     if (result == MMG5_SUCCESS)

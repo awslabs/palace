@@ -279,9 +279,24 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
             validate_calibration_commands(case, {
                 **stages, "metric-preparation": {"Command": ["python3", "metric.py",
                                                              "--far-growth=0.5"]}})
-        with self.assertRaisesRegex(ValueError, "declared for two stages"):
+        # An option shared by two stage commands is declared for each with one value;
+        # every declaring stage executes it and a differing value is rejected.
+        shared = {"Calibration": {"SeedCommandOptions": {"--edge-size": 0.004},
+                                  "MetricCommandOptions": {"--edge-size": 0.004},
+                                  "ProductionValues": {"--edge-size": 0.0}}}
+        layered = {**stages,
+                   "seed-generation": {"Command": ["julia", "seed.jl", "--edge-size", ".004"]},
+                   "metric-preparation": {"Command": ["python3", "metric.py", "--edge-size", "0.004"]}}
+        validate_calibration_commands(shared, layered)
+        with self.assertRaisesRegex(ValueError, "declared with two values"):
             validate_calibration_commands({"Calibration": {
-                **case["Calibration"], "MetricCommandOptions": {"--lc-tangent": 0.05}}}, stages)
+                **shared["Calibration"], "MetricCommandOptions": {"--edge-size": 0.002}}}, layered)
+        with self.assertRaisesRegex(ValueError, "exactly once"):
+            validate_calibration_commands(shared, {
+                **layered, "metric-preparation": {"Command": ["python3", "metric.py"]}})
+        with self.assertRaisesRegex(ValueError, "away from its production value"):
+            validate_calibration_commands({"Calibration": {
+                **shared["Calibration"], "MetricCommandOptions": {}}}, layered)
         with self.assertRaisesRegex(ValueError, "ends with option"):
             validate_calibration_commands(case, {
                 **stages, "metric-preparation": {"Command": ["python3", "--far-growth"]}})

@@ -20,8 +20,10 @@ from restore_planar_metric_mesh import (
     _within_displacement_bound,
     frozen_edge_layer_vertices,
     local_size_bounds,
+    required_tetrahedron_vertices,
     restore_in_source_frame,
 )
+from mesh_array_io import read_medit_binary, read_mesh
 
 
 def _single_tetrahedron_repair_case(apex_height):
@@ -634,3 +636,97 @@ class LocalSizeBoundTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RequiredTetrahedraTest(unittest.TestCase):
+    """MMG's kept-verbatim seed cells are read from the native output and frozen."""
+
+    @staticmethod
+    def write_medit_binary(path, points, triangles, tetrahedra, required, extra_keyword=True):
+        """A version-2 binary Medit mesh in MMG's keyword order with a keyword the
+        tools do not consume (Corners) before the cells and RequiredTetrahedra after."""
+        import struct
+        chunks = [struct.pack("<ii", 1, 2), struct.pack("<i", 3)]
+        position = 8 + 4 + 4 + 4
+        chunks.append(struct.pack("<ii", position, 3))
+        def field(code, payload):
+            nonlocal position
+            header_size = 4 + 4
+            position += header_size + len(payload)
+            chunks.append(struct.pack("<ii", code, position)); chunks.append(payload)
+        field(4, struct.pack("<i", len(points)) + b"".join(
+            struct.pack("<dddi", *point, 0) for point in points))
+        if extra_keyword:
+            field(13, struct.pack("<ii", 1, 1))
+        field(8, struct.pack("<i", len(tetrahedra)) + b"".join(
+            struct.pack("<iiiii", *(v + 1 for v in cell), 7) for cell in tetrahedra))
+        if required is not None:
+            field(12, struct.pack("<i", len(required)) + b"".join(
+                struct.pack("<i", index + 1) for index in required))
+        field(6, struct.pack("<i", len(triangles)) + b"".join(
+            struct.pack("<iiii", *(v + 1 for v in tri), 100) for tri in triangles))
+        chunks.append(struct.pack("<ii", 54, 0))
+        path.write_bytes(b"".join(chunks))
+
+    def test_native_reader_skips_unknown_keywords_and_flags_required_cells(self):
+        import tempfile
+        from pathlib import Path
+        points, tetrahedra, supports, node_supports, recipe, free = \
+            _corner_ball_with_inserted_vertex(.012)
+        triangles = np.array([[0, 1, 2], [1, 2, 9]])
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "adapted.meshb"
+            self.write_medit_binary(path, points, triangles, tetrahedra, [1, 3])
+            mesh = read_mesh(path)
+            self.assertEqual([block.type for block in mesh.cells], ["tetra", "triangle"])
+            np.testing.assert_array_equal(mesh.points, points)
+            np.testing.assert_array_equal(mesh.cells[0].data, tetrahedra)
+            np.testing.assert_array_equal(mesh.cells[1].data, triangles)
+            np.testing.assert_array_equal(mesh.cell_data["medit:ref"][1], [100, 100])
+            flags = mesh.cell_data["medit:required"][0]
+            self.assertEqual(flags.tolist(), [0, 1, 0, 1] + [0] * (len(tetrahedra) - 4))
+            nodes, count = required_tetrahedron_vertices(mesh)
+            self.assertEqual(count, 2)
+            self.assertEqual(nodes, frozenset(int(v) for v in tetrahedra[[1, 3]].ravel()))
+            # meshio's own reader mis-parses the RequiredTetrahedra keyword; ours is exact.
+            self.write_medit_binary(path.with_name("plain.meshb"), points, triangles, tetrahedra, None)
+            plain = read_medit_binary(path.with_name("plain.meshb"))
+            self.assertEqual(int(plain.cell_data["medit:required"][0].sum()), 0)
+            self.assertEqual(required_tetrahedron_vertices(plain), (frozenset(), 0))
+            self.write_medit_binary(path.with_name("bad.meshb"), points, triangles, tetrahedra,
+                                    [len(tetrahedra)])
+            with self.assertRaisesRegex(ValueError, "out of range"):
+                read_medit_binary(path.with_name("bad.meshb"))
+
+    def test_required_vertices_are_neither_collapsed_nor_moved(self):
+        points, tetrahedra, supports, node_supports, recipe, free = \
+            _corner_ball_with_inserted_vertex(.012)
+        refs = np.arange(len(tetrahedra))
+        # The sub-hmin free vertex belongs to a required cell: no collapse.
+        _, new_tetrahedra, _, vertex_map, collapsed = _collapse_corner_ball_vertices(
+            points, tetrahedra, refs, node_supports, frozenset(), recipe, .02,
+            frozen_nodes=frozenset({free}))
+        self.assertEqual(collapsed[0]["CollapsedVertices"], 0)
+        np.testing.assert_array_equal(new_tetrahedra, tetrahedra)
+        # Through the restoration: the required cells' vertices are frozen in the
+        # repair and reported; without the flag the same vertex is collapsed.
+        triangles = np.array([[0, 1, 2]])
+        normal = np.cross(points[1] - points[0], points[2] - points[0])
+        normal /= np.linalg.norm(normal)
+        plane = {"Normal": normal.tolist(), "Offset": float(normal @ points[0]), "Attribute": 6001}
+        recipe = {**recipe, "PlanarSupports": {"100": plane}, "FarSize": .1,
+                  "PhysicalSegments": [], "PinnedVertices": [],
+                  "SemanticContract": {"CutSurfaceRoles": [], "BoundaryLabels": [],
+                                       "VolumeMaterials": [{"Material": "vacuum", "Attribute": 7}]}}
+        def mesh(required):
+            flags = np.zeros(len(tetrahedra), dtype=np.int32); flags[list(required)] = 1
+            return meshio.Mesh(points.copy(), [("triangle", triangles), ("tetra", tetrahedra)],
+                               cell_data={"medit:ref": [np.array([100]), np.full(len(tetrahedra), 7)],
+                                          "medit:required": [np.zeros(1, dtype=np.int32), flags]})
+        _, _, report = restore_in_source_frame(mesh([0]), recipe, (.25, "local"), .01, 20., (.75, "local"))
+        self.assertEqual(report["RequiredTetrahedra"], 1)
+        self.assertEqual(report["RequiredVertices"], 4)
+        self.assertEqual(report["CollapsedCornerVertices"], 0)
+        self.assertLess(report["MaximumRequiredVertexCorrectionUm"], 1e-15)  # plane roundoff only
+        _, _, report = restore_in_source_frame(mesh([]), recipe, (.25, "local"), .01, 20., (.75, "local"))
+        self.assertEqual(report["RequiredTetrahedra"], 0)
+        self.assertGreater(report["CollapsedCornerVertices"], 0)

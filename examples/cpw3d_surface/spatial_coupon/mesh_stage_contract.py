@@ -36,7 +36,7 @@ STAGE_INPUTS = {
     "metric-preparation": {"seed-mesh", "seed-corner-census", "canonical-semantic-contract",
                            "canonical-supports"},
     "native-adaptation-mmg": {"mmg-seed", "metric", "pins", "fixed-triangles",
-                              "restoration-recipe"},
+                              "required-tetrahedra", "restoration-recipe"},
     "label-restoration": {"adapted-mesh", "restoration-recipe"},
     "canonical-gmsh-publication": {"restored-mesh", "source-process", "source-signature",
                                    "source-boundary"},
@@ -66,7 +66,7 @@ STAGE_OUTPUTS = {
     "canonical-source-validation": {"canonical-semantic-contract", "canonical-supports"},
     "seed-generation": {"seed-mesh", "seed-corner-census"},
     "metric-preparation": {"mmg-seed", "metric", "pins", "fixed-triangles",
-                           "restoration-recipe"},
+                           "required-tetrahedra", "restoration-recipe"},
     "native-adaptation-mmg": {"adapted-mesh", "adaptation-receipt"},
     "label-restoration": {"source-local-restored-mesh", "restored-mesh"},
     "canonical-gmsh-publication": {"canonical-candidate-mesh",
@@ -105,7 +105,8 @@ STAGE_BINDING_OPTIONS = {
         "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
         "--transformed-supports": ("Inputs", "canonical-supports"),
         "--seed-census": ("Inputs", "seed-corner-census")},
-    "native-adaptation-mmg": {"--fixed-triangles": ("Inputs", "fixed-triangles")},
+    "native-adaptation-mmg": {"--fixed-triangles": ("Inputs", "fixed-triangles"),
+                              "--required-tetrahedra": ("Inputs", "required-tetrahedra")},
     "label-restoration": {
         "--source-local-output": ("Artifacts", "source-local-restored-mesh")},
     "canonical-gmsh-publication": {
@@ -325,6 +326,11 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
                 float(receipt.get("HmaxArgument", "nan")) != hmax or
                 receipt.get("OutputSHA256") != report["Artifacts"]["adapted-mesh"]["SHA256"]):
             raise ValueError("Native MMG hmax receipt differs from the bound metric policy")
+        required = report["Inputs"]["required-tetrahedra"]
+        if (receipt.get("RequiredTetrahedraSHA256") != required["SHA256"] or
+                receipt.get("RequiredTetrahedra") !=
+                recipe_data.get("RequiredTetrahedra", {}).get("Count")):
+            raise ValueError("Native MMG receipt required tetrahedra differ from the bound list")
         if (receipt.get("AdapterSHA256") != tools["adapter-mmg"]["SHA256"] or
                 receipt.get("MMGLibrarySHA256") != tools["mmg-library"]["SHA256"] or
                 str(Path(receipt.get("MMGLibraryPath", "")).resolve()) !=
@@ -715,6 +721,99 @@ def validate_edge_layer(seed_report, metric_report, adaptation_report, recipe, c
     return layer
 
 
+# Quality gates the seed stage enforces on the MMG required region (decision 30)
+# and the label restorer enforces on the adapted mesh: both commands carry them,
+# with equal values.
+REQUIRED_REGION_GATE_OPTIONS = ("--maximum-corner-aspect", "--minimum-scaled-jacobian",
+                                "--maximum-quality-displacement-over-normal")
+
+
+def _required_indices(path, tetrahedra):
+    values = Path(path).read_text().split()
+    if not values or any(not value.isdigit() for value in values):
+        raise ValueError("Required tetrahedron list must be non-empty positive integers")
+    indices = [int(value) for value in values]
+    if (indices != sorted(set(indices)) or indices[0] < 1 or indices[-1] > tetrahedra):
+        raise ValueError("Required tetrahedron list must be sorted, unique and in range")
+    return indices
+
+
+def validate_required_region(seed_report, restoration_report, recipe, census, required_path):
+    """The metric stage's required tetrahedra are the recipe's corner balls and edge
+    layer, the list is the recorded one, and the seed stage optimized and gated the
+    same region with the restorer's gate values.
+
+    The recipe RequiredTetrahedra record names the rule, CornerIsotropyRadius, one
+    count per semantic corner (each positive), the layer reach LayerThickness x
+    (1 + RowZigzag) + EdgeSize and one count per span when a layer is recorded (no
+    reach and no spans otherwise); the list has exactly Count sorted unique seed
+    indices.  The seed command passes the three gate options with the restorer's
+    values; the census SeedQualityOptimization record carries them, no required cell
+    below the scaled-Jacobian gate and every corner aspect within the corner gate.
+    """
+    record = recipe.get("RequiredTetrahedra")
+    corners = recipe.get("TruePhysicalCorners")
+    if (not isinstance(record, dict) or not isinstance(corners, list) or not corners or
+            not isinstance(record.get("PerCorner"), list) or
+            not isinstance(record.get("PerSpan"), list) or record.get("IndexBase") != 1):
+        raise ValueError("Restoration recipe lacks the required-tetrahedra record")
+    tetrahedra = _count(recipe.get("Tetrahedra"), "Recipe tetrahedra")
+    indices = _required_indices(required_path, tetrahedra)
+    if _count(record.get("Count"), "Required tetrahedra") != len(indices) or not indices:
+        raise ValueError("Required tetrahedron list differs from the recipe record")
+    if _recipe_number(record, "CornerRadius") != _recipe_number(recipe, "CornerIsotropyRadius"):
+        raise ValueError("Required corner-ball radius differs from the recipe CornerIsotropyRadius")
+    per_corner = record["PerCorner"]
+    if (len(per_corner) != len(corners) or any(not isinstance(row, dict) for row in per_corner) or
+            sorted(row.get("Point") for row in per_corner) != sorted(corners) or
+            any(_count(row.get("Tetrahedra"), "Required corner tetrahedra") <= 0
+                for row in per_corner)):
+        raise ValueError("Required corner balls differ from the recipe semantic corners")
+    layer = recipe.get("EdgeLayer")
+    if layer is None:
+        if record.get("LayerRequiredReach") is not None or record["PerSpan"]:
+            raise ValueError("Required edge layer recorded without a recipe edge layer")
+        regions = sum(row["Tetrahedra"] for row in per_corner)
+    else:
+        reach = (_recipe_number(layer, "LayerThickness") *
+                 (1.0 + _recipe_number(layer, "RowZigzag")) + _recipe_number(layer, "EdgeSize"))
+        if (_recipe_number(record, "LayerRequiredReach") != reach or
+                len(record["PerSpan"]) != layer.get("SpanCount") or
+                any(not isinstance(row, dict) or
+                    _count(row.get("Tetrahedra"), "Required span tetrahedra") <= 0
+                    for row in record["PerSpan"]) or
+                [row.get("Span") for row in record["PerSpan"]] != layer.get("Spans")):
+            raise ValueError("Required edge-layer record differs from the recipe edge layer")
+        regions = sum(row["Tetrahedra"] for row in per_corner + record["PerSpan"])
+    if not max(row["Tetrahedra"] for row in per_corner) <= len(indices) <= regions:
+        raise ValueError("Required tetrahedron counts do not cover the list")
+    gates = {}
+    for option in REQUIRED_REGION_GATE_OPTIONS:
+        seed_value = _option_or_default(seed_report["Command"], option, None)
+        restorer_value = _option_or_default(restoration_report["Command"], option, None)
+        if seed_value != restorer_value or not math.isfinite(seed_value) or seed_value <= 0:
+            raise ValueError(f"Seed command {option} differs from the label-restoration command")
+        gates[option] = seed_value
+    quality = census.get("SeedQualityOptimization") if isinstance(census, dict) else None
+    if (not isinstance(quality, dict) or
+            _recipe_number(quality, "MaximumCornerAspect") != gates["--maximum-corner-aspect"] or
+            _recipe_number(quality, "MinimumScaledJacobian") != gates["--minimum-scaled-jacobian"] or
+            _recipe_number(quality, "DisplacementBoundOverNormal") !=
+            gates["--maximum-quality-displacement-over-normal"] or
+            _count(quality.get("RequiredCellsBelowGateAfter"), "Required cells below the gate") != 0 or
+            _count(quality.get("RequiredTetrahedra"), "Seed required tetrahedra") <= 0 or
+            not isinstance(quality.get("CornerAspectsAfter"), list) or
+            len(quality["CornerAspectsAfter"]) != len(corners) or
+            any(isinstance(value, bool) or not isinstance(value, (int, float)) or
+                not math.isfinite(value) or value > gates["--maximum-corner-aspect"]
+                for value in quality["CornerAspectsAfter"])):
+        raise ValueError("Seed census does not record a gated required-region optimization")
+    if (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
+            gates["--minimum-scaled-jacobian"]):
+        raise ValueError("Seed required region is below the scaled-Jacobian gate")
+    return record
+
+
 TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
 
 
@@ -871,7 +970,7 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
          source["Artifacts"]["canonical-supports"]["SHA256"]),
         *[(adaptation["Inputs"][name]["SHA256"], metric["Artifacts"][name]["SHA256"])
           for name in ("mmg-seed", "metric", "pins", "fixed-triangles",
-                       "restoration-recipe")],
+                       "required-tetrahedra", "restoration-recipe")],
         (restoration["Inputs"]["adapted-mesh"]["SHA256"],
          adaptation["Artifacts"]["adapted-mesh"]["SHA256"]),
         (restoration["Inputs"]["restoration-recipe"]["SHA256"],
@@ -888,6 +987,8 @@ def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
     census = json.loads(Path(seed_stage["Artifacts"]["seed-corner-census"]["Path"]).read_text())
     validate_trace_basis_sizing(seed_stage, metric, recipe, census)
     validate_edge_layer(seed_stage, metric, adaptation, recipe, census)
+    validate_required_region(seed_stage, restoration, recipe, census,
+                             metric["Artifacts"]["required-tetrahedra"]["Path"])
     return reports, digests
 
 

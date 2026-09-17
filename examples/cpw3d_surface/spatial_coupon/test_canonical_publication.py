@@ -133,20 +133,23 @@ class CanonicalBuildTest(unittest.TestCase):
 
 @unittest.skipUnless(ADAPTER is not None, "native fixture adapter requires a C compiler (cc)")
 class NativeHmaxTest(unittest.TestCase):
-    def recipe(self, root):
+    def recipe(self, root, required_count=3):
         path = root / "recipe.json"
         path.write_text(json.dumps({
-            "FarSize": 0.32,
+            "FarSize": 0.32, "Tetrahedra": 10,
+            "RequiredTetrahedra": {"Count": required_count},
             "FarFieldBudgetPolicy": {"Name": "seed-fraction-far-field-v1",
                 "RequestedFarSize": 0.16, "Pressure": 2.0,
                 "EffectiveFarSize": 0.32}}))
         return path
 
-    def inputs(self, root):
+    def inputs(self, root, required="1\n4\n9\n"):
         for name in ("seed.mesh", "metric.f64", "pins.txt", "fixed.txt"):
             (root / name).write_text(name)
+        (root / "required.txt").write_text(required)
         return dict(hmin=.025, hgrad=1.3, mode="freeze-selected",
-                    fixed_triangles=root / "fixed.txt")
+                    fixed_triangles=root / "fixed.txt",
+                    required_tetrahedra=root / "required.txt")
 
     def test_effective_far_policy_is_actual_adapter_hmax_and_library_is_bound(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -156,6 +159,10 @@ class NativeHmaxTest(unittest.TestCase):
                           root / "receipt.json", mmg_library=MMG_LIBRARY, **controls)
             self.assertEqual(float(receipt["Command"][6]), 0.32)
             self.assertEqual(receipt["EffectiveFarSize"], 0.32)
+            self.assertEqual(receipt["Command"][-2:],
+                             ["--required-tetrahedra", str((root / "required.txt").resolve())])
+            self.assertEqual(receipt["RequiredTetrahedra"], 3)
+            self.assertEqual(receipt["RequiredTetrahedraSHA256"], sha256(root / "required.txt"))
             self.assertEqual(receipt["AdapterSHA256"], sha256(ADAPTER))
             self.assertEqual(receipt["MMGLibrarySHA256"], sha256(MMG_LIBRARY))
             self.assertEqual(Path(receipt["MMGLibraryPath"]), Path(MMG_LIBRARY).resolve())
@@ -175,6 +182,35 @@ class NativeHmaxTest(unittest.TestCase):
                     self.recipe(root), root / "adapted.meshb", root / "receipt.json",
                     mmg_library=MMG_LIBRARY, **controls)
             self.assertFalse((root / "adapted.meshb").exists())
+
+    def test_required_tetrahedron_list_is_mandatory_and_checked_against_the_recipe(self):
+        for required, count, message in (("", 3, "non-empty"), ("1\n4\n4\n", 3, "duplicated"),
+                                         ("0\n4\n", 2, "out of range"), ("1\n11\n", 2, "out of range"),
+                                         ("1\n4\n", 3, "differs from the recipe"),
+                                         ("1\nx\n", 2, "positive integers")):
+            with self.subTest(required=required), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); controls = self.inputs(root, required)
+                with self.assertRaisesRegex(ValueError, message):
+                    run(ADAPTER, root / "seed.mesh", root / "metric.f64", root / "pins.txt",
+                        self.recipe(root, count), root / "adapted.meshb", root / "receipt.json",
+                        mmg_library=MMG_LIBRARY, **controls)
+                self.assertFalse((root / "adapted.meshb").exists())
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); controls = self.inputs(root)
+            (root / "required.txt").unlink()
+            with self.assertRaisesRegex(ValueError, "must exist"):
+                run(ADAPTER, root / "seed.mesh", root / "metric.f64", root / "pins.txt",
+                    self.recipe(root), root / "adapted.meshb", root / "receipt.json",
+                    mmg_library=MMG_LIBRARY, **controls)
+            recipe = root / "recipe.json"
+            recipe.write_text(json.dumps({"FarSize": 0.32, "Tetrahedra": 10,
+                "FarFieldBudgetPolicy": {"Name": "seed-fraction-far-field-v1",
+                    "RequestedFarSize": 0.16, "Pressure": 2.0, "EffectiveFarSize": 0.32}}))
+            (root / "required.txt").write_text("1\n")
+            with self.assertRaisesRegex(ValueError, "required-tetrahedra record"):
+                run(ADAPTER, root / "seed.mesh", root / "metric.f64", root / "pins.txt",
+                    recipe, root / "adapted.meshb", root / "receipt.json",
+                    mmg_library=MMG_LIBRARY, **controls)
 
     def test_recorded_policy_not_consumed_and_tampered_hmax_are_rejected(self):
         recipe = {"FarSize": .16, "FarFieldBudgetPolicy": {

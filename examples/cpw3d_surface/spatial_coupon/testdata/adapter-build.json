@@ -1,0 +1,77 @@
+{
+  "Version": 1,
+  "Scope": "Recorded build of the reviewed native MMG adapter (adapt_edge_metric.cpp). The executable is machine-bound and never committed; refreeze_manifest_tools.py --adapter-mmg accepts only an executable whose digest and whose source digest equal this record.",
+  "Built": "2026-09-16T21:56:38-07:00",
+  "Decision": "SUPERVISOR-DECISIONS.md item 30 (2026-09-16): --required-tetrahedra flag (MMG3D_Set_requiredTetrahedron + MMG3D_Set_requiredVertex for each listed seed tetrahedron; fail closed on out-of-range or malformed indices); everything else identical to the previous reviewed adapter",
+  "Command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++17 -O2 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk -I/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/include /Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/adapt_edge_metric.cpp -o /tmp/coupon-adapter-build-20260916-215638/adapt_edge_metric -L/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib -lmmg3d -Wl,-rpath,/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib -Wl,-rpath,/Users/simlap/.julia/artifacts/0561fb98167bb2b991693655136cabd30fd63cf7/lib -Wl,-rpath,/Users/simlap/.julia/artifacts/c560fb1585b093a8b6fbaf89c3b44c35b5f7e3f8/lib -Wl,-rpath,/opt/homebrew/opt/zlib/lib",
+  "CommandTokens": [
+    "/opt/homebrew/opt/llvm/bin/clang++",
+    "-std=c++17",
+    "-O2",
+    "-isysroot",
+    "/Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk",
+    "-I/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/include",
+    "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/adapt_edge_metric.cpp",
+    "-o",
+    "/tmp/coupon-adapter-build-20260916-215638/adapt_edge_metric",
+    "-L/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib",
+    "-lmmg3d",
+    "-Wl,-rpath,/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib",
+    "-Wl,-rpath,/Users/simlap/.julia/artifacts/0561fb98167bb2b991693655136cabd30fd63cf7/lib",
+    "-Wl,-rpath,/Users/simlap/.julia/artifacts/c560fb1585b093a8b6fbaf89c3b44c35b5f7e3f8/lib",
+    "-Wl,-rpath,/opt/homebrew/opt/zlib/lib"
+  ],
+  "Compiler": {
+    "Path": "/opt/homebrew/opt/llvm/bin/clang++",
+    "Version": "Homebrew clang version 21.1.8",
+    "Target": "arm64-apple-darwin25.6.0",
+    "InstalledDir": "/opt/homebrew/Cellar/llvm/21.1.8/bin",
+    "Configuration": "/opt/homebrew/etc/clang/arm64-apple-darwin25.cfg (adds -isysroot MacOSX26.sdk; overridden by the explicit -isysroot below)"
+  },
+  "Flags": [
+    "-std=c++17",
+    "-O2",
+    "-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk"
+  ],
+  "Include": "/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/include (MMG 5.6.0 headers: mmg/mmg3d/libmmg3d.h)",
+  "Link": {
+    "Library": "-lmmg3d",
+    "LibraryDirectory": "/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib",
+    "LinkReference": "@rpath/libmmg3d.5.dylib",
+    "Cxx": "/opt/homebrew/opt/llvm/lib/c++/libc++.1.dylib (homebrew llvm libc++)"
+  },
+  "RPath": [
+    "/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib",
+    "/Users/simlap/.julia/artifacts/0561fb98167bb2b991693655136cabd30fd63cf7/lib",
+    "/Users/simlap/.julia/artifacts/c560fb1585b093a8b6fbaf89c3b44c35b5f7e3f8/lib",
+    "/opt/homebrew/opt/zlib/lib"
+  ],
+  "RPathRoles": {
+    "/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib": "MMG3D 5.6.0 (MMG_jll artifact)",
+    "/Users/simlap/.julia/artifacts/0561fb98167bb2b991693655136cabd30fd63cf7/lib": "libElas (MMG dependency, Elas_jll artifact)",
+    "/Users/simlap/.julia/artifacts/c560fb1585b093a8b6fbaf89c3b44c35b5f7e3f8/lib": "libscotch (MMG dependency, SCOTCH_jll artifact)",
+    "/opt/homebrew/opt/zlib/lib": "zlib (homebrew)"
+  },
+  "LinkTable": [
+    "@rpath/libmmg3d.5.dylib (compatibility version 5.0.0, current version 5.6.0)",
+    "/opt/homebrew/opt/llvm/lib/c++/libc++.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+    "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+  ],
+  "SourcePath": "examples/cpw3d_surface/spatial_coupon/adapt_edge_metric.cpp",
+  "SourceSHA256": "1e767161272cfeaa39d7015b4652221c78f497e491f8cc02a5d5cdb9a013e2db",
+  "ExecutablePath": "/tmp/coupon-adapter-build-20260916-215638/adapt_edge_metric",
+  "ExecutableSHA256": "72f741e3c024482822b1d704d3207890cf8720b787e0e4dddb4182444f919669",
+  "MMGLibraryPath": "/Users/simlap/.julia/artifacts/5d5fcb3da4afd972cdf22b4f4e6f05fc7ae6db98/lib/libmmg3d.5.6.0.dylib",
+  "MMGLibrarySHA256": "a97d9580837712e79c637b0a7228f44c51e446ef32471a1104894e7fe7e378d5",
+  "MMGVersion": "5.6.0 (mmgversion.h MMG_VERSION_RELEASE, release date Nov. 05, 2021)",
+  "PreviousReviewedAdapter": {
+    "ExecutablePath": "/tmp/coupon-adapter-build-20260914-182905/adapt_edge_metric",
+    "ExecutableSHA256": "0bc636793c280b1fc512efa96c381faac3980c00e2111442a746bf22b07633ed",
+    "SourceSHA256": "497864bd3fb70e2a7fbda1b6671a4eaee4c7b31940bc5c95f5f4ff56aac76c78",
+    "Reconstruction": "no build command was recorded for it; otool -L/-l show the same link table (@rpath/libmmg3d.5.dylib, homebrew llvm libc++, libSystem), the same four LC_RPATH entries in the same order, 23 load commands, LC_BUILD_VERSION minos 26.0 sdk 27.0; the same clang++ 21.1.8 with -std=c++17 -O2 and the MacOSX27.0 SDK reproduces that structure (2918 vs 2824 instructions, 58360 vs 58352 bytes: the SDK/libSystem on this machine advanced since 2026-09-14, so the byte-identical hash is not reproducible)"
+  },
+  "Verification": {
+    "resolve_mmg_library": "run_native_mmg_adaptation.resolve_mmg_library(executable) resolves LinkReference @rpath/libmmg3d.5.dylib to MMGLibraryPath with MMGLibrarySHA256",
+    "test_adapt_edge_metric": "EDGE_METRIC_ADAPTER_EXE=<executable> python3 -m unittest test_adapt_edge_metric (3 tests)"
+  }
+}

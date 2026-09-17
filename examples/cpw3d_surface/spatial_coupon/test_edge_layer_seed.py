@@ -72,6 +72,16 @@ open({j(str(root / 'record.json'))}, "w") do io; write_json(io, record); end
         np.testing.assert_allclose(nodes1[:, 0], [.05, .10], rtol=1e-12)
         self.assertEqual(record["families"], [4, 5, 6])
 
+    def test_seed_required_region_optimization_julia_unit_tests(self):
+        """Julia unit tests: the required-region rule (metric stage's), the surface
+        movement bases and the bounded coordinate descent (decision 30)."""
+        result = subprocess.run(
+            [self.julia, "--startup-file=no", f"--project={self.project}",
+             str(HERE / "test_seed_required_region.jl")],
+            cwd=REPO, capture_output=True, text=True, check=False, timeout=600)
+        self.assertEqual(result.returncode, 0,
+                         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -134,7 +134,16 @@ def matched_planar_patch_areas(before,after):
             for row,j in zip(left,mapping)]
 
 
-def directional_widths(mesh,recipe):
+def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
+    """Tangential / transverse extents of the band cells (centroid within 1 or 3
+    NormalSize of a physical segment, away from the corners) as 10/50/90 percentiles.
+
+    With a recorded edge layer (supervisor decision 31) the cells whose centroid
+    lies within layer_reach (LayerThickness + EdgeSize) of a layer span are the
+    layer's own statistics ('EdgeLayer', same percentiles) and are excluded from the
+    band statistics: the band anisotropy design gate judges the metric-driven band,
+    the layer's design statement is the bound EdgeLayer aspect rule.
+    """
     t,_=blocks(mesh,'tetra');xyz=mesh.points[t];center=xyz.mean(axis=1)
     segments=recipe['PhysicalSegments'];corners=np.asarray(recipe['TruePhysicalCorners'])
     distance=np.full(len(t),np.inf);which=np.zeros(len(t),int)
@@ -142,22 +151,34 @@ def directional_widths(mesh,recipe):
         r,_=segment_distances(center,s);mask=r<distance;which[mask]=i;distance[mask]=r[mask]
     dc=np.full(len(t),np.inf)
     for c in corners:dc=np.minimum(dc,np.linalg.norm(center-c,axis=1))
+    in_layer=np.zeros(len(t),dtype=bool)
+    if layer_spans is not None:
+        if not np.isfinite(layer_reach) or layer_reach<=0:raise ValueError('Invalid edge layer reach')
+        for span in np.asarray(layer_spans,dtype=float).reshape(-1,6):
+            in_layer|=segment_distances(center,span)[0]<=layer_reach
     fine=recipe['NormalSize'];tangent=recipe['TangentialSize'];reports={}
-    for cutoff in (1.,3.):
-        chosen=np.flatnonzero((distance<cutoff*fine)&(dc>5*tangent))
+    def percentiles(ids):
         widths=[]
         for i,s in enumerate(segments):
-            ids=chosen[which[chosen]==i]
-            if not len(ids):continue
-            _,direction=segment_distances(center[ids],s)
+            selected=ids[which[ids]==i]
+            if not len(selected):continue
+            _,direction=segment_distances(center[selected],s)
             transverse=np.eye(3)-np.outer(direction,direction)
-            centered=xyz[ids]-center[ids,None,:];projected=centered@transverse
+            centered=xyz[selected]-center[selected,None,:];projected=centered@transverse
             _,axes=np.linalg.eigh(projected.swapaxes(1,2)@projected)
             values=centered@axes[:,:,1:]
-            widths.extend(np.column_stack((np.ptp(xyz[ids]@direction,axis=1),np.ptp(values,axis=1))))
+            widths.extend(np.column_stack((np.ptp(xyz[selected]@direction,axis=1),np.ptp(values,axis=1))))
         widths=np.asarray(widths)
+        return np.percentile(widths,[10,50,90],axis=0).tolist() if len(widths) else []
+    for cutoff in (1.,3.):
+        band=(distance<cutoff*fine)&(dc>5*tangent)
+        chosen=np.flatnonzero(band&~in_layer);layer=np.flatnonzero(band&in_layer)
         reports[str(cutoff)]={'Cells':len(chosen),'DistanceCutoff':cutoff*fine,
-                             'WidthsTangentialTransverse1Transverse2':np.percentile(widths,[10,50,90],axis=0).tolist() if len(widths) else []}
+                             'WidthsTangentialTransverse1Transverse2':percentiles(chosen),
+                             'ExcludedEdgeLayerCells':int(len(layer))}
+        if layer_spans is not None:
+            reports[str(cutoff)]['EdgeLayer']={'Cells':int(len(layer)),'Reach':float(layer_reach),
+                'WidthsTangentialTransverse1Transverse2':percentiles(layer)}
     return reports
 
 

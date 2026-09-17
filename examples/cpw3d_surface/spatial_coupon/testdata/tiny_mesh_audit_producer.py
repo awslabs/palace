@@ -81,10 +81,28 @@ def trace_basis_sizing(basis_paths, ratio, scale):
 
 
 def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None,
-                  scale=1.0, basis_paths=None, ratio=None):
-    """Recorded corner-ball census of the fixture seed (schema of the production seeder)."""
+                  scale=1.0, basis_paths=None, ratio=None, gates=None):
+    """Recorded corner-ball census of the fixture seed (schema of the production seeder).
+
+    `gates` is (MaximumCornerAspect, MinimumScaledJacobian, DisplacementBoundOverNormal):
+    the seed-side required-region optimization record (decision 30) is written when
+    the production seeder's three gate options are passed."""
     contract = json.loads(contract_path.read_text())
     corners = contract["SemanticCorners"]
+    quality = None
+    if gates is not None:
+        maximum_aspect, minimum_scaled, ratio_bound = gates
+        quality = {"MaximumCornerAspect": maximum_aspect, "CornerAspectTarget": .95 * maximum_aspect,
+                   "MinimumScaledJacobian": minimum_scaled, "ScaledJacobianTarget": 2 * minimum_scaled,
+                   "DisplacementBoundOverNormal": ratio_bound, "LayerRequiredReach": None,
+                   "RequiredTetrahedra": 1, "CornerAspectsBefore": [1.0 for _ in corners],
+                   "CornerAspectsAfter": [1.0 for _ in corners], "CornerMoves": [0 for _ in corners],
+                   "RequiredMinimumScaledJacobianBefore": 1.0,
+                   "RequiredMinimumScaledJacobianAfter": 1.0,
+                   "RequiredCellsBelowTargetBefore": 0, "RequiredCellsBelowTargetAfter": 0,
+                   "RequiredCellsBelowGateAfter": 0, "RepairComponents": 0, "RepairMoves": 0,
+                   "MovedVertices": 0, "MaximumDisplacement": 0.0,
+                   "MaximumDisplacementOverBound": 0.0}
     output.write_text(json.dumps({
         "Version": 1, "Frame": "SourceLocal", "SemanticCorners": corners,
         "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size,
@@ -107,6 +125,7 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                                                   "Tolerance": 1e-6}}],
         "JunctionCurves": junction_curves(scale),
         "TraceBasisSizing": trace_basis_sizing(basis_paths, ratio, scale),
+        "SeedQualityOptimization": quality,
         "InterfaceAreaUnits": "um^2",
         # One row per contract boundary label, as written in the fixture seed.
         "InterfaceAreas": [{"Attribute": 1, "Name": "surface_1", "Triangles": 7,
@@ -143,7 +162,18 @@ def main():
     parser.add_argument("--trace-triangles", type=Path)
     parser.add_argument("--process-library", type=Path)
     parser.add_argument("--trace-basis-size-ratio", type=float)
+    # The seed-side required-region gates (decision 30), required together.
+    parser.add_argument("--maximum-corner-aspect", type=float)
+    parser.add_argument("--minimum-scaled-jacobian", type=float)
+    parser.add_argument("--maximum-quality-displacement-over-normal", type=float)
     args = parser.parse_args()
+    gates = (args.maximum_corner_aspect, args.minimum_scaled_jacobian,
+             args.maximum_quality_displacement_over_normal)
+    if any(value is not None for value in gates):
+        if any(value is None or value <= 0 for value in gates):
+            parser.error("the three seed quality gate options are required together")
+    else:
+        gates = None
     if args.etch_boundary is not None and not args.etch_boundary.is_file():
         parser.error("the bound retained etch footprint must exist")
     basis_paths = (args.trace_basis_contract, args.trace_vertices, args.trace_triangles,
@@ -164,7 +194,7 @@ def main():
     produce(args.output, json.loads(args.transform.read_text()), args.scale)
     corner_census(args.corner_census, args.semantic_contract, args.corner_isotropy_radius,
                   args.lc_fine, args.etch_boundary, args.scale, basis_paths,
-                  args.trace_basis_size_ratio)
+                  args.trace_basis_size_ratio, gates)
 
 
 if __name__ == "__main__":

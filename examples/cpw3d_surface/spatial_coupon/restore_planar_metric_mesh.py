@@ -15,6 +15,7 @@ from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 
 from edge_volume_metric import recipe_local_normal_size,segment_distances
+from mesh_array_io import read_mesh
 from transform_coupon_source_contract import validate_rigid_transform
 
 # A vertex saturated on the displacement ball is clamped to exactly the bound;
@@ -69,6 +70,20 @@ def frozen_edge_layer_vertices(points,node_supports,recipe):
     for span in np.asarray(layer['Spans'],dtype=float).reshape(-1,6):
         distance=np.minimum(distance,segment_distances(points[supported],span)[0])
     return frozenset(int(node) for node in supported[distance<=reach])
+
+
+def required_tetrahedron_vertices(mesh):
+    """Vertices of the tetrahedra MMG kept verbatim (the adapter's required
+    tetrahedra: seed corner balls and edge layer, flagged 'medit:required' by the
+    native reader).  They are the seed's cells and the restoration must not move,
+    collapse or repair them; the seed stage gated their quality."""
+    flags=mesh.cell_data.get('medit:required')
+    if flags is None:return frozenset(),0
+    tetrahedra=[np.asarray(block.data)[np.asarray(flag)==1] for block,flag in zip(mesh.cells,flags)
+                if block.type=='tetra']
+    if not tetrahedra:return frozenset(),0
+    kept=np.concatenate(tetrahedra)
+    return frozenset(int(node) for node in np.unique(kept)),int(len(kept))
 
 
 def _tetra_quality(points,tetrahedra):
@@ -129,7 +144,8 @@ def _pinned_vertices(points,recipe,tolerance=1e-10):
 
 
 def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_supports,
-                                   pinned_nodes,recipe,quality_target,local_size=None):
+                                   pinned_nodes,recipe,quality_target,local_size=None,
+                                   frozen_nodes=frozenset()):
     """Collapse MMG-inserted free vertices below the adapter's minimum size in the
     semantic corner balls.
 
@@ -166,6 +182,7 @@ def _collapse_corner_ball_vertices(points,tetrahedra,tetrahedron_refs,node_suppo
     free=np.ones(len(points),dtype=bool)
     free[list(node_supports)]=False
     free[list(pinned_nodes)]=False
+    free[list(frozen_nodes)]=False
     tree=cKDTree(points)
     collapsed=[]
     for corner in corners:
@@ -524,14 +541,15 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
         if not (np.isfinite(minimum_scaled) and 0<minimum_scaled<1):
             raise ValueError('Invalid post-adaptation quality controls')
         local_size=local_bound_size(points,recipe)
-        frozen_nodes=frozen_edge_layer_vertices(points,node_supports,recipe)
+        required_nodes,required_cells=required_tetrahedron_vertices(mesh)
+        frozen_nodes=frozen_edge_layer_vertices(points,node_supports,recipe)|required_nodes
         corner_ball=np.zeros(len(points),dtype=bool)
         for corner in np.asarray(recipe['TruePhysicalCorners'],dtype=float).reshape(-1,3):
             corner_ball|=np.linalg.norm(points-corner,axis=1)<=float(recipe['CornerIsotropyRadius'])
         thresholds=_bound_statistics(local_size[corner_ball])
         points,tetrahedra,tetrahedron_refs,vertex_map,collapsed=_collapse_corner_ball_vertices(
             points,tetrahedra,tetrahedron_refs,node_supports,pinned_nodes,recipe,
-            2.*minimum_scaled,local_size)
+            2.*minimum_scaled,local_size,frozen_nodes)
         node_supports={int(vertex_map[node]):ids for node,ids in node_supports.items()}
         pinned_nodes=frozenset(int(vertex_map[node]) for node in pinned_nodes)
         frozen_nodes=frozenset(int(vertex_map[node]) for node in frozen_nodes)
@@ -541,7 +559,12 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
         quality=_quality_repair(points,tetrahedra,node_supports,supports,recipe,
                                 minimum_scaled,maximum_corner_aspect,
                                 repair_bound,pinned_nodes=pinned_nodes,frozen_nodes=frozen_nodes)
-        quality.update({'CornerBallCollapses':collapsed,
+        required=np.fromiter(required_nodes,dtype=int,count=len(required_nodes))
+        quality.update({'RequiredTetrahedra':required_cells,'RequiredVertices':len(required_nodes),
+                        'MaximumRequiredVertexCorrectionUm':(float(np.max(np.linalg.norm(
+                            points[vertex_map[required]]-mesh.points[required],axis=1)))
+                            if required.size else 0.),
+                        'CornerBallCollapses':collapsed,
                         'CollapsedCornerVertices':int(sum(item['CollapsedVertices']
                                                           for item in collapsed)),
                         'CornerAspectsBeforeCollapse':[item['AspectBefore'] for item in collapsed],
@@ -552,7 +575,9 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
                                     'size at each vertex (recipe band/edge-layer law and corner '
                                     'balls, capped at NormalSize), so only edge-layer vertices '
                                     'get tighter bounds; frozen edge-layer surface vertices '
-                                    'are fixed'})
+                                    'and the vertices of the adapter\'s required tetrahedra '
+                                    '(seed corner balls and edge layer) are fixed: neither '
+                                    'collapsed nor moved by the repair'})
     cells=[];attributes=[]
     for block,ref in zip(mesh.cells,refs):
         if block.type!='triangle':continue
@@ -651,7 +676,7 @@ def main():
         raise ValueError('Invalid displacement bound')
     quality_displacement=(None if a.maximum_quality_displacement_over_normal is None else
                           (a.maximum_quality_displacement_over_normal,'local'))
-    mesh=meshio.read(a.input);local_output,output,report=restore_in_source_frame(
+    mesh=read_mesh(a.input);local_output,output,report=restore_in_source_frame(
         mesh,recipe,maximum,a.minimum_scaled_jacobian,a.maximum_corner_aspect,
         quality_displacement)
     if a.max_displacement_over_normal is not None:

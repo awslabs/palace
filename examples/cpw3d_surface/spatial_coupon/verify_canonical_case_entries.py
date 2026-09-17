@@ -58,8 +58,10 @@ def validate_calibration_commands(case, bounded_stages):
     """For a case with a `Calibration` block, the recorded seed-generation,
     metric-preparation and native-adaptation commands must execute exactly each
     declared option/value pair and none of the `ProductionValues` of those options; an
-    undeclared production option may appear only at its production value.  Raises
-    ValueError otherwise."""
+    undeclared production option may appear only at its production value.  An option
+    shared by several stage commands (the seed and the metric both take
+    `--edge-size`) is declared for each stage with one value.  Raises ValueError
+    otherwise."""
     calibration = case.get("Calibration")
     if calibration is None:
         return
@@ -68,9 +70,10 @@ def validate_calibration_commands(case, bounded_stages):
     for stage, key in CALIBRATION_STAGE_OPTIONS.items():
         command = bounded_stages[stage]["Command"]
         for option, value in calibration.get(key, {}).items():
-            if option in declared:
-                raise ValueError(f"calibration option {option} is declared for two stages")
-            declared[option] = stage
+            stages = declared.setdefault(option, {})
+            if stages and float(value) not in stages.values():
+                raise ValueError(f"calibration option {option} is declared with two values")
+            stages[stage] = float(value)
             if option not in production:
                 raise ValueError(f"calibration option {option} has no production value")
             if float(value) == float(production[option]):
@@ -81,9 +84,9 @@ def validate_calibration_commands(case, bounded_stages):
                 raise ValueError(f"{stage} command does not execute calibration option "
                                  f"{option}={value} exactly once (executed {executed})")
     for option, value in production.items():
-        if option in declared:
-            continue
         for stage in CALIBRATION_STAGE_OPTIONS:
+            if stage in declared.get(option, {}):
+                continue
             executed = _option_values(bounded_stages[stage]["Command"], option)
             if any(item != float(value) for item in executed):
                 raise ValueError(f"{stage} command executes undeclared calibration option "

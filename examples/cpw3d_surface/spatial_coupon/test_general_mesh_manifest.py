@@ -46,6 +46,10 @@ BOUNDED = HERE / "run_bounded_mesher.py"
 STAGER = HERE / "testdata" / "tiny_mesh_stage.py"
 SCRIPT_ADAPTER = HERE / "testdata" / "tiny_native_adapter.py"
 WRAPPER = HERE / "run_native_mmg_adaptation.py"
+# Seed-side required-region gates (decision 30): the seed and label-restoration
+# commands carry them with equal values (the fixture manifest's corner gate is 3).
+SEED_QUALITY_GATE_OPTIONS = ("--maximum-corner-aspect", "3", "--minimum-scaled-jacobian", ".01",
+                             "--maximum-quality-displacement-over-normal", ".75")
 # The native fixture adapter links a fixture libmmg3d through rpath so the
 # wrapper's runtime-library resolution is exercised; it needs a C compiler.
 _NATIVE_FIXTURE_DIRECTORY = tempfile.TemporaryDirectory(prefix="tiny-native-adapter-")
@@ -220,6 +224,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
             mmg_seed = root / f"{canonical_stem}-mmg-seed.msh"
             pins = root / f"{canonical_stem}-pins.txt"
             fixed = root / f"{canonical_stem}-fixed.txt"
+            required = root / f"{canonical_stem}-required.txt"
             recipe = root / f"{canonical_stem}-recipe.json"
             canonical_semantic = root / f"{canonical_stem}-semantic.json"
             canonical_supports = root / f"{canonical_stem}-supports.json"
@@ -279,37 +284,41 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--corner-isotropy-radius", str(CORNER_ISOTROPY_RADIUS),
                  "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
                  *(["--etch-boundary", str(etch)] if etch is not None else []),
-                 *basis_options])
+                 *basis_options, *SEED_QUALITY_GATE_OPTIONS])
             launch(canonical_stem, canonical_reports, "metric-preparation",
                 {"seed-mesh": seed, "seed-corner-census": census,
                  "canonical-semantic-contract": canonical_semantic,
                  "canonical-supports": canonical_supports, **basis_inputs},
                 {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
-                 "fixed-triangles": fixed, "restoration-recipe": recipe},
+                 "fixed-triangles": fixed, "required-tetrahedra": required,
+                 "restoration-recipe": recipe},
                 {"runtime": sys.executable, "metric-preparer": STAGER},
                 [sys.executable, str(STAGER), "metric", str(seed), str(metric),
                  "--mmg-seed", str(mmg_seed), "--pins", str(pins), "--fixed-triangles", str(fixed),
-                 "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
+                 "--required-tetrahedra", str(required), "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
                  "--transformed-supports", str(canonical_supports),
                  "--seed-census", str(census),
                  "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS),
                  *basis_options])
             launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
                 {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
-                 "fixed-triangles": fixed, "restoration-recipe": recipe},
+                 "fixed-triangles": fixed, "required-tetrahedra": required,
+                 "restoration-recipe": recipe},
                 {"adapted-mesh": adapted, "adaptation-receipt": adaptation_receipt},
                 {"runtime": sys.executable, "adaptation-wrapper": WRAPPER, "adapter-mmg": ADAPTER,
                  "mmg-library": MMG_LIBRARY},
                 [sys.executable, str(WRAPPER), str(mmg_seed), str(metric), str(pins), str(recipe),
                  str(adapted), str(adaptation_receipt), "--adapter", str(ADAPTER),
                  "--mmg-library", str(MMG_LIBRARY), "--hmin", ".1",
-                 "--hgrad", "1.3", "--fixed-triangles", str(fixed)])
+                 "--hgrad", "1.3", "--fixed-triangles", str(fixed),
+                 "--required-tetrahedra", str(required)])
             launch(canonical_stem, canonical_reports, "label-restoration",
                 {"adapted-mesh": adapted, "restoration-recipe": recipe},
                 {"source-local-restored-mesh": local_restored, "restored-mesh": restored},
                 {"runtime": sys.executable, "label-restorer": STAGER},
                 [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
-                 "--recipe", str(recipe), "--source-local-output", str(local_restored)])
+                 "--recipe", str(recipe), "--source-local-output", str(local_restored),
+                 *SEED_QUALITY_GATE_OPTIONS])
             launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
                 {"restored-mesh": restored, "source-process": directory / "process.toml",
                  "source-signature": directory / "signature.csv",
@@ -1157,12 +1166,14 @@ class GeneralMeshManifestTest(unittest.TestCase):
             metric = root / "metric"; metric.write_text("metric")
             pins = root / "pins"; pins.write_text("pins")
             fixed = root / "fixed"; fixed.write_text("fixed")
+            required = root / "required"; required.write_text("1\n")
             recipe = root / "recipe"; recipe.write_text("{}")
             result = subprocess.run(
                 [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
                  "--log", str(root / "bad.log"), "--stage", "native-adaptation-mmg",
                  "--input", f"mmg-seed={seed}", "--input", f"metric={metric}",
                  "--input", f"pins={pins}", "--input", f"fixed-triangles={fixed}",
+                 "--input", f"required-tetrahedra={required}",
                  "--input", f"restoration-recipe={recipe}",
                  "--artifact", f"adapted-mesh={root / 'adapted.msh'}",
                  "--artifact", f"adaptation-receipt={root / 'receipt.json'}",
@@ -1172,10 +1183,37 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--tool", f"mmg-library={SCRIPT_ADAPTER}", "--",
                  sys.executable, str(WRAPPER), str(seed), str(metric), str(pins),
                  str(recipe), str(root / "adapted.msh"), str(root / "receipt.json"),
-                 "--mmg-library", str(SCRIPT_ADAPTER), "--fixed-triangles", str(fixed)],
+                 "--mmg-library", str(SCRIPT_ADAPTER), "--fixed-triangles", str(fixed),
+                 "--required-tetrahedra", str(required)],
                 capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("--adapter", result.stderr)
+            # The required-tetrahedra list is a bound adaptation input: a stage that
+            # neither binds nor passes it fails closed before launching.
+            for omit_input, omit_option in ((True, False), (False, True)):
+                command = [sys.executable, str(BOUNDED), "--seconds", "1", "--memory-gib", "1",
+                           "--log", str(root / f"bad-{omit_input}-{omit_option}.log"),
+                           "--stage", "native-adaptation-mmg",
+                           "--input", f"mmg-seed={seed}", "--input", f"metric={metric}",
+                           "--input", f"pins={pins}", "--input", f"fixed-triangles={fixed}",
+                           *([] if omit_input else ["--input", f"required-tetrahedra={required}"]),
+                           "--input", f"restoration-recipe={recipe}",
+                           "--artifact", f"adapted-mesh={root / 'adapted.msh'}",
+                           "--artifact", f"adaptation-receipt={root / 'receipt.json'}",
+                           "--tool", f"runtime={sys.executable}",
+                           "--tool", f"adaptation-wrapper={WRAPPER}",
+                           "--tool", f"adapter-mmg={SCRIPT_ADAPTER}",
+                           "--tool", f"mmg-library={SCRIPT_ADAPTER}", "--",
+                           sys.executable, str(WRAPPER), str(seed), str(metric), str(pins),
+                           str(recipe), str(root / "adapted.msh"), str(root / "receipt.json"),
+                           "--adapter", str(SCRIPT_ADAPTER), "--mmg-library", str(SCRIPT_ADAPTER),
+                           "--fixed-triangles", str(fixed),
+                           *([] if omit_option else ["--required-tetrahedra", str(required)])]
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue("required-tetrahedra" in result.stderr or
+                                "frozen stage contract" in result.stderr)
+                self.assertFalse((root / "adapted.msh").exists())
 
     def _seed_stage_launch(self, root, output, *, semantic_option=True):
         sources = {name: root / f"{name}.csv" for name in ("signature", "boundary", "mask")}
@@ -2047,6 +2085,51 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     if (stage, role) not in refreezer.STAGE_REPOSITORY_TOOLS:
                         self.assertEqual(json.loads(stale_production.read_text())
                                          ["StageToolSHA256"][stage][role], roles[role])
+            # The reviewed adapter is machine-bound: its digest changes only through an
+            # explicit --adapter-mmg naming the executable of the recorded build whose
+            # source digest is the repository's adapt_edge_metric.cpp.
+            (root / "testdata").mkdir()
+            shutil.copy(HERE / "adapt_edge_metric.cpp", root / "adapt_edge_metric.cpp")
+            adapter = root / "adapt_edge_metric"; adapter.write_bytes(b"adapter build")
+            record = {"ExecutableSHA256": sha256(adapter),
+                      "SourceSHA256": sha256(root / "adapt_edge_metric.cpp")}
+            (root / "testdata" / "adapter-build.json").write_text(json.dumps(record))
+            changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=False,
+                                            adapter=adapter)
+            self.assertEqual(changes, [("native-adaptation-mmg/adapter-mmg",
+                                        production["StageToolSHA256"]["native-adaptation-mmg"]
+                                        ["adapter-mmg"], sha256(adapter))])
+            for path in (stale_production, stale_calibration):
+                self.assertEqual(json.loads(path.read_text())["StageToolSHA256"]
+                                 ["native-adaptation-mmg"]["adapter-mmg"], sha256(adapter))
+            other = root / "other_adapter"; other.write_bytes(b"unrecorded build")
+            with self.assertRaisesRegex(ValueError, "differ from the recorded build"):
+                refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                   adapter=other)
+            (root / "adapt_edge_metric.cpp").write_text("// edited source\n")
+            with self.assertRaisesRegex(ValueError, "differ from the recorded build"):
+                refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                   adapter=adapter)
+            # The Julia launcher is machine-bound likewise: --julia-runtime refreezes the
+            # three Julia runtime roles together.
+            launcher = root / "julialauncher"; launcher.write_bytes(b"julia launcher")
+            changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=False,
+                                            julia_runtime=launcher)
+            self.assertEqual(sorted(name for name, _, _ in changes),
+                             sorted(f"{stage}/{role}" for stage, role in refreezer.JULIA_RUNTIME_ROLES))
+            for stage, role in refreezer.JULIA_RUNTIME_ROLES:
+                self.assertEqual(json.loads(stale_calibration.read_text())["StageToolSHA256"]
+                                 [stage][role], sha256(launcher))
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                   julia_runtime=root / "missing")
+            # The committed record names the committed source and the frozen adapter digest.
+            committed = json.loads((HERE / "testdata" / "adapter-build.json").read_text())
+            self.assertEqual(committed["SourceSHA256"], sha256(HERE / "adapt_edge_metric.cpp"))
+            self.assertEqual(committed["ExecutableSHA256"],
+                             production["StageToolSHA256"]["native-adaptation-mmg"]["adapter-mmg"])
+            self.assertEqual(committed["MMGLibrarySHA256"],
+                             production["StageToolSHA256"]["native-adaptation-mmg"]["mmg-library"])
 
     def test_remote_verified_contracts_match_source_model_and_physical_corners(self):
         manifest = json.loads((HERE / "geometry-independence-suite.json").read_text())
@@ -2146,6 +2229,104 @@ class SemanticContractTest(unittest.TestCase):
             validate_semantic_contract({"Version": 1, "VolumeMaterials": [],
                 "BoundaryLabels": [], "SemanticCorners": [], "ProtectedSupports": [],
                 "MetricSurfaceRoles": [], "CutSurfaceRoles": [], "UnmatchedPolicy": "Error"})
+
+
+class RequiredRegionContractTest(unittest.TestCase):
+    """The metric stage's required tetrahedra are the recipe's corner balls and edge
+    layer, and the seed stage gated the same region with the restorer's values."""
+
+    GATES = ["--maximum-corner-aspect", "4", "--minimum-scaled-jacobian", ".01",
+             "--maximum-quality-displacement-over-normal", ".75"]
+
+    def fixture(self, root, layer=True):
+        corners = [[0., 0., 0.], [10., 0., 0.]]
+        spans = [[1., 0., .1, 9., 0., .1]]
+        recipe = {"Tetrahedra": 100, "CornerIsotropyRadius": .1, "TruePhysicalCorners": corners,
+                  "RequiredTetrahedra": {"Count": 5 if layer else 3, "CornerRadius": .1, "IndexBase": 1,
+                      "PerCorner": [{"Point": corners[0], "Tetrahedra": 2},
+                                    {"Point": corners[1], "Tetrahedra": 1}],
+                      "LayerRequiredReach": .028 * 1.05 + .004 if layer else None,
+                      "PerSpan": [{"Span": spans[0], "Tetrahedra": 3}] if layer else []}}
+        if layer:
+            recipe["EdgeLayer"] = {"EdgeSize": .004, "LayerThickness": .028, "RowZigzag": .05,
+                                   "Spans": spans, "SpanCount": 1}
+        census = {"SeedQualityOptimization": {
+            "MaximumCornerAspect": 4., "MinimumScaledJacobian": .01,
+            "DisplacementBoundOverNormal": .75, "RequiredTetrahedra": 5,
+            "RequiredCellsBelowGateAfter": 0, "CornerAspectsAfter": [3.4, 3.74],
+            "RequiredMinimumScaledJacobianAfter": .02}}
+        seed = {"Command": ["julia", "mesh_spatial_coupon.jl", "sig.csv", "fabricated", "seed.msh",
+                            *self.GATES]}
+        restoration = {"Command": ["python3", "restore_planar_metric_mesh.py", "adapted.meshb",
+                                   "recipe.json", "restored.msh", *self.GATES]}
+        required = root / f"required-tetrahedra-{layer}.txt"
+        required.write_text("3\n7\n40\n41\n99\n" if layer else "3\n7\n40\n")
+        return seed, restoration, recipe, census, required
+
+    def test_required_region_is_bound_and_seed_gated(self):
+        from mesh_stage_contract import validate_required_region
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            seed, restoration, recipe, census, required = self.fixture(root)
+            self.assertEqual(validate_required_region(seed, restoration, recipe, census, required),
+                             recipe["RequiredTetrahedra"])
+            seed0, restoration0, recipe0, census0, required0 = self.fixture(root, layer=False)
+            validate_required_region(seed0, restoration0, recipe0, census0, required0)
+
+            def rejected(message, seed_report=seed, restoration_report=restoration,
+                         recipe_data=recipe, census_data=census, path=required):
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_required_region(seed_report, restoration_report, recipe_data,
+                                             census_data, path)
+
+            def with_record(**changes):
+                data = copy.deepcopy(recipe); data["RequiredTetrahedra"].update(changes); return data
+
+            def with_quality(**changes):
+                data = copy.deepcopy(census); data["SeedQualityOptimization"].update(changes); return data
+
+            def with_value(report, option, value):
+                report = copy.deepcopy(report)
+                report["Command"][report["Command"].index(option) + 1] = value; return report
+
+            def listing(name, text):
+                path = root / name; path.write_text(text); return path
+
+            rejected("lacks the required-tetrahedra record",
+                     recipe_data={k: v for k, v in recipe.items() if k != "RequiredTetrahedra"})
+            rejected("differs from the recipe record", recipe_data=with_record(Count=4))
+            rejected("sorted, unique and in range", path=listing("dup.txt", "3\n3\n7\n40\n99\n"))
+            rejected("sorted, unique and in range", path=listing("range.txt", "0\n3\n7\n40\n99\n"))
+            rejected("sorted, unique and in range", path=listing("over.txt", "3\n7\n40\n99\n101\n"))
+            rejected("non-empty positive integers", path=listing("empty.txt", ""))
+            rejected("non-empty positive integers", path=listing("text.txt", "3\nx\n"))
+            rejected("radius differs", recipe_data=with_record(CornerRadius=.2))
+            rejected("differ from the recipe semantic corners",
+                     recipe_data=with_record(PerCorner=[{"Point": [0., 0., 0.], "Tetrahedra": 2}]))
+            rejected("differ from the recipe semantic corners",
+                     recipe_data=with_record(PerCorner=[{"Point": [0., 0., 0.], "Tetrahedra": 2},
+                                                        {"Point": [10., 0., 0.], "Tetrahedra": 0}]))
+            rejected("differs from the recipe edge layer", recipe_data=with_record(LayerRequiredReach=.032))
+            rejected("differs from the recipe edge layer", recipe_data=with_record(PerSpan=[]))
+            rejected("differs from the recipe edge layer",
+                     recipe_data=with_record(PerSpan=[{"Span": [0., 0., 0., 1., 0., 0.], "Tetrahedra": 3}]))
+            rejected("do not cover the list", recipe_data=with_record(Count=7),
+                     path=listing("seven.txt", "1\n2\n3\n4\n5\n6\n7\n"))
+            without_layer = {k: v for k, v in recipe.items() if k != "EdgeLayer"}
+            rejected("without a recipe edge layer", recipe_data=without_layer)
+            rejected("differs from the label-restoration command",
+                     seed_report=with_value(seed, "--maximum-corner-aspect", "5"))
+            rejected("differs from the label-restoration command",
+                     restoration_report=with_value(restoration, "--minimum-scaled-jacobian", ".02"))
+            rejected("must provide --maximum-quality-displacement-over-normal",
+                     seed_report={"Command": seed["Command"][:-2]})
+            rejected("does not record a gated", census_data={})
+            rejected("does not record a gated", census_data=with_quality(MaximumCornerAspect=3.8))
+            rejected("does not record a gated", census_data=with_quality(RequiredCellsBelowGateAfter=1))
+            rejected("does not record a gated", census_data=with_quality(CornerAspectsAfter=[3.4, 4.1]))
+            rejected("does not record a gated", census_data=with_quality(CornerAspectsAfter=[3.4]))
+            rejected("below the scaled-Jacobian gate",
+                     census_data=with_quality(RequiredMinimumScaledJacobianAfter=.009))
 
 
 class EdgeLayerContractTest(unittest.TestCase):

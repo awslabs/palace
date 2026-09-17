@@ -4,9 +4,10 @@ import copy
 import unittest
 import numpy as np
 from edge_volume_metric import (COPLANAR_TOLERANCE, cluster_coplanar_triangles, edge_layer_reach,
-                                feature_chains, intersect_metrics, junction_segments,
-                                local_normal_size, match_equivalent_planes, plane_deviation,
-                                recipe_local_normal_size, surface_features, volume_metric)
+                                edge_layer_required_reach, feature_chains, intersect_metrics,
+                                junction_segments, local_normal_size, match_equivalent_planes,
+                                plane_deviation, recipe_local_normal_size, required_tetrahedra,
+                                surface_features, volume_metric)
 from prepare_edge_metric_scout import (budget_aware_far_policy, edge_layer_record,
                                        protected_corner_ball_triangles)
 
@@ -473,6 +474,33 @@ class EdgeVolumeMetricTest(unittest.TestCase):
             edge_layer_record({},.001,2.,4.,.025,.05,contract,band)
         with self.assertRaisesRegex(ValueError,'Aspect'):
             edge_layer_record(census,.001,2.,.5,.025,.05,contract,band)
+
+    def test_required_tetrahedra_are_corner_ball_centroids_and_layer_touching_cells(self):
+        # Two corners and one span along x at y = z = 0 between x = 1 and x = 9.
+        corners = [[0., 0., 0.], [10., 0., 0.]]
+        spans = np.array([[1., 0., 0., 9., 0., 0.]])
+        layer = {"LayerThickness": .028, "EdgeSize": .004, "RowZigzag": .05}
+        reach = edge_layer_required_reach(layer)
+        self.assertAlmostEqual(reach, .028 * 1.05 + .004)
+        self.assertAlmostEqual(edge_layer_required_reach({"LayerThickness": .028, "EdgeSize": .004}),
+                               .032)
+        points = np.array([
+            [.01, .01, .01], [.05, 0., 0.], [0., .05, 0.], [0., 0., .05],   # cell 0: centroid in ball 0
+            [.2, 0., 0.], [.3, 0., 0.], [.2, .1, 0.], [.2, 0., .1],          # cell 1: centroid outside
+            [5., .03, 0.], [5.2, .03, 0.], [5.1, .5, 0.], [5.1, .03, .5],   # cell 2: one vertex in reach
+            [5., .04, 0.], [5.2, .04, 0.], [5.1, .5, 0.], [5.1, .04, .5],   # cell 3: none in reach
+            [9.95, 0., 0.], [9.99, .01, 0.], [9.97, 0., .02], [9.96, .01, .01]])  # cell 4: ball 1
+        tetrahedra = np.arange(20).reshape(5, 4)
+        mask, per_corner, per_span = required_tetrahedra(points, tetrahedra, corners, .1, spans, reach)
+        self.assertEqual(mask.tolist(), [True, False, True, False, True])
+        self.assertEqual(per_corner, [1, 1]); self.assertEqual(per_span, [1])
+        mask, per_corner, per_span = required_tetrahedra(points, tetrahedra, corners, .1)
+        self.assertEqual(mask.tolist(), [True, False, False, False, True]); self.assertEqual(per_span, [])
+        for radius, layer_reach in ((0., reach), (.1, 0.), (np.nan, reach)):
+            with self.assertRaises(ValueError):
+                required_tetrahedra(points, tetrahedra, corners, radius, spans, layer_reach)
+        with self.assertRaises(ValueError):
+            edge_layer_required_reach({"LayerThickness": 0., "EdgeSize": .004, "RowZigzag": .05})
 
     def test_bad_controls_fail_closed(self):
         for controls in ((0,.1,1),(.1,.01,1),(.1,2,1)):

@@ -13,8 +13,9 @@ import sys
 from pathlib import Path
 import meshio
 import numpy as np
-from edge_volume_metric import (COPLANAR_TOLERANCE,cluster_coplanar_triangles,edge_layer_reach,
-                                intersect_metrics,junction_segments,surface_features,volume_metric,
+from edge_volume_metric import (COPLANAR_TOLERANCE,REQUIRED_TETRAHEDRA_RULE,cluster_coplanar_triangles,
+                                edge_layer_reach,edge_layer_required_reach,intersect_metrics,
+                                junction_segments,required_tetrahedra,surface_features,volume_metric,
                                 segment_distances)
 from mesh_array_io import read_mesh,sha
 from mesh_stage_contract import footprint_provenance,footprint_segments
@@ -465,6 +466,23 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
         mesh.points,triangles,semantic_corners,tangent)
     fixed |= corner_balls
     np.savetxt(path/'fixed-triangles.txt',np.flatnonzero(fixed)+1,fmt='%d')
+    # The seed cells inside the corner balls and the edge layer are MMG required
+    # tetrahedra: the seed defines the near-corner/near-edge discretization and MMG
+    # adapts only outside them (supervisor decision 30).
+    layer_reach=None if edge_layer is None else edge_layer_required_reach(edge_layer)
+    required,required_per_corner,required_per_span=required_tetrahedra(
+        mesh.points,tetrahedra,semantic_corners,tangent,layer_spans,layer_reach)
+    required_indices=np.flatnonzero(required)+1
+    if not len(required_indices):raise ValueError('No seed tetrahedron lies inside a corner ball')
+    np.savetxt(path/'required-tetrahedra.txt',required_indices,fmt='%d')
+    required_record={'Count':int(len(required_indices)),'Rule':REQUIRED_TETRAHEDRA_RULE,
+        'CornerRadius':float(tangent),
+        'PerCorner':[{'Point':corner.tolist(),'Tetrahedra':int(count)}
+                     for corner,count in zip(semantic_corners,required_per_corner)],
+        'LayerRequiredReach':layer_reach,
+        'PerSpan':[{'Span':span.tolist(),'Tetrahedra':int(count)}
+                   for span,count in zip(([] if layer_spans is None else layer_spans),required_per_span)],
+        'File':'required-tetrahedra.txt','IndexBase':1}
     with (path/'metric.f64').open('wb') as f:
         for start in range(0,len(mesh.points),100000):
             metric=volume_metric(mesh.points[start:start+100000],band_segments,corners,normal,tangent,effective_far,
@@ -491,6 +509,7 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
             'FarFieldBudgetPolicy':far_policy,
             'SurfaceProtectionRadius':protect_surface,'FixedSurfaceTriangles':int(fixed.sum()),
             'CornerIsotropyRadius':tangent,
+            'RequiredTetrahedra':required_record,
             'ProtectedCornerBalls':{'Radius':tangent,
                 'Rule':'every seed surface triangle with a vertex within CornerIsotropyRadius '
                        'of a semantic corner is frozen; the seed corner ball is the corner '
@@ -535,7 +554,8 @@ def prepare(mesh,path,normal,tangent,far,protected_distance=0.,far_growth=1.,pro
                    '(direction aligned and both endpoints within 2 x ShortEdgeThreshold of the '
                    'edge segment) and reports such bands separately'}
     (path/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
-    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments','TraceBasisSizing','EdgeLayer')},indent=2))
+    print(json.dumps({k:v for k,v in recipe.items() if k not in ('PhysicalSegments','TruePhysicalCorners','FootprintSegments','JunctionSegments','TraceBasisSizing','EdgeLayer','RequiredTetrahedra')},indent=2))
+    print(json.dumps({'RequiredTetrahedra':{k:v for k,v in required_record.items() if k not in ('PerSpan','Rule')}},indent=2))
     if edge_layer is not None:
         print(json.dumps({'EdgeLayer':{k:v for k,v in edge_layer.items() if k not in ('Spans','SeedCurves','Rule')}},indent=2))
     print(json.dumps({'JunctionSegments':{k:v for k,v in junction_record.items() if k!='Segments'}},indent=2))

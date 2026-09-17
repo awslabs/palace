@@ -6,9 +6,17 @@ from pathlib import Path
 import shutil
 import sys
 
-if len(sys.argv) < 9:
+arguments = list(sys.argv)
+if "--required-tetrahedra" in arguments:
+    position = arguments.index("--required-tetrahedra")
+    if position + 1 >= len(arguments) or not Path(arguments[position + 1]).is_file():
+        raise SystemExit(2)
+    del arguments[position:position + 2]
+else:
     raise SystemExit(2)
-output = Path(sys.argv[4])
+if len(arguments) < 9:
+    raise SystemExit(2)
+output = Path(arguments[4])
 if output.exists():
     raise SystemExit(2)
-shutil.copyfile(sys.argv[1], output)
+shutil.copyfile(arguments[1], output)
