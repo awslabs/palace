@@ -728,6 +728,7 @@ void WavePortData::Initialize(double omega)
   const double sigma = -omega * omega * mu_eps_max;
   std::complex<double> lambda;
   {
+    BlockTimer bt(Timer::WAVE_PORT_SOLVE);
     const bool has_solver = (port_comm != MPI_COMM_NULL);
     auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
     if (has_solver)
@@ -736,8 +737,8 @@ void WavePortData::Initialize(double omega)
                   "Wave port eigensolver did not converge!");
       lambda = mode_solver->GetEigenvalue(mode_idx - 1);
     }
+    Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
   }
-  Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // 1 / (-k_n² - σ).
@@ -748,6 +749,7 @@ void WavePortData::Initialize(double omega)
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
   // phase-normalize, then apply the shared VD back-transform.
   {
+    BlockTimer bt(Timer::WAVE_PORT_FIELD);
     if (port_comm != MPI_COMM_NULL)
     {
       mode_solver->GetEigenvector(mode_idx - 1, e0);
@@ -784,6 +786,7 @@ void WavePortData::Initialize(double omega)
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
   // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
   {
+    BlockTimer bt(Timer::WAVE_PORT_POSTPRO);
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
@@ -833,6 +836,62 @@ void WavePortData::Initialize(double omega)
                            *port_sr, *port_si);
     }
   }
+}
+
+void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
+                                                 std::size_t num_excitations,
+                                                 bool synthesis_seed)
+{
+  const std::size_t seed = synthesis_seed ? 1 : 0;
+  MFEM_VERIFY(num_excitations > 0, "Wave-port PROM training requires an excitation!");
+  MFEM_VERIFY(max_samples <=
+                  (std::numeric_limits<std::size_t>::max() - seed) / num_excitations,
+              "Wave-port PROM training snapshot capacity overflow!");
+  const std::size_t snapshots = max_samples * num_excitations + seed;
+  MFEM_VERIFY(static_cast<std::size_t>(mode_idx) <=
+                  std::numeric_limits<std::size_t>::max() /
+                      std::max(snapshots, std::size_t{1}),
+              "Wave-port PROM basis capacity overflow!");
+  const std::size_t capacity = static_cast<std::size_t>(mode_idx) * snapshots;
+  mode_solver->ConfigureReducedModelTraining(
+      std::max(capacity, static_cast<std::size_t>(mode_idx)));
+}
+
+void WavePortData::EnableReducedModel(double adaptive_tol)
+{
+  mode_solver->EnableReducedModel(adaptive_tol);
+}
+
+ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
+{
+  auto stats = mode_solver->GetReducedModelStats();
+  unsigned long long counts[] = {
+      stats.exact_solves,       stats.reduced_solves,   stats.fallbacks,
+      stats.offline_basis_rank, stats.online_basis_cap,
+  };
+  Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
+                 port_mesh->GetComm());
+  Mpi::Broadcast(1, &stats.worst_residual, port_root, port_mesh->GetComm());
+  stats.exact_solves = counts[0];
+  stats.reduced_solves = counts[1];
+  stats.fallbacks = counts[2];
+  stats.offline_basis_rank = counts[3];
+  stats.online_basis_cap = counts[4];
+  return stats;
+}
+
+std::size_t WavePortData::GetReducedBasisSize() const
+{
+  unsigned long long size = mode_solver->GetReducedBasisSize();
+  Mpi::Broadcast(1, &size, port_root, port_mesh->GetComm());
+  return static_cast<std::size_t>(size);
+}
+
+double WavePortData::GetReducedTolerance() const
+{
+  double tol = mode_solver->GetReducedTolerance();
+  Mpi::Broadcast(1, &tol, port_root, port_mesh->GetComm());
+  return tol;
 }
 
 std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
@@ -1331,6 +1390,52 @@ const WavePortData &WavePortOperator::GetPort(int idx) const
   auto it = ports.find(idx);
   MFEM_VERIFY(it != ports.end(), "Unknown wave port index requested!");
   return it->second;
+}
+
+void WavePortOperator::ConfigureReducedModelTraining(std::size_t max_samples,
+                                                     std::size_t num_excitations,
+                                                     bool synthesis_seed)
+{
+  for (auto &[idx, data] : ports)
+  {
+    data.ConfigureReducedModelTraining(max_samples, num_excitations, synthesis_seed);
+  }
+}
+
+void WavePortOperator::EnableReducedModel(double adaptive_tol)
+{
+  if (ports.empty())
+  {
+    return;
+  }
+  Mpi::Print("\nEnabling guarded reduced wave-port models after adaptive offline "
+             "training:\n");
+  for (auto &[idx, data] : ports)
+  {
+    data.EnableReducedModel(adaptive_tol);
+    const auto stats = data.GetReducedModelStats();
+    Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, backward tolerance = {:.3e}\n", idx,
+               stats.offline_basis_rank, stats.online_basis_cap,
+               data.GetReducedTolerance());
+  }
+}
+
+void WavePortOperator::PrintReducedModelStats() const
+{
+  if (ports.empty())
+  {
+    return;
+  }
+  Mpi::Print("\nWave-port reduced model statistics:\n");
+  for (const auto &[idx, data] : ports)
+  {
+    const auto stats = data.GetReducedModelStats();
+    Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, reduced/exact = {:d}/{:d}, "
+               "fallbacks = {:d}, worst residual = {:.3e}\n",
+               idx, data.GetReducedBasisSize(), stats.online_basis_cap,
+               stats.reduced_solves, stats.exact_solves, stats.fallbacks,
+               stats.worst_residual);
+  }
 }
 
 mfem::Array<int> WavePortOperator::GetAttrList() const

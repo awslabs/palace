@@ -55,6 +55,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and rewrite them at most once every 10 s (and at the end of the sweep), instead of
     rewriting the growing tables at every output frequency.
     [PR 938](https://github.com/awslabs/palace/pull/938).
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
+    across excitations, evaluating default domain energies in reduced coordinates, and
+    evaluating port quantities without unnecessary magnetic-field reconstruction when
+    possible. [PR 909](https://github.com/awslabs/palace/pull/909).
 
 #### Build system
 

@@ -158,6 +158,15 @@ public:
 
   void Initialize(double omega);
 
+  // Configure exact offline snapshot collection before any adaptive HDM or synthesis
+  // reference solve, then enable guarded reduced evaluation after offline training.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
+  void EnableReducedModel(double adaptive_tol);
+  ModeEigenSolver::ReducedModelStats GetReducedModelStats() const;
+  std::size_t GetReducedBasisSize() const;
+  double GetReducedTolerance() const;
+
   // Compute the sign of the modal E-field projected on the (high → low) direction
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
   // first, ground terminal second). Returns +1, -1, or 0 if attributes were not
@@ -250,6 +259,20 @@ public:
 
   // Enable or suppress all outputs (log printing and fields to disk).
   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
+
+  // Prepare all frequency-dependent modal state once before evaluating multiple
+  // excitations at the same frequency.
+  void PrepareFrequency(double omega) { Initialize(omega); }
+
+  // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
+  // is a checked upper bound on possible exact mode snapshots and storage remains lazy.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
+
+  // Switch all trained port models to guarded reduced evaluation. Called only after the
+  // adaptive 3D offline phase so HDM snapshots always use exact port modes.
+  void EnableReducedModel(double adaptive_tol);
+  void PrintReducedModelStats() const;
 
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;

@@ -550,10 +550,37 @@ for later excitations. `"AdaptiveMaxSamples"` is interpreted per excitation.
 ### Non-quadratic boundary terms
 
 When non-quadratic frequency terms ``\bm{A}_2(\omega)`` are present, the HDM samples still
-include the full operator and the projected reduced problem uses the projected
-``\bm{A}_{2,r}(\omega)`` during online evaluation. This is more expensive than the purely
-quadratic case because the projected non-quadratic contribution has to be updated at output
-frequencies.
+include the full operator and the projected reduced problem includes the projected
+``\bm{A}_{2,r}(\omega)`` during online evaluation. For boundary conditions whose frequency
+dependence factors as a scalar times a frequency-independent boundary operator (the
+second-order absorbing boundary, surface conductivity, rational surface impedance, and
+Floquet port Robin terms), the boundary operator is projected onto ``\bm{Q}`` once and only
+the scalar is re-evaluated at each output frequency, so the online cost matches the purely
+quadratic case. Wave ports have the same structure,
+``\bm{A}_{2,r}(\omega) = i\,k_n(\omega)\,\bm{Q}^T\bm{M}_p\bm{Q}``, but the propagation
+constant ``k_n(\omega)`` and the port mode field used for excitation and S-parameter
+postprocessing come from a two-dimensional boundary eigenvalue problem that depends on
+frequency.
+
+Rather than solving that eigenvalue problem exactly at every output frequency, *Palace*
+builds a per-port reduced model during the offline phase: each exact port mode computed for
+an HDM sample is added to a complex basis of port eigenvectors. Online, the boundary
+eigenvalue problem is projected onto this basis and solved densely (a Rayleigh-Ritz
+procedure); the mode is selected in the same way as the exact solver. The reduced
+eigenpair ``(\lambda, \bm{x})`` is accepted only if its full-space backward residual
+
+```math
+\eta = \frac{\|\bm{B}\bm{x} - \lambda\bm{A}(\omega)\bm{x}\|}
+            {\|\bm{B}\bm{x}\| + |\lambda|\,\|\bm{A}(\omega)\bm{x}\|}
+```
+
+is below a tolerance derived from the port eigensolver tolerance and `"AdaptiveTol"`.
+Otherwise, or whenever the reduced problem does not yield the requested number of
+well-separated modes, the exact eigenvalue problem is solved instead and its eigenvector
+enriches the basis, up to a fixed capacity above the offline rank. Complex-frequency
+queries (from the eigenmode solver) always use the exact solver. At the end of the sweep,
+*Palace* prints per-port statistics: the basis size and capacity, the numbers of reduced
+and exact solves, the number of fallbacks, and the worst accepted residual.
 
 The sample-selection interpolation is based on the quadratic linearization and does not
 fully represent arbitrary non-quadratic frequency dependence. If the non-quadratic
