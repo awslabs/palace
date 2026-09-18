@@ -15,7 +15,7 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
-## In progress
+## [0.18.1] - 2026-09-18
 
 #### New Features
 
@@ -28,6 +28,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     can override this choice per port with `"ComplexCoarseSolve"`, without changing the full
     3D system preconditioner. SchemaVer 1-7-0
     [PR 921](https://github.com/awslabs/palace/pull/921).
+
+#### Interface Changes
+
+  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
+    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+
+#### Performance Improvements
+
+  - Reduced repeated work in complex operators [PR
+    932](https://github.com/awslabs/palace/pull/932).
+  - Reduced repeated work in PROM construction [PR
+    930](https://github.com/awslabs/palace/pull/930).
+  - Adaptive driven sweeps now buffer CSV output tables in memory during the online phase
+    and rewrite them at most once every 10 s (and at the end of the sweep), instead of
+    rewriting the growing tables at every output frequency.
+    [PR 938](https://github.com/awslabs/palace/pull/938).
 
 #### Bug Fixes
 
@@ -44,31 +62,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
     `Lc / Z₀` and so depended on the characteristic length `Lc`.
     [PR 936](https://github.com/awslabs/palace/pull/936).
-
-#### Performance Improvements
-
-  - Reduced repeated work in complex operators [PR
-    932](https://github.com/awslabs/palace/pull/932).
-  - Reduced repeated work in PROM construction [PR
-    930](https://github.com/awslabs/palace/pull/930).
-  - Adaptive driven sweeps now buffer CSV output tables in memory during the online phase
-    and rewrite them at most once every 10 s (and at the end of the sweep), instead of
-    rewriting the growing tables at every output frequency.
-    [PR 938](https://github.com/awslabs/palace/pull/938).
+  - Fixed the quadrature data offset in the H(div) mass build QFunction, which left the cached
+    curl-curl block of 2D-in-3D H(div) operators unwritten and partially overwrote the mass
+    block. [PR 931](https://github.com/awslabs/palace/pull/931).
 
 #### Build system
 
   - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
     compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
   - Pinned the libCEED commit in the Spack recipe per Palace release instead of building an
-    unpinned libCEED `develop`.
-
-#### Interface Changes
-
-  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
-    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
-    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
-    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+    unpinned libCEED `develop`. [PR 940](https://github.com/awslabs/palace/pull/940).
 
 ## [0.18.0] - 2026-09-09
 
