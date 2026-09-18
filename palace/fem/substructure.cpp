@@ -121,15 +121,41 @@ DtNBoundaryOperator::DtNBoundaryOperator(const Substructure &environment,
                                          const mfem::SparseMatrix &A_env,
                                          const mfem::Vector &f_env)
 {
+  Build(environment, gamma_index, A_env, f_env, {}, mfem::Vector());
+}
+
+DtNBoundaryOperator::DtNBoundaryOperator(const Substructure &environment,
+                                         const std::vector<int> &gamma_index,
+                                         const mfem::SparseMatrix &A_env,
+                                         const mfem::Vector &f_env,
+                                         const std::vector<char> &dbc_marker,
+                                         const mfem::Vector &dbc_values)
+{
+  Build(environment, gamma_index, A_env, f_env, dbc_marker, dbc_values);
+}
+
+void DtNBoundaryOperator::Build(const Substructure &environment,
+                                const std::vector<int> &gamma_index,
+                                const mfem::SparseMatrix &A_env, const mfem::Vector &f_env,
+                                const std::vector<char> &dbc_marker,
+                                const mfem::Vector &dbc_values)
+{
   const auto &par = environment.GetParentDof();
   const auto &sgn = environment.GetSign();
   const int n = A_env.Height();
+  const bool has_dbc = !dbc_marker.empty();
+  auto is_dbc = [&](int i) { return has_dbc && dbc_marker[i]; };
 
-  // Classify environment DOFs: interface (compact gamma index) vs interior (compact index).
+  // Classify environment DOFs: Dirichlet (fixed, skipped), interface (compact gamma index),
+  // or interior (compact index).
   std::vector<int> g_of(n, -1), i_of(n, -1);
   int nG = 0, nI = 0;
   for (int i = 0; i < n; i++)
   {
+    if (is_dbc(i))
+    {
+      continue;
+    }
     if (gamma_index[par[i]] >= 0)
     {
       g_of[i] = nG++;
@@ -162,14 +188,24 @@ DtNBoundaryOperator::DtNBoundaryOperator(const Substructure &environment,
   fG = 0.0;
   for (int i = 0; i < n; i++)
   {
+    if (is_dbc(i))
+    {
+      continue;  // fixed row, not condensed
+    }
     const int *cols = A_env.GetRowColumns(i);
     const double *vals = A_env.GetRowEntries(i);
     const bool ig = g_of[i] >= 0;
+    double rhs_i = f_env(i);
     for (int k = 0; k < A_env.RowSize(i); k++)
     {
       const int j = cols[k];
-      const bool jg = g_of[j] >= 0;
       const double v = vals[k];
+      if (is_dbc(j))
+      {
+        rhs_i -= v * dbc_values(j);  // eliminate Dirichlet column into the RHS
+        continue;
+      }
+      const bool jg = g_of[j] >= 0;
       if (ig && jg)
       {
         AGG(g_of[i], g_of[j]) += v;
@@ -189,11 +225,11 @@ DtNBoundaryOperator::DtNBoundaryOperator(const Substructure &environment,
     }
     if (ig)
     {
-      fG(g_of[i]) += f_env(i);
+      fG(g_of[i]) += rhs_i;
     }
     else
     {
-      fi(i_of[i]) += f_env(i);
+      fi(i_of[i]) += rhs_i;
     }
   }
 

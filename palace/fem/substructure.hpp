@@ -76,11 +76,22 @@ public:
   DtNBoundaryOperator(const Substructure &environment, const std::vector<int> &gamma_index,
                       const mfem::SparseMatrix &A_env, const mfem::Vector &f_env);
 
+  // Dirichlet-aware overload: dbc_marker[i] != 0 marks environment submesh DOF i as an
+  // essential (Dirichlet) DOF with prescribed value dbc_values(i). These are eliminated
+  // into g_E and excluded from the condensed interior, keeping A_EE nonsingular for
+  // pure-Laplace (grounded) environments as in electrostatics.
+  DtNBoundaryOperator(const Substructure &environment, const std::vector<int> &gamma_index,
+                      const mfem::SparseMatrix &A_env, const mfem::Vector &f_env,
+                      const std::vector<char> &dbc_marker, const mfem::Vector &dbc_values);
+
   int Size() const { return S_E.Height(); }
   const mfem::DenseMatrix &Schur() const { return S_E; }  // nG x nG, parent orientation
   const mfem::Vector &Load() const { return g_E; }        // nG
 
 private:
+  void Build(const Substructure &environment, const std::vector<int> &gamma_index,
+             const mfem::SparseMatrix &A_env, const mfem::Vector &f_env,
+             const std::vector<char> &dbc_marker, const mfem::Vector &dbc_values);
   mfem::DenseMatrix S_E;
   mfem::Vector g_E;
 };

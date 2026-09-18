@@ -564,4 +564,257 @@ TEST_CASE("Region DtN operator solves iteratively to the monolith",
   }
 }
 
+TEST_CASE("DtN with Dirichlet terminals reproduces electrostatics",
+          "[substructure][Serial]")
+{
+  if (Mpi::Size(Mpi::World()) > 1)
+  {
+    SKIP("electrostatic DtN test is serial-only");
+  }
+  // Pure-Laplace two-terminal capacitor: phi=1 on x=0 (region), phi=0 on x=1 (environment).
+  // The environment is condensed with its ground terminal as a Dirichlet DOF (keeping A_EE
+  // nonsingular); the region is solved with its drive terminal + the DtN, and must
+  // reproduce the full-domain solve. Includes a permittivity contrast across the interface.
+  auto run = [](double eps_r, double eps_e)
+  {
+    const int nx = 6;
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::HEXAHEDRON);
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      mfem::Vector c;
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    serial.SetAttributes();
+    mfem::ParMesh mesh(Mpi::World(), serial);
+    mfem::H1_FECollection fec(1, 3);
+    mfem::ParFiniteElementSpace pfes(&mesh, &fec);
+    const int N = pfes.GetVSize();
+
+    // Dirichlet terminal DOFs by vertex x-coordinate (order-1 H1: DOF == vertex).
+    std::vector<char> dir(N, 0);
+    std::vector<double> udir(N, 0.0);
+    for (int v = 0; v < mesh.GetNV(); v++)
+    {
+      const double *x = mesh.GetVertex(v);
+      if (x[0] < 1e-9)
+      {
+        dir[v] = 1;
+        udir[v] = 1.0;
+      }
+      else if (x[0] > 1.0 - 1e-9)
+      {
+        dir[v] = 1;
+        udir[v] = 0.0;
+      }
+    }
+
+    mfem::Array<int> ar(1), ae(1);
+    ar[0] = 1;
+    ae[0] = 2;
+    Substructure region(pfes, ar, fec), env(pfes, ae, fec);
+    std::vector<int> owner, gamma_index;
+    MarkParentDofOwnership({&region, &env}, N, owner);
+    BuildInterfaceIndex(owner, gamma_index);
+
+    auto assemble = [&](mfem::ParFiniteElementSpace &fes, double eps,
+                        std::unique_ptr<mfem::SparseMatrix> &A)
+    {
+      mfem::ConstantCoefficient ec(eps);
+      mfem::BilinearForm a(&fes);
+      a.AddDomainIntegrator(new mfem::DiffusionIntegrator(ec));
+      a.Assemble();
+      a.Finalize();
+      A = std::make_unique<mfem::SparseMatrix>(a.SpMat());
+    };
+
+    // Environment submesh Dirichlet marker/values (map parent Dirichlet -> env submesh
+    // DOF).
+    auto submesh_dbc = [&](Substructure &s, std::vector<char> &m, mfem::Vector &vals)
+    {
+      const auto &par = s.GetParentDof();
+      const int ns = par.size();
+      m.assign(ns, 0);
+      vals.SetSize(ns);
+      vals = 0.0;
+      for (int i = 0; i < ns; i++)
+      {
+        if (dir[par[i]])
+        {
+          m[i] = 1;
+          vals(i) = udir[par[i]];
+        }
+      }
+    };
+
+    std::unique_ptr<mfem::SparseMatrix> Ae;
+    assemble(env.GetFESpace(), eps_e, Ae);
+    std::vector<char> em;
+    mfem::Vector ev;
+    submesh_dbc(env, em, ev);
+    mfem::Vector fe(Ae->Height());
+    fe = 0.0;
+    DtNBoundaryOperator dtn(env, gamma_index, *Ae, fe, em, ev);
+
+    // Region system on (region-interior-free + interface), region Dirichlet eliminated.
+    std::unique_ptr<mfem::SparseMatrix> Ar;
+    assemble(region.GetFESpace(), eps_r, Ar);
+    const auto &par = region.GetParentDof();
+    const int nr = Ar->Height();
+    std::vector<char> rm;
+    mfem::Vector rv;
+    submesh_dbc(region, rm, rv);
+    // Compact region free DOFs: interface (gamma) + region interior (not Dirichlet, not
+    // iface).
+    std::vector<int> rint;
+    std::vector<int> ri(N, -1);
+    const int nG = dtn.Size();
+    for (int i = 0; i < nr; i++)
+    {
+      if (!rm[i] && gamma_index[par[i]] < 0 && ri[par[i]] < 0)
+      {
+        ri[par[i]] = (int)rint.size();
+        rint.push_back(par[i]);
+      }
+    }
+    const int nRi = rint.size(), ndof = nG + nRi;
+    auto idx = [&](int i)
+    { return gamma_index[par[i]] >= 0 ? gamma_index[par[i]] : nG + ri[par[i]]; };
+    mfem::DenseMatrix K(ndof);
+    K = 0.0;
+    mfem::Vector b(ndof);
+    b = 0.0;
+    for (int i = 0; i < nr; i++)
+    {
+      if (rm[i])
+      {
+        continue;
+      }
+      const int *cols = Ar->GetRowColumns(i);
+      const double *vals = Ar->GetRowEntries(i);
+      for (int k = 0; k < Ar->RowSize(i); k++)
+      {
+        const int j = cols[k];
+        const double v = vals[k];
+        if (rm[j])
+        {
+          b(idx(i)) -= v * rv(j);
+          continue;
+        }  // eliminate region Dirichlet
+        K(idx(i), idx(j)) += v;
+      }
+    }
+    for (int a = 0; a < nG; a++)
+    {
+      b(a) += dtn.Load()(a);
+      for (int bb = 0; bb < nG; bb++)
+      {
+        K(a, bb) += dtn.Schur()(a, bb);
+      }
+    }
+    mfem::DenseMatrix Ki(K);
+    Ki.Invert();
+    mfem::Vector u(ndof);
+    Ki.Mult(b, u);
+
+    // Full-domain reference.
+    std::unique_ptr<mfem::SparseMatrix> ArF, AeF;
+    assemble(region.GetFESpace(), eps_r, ArF);
+    assemble(env.GetFESpace(), eps_e, AeF);
+    mfem::DenseMatrix A(N);
+    A = 0.0;
+    auto add = [&](Substructure &s, mfem::SparseMatrix &As)
+    {
+      const auto &p = s.GetParentDof();
+      for (int i = 0; i < As.Height(); i++)
+      {
+        const int *cols = As.GetRowColumns(i);
+        const double *vals = As.GetRowEntries(i);
+        for (int k = 0; k < As.RowSize(i); k++)
+        {
+          A(p[i], p[cols[k]]) += vals[k];
+        }
+      }
+    };
+    add(region, *ArF);
+    add(env, *AeF);
+    std::vector<int> freed;
+    std::vector<int> fl(N, -1);
+    for (int p = 0; p < N; p++)
+    {
+      if (!dir[p])
+      {
+        fl[p] = (int)freed.size();
+        freed.push_back(p);
+      }
+    }
+    const int nf = freed.size();
+    mfem::DenseMatrix Kf(nf);
+    Kf = 0.0;
+    mfem::Vector bf(nf);
+    bf = 0.0;
+    for (int a = 0; a < nf; a++)
+    {
+      int p = freed[a];
+      for (int q = 0; q < N; q++)
+      {
+        double v = A(p, q);
+        if (v == 0.0)
+        {
+          continue;
+        }
+        if (fl[q] >= 0)
+        {
+          Kf(a, fl[q]) += v;
+        }
+        else if (dir[q])
+        {
+          bf(a) -= v * udir[q];
+        }
+      }
+    }
+    mfem::DenseMatrix Kfi(Kf);
+    Kfi.Invert();
+    mfem::Vector uf(nf);
+    Kfi.Mult(bf, uf);
+    std::vector<double> u_full(N, 0.0);
+    for (int p = 0; p < N; p++)
+    {
+      if (dir[p])
+      {
+        u_full[p] = udir[p];
+      }
+    }
+    for (int a = 0; a < nf; a++)
+    {
+      u_full[freed[a]] = uf(a);
+    }
+
+    // Compare region-condensed to full-domain on region free DOFs (interior + interface).
+    double num = 0.0, den = 0.0;
+    for (int i = 0; i < nr; i++)
+    {
+      if (rm[i])
+      {
+        continue;
+      }
+      double us = u(idx(i));
+      double um = u_full[par[i]];
+      double e = us - um;
+      num += e * e;
+      den += um * um;
+    }
+    CHECK(std::sqrt(num / den) < 1.0e-10);
+  };
+
+  SECTION("uniform permittivity")
+  {
+    run(1.0, 1.0);
+  }
+  SECTION("contrast across interface")
+  {
+    run(1.0, 10.0);
+  }
+}
+
 }  // namespace palace
