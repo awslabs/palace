@@ -56,6 +56,32 @@ private:
 void MarkParentDofOwnership(const std::vector<const Substructure *> &subs,
                             int n_parent_dofs, std::vector<int> &owner);
 
+// Compact interface indexing from the ownership bitmask: gamma_index[p] in [0, nG) for
+// parent DOFs on an interface (more than one owner bit set), else -1. Returns nG.
+int BuildInterfaceIndex(const std::vector<int> &owner, std::vector<int> &gamma_index);
+
+// Environment Dirichlet-to-Neumann operator: the dense Schur complement S_E and load g_E of
+// an environment substructure, condensed onto the interface in parent orientation and the
+// compact interface indexing. Reusable across region redesigns that preserve the interface.
+//
+// A_env / f_env are the environment substructure's assembled operator and load (in its own
+// submesh DOFs); the problem-specific bilinear/linear forms are the caller's
+// responsibility.
+class DtNBoundaryOperator
+{
+public:
+  DtNBoundaryOperator(const Substructure &environment, const std::vector<int> &gamma_index,
+                      const mfem::SparseMatrix &A_env, const mfem::Vector &f_env);
+
+  int Size() const { return S_E.Height(); }
+  const mfem::DenseMatrix &Schur() const { return S_E; }  // nG x nG, parent orientation
+  const mfem::Vector &Load() const { return g_E; }        // nG
+
+private:
+  mfem::DenseMatrix S_E;
+  mfem::Vector g_E;
+};
+
 }  // namespace palace
 
 #endif  // PALACE_FEM_SUBSTRUCTURE_HPP
