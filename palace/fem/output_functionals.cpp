@@ -12,6 +12,7 @@
 #include <mutex>
 #include <numeric>
 #include <sstream>
+#include <tuple>
 #include "fem/boundary_physical_trace.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/face_sampling_plan.hpp"
@@ -132,19 +133,7 @@ void NormalizeReferencePoint(mfem::IntegrationPoint &ip)
 
 bool CanonicalPointLess(const mfem::IntegrationPoint &a, const mfem::IntegrationPoint &b)
 {
-  if (a.x != b.x)
-  {
-    return a.x < b.x;
-  }
-  if (a.y != b.y)
-  {
-    return a.y < b.y;
-  }
-  if (a.z != b.z)
-  {
-    return a.z < b.z;
-  }
-  return a.weight < b.weight;
+  return std::tie(a.x, a.y, a.z, a.weight) < std::tie(b.x, b.y, b.z, b.weight);
 }
 
 CanonicalMappedRule
