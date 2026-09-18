@@ -113,6 +113,16 @@ bool Table::insert(Column &&column)
   return true;
 }
 
+void Table::RebuildNameIndex()
+{
+  name_to_index.clear();
+  name_to_index.reserve(cols.size());
+  for (std::size_t i = 0; i < cols.size(); i++)
+  {
+    name_to_index[cols[i].name] = i;
+  }
+}
+
 Column &Table::operator[](std::string_view name)
 {
   auto it = name_to_index.find(std::string(name));

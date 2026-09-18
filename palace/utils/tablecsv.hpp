@@ -83,6 +83,8 @@ class Table
 
   // Map of column name to column index to avoid duplicate column names and allow
   // fast retrieval by name.
+  // TODO(C++20): a transparent hash and equal, so a key can be probed without building a
+  // std::string, and contains() instead of count().
   std::unordered_map<std::string, std::size_t> name_to_index;
 
   // Cache value to reserve vector space by default.
@@ -122,6 +124,10 @@ public:
   {
     return name_to_index.count(std::string(name)) > 0;
   }
+
+  // Rebuild the name index from the columns, for callers that reassign Column::name
+  // directly rather than going through insert.
+  void RebuildNameIndex();
 
   // Access columns via vector position or column name.
   inline Column &operator[](std::size_t idx) { return cols.at(idx); }
