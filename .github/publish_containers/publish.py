@@ -84,10 +84,12 @@ def plan(
 
     Every leg must be complete (both the OCI tar and the SIF present) and its
     arch label unique, so an incomplete or mislabelled leg is a hard error
-    rather than a silently partial publish. Completeness of the set of legs is
-    guaranteed upstream: this workflow only runs when the whole `Containers`
-    matrix succeeded (workflow_run.conclusion == 'success'), and the build's
-    artifact uploads are unconditional, so a successful run has every leg.
+    rather than a silently partial publish. Completeness of a run's own legs is
+    guaranteed upstream: the publisher only runs when the triggering build
+    succeeded (workflow_run.conclusion == 'success') and the build's artifact
+    uploads are unconditional, so a successful run has every leg it built. A
+    per-host non-tag build carries one leg; the release-matrix build carries the
+    full microarchitecture set — each publishes exactly what its own run built.
     """
     items: list[PublishItem] = []
     seen_labels: set[str] = set()

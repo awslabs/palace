@@ -1,0 +1,38 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Containers (x64)
+
+# Non-tag x64 container build (push to main, PRs, manual dispatch).
+#
+# Builds the runner's native x64 microarchitecture (sapphirerapids on the c7i
+# host). This is its own top-level workflow so its container publishes as soon
+# as it is built, without waiting for the arm64 or gpu legs. Release tags are
+# built by the full matrix in containers.yml instead, so tags are excluded here.
+#
+# Dispatching IS a publish request: the trusted publish-containers workflow
+# (which runs from `main`) authorizes it. This workflow holds no credentials and
+# makes no publish decision.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # 'labeled' so adding the `push-containers` label triggers a prototype
+    # deploy; the rest are the usual PR-build triggers.
+    types: [opened, reopened, synchronize, labeled]
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/container-build-leg.yml
+    with:
+      runner: x64
