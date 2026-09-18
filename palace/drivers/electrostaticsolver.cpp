@@ -11,8 +11,10 @@
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -21,6 +23,30 @@ namespace palace
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring (region-condensed) path: condense the environment to a Dirichlet-to-
+  // Neumann boundary operator and solve the region of interest against it, reporting the
+  // electrostatic energy. Phase 1 electrostatic MVP (single excitation).
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    Vector u = sub.SolveRegion();
+    const double energy = sub.ElectrostaticEnergy(u);
+    Mpi::Print("\nSubstructuring region-condensed electrostatic solve complete\n"
+               " Region global true dofs = {:d}, electrostatic energy = {:.9e}\n",
+               sub.RegionGlobalTrueVSize(), energy);
+    if (root)
+    {
+      TableWithCSVFile output(post_dir / "substructuring.csv");
+      output.table.insert(Column("idx", "i", 0, 0, 2, ""));
+      output.table.insert("energy", "E");
+      output.table["idx"] << 1.0;
+      output.table["energy"] << energy;
+      output.WriteFullTableTrunc();
+    }
+    return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};
+  }
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
