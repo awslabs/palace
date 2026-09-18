@@ -198,7 +198,7 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
         case["Calibration"] = {"Label": "fixture calibration", "BaseCase": case_id,
                                "SeedCommandOptions": seed, "MetricCommandOptions": metric,
-                               "ProductionValues": production}
+                               "ProductionValuesBefore34B": production}
         if adaptation is not None:
             case["Calibration"]["AdaptationCommandOptions"] = adaptation
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -249,6 +249,53 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
             self.assertTrue(verify_case(manifest_path, audits, "base")["Passed"])
 
+    def test_production_recipe_options_are_bound_to_the_recorded_commands(self):
+        # Supervisor decision 34B: a production manifest records its recipe options
+        # (ProductionRecipe) and every production case's recorded seed / metric /
+        # adaptation command must execute each of them exactly once at its value.
+        normal, radius = fixture_suite.NORMAL_SIZE, fixture_suite.CORNER_ISOTROPY_RADIUS
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self.fixture(root)
+            def declare(seed, metric, adaptation):
+                labeled = json.loads(manifest_path.read_text())
+                labeled["ProductionRecipe"] = {"Label": "fixture recipe",
+                                               "SeedCommandOptions": seed,
+                                               "MetricCommandOptions": metric,
+                                               "AdaptationCommandOptions": adaptation}
+                manifest_path.write_text(json.dumps(labeled, indent=2) + "\n")
+            declare({"--lc-fine": normal}, {"--normal": normal, "--tangent": radius},
+                    {"--hmin": 0.1})
+            report = verify_case(manifest_path, audits, "base")
+            self.assertTrue(report["Passed"], report["Failures"])
+            self.assertIn("validate_production_recipe_commands", report["ProductionFunctions"])
+            rejected = (
+                # The recorded seed executed the pre-change value, not the recipe's.
+                ({"--lc-fine": normal / 2}, {"--normal": normal}, {"--hmin": 0.1},
+                 "seed-generation command does not execute the production recipe option --lc-fine"),
+                # A recipe option the recorded metric command never executed.
+                ({"--lc-fine": normal}, {"--far-growth": 0.5}, {"--hmin": 0.1},
+                 "metric-preparation command does not execute the production recipe option --far-growth"),
+                # The adapter hmin of the recipe differs from the executed one.
+                ({"--lc-fine": normal}, {"--normal": normal}, {"--hmin": 0.004},
+                 "native-adaptation-mmg command does not execute the production recipe option --hmin"))
+            for seed, metric, adaptation, message in rejected:
+                declare(seed, metric, adaptation)
+                report = verify_case(manifest_path, audits, "base")
+                self.assertFalse(report["Passed"], (seed, metric, adaptation))
+                for entry in report["Entries"].values():
+                    self.assertIn(message, entry["Error"] or "", (seed, metric, adaptation))
+            # A recipe block without finite values for every stage fails the manifest.
+            declare({"--lc-fine": normal}, {}, {"--hmin": 0.1})
+            with self.assertRaisesRegex(ValueError, "Production recipe must bind"):
+                verify_case(manifest_path, audits, "base")
+            # A calibration manifest cannot carry a production recipe.
+            declare({"--lc-fine": normal}, {"--normal": normal}, {"--hmin": 0.1})
+            labeled = json.loads(manifest_path.read_text())
+            labeled["Calibration"] = {"Purpose": "fixture calibration manifest"}
+            manifest_path.write_text(json.dumps(labeled, indent=2) + "\n")
+            with self.assertRaisesRegex(ValueError, "cannot carry a production recipe"):
+                verify_case(manifest_path, audits, "base")
+
     def test_validate_calibration_commands_reads_the_recorded_argv_numerically(self):
         # Recorded argv tokens are strings (".05" and "0.05" are the same value); a
         # repeated option is not "exactly once"; option=value tokens are not executed.
@@ -262,13 +309,13 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
                                                     "--minimum-scaled-jacobian", ".01"]}}
         case = {"Calibration": {"SeedCommandOptions": {"--lc-tangent": 0.05},
                                 "MetricCommandOptions": {"--far-growth": 0.5},
-                                "ProductionValues": {"--lc-tangent": 0.1, "--far-growth": 1.0}}}
+                                "ProductionValuesBefore34B": {"--lc-tangent": 0.1, "--far-growth": 1.0}}}
         validate_calibration_commands(case, stages)
         validate_calibration_commands({}, stages)
         # An adaptation block binds --hmin; without the block hmin is not declared.
         halved = {"Calibration": {**case["Calibration"],
                                   "AdaptationCommandOptions": {"--hmin": 0.0125},
-                                  "ProductionValues": {**case["Calibration"]["ProductionValues"],
+                                  "ProductionValuesBefore34B": {**case["Calibration"]["ProductionValuesBefore34B"],
                                                        "--hmin": 0.025}}}
         with self.assertRaisesRegex(ValueError, "--hmin=0.0125 exactly once"):
             validate_calibration_commands(halved, stages)
@@ -287,7 +334,7 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         # every declaring stage executes it and a differing value is rejected.
         shared = {"Calibration": {"SeedCommandOptions": {"--edge-size": 0.004},
                                   "MetricCommandOptions": {"--edge-size": 0.004},
-                                  "ProductionValues": {"--edge-size": 0.0}}}
+                                  "ProductionValuesBefore34B": {"--edge-size": 0.0}}}
         layered = {**stages,
                    "seed-generation": {"Command": ["julia", "seed.jl", "--edge-size", ".004"]},
                    "metric-preparation": {"Command": ["python3", "metric.py", "--edge-size", "0.004"]}}
@@ -307,7 +354,7 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         # The label-restoration command is bound the same way (RestorationCommandOptions).
         restored = {"Calibration": {"RestorationCommandOptions": {"--edge-layer-maximum-aspect": 100.},
                                     "SeedCommandOptions": {"--edge-layer-maximum-aspect": 100.},
-                                    "ProductionValues": {"--edge-layer-maximum-aspect": 0.}}}
+                                    "ProductionValuesBefore34B": {"--edge-layer-maximum-aspect": 0.}}}
         ruled = {**stages,
                  "seed-generation": {"Command": ["julia", "seed.jl", "--edge-layer-maximum-aspect", "100"]},
                  "label-restoration": {"Command": ["python3", "restore.py", "--edge-layer-maximum-aspect", "100"]}}

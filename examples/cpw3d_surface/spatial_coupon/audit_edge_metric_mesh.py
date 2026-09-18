@@ -9,8 +9,8 @@ import meshio
 import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from edge_volume_metric import (cluster_coplanar_triangles,edge_layer_cells,match_equivalent_planes,
-                                segment_distances)
+from edge_volume_metric import (EDGE_LAYER_CELL_RULE,cluster_coplanar_triangles,edge_layer_cells,
+                                match_equivalent_planes,segment_distances)
 from mesh_array_io import read_mesh
 from semantic_mesh_contract import (boundary_adjacency, boundary_attributes,
                                     load_semantic_contract, metric_surface_attributes,
@@ -134,6 +134,23 @@ def matched_planar_patch_areas(before,after):
             for row,j in zip(left,mapping)]
 
 
+# Achieved-anisotropy design gate (supervisor decisions 31 and 35): the gate judges the
+# band sample within one NormalSize of the physical segments outside a recorded edge
+# layer.  When a recorded layer covers that whole sample (every cell within one
+# NormalSize is a layer cell) the gate is not applicable by construction: the layer's
+# design statement is the bound EdgeLayer aspect rule, and the cells around the layer
+# within three NormalSize are the layer-adjacent band, reported and never gated.
+BAND_GATE_CUTOFFS=(1.,3.)
+ANISOTROPY_GATE_APPLIED='band within one NormalSize outside the recorded edge layer'
+ANISOTROPY_GATE_NOT_APPLICABLE='not-applicable: layer-covered band'
+LAYER_ADJACENT_BAND_RULE=('layer-adjacent band: band cells (centroid within three NormalSize of a '
+                          'physical segment, away from the corners) that are not edge-layer cells; '
+                          'the transition shell between the seeded edge layer and the NormalSize '
+                          'band, graded by the layer rows and the frozen seed tangential grid; its '
+                          'anisotropy is not a design intent and is reported, not gated (supervisor '
+                          'decision 35: E/SA never regressed across V1/V2/EL4/EL4c, physics-03..06)')
+
+
 def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
     """Tangential / transverse extents of the band cells (centroid within 1 or 3
     NormalSize of a physical segment, away from the corners) as 10/50/90 percentiles.
@@ -143,7 +160,9 @@ def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
     recipe's RequiredReach, of a layer span) are the layer's own statistics
     ('EdgeLayer', same percentiles) and are excluded from the band statistics: the
     band anisotropy design gate judges the metric-driven band, the layer's design
-    statement is the bound EdgeLayer aspect rule.
+    statement is the bound EdgeLayer aspect rule.  For the band cells outside the
+    layer the range of the nearest-vertex distance to a layer span is recorded
+    ('NearestSpanVertexDistance'), so a layer-adjacent band is asserted from the mesh.
     """
     t,_=blocks(mesh,'tetra');xyz=mesh.points[t];center=xyz.mean(axis=1)
     segments=recipe['PhysicalSegments'];corners=np.asarray(recipe['TruePhysicalCorners'])
@@ -154,6 +173,12 @@ def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
     for c in corners:dc=np.minimum(dc,np.linalg.norm(center-c,axis=1))
     in_layer=(np.zeros(len(t),dtype=bool) if layer_spans is None else
               edge_layer_cells(mesh.points,t,layer_spans,layer_reach))
+    span_distance=None
+    if layer_spans is not None:
+        vertex_distance=np.full(len(mesh.points),np.inf)
+        for span in np.asarray(layer_spans,dtype=float).reshape(-1,6):
+            vertex_distance=np.minimum(vertex_distance,segment_distances(mesh.points,span)[0])
+        span_distance=vertex_distance[t].min(axis=1)
     fine=recipe['NormalSize'];tangent=recipe['TangentialSize'];reports={}
     def percentiles(ids):
         widths=[]
@@ -168,7 +193,7 @@ def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
             widths.extend(np.column_stack((np.ptp(xyz[selected]@direction,axis=1),np.ptp(values,axis=1))))
         widths=np.asarray(widths)
         return np.percentile(widths,[10,50,90],axis=0).tolist() if len(widths) else []
-    for cutoff in (1.,3.):
+    for cutoff in BAND_GATE_CUTOFFS:
         band=(distance<cutoff*fine)&(dc>5*tangent)
         chosen=np.flatnonzero(band&~in_layer);layer=np.flatnonzero(band&in_layer)
         reports[str(cutoff)]={'Cells':len(chosen),'DistanceCutoff':cutoff*fine,
@@ -177,7 +202,58 @@ def directional_widths(mesh,recipe,layer_spans=None,layer_reach=None):
         if layer_spans is not None:
             reports[str(cutoff)]['EdgeLayer']={'Cells':int(len(layer)),'Reach':float(layer_reach),
                 'WidthsTangentialTransverse1Transverse2':percentiles(layer)}
+            reports[str(cutoff)]['NearestSpanVertexDistance']=(
+                {'Minimum':float(span_distance[chosen].min()),'Maximum':float(span_distance[chosen].max())}
+                if len(chosen) else None)
     return reports
+
+
+def _anisotropy_statistics(sample):
+    """TangentialP50 and the transverse P90s of one directional-width sample."""
+    percentiles=sample['WidthsTangentialTransverse1Transverse2']
+    if not percentiles:return {'TangentialP50':None,'Transverse1P90':None,'Transverse2P90':None}
+    return {'TangentialP50':percentiles[1][0],'Transverse1P90':percentiles[2][1],
+            'Transverse2P90':percentiles[2][2]}
+
+
+def achieved_anisotropy(widths,normal_size,layer=None):
+    """The AchievedAnisotropy record judged by the design gate.
+
+    The gated sample is the band within one NormalSize outside a recorded edge layer
+    (the first non-empty cutoff when no layer is recorded, as before).  With a
+    recorded layer covering every cell of that band the record is 'not applicable
+    by construction' (Samples 0, Gate ANISOTROPY_GATE_NOT_APPLICABLE); the layer's
+    own statistics ('EdgeLayer') and the layer-adjacent band ('LayerAdjacentBand':
+    the three-NormalSize band outside the layer with its transverse P90 over
+    NormalSize, the MaximumNormalFactor-equivalent) are recorded either way.
+    """
+    first=widths[str(BAND_GATE_CUTOFFS[0])];outer=widths[str(BAND_GATE_CUTOFFS[-1])]
+    sample=next((value for value in widths.values() if value['Cells']),None)
+    gate=ANISOTROPY_GATE_APPLIED;layer_record=adjacent=None
+    if layer is not None:
+        layer_widths=first['EdgeLayer']
+        layer_record={'Cells':layer_widths['Cells'],'Reach':layer_widths['Reach'],
+                      'EdgeSize':float(layer['EdgeSize']),'Aspect':float(layer['Aspect']),
+                      **_anisotropy_statistics(layer_widths),
+                      'Rule':EDGE_LAYER_CELL_RULE+'; excluded from the band anisotropy statistics, '
+                             'whose design gate judges the metric-driven band; the layer\'s design '
+                             'statement is the bound EdgeLayer aspect rule '
+                             '(mesh_stage_contract.validate_edge_layer)'}
+        outer_statistics=_anisotropy_statistics(outer)
+        transverse=[outer_statistics['Transverse1P90'],outer_statistics['Transverse2P90']]
+        adjacent={'Cells':outer['Cells'],'DistanceCutoff':outer['DistanceCutoff'],
+                  'NearestSpanVertexDistance':outer['NearestSpanVertexDistance'],
+                  **outer_statistics,
+                  'TransverseP90OverNormalSize':(max(transverse)/normal_size
+                                                 if outer['Cells'] else None),
+                  'Rule':LAYER_ADJACENT_BAND_RULE}
+        if not first['Cells'] and first['ExcludedEdgeLayerCells']:
+            sample=first;gate=ANISOTROPY_GATE_NOT_APPLICABLE
+    if sample is None:raise ValueError('No directional-width samples')
+    return {'Samples':sample['Cells'],'DistanceCutoff':sample['DistanceCutoff'],
+            'NormalTarget':normal_size,**_anisotropy_statistics(sample),
+            'ExcludedEdgeLayerCells':sample['ExcludedEdgeLayerCells'],'Gate':gate,
+            'LayerAdjacentBand':adjacent,'EdgeLayer':layer_record}
 
 
 def main():

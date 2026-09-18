@@ -28,9 +28,12 @@ from general_mesh_audit_producer import (KINDS, VARIANT_AUDITS_KIND,
                                          produce as produce_audit, produce_variant_audits)
 from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, build_record,
                                   build_record_from_stage_reports)
+from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT_APPLICABLE,
+                                    LAYER_ADJACENT_BAND_RULE)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, audit_manifest_evidence, case_gates,
-                                   run_manifest, sha256, validate_manifest)
+                                   layer_covered_band, run_manifest, sha256, validate_manifest,
+                                   validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, validate_stage_report,
                                  validate_tool_invocation)
@@ -2292,6 +2295,190 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                         "ten-edge-6791f1c84123"}}
             self.assertEqual(remote["four-edge-9d2cb9bbb3fe"]["DiscoveredEdgeCount"], 4)
             self.assertEqual(remote["ten-edge-6791f1c84123"]["DiscoveredEdgeCount"], 10)
+
+
+class AchievedAnisotropyDesignGateTest(unittest.TestCase):
+    """Decisions 34B/35: the production manifest records the EL4c recipe; the
+    achieved-anisotropy design gate judges the one-NormalSize band outside a recorded
+    edge layer and is not applicable by construction on a layer-covered band, whose
+    layer-adjacent band is recorded and never gated."""
+
+    def setUp(self):
+        self.production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        self.gates = self.production["Gates"]
+        case = self.production["Cases"][0]
+        self.contract = load_semantic_contract(HERE / "testdata" / "one-edge-semantic.json")
+        self.binding = {"CaseId": case["Id"], "Variant": "identity",
+                        "Transform": case["Variants"][0]["Transform"],
+                        "TransformSHA256": "x", "InputSHA256": {"Process": "p", "SemanticContract": "s",
+                                                                "MeshRecipe": "r"},
+                        "ToolSHA256": {}, "StageToolSHA256": {}}
+
+    @staticmethod
+    def covered(**overrides):
+        # The EL4c identity measurement (decision 35 record).
+        adjacent = {"Cells": 5955, "DistanceCutoff": .025 * 3.,
+                    "NearestSpanVertexDistance": {"Minimum": .0334, "Maximum": .083},
+                    "TangentialP50": .05, "Transverse1P90": .0405, "Transverse2P90": .0665,
+                    "TransverseP90OverNormalSize": .0665 / .025, "Rule": LAYER_ADJACENT_BAND_RULE}
+        layer = {"Cells": 26870, "Reach": .0334, "EdgeSize": .004, "Aspect": 4.,
+                 "TangentialP50": .0187, "Transverse1P90": .0246, "Transverse2P90": .0469, "Rule": "r"}
+        record = {"Samples": 0, "DistanceCutoff": .025, "NormalTarget": .025, "TangentialP50": None,
+                  "Transverse1P90": None, "Transverse2P90": None, "ExcludedEdgeLayerCells": 26870,
+                  "Gate": ANISOTROPY_GATE_NOT_APPLICABLE, "LayerAdjacentBand": adjacent,
+                  "EdgeLayer": layer}
+        record.update(overrides)
+        return record
+
+    def failures(self, widths, gates=None):
+        names = audit_manifest_evidence({"AchievedAnisotropy": widths}, gates or self.gates,
+                                        self.contract, self.binding)
+        return "achieved-anisotropy" in names
+
+    def test_production_manifest_records_the_el4c_recipe(self):
+        recipe = validate_production_recipe(self.production)
+        self.assertEqual(recipe["SeedCommandOptions"],
+                         {"--lc-tangent": .05, "--edge-size": .004, "--edge-growth-ratio": 2.,
+                          "--edge-layer-aspect": 4., "--corner-size": .004})
+        self.assertEqual(recipe["MetricCommandOptions"],
+                         {"--far-growth": .5, "--edge-size": .004, "--edge-growth-ratio": 2.,
+                          "--edge-layer-aspect": 4., "--corner-size": .004})
+        self.assertEqual(recipe["AdaptationCommandOptions"], {"--hmin": .004})
+        # The physical gates and the design gate values are unchanged.
+        self.assertEqual(self.gates["MinimumAchievedAspect"], 1.5)
+        self.assertEqual(self.gates["MaximumNormalFactor"], 2.0)
+        self.assertEqual(self.gates["MinimumScaledJacobian"], .01)
+        self.assertEqual(self.gates["MaximumJacobianCondition"], 1000.)
+        self.assertEqual(self.gates["MaximumCornerAspect"], 4.)
+        self.assertEqual(self.gates["MaximumProtectedMeasureError"], 1e-8)
+        self.assertEqual(self.gates["MaximumElements"], 4000000)
+        self.assertEqual((self.gates["MaximumSeconds"], self.gates["MaximumRSSGiB"]), (1800, 8.))
+        # The calibration manifest never carries the block and its cases keep their
+        # pre-34B production values; EL4c is labeled as the adopted recipe.
+        calibration = json.loads((HERE / "geometry-independence-calibration-ma.json").read_text())
+        self.assertNotIn("ProductionRecipe", calibration)
+        with self.assertRaisesRegex(ValueError, "cannot carry a production recipe"):
+            validate_production_recipe({**calibration, "ProductionRecipe": recipe})
+        el4c = next(case for case in calibration["Cases"] if case["Id"] == "four-edge-calib-ma-el4c")
+        self.assertIn("AdoptedAsProductionRecipe", el4c["Calibration"])
+        for case in calibration["Cases"]:
+            self.assertNotIn("ProductionValues", case["Calibration"])
+            self.assertEqual(case["Calibration"]["ProductionValuesBefore34B"]["--lc-tangent"], .1)
+        self.assertEqual(el4c["Calibration"]["ProductionValuesBefore34B"]["--edge-size"], 0.)
+        self.assertEqual(el4c["Calibration"]["SeedCommandOptions"]["--lc-tangent"],
+                         recipe["SeedCommandOptions"]["--lc-tangent"])
+        self.assertEqual(el4c["Calibration"]["MetricCommandOptions"]["--far-growth"],
+                         recipe["MetricCommandOptions"]["--far-growth"])
+        self.assertEqual(el4c["Calibration"]["AdaptationCommandOptions"], recipe["AdaptationCommandOptions"])
+        # Malformed blocks are rejected.
+        for broken in ({**recipe, "AdaptationCommandOptions": {}},
+                       {**recipe, "SeedCommandOptions": {"--lc-tangent": "0.05"}},
+                       {**recipe, "MetricCommandOptions": {"far-growth": .5}}, []):
+            with self.assertRaisesRegex(ValueError, "Production recipe must bind"):
+                validate_production_recipe({**self.production, "ProductionRecipe": broken})
+
+    def test_production_recipe_commands_are_bound_exactly_once(self):
+        stages = {"seed-generation": {"Command": ["julia", "seed.jl", "--lc-tangent", ".05",
+                                                  "--edge-size", "0.004", "--edge-growth-ratio", "2",
+                                                  "--edge-layer-aspect", "4", "--corner-size", ".004"]},
+                  "metric-preparation": {"Command": ["python3", "metric.py", "--far-growth", "0.5",
+                                                     "--edge-size", ".004", "--edge-growth-ratio", "2.0",
+                                                     "--edge-layer-aspect", "4.0", "--corner-size", "0.004"]},
+                  "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin", ".004"]}}
+        case = self.production["Cases"][0]
+        validate_production_recipe_commands(self.production, case, stages)
+        validate_production_recipe_commands({}, case, stages)                 # no recipe block
+        validate_production_recipe_commands(self.production, {**case, "Calibration": {}}, stages)
+        for stage, command in (("seed-generation", ["julia", "seed.jl", "--lc-tangent", ".1",
+                                                    "--edge-size", "0.004", "--edge-growth-ratio", "2",
+                                                    "--edge-layer-aspect", "4", "--corner-size", ".004"]),
+                               ("metric-preparation", ["python3", "metric.py", "--edge-size", ".004",
+                                                       "--edge-growth-ratio", "2", "--edge-layer-aspect",
+                                                       "4", "--corner-size", "0.004"]),
+                               ("native-adaptation-mmg", ["python3", "adapt.py", "--hmin", ".025"]),
+                               ("native-adaptation-mmg", ["python3", "adapt.py", "--hmin", ".004",
+                                                          "--hmin", ".004"])):
+            with self.assertRaisesRegex(ValueError, f"{stage} command does not execute the production recipe"):
+                validate_production_recipe_commands(self.production, case, {**stages, stage: {"Command": command}})
+
+    def test_layer_covered_band_is_not_applicable_and_the_adjacent_band_is_informational(self):
+        self.assertTrue(layer_covered_band(self.covered()))
+        self.assertFalse(self.failures(self.covered()))
+        # The layer-adjacent band's values do not gate: aspect 0.75 and transverse P90
+        # 2.66 x NormalSize are recorded, not judged.
+        loose = self.covered(); loose["LayerAdjacentBand"] = dict(
+            loose["LayerAdjacentBand"], TangentialP50=.01, Transverse1P90=.2, Transverse2P90=.3,
+            TransverseP90OverNormalSize=.3 / .025)
+        self.assertFalse(self.failures(loose))
+        # Negatives: anything less than the complete not-applicable record is judged as
+        # an ordinary band sample and fails on Samples 0 or the gate values.
+        negatives = {
+            "band cells outside the layer": {"Samples": 5, "TangentialP50": .05, "Transverse1P90": .04,
+                                             "Transverse2P90": .066},
+            "no layer cells": {"ExcludedEdgeLayerCells": 0},
+            "gate not declared": {"Gate": ANISOTROPY_GATE_APPLIED},
+            "no layer record": {"EdgeLayer": None},
+            "no adjacent band": {"LayerAdjacentBand": None},
+            "adjacent band without cells": {"LayerAdjacentBand": dict(self.covered()["LayerAdjacentBand"],
+                                                                      Cells=0)},
+            "adjacent band statistic missing": {"LayerAdjacentBand": dict(
+                self.covered()["LayerAdjacentBand"], Transverse2P90=None)},
+            "normal factor inconsistent": {"LayerAdjacentBand": dict(
+                self.covered()["LayerAdjacentBand"], TransverseP90OverNormalSize=2.)},
+            "adjacent band rule": {"LayerAdjacentBand": dict(self.covered()["LayerAdjacentBand"], Rule="x")},
+            "adjacent band cutoff": {"LayerAdjacentBand": dict(self.covered()["LayerAdjacentBand"],
+                                                               DistanceCutoff=.05)},
+            "gated sample cutoff": {"DistanceCutoff": .075},
+            "layer without cells": {"EdgeLayer": dict(self.covered()["EdgeLayer"], Cells=0)},
+            "no span distance": {"LayerAdjacentBand": dict(self.covered()["LayerAdjacentBand"],
+                                                           NearestSpanVertexDistance=None)},
+        }
+        for name, overrides in negatives.items():
+            with self.subTest(name=name):
+                record = self.covered(**overrides)
+                self.assertFalse(layer_covered_band(record))
+                self.assertTrue(self.failures(record))
+        # A band with cells outside the layer within one NormalSize is judged by 1.5 and
+        # the normal factor exactly as before (production four-edge: 0.0946 / 0.0500).
+        judged = {"Samples": 2103, "DistanceCutoff": .025, "NormalTarget": .025, "TangentialP50": .0946,
+                  "Transverse1P90": .0417, "Transverse2P90": .05, "ExcludedEdgeLayerCells": 0,
+                  "Gate": ANISOTROPY_GATE_APPLIED, "LayerAdjacentBand": None, "EdgeLayer": None}
+        self.assertFalse(self.failures(judged))
+        self.assertTrue(self.failures({**judged, "TangentialP50": .057}))        # V2: 1.14 < 1.5
+        self.assertTrue(self.failures({**judged, "Transverse2P90": .0665}))       # > 2 x NormalSize
+        self.assertTrue(self.failures({**judged, "Gate": None}))
+        self.assertTrue(self.failures({**judged, "Gate": ANISOTROPY_GATE_NOT_APPLICABLE}))
+        self.assertTrue(self.failures({**judged, "Samples": 0}))
+
+    def test_covariance_compares_the_adjacent_band_when_the_gate_is_not_applicable(self):
+        comparison = {"MaximumRelativeVolumeError": 1e-8, "MaximumRelativeSurfaceMeasureError": 1e-8,
+                      "MaximumProtectedSupportHausdorff": 1e-8, "MaximumProtectedMeasureError": 1e-8,
+                      "MaximumQualityDistributionRelativeError": 1e-8,
+                      "MaximumAnisotropyRelativeError": .35, "MaximumComplexityRatio": 1.1}
+        physical = {"LabelsMaterialsAdjacencyMatch": True,
+                    "ReferenceInvariants": {"Volume:1": 1., "Area:1": 1.},
+                    "TransformedInvariants": {"Volume:1": 1., "Area:1": 1.},
+                    "ProtectedSurfaces": {"PlaneSupportsMatch": True, "TopologyMatches": True,
+                                          "MaximumSupportVertexDistance": 0., "MaximumRelativeMeasureError": 0.},
+                    "ReferenceQuality": {"PositiveOrientation": True, "ScaledJacobianQuantiles": [.1],
+                                         "JacobianConditionQuantiles": [2.]},
+                    "TransformedQuality": {"PositiveOrientation": True, "ScaledJacobianQuantiles": [.1],
+                                           "JacobianConditionQuantiles": [2.]}}
+        def evidence(widths):
+            return {"PhysicalCovariance": physical, "AchievedAnisotropy": widths,
+                    "Complexity": {"H1DOFs": 100}, "Resources": {"Elements": 50}}
+        reference, transformed = evidence(self.covered()), evidence(self.covered())
+        self.assertEqual(_physical_comparison_failures(reference, transformed, comparison), [])
+        # The adjacent band is what covariance compares ...
+        rotated = self.covered(); rotated["LayerAdjacentBand"] = dict(
+            rotated["LayerAdjacentBand"], TangentialP50=.1)
+        self.assertEqual(_physical_comparison_failures(reference, evidence(rotated), comparison),
+                         ["local-frame anisotropy"])
+        # ... and the two variants must agree on whether the gate applied.
+        applied = self.covered(Samples=5, TangentialP50=.05, Transverse1P90=.04, Transverse2P90=.066,
+                               Gate=ANISOTROPY_GATE_APPLIED)
+        self.assertEqual(_physical_comparison_failures(reference, evidence(applied), comparison),
+                         ["local-frame anisotropy"])
 
 
 class EdgeLayerQualityGateTest(unittest.TestCase):

@@ -17,7 +17,8 @@ import meshio
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 
-from audit_edge_metric_mesh import analyze, blocks, directional_widths, planar_patch_key
+from audit_edge_metric_mesh import (achieved_anisotropy, analyze, blocks, directional_widths,
+                                    planar_patch_key)
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_CELL_RULE,
                                 cluster_coplanar_triangles, edge_layer_cells,
                                 edge_layer_quality, edge_layer_required_reach,
@@ -834,7 +835,9 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
         homogeneous_corners = np.column_stack((corners, np.ones(len(corners))))
         transformed_recipe["TruePhysicalCorners"] = (homogeneous_corners @ matrix.T)[:, :3].tolist()
     # A recorded edge layer (restoration recipe EdgeLayer) is measured on its own:
-    # its cells are excluded from the band anisotropy statistics (decision 31).
+    # its cells are excluded from the band anisotropy statistics (decision 31) and
+    # the design gate is not applicable by construction when the layer covers the
+    # whole one-NormalSize band (decision 35; audit_edge_metric_mesh.achieved_anisotropy).
     layer = json.loads(Path(restoration_recipe_path).read_text()).get("EdgeLayer")
     layer_spans = layer_reach = None
     if isinstance(layer, dict):
@@ -843,23 +846,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
         layer_spans = (homogeneous_spans @ matrix.T)[..., :3].reshape(-1, 6)
         layer_reach = edge_layer_required_reach(layer)
     widths = directional_widths(mesh, transformed_recipe, layer_spans, layer_reach)
-    samples = next((value for value in widths.values() if value["Cells"]), None)
-    if samples is None:
-        raise ValueError("No directional-width samples")
-    percentiles = samples["WidthsTangentialTransverse1Transverse2"]
-    layer_samples = samples.get("EdgeLayer")
-    layer_anisotropy = None
-    if layer_samples is not None:
-        layer_percentiles = layer_samples["WidthsTangentialTransverse1Transverse2"]
-        layer_anisotropy = {"Cells": layer_samples["Cells"], "Reach": layer_samples["Reach"],
-                            "EdgeSize": float(layer["EdgeSize"]), "Aspect": float(layer["Aspect"]),
-                            "TangentialP50": layer_percentiles[1][0] if layer_percentiles else None,
-                            "Transverse1P90": layer_percentiles[2][1] if layer_percentiles else None,
-                            "Transverse2P90": layer_percentiles[2][2] if layer_percentiles else None,
-                            "Rule": EDGE_LAYER_CELL_RULE + "; excluded from the band anisotropy "
-                                    "statistics, whose design gate judges the metric-driven band; "
-                                    "the layer's design statement is the bound EdgeLayer aspect "
-                                    "rule (mesh_stage_contract.validate_edge_layer)"}
+    anisotropy = achieved_anisotropy(widths, transformed_recipe["NormalSize"],
+                                     layer if isinstance(layer, dict) else None)
     _, material_attributes = blocks(mesh, "tetra")
     _, boundary_attributes = blocks(mesh, "triangle")
     actual_boundary_attributes = sorted(int(value)
@@ -893,13 +881,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "CutNeighborhoods": _point_aspects(mesh, transformed(cut_points)),
               "ProtectedSurfaces": _protected_surface_report(
                   transformed_reference, mesh, contract),
-              "AchievedAnisotropy": {"Samples": samples["Cells"],
-                                     "NormalTarget": transformed_recipe["NormalSize"],
-                                     "TangentialP50": percentiles[1][0],
-                                     "Transverse1P90": percentiles[2][1],
-                                     "Transverse2P90": percentiles[2][2],
-                                     "ExcludedEdgeLayerCells": samples["ExcludedEdgeLayerCells"],
-                                     "EdgeLayer": layer_anisotropy},
+              "AchievedAnisotropy": anisotropy,
               "TraceDiagonal": {**_global_diagonal_bands(
                   mesh, transformed_recipe["PhysicalSegments"],
                   transformed_recipe["NormalSize"], transformed_footprint,

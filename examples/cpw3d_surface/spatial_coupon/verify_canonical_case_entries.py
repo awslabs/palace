@@ -27,14 +27,16 @@ from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUAL
                                    _check_artifact, _finite_number,
                                    _physical_comparison_failures, _validate_bound_records,
                                    _validate_mesh, audit_manifest_evidence, canonical_sha256,
-                                   case_gates, sha256, validate_manifest)
+                                   case_gates, option_values as _option_values, sha256,
+                                   validate_manifest, validate_production_recipe_commands)
 from semantic_mesh_contract import load_semantic_contract, validate_feature_topology
 
 PRODUCTION_FUNCTIONS = ["validate_manifest", "validate_feature_topology",
                         "audit_manifest_evidence", "_check_artifact", "_validate_mesh",
                         "_validate_bound_records", "same_canonical_build",
                         "_physical_comparison_failures", "validate_calibration_commands",
-                        "validate_edge_layer_quality_rule_binding", "case_gates"]
+                        "validate_edge_layer_quality_rule_binding", "case_gates",
+                        "validate_production_recipe_commands"]
 _EXPECTED_ERRORS = (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError)
 # A calibration case (labeled calibration manifest) declares the recipe options that
 # differ from production per stage command; the canonical cache key does not encode
@@ -47,31 +49,26 @@ CALIBRATION_STAGE_OPTIONS = {"seed-generation": "SeedCommandOptions",
 # The edge-layer quality rule (decision 32) is a manifest gate; the seed and the
 # label restorer of a case declaring Calibration.EdgeLayerQualityRule execute its bound.
 EDGE_LAYER_QUALITY_RULE_STAGES = ("seed-generation", "label-restoration")
-
-
-def _option_values(command, option):
-    """Every value the recorded argv passes to `option` (separate tokens), as floats."""
-    values = []
-    for index, token in enumerate(command):
-        if token == option:
-            if index + 1 >= len(command):
-                raise ValueError(f"recorded command ends with option {option}")
-            values.append(float(command[index + 1]))
-    return values
+# The production values a calibration case's options are declared against: those of
+# the production recipe before decision 34B (seed --lc-tangent 0.1, metric
+# --far-growth 1.0, no edge layer, adapter --hmin NormalSize, no corner grading).
+CALIBRATION_PRODUCTION_VALUES_KEY = "ProductionValuesBefore34B"
 
 
 def validate_calibration_commands(case, bounded_stages):
     """For a case with a `Calibration` block, the recorded seed-generation,
     metric-preparation and native-adaptation commands must execute exactly each
-    declared option/value pair and none of the `ProductionValues` of those options; an
-    undeclared production option may appear only at its production value.  An option
+    declared option/value pair and none of the `ProductionValuesBefore34B` of those
+    options (the production values at the time of the study, before supervisor decision
+    34B adopted the EL4c recipe); an undeclared production option may appear only at
+    its recorded pre-34B production value.  An option
     shared by several stage commands (the seed and the metric both take
     `--edge-size`) is declared for each stage with one value.  Raises ValueError
     otherwise."""
     calibration = case.get("Calibration")
     if calibration is None:
         return
-    production = calibration["ProductionValues"]
+    production = calibration[CALIBRATION_PRODUCTION_VALUES_KEY]
     declared = {}
     for stage, key in CALIBRATION_STAGE_OPTIONS.items():
         command = bounded_stages[stage]["Command"]
@@ -172,6 +169,7 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
     bounded_record = json.loads(_check_artifact(evidence_path.parent, bounded_item,
                                                 "audit record").read_text())
     validate_calibration_commands(case, bounded_record["BoundedStages"])
+    validate_production_recipe_commands(manifest, case, bounded_record["BoundedStages"])
     validate_edge_layer_quality_rule_binding(manifest, case, bounded_record["BoundedStages"])
     if shared["variant_digests"] & variant_digests:
         raise ValueError("variant audit/placement records must be content-distinct")

@@ -11,21 +11,103 @@ gates.
 ## Frozen inputs and required matrix
 
 `geometry-independence-suite.json` is the only production manifest.
+
+## Production recipe (supervisor decision 34B, 2026-09-17)
+
+The production recipe is the EL4c calibration recipe, recorded in the manifest's
+`ProductionRecipe` block and executed by every production stage command:
+seed `--lc-tangent 0.05` (V1: the ridge grid at 2 x NormalSize), metric
+`--far-growth 0.5` (V2: half the growth rate of the normal size beyond the
+protected distance, widening the graded layer around every metal edge and
+junction line from 0.135 to 0.22 um), the seeded transverse edge layer
+`--edge-size 0.004 --edge-growth-ratio 2 --edge-layer-aspect 4` on seed and
+metric (rows 4/12/28 nm below NormalSize 0.025 with nested tangential rows
+12.5/25/50 nm on the 50 nm ridge grid; RequiredReach 0.0334; the adapter
+`--hmin 0.004` = EdgeSize), corner grading `--corner-size 0.004` on seed and
+metric (shells 4/8/16 nm at 4/12/28 nm inside every 0.1 um corner ball, rows to
+the ball boundary, 0.1 um of un-layered edge per corner), the corner balls and
+the layer as MMG required tetrahedra (decision 30) with the seed-side
+required-region gates (`--maximum-corner-aspect 4 --minimum-scaled-jacobian .01
+--maximum-jacobian-condition 1000 --maximum-quality-displacement-over-normal
+.75`, equal on seed and restorer). Every other parameter is unchanged (NormalSize
+0.25 x thickness, TangentialSize / CornerIsotropyRadius 4 x NormalSize, FarSize
+0.08 x radius, protected distance and surface radius 2 x NormalSize,
+TraceBasisSizeRatio 1, `--hgrad 1.15 --hausd 1e-8`, restoration bounds 0.25 /
+0.75). Before 34B production executed `--lc-tangent 0.1`, `--far-growth 1.0`,
+no edge layer (`--edge-size 0`), `--hmin` NormalSize and no corner grading;
+those values are recorded as `ProductionRecipe.ValuesBefore34B` and as the
+calibration cases' `ProductionValuesBefore34B`.
+Binding: `verify_canonical_case_entries.py` and `run_general_mesh_suite.py`
+(`general_mesh_manifest.validate_production_recipe_commands`) require the
+recorded seed-generation / metric-preparation / native-adaptation-mmg commands
+of every production case to execute each `SeedCommandOptions` /
+`MetricCommandOptions` / `AdaptationCommandOptions` pair exactly once at its
+value; the recipe's `EdgeLayer`, `CornerGrading` and `RequiredTetrahedra`
+records are bound by the stage contract as before. The canonical cache key
+does not encode recipe options (unchanged, documented limitation). A
+calibration manifest never carries `ProductionRecipe` (`validate_manifest`
+rejects it) and production cases still never carry `Calibration` or `EdgeLayer`
+blocks.
+Physical gates unchanged: MinimumScaledJacobian 0.01, MaximumJacobianCondition
+1000, MaximumCornerAspect 4.0, MaximumProtectedMeasureError 1e-8, orientation,
+ownership closure, MaximumElements 4,000,000, 1800 s / 8 GiB per stage (audits
+16 GiB), trace-diagonal 0. The calibration-only EdgeLayerQualityRule and the
+5,000,000 element cap stay in the calibration manifest only.
+Evidence (four-edge coupon vs the graded_v2 reference, 8.74M tets; p4, 80
+sources, 60 free-view): production before 34B (physics-02) E max 4.1%, SA max
+15%, p_MA median -10.08%, p_MS -1.46%, 0.453 node-h; V1/V2 (physics-03) E 60/60
+within 1% (max 0.95%), SA max 8.7%, p_MA -9.11 / -8.99%, 0.454 node-h; EL4
+(physics-04) p_MA -7.05%, p_MS -0.81%, E/SA no regression, PCG 22.4, 0.749
+node-h; EL1 1 nm x 50 nm (physics-05) p_MA -10.94% (worse), E/SA unchanged,
+0.836 node-h, rejected; EL4c (physics-06, PBS 44717) E 60/60 within 1% (max
+0.81%), SA max 8.56%, p_MS median -0.75%, p_MA median -6.63% / magnitude-
+weighted -5.00% / strongest-20 -5.05%, PCG mean 22.6 / max 33, 0.752 node-h per
+80-source p4 coupon, 3,471,507 tets (2.5x fewer than the reference). E and SA
+never regressed across V1/V2/EL4/EL4c.
+Design gate (supervisor decision 35, 2026-09-18): `achieved-anisotropy`
+(MinimumAchievedAspect 1.5 and MaximumNormalFactor 2.0, values unchanged) judges
+the band within one NormalSize of the physical segments outside the recorded
+edge layer (`audit_edge_metric_mesh.achieved_anisotropy`). When the recorded
+layer covers every cell of that band the gate is not applicable by construction
+(`AchievedAnisotropy.Gate` = `not-applicable: layer-covered band`, `Samples` 0;
+`general_mesh_manifest.layer_covered_band` accepts only the complete record):
+the layer's design statement is the bound EdgeLayer aspect rule
+(`AchievedAnisotropy.EdgeLayer`), and the layer-adjacent band - the band cells
+within three NormalSize outside the layer - is recorded informationally
+(`AchievedAnisotropy.LayerAdjacentBand`: cells, TangentialP50, transverse P90s,
+`TransverseP90OverNormalSize` - the MaximumNormalFactor-equivalent - and the
+nearest-vertex distance range to a span), never gated. Any one-NormalSize band
+sample with cells outside a recorded layer (no layer, or an edge without one)
+is judged by 1.5 and the normal factor as before. Rationale: the layer-adjacent
+band is the transition shell between the 4 nm layer and the 25 nm band, graded
+by the layer rows and the frozen 50 nm seed grid; its anisotropy is not a
+design intent (EL4c identity: the one-NormalSize band is 26,870 layer cells and
+0 others; the three-NormalSize band outside the layer is 5,955 cells with
+nearest vertices 33-83 nm from a span, TangentialP50 50.0 nm, transverse P90
+40.5/66.5 nm, 2.66 x NormalSize; the seed grid caps the band tangential at
+50 nm, so 1.5 is unreachable by any sample of a lc-tangent-0.05 recipe - V2
+measured 0.0571 / 0.0499 = 1.14); E/SA never regressed across V1/V2/EL4/EL4c
+(physics-03..06). The covariance comparison compares the layer-adjacent band
+of both placements when the gate is not applicable and requires both to agree
+on whether it applied.
+
 `geometry-independence-calibration-ma.json` is a separately labeled CALIBRATION
-manifest (supervisor decision 22: MA/MS metal-edge-layer h-study) whose two
+manifest (supervisor decision 22: MA/MS metal-edge-layer h-study) whose
 cases re-mesh the four-edge inputs with the recipe parameters listed in their
 `Calibration` blocks (V1 seed `--lc-tangent .05`; V2 additionally metric
-`--far-growth 0.5`); it mirrors the production tools and gates except the
-labeled anisotropy-design gate `MinimumAchievedAspect 0.9`, which can never be
-used by the production suite (asserted by `test_general_mesh_manifest.py`).
-The per-case verifier binds each calibration label to its build: the recorded
-`seed-generation` / `metric-preparation` / `native-adaptation-mmg` commands must
-execute exactly every `SeedCommandOptions` / `MetricCommandOptions` /
-`AdaptationCommandOptions` pair (numerically, exactly once)
-and none of the `ProductionValues` of those options, and an undeclared
-production option may appear only at its production value - the canonical cache
-key does not encode recipe options, so a root labeled V2 but built with the V1
-options is rejected. `refreeze_manifest_tools.py` recomputes the
+`--far-growth 0.5`; EL4/EL1/EL4c/EL1c below); it mirrors the production tools
+and gates except the labeled anisotropy-design gate `MinimumAchievedAspect 0.9`,
+which can never be used by the production suite (asserted by
+`test_general_mesh_manifest.py`). The per-case verifier binds each calibration
+label to its build: the recorded `seed-generation` / `metric-preparation` /
+`native-adaptation-mmg` commands must execute exactly every
+`SeedCommandOptions` / `MetricCommandOptions` / `AdaptationCommandOptions` pair
+(numerically, exactly once) and none of the `ProductionValuesBefore34B` of those
+options (the production values at the time of the study), and an undeclared
+production option may appear only at its pre-34B production value - the
+canonical cache key does not encode recipe options, so a root labeled V2 but
+built with the V1 options is rejected. The EL4c case is labeled
+`AdoptedAsProductionRecipe`; the study records stay bound to the pre-34B values. `refreeze_manifest_tools.py` recomputes the
 repository-tool digests of the production manifest and mirrors `Tools` /
 `StageToolSHA256` into the calibration manifest in one step (`--check` reports
 stale digests; runtimes, adapter and MMG library are never recomputed).
@@ -325,6 +407,9 @@ reported as `AchievedAnisotropy.EdgeLayer` with their own percentiles); the
 rule is keyed on the recipe's EdgeLayer record, never on a case, gate values
 are unchanged (production 1.5, calibration 0.9), and the layer's design
 statement remains the bound EdgeLayer aspect rule.
+Decision 35 (above, "Production recipe") completes this: with the production
+layer covering the whole one-NormalSize band the gate is not applicable by
+construction and the layer-adjacent band is recorded, never gated.
 Review of 836a1c19f (P1/P2, 2026-09-17): the seed optimizer gated the required
 set computed before its vertex moves (4 nm root: 199,572 gated, 199,992 listed
 by the metric stage on the moved seed), so `optimize_required_region!` now

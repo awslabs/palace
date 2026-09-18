@@ -1,13 +1,17 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The band anisotropy statistics exclude a recorded edge layer's cells and report
-them separately (supervisor decision 31)."""
+them separately (supervisor decision 31); a layer covering the whole one-NormalSize
+band makes the design gate not applicable by construction and records the
+layer-adjacent band informationally (supervisor decision 35)."""
 import unittest
 
 import meshio
 import numpy as np
 
-from audit_edge_metric_mesh import directional_widths
+from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT_APPLICABLE,
+                                    LAYER_ADJACENT_BAND_RULE, achieved_anisotropy,
+                                    directional_widths)
 
 
 def band_mesh():
@@ -56,6 +60,59 @@ class DirectionalWidthsTest(unittest.TestCase):
         self.assertLess(layer["WidthsTangentialTransverse1Transverse2"][2][2], .0015)
         with self.assertRaises(ValueError):
             directional_widths(mesh, recipe, layer_spans=[[1., 0., 0., 1.4, 0., 0.]], layer_reach=0.)
+
+    def test_achieved_anisotropy_record_and_layer_covered_band(self):
+        mesh = band_mesh()
+        recipe = {"PhysicalSegments": [[0., 0., 0., 3., 0., 0.]], "TruePhysicalCorners": [[-9., 0., 0.]],
+                  "NormalSize": .025, "TangentialSize": .1}
+        layer = {"EdgeSize": .001, "Aspect": 4.}
+        # No layer: the first non-empty cutoff is the gated sample, as before.
+        plain = achieved_anisotropy(directional_widths(mesh, recipe), .025)
+        self.assertEqual((plain["Gate"], plain["Samples"], plain["ExcludedEdgeLayerCells"]),
+                         (ANISOTROPY_GATE_APPLIED, 240, 0))       # the unrecorded layer rows
+        self.assertEqual(plain["DistanceCutoff"], .025)
+        self.assertLess(plain["TangentialP50"], .02)
+        self.assertIsNone(plain["EdgeLayer"]); self.assertIsNone(plain["LayerAdjacentBand"])
+        # With the layer recorded and band cells outside it within the gated cutoff, the
+        # gate applies to those cells and the adjacent band is still recorded.
+        spans = [[1., 0., 0., 1.4, 0., 0.]]
+        widths = directional_widths(mesh, recipe, layer_spans=spans, layer_reach=.005)
+        self.assertEqual(widths["1.0"]["Cells"], 0)                # band row centroids ~30 nm
+        self.assertEqual(widths["1.0"]["ExcludedEdgeLayerCells"], 240)
+        self.assertIsNone(widths["1.0"]["NearestSpanVertexDistance"])
+        outer = widths["3.0"]["NearestSpanVertexDistance"]
+        self.assertAlmostEqual(outer["Minimum"], .02 * np.sqrt(2))   # band row corner to the span
+        self.assertAlmostEqual(outer["Maximum"], np.sqrt(.575**2 + 2 * .02**2))  # last box past the span end
+        covered = achieved_anisotropy(widths, .025, layer)
+        self.assertEqual(covered["Gate"], ANISOTROPY_GATE_NOT_APPLICABLE)
+        self.assertEqual((covered["Samples"], covered["DistanceCutoff"], covered["ExcludedEdgeLayerCells"]),
+                         (0, .025, 240))
+        self.assertIsNone(covered["TangentialP50"])
+        adjacent = covered["LayerAdjacentBand"]
+        self.assertEqual((adjacent["Cells"], adjacent["DistanceCutoff"], adjacent["Rule"]),
+                         (240, .025 * 3., LAYER_ADJACENT_BAND_RULE))
+        self.assertAlmostEqual(adjacent["TangentialP50"], .025)
+        self.assertEqual(adjacent["TransverseP90OverNormalSize"],
+                         max(adjacent["Transverse1P90"], adjacent["Transverse2P90"]) / .025)
+        self.assertEqual(adjacent["NearestSpanVertexDistance"], outer)
+        self.assertEqual((covered["EdgeLayer"]["Cells"], covered["EdgeLayer"]["EdgeSize"],
+                          covered["EdgeLayer"]["Aspect"]), (240, .001, 4.))
+        self.assertAlmostEqual(covered["EdgeLayer"]["TangentialP50"], .01)
+        # A layer that leaves band cells within one NormalSize keeps the gate applied to
+        # them (here a wider band reaches the isotropic row), the layer still reported.
+        partial = directional_widths(mesh, {**recipe, "NormalSize": .05}, layer_spans=spans,
+                                     layer_reach=.005)
+        applied = achieved_anisotropy(partial, .05, layer)
+        self.assertEqual(applied["Gate"], ANISOTROPY_GATE_APPLIED)
+        self.assertEqual((applied["Samples"], applied["DistanceCutoff"], applied["ExcludedEdgeLayerCells"]),
+                         (partial["1.0"]["Cells"], .05, 240))
+        self.assertGreater(applied["Samples"], 0)                  # the nearer tets of each box
+        self.assertAlmostEqual(applied["TangentialP50"], .025)
+        self.assertEqual(applied["LayerAdjacentBand"]["Cells"], 240)
+        self.assertEqual(applied["EdgeLayer"]["Cells"], 240)
+        with self.assertRaises(ValueError):
+            achieved_anisotropy(directional_widths(
+                mesh, {**recipe, "TruePhysicalCorners": [[1.5, 0., 0.]]}), .025)
 
     def test_mesh_quality_reports_layer_and_outside_regions(self):
         # Decision 32: the quality audit reports the recorded layer's cells (orientation,

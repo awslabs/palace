@@ -4,7 +4,7 @@
   "Scope": "CALIBRATION ONLY (MA/MS metal-edge-layer h-study, supervisor decision 22): mesh-only qualification of labeled calibration variants of the four-edge case; NOT the production geometry-independence suite; nothing here changes a production default, gate or manifest",
   "Calibration": {
     "Purpose": "p_MA -10% / p_MS -1.4% offsets of the canonical four-edge coupon vs the graded_v2 reference are half p-convergence and half an h-limit of the metal edge/sidewall layer (6001: 6,423 tris at 0.113 um vs ~1.0M in the reference; physics-02). These variants refine that layer through EXISTING recipe parameters only.",
-    "Decision": "SUPERVISOR-DECISIONS.md items 22 (V1/V2, 2026-09-16), 27-29 (seeded transverse edge layer, 2026-09-16), 30 (required tetrahedra, seed-side gates, 2026-09-16), 32 (1 nm x 50 nm layer with the layer-local quality rule, 2026-09-17) and 33 (corner grading inside the frozen corner balls and the clean 1 nm point, 2026-09-17)",
+    "Decision": "SUPERVISOR-DECISIONS.md items 22 (V1/V2, 2026-09-16), 27-29 (seeded transverse edge layer, 2026-09-16), 30 (required tetrahedra, seed-side gates, 2026-09-16), 32 (1 nm x 50 nm layer with the layer-local quality rule, 2026-09-17) and 33 (corner grading inside the frozen corner balls and the clean 1 nm point, 2026-09-17), 34B (2026-09-17, EL4c adopted as the production recipe) and 35 (2026-09-18, design gate on a layer-covered band)",
     "ProductionManifest": "geometry-independence-suite.json",
     "GateDeviations": {
       "MinimumAchievedAspect": {
@@ -35,7 +35,7 @@
         "ProductionUse": "FORBIDDEN: the production manifest keeps Gates.MaximumElements 4,000,000 and no production case may declare a Calibration block; test_general_mesh_manifest asserts it"
       }
     },
-    "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration",
+    "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration; each case declares its options against ProductionValuesBefore34B, the production values at the time of the study (decision 34B adopted the EL4c options as the production recipe; this manifest never carries a ProductionRecipe block)",
     "Verification": "per case only (verify_canonical_case_entries.py); the ScalingComparisons below are schema placeholders required by validate_manifest and are never evaluated as a matrix",
     "EdgeLayerVariant": {
       "Purpose": "decision 27 (user directive): O(1 nm) transverse resolution at the metal edges is required for the edge-singular MA participation; the seed carries a geometric transverse layer (EdgeSize, GrowthRatio) on every metal-edge face with nested tangential refinement (EdgeLayerAspect), the metric prescribes the same law and the layer surface is frozen; EdgeSize is the recorded h-parameter of the MA edge study (25 -> 4 -> 2 -> 1 nm)",
@@ -69,12 +69,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "0386dcc4b8d5631303f548bc64b71f91d75649be54e344406dc42b6ae0286ed9"
+      "SHA256": "e50260ab477f1c360eb2a5c673f6c6df4723c37491b57008bea0ea290896ee0e"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "ffda6594abc2f38bac453bb9de92741ffe0936e41102fefb5b74dd1e95b11020"
+      "SHA256": "4054db13de28c27bdce2eeabc2ea8cf3aad2c75e7953dd98f8ed9ab0c7fbdb10"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -99,7 +99,7 @@
     {
       "Name": "audit_edge_metric_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_edge_metric_mesh.py",
-      "SHA256": "dec65dc9c9e86a438d775a9d974962f9fdd62beb9b035d6ae4035310aa98de09"
+      "SHA256": "0a3e8fa513e52106910e5a49d90b02ed15f032b815639e35f72c2c71e3f9308c"
     },
     {
       "Name": "edge_volume_metric.py",
@@ -119,7 +119,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "913210369623f670551f0899200e34e91052df1248d8899b7af9be3f99fa3586"
+      "SHA256": "031d653cfae7a5f2fadb65de0ecc941a6adce32284cc00f82f8688f17450df9c"
     },
     {
       "Name": "mesh_stage_contract.py",
@@ -368,10 +368,11 @@
           "--lc-tangent": 0.05
         },
         "MetricCommandOptions": {},
-        "ProductionValues": {
+        "ProductionValuesBefore34B": {
           "--lc-tangent": 0.1,
           "--far-growth": 1.0
         },
+        "ProductionValuesBefore34BNote": "production values of the recipe BEFORE supervisor decision 34B (2026-09-17): the calibration options of this case are declared against them (verify_canonical_case_entries.validate_calibration_commands); decision 34B adopted the EL4c options (four-edge-calib-ma-el4c) as the production recipe (geometry-independence-suite.json ProductionRecipe), so a pre-34B calibration option may now equal a production value - the study record is historical and stays bound to these values",
         "UnchangedProductionParameters": {
           "seed": {
             "--lc-fine": 0.025,
@@ -552,10 +553,11 @@
         "MetricCommandOptions": {
           "--far-growth": 0.5
         },
-        "ProductionValues": {
+        "ProductionValuesBefore34B": {
           "--lc-tangent": 0.1,
           "--far-growth": 1.0
         },
+        "ProductionValuesBefore34BNote": "production values of the recipe BEFORE supervisor decision 34B (2026-09-17): the calibration options of this case are declared against them (verify_canonical_case_entries.validate_calibration_commands); decision 34B adopted the EL4c options (four-edge-calib-ma-el4c) as the production recipe (geometry-independence-suite.json ProductionRecipe), so a pre-34B calibration option may now equal a production value - the study record is historical and stays bound to these values",
         "UnchangedProductionParameters": {
           "seed": {
             "--lc-fine": 0.025,
@@ -739,7 +741,7 @@
           "--far-growth": 0.5,
           "--edge-size": 0.004
         },
-        "ProductionValues": {
+        "ProductionValuesBefore34B": {
           "--lc-tangent": 0.1,
           "--far-growth": 1.0,
           "--edge-size": 0.0,
@@ -747,6 +749,7 @@
           "--edge-layer-aspect": 4.0,
           "--hmin": 0.025
         },
+        "ProductionValuesBefore34BNote": "production values of the recipe BEFORE supervisor decision 34B (2026-09-17): the calibration options of this case are declared against them (verify_canonical_case_entries.validate_calibration_commands); decision 34B adopted the EL4c options (four-edge-calib-ma-el4c) as the production recipe (geometry-independence-suite.json ProductionRecipe), so a pre-34B calibration option may now equal a production value - the study record is historical and stays bound to these values",
         "UnchangedProductionParameters": {
           "seed": {
             "--lc-fine": 0.025,
@@ -997,7 +1000,7 @@
           "--edge-size": 0.001,
           "--edge-layer-aspect": 50.0
         },
-        "ProductionValues": {
+        "ProductionValuesBefore34B": {
           "--lc-tangent": 0.1,
           "--far-growth": 1.0,
           "--edge-size": 0.0,
@@ -1006,6 +1009,7 @@
           "--edge-layer-maximum-aspect": 0.0,
           "--hmin": 0.025
         },
+        "ProductionValuesBefore34BNote": "production values of the recipe BEFORE supervisor decision 34B (2026-09-17): the calibration options of this case are declared against them (verify_canonical_case_entries.validate_calibration_commands); decision 34B adopted the EL4c options (four-edge-calib-ma-el4c) as the production recipe (geometry-independence-suite.json ProductionRecipe), so a pre-34B calibration option may now equal a production value - the study record is historical and stays bound to these values",
         "UnchangedProductionParameters": {
           "seed": {
             "--lc-fine": 0.025,
@@ -1265,7 +1269,7 @@
           "--edge-size": 0.004,
           "--corner-size": 0.004
         },
-        "ProductionValues": {
+        "ProductionValuesBefore34B": {
           "--lc-tangent": 0.1,
           "--far-growth": 1.0,
           "--edge-size": 0.0,
@@ -1274,6 +1278,7 @@
           "--hmin": 0.025,
           "--corner-size": 0.0
         },
+        "ProductionValuesBefore34BNote": "production values of the recipe BEFORE supervisor decision 34B (2026-09-17): the calibration options of this case are declared against them (verify_canonical_case_entries.validate_calibration_commands); decision 34B adopted the EL4c options (four-edge-calib-ma-el4c) as the production recipe (geometry-independence-suite.json ProductionRecipe), so a pre-34B calibration option may now equal a production value - the study record is historical and stays bound to these values",
         "UnchangedProductionParameters": {
           "seed": {
             "--lc-fine": 0.025,
@@ -1391,7 +1396,8 @@
           "MetricLaw": "min(NormalSize, CornerSize + (GrowthRatio - 1) x distance to the corner) inside CornerIsotropyRadius (edge_volume_metric.corner_ball_size; the shells never exceed it); the corner-ball cells are MMG required tetrahedra so the adapted corner cells are the seed's",
           "Binding": "seed --corner-size == metric --corner-size == census CornerGrading.CornerSize == recipe CornerGrading.CornerSize; GrowthRatio = the edge-layer growth ratio; Reach <= CornerIsotropyRadius; shells recomputed (mesh_stage_contract.validate_corner_grading); with the layer the census records LayerReachesCornerBall, no taper and UnlayeredEdgeLengthPerCorner",
           "Default": "--corner-size 0 (absent) is the production ball: uniform NormalSize; the EL4 and EL1 records keep it"
-        }
+        },
+        "AdoptedAsProductionRecipe": "supervisor decision 34B (2026-09-17): these SeedCommandOptions / MetricCommandOptions / AdaptationCommandOptions (with --edge-growth-ratio 2 and --edge-layer-aspect 4) are the production recipe of geometry-independence-suite.json (ProductionRecipe); the design gate semantics on the layer-covered band are decision 35 (not applicable by construction; layer-adjacent band recorded, never gated); evidence physics-06 (PBS 44717): E 60/60 within 1%, SA max 8.56%, p_MS -0.75%, p_MA median -6.63% / weighted -5.00%, 0.752 node-h"
       }
     },
     {
@@ -1545,7 +1551,7 @@
           "--edge-size": 0.001,
           "--corner-size": 0.004
         },
-        "ProductionValues": {
+        "ProductionValuesBefore34B": {
           "--lc-tangent": 0.1,
           "--far-growth": 1.0,
           "--edge-size": 0.0,
@@ -1554,6 +1560,7 @@
           "--hmin": 0.025,
           "--corner-size": 0.0
         },
+        "ProductionValuesBefore34BNote": "production values of the recipe BEFORE supervisor decision 34B (2026-09-17): the calibration options of this case are declared against them (verify_canonical_case_entries.validate_calibration_commands); decision 34B adopted the EL4c options (four-edge-calib-ma-el4c) as the production recipe (geometry-independence-suite.json ProductionRecipe), so a pre-34B calibration option may now equal a production value - the study record is historical and stays bound to these values",
         "UnchangedProductionParameters": {
           "seed": {
             "--lc-fine": 0.025,

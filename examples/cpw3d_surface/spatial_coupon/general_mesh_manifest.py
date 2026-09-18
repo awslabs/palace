@@ -9,7 +9,8 @@ import json
 import math
 from pathlib import Path
 
-from audit_edge_metric_mesh import analyze
+from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT_APPLICABLE,
+                                    BAND_GATE_CUTOFFS, LAYER_ADJACENT_BAND_RULE, analyze)
 from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
 from mesh_array_io import read_mesh
 from canonical_mesh_build import same_canonical_build, validate_build_record
@@ -100,6 +101,65 @@ def _is_rigid_transform(transform, tolerance=1e-12):
 
 
 PRODUCER_DEFAULT_ETCH_FOOTPRINT = "producer-default"
+# The production recipe (supervisor decisions 34B/35, adopted from the EL4c
+# calibration case): the seed, metric and adaptation options every production build
+# executes, recorded in the production manifest and bound to the recorded stage
+# commands of every production case (the canonical cache key does not encode recipe
+# options; the recipe's EdgeLayer / CornerGrading records are bound by the stage
+# contract).  A labeled calibration manifest never carries it: its cases declare
+# their own options against the recorded pre-34B production values.
+PRODUCTION_RECIPE_KEY = "ProductionRecipe"
+PRODUCTION_RECIPE_STAGE_OPTIONS = {"seed-generation": "SeedCommandOptions",
+                                   "metric-preparation": "MetricCommandOptions",
+                                   "native-adaptation-mmg": "AdaptationCommandOptions"}
+
+
+def option_values(command, option):
+    """Every value the recorded argv passes to `option` (separate tokens), as floats."""
+    values = []
+    for index, token in enumerate(command):
+        if token == option:
+            if index + 1 >= len(command):
+                raise ValueError(f"recorded command ends with option {option}")
+            values.append(float(command[index + 1]))
+    return values
+
+
+def validate_production_recipe(manifest):
+    """ProductionRecipe (if present) names, per stage of PRODUCTION_RECIPE_STAGE_OPTIONS,
+    a non-empty dict of option -> finite number, in a manifest without a Calibration
+    block.  Returns the block or None."""
+    recipe = manifest.get(PRODUCTION_RECIPE_KEY)
+    if recipe is None:
+        return None
+    if "Calibration" in manifest:
+        raise ValueError("A calibration manifest cannot carry a production recipe")
+    if (not isinstance(recipe, dict) or
+            any(not isinstance(recipe.get(key), dict) or not recipe[key] or
+                any(not isinstance(option, str) or not option.startswith("--") or
+                    not _finite_number(value)
+                    for option, value in recipe[key].items())
+                for key in PRODUCTION_RECIPE_STAGE_OPTIONS.values())):
+        raise ValueError("Production recipe must bind finite option values for the seed, "
+                         "metric and adaptation stages")
+    return recipe
+
+
+def validate_production_recipe_commands(manifest, case, bounded_stages):
+    """A production case (no Calibration block) of a manifest carrying ProductionRecipe
+    executed every recorded option exactly once at its recorded value in the seed,
+    metric and adaptation commands.  Raises ValueError otherwise."""
+    recipe = manifest.get(PRODUCTION_RECIPE_KEY)
+    if recipe is None or case.get("Calibration") is not None:
+        return
+    for stage, key in PRODUCTION_RECIPE_STAGE_OPTIONS.items():
+        command = bounded_stages[stage]["Command"]
+        for option, value in recipe[key].items():
+            executed = option_values(command, option)
+            if executed != [float(value)]:
+                raise ValueError(f"{stage} command does not execute the production recipe "
+                                 f"option {option}={value} exactly once (executed {executed})")
+
 # The trace basis is bound (seed cut-surface sizing and metric record) exactly when
 # a case freezes all four roles; a partial set fails preflight.
 TRACE_BASIS_ROLES = ("BasisContract", "TraceVertices", "TraceTriangles", "ProcessLibrary")
@@ -208,6 +268,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     if any(not _finite_number(gates.get(name), nonnegative=True) for name in required_gates):
         raise ValueError("Manifest has missing or invalid mesh gates")
     validate_edge_layer_quality_rule_gate(manifest)
+    validate_production_recipe(manifest)
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     tools = manifest.get("Tools")
     if not isinstance(tools, list) or not tools:
@@ -607,6 +668,13 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     return variant_digests, canonical_stage_digests, canonical_record
 
 
+def _bounded_stages(evidence_path, evidence):
+    """The recorded stage reports of the evidence's bounded-run record."""
+    item = next(record for record in evidence["AuditRecords"] if record.get("Kind") == "bounded-run")
+    record = json.loads(_check_artifact(evidence_path.parent, item, "audit record").read_text())
+    return record["BoundedStages"]
+
+
 def audit_manifest_evidence(evidence, gates, contract, binding):
     """Judge actual measurements against a separately frozen semantic contract."""
     failures = []
@@ -700,13 +768,15 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         failures.append("protected-surfaces")
 
     widths = evidence.get("AchievedAnisotropy", {})
-    values = [widths.get(name) for name in ("Transverse1P90", "Transverse2P90",
-                                             "NormalTarget", "TangentialP50")]
-    if (not isinstance(widths.get("Samples"), int) or widths.get("Samples", 0) <= 0 or
-            any(not _finite_number(x, positive=True) for x in values) or
-            max(values[:2]) > gates["MaximumNormalFactor"] * values[2] or
-            values[3] < gates["MinimumAchievedAspect"] * max(values[:2])):
-        failures.append("achieved-anisotropy")
+    if not layer_covered_band(widths):
+        values = [widths.get(name) for name in ("Transverse1P90", "Transverse2P90",
+                                                 "NormalTarget", "TangentialP50")]
+        if (widths.get("Gate") != ANISOTROPY_GATE_APPLIED or
+                not isinstance(widths.get("Samples"), int) or widths.get("Samples", 0) <= 0 or
+                any(not _finite_number(x, positive=True) for x in values) or
+                max(values[:2]) > gates["MaximumNormalFactor"] * values[2] or
+                values[3] < gates["MinimumAchievedAspect"] * max(values[:2])):
+            failures.append("achieved-anisotropy")
     if evidence.get("TraceDiagonal", {}).get("GlobalDiagonalBands") != 0:
         failures.append("trace-diagonal-overrefinement")
 
@@ -775,6 +845,53 @@ def _relative_error(a, b):
     return abs(a - b) / scale
 
 
+ANISOTROPY_STATISTICS = ("TangentialP50", "Transverse1P90", "Transverse2P90")
+
+
+def layer_covered_band(widths):
+    """True when the achieved-anisotropy design gate is not applicable by
+    construction (supervisor decision 35): the record declares
+    ANISOTROPY_GATE_NOT_APPLICABLE with no band cell outside the recorded edge layer
+    within one NormalSize (Samples 0, ExcludedEdgeLayerCells > 0), a layer record
+    with cells and finite statistics, and a layer-adjacent band record with cells,
+    finite statistics and its transverse P90 over NormalSize (the
+    MaximumNormalFactor-equivalent, reported and never gated).  Anything less is
+    judged by the gate as an ordinary band sample (and fails on Samples 0)."""
+    if not isinstance(widths, dict) or widths.get("Gate") != ANISOTROPY_GATE_NOT_APPLICABLE:
+        return False
+    layer, adjacent = widths.get("EdgeLayer"), widths.get("LayerAdjacentBand")
+    normal = widths.get("NormalTarget")
+    if (widths.get("Samples") != 0 or
+            not isinstance(widths.get("ExcludedEdgeLayerCells"), int) or
+            widths["ExcludedEdgeLayerCells"] <= 0 or
+            not _finite_number(normal, positive=True) or
+            widths.get("DistanceCutoff") != normal * BAND_GATE_CUTOFFS[0] or
+            not isinstance(layer, dict) or not isinstance(adjacent, dict) or
+            any(not isinstance(item.get("Cells"), int) or item["Cells"] <= 0 or
+                any(not _finite_number(item.get(name), positive=True)
+                    for name in ANISOTROPY_STATISTICS)
+                for item in (layer, adjacent)) or
+            adjacent.get("DistanceCutoff") != normal * BAND_GATE_CUTOFFS[-1] or
+            adjacent.get("Rule") != LAYER_ADJACENT_BAND_RULE or
+            not _finite_number(adjacent.get("TransverseP90OverNormalSize"), positive=True) or
+            adjacent["TransverseP90OverNormalSize"] !=
+            max(adjacent["Transverse1P90"], adjacent["Transverse2P90"]) / normal or
+            not isinstance(adjacent.get("NearestSpanVertexDistance"), dict) or
+            any(not _finite_number(adjacent["NearestSpanVertexDistance"].get(name), nonnegative=True)
+                for name in ("Minimum", "Maximum"))):
+        return False
+    return True
+
+
+def _compared_anisotropy(evidence):
+    """The anisotropy statistics the covariance comparison uses: the gated band
+    sample, or the layer-adjacent band when the gate is not applicable."""
+    widths = evidence.get("AchievedAnisotropy", {})
+    if layer_covered_band(widths):
+        return dict(widths["LayerAdjacentBand"], Gate=widths["Gate"])
+    return dict(widths, Gate=widths.get("Gate") if isinstance(widths, dict) else None)
+
+
 def _physical_comparison_failures(reference_evidence, transformed_evidence, comparison):
     """Compare final meshes physically; deterministic topology is diagnostic only."""
     failures = []
@@ -816,13 +933,13 @@ def _physical_comparison_failures(reference_evidence, transformed_evidence, comp
             max(quality_values, default=math.inf) >
             comparison["MaximumQualityDistributionRelativeError"]):
         failures.append("orientation/quality distribution")
-    anisotropy_names = ("TangentialP50", "Transverse1P90", "Transverse2P90")
-    anisotropy = [item.get("AchievedAnisotropy", {})
+    anisotropy = [_compared_anisotropy(item)
                   for item in (reference_evidence, transformed_evidence)]
-    anisotropy_error = max((_relative_error(anisotropy[0].get(name, math.inf),
-                                            anisotropy[1].get(name, -math.inf))
-                            for name in anisotropy_names), default=math.inf)
-    if anisotropy_error > comparison["MaximumAnisotropyRelativeError"]:
+    statistics = [[item.get(name) for name in ANISOTROPY_STATISTICS] for item in anisotropy]
+    if (anisotropy[0]["Gate"] != anisotropy[1]["Gate"] or
+            any(not _finite_number(value) for values in statistics for value in values) or
+            max(_relative_error(a, b) for a, b in zip(*statistics)) >
+            comparison["MaximumAnisotropyRelativeError"]):
         failures.append("local-frame anisotropy")
     complexity_values = [
         [item["Complexity"]["H1DOFs"], item["Resources"]["Elements"]]
@@ -933,6 +1050,7 @@ def run_manifest(args):
                 used_meshes.add(mesh_digest)
                 variant_digests, canonical_digests, canonical_record = _validate_bound_records(
                     path, evidence, binding, sources[case["Id"]][1])
+                validate_production_recipe_commands(manifest, case, _bounded_stages(path, evidence))
                 if used_variant_audits & variant_digests:
                     raise ValueError("variant audit/placement records must be content-distinct")
                 used_variant_audits.update(variant_digests)
