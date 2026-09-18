@@ -3814,7 +3814,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
       if (i > 0)
       {
         int slen = static_cast<int>(so[i].length());
-        MFEM_VERIFY(so[i].length() == (std::size_t)slen,
+        MFEM_VERIFY(so[i].length() == static_cast<std::size_t>(slen),
                     "Overflow error distributing parallel mesh!");
         MPI_Isend(so[i].data(), slen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
       }

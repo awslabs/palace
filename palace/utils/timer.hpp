@@ -217,7 +217,7 @@ private:
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
-      if (timer.Counts((Timer::Index)i) > 0)
+      if (timer.Counts(static_cast<Timer::Index>(i)) > 0)
       {
         if (i == Timer::TOTAL)
         {
@@ -302,7 +302,7 @@ public:
     for (int i = Timer::INIT; i < n; i++)
     {
       reduced_time.min[i] = reduced_time.max[i] = reduced_time.avg[i] =
-          timer.Data((Timer::Index)i);
+          timer.Data(static_cast<Timer::Index>(i));
     }
     Mpi::GlobalMin(n, reduced_time.min.data(), comm);
     Mpi::GlobalMax(n, reduced_time.max.data(), comm);
@@ -317,7 +317,7 @@ public:
     for (int i = Timer::INIT; i < n; i++)
     {
       reduced_rank_mem.min[i] = reduced_rank_mem.max[i] = reduced_rank_mem.sum[i] =
-          static_cast<double>(timer.MemoryData((Timer::Index)i));
+          static_cast<double>(timer.MemoryData(static_cast<Timer::Index>(i)));
     }
     Mpi::GlobalMin(n, reduced_rank_mem.min.data(), comm);
     Mpi::GlobalMax(n, reduced_rank_mem.max.data(), comm);
@@ -328,7 +328,7 @@ public:
     for (int i = Timer::INIT; i < n; i++)
     {
       auto stats = memory_reporting::ComputeNodeMemoryStats(
-          "", timer.MemoryData((Timer::Index)i), comm);
+          "", timer.MemoryData(static_cast<Timer::Index>(i)), comm);
       reduced_node_mem.min[i] = static_cast<double>(stats.min);
       reduced_node_mem.max[i] = static_cast<double>(stats.max);
       reduced_node_mem.sum[i] = static_cast<double>(stats.sum);
