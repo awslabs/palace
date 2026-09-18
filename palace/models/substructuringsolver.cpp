@@ -568,6 +568,29 @@ long long int SubstructuringSolver::RegionGlobalTrueVSize() const
   return impl->parent_fes.GlobalTrueVSize();
 }
 
+void SubstructuringSolver::WriteParaView(const std::string &dir,
+                                         const std::vector<int> &terminals,
+                                         const std::vector<Vector> &fields) const
+{
+  MFEM_VERIFY(terminals.size() == fields.size(),
+              "WriteParaView requires one field per terminal!");
+  const int order = impl->iodata.solver.order;
+  mfem::ParGridFunction phi(&impl->parent_fes);
+  mfem::ParaViewDataCollection pv("paraview", &impl->parent);
+  pv.SetPrefixPath(dir);
+  pv.SetLevelsOfDetail(order);
+  pv.SetHighOrderOutput(order > 1);
+  pv.SetDataFormat(mfem::VTKFormat::BINARY);
+  pv.RegisterField("V", &phi);
+  for (std::size_t j = 0; j < fields.size(); j++)
+  {
+    phi.SetFromTrueDofs(fields[j]);
+    pv.SetCycle(static_cast<int>(j));
+    pv.SetTime(static_cast<double>(terminals[j]));
+    pv.Save();
+  }
+}
+
 double SubstructuringSolver::ElectrostaticEnergy(const Vector &u) const
 {
   Vector t(impl->nt), t2(impl->nt);

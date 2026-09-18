@@ -76,6 +76,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       output.WriteFullTableTrunc();
     }
+    sub.WriteParaView(post_dir.string(), terminals, fields);
     Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
                (n > 1) ? "s" : "");
     return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};

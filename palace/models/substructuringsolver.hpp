@@ -5,6 +5,7 @@
 #define PALACE_MODELS_SUBSTRUCTURING_SOLVER_HPP
 
 #include <memory>
+#include <string>
 #include <vector>
 #include "linalg/vector.hpp"
 
@@ -16,11 +17,10 @@ class Mesh;
 
 // Phase 1 substructuring for electrostatics: condense the environment (the rest of the
 // domain, selected by domain attributes) to an implicit Dirichlet-to-Neumann boundary
-// operator on the shared interface, then solve the region of interest against it. Works in
-// parallel (true-DOF interface identification and a distributed implicit DtN).
-//
-// Scope (this phase): single-excitation electrostatic. The capacitance sweep, reuse-
-// optimized (materialized) DtN, and magnetostatics are later phases.
+// operator on the shared interface, then solve the region of interest against it. The
+// environment DtN is materialized once and reused across terminal excitations, enabling a
+// cheap capacitance sweep. Works in parallel (true-DOF interface identification and a
+// distributed implicit DtN).
 class SubstructuringSolver
 {
 public:
@@ -55,6 +55,11 @@ public:
 
   // Global parent H1 true-DOF size, for reporting.
   long long int RegionGlobalTrueVSize() const;
+
+  // Write the recovered full parent-space potentials to a ParaView collection under dir,
+  // one time step per excitation (time = terminal index).
+  void WriteParaView(const std::string &dir, const std::vector<int> &terminals,
+                     const std::vector<Vector> &fields) const;
 
 private:
   // Hides the heavy internals (LaplaceOperator on each submesh, Substructure,
