@@ -300,6 +300,14 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         set_operator(*K);
         ksp.Mult(RHS, A[step]);
       }
+      if (!ksp.GetConverged())
+      {
+        // Halt rather than write an unreliable inductance from a non-converged solve.
+        Mpi::Warning(curlcurl_op.GetComm(),
+                     "Current source solve did not converge for port {:d}!\n", idx);
+        solve_converged_ = false;
+        return {indicator, curlcurl_op.GlobalTrueVSize()};
+      }
     }
     else
     {
