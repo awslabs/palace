@@ -154,6 +154,33 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
     MPI_Allreduce(&den, &gden, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
     CHECK(std::sqrt(gnum / gden) < 1.0e-8);
+
+    // Electrostatic energy (QoI) must match the monolith. Monolith energy = 1/2 X^T (B -
+    // r), computed here directly as 1/2 u_full^T A_full u_full via the substructuring
+    // accessor on the reference field.
+    const double e_sub = ss.ElectrostaticEnergy(u);
+    const double e_ref = ss.ElectrostaticEnergy(u_full);
+    CHECK(std::abs(e_sub - e_ref) <= 1.0e-8 * std::abs(e_ref));
+
+    // Capacitance sweep: solve each terminal excitation and form C_ij = phi_i^T K phi_j.
+    // The Maxwell capacitance matrix must be symmetric and, with no grounded conductor, its
+    // rows must sum to zero (K annihilates the constant vector).
+    const std::vector<int> terms = ss.TerminalIndices();
+    REQUIRE(terms.size() == 2);
+    std::vector<Vector> phi(terms.size());
+    for (std::size_t j = 0; j < terms.size(); j++)
+    {
+      phi[j] = ss.SolveExcitation(terms[j]);
+    }
+    const double c00 = ss.MutualEnergy(phi[0], phi[0]);
+    const double c01 = ss.MutualEnergy(phi[0], phi[1]);
+    const double c10 = ss.MutualEnergy(phi[1], phi[0]);
+    const double c11 = ss.MutualEnergy(phi[1], phi[1]);
+    CHECK(std::abs(c01 - c10) <= 1.0e-9 * std::abs(c00));
+    CHECK(std::abs(c00 + c01) <= 1.0e-8 * std::abs(c00));
+    CHECK(std::abs(c11 + c10) <= 1.0e-8 * std::abs(c11));
+    // The default SolveRegion excitation drives the lowest terminal, matching phi[0].
+    CHECK(std::abs(2.0 * e_sub - c00) <= 1.0e-9 * std::abs(c00));
   };
 
   SECTION("uniform permittivity, order 1")
