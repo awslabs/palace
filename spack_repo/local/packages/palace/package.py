@@ -319,7 +319,19 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     with when("@0.14:"):
-        depends_on("libceed@0.13:")
+        # Pin libCEED to the commit each release's cmake/ExternalGitTags.cmake uses. The
+        # builtin recipe has no release newer than 0.12.0, so an open range would resolve
+        # to an unpinned develop. Keep the last entry in sync with EXTERN_LIBCEED_GIT_TAG.
+        depends_on(
+            "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
+        )
+        depends_on(
+            "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
+            when="@0.15:0.17",
+        )
+        depends_on(
+            "libceed@develop commit=39f259f89332e936122f7e02d6088a1dae3fb628", when="@0.18:"
+        )
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
