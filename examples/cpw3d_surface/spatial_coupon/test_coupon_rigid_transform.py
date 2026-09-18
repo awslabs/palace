@@ -295,14 +295,24 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             # Pulling the rotated contract corners back leaves roundoff only.
             np.testing.assert_allclose(rotated_census["SemanticCorners"],
                                        census["SemanticCorners"], rtol=0.0, atol=1e-14)
+            def assert_covariant(rotated_value, value, key):
+                # Census rows nest records (the corner shells): integers equal,
+                # numbers to roundoff, records and lists field by field.
+                if isinstance(value, dict):
+                    self.assertEqual(set(value), set(rotated_value), key)
+                    for name, item in value.items():
+                        assert_covariant(rotated_value[name], item, f"{key}.{name}")
+                elif isinstance(value, list) and any(isinstance(item, (dict, list)) for item in value):
+                    self.assertEqual(len(value), len(rotated_value), key)
+                    for index, (rotated_item, item) in enumerate(zip(rotated_value, value)):
+                        assert_covariant(rotated_item, item, f"{key}[{index}]")
+                elif isinstance(value, (int, str, bool)) or value is None:
+                    self.assertEqual(value, rotated_value, key)
+                else:
+                    np.testing.assert_allclose(rotated_value, value, rtol=1e-9, atol=1e-13,
+                                               err_msg=key)
             for row, rotated_row in zip(census["Corners"], rotated_census["Corners"]):
-                self.assertEqual(set(row), set(rotated_row))
-                for key, value in row.items():
-                    if isinstance(value, int):
-                        self.assertEqual(value, rotated_row[key], key)
-                    else:
-                        np.testing.assert_allclose(rotated_row[key], value, rtol=1e-9,
-                                                   atol=1e-13, err_msg=key)
+                assert_covariant(rotated_row, row, "Corners")
             metadata = json.loads((root / "identity.msh.metadata.json").read_text())
             self.assertEqual(metadata["CornerIsotropyRadius"], 0.4)
             self.assertEqual(metadata["SemanticCornerCount"], len(contract["SemanticCorners"]))

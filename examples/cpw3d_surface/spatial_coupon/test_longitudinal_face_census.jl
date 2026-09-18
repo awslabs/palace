@@ -81,7 +81,8 @@ end
     point_nodes = Dict{Int32, Int}()
     reach = corner_law_reach(RADIUS, LC_FINE, LC_TANGENT, SLOPE)
     for curve in longitudinal
-        placed = corner_isotropic_curve_nodes(curve, [CORNER], RADIUS, LC_FINE, LC_TANGENT, SLOPE)
+        placed = corner_isotropic_curve_nodes(curve, [CORNER], CornerGrading(0.0, 2.0, LC_FINE, RADIUS),
+                                              LC_TANGENT, SLOPE)
         @test placed !== nothing
         parameters, coordinates = placed
         xyz = reshape(coordinates, 3, :)
@@ -113,7 +114,8 @@ end
     sidewall_face(8.0, 0.1)
     far_corner = (100.0, 0.0, 0.0)
     for (_, curve) in gmsh.model.getEntities(1)
-        @test corner_isotropic_curve_nodes(curve, [far_corner], RADIUS, LC_FINE, LC_TANGENT,
+        @test corner_isotropic_curve_nodes(curve, [far_corner],
+                                           CornerGrading(0.0, 2.0, LC_FINE, RADIUS), LC_TANGENT,
                                            SLOPE) === nothing
     end
     gmsh.finalize()

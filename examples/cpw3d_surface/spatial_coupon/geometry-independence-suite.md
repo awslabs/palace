@@ -462,6 +462,91 @@ exactly the declaring cases with the production value 4,000,000, and
 `case_gates` judges only those cases by the cap; `Gates.MaximumElements` stays
 4,000,000 in both manifests (the build cache key, and the gate of every other
 case), no production case may declare a cap, and the stage bounds are unchanged.
+Measured outcomes of decision 33 (roots
+`/tmp/coupon-calibration-ma-el4c-4f9946870-20260917-155730` and
+`/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-160517`, adapter 72f741e3...,
+MMG 5.6 a97d9580...): EL4c PASSES every physical gate on identity and
+rotate-z-0.63 - 3,471,507 tets (EL4 3,450,085), minimum scaled Jacobian 0.0200,
+maximum Jacobian condition 898.6, corners 3.76/3.29/3.72/3.23 == seed, 0
+restoration repairs, protected 1.0e-10, ownership closed, identity SHA256
+5fb3a5c8..., CanonicalBuildSHA256 819f50cf... - and fails only the calibration
+design gate `achieved-anisotropy` on the band next to the layer (TangentialP50
+50.0 nm vs transverse P90 40.5/66.5 nm; decision 31: physics adjudicates;
+physics-06 ran on it). EL1c as built at cb3f64d81 FAILED the physical gate
+`mesh-quality-jacobian`: MaximumJacobianCondition 5115.5 > 1000 on 56
+edge-interior layer cells on the metal faces (209 > 500), each with a 0.02-0.24 nm
+edge between a face vertex and a 1 nm row node (minimum scaled Jacobian 0.01696
+passes; 4,479,207 tets < the 5,000,000 cap; corners 3.55/3.24/3.42/3.41 == seed;
+identity SHA256 9e9e1567...); its identity variant was audited, normalized and
+verified, its rotate-z-0.63 variant audit producer exceeded the 1800 s audit
+bound twice (once alone: the rotated topology/protected-surface pass takes
+20 min on 4.48 M tets) - recorded as "identity verified; rotate-z audit exceeded
+the audit bound", no bound change; not run in physics. Both cases share
+`CanonicalBuildId` 40d6db94... (the cache key is source + process + contract +
+recipe + manifest `Gates` + tools; neither the case `Calibration` options nor
+the case-level element cap enter it), so `run_general_mesh_suite` over the whole
+calibration manifest would refuse the second case ("shared canonical stages
+require exact cache key and hashes"): calibration cases are verified per case
+only (`verify_canonical_case_entries.py`), a documented limitation.
+Decision 34 (2026-09-17) located the EL1c failure on the seed itself: the 56
+cells (and the CornerSize 1 nm probe's 0.41 nm corner edge) are made by the
+seed's bounded descent, which moved face vertices to 0.013-0.24 nm of a row or
+ridge node while repairing scaled Jacobians and corners - the Gmsh seed has no
+edge below half EdgeSize (the sub-size collapse finds 0 candidates below the
+threshold). The seed now (a) collapses sub-size edges (`collapse_short_edges!`,
+threshold `SEED_COLLAPSE_SIZE_FRACTION` 0.5 x the smallest prescribed size:
+EdgeSize or CornerSize; a threshold at the size collapsed 14,667 legitimate layer
+face vertices between the 1 and 3 nm rows and 2,677 row nodes) for interior and
+surface vertices alike, a surface vertex only along its own surface (onto a
+surface neighbour in every plane of the vertex carrying every line/triangle
+support of the vertex: a face vertex within its face, a row or ridge node along
+its curve, CAD points never; remapped triangles keep their normal; the cavity is
+no worse in maximum edge aspect and Jacobian condition and better in one, and
+no cell falls below the scaled-Jacobian gate where none was; census
+`SubSizeEdgeCollapse` with every collapse's position and quality), with and
+without the layer quality rule; (b) guards the descent so that every touched
+cell keeps max(original, 0.95 x MaximumJacobianCondition) Jacobian condition and
+a moved vertex in the collapse region keeps its edges at or above min(original,
+threshold); (c) gates the scaled-Jacobian-gated required cells by
+`--maximum-jacobian-condition` (the manifest MaximumJacobianCondition 1000,
+carried equally by the seed and the restorer, `REQUIRED_REGION_GATE_OPTIONS`;
+census `RequiredMaximumJacobianCondition{Before,After}`,
+`RequiredCellsAboveConditionAfter`; restorer `RequiredMaximumJacobianCondition`),
+failing closed at the seed instead of after the hour-long build. EL1c seed under
+(a)-(c): 2,147,264 tets (unchanged connectivity), 834,434 required, corners
+3.55/3.24/3.42/3.41, required maximum condition 221.7 before the moves and 924.2
+after (0 above 1000; without the guards 8,525 on 43 cells), minimum scaled
+Jacobian 0.0163, 188 s. Required region of the seed, old -> new build: maximum
+condition 5115.5 -> 924.2, cells above 1000/500/200: 56/209/983 -> 0/106/741,
+shortest edge 0.024 nm -> 0.500 nm (1,228 -> 0 edges below 0.5 nm), minimum
+scaled Jacobian 0.01696 -> 0.01630 (one cell in [0.01, 0.02) in both, the
+layer/ball-junction cell of the amendment).
+EL1c rebuilt under decision 34 (root
+`/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-205035`, tools of commit
+3c6b4c7fe, adapter 72f741e3..., MMG a97d9580...): 4,483,816 tets (< the
+5,000,000 cap; 890,977 H1 DOFs), MMG kept all 834,434 required tetrahedra
+(recipe == receipt == restorer), restoration 1 repair component rejected (the
+frozen junction cell, 0.0163 >= 0.01), 0 corner-ball collapses. Identity
+variant: every PHYSICAL gate passes - minimum scaled Jacobian 0.01630, maximum
+Jacobian condition 924.2 (outside the layer 221.7), corners 3.55/3.24/3.42/3.41
+== seed, protected surfaces 1.04e-10, ownership closure 3.1e-13 (0 unmatched, 0
+overlapping), 0 diagonal bands, canonical build 444.8 s / 7.47 GiB and
+placement 201.1 s / 7.39 GiB within 1800 s / 8 GiB (the publication stages now
+peak at 7.4-7.5 GiB, 0.5 GiB under the bound) - and the calibration design gate
+`achieved-anisotropy` fails on the layer-adjacent band (TangentialP50 41.2 nm vs
+transverse P90 35.4/60.6 nm), as for EL4/EL4c (decision 31). Layer census:
+transverse tet-edge P50 per shell 0-2/2-5/5-10/10-25/25-50 nm =
+1.05/3.5/13.4/20.0/31.2 nm at tangential 3.1/3.5/7.7/15.4/32.8 nm; corner balls
+779/1156/773/1522 cells, 0 below 0.02. The rotate-z-0.63 variant audit producer
+again exceeded the 1800 s audit bound alone (bounded-run, topology/quality,
+complexity and invariants written at +24 min, the variant-transform record not
+reached; its written records equal the identity's: scaled Jacobian 0.01630,
+condition 924.2, corners, protected 1.04e-10, ownership closed), so EL1c is
+recorded as "identity verified on every physical gate; rotate-z audit exceeded
+the 1800 s audit bound" - no bound change (`per-entry-verification.json`:
+identity failures = [achieved-anisotropy] only; rotate-z evidence missing).
+identity.msh == canonical.msh SHA256 2a3de0d9..., rotate-z-0.63.msh 64bd3c3b...,
+CanonicalBuildId 1742cc0c... (new tool digests), CanonicalBuildSHA256 30854ab8....
 Every case has identity and `rotate-z-0.63` variants with explicit transforms
 and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
