@@ -795,7 +795,7 @@ int QuasiNewtonSolver::Solve()
     {
       ComplexVector eigv = MatVecMult(X, Xeig[order2[i]]);
       eigenvalues.push_back(eigs[i]);
-      eigenvectors.push_back(eigv);
+      eigenvectors.push_back(std::move(eigv));
     }
   }
   nev = eigenvalues.size();
