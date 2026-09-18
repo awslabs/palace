@@ -538,9 +538,10 @@ public:
 
   // Compute eigenvalue estimates of the synthesized L⁻¹/R⁻¹/C system via the companion
   // linearization (in s = iω) of the quadratic pencil (L⁻¹ + iωR⁻¹ − ω²C)v = 0. Returns
-  // modes whose Re(f) lies inside [fmin_GHz, fmax_GHz] with Q > 0.5 (spurious
-  // aux-state roots filtered). The complex-symmetric pencil yields decaying modes with
-  // positive Im{f}, the same sign convention as the eigenmode solver's eig.csv.
+  // every finite root whose Re(f) lies inside [fmin_GHz, fmax_GHz]; spurious roots are left
+  // in and flagged by their reported HDM residuals rather than a fixed cutoff. The
+  // complex-symmetric pencil yields decaying modes with positive Im{f}, the same sign
+  // convention as the eigenmode solver's eig.csv.
   struct EigenvalueEstimate
   {
     double freq_re_GHz;  // Re(f): resonant frequency

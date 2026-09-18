@@ -209,8 +209,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     nonlinear term, preventing crashes on otherwise valid problems.
     [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reported synthesized eigenvalue estimates with the same `Q = |ω|/(2|Im ω|)` convention as
-    the eigenmode postprocessor, and filter spurious roots by their reported HDM absolute and
-    backward residuals rather than fixed quality-factor or coordinate-norm cutoffs.
+    the eigenmode postprocessor, and report HDM absolute and backward residuals for every root
+    instead of filtering by fixed quality-factor or coordinate-norm cutoffs.
     [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the

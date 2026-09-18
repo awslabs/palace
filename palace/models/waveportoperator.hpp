@@ -411,10 +411,10 @@ public:
   GetModeExcitationVector(int port_idx, double omega, FiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &nd_dbc_tdof_list);
 
-  // Complex-ω overload for the eigenmode / synthesis path. n×H is linear in kₙ, so the
-  // ω-dependence is carried by kₙ(ω)=SolveKnComplex(ω) while the mode-shape vectors stay
-  // frozen at the last Initialize(ω0); reduces exactly to the real-ω terms at ω=ω0. Does
-  // not call Initialize — the caller must Initialize(target) once beforehand.
+  // Complex-ω overload for the eigenmode / synthesis path. Recomputes the mode at ω and
+  // assembles the full and scalar-admittance n×H shape vectors from that field, so W tracks
+  // the true mode shape at ω rather than freezing it at ω0; reduces to the real-ω terms at
+  // ω=ω0. Does not call Initialize (ω is complex).
   std::vector<ModalCorrectionTerm>
   GetModalCorrectionTerms(std::complex<double> omega, FiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &nd_dbc_tdof_list);
