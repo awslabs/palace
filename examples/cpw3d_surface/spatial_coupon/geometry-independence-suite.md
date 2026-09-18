@@ -115,6 +115,50 @@ lifted to the band's plane by the metal thickness, as the trace-basis rule
 does) remains available. Unit-tested: a 1 um band tilted 5 mrad accepted, the
 same band at 20 mrad rejected, a 45-degree band rejected, a 10 um band at
 0 accepted and at 5 mrad (above its 1.1e-3 resolvability) rejected.
+Requalification under the production recipe (commits 70dc4c369 / 3fa5ee380,
+adapter 72f741e3..., MMG 5.6 a97d9580...; roots
+`/tmp/coupon-canonical-four-edge-9d2cb9bbb3fe-70dc4c369-20260917-233153` and
+`/tmp/coupon-canonical-ten-edge-6791f1c84123-70dc4c369-20260918-001452`; the
+audits/verification were regenerated on the same roots under the decision-36
+producer, CanonicalBuildIds unchanged): four-edge identity + rotate-z-0.63
+VERIFIED - 3,471,480 tets (seed 1,507,719; 200,348 required), minimum scaled
+Jacobian 0.0200, maximum Jacobian condition 638.6, corners 3.76/3.29/3.72/3.46
+== seed, 0 repairs, protected 1.04e-10, ownership closure 8.0e-13, 0 diagonal
+bands, far-field pressure 1.0, design gate not applicable (layer 26,870 cells,
+tangential P50 12.9 nm, transverse P90 17.1/35.4 nm; layer-adjacent band 6,022
+cells, 50.0 nm vs 40.4/66.4 nm, 2.66 x NormalSize, vertices 33-71 nm from a
+span), canonical 219 s / 5.08 GiB, placement 150 s / 5.28 GiB, audits 269 /
+395 s, verification 1,170 s; identity SHA256 45ab1d37..., CanonicalBuildId
+1b532338.... Ten-edge identity + rotate-z-0.63 VERIFIED - 3,570,533 tets
+(estimate before building 3.65M; seed 2,125,258; 310,643 required; far-field
+budget policy pressure 1.143, effective far 0.1828 / growth 0.571, as
+designed), minimum scaled Jacobian 0.0200, maximum condition 507.7, ten
+corners 3.37-3.75 == seed, 0 repairs, protected 1.50e-10, closure 6.6e-13, 0
+diagonal bands (2 before decision 36), design gate not applicable (layer
+54,937 cells; adjacent band 11,825 cells, 50.1 nm vs 41.3/68.2 nm, 2.73 x
+NormalSize), canonical 284 s / 5.51 GiB, placement 159 s / 5.80 GiB, audits
+308 / 592 s, verification 1,430 s; identity SHA256 12f485e7...,
+CanonicalBuildId 548c28fe.... Layer census on both: transverse tet-edge P50
+per shell 0-2/2-5/5-10/10-25/25-50 nm = 4.0/4.2/8.6/26.9/33.7 nm, 0 layer
+cells below 0.02, corner balls 725-1,506 cells each.
+The other ten manifest cases were run stages-only under the same driver and
+none is buildable with its frozen inputs; every failure precedes the recipe:
+one-edge-straight and one-edge-cad-subdivided (metric: 2 contract
+SemanticCorners vs 1 boundary `Physical` vertex, "Transformed physical boundary
+differs from semantic corners"), three-edge-current-calibration (metric: seed
+boundary labels differ from the frozen semantic contract), two-edge-multislot
+(seed: semantic corner (0, 0, 0) absent from the seed CAD), two-edge-transition
+and six-edge-cluster (seed: the required-region gates fail after optimization -
+corner aspect 4.11, 63 / 558 cells below 0.01, 16 / 175 above condition 1000 -
+on Radius 12.5 fixtures whose contracts also disagree with their boundaries: 1
+vs 5 and 4 vs 10 Physical vertices), concave-multislot, hole, rounded-strip and
+opposed-layers (seed: "tangential mesh size must lie between fine and far
+sizes" - their Radius 0.5 process gives FarSize 0.04 below the recipe tangential
+0.05, and below the pre-34B 0.1 as well). Only the four-edge and ten-edge
+contracts have SemanticCorners equal to the boundary's Physical vertices; the
+fixture contracts were authored for the preflight feature-topology counts and
+never passed through the seven stages. Repairing them means rewriting frozen
+immutable inputs, a separate decision.
 
 `geometry-independence-calibration-ma.json` is a separately labeled CALIBRATION
 manifest (supervisor decision 22: MA/MS metal-edge-layer h-study) whose
