@@ -141,4 +141,63 @@ TEST_CASE("Substructure signed composition reproduces the monolith",
   }
 }
 
+TEST_CASE("Substructure interface partition", "[substructure][Serial]")
+{
+  if (Mpi::Size(Mpi::World()) > 1)
+  {
+    SKIP("substructure partition test is serial-only");
+  }
+  // Cube split at x = 0.5 into region (attr 1) and environment (attr 2). The interface is
+  // the x = 0.5 plane; its DOF count is exact and geometry-determined.
+  auto interface_count = [](bool nedelec, int nx)
+  {
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::HEXAHEDRON);
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      mfem::Vector c;
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    serial.SetAttributes();
+    mfem::ParMesh mesh(Mpi::World(), serial);
+    std::unique_ptr<mfem::FiniteElementCollection> fec;
+    if (nedelec)
+    {
+      fec = std::make_unique<mfem::ND_FECollection>(1, 3);
+    }
+    else
+    {
+      fec = std::make_unique<mfem::H1_FECollection>(1, 3);
+    }
+    mfem::ParFiniteElementSpace pfes(&mesh, fec.get());
+    mfem::Array<int> ar(1), ae(1);
+    ar[0] = 1;
+    ae[0] = 2;
+    Substructure region(pfes, ar, *fec), env(pfes, ae, *fec);
+    CHECK(region.ConformingMap());
+    CHECK(env.ConformingMap());
+    std::vector<int> owner;
+    MarkParentDofOwnership({&region, &env}, pfes.GetVSize(), owner);
+    int n_iface = 0, n_covered = 0;
+    for (int o : owner)
+    {
+      if (o == 3)
+      {
+        n_iface++;
+      }
+      if (o != 0)
+      {
+        n_covered++;
+      }
+    }
+    // Region and environment together cover every parent DOF.
+    CHECK(n_covered == pfes.GetVSize());
+    return n_iface;
+  };
+
+  // H1: 7x7 vertices on the x=0.5 plane. H(curl): in-plane edges = 2*6*7.
+  CHECK(interface_count(false, 6) == 49);
+  CHECK(interface_count(true, 6) == 84);
+}
+
 }  // namespace palace

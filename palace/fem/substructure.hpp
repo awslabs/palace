@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_SUBSTRUCTURE_HPP
 #define PALACE_FEM_SUBSTRUCTURE_HPP
 
+#include <memory>
 #include <vector>
 #include <mfem.hpp>
 
@@ -20,6 +21,40 @@ bool BuildSubMeshDofMap(const mfem::ParFiniteElementSpace &sub_fespace,
                         const mfem::ParFiniteElementSpace &parent_fespace,
                         const mfem::Array<int> &parent_element_ids,
                         std::vector<int> &par_dof, std::vector<double> &sign);
+
+// A substructure is a region of the parent mesh (selected by domain attributes) treated as
+// its own finite element problem: it owns a ParSubMesh and matching FE space, and the
+// signed map from its local DOFs to the parent DOFs (see BuildSubMeshDofMap). Substructures
+// sharing parent DOFs are coupled across the interface those shared DOFs form.
+class Substructure
+{
+public:
+  Substructure(mfem::ParFiniteElementSpace &parent_fespace,
+               const mfem::Array<int> &domain_attrs, mfem::FiniteElementCollection &fec);
+
+  mfem::ParSubMesh &GetSubMesh() { return *submesh; }
+  mfem::ParFiniteElementSpace &GetFESpace() { return *fespace; }
+
+  // Signed submesh-DOF -> parent-DOF map.
+  const std::vector<int> &GetParentDof() const { return par_dof; }
+  const std::vector<double> &GetSign() const { return sign; }
+
+  // False if the submesh->parent DOF map is not a clean signed permutation (nonconforming).
+  bool ConformingMap() const { return map_ok; }
+
+private:
+  std::unique_ptr<mfem::ParSubMesh> submesh;
+  std::unique_ptr<mfem::ParFiniteElementSpace> fespace;
+  std::vector<int> par_dof;
+  std::vector<double> sign;
+  bool map_ok;
+};
+
+// Fill owner (size = number of parent DOFs) with a bitmask: bit (1 << k) is set when
+// subs[k] covers that parent DOF. A DOF covered by more than one substructure lies on a
+// shared interface between them.
+void MarkParentDofOwnership(const std::vector<const Substructure *> &subs,
+                            int n_parent_dofs, std::vector<int> &owner);
 
 }  // namespace palace
 

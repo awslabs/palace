@@ -63,4 +63,33 @@ bool BuildSubMeshDofMap(const mfem::ParFiniteElementSpace &sub_fespace,
   return ok;
 }
 
+Substructure::Substructure(mfem::ParFiniteElementSpace &parent_fespace,
+                           const mfem::Array<int> &domain_attrs,
+                           mfem::FiniteElementCollection &fec)
+{
+  auto &parent_mesh = *parent_fespace.GetParMesh();
+  submesh = std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromDomain(parent_mesh, domain_attrs));
+  fespace = std::make_unique<mfem::ParFiniteElementSpace>(submesh.get(), &fec);
+  mfem::Array<int> emap = submesh->GetParentElementIDMap();
+  map_ok = BuildSubMeshDofMap(*fespace, parent_fespace, emap, par_dof, sign);
+}
+
+void MarkParentDofOwnership(const std::vector<const Substructure *> &subs,
+                            int n_parent_dofs, std::vector<int> &owner)
+{
+  owner.assign(n_parent_dofs, 0);
+  for (std::size_t k = 0; k < subs.size(); k++)
+  {
+    const int bit = 1 << k;
+    for (int pd : subs[k]->GetParentDof())
+    {
+      if (pd >= 0)
+      {
+        owner[pd] |= bit;
+      }
+    }
+  }
+}
+
 }  // namespace palace
