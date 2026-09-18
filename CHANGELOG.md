@@ -60,8 +60,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
     compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
-  - Pinned the libCEED commit in the Spack recipe per Palace release, matching the CMake
-    superbuild, instead of building an unpinned libCEED `develop`.
+  - Pinned the libCEED commit in the Spack recipe per Palace release instead of building an
+    unpinned libCEED `develop`, and moved the 0.18 pin to the libCEED `main` merge commit
+    containing the same changes.
 
 #### Interface Changes
 
