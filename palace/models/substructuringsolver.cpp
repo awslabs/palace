@@ -3,6 +3,8 @@
 
 #include "substructuringsolver.hpp"
 
+#include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
@@ -13,104 +15,243 @@
 namespace palace
 {
 
-// Implementation note: for this first electrostatic increment the region and environment
-// operators are assembled directly with a BilinearForm using a scalar (isotropic)
-// permittivity coefficient from the material configuration, and the region is solved with
-// CG. Reusing LaplaceOperator + KspSolver/AMG (and tensor materials, postprocessing, the
-// full capacitance sweep) is a follow-up; the public interface is unchanged by that.
+namespace
+{
+
+// Implicit environment Dirichlet-to-Neumann action on parent true DOFs:
+//   y|_Gamma = A_GG x - A_GE A_EE^-1 A_EG x
+// using the parent-space environment matrix A_env (with A_EE the environment-interior
+// block, realized as A_env with all non-interior true DOFs identity-eliminated) and its
+// solver. All operations are distributed matvecs plus one distributed A_EE solve, so this
+// is parallel by construction.
+class ImplicitDtN : public mfem::Operator
+{
+public:
+  ImplicitDtN(mfem::HypreParMatrix &A_env, mfem::Solver &Aee_inv,
+              const std::vector<char> &is_gamma, const std::vector<char> &is_env_int)
+    : mfem::Operator(A_env.Height()), A_env(A_env), Aee_inv(Aee_inv), is_gamma(is_gamma),
+      is_env_int(is_env_int), t(A_env.Height()), rhs(A_env.Height()), ye(A_env.Height()),
+      t2(A_env.Height())
+  {
+  }
+
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  {
+    A_env.Mult(x, t);
+    rhs = 0.0;
+    for (int i = 0; i < height; i++)
+    {
+      if (is_env_int[i])
+      {
+        rhs(i) = t(i);
+      }
+    }
+    ye = 0.0;
+    Aee_inv.Mult(rhs, ye);
+    for (int i = 0; i < height; i++)
+    {
+      if (!is_env_int[i])
+      {
+        ye(i) = 0.0;
+      }
+    }
+    A_env.Mult(ye, t2);
+    y = 0.0;
+    for (int i = 0; i < height; i++)
+    {
+      if (is_gamma[i])
+      {
+        y(i) = t(i) - t2(i);
+      }
+    }
+  }
+
+private:
+  mfem::HypreParMatrix &A_env;
+  mfem::Solver &Aee_inv;
+  const std::vector<char> &is_gamma, &is_env_int;
+  mutable mfem::Vector t, rhs, ye, t2;
+};
+
+// Region-condensed system operator: (region operator on region-free true DOFs) + implicit
+// DtN on the interface, with non-region-free true DOFs pinned to identity.
+class RegionCondensedOperator : public mfem::Operator
+{
+public:
+  RegionCondensedOperator(mfem::HypreParMatrix &A_region_free, const mfem::Operator &dtn,
+                          const std::vector<char> &is_region_free)
+    : mfem::Operator(A_region_free.Height()), A_region_free(A_region_free), dtn(dtn),
+      is_region_free(is_region_free), td(A_region_free.Height())
+  {
+  }
+
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  {
+    A_region_free.Mult(x, y);
+    dtn.Mult(x, td);
+    for (int i = 0; i < height; i++)
+    {
+      if (is_region_free[i])
+      {
+        y(i) += td(i);
+      }
+    }
+  }
+
+private:
+  mfem::HypreParMatrix &A_region_free;
+  const mfem::Operator &dtn;
+  const std::vector<char> &is_region_free;
+  mutable mfem::Vector td;
+};
+
+}  // namespace
+
+// Parallel region-condensed electrostatic solve. Region/environment operators are assembled
+// on the parent finite element space with domain-restricted (isotropic scalar) permittivity
+// coefficients; the interface is identified in true-DOF space; the environment is condensed
+// through an implicit distributed DtN. Reusing LaplaceOperator/KspSolver, tensor materials,
+// the capacitance sweep, and reuse-optimized (materialized) DtN are follow-ups.
 struct SubstructuringSolver::Impl
 {
   const IoData &iodata;
   mfem::ParMesh &parent;
   mfem::H1_FECollection fec;
   mfem::ParFiniteElementSpace parent_fes;
-  std::unique_ptr<Substructure> region, environment;
-  std::vector<int> owner, gamma_index;
-  mfem::Vector eps_by_attr;  // relative permittivity indexed by (attribute - 1)
-  std::unique_ptr<DtNBoundaryOperator> dtn;
+  int nt;
+
+  std::unique_ptr<mfem::HypreParMatrix> A_region, A_env, A_env_int, A_region_free;
+  std::vector<char> is_gamma, is_env_int, is_region_free;
+  mfem::Array<int> dbc_tdofs;
+  mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
+
+  std::unique_ptr<mfem::HypreBoomerAMG> amg_env;
+  std::unique_ptr<mfem::HyprePCG> solver_env;
+  std::unique_ptr<ImplicitDtN> dtn;
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
     : iodata(iodata), parent(parent), fec(iodata.solver.order, parent.Dimension()),
-      parent_fes(&parent, &fec)
+      parent_fes(&parent, &fec), nt(parent_fes.GetTrueVSize())
   {
     const auto &sub = *iodata.solver.substructuring;
-    mfem::Array<int> ra(sub.region_attributes.size()),
-        ea(sub.environment_attributes.size());
+    mfem::Array<int> ra(static_cast<int>(sub.region_attributes.size())),
+        ea(static_cast<int>(sub.environment_attributes.size()));
     std::copy(sub.region_attributes.begin(), sub.region_attributes.end(), ra.begin());
     std::copy(sub.environment_attributes.begin(), sub.environment_attributes.end(),
               ea.begin());
-    region = std::make_unique<Substructure>(parent_fes, ra, fec);
-    environment = std::make_unique<Substructure>(parent_fes, ea, fec);
-    MarkParentDofOwnership({region.get(), environment.get()}, parent_fes.GetVSize(), owner);
-    BuildInterfaceIndex(owner, gamma_index);
 
-    // Scalar (isotropic) relative permittivity per attribute from the material config.
-    int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-    eps_by_attr.SetSize(max_attr);
-    eps_by_attr = 1.0;
+    // Interface / region / environment true-DOF markers.
+    mfem::Array<int> rm, em, im;
+    MarkInterfaceTrueDofs(parent_fes, ra, ea, rm, em, im);
+
+    // Dirichlet terminals (single excitation: lowest index -> 1 V, others grounded).
+    const auto &terminals = iodata.boundaries.terminal;
+    mfem::Array<int> dir_mark(nt);
+    dir_mark = 0;
+    dbc_values.SetSize(nt);
+    dbc_values = 0.0;
+    if (!terminals.empty())
+    {
+      const int drive = terminals.begin()->first;
+      const int maxb = parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0;
+      for (const auto &[idx, term] : terminals)
+      {
+        const double value = (idx == drive) ? 1.0 : 0.0;
+        mfem::Array<int> ess_bdr(maxb), ess;
+        ess_bdr = 0;
+        for (int a : term.attributes)
+        {
+          if (a >= 1 && a <= maxb)
+          {
+            ess_bdr[a - 1] = 1;
+          }
+        }
+        parent_fes.GetEssentialTrueDofs(ess_bdr, ess);
+        for (int i = 0; i < ess.Size(); i++)
+        {
+          dir_mark[ess[i]] = 1;
+          dbc_values(ess[i]) = value;
+        }
+      }
+    }
+    for (int i = 0; i < nt; i++)
+    {
+      if (dir_mark[i])
+      {
+        dbc_tdofs.Append(i);
+      }
+    }
+
+    is_gamma.assign(nt, 0);
+    is_env_int.assign(nt, 0);
+    is_region_free.assign(nt, 0);
+    for (int i = 0; i < nt; i++)
+    {
+      if (dir_mark[i])
+      {
+        continue;
+      }
+      const bool r = rm[i], e = em[i];
+      if (r && e)
+      {
+        is_gamma[i] = 1;
+      }
+      else if (e)
+      {
+        is_env_int[i] = 1;
+      }
+      if (r)
+      {
+        is_region_free[i] = 1;  // region-free includes the interface
+      }
+    }
+
+    // Domain-restricted scalar permittivity coefficients (zero outside the subdomain).
+    const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
+    mfem::Vector er(max_attr), ee(max_attr);
+    er = 0.0;
+    ee = 0.0;
+    auto in = [](const mfem::Array<int> &s, int a)
+    {
+      for (int x : s)
+      {
+        if (x == a)
+        {
+          return true;
+        }
+      }
+      return false;
+    };
     for (const auto &mat : iodata.domains.materials)
     {
       for (int a : mat.attributes)
       {
-        if (a >= 1 && a <= max_attr)
+        if (a < 1 || a > max_attr)
         {
-          eps_by_attr(a - 1) = mat.epsilon_r.s[0];
+          continue;
+        }
+        if (in(ra, a))
+        {
+          er(a - 1) = mat.epsilon_r.s[0];
+        }
+        else if (in(ea, a))
+        {
+          ee(a - 1) = mat.epsilon_r.s[0];
         }
       }
     }
+    A_region = AssembleParent(er);
+    A_env = AssembleParent(ee);
   }
 
-  // Assemble a substructure's Laplace (grad eps grad) operator on its submesh FE space.
-  std::unique_ptr<mfem::SparseMatrix> AssembleStiffness(Substructure &s)
+  std::unique_ptr<mfem::HypreParMatrix> AssembleParent(const mfem::Vector &eps_by_attr)
   {
-    mfem::PWConstCoefficient eps(eps_by_attr);
-    mfem::BilinearForm a(&s.GetFESpace());
+    mfem::PWConstCoefficient eps(const_cast<mfem::Vector &>(eps_by_attr));
+    mfem::ParBilinearForm a(&parent_fes);
     a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
     a.Assemble();
     a.Finalize();
-    return std::make_unique<mfem::SparseMatrix>(a.SpMat());
-  }
-
-  // Build the Dirichlet terminal marker/values for a substructure, for a single excitation:
-  // the terminal with the lowest index is driven to 1, all other terminals grounded (0).
-  void BuildTerminals(Substructure &s, std::vector<char> &marker, mfem::Vector &vals)
-  {
-    auto &fes = s.GetFESpace();
-    const int nv = fes.GetVSize();
-    marker.assign(nv, 0);
-    vals.SetSize(nv);
-    vals = 0.0;
-    const auto &terminals = iodata.boundaries.terminal;
-    if (terminals.empty())
-    {
-      return;
-    }
-    const int drive_idx = terminals.begin()->first;
-    const int max_bdr =
-        s.GetSubMesh().bdr_attributes.Size() ? s.GetSubMesh().bdr_attributes.Max() : 0;
-    for (const auto &[idx, term] : terminals)
-    {
-      const double value = (idx == drive_idx) ? 1.0 : 0.0;
-      mfem::Array<int> ess_bdr(max_bdr);
-      ess_bdr = 0;
-      for (int a : term.attributes)
-      {
-        if (a >= 1 && a <= max_bdr)
-        {
-          ess_bdr[a - 1] = 1;
-        }
-      }
-      mfem::Array<int> ess_vdofs;
-      fes.GetEssentialVDofs(ess_bdr, ess_vdofs);
-      for (int i = 0; i < nv; i++)
-      {
-        if (ess_vdofs[i])
-        {
-          marker[i] = 1;
-          vals(i) = value;
-        }
-      }
-    }
+    return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
   }
 };
 
@@ -120,115 +261,104 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
 {
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
-  MFEM_VERIFY(impl->region->ConformingMap() && impl->environment->ConformingMap(),
-              "Substructuring requires a conforming interface (order-1, matching mesh)!");
 }
 
 SubstructuringSolver::~SubstructuringSolver() = default;
 
 void SubstructuringSolver::CondenseEnvironment()
 {
-  auto A_env = impl->AssembleStiffness(*impl->environment);
-  std::vector<char> marker;
-  mfem::Vector vals;
-  impl->BuildTerminals(*impl->environment, marker, vals);
-  mfem::Vector f_env(A_env->Height());
-  f_env = 0.0;
-  impl->dtn = std::make_unique<DtNBoundaryOperator>(*impl->environment, impl->gamma_index,
-                                                    *A_env, f_env, marker, vals);
+  // A_EE: the environment operator with all non-(environment-interior) true DOFs
+  // identity-eliminated, so its inverse acts only on the environment interior.
+  impl->A_env_int = std::make_unique<mfem::HypreParMatrix>(*impl->A_env);
+  mfem::Array<int> non_int;
+  for (int i = 0; i < impl->nt; i++)
+  {
+    if (!impl->is_env_int[i])
+    {
+      non_int.Append(i);
+    }
+  }
+  {
+    std::unique_ptr<mfem::HypreParMatrix> tmp(impl->A_env_int->EliminateRowsCols(non_int));
+  }
+  impl->amg_env = std::make_unique<mfem::HypreBoomerAMG>(*impl->A_env_int);
+  impl->amg_env->SetPrintLevel(0);
+  impl->solver_env = std::make_unique<mfem::HyprePCG>(*impl->A_env_int);
+  impl->solver_env->SetTol(1.0e-13);
+  impl->solver_env->SetMaxIter(1000);
+  impl->solver_env->SetPrintLevel(0);
+  impl->solver_env->SetPreconditioner(*impl->amg_env);
+  impl->dtn = std::make_unique<ImplicitDtN>(*impl->A_env, *impl->solver_env, impl->is_gamma,
+                                            impl->is_env_int);
+
+  // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
+  impl->A_region_free = std::make_unique<mfem::HypreParMatrix>(*impl->A_region);
+  mfem::Array<int> non_rfree;
+  for (int i = 0; i < impl->nt; i++)
+  {
+    if (!impl->is_region_free[i])
+    {
+      non_rfree.Append(i);
+    }
+  }
+  {
+    std::unique_ptr<mfem::HypreParMatrix> tmp(
+        impl->A_region_free->EliminateRowsCols(non_rfree));
+  }
 }
 
 Vector SubstructuringSolver::SolveRegion()
 {
   MFEM_VERIFY(impl->dtn, "CondenseEnvironment must be called before SolveRegion!");
-  auto &region = *impl->region;
-  auto A_region = impl->AssembleStiffness(region);
-  const auto &par = region.GetParentDof();
-  const int nr = A_region->Height();
+  const int nt = impl->nt;
 
-  std::vector<char> rm;
-  mfem::Vector rv;
-  impl->BuildTerminals(region, rm, rv);
-
-  // Compact region free system: interface (gamma index) + region interior (not Dirichlet,
-  // not interface), with region Dirichlet terminals eliminated into the RHS.
-  const int nG = impl->dtn->Size();
-  const int N = impl->parent_fes.GetVSize();
-  std::vector<int> ri(N, -1), rint;
-  for (int i = 0; i < nr; i++)
-  {
-    if (!rm[i] && impl->gamma_index[par[i]] < 0 && ri[par[i]] < 0)
-    {
-      ri[par[i]] = static_cast<int>(rint.size());
-      rint.push_back(par[i]);
-    }
-  }
-  const int ndof = nG + static_cast<int>(rint.size());
-  auto idx = [&](int i)
-  { return impl->gamma_index[par[i]] >= 0 ? impl->gamma_index[par[i]] : nG + ri[par[i]]; };
-
-  // Assemble the compact (interface + region-interior) free system as a sparse matrix. The
-  // environment DtN contributes a dense interface-interface block (interface-sized), added
-  // as explicit entries; region Dirichlet terminals are eliminated into the RHS.
-  mfem::SparseMatrix K(ndof, ndof);
-  mfem::Vector b(ndof);
+  // RHS: region Dirichlet elimination + environment DtN load g_E (environment Dirichlet
+  // carried through the implicit DtN).
+  Vector b(nt);
   b = 0.0;
-  for (int i = 0; i < nr; i++)
   {
-    if (rm[i])
+    Vector t(nt);
+    impl->A_region->Mult(impl->dbc_values, t);
+    for (int i = 0; i < nt; i++)
     {
-      continue;
-    }
-    const int *cols = A_region->GetRowColumns(i);
-    const double *vals = A_region->GetRowEntries(i);
-    for (int k = 0; k < A_region->RowSize(i); k++)
-    {
-      const int j = cols[k];
-      const double v = vals[k];
-      if (rm[j])
+      if (impl->is_region_free[i])
       {
-        b(idx(i)) -= v * rv(j);
-        continue;
+        b(i) -= t(i);
       }
-      K.Add(idx(i), idx(j), v);
     }
   }
-  for (int a = 0; a < nG; a++)
   {
-    b(a) += impl->dtn->Load()(a);
-    for (int bb = 0; bb < nG; bb++)
+    Vector gE(nt);
+    impl->dtn->Mult(impl->dbc_values, gE);  // interface response to environment Dirichlet
+    for (int i = 0; i < nt; i++)
     {
-      K.Add(a, bb, impl->dtn->Schur()(a, bb));
+      if (impl->is_gamma[i])
+      {
+        b(i) -= gE(i);
+      }
     }
   }
-  K.Finalize();
 
-  // Solve the SPD compact system with CG (diagonal-preconditioned).
-  mfem::Vector u(ndof);
+  RegionCondensedOperator sysop(*impl->A_region_free, *impl->dtn, impl->is_region_free);
+  Vector u(nt);
   u = 0.0;
-  mfem::GSSmoother prec(K);
-  mfem::CGSolver cg;
-  cg.SetOperator(K);
-  cg.SetPreconditioner(prec);
-  cg.SetRelTol(1.0e-12);
+  mfem::CGSolver cg(impl->parent_fes.GetComm());
+  cg.SetOperator(sysop);
+  cg.SetRelTol(1.0e-10);
   cg.SetMaxIter(2000);
   cg.SetPrintLevel(0);
   cg.Mult(b, u);
   MFEM_VERIFY(cg.GetConverged(), "Region-condensed CG solve did not converge!");
-
-  // Scatter to region submesh DOFs (Dirichlet DOFs carry their prescribed value).
-  Vector u_region(nr);
-  u_region = 0.0;
-  for (int i = 0; i < nr; i++)
+  for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
   {
-    u_region(i) = rm[i] ? rv(i) : u(idx(i));
+    u(impl->dbc_tdofs[i]) = impl->dbc_values(impl->dbc_tdofs[i]);
   }
-  return u_region;
+  return u;
 }
 
 long long int SubstructuringSolver::RegionGlobalTrueVSize() const
 {
-  return impl->region->GetFESpace().GlobalTrueVSize();
+  return impl->parent_fes.GlobalTrueVSize();
 }
 
 }  // namespace palace

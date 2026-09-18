@@ -15,14 +15,12 @@ class IoData;
 class Mesh;
 
 // Phase 1 substructuring for electrostatics: condense the environment (the rest of the
-// domain, selected by domain attributes) to a Dirichlet-to-Neumann boundary operator
-// S_E, g_E on the shared interface, then solve the region of interest against it with
-// Palace's linear solver. The environment condensation is performed once and reused across
-// region solves, enabling region redesign without re-solving the environment.
+// domain, selected by domain attributes) to an implicit Dirichlet-to-Neumann boundary
+// operator on the shared interface, then solve the region of interest against it. Works in
+// parallel (true-DOF interface identification and a distributed implicit DtN).
 //
-// Scope (this phase): single-excitation electrostatic, offline mode. The capacitance sweep
-// (multiple terminals, environment-terminal excitation), online/serialized reuse, and
-// magnetostatics are later phases.
+// Scope (this phase): single-excitation electrostatic. The capacitance sweep, reuse-
+// optimized (materialized) DtN, and magnetostatics are later phases.
 class SubstructuringSolver
 {
 public:
@@ -35,11 +33,12 @@ public:
   void CondenseEnvironment();
 
   // Solve the region-condensed electrostatic problem: the region's own Dirichlet terminals
-  // plus the environment DtN term on the interface. Returns the region potential on the
-  // region H1 (true) DOFs. Requires CondenseEnvironment to have been called.
+  // plus the environment DtN term on the interface. Returns the potential on the parent H1
+  // true DOFs (the region-touched entries are the region solution; environment-interior
+  // entries are left zero). Requires CondenseEnvironment to have been called.
   Vector SolveRegion();
 
-  // Global (region) H1 true-DOF size, for reporting.
+  // Global parent H1 true-DOF size, for reporting.
   long long int RegionGlobalTrueVSize() const;
 
 private:

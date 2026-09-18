@@ -21,8 +21,8 @@ namespace palace
 namespace
 {
 
-// Build a unit-cube ParMesh split at x=0.5 (domain attrs 1/2) with boundary attrs 1 (x=0),
-// 2 (x=1), 3 (all other faces).
+// Unit-cube ParMesh split at x=0.5 (domain attrs 1/2), boundary attrs 1 (x=0), 2 (x=1),
+// 3 (other faces).
 std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
 {
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::HEXAHEDRON);
@@ -42,16 +42,7 @@ std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
       xc += serial.GetVertex(vtx[j])[0];
     }
     xc /= vtx.Size();
-    int a = 3;
-    if (xc < 1e-9)
-    {
-      a = 1;
-    }
-    else if (xc > 1.0 - 1e-9)
-    {
-      a = 2;
-    }
-    serial.SetBdrAttribute(b, a);
+    serial.SetBdrAttribute(b, xc < 1e-9 ? 1 : (xc > 1.0 - 1e-9 ? 2 : 3));
   }
   serial.SetAttributes();
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
@@ -60,12 +51,8 @@ std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
 }  // namespace
 
 TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
-          "[substructure][Serial]")
+          "[substructure][Serial][Parallel]")
 {
-  if (Mpi::Size(Mpi::World()) > 1)
-  {
-    SKIP("SubstructuringSolver test is serial-only");
-  }
   auto run = [](double eps_r, double eps_e, int order)
   {
     json config = {
@@ -87,17 +74,17 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
 
-    // Region-condensed solve.
+    // Region-condensed solve (parent true-DOF solution).
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
-    Vector u_region = ss.SolveRegion();
+    Vector u = ss.SolveRegion();
 
-    // Full-domain reference: assemble grad(eps grad) with terminal Dirichlet and solve.
+    // Full-domain reference on the same parent space, parallel CG.
     auto &pmesh = mesh.back()->Get();
     mfem::H1_FECollection fec(order, 3);
     mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-    const int N = pfes.GetVSize();
-    mfem::Vector eps_by_attr(pmesh.attributes.Max());
+    const int max_attr = pmesh.attributes.Max();
+    mfem::Vector eps_by_attr(max_attr);
     eps_by_attr = 1.0;
     for (const auto &m : iodata.domains.materials)
     {
@@ -107,98 +94,64 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
       }
     }
     mfem::PWConstCoefficient eps(eps_by_attr);
-    mfem::BilinearForm a(&pfes);
+    mfem::ParBilinearForm a(&pfes);
     a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
     a.Assemble();
-    a.Finalize();
-    mfem::SparseMatrix &A = a.SpMat();
-    // Dirichlet by terminal boundary attribute (order-agnostic): attr 1 -> 1 V, attr 2 ->
-    // 0.
-    std::vector<char> dir(N, 0);
-    std::vector<double> udir(N, 0.0);
-    {
-      const int maxb = pmesh.bdr_attributes.Max();
-      auto mark = [&](int attr, double val)
-      {
-        mfem::Array<int> eb(maxb), ev;
-        eb = 0;
-        eb[attr - 1] = 1;
-        pfes.GetEssentialVDofs(eb, ev);
-        for (int i = 0; i < N; i++)
-        {
-          if (ev[i])
-          {
-            dir[i] = 1;
-            udir[i] = val;
-          }
-        }
-      };
-      mark(1, 1.0);
-      mark(2, 0.0);
-    }
-    std::vector<int> fl(N, -1), freed;
-    for (int p = 0; p < N; p++)
-    {
-      if (!dir[p])
-      {
-        fl[p] = (int)freed.size();
-        freed.push_back(p);
-      }
-    }
-    const int nf = freed.size();
-    mfem::DenseMatrix Kf(nf);
-    Kf = 0.0;
-    mfem::Vector bf(nf);
-    bf = 0.0;
-    for (int af = 0; af < nf; af++)
-    {
-      int p = freed[af];
-      const int *cols = A.GetRowColumns(p);
-      const double *vals = A.GetRowEntries(p);
-      for (int k = 0; k < A.RowSize(p); k++)
-      {
-        int q = cols[k];
-        double v = vals[k];
-        if (fl[q] >= 0)
-        {
-          Kf(af, fl[q]) += v;
-        }
-        else if (dir[q])
-        {
-          bf(af) -= v * udir[q];
-        }
-      }
-    }
-    mfem::DenseMatrix Kfi(Kf);
-    Kfi.Invert();
-    mfem::Vector uf(nf);
-    Kfi.Mult(bf, uf);
-    std::vector<double> u_full(N, 0.0);
-    for (int p = 0; p < N; p++)
-    {
-      if (dir[p])
-      {
-        u_full[p] = udir[p];
-      }
-    }
-    for (int af = 0; af < nf; af++)
-    {
-      u_full[freed[af]] = uf(af);
-    }
+    mfem::ParGridFunction xgf(&pfes);
+    xgf = 0.0;
+    const int maxb = pmesh.bdr_attributes.Max();
+    mfem::Array<int> m1(maxb), m2(maxb);
+    m1 = 0;
+    m2 = 0;
+    m1[0] = 1;  // attr 1 -> 1 V
+    m2[1] = 1;  // attr 2 -> 0 V
+    mfem::ConstantCoefficient one(1.0), zero(0.0);
+    xgf.ProjectBdrCoefficient(one, m1);
+    xgf.ProjectBdrCoefficient(zero, m2);
+    mfem::Array<int> ess_bdr(maxb), ess_tdofs;
+    ess_bdr = 0;
+    ess_bdr[0] = 1;
+    ess_bdr[1] = 1;
+    pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
+    mfem::ParLinearForm bform(&pfes);
+    bform = 0.0;
+    bform.Assemble();
+    mfem::OperatorPtr A;
+    mfem::Vector B, X;
+    a.FormLinearSystem(ess_tdofs, xgf, bform, A, X, B);
+    mfem::HypreParMatrix *Ah = A.As<mfem::HypreParMatrix>();
+    mfem::HypreBoomerAMG amg(*Ah);
+    amg.SetPrintLevel(0);
+    mfem::HyprePCG pcg(*Ah);
+    pcg.SetTol(1e-12);
+    pcg.SetMaxIter(500);
+    pcg.SetPrintLevel(0);
+    pcg.SetPreconditioner(amg);
+    pcg.Mult(B, X);
+    a.RecoverFEMSolution(X, bform, xgf);
+    mfem::Vector u_full;
+    xgf.GetTrueDofs(u_full);
 
-    // Map region submesh DOFs to parent for comparison.
-    mfem::Array<int> ra(1);
+    // Compare on region-touched true DOFs.
+    mfem::Array<int> ra(1), ea(1);
     ra[0] = 1;
-    Substructure region(pfes, ra, fec);
-    const auto &par = region.GetParentDof();
+    ea[0] = 2;
+    mfem::Array<int> rm, em, im;
+    MarkInterfaceTrueDofs(pfes, ra, ea, rm, em, im);
     double num = 0.0, den = 0.0;
-    for (int i = 0; i < u_region.Size(); i++)
+    for (int i = 0; i < pfes.GetTrueVSize(); i++)
     {
-      double e = u_region(i) - u_full[par[i]];
-      num += e * e;
-      den += u_full[par[i]] * u_full[par[i]];
+      if (rm[i])
+      {
+        double e = u(i) - u_full(i);
+        num += e * e;
+        den += u_full(i) * u_full(i);
+      }
     }
-    CHECK(std::sqrt(num / den) < 1.0e-10);
+    double gnum = 0.0, gden = 0.0;
+    MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+    MPI_Allreduce(&den, &gden, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+    CHECK(std::sqrt(gnum / gden) < 1.0e-8);
   };
 
   SECTION("uniform permittivity, order 1")
