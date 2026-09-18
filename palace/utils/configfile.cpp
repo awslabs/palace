@@ -1107,6 +1107,12 @@ std::vector<double> ConstructLinearRange(double start, double end, double delta)
 }
 std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 {
+  MFEM_VERIFY(n_sample > 0, "Invalid number of samples for linear frequency range!");
+  if (n_sample == 1)
+  {
+    // Single-sample convention (as in numpy.linspace): sample the interval start.
+    return {start};
+  }
   std::vector<double> f(n_sample);
   for (int i = 0; i < n_sample; i++)
   {
@@ -1116,6 +1122,11 @@ std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
+  MFEM_VERIFY(n_sample > 0, "Invalid number of samples for log frequency range!");
+  if (n_sample == 1)
+  {
+    return {start};
+  }
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);
@@ -1166,6 +1177,10 @@ DrivenSolverData::DrivenSolverData(const json &driven)
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
+  // Circuit synthesis is only implemented by the adaptive sweep; without a positive
+  // "AdaptiveTol" it would be silently ignored.
+  MFEM_VERIFY(!adaptive_circuit_synthesis || adaptive_tol > 0.0,
+              "\"AdaptiveCircuitSynthesis\" requires a positive \"AdaptiveTol\"!");
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
@@ -1175,6 +1190,7 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     double min_f = driven.at("MinFreq");     // Required
     double max_f = driven.at("MaxFreq");     // Required
     double delta_f = driven.at("FreqStep");  // Required
+    MFEM_VERIFY(delta_f > 0.0, "\"FreqStep\" must be positive!");
     sample_f = ConstructLinearRange(min_f, max_f, delta_f);
     if (int save_step = driven.value("SaveStep", 0); save_step > 0)
     {
@@ -1306,6 +1322,13 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
+  // DrivenSolver reverts an adaptive sweep with too few samples to a uniform sweep at
+  // runtime, except with circuit synthesis, which has no such fallback: a single distinct
+  // sample would degenerate PROM initialization (identical endpoint indices) and the MRI
+  // error indicator, which requires two sample points (sample_f is deduplicated above).
+  MFEM_VERIFY(adaptive_tol == 0.0 || !adaptive_circuit_synthesis || sample_f.size() >= 2,
+              "Adaptive frequency sweep with circuit synthesis requires at least two "
+              "distinct frequency samples!");
 }
 
 EigenSolverData::EigenSolverData(const json &eigenmode)
