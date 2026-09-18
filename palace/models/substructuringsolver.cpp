@@ -167,8 +167,10 @@ Vector SubstructuringSolver::SolveRegion()
   auto idx = [&](int i)
   { return impl->gamma_index[par[i]] >= 0 ? impl->gamma_index[par[i]] : nG + ri[par[i]]; };
 
-  mfem::DenseMatrix K(ndof);
-  K = 0.0;
+  // Assemble the compact (interface + region-interior) free system as a sparse matrix. The
+  // environment DtN contributes a dense interface-interface block (interface-sized), added
+  // as explicit entries; region Dirichlet terminals are eliminated into the RHS.
+  mfem::SparseMatrix K(ndof, ndof);
   mfem::Vector b(ndof);
   b = 0.0;
   for (int i = 0; i < nr; i++)
@@ -188,7 +190,7 @@ Vector SubstructuringSolver::SolveRegion()
         b(idx(i)) -= v * rv(j);
         continue;
       }
-      K(idx(i), idx(j)) += v;
+      K.Add(idx(i), idx(j), v);
     }
   }
   for (int a = 0; a < nG; a++)
@@ -196,14 +198,23 @@ Vector SubstructuringSolver::SolveRegion()
     b(a) += impl->dtn->Load()(a);
     for (int bb = 0; bb < nG; bb++)
     {
-      K(a, bb) += impl->dtn->Schur()(a, bb);
+      K.Add(a, bb, impl->dtn->Schur()(a, bb));
     }
   }
+  K.Finalize();
 
-  mfem::DenseMatrix Ki(K);
-  Ki.Invert();
+  // Solve the SPD compact system with CG (diagonal-preconditioned).
   mfem::Vector u(ndof);
-  Ki.Mult(b, u);
+  u = 0.0;
+  mfem::GSSmoother prec(K);
+  mfem::CGSolver cg;
+  cg.SetOperator(K);
+  cg.SetPreconditioner(prec);
+  cg.SetRelTol(1.0e-12);
+  cg.SetMaxIter(2000);
+  cg.SetPrintLevel(0);
+  cg.Mult(b, u);
+  MFEM_VERIFY(cg.GetConverged(), "Region-condensed CG solve did not converge!");
 
   // Scatter to region submesh DOFs (Dirichlet DOFs carry their prescribed value).
   Vector u_region(nr);
