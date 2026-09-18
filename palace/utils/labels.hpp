@@ -146,6 +146,13 @@ enum class MultigridCoarsening : char
   LOGARITHMIC
 };
 
+// Mode for the substructuring (domain-decomposition region condensation) capability.
+enum class SubstructuringMode : char
+{
+  OFFLINE,
+  ONLINE
+};
+
 // Preconditioning side.
 enum class PreconditionerSide : char
 {

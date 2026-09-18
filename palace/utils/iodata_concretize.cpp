@@ -534,6 +534,19 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
       break;
   }
 
+  if (iodata.solver.substructuring)
+  {
+    const auto &sub = *iodata.solver.substructuring;
+    auto &j_sub = j_solver["Substructuring"];
+    j_sub["Region"]["Attributes"] = sub.region_attributes;
+    j_sub["Environment"]["Attributes"] = sub.environment_attributes;
+    Concretize(j_sub, "Mode", ToString(sub.mode));
+    if (!sub.save_model.empty())
+    {
+      Concretize(j_sub, "SaveModel", sub.save_model);
+    }
+  }
+
   if (config.contains("Domains"))
   {
     ConcretizeDomains(iodata.domains, config["Domains"]);
