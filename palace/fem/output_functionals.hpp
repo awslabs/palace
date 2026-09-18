@@ -143,6 +143,11 @@ private:
   double epr_t = 0.0, epr_epsilon = 0.0;
   SurfaceFlux flux_type = SurfaceFlux::ELECTRIC;
   bool flux_two_sided = false;
+  // Electric flux and surface charge kernels evaluate D = ε E with the real permittivity by
+  // default; when set, the imaginary permittivity Im{ε} is used instead, so that owners can
+  // assemble the complex D = (Re{ε} + i Im{ε}) E of a lossy dielectric from two
+  // functionals.
+  bool flux_imag_permittivity = false;
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
   std::complex<double> farfield_omega = 0.0;
@@ -243,7 +248,8 @@ private:
                     const mfem::ParFiniteElementSpace &fespace,
                     const MaterialOperator &mat_op, int lod, double scaling,
                     std::shared_ptr<const FaceSamplingPlan> sampling_plan,
-                    std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache = nullptr);
+                    std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache = nullptr,
+                    bool imag_permittivity = false);
   SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
                     const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &nd_fespace,
@@ -281,12 +287,13 @@ public:
 
   // Construct a surface flux functional (see BdrSurfaceFluxCoefficient). The required
   // finite element spaces depend on the flux type: ELECTRIC requires nd_fespace,
-  // MAGNETIC requires rt_fespace, POWER requires both.
+  // MAGNETIC requires rt_fespace, POWER requires both. For ELECTRIC, imag_permittivity
+  // selects Im{ε} in place of Re{ε} in D = ε E.
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace *nd_fespace,
                     const mfem::ParFiniteElementSpace *rt_fespace,
                     const MaterialOperator &mat_op, SurfaceFlux type, bool two_sided,
-                    const mfem::Vector &x0);
+                    const mfem::Vector &x0, bool imag_permittivity = false);
 
   // Construct a Stratton-Chu far-field functional for the given observation directions
   // (see AddStrattonChuIntegrandAtElement; external boundaries only).

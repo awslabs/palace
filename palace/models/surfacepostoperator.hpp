@@ -55,7 +55,8 @@ private:
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
                                                       const mfem::ParGridFunction *B,
-                                                      const MaterialOperator &mat_op) const;
+                                                      const MaterialOperator &mat_op,
+                                                      bool imag_permittivity = false) const;
   };
   struct InterfaceDielectricData : public SurfaceData
   {
@@ -98,6 +99,8 @@ private:
   // constructed lazily per surface index to replace per-call coefficient evaluation and
   // boundary LinearForm assembly in the legacy paths when supported.
   mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
+  // Im{ε}-weighted electric flux functionals for complex fields in lossy dielectrics.
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs_imag;
   mutable std::unique_ptr<SurfaceFunctional> farfield_func;
   mutable std::vector<std::array<double, 3>> farfield_func_dirs;
 
@@ -115,7 +118,9 @@ public:
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);
 
-  // Get surface integrals computing electric or magnetic field flux through a boundary.
+  // Get surface integrals computing electric or magnetic field flux, or the stationary real
+  // power flux, through a boundary. For complex fields the electric flux uses the complex
+  // permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
                                       const GridFunction *B) const;
 

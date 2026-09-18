@@ -598,11 +598,29 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
                             E_bdr_eval);
     }
-    // Q_s = D ⋅ n = ε_0 E ⋅ n.
+    // Q_s = D ⋅ n = ε_0 ε E ⋅ n, with the complex permittivity ε = Re{ε} + i Im{ε} of a
+    // lossy dielectric for complex fields (the fused bundle applies it in-kernel; the
+    // independent evaluators need the Im{ε}-weighted counterpart, combined at write time).
     if (use_ceed_boundary_fields)
     {
       MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
                             Q_bdr_eval);
+      if (HasComplexGridFunction<solver_t>() && fem_op->GetMaterialOp().HasLossTangent() &&
+          !bdr_derived_bundle)
+      {
+        const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+        const auto &pmesh = mesh.Get();
+        const int bdr_attr_max =
+            pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+        mfem::Array<int> marker(bdr_attr_max);
+        marker = 1;
+        Q_bdr_eval_imag = std::make_unique<PointFieldEvaluator>(
+            PointFieldEvaluator::Kind::FLUX_Q, mesh, marker, *E->ParFESpace(),
+            fem_op->GetMaterialOp(), paraview_refine_order, scaling, bdr_sampling_plan,
+            bdr_trace_cache, nullptr, /*imag_permittivity*/ true);
+        RequireCeedPointFieldEvaluator(Q_bdr_eval_imag.get(),
+                                       "lossy boundary surface charge visualization");
+      }
     }
   }
 
@@ -968,13 +986,37 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
+      // Independent evaluators: Q_r = Re{ε} E_r ⋅ n - Im{ε} E_i ⋅ n and
+      // Q_i = Re{ε} E_i ⋅ n + Im{ε} E_r ⋅ n (the Im{ε} evaluator exists only for lossy
+      // materials; the fused bundle computes the same combination in-kernel).
+      auto RegisterBdrChargeField = [&](const std::string &name, bool imaginary_phase)
+      {
+        const auto *eval_ptr = Q_bdr_eval.get();
+        const auto *eval_imag_ptr = Q_bdr_eval_imag.get();
+        const auto *E_ptr = E.get();
+        paraview_bdr->RegisterBoundaryPointEvaluator(
+            name,
+            [eval_ptr, eval_imag_ptr, E_ptr, imaginary_phase](Vector &buffer)
+            {
+              eval_ptr->EvalBuffer(imaginary_phase ? E_ptr->Imag() : E_ptr->Real(), buffer);
+              if (eval_imag_ptr)
+              {
+                Vector cross(buffer.Size());
+                cross.UseDevice(buffer.UseDevice());
+                eval_imag_ptr->EvalBuffer(imaginary_phase ? E_ptr->Real() : E_ptr->Imag(),
+                                          cross);
+                buffer.Add(imaginary_phase ? 1.0 : -1.0, cross);
+              }
+            },
+            eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+      };
       if (!RegisterBdrBundleField("Q_s_real", PointFieldEvaluator::Kind::FLUX_Q, false))
       {
-        RegisterBdrEvalField("Q_s_real", Q_bdr_eval, E->Real());
+        RegisterBdrChargeField("Q_s_real", false);
       }
       if (!RegisterBdrBundleField("Q_s_imag", PointFieldEvaluator::Kind::FLUX_Q, true))
       {
-        RegisterBdrEvalField("Q_s_imag", Q_bdr_eval, E->Imag());
+        RegisterBdrChargeField("Q_s_imag", true);
       }
     }
     else
