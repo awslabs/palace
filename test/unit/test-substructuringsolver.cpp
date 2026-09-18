@@ -79,6 +79,15 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     ss.CondenseEnvironment();
     Vector u = ss.SolveRegion();
 
+    // Reuse: a second solve reuses the materialized environment DtN (no re-condensation)
+    // and must give an identical result.
+    Vector u2 = ss.SolveRegion();
+    {
+      Vector d(u2);
+      d -= u;
+      CHECK(d.Norml2() <= 1.0e-12 * (u.Norml2() + 1.0e-30));
+    }
+
     // Full-domain reference on the same parent space, parallel CG.
     auto &pmesh = mesh.back()->Get();
     mfem::H1_FECollection fec(order, 3);

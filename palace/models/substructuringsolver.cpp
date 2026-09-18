@@ -105,6 +105,53 @@ private:
   mutable mfem::Vector td;
 };
 
+// Materialized DtN: applies a replicated dense interface operator S_E (computed once) to a
+// distributed interface vector via a gather (Allreduce over the global interface
+// enumeration) and a local dense apply on owned interface rows. Cheap and reusable across
+// region solves.
+class MaterializedDtN : public mfem::Operator
+{
+public:
+  MaterializedDtN(const mfem::DenseMatrix &S, const std::vector<int> &gamma_global,
+                  int nG_global, MPI_Comm comm)
+    : mfem::Operator(static_cast<int>(gamma_global.size())), S(S),
+      gamma_global(gamma_global), nG_global(nG_global), comm(comm)
+  {
+  }
+
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  {
+    std::vector<double> xl(nG_global, 0.0), xg(nG_global, 0.0);
+    for (int i = 0; i < height; i++)
+    {
+      if (gamma_global[i] >= 0)
+      {
+        xl[gamma_global[i]] = x(i);
+      }
+    }
+    MPI_Allreduce(xl.data(), xg.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
+    y = 0.0;
+    for (int i = 0; i < height; i++)
+    {
+      if (gamma_global[i] >= 0)
+      {
+        double s = 0.0;
+        for (int j = 0; j < nG_global; j++)
+        {
+          s += S(gamma_global[i], j) * xg[j];
+        }
+        y(i) = s;
+      }
+    }
+  }
+
+private:
+  const mfem::DenseMatrix &S;
+  const std::vector<int> &gamma_global;
+  int nG_global;
+  MPI_Comm comm;
+};
+
 }  // namespace
 
 // Parallel region-condensed electrostatic solve. Region/environment operators are assembled
@@ -128,6 +175,15 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<mfem::HypreBoomerAMG> amg_env;
   std::unique_ptr<mfem::HyprePCG> solver_env;
   std::unique_ptr<ImplicitDtN> dtn;
+
+  // Materialized (reusable) interface operator: replicated dense S_E + load g_E over a
+  // global interface enumeration, computed once so region solves need no environment
+  // solves.
+  std::vector<int> gamma_global;  // owned parent true DOF -> global interface index, or -1
+  int nG_global = 0;
+  mfem::DenseMatrix S_dense;
+  mfem::Vector g_dense;
+  std::unique_ptr<MaterializedDtN> mat_dtn;
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
     : iodata(iodata), parent(parent), fec(iodata.solver.order, parent.Dimension()),
@@ -305,15 +361,90 @@ void SubstructuringSolver::CondenseEnvironment()
     std::unique_ptr<mfem::HypreParMatrix> tmp(
         impl->A_region_free->EliminateRowsCols(non_rfree));
   }
+
+  // Materialize the interface operator S_E and load g_E once, so region solves reuse them
+  // without any environment solves. Global interface enumeration via MPI_Exscan.
+  MPI_Comm comm = impl->parent_fes.GetComm();
+  int nloc = 0;
+  for (int i = 0; i < impl->nt; i++)
+  {
+    if (impl->is_gamma[i])
+    {
+      nloc++;
+    }
+  }
+  int off = 0;
+  MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+  impl->nG_global = 0;
+  MPI_Allreduce(&nloc, &impl->nG_global, 1, MPI_INT, MPI_SUM, comm);
+  impl->gamma_global.assign(impl->nt, -1);
+  {
+    int c = off;
+    for (int i = 0; i < impl->nt; i++)
+    {
+      if (impl->is_gamma[i])
+      {
+        impl->gamma_global[i] = c++;
+      }
+    }
+  }
+
+  const int nG = impl->nG_global;
+  auto gather_interface = [&](const Vector &y, double *col)
+  {
+    std::vector<double> loc(nG, 0.0);
+    for (int i = 0; i < impl->nt; i++)
+    {
+      if (impl->is_gamma[i])
+      {
+        loc[impl->gamma_global[i]] = y(i);
+      }
+    }
+    MPI_Allreduce(loc.data(), col, nG, MPI_DOUBLE, MPI_SUM, comm);
+  };
+  impl->S_dense.SetSize(nG);
+  impl->S_dense = 0.0;
+  Vector e(impl->nt), y(impl->nt);
+  std::vector<double> col(nG);
+  for (int c = 0; c < nG; c++)
+  {
+    e = 0.0;
+    for (int i = 0; i < impl->nt; i++)
+    {
+      if (impl->is_gamma[i] && impl->gamma_global[i] == c)
+      {
+        e(i) = 1.0;
+      }
+    }
+    impl->dtn->Mult(e, y);
+    gather_interface(y, col.data());
+    for (int r = 0; r < nG; r++)
+    {
+      impl->S_dense(r, c) = col[r];
+    }
+  }
+  // g_E: interface response to the environment Dirichlet data.
+  impl->g_dense.SetSize(nG);
+  {
+    Vector gy(impl->nt);
+    impl->dtn->Mult(impl->dbc_values, gy);
+    std::vector<double> gc(nG);
+    gather_interface(gy, gc.data());
+    for (int r = 0; r < nG; r++)
+    {
+      impl->g_dense(r) = gc[r];
+    }
+  }
+  impl->mat_dtn = std::make_unique<MaterializedDtN>(impl->S_dense, impl->gamma_global,
+                                                    impl->nG_global, comm);
 }
 
 Vector SubstructuringSolver::SolveRegion()
 {
-  MFEM_VERIFY(impl->dtn, "CondenseEnvironment must be called before SolveRegion!");
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before SolveRegion!");
   const int nt = impl->nt;
 
-  // RHS: region Dirichlet elimination + environment DtN load g_E (environment Dirichlet
-  // carried through the implicit DtN).
+  // RHS: region Dirichlet elimination + the materialized environment DtN load g_E.
   Vector b(nt);
   b = 0.0;
   {
@@ -327,19 +458,16 @@ Vector SubstructuringSolver::SolveRegion()
       }
     }
   }
+  for (int i = 0; i < nt; i++)
   {
-    Vector gE(nt);
-    impl->dtn->Mult(impl->dbc_values, gE);  // interface response to environment Dirichlet
-    for (int i = 0; i < nt; i++)
+    if (impl->is_gamma[i])
     {
-      if (impl->is_gamma[i])
-      {
-        b(i) -= gE(i);
-      }
+      b(i) -= impl->g_dense(impl->gamma_global[i]);
     }
   }
 
-  RegionCondensedOperator sysop(*impl->A_region_free, *impl->dtn, impl->is_region_free);
+  // Region-condensed solve using the materialized S_E (no environment solves in the loop).
+  RegionCondensedOperator sysop(*impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
   Vector u(nt);
   u = 0.0;
   mfem::CGSolver cg(impl->parent_fes.GetComm());
