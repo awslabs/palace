@@ -70,12 +70,12 @@ constexpr int WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX = 12;
 // Schur complement by percent-level amounts. A 1e-6 floor retains those directions while
 // avoiding rank decisions in the numerical tail when AdaptiveTol is much tighter.
 constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
-// Significance floor for a modal-correction coupling part relative to its pair norm ‖S_pq‖.
-// The modal subspace is real up to an arbitrary per-partition global phase, so Im(Q_p Q_qᵀ)
-// is machine-epsilon phase noise (~1e-10·‖S_pq‖). Fitting it spends aux states on noise
-// whose SVD rank flips across partitions, so skip any part below this floor as numerically
-// zero.
-constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_TOL = 1.0e-6;
+// Absolute floor for a modal-correction residue part, guarding the phase-noise Im(Q_p Q_qᵀ)
+// (machine-eps) from spending aux states. Significance itself is measured by the part's
+// in-band contribution ‖part‖/dist(p, band) against max_ω ‖M(ω)‖, not the pole's own
+// residue norm (a far pole's residue can be O(10-100)×W via near-cancellation with the poly
+// part).
+constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
 // Index of `target` in `labels`, or -1 when absent. Used to address rows of the
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
@@ -2212,8 +2212,24 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       }
 
       const std::complex<double> imag_unit(0.0, 1.0);
+      // In-band correction scale: ‖M‖_F is invariant under the orthonormal Q, so this
+      // equals max ‖W_e(ω)‖_F over the fit grid.
+      const double M_scale = Y.rowwise().norm().maxCoeff();
+      auto band_distance = [&](std::complex<double> p)
+      {
+        // Distance from the pole to the real sweep interval, floored so a pole on the band
+        // is never treated as insignificant.
+        const double dre =
+            std::max({sweep_omega_min - p.real(), p.real() - sweep_omega_max, 0.0});
+        return std::max(std::hypot(dre, p.imag()),
+                        1.0e-3 * (sweep_omega_max - sweep_omega_min));
+      };
+      // Part significance: max in-band contribution relative to the correction scale, at
+      // the requested tolerance (bounded below by the phase-noise floor).
+      const double part_tol =
+          std::max(0.1 * waveport_synthesis_tol, WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR);
       // Track the actually-realized residues (kept parts only) so the residual below
-      // reflects the MODAL_PART_TOL truncation, not the untruncated fit.
+      // reflects the significance truncation, not the untruncated fit.
       std::vector<std::pair<std::complex<double>, Eigen::MatrixXcd>> realized_poles;
       for (int k = 0; k < n_poles; k++)
       {
@@ -2227,8 +2243,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
         Eigen::MatrixXcd R_kept = Eigen::MatrixXcd::Zero(nr, nr);
         for (int part = 0; part < 2; part++)
         {
-          if (residue_norm == 0.0 ||
-              parts[part].first.norm() <= WAVEPORT_SYNTHESIS_MODAL_PART_TOL * residue_norm)
+          if (residue_norm == 0.0 || M_scale <= 0.0 ||
+              parts[part].first.norm() / band_distance(denominator.poles(k)) <=
+                  part_tol * M_scale)
           {
             continue;
           }
