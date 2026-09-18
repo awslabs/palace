@@ -516,4 +516,20 @@ long long int SubstructuringSolver::RegionGlobalTrueVSize() const
   return impl->parent_fes.GlobalTrueVSize();
 }
 
+double SubstructuringSolver::ElectrostaticEnergy(const Vector &u) const
+{
+  Vector t(impl->nt), t2(impl->nt);
+  impl->A_region->Mult(u, t);
+  impl->A_env->Mult(u, t2);
+  t += t2;
+  double local = 0.0;
+  for (int i = 0; i < impl->nt; i++)
+  {
+    local += u(i) * t(i);
+  }
+  double global = 0.0;
+  MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, impl->parent_fes.GetComm());
+  return 0.5 * global;
+}
+
 }  // namespace palace

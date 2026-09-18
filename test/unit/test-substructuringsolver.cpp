@@ -154,6 +154,13 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
     MPI_Allreduce(&den, &gden, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
     CHECK(std::sqrt(gnum / gden) < 1.0e-8);
+
+    // Electrostatic energy (QoI) must match the monolith. Monolith energy = 1/2 X^T (B -
+    // r), computed here directly as 1/2 u_full^T A_full u_full via the substructuring
+    // accessor on the reference field.
+    const double e_sub = ss.ElectrostaticEnergy(u);
+    const double e_ref = ss.ElectrostaticEnergy(u_full);
+    CHECK(std::abs(e_sub - e_ref) <= 1.0e-8 * std::abs(e_ref));
   };
 
   SECTION("uniform permittivity, order 1")

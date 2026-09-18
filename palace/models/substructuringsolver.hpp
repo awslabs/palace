@@ -37,6 +37,11 @@ public:
   // Returns the full parent H1 true-DOF potential. Requires CondenseEnvironment first.
   Vector SolveRegion();
 
+  // Total electrostatic energy 1/2 phi^T K phi of a full parent-space potential, using the
+  // full (region + environment) stiffness. For a single-terminal 1 V excitation this is
+  // half the driven terminal's self-capacitance.
+  double ElectrostaticEnergy(const Vector &u) const;
+
   // Global parent H1 true-DOF size, for reporting.
   long long int RegionGlobalTrueVSize() const;
 
