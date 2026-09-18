@@ -333,7 +333,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
     // comparison).
     for (int i = 0; i < single_tet.GetNodes()->Size(); i++)
     {
-      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + (double)rand() / RAND_MAX);
+      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + static_cast<double>(rand()) / RAND_MAX);
     }
 
     auto four_hex = mesh::MeshTetToHex(single_tet);

@@ -1793,10 +1793,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
       }
       CeedElemRestriction ident_restr;
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp,
-                               num_pts, (CeedSize)geom_comp * num_pts, CEED_MEM_HOST,
-                               CEED_COPY_VALUES, ident_offsets.data(), &ident_restr));
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionCreate(
+                         ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp, num_pts,
+                         static_cast<CeedSize>(geom_comp) * num_pts, CEED_MEM_HOST,
+                         CEED_COPY_VALUES, ident_offsets.data(), &ident_restr));
       CeedVector ident_vec;
       ceed::InitCeedVector(ident, ceed, &ident_vec);
       inputs.push_back(
@@ -1909,8 +1910,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       CeedElemRestriction restr;
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(
                                ceed, static_cast<CeedInt>(num_elem), nq, num_comp, 1,
-                               (CeedSize)face_nbr_exchange->ImportSize(), CEED_MEM_HOST,
-                               CEED_COPY_VALUES, offsets.data(), &restr));
+                               static_cast<CeedSize>(face_nbr_exchange->ImportSize()),
+                               CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(), &restr));
       CeedVector vec;
       ceed::InitCeedVector(face_nbr_exchange->Imported(), ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
@@ -2109,10 +2110,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       // Keep the output as an EVAL_NONE restriction so fixed-rule point routing and
       // scatter into the visualization buffer stay on the device.
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(num_elem), nq, nc,
-                               component_stride, (CeedSize)buffer_size, CEED_MEM_HOST,
-                               CEED_COPY_VALUES, offsets.data(), &out_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
+                                                     nq, nc, component_stride,
+                                                     static_cast<CeedSize>(buffer_size),
+                                                     CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                     offsets.data(), &out_restr));
     }
     else
     {
