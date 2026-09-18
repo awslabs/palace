@@ -854,10 +854,7 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
   const int nnz_int = mfem::internal::to_int(nnz);
   mfem::Array<int> I(m + 1), J(nnz_int), perm(nnz_int), Jmap(nnz_int + 1);
   I = 0;
-  for (int k = 0; k < nnz_int; k++)
-  {
-    perm[k] = k;
-  }
+  std::iota(perm.begin(), perm.end(), 0);
   std::sort(perm.begin(), perm.end(),
             [&](const int &i, const int &j) { return (rows[i] < rows[j]); });
 
