@@ -49,6 +49,18 @@ def _base(kind, case, variant, mesh, input_hashes, transform, command):
             "Producer": _producer()}
 
 
+# Direction alignment of a short-edge band with a feature segment (supervisor
+# decision 36): the principal axis of a band of RMSWidth w and Span L is resolvable
+# only to about w / L, so a band is aligned when the sine of its angle to the
+# segment is within that ratio; the former fixed cosine tolerance stays as the floor
+# for degenerate (zero-width) bands.  An arbitrary diagonal stays far outside.
+ALIGNMENT_COSINE_FLOOR = 1e-6
+ALIGNMENT_RULE = ("direction aligned when sin(angle to the feature segment) <= RMSWidth / Span (the "
+                  "band's own direction resolvability; supervisor decision 36), with the floor "
+                  "cos(angle) > 1 - 1e-6 for degenerate widths; the measured angle, the resolvability "
+                  "and the verdict are recorded per band")
+
+
 def _segment_alignment(direction, segments):
     """Largest |cos| between a band direction and the given feature segments."""
     alignment = 0.0
@@ -59,6 +71,17 @@ def _segment_alignment(direction, segments):
             raise ValueError("Degenerate feature segment")
         alignment = max(alignment, float(abs(np.dot(direction, tangent / length))))
     return alignment
+
+
+def _alignment_angle(alignment):
+    return float(math.acos(min(1.0, max(-1.0, alignment))))
+
+
+def _direction_aligned(alignment, resolvability):
+    """Decision 36: aligned when sin(angle) <= resolvability (RMSWidth / Span) or
+    within the fixed cosine floor."""
+    return (alignment > 1 - ALIGNMENT_COSINE_FLOOR or
+            math.sin(_alignment_angle(alignment)) <= resolvability)
 
 
 def _on_basis_edge(direction, endpoints, basis_edges, reach):
@@ -193,12 +216,13 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             width = float(singular[1] / math.sqrt(len(points))) if len(singular) > 1 else 0.0
             line_like = width <= 2.0 * threshold
             direction = axes[0]
+            resolvability = width / span
             alignment = _segment_alignment(direction, segments)
             footprint_alignment = _segment_alignment(direction, footprint)
             junction_alignment = _segment_alignment(direction, junction)
-            aligned = alignment > 1 - 1e-6
-            footprint_aligned = footprint_alignment > 1 - 1e-6
-            junction_aligned = junction_alignment > 1 - 1e-6
+            aligned = _direction_aligned(alignment, resolvability)
+            footprint_aligned = _direction_aligned(footprint_alignment, resolvability)
+            junction_aligned = _direction_aligned(junction_alignment, resolvability)
             basis_aligned = bool(len(basis_edges)) and _on_basis_edge(
                 direction, (points[first], points[last]), basis_edges, 2.0 * threshold)
             feature_aligned = aligned or footprint_aligned or junction_aligned or basis_aligned
@@ -217,6 +241,10 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                 "Span": span, "RMSWidth": width, "PhysicalSegmentAlignment": alignment,
                 "FootprintSegmentAlignment": footprint_alignment,
                 "JunctionSegmentAlignment": junction_alignment,
+                "DirectionResolvability": resolvability,
+                "AlignmentAngles": {"Signature": _alignment_angle(alignment),
+                                    "Footprint": _alignment_angle(footprint_alignment),
+                                    "Junction": _alignment_angle(junction_alignment)},
                 "LineLike": line_like, "AlignedWithPhysicalSegment": aligned,
                 "AlignedWithFootprintSegment": footprint_aligned,
                 "AlignedWithJunctionSegment": junction_aligned,
@@ -239,7 +267,8 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                                         "material-interface junction line (same band), a bound "
                                         "trace-basis edge the band lies on (direction aligned and "
                                         "both endpoints within 2 x ShortEdgeThreshold of the edge "
-                                        "segment; source-driven, decision 21)"},
+                                        "segment; source-driven, decision 21)",
+                                "Alignment": ALIGNMENT_RULE},
             "LineLikeBandsAlignedWith": aligned_counts,
             "TraceBasisEdgeBands": basis_bands,
             "LongShortEdgeComponents": components}

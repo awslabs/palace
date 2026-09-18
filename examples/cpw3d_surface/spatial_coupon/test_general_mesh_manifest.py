@@ -1758,6 +1758,62 @@ class GeneralMeshManifestTest(unittest.TestCase):
             _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
                                    footprint_segments=[[[0., 0., 0.], [0., 0., 0.]]])
 
+    def test_diagonal_detector_alignment_within_the_band_resolvability(self):
+        # Supervisor decision 36: a band's direction is resolvable only to RMSWidth /
+        # Span, so alignment with a feature segment is judged within that ratio (the
+        # 1e-6 cosine floor kept for degenerate widths); the gate is unchanged.
+        def grid(points, triangles, origin, angle, columns, rows, spacing, transverse):
+            rotation = np.array([[math.cos(angle), -math.sin(angle)],
+                                 [math.sin(angle), math.cos(angle)]])
+            base = len(points)
+            points.extend([*(rotation @ np.array([index * spacing, offset]) + origin), 0.]
+                          for offset in transverse for index in range(columns))
+            for row in range(rows - 1):
+                for index in range(columns - 1):
+                    first = base + row * columns + index; last = first + columns
+                    triangles.extend([[first, first + 1, last + 1], [first, last + 1, last]])
+        def strip(angle, length):
+            # A 10/12.5 nm layer-like band (four rows, 30 nm wide) on a plane whose
+            # ordinary triangulation is the 50 nm grid (so the short-edge threshold is
+            # the production 0.6 x median = 30 nm), as on a metal face.
+            points, triangles = [], []
+            columns = int(round(length / .0125)) + 1
+            grid(points, triangles, np.zeros(2), angle, columns, 4, .0125, (0., .01, .02, .03))
+            coarse = int(round(length / .05)) + 1
+            grid(points, triangles, np.array([0., .1]), 0., coarse, 23, .05, [.05 * k for k in range(23)])
+            triangles = np.asarray(triangles)
+            return meshio.Mesh(np.asarray(points), [("triangle", triangles)],
+                               cell_data={"gmsh:physical": [np.ones(len(triangles), int)]})
+        segment = [[[0., 0., 0.], [1., 0., 0.]]]
+        def bands(angle, length):
+            report = _global_diagonal_bands(strip(angle, length), segment, .025)
+            components = [item for item in report["LongShortEdgeComponents"] if item["LineLike"]]
+            self.assertEqual(len(components), 1)
+            return report["GlobalDiagonalBands"], components[0]
+        # The 1 um edge-layer band tilted by 5 mrad (the ten-edge x = -1 bands: 2.2-2.9
+        # mrad at width/span 1.5e-2, rejected by the fixed 1.4 mrad tolerance).
+        count, band = bands(.005, 1.)
+        self.assertEqual(count, 0); self.assertTrue(band["AlignedWithPhysicalSegment"])
+        self.assertAlmostEqual(band["AlignmentAngles"]["Signature"], .005, delta=1e-3)
+        self.assertGreater(band["DirectionResolvability"], .005)
+        self.assertLess(band["PhysicalSegmentAlignment"], 1 - 1e-6)     # the old rule rejected it
+        # A short band whose angle exceeds its resolvability is still rejected ...
+        count, band = bands(.02, 1.)
+        self.assertEqual(count, 1); self.assertFalse(band["AlignedWithFeature"])
+        self.assertLess(band["DirectionResolvability"], math.sin(.02))
+        # ... as is a 45-degree diagonal.
+        count, band = bands(math.pi / 4, 1.)
+        self.assertEqual(count, 1); self.assertAlmostEqual(band["AlignmentAngles"]["Signature"], math.pi / 4, delta=1e-3)
+        # Long bands are unchanged: aligned at zero angle; the same 5 mrad tilt exceeds
+        # a 10 um band's resolvability (1.1e-3) and is rejected.
+        count, band = bands(0., 10.)
+        self.assertEqual(count, 0); self.assertTrue(band["AlignedWithPhysicalSegment"])
+        self.assertLess(band["AlignmentAngles"]["Signature"], 1e-4)          # within the 1e-6 cosine floor
+        count, band = bands(.005, 10.)
+        self.assertEqual(count, 1); self.assertFalse(band["AlignedWithPhysicalSegment"])
+        self.assertIn("decision 36", _global_diagonal_bands(strip(0., 1.), segment, .025)
+                      ["FeatureSegments"]["Alignment"])
+
     def test_diagonal_detector_threshold_tolerates_construction_roundoff(self):
         # Seed grid edges sit at exactly 2 x NormalSize up to construction roundoff
         # (~1e-12 relative on the coupon).  A band of such edges must be classified

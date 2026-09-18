@@ -90,6 +90,31 @@ measured 0.0571 / 0.0499 = 1.14); E/SA never regressed across V1/V2/EL4/EL4c
 (physics-03..06). The covariance comparison compares the layer-adjacent band
 of both placements when the gate is not applicable and requires both to agree
 on whether it applied.
+Trace-diagonal detector alignment (supervisor decision 36, 2026-09-18): the
+edge layer's nested 12.5 nm rows make every metal edge a line-like short-edge
+band on the metal faces (pre-34B the frozen 50 nm grid had none). On the
+ten-edge coupon's 1.0 um edge x = -1 (y in [-0.6, 0.4]) two of the five
+per-face bands (5001 at z = 0, 6001 at z = 0.1; RMS width 15-19 nm) had their
+SVD principal axis tilted by 2.2-2.9 mrad from the signature direction - a
+one-sided 1 um x 0.02 um point cloud resolves its direction only to about
+width / span = 1.5e-2 - and the fixed cosine tolerance 1e-6 (1.4 mrad) counted
+them as diagonal over-refinements while their siblings passed at 0.5-1.1 mrad.
+Direction alignment with a signature, footprint or junction segment is now
+judged within the band's own resolvability: sin(angle) <= RMSWidth / Span,
+with the former cosine floor 1e-6 kept for degenerate widths
+(`_direction_aligned`; the position-aware trace-basis rule is unchanged). The
+gate is unchanged (unaligned bands must be 0); a 45-degree diagonal (0.785 rad)
+or any band off every feature direction by more than its own aspect stays
+flagged, and the four-edge/ten-edge 5.5-10 um bands (angles 1e-5 to 3e-4 rad,
+resolvability 1e-3 to 8e-3) are unaffected. Every band records
+`AlignmentAngles` (signature/footprint/junction), `DirectionResolvability`
+and the verdict, and `FeatureSegments.Alignment` states the rule. Should a
+resolvability-accepted band ever turn out to lie off its feature, the
+position-aware alternative (both band endpoints on the signature segment
+lifted to the band's plane by the metal thickness, as the trace-basis rule
+does) remains available. Unit-tested: a 1 um band tilted 5 mrad accepted, the
+same band at 20 mrad rejected, a 45-degree band rejected, a 10 um band at
+0 accepted and at 5 mrad (above its 1.1e-3 resolvability) rejected.
 
 `geometry-independence-calibration-ma.json` is a separately labeled CALIBRATION
 manifest (supervisor decision 22: MA/MS metal-edge-layer h-study) whose
