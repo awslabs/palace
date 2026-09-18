@@ -461,7 +461,7 @@ void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
 {
   if (!defer_table_writes)
   {
-    table.WriteFullTableTrunc();
+    table.WriteTableIncremental();
     return;
   }
   constexpr auto flush_interval = std::chrono::seconds(10);
@@ -480,7 +480,7 @@ void PostOperatorCSV<solver_t>::WriteTable(std::optional<TableWithCSVFile> &tabl
   }
   if (table->table.n_rows() > 0)
   {
-    table->WriteFullTableTrunc();
+    table->WriteTableIncremental();
   }
   else
   {
@@ -1881,12 +1881,19 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
   {
     nr_expected_measurement_rows = solver.driven.sample_f.size();
     reload_table = (solver.driven.restart != 1);
-    defer_table_writes = (solver.driven.adaptive_tol > 0.0);
+    defer_table_writes = true;
     last_deferred_flush = std::chrono::steady_clock::now();
 
     row_i = std::size_t(solver.driven.restart - 1) % nr_expected_measurement_rows;
     ex_idx_i = std::size_t(solver.driven.restart - 1) / nr_expected_measurement_rows;
     m_ex_idx = ex_idx_v_all.at(ex_idx_i);
+  }
+
+  // Transient solver: defer writes too, else every step rewrites the tables in full.
+  if constexpr (solver_t == ProblemType::TRANSIENT)
+  {
+    defer_table_writes = true;
+    last_deferred_flush = std::chrono::steady_clock::now();
   }
 
   // Non-driven solver: get nr_expected_measurement_rows to reserve table space.
