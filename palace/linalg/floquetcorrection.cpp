@@ -28,7 +28,7 @@ FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
     BilinearForm a(rt_fespace);
     a.AddDomainIntegrator<VectorFEMassIntegrator>();
     std::unique_ptr<Operator> m = a.Assemble(skip_zeros);
-    if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
     {
       M = std::make_unique<ComplexParOperator>(std::move(m), nullptr, rt_fespace);
     }
@@ -45,7 +45,7 @@ FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
     BilinearForm a(nd_fespace, rt_fespace);
     a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
     std::unique_ptr<Operator> m = a.Assemble(skip_zeros);
-    if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
     {
       Cross = std::make_unique<ComplexParOperator>(std::move(m), nullptr, nd_fespace,
                                                    rt_fespace, false);
