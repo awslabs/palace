@@ -31,20 +31,53 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     BlockTimer bt(Timer::CONSTRUCT);
     SubstructuringSolver sub(iodata, mesh);
     sub.CondenseEnvironment();
-    Vector u = sub.SolveRegion();
-    const double energy = sub.ElectrostaticEnergy(u);
-    Mpi::Print("\nSubstructuring region-condensed electrostatic solve complete\n"
-               " Region global true dofs = {:d}, electrostatic energy = {:.9e}\n",
-               sub.RegionGlobalTrueVSize(), energy);
+    const std::vector<int> terminals = sub.TerminalIndices();
+    const int n = static_cast<int>(terminals.size());
+    MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
+
+    // Capacitance sweep: solve each terminal excitation (reusing the condensed
+    // environment), then form the Maxwell capacitance matrix C_ij = phi_i^T K phi_j.
+    std::vector<Vector> fields(n);
+    for (int j = 0; j < n; j++)
+    {
+      Mpi::Print("\nSubstructuring excitation {:d}/{:d}: terminal {:d}\n", j + 1, n,
+                 terminals[j]);
+      fields[j] = sub.SolveExcitation(terminals[j]);
+    }
+    mfem::DenseMatrix C(n);
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        C(i, j) = sub.MutualEnergy(fields[i], fields[j]);
+      }
+    }
     if (root)
     {
-      TableWithCSVFile output(post_dir / "substructuring.csv");
-      output.table.insert(Column("idx", "i", 0, 0, 2, ""));
-      output.table.insert("energy", "E");
-      output.table["idx"] << 1.0;
-      output.table["energy"] << energy;
+      const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
+      TableWithCSVFile output(post_dir / "terminal-C.csv");
+      output.table.insert(Column("i", "i", 0, 0, 2, ""));
+      for (int j = 0; j < n; j++)
+      {
+        output.table.insert(fmt::format("C{}", terminals[j]),
+                            fmt::format("C[i][{}] (F)", terminals[j]));
+      }
+      for (int i = 0; i < n; i++)
+      {
+        output.table["i"] << static_cast<double>(terminals[i]);
+      }
+      for (int j = 0; j < n; j++)
+      {
+        auto &col = output.table[fmt::format("C{}", terminals[j])];
+        for (int i = 0; i < n; i++)
+        {
+          col << C(i, j) * F;
+        }
+      }
       output.WriteFullTableTrunc();
     }
+    Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
+               (n > 1) ? "s" : "");
     return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};
   }
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are

@@ -37,6 +37,17 @@ public:
   // Returns the full parent H1 true-DOF potential. Requires CondenseEnvironment first.
   Vector SolveRegion();
 
+  // Solve for a single excitation: the given terminal driven to 1 V, all other terminals
+  // grounded. Reuses the materialized environment DtN. Returns the full parent field.
+  Vector SolveExcitation(int drive_terminal_index);
+
+  // Terminal indices (sorted), for a capacitance sweep.
+  std::vector<int> TerminalIndices() const;
+
+  // Mutual energy ui^T K uj over the full (region + environment) stiffness; the (i, j)
+  // Maxwell capacitance entry for unit terminal excitations.
+  double MutualEnergy(const Vector &ui, const Vector &uj) const;
+
   // Total electrostatic energy 1/2 phi^T K phi of a full parent-space potential, using the
   // full (region + environment) stiffness. For a single-terminal 1 V excitation this is
   // half the driven terminal's self-capacitance.

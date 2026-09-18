@@ -3,6 +3,7 @@
 
 #include "substructuringsolver.hpp"
 
+#include <map>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -171,6 +172,7 @@ struct SubstructuringSolver::Impl
   std::vector<char> is_gamma, is_env_int, is_region_free;
   mfem::Array<int> dbc_tdofs;
   mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
+  std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
   std::unique_ptr<mfem::HypreBoomerAMG> amg_env;
   std::unique_ptr<mfem::HyprePCG> solver_env;
@@ -182,7 +184,6 @@ struct SubstructuringSolver::Impl
   std::vector<int> gamma_global;  // owned parent true DOF -> global interface index, or -1
   int nG_global = 0;
   mfem::DenseMatrix S_dense;
-  mfem::Vector g_dense;
   std::unique_ptr<MaterializedDtN> mat_dtn;
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
@@ -200,19 +201,18 @@ struct SubstructuringSolver::Impl
     mfem::Array<int> rm, em, im;
     MarkInterfaceTrueDofs(parent_fes, ra, ea, rm, em, im);
 
-    // Dirichlet terminals (single excitation: lowest index -> 1 V, others grounded).
+    // Terminal Dirichlet true DOFs (per terminal). The Dirichlet DOF *set* is the union of
+    // all terminals and is fixed across excitations; only the prescribed values change, so
+    // the interface/interior partition below is excitation-independent.
     const auto &terminals = iodata.boundaries.terminal;
     mfem::Array<int> dir_mark(nt);
     dir_mark = 0;
     dbc_values.SetSize(nt);
     dbc_values = 0.0;
-    if (!terminals.empty())
     {
-      const int drive = terminals.begin()->first;
       const int maxb = parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0;
       for (const auto &[idx, term] : terminals)
       {
-        const double value = (idx == drive) ? 1.0 : 0.0;
         mfem::Array<int> ess_bdr(maxb), ess;
         ess_bdr = 0;
         for (int a : term.attributes)
@@ -223,10 +223,11 @@ struct SubstructuringSolver::Impl
           }
         }
         parent_fes.GetEssentialTrueDofs(ess_bdr, ess);
+        auto &list = terminal_tdofs[idx];
         for (int i = 0; i < ess.Size(); i++)
         {
           dir_mark[ess[i]] = 1;
-          dbc_values(ess[i]) = value;
+          list.push_back(ess[i]);
         }
       }
     }
@@ -423,28 +424,48 @@ void SubstructuringSolver::CondenseEnvironment()
       impl->S_dense(r, c) = col[r];
     }
   }
-  // g_E: interface response to the environment Dirichlet data.
-  impl->g_dense.SetSize(nG);
-  {
-    Vector gy(impl->nt);
-    impl->dtn->Mult(impl->dbc_values, gy);
-    std::vector<double> gc(nG);
-    gather_interface(gy, gc.data());
-    for (int r = 0; r < nG; r++)
-    {
-      impl->g_dense(r) = gc[r];
-    }
-  }
+  // g_E is excitation-dependent; it is computed per excitation in the region solve.
   impl->mat_dtn = std::make_unique<MaterializedDtN>(impl->S_dense, impl->gamma_global,
                                                     impl->nG_global, comm);
 }
 
-Vector SubstructuringSolver::SolveRegion()
+Vector SubstructuringSolver::SolveExcitation(int drive_idx)
 {
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before SolveRegion!");
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   const int nt = impl->nt;
+  MPI_Comm comm = impl->parent_fes.GetComm();
 
-  // RHS: region Dirichlet elimination + the materialized environment DtN load g_E.
+  // Prescribed terminal values for this excitation: driven terminal at 1 V, others
+  // grounded.
+  impl->dbc_values = 0.0;
+  for (const auto &[idx, dofs] : impl->terminal_tdofs)
+  {
+    const double value = (idx == drive_idx) ? 1.0 : 0.0;
+    for (int d : dofs)
+    {
+      impl->dbc_values(d) = value;
+    }
+  }
+
+  // g_E for this excitation: interface response to the (excitation-specific) Dirichlet
+  // data, via one environment solve through the implicit DtN, gathered to the global
+  // interface.
+  std::vector<double> g_glob(impl->nG_global, 0.0);
+  {
+    Vector gy(nt);
+    impl->dtn->Mult(impl->dbc_values, gy);
+    std::vector<double> loc(impl->nG_global, 0.0);
+    for (int i = 0; i < nt; i++)
+    {
+      if (impl->is_gamma[i])
+      {
+        loc[impl->gamma_global[i]] = gy(i);
+      }
+    }
+    MPI_Allreduce(loc.data(), g_glob.data(), impl->nG_global, MPI_DOUBLE, MPI_SUM, comm);
+  }
+
+  // RHS: region Dirichlet elimination + environment DtN load g_E.
   Vector b(nt);
   b = 0.0;
   {
@@ -462,7 +483,7 @@ Vector SubstructuringSolver::SolveRegion()
   {
     if (impl->is_gamma[i])
     {
-      b(i) -= impl->g_dense(impl->gamma_global[i]);
+      b(i) -= g_glob[impl->gamma_global[i]];
     }
   }
 
@@ -470,7 +491,7 @@ Vector SubstructuringSolver::SolveRegion()
   RegionCondensedOperator sysop(*impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
   Vector u(nt);
   u = 0.0;
-  mfem::CGSolver cg(impl->parent_fes.GetComm());
+  mfem::CGSolver cg(comm);
   cg.SetOperator(sysop);
   cg.SetRelTol(1.0e-10);
   cg.SetMaxIter(2000);
@@ -482,9 +503,7 @@ Vector SubstructuringSolver::SolveRegion()
     u(impl->dbc_tdofs[i]) = impl->dbc_values(impl->dbc_tdofs[i]);
   }
 
-  // Recover the environment interior: u_E = -A_EE^-1 (A_env u)|_E, with u carrying the
-  // solved interface values and the environment Dirichlet data. This yields the full parent
-  // field.
+  // Recover the environment interior: u_E = -A_EE^-1 (A_env u)|_E.
   {
     Vector t(nt);
     impl->A_env->Mult(u, t);
@@ -509,6 +528,39 @@ Vector SubstructuringSolver::SolveRegion()
     }
   }
   return u;
+}
+
+Vector SubstructuringSolver::SolveRegion()
+{
+  // Default single excitation: drive the lowest-index terminal.
+  MFEM_VERIFY(!impl->terminal_tdofs.empty(), "No terminals configured!");
+  return SolveExcitation(impl->terminal_tdofs.begin()->first);
+}
+
+std::vector<int> SubstructuringSolver::TerminalIndices() const
+{
+  std::vector<int> idx;
+  for (const auto &[i, dofs] : impl->terminal_tdofs)
+  {
+    idx.push_back(i);
+  }
+  return idx;
+}
+
+double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) const
+{
+  Vector t(impl->nt), t2(impl->nt);
+  impl->A_region->Mult(uj, t);
+  impl->A_env->Mult(uj, t2);
+  t += t2;
+  double local = 0.0;
+  for (int i = 0; i < impl->nt; i++)
+  {
+    local += ui(i) * t(i);
+  }
+  double global = 0.0;
+  MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, impl->parent_fes.GetComm());
+  return global;
 }
 
 long long int SubstructuringSolver::RegionGlobalTrueVSize() const
