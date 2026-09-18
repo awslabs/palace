@@ -66,7 +66,7 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
   {
     SKIP("SubstructuringSolver test is serial-only");
   }
-  auto run = [](double eps_r, double eps_e)
+  auto run = [](double eps_r, double eps_e, int order)
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -79,7 +79,7 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
          {{"Terminal",
            {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
         {"Solver",
-         {{"Order", 1},
+         {{"Order", order},
           {"Substructuring",
            {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
     IoData iodata(config, false);
@@ -94,7 +94,7 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
 
     // Full-domain reference: assemble grad(eps grad) with terminal Dirichlet and solve.
     auto &pmesh = mesh.back()->Get();
-    mfem::H1_FECollection fec(1, 3);
+    mfem::H1_FECollection fec(order, 3);
     mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
     const int N = pfes.GetVSize();
     mfem::Vector eps_by_attr(pmesh.attributes.Max());
@@ -112,22 +112,29 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     a.Assemble();
     a.Finalize();
     mfem::SparseMatrix &A = a.SpMat();
-    // Dirichlet: attr 1 -> 1 V, attr 2 -> 0 V (by vertex x-coordinate, order-1 H1).
+    // Dirichlet by terminal boundary attribute (order-agnostic): attr 1 -> 1 V, attr 2 ->
+    // 0.
     std::vector<char> dir(N, 0);
     std::vector<double> udir(N, 0.0);
-    for (int v = 0; v < pmesh.GetNV(); v++)
     {
-      const double *x = pmesh.GetVertex(v);
-      if (x[0] < 1e-9)
+      const int maxb = pmesh.bdr_attributes.Max();
+      auto mark = [&](int attr, double val)
       {
-        dir[v] = 1;
-        udir[v] = 1.0;
-      }
-      else if (x[0] > 1.0 - 1e-9)
-      {
-        dir[v] = 1;
-        udir[v] = 0.0;
-      }
+        mfem::Array<int> eb(maxb), ev;
+        eb = 0;
+        eb[attr - 1] = 1;
+        pfes.GetEssentialVDofs(eb, ev);
+        for (int i = 0; i < N; i++)
+        {
+          if (ev[i])
+          {
+            dir[i] = 1;
+            udir[i] = val;
+          }
+        }
+      };
+      mark(1, 1.0);
+      mark(2, 0.0);
     }
     std::vector<int> fl(N, -1), freed;
     for (int p = 0; p < N; p++)
@@ -194,13 +201,17 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     CHECK(std::sqrt(num / den) < 1.0e-10);
   };
 
-  SECTION("uniform permittivity")
+  SECTION("uniform permittivity, order 1")
   {
-    run(1.0, 1.0);
+    run(1.0, 1.0, 1);
   }
-  SECTION("contrast across interface")
+  SECTION("contrast across interface, order 1")
   {
-    run(1.0, 10.0);
+    run(1.0, 10.0, 1);
+  }
+  SECTION("contrast across interface, order 2")
+  {
+    run(1.0, 10.0, 2);
   }
 }
 
