@@ -44,6 +44,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
     `Lc / Z₀` and so depended on the characteristic length `Lc`.
     [PR 936](https://github.com/awslabs/palace/pull/936).
+  - Fixed driven frequency sampling edge cases: `"NSample": 1` now samples the interval
+    start instead of producing a NaN frequency, the deprecated `"FreqStep"` is validated
+    to be positive (previously `0` crashed and negative values silently swept downward
+    from `"MinFreq"`), an adaptive sweep with fewer than two distinct frequency samples
+    is rejected at parse time when circuit synthesis is enabled (other degenerate
+    adaptive sweeps already revert to a uniform sweep at runtime), and
+    `"AdaptiveCircuitSynthesis": true` without a positive `"AdaptiveTol"` (which silently
+    disabled synthesis) is rejected by schema validation and at parse time.
+    SchemaVer 1-7-1 [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Documented in the developer notes that schema validation tightenings which only
+    reject configurations that never produced valid solver output are bug fixes
+    (ADDITION), not breaking (MODEL) changes.
 
 #### Performance Improvements
 
