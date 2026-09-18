@@ -109,13 +109,15 @@ PointFieldEvaluator::PointFieldEvaluator(
     const mfem::ParFiniteElementSpace &fespace, const MaterialOperator &mat_op, int lod,
     double scaling, std::shared_ptr<const FaceSamplingPlan> sampling_plan,
     std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_,
-    std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle_)
+    std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle_, bool imag_permittivity)
   : location(MeshEntityType::Boundary), kind(kind), trace_cache(std::move(trace_cache_)),
-    derived_bundle(std::move(derived_bundle_))
+    derived_bundle(imag_permittivity ? nullptr : std::move(derived_bundle_))
 {
   MFEM_VERIFY(kind == Kind::FLUX_Q || kind == Kind::CURRENT_J || kind == Kind::ENERGY_E ||
                   kind == Kind::ENERGY_M,
               "Unsupported boundary material point field kind!");
+  MFEM_VERIFY(!imag_permittivity || kind == Kind::FLUX_Q,
+              "Imaginary permittivity is only meaningful for the surface charge kind!");
   if (!sampling_plan && SupportsBoundarySamplingPlan(mesh))
   {
     sampling_plan = std::make_shared<FaceSamplingPlan>(mesh, bdr_attr_marker, lod);
@@ -139,7 +141,7 @@ PointFieldEvaluator::PointFieldEvaluator(
   }
   boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, fespace, mat_op,
                                             lod, scaling, std::move(sampling_plan),
-                                            trace_cache));
+                                            trace_cache, imag_permittivity));
   valid = boundary_eval->IsValid();
 }
 
