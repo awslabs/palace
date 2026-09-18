@@ -295,3 +295,59 @@ TEST_CASE("TableCSV_LoadFromFile", "[tablecsv][Serial]")
     CHECK(table_w.table[1].data == std::vector<double>{1, 1, 1, 1, 1, 1});
   }
 }
+
+// The restart path reloads a table from disk and then restores the real column names from a
+// reference table. Looking columns up by those names used to fail, because the name index
+// still held the placeholder names the loader assigns.
+TEST_CASE("TableCSV_NamesRestoredAfterReload", "[tablecsv][Serial]")
+{
+  Table reference{};
+  reference.insert("idx", "f (GHz)", -1);
+  reference.insert("Ee_1", "E_elec1 (J)", 0);
+  reference["idx"] << 1.0;
+  reference["Ee_1"] << 2.0;
+
+  const std::string text = reference.format_table();
+  Table loaded{text};
+  REQUIRE(loaded.n_cols() == reference.n_cols());
+  for (std::size_t i = 0; i < loaded.n_cols(); i++)
+  {
+    loaded[i].name = reference[i].name;
+  }
+
+  CHECK(loaded.has("idx"));
+  CHECK(loaded.has("Ee_1"));
+  CHECK(!loaded.has("missing"));
+  CHECK(loaded["idx"].data.at(0) == 1.0);
+  CHECK(loaded["idx"].data.at(0) == 1.0);  // second lookup goes through the memoised entry
+  CHECK(loaded["Ee_1"].data.at(0) == 2.0);
+}
+
+// Rebuilding the index is what the restart path does after restoring the names, and it also
+// drops the loader's placeholder names, so they no longer resolve.
+TEST_CASE("TableCSV_RebuildNameIndexAfterRename", "[tablecsv][Serial]")
+{
+  Table reference{};
+  reference.insert("idx", "f (GHz)", -1);
+  reference.insert("Ee_1", "E_elec1 (J)", 0);
+  reference["idx"] << 1.0;
+  reference["Ee_1"] << 2.0;
+
+  const std::string text = reference.format_table();
+  Table loaded{text};
+  for (std::size_t i = 0; i < loaded.n_cols(); i++)
+  {
+    loaded[i].name = reference[i].name;
+  }
+  loaded.RebuildNameIndex();
+
+  CHECK(loaded.has("idx"));
+  CHECK(loaded.has("Ee_1"));
+  CHECK(!loaded.has("col_0"));  // the placeholder the loader assigned is gone
+  CHECK(loaded["idx"].data.at(0) == 1.0);
+  CHECK(loaded["Ee_1"].data.at(0) == 2.0);
+
+  // insert must still notice a duplicate of the renamed column.
+  CHECK(!loaded.insert("idx", "f (GHz)"));
+  CHECK(loaded.n_cols() == reference.n_cols());
+}
