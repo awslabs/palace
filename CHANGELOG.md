@@ -15,7 +15,7 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
-## [0.18.1] - 2026-09-18
+## [0.18.1] - 2026-09-21
 
 #### New Features
 
@@ -28,6 +28,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     can override this choice per port with `"ComplexCoarseSolve"`, without changing the full
     3D system preconditioner. SchemaVer 1-7-0
     [PR 921](https://github.com/awslabs/palace/pull/921).
+
+#### Interface Changes
+
+  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
+    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+
+#### Performance Improvements
+
+  - Reduced repeated work in complex operators [PR
+    932](https://github.com/awslabs/palace/pull/932).
+  - Reduced repeated work in PROM construction [PR
+    930](https://github.com/awslabs/palace/pull/930).
+  - Adaptive driven sweeps now buffer CSV output tables in memory during the online phase
+    and rewrite them at most once every 10 s (and at the end of the sweep), instead of
+    rewriting the growing tables at every output frequency.
+    [PR 938](https://github.com/awslabs/palace/pull/938).
 
 #### Bug Fixes
 
@@ -48,31 +66,30 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
     `Lc / Z₀` and so depended on the characteristic length `Lc`.
     [PR 936](https://github.com/awslabs/palace/pull/936).
-
-#### Performance Improvements
-
-  - Reduced repeated work in complex operators [PR
-    932](https://github.com/awslabs/palace/pull/932).
-  - Reduced repeated work in PROM construction [PR
-    930](https://github.com/awslabs/palace/pull/930).
-  - Adaptive driven sweeps now buffer CSV output tables in memory during the online phase
-    and rewrite them at most once every 10 s (and at the end of the sweep), instead of
-    rewriting the growing tables at every output frequency.
-    [PR 938](https://github.com/awslabs/palace/pull/938).
+  - Fixed the quadrature data offset in the H(div) mass build QFunction, which left the cached
+    curl-curl block of 2D-in-3D H(div) operators unwritten and partially overwrote the mass
+    block. [PR 931](https://github.com/awslabs/palace/pull/931).
+  - Fixed non-unitary wave-port S-parameters for modes with a longitudinal electric field
+    (TM/hybrid modes), where a lossless shorted guide could report `|S11| > 1`. A modal
+    correction to the port Robin operator restores unitarity and reciprocity across driven,
+    adaptive, eigenmode, and circuit-synthesis solves; TEM/TE modes are unchanged.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+  - Fixed the SLP nonlinear eigensolver to fall back to the Hybrid method when SLEPc is
+    unavailable or an ARPACK backend is selected (SLP is realized only through SLEPc), resolved
+    before the Hybrid interpolation is built, and to handle a null damping matrix and a missing
+    nonlinear term, preventing crashes on otherwise valid problems.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+  - Reported synthesized eigenvalue estimates with the same `Q = |ω|/(2|Im ω|)` convention as
+    the eigenmode postprocessor, and report HDM absolute and backward residuals for every root
+    instead of filtering by fixed quality-factor or coordinate-norm cutoffs.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
 
 #### Build system
 
   - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
     compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
   - Pinned the libCEED commit in the Spack recipe per Palace release instead of building an
-    unpinned libCEED `develop`.
-
-#### Interface Changes
-
-  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
-    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
-    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
-    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+    unpinned libCEED `develop`. [PR 940](https://github.com/awslabs/palace/pull/940).
 
 ## [0.18.0] - 2026-09-09
 
@@ -197,25 +214,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     wave-port simulations under nonconformal AMR on multiple MPI ranks. The check now
     validates only domains owned by a local volume element, ignoring ghost/neighbor
     bookkeeping attributes. [PR 888](https://github.com/awslabs/palace/pull/888).
-  - Fixed non-unitary wave-port S-parameters for modes with a longitudinal electric field
-    (`E_n` ≠ 0, e.g. TM/hybrid modes). The assembled Robin operator enforced only the scalar
-    surface admittance `i·k_n·M`, while the excitation, normalization, and S-parameter projection
-    used the full modal `n×H` (including the `∇ₜE_n` term), so a lossless shorted guide could
-    report `|S11|` > 1. A complex-symmetric modal correction `W` supplies the missing term,
-    restoring S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged.
-    `W` is applied consistently across the driven solve, its reduced-order (PROM) fast-frequency
-    sweep, the complex-frequency eigenmode solve, and the circuit synthesis (where it enters the
-    synthesized pencil and the exported frequency-dependent coupling maps).
-    [PR 886](https://github.com/awslabs/palace/pull/886).
-  - Fixed the SLP nonlinear eigensolver to fall back to the Hybrid method when SLEPc is
-    unavailable or an ARPACK backend is selected (SLP is realized only through SLEPc), resolved
-    before the Hybrid interpolation is built, and to handle a null damping matrix and a missing
-    nonlinear term, preventing crashes on otherwise valid problems.
-    [PR 886](https://github.com/awslabs/palace/pull/886).
-  - Reported synthesized eigenvalue estimates with the same `Q = |ω|/(2|Im ω|)` convention as
-    the eigenmode postprocessor, and report HDM absolute and backward residuals for every root
-    instead of filtering by fixed quality-factor or coordinate-norm cutoffs.
-    [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.
