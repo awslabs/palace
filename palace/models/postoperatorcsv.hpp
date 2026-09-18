@@ -242,7 +242,7 @@ protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
   bool reload_table = false;  // Driven simulation with non-default restart.
-  // Adaptive driven output is buffered and rewritten at most once per flush interval (and
+  // Adaptive driven output is buffered and written at most once per flush interval (and
   // at finalization), so an interrupted sweep still leaves usable tables.
   bool defer_table_writes = false;
   std::chrono::steady_clock::time_point last_deferred_flush;

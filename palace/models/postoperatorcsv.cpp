@@ -465,7 +465,7 @@ void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
 {
   if (!defer_table_writes)
   {
-    table.WriteFullTableTrunc();
+    table.WriteTableIncremental();
     return;
   }
   constexpr auto flush_interval = std::chrono::seconds(10);
@@ -484,7 +484,7 @@ void PostOperatorCSV<solver_t>::WriteTable(std::optional<TableWithCSVFile> &tabl
   }
   if (table->table.n_rows() > 0)
   {
-    table->WriteFullTableTrunc();
+    table->WriteTableIncremental();
   }
   else
   {
