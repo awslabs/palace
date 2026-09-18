@@ -441,8 +441,8 @@ SurfaceFunctional::SurfaceFunctional(
     PointFieldKind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
     const mfem::ParFiniteElementSpace &fespace, const MaterialOperator &mat_op, int lod,
     double scaling, std::shared_ptr<const FaceSamplingPlan> sampling_plan_,
-    std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_)
-  : kind(ToKernelKind(kind)),
+    std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_, bool imag_permittivity)
+  : kind(ToKernelKind(kind)), flux_imag_permittivity(imag_permittivity),
     nd_fespace((kind == PointFieldKind::FLUX_Q || kind == PointFieldKind::ENERGY_E)
                    ? &fespace
                    : nullptr),
@@ -455,6 +455,8 @@ SurfaceFunctional::SurfaceFunctional(
   MFEM_VERIFY(kind == PointFieldKind::FLUX_Q || kind == PointFieldKind::CURRENT_J ||
                   kind == PointFieldKind::ENERGY_E || kind == PointFieldKind::ENERGY_M,
               "Invalid SurfaceFunctional point-field backend constructor!");
+  MFEM_VERIFY(!imag_permittivity || kind == PointFieldKind::FLUX_Q,
+              "Imaginary permittivity is only meaningful for the surface charge kernel!");
   Assemble(mesh, bdr_attr_marker);
   WarmUpBufferOperators();
 }
@@ -491,14 +493,18 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace *nd_fespace,
                                      const mfem::ParFiniteElementSpace *rt_fespace,
                                      const MaterialOperator &mat_op, SurfaceFlux type,
-                                     bool two_sided, const mfem::Vector &x0)
-  : kind(KernelKind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
-    nd_fespace(nd_fespace), rt_fespace(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+                                     bool two_sided, const mfem::Vector &x0,
+                                     bool imag_permittivity)
+  : kind(KernelKind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided),
+    flux_imag_permittivity(imag_permittivity), flux_x0(x0), nd_fespace(nd_fespace),
+    rt_fespace(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
   MFEM_VERIFY(
       (nd_fespace || (type != SurfaceFlux::ELECTRIC && type != SurfaceFlux::POWER)) &&
           (rt_fespace || (type != SurfaceFlux::MAGNETIC && type != SurfaceFlux::POWER)),
       "Missing finite element space for surface flux functional!");
+  MFEM_VERIFY(!imag_permittivity || type == SurfaceFlux::ELECTRIC,
+              "Imaginary permittivity is only meaningful for the electric surface flux!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -639,7 +645,9 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     if (flux_type == SurfaceFlux::ELECTRIC)
     {
       MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
-                                               mat_op->GetPermittivityReal());
+                                               flux_imag_permittivity
+                                                   ? mat_op->GetPermittivityImag()
+                                                   : mat_op->GetPermittivityReal());
       auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
@@ -659,7 +667,9 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     const bool magnetic = (kind == KernelKind::BDR_CURRENT_J);
     MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
                                            magnetic ? mat_op->GetCurlCurlInvPermeability()
-                                                    : mat_op->GetPermittivityReal());
+                                           : flux_imag_permittivity
+                                               ? mat_op->GetPermittivityImag()
+                                               : mat_op->GetPermittivityReal());
     auto mat_ctx =
         ceed::PopulateCoefficientContext(magnetic && is_2d ? 1 : dim, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());

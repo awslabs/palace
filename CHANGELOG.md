@@ -31,6 +31,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the electric surface flux (`surface-F.csv`) and boundary surface charge (`Q_s`)
+    of complex fields in lossy dielectrics, which used the real permittivity only; they now
+    use the complex permittivity `ε(1 − i tanδ)` of the material model, consistent with the
+    solver. Also corrected the documented `Q_s` units to C/m².
+    [PR 953](https://github.com/awslabs/palace/pull/953).
   - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
     integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
   - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
