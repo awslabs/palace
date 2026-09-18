@@ -20,6 +20,8 @@
 namespace palace
 {
 
+using namespace std::complex_literals;
+
 namespace
 {
 
@@ -125,17 +127,16 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
   }
 }
 
-std::unique_ptr<mfem::Coefficient>
-SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction *E,
-                                                     const mfem::ParGridFunction *B,
-                                                     const MaterialOperator &mat_op) const
+std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
+    const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+    const MaterialOperator &mat_op, bool imag_permittivity) const
 {
   switch (type)
   {
     case SurfaceFlux::ELECTRIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>>(
-          attr_list, E, nullptr, mat_op, two_sided, center);
+          attr_list, E, nullptr, mat_op, two_sided, center, 1.0, imag_permittivity);
     case SurfaceFlux::MAGNETIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>>(
@@ -313,11 +314,17 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
 {
   // For complex-valued fields, output the separate real and imaginary parts for the time-
   // harmonic quantity. For power flux (Poynting vector), output only the stationary real
-  // part and not the part which has double the frequency.
+  // part and not the part which has double the frequency. For the electric flux of a
+  // complex field in a lossy dielectric, D = ε E with the complex permittivity
+  // ε = Re{ε} + i Im{ε} (Im{ε} = -Re{ε} tan δ): the Im{ε}-weighted flux F'' of the same
+  // field adds as Φ = F'(E) + i F''(E), i.e. Φ_r = F'(E_r) - F''(E_i), Φ_i = F'(E_i) +
+  // F''(E_r).
   auto it = flux_surfs.find(idx);
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown surface flux postprocessing index requested!");
   const bool has_imag = (E) ? E->HasImag() : B->HasImag();
+  const bool complex_permittivity =
+      (it->second.type == SurfaceFlux::ELECTRIC && has_imag && mat_op.HasLossTangent());
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
@@ -334,21 +341,40 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   }
   if (func && func->IsValid())
   {
-    return func->EvalFlux(E, B);
+    std::complex<double> flux = func->EvalFlux(E, B);
+    if (complex_permittivity)
+    {
+      auto &func_imag = flux_funcs_imag[idx];
+      if (!func_imag)
+      {
+        func_imag = std::make_unique<SurfaceFunctional>(
+            mat_op.GetMesh(), attr_marker, E->ParFESpace(), nullptr, mat_op,
+            it->second.type, it->second.two_sided, it->second.center,
+            /*imag_permittivity*/ true);
+      }
+      MFEM_VERIFY(func_imag && func_imag->IsValid(),
+                  "libCEED postprocessing was expected for the lossy electric surface "
+                  "flux, but SurfaceFunctional could not assemble!");
+      flux += 1i * func_imag->EvalFlux(E, B);
+    }
+    return flux;
   }
   if (IsSupportedSurfaceFluxDimension(mesh))
   {
     RequireCeedSurfaceFunctional(func.get(), "3D surface flux");
   }
 
-  auto f =
-      it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
-  std::complex<double> dot(GetLocalSurfaceIntegral(*f, attr_marker), 0.0);
+  auto Integrate = [&](const mfem::ParGridFunction *Ei, const mfem::ParGridFunction *Bi,
+                       bool imag_permittivity)
+  {
+    auto f = it->second.GetCoefficient(Ei, Bi, mat_op, imag_permittivity);
+    return GetLocalSurfaceIntegral(*f, attr_marker);
+  };
+  std::complex<double> dot(
+      Integrate(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, false), 0.0);
   if (has_imag)
   {
-    f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
-                                  mat_op);
-    double doti = GetLocalSurfaceIntegral(*f, attr_marker);
+    double doti = Integrate(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr, false);
     if (it->second.type == SurfaceFlux::POWER)
     {
       dot += doti;
@@ -356,6 +382,11 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     else
     {
       dot.imag(doti);
+    }
+    if (complex_permittivity)
+    {
+      dot += 1i * std::complex<double>(Integrate(&E->Real(), nullptr, true),
+                                       Integrate(&E->Imag(), nullptr, true));
     }
   }
   Mpi::GlobalSum(1, &dot, (E) ? E->GetComm() : B->GetComm());

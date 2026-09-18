@@ -218,6 +218,9 @@ protected:
   // avoiding coefficient adapters or floating-point point lookup at save time.
   std::unique_ptr<PointFieldEvaluator> E_bdr_eval, B_bdr_eval, V_bdr_eval, A_bdr_eval,
       Q_bdr_eval, J_bdr_eval, Ue_bdr_eval, Um_bdr_eval, S_bdr_eval;
+  // Im{ε}-weighted surface charge evaluator for complex fields in lossy dielectrics
+  // (Q_s = (Re{ε} + i Im{ε}) E ⋅ n), used when the fused boundary bundle is unavailable.
+  std::unique_ptr<PointFieldEvaluator> Q_bdr_eval_imag;
   // One immutable boundary lattice/trace plan is shared by every compatible ParaView
   // evaluator built for this PostOperator setup.
   std::shared_ptr<const FaceSamplingPlan> bdr_sampling_plan;
