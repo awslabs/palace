@@ -79,7 +79,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "6e5c61c31f835c37143efc7108270705fd990e4c22161ece681fb46ebd225519"
+      "SHA256": "65aa5ff9ceba6ea4dc5d2b73709aa97fa64d6bbc9874d9c9a89f12c8ba642d42"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1539,7 +1539,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "833dd9e2e4144e83a6f79eb3393cf904146037ef55e7c551db157bf9ce24e17e"
+      "mesher": "85fbfa0ff928070c3f1891cde3b5f850d774cba5389221684073d2d486a54634"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -1553,7 +1553,7 @@
     },
     "label-restoration": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "eadfae24a79b2fb8c9addacc335c47aa932dcb4756d3ff29e294cb801778c150"
+      "label-restorer": "5baf757913d709f90aa910dfacbc899d50e6c90c196a070db8415ffca0f76a5c"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

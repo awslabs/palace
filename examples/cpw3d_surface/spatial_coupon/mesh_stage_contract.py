@@ -787,10 +787,12 @@ def validate_corner_grading(seed_report, metric_report, recipe, census):
     return grading
 
 
-# Quality gates the seed stage enforces on the MMG required region (decision 30)
+# Quality gates the seed stage enforces on the MMG required region (decision 30;
+# the Jacobian condition bound, the manifest MaximumJacobianCondition, decision 34)
 # and the label restorer enforces on the adapted mesh: both commands carry them,
 # with equal values.
 REQUIRED_REGION_GATE_OPTIONS = ("--maximum-corner-aspect", "--minimum-scaled-jacobian",
+                                "--maximum-jacobian-condition",
                                 "--maximum-quality-displacement-over-normal")
 # The edge-layer quality rule (supervisor decision 32, calibration manifests only):
 # both commands carry the same bound, or neither; it needs a recipe edge layer.
@@ -826,12 +828,13 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
     LayerThickness x (1 + RowZigzag) + EdgeSize (also the recipe EdgeLayer
     RequiredReach) and one count per span when a layer is recorded (no reach and no
     spans otherwise); the list has exactly Count sorted unique seed indices.  The
-    seed command passes the three gate options with the restorer's values; the
+    seed command passes the four gate options with the restorer's values; the
     census SeedQualityOptimization record carries them, gated exactly Count cells
     (the set recomputed on the final seed positions), no required cell below the
-    scaled-Jacobian gate and every corner aspect within the corner gate; the label
-    restorer found exactly Count required tetrahedra in the adapted mesh (MMG kept
-    them all).
+    scaled-Jacobian gate or above the Jacobian condition gate and every corner
+    aspect within the corner gate; the label restorer found exactly Count required
+    tetrahedra in the adapted mesh (MMG kept them all) and reports their maximum
+    Jacobian condition within the gate.
     """
     record = recipe.get("RequiredTetrahedra")
     corners = recipe.get("TruePhysicalCorners")
@@ -881,9 +884,13 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
     if (not isinstance(quality, dict) or
             _recipe_number(quality, "MaximumCornerAspect") != gates["--maximum-corner-aspect"] or
             _recipe_number(quality, "MinimumScaledJacobian") != gates["--minimum-scaled-jacobian"] or
+            _recipe_number(quality, "MaximumJacobianCondition") !=
+            gates["--maximum-jacobian-condition"] or
             _recipe_number(quality, "DisplacementBoundOverNormal") !=
             gates["--maximum-quality-displacement-over-normal"] or
             _count(quality.get("RequiredCellsBelowGateAfter"), "Required cells below the gate") != 0 or
+            _count(quality.get("RequiredCellsAboveConditionAfter"),
+                   "Required cells above the condition gate") != 0 or
             _count(quality.get("RequiredTetrahedra"), "Seed required tetrahedra") != len(indices) or
             not isinstance(quality.get("CornerAspectsAfter"), list) or
             len(quality["CornerAspectsAfter"]) != len(corners) or
@@ -894,10 +901,20 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
     if (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
             gates["--minimum-scaled-jacobian"]):
         raise ValueError("Seed required region is below the scaled-Jacobian gate")
+    if (_recipe_number(quality, "RequiredMaximumJacobianConditionAfter") >
+            gates["--maximum-jacobian-condition"]):
+        raise ValueError("Seed required region is above the Jacobian condition gate")
     restoration = _restoration_quality_report(restoration_report)
     if _count(restoration.get("RequiredTetrahedra"), "Restored required tetrahedra") != len(indices):
         raise ValueError("Label restoration found a different number of required tetrahedra "
                          "than the recipe record")
+    # None: no required cell is judged by the condition (all are layer cells under
+    # the layer quality rule).
+    if (restoration.get("RequiredMaximumJacobianCondition") is not None and
+            _recipe_number(restoration, "RequiredMaximumJacobianCondition") >
+            gates["--maximum-jacobian-condition"]):
+        raise ValueError("Label restoration found required tetrahedra above the Jacobian "
+                         "condition gate")
     validate_edge_layer_quality_rule(seed_report, restoration_report, layer, quality, restoration)
     return record
 

@@ -50,6 +50,7 @@ WRAPPER = HERE / "run_native_mmg_adaptation.py"
 # Seed-side required-region gates (decision 30): the seed and label-restoration
 # commands carry them with equal values (the fixture manifest's corner gate is 3).
 SEED_QUALITY_GATE_OPTIONS = ("--maximum-corner-aspect", "3", "--minimum-scaled-jacobian", ".01",
+                             "--maximum-jacobian-condition", "1000",
                              "--maximum-quality-displacement-over-normal", ".75")
 # The native fixture adapter links a fixture libmmg3d through rpath so the
 # wrapper's runtime-library resolution is exercised; it needs a C compiler.
@@ -2419,6 +2420,7 @@ class RequiredRegionContractTest(unittest.TestCase):
     layer, and the seed stage gated the same region with the restorer's values."""
 
     GATES = ["--maximum-corner-aspect", "4", "--minimum-scaled-jacobian", ".01",
+             "--maximum-jacobian-condition", "1000",
              "--maximum-quality-displacement-over-normal", ".75"]
 
     def fixture(self, root, layer=True):
@@ -2438,15 +2440,19 @@ class RequiredRegionContractTest(unittest.TestCase):
         # the recipe count (the pre-move set may differ and is reported).
         census = {"SeedQualityOptimization": {
             "MaximumCornerAspect": 4., "MinimumScaledJacobian": .01,
+            "MaximumJacobianCondition": 1000.,
             "DisplacementBoundOverNormal": .75, "RequiredTetrahedra": 5 if layer else 3,
             "RequiredTetrahedraBeforeMoves": 6 if layer else 3,
             "RequiredCellsBelowGateAfter": 0, "CornerAspectsAfter": [3.4, 3.74],
-            "RequiredMinimumScaledJacobianAfter": .02}}
+            "RequiredMinimumScaledJacobianAfter": .02,
+            "RequiredCellsAboveConditionAfter": 0,
+            "RequiredMaximumJacobianConditionAfter": 412.}}
         seed = {"Command": ["julia", "mesh_spatial_coupon.jl", "sig.csv", "fabricated", "seed.msh",
                             *self.GATES]}
         restored = root / f"restored-{layer}.msh"
         restored.with_suffix(".projection.json").write_text(json.dumps(
-            {"RequiredTetrahedra": 5 if layer else 3, "RequiredVertices": 12}))
+            {"RequiredTetrahedra": 5 if layer else 3, "RequiredVertices": 12,
+             "RequiredMaximumJacobianCondition": 412.}))
         restoration = {"Command": ["python3", "restore_planar_metric_mesh.py", "adapted.meshb",
                                    "recipe.json", str(restored), *self.GATES],
                        "Artifacts": {"restored-mesh": {"Path": str(restored), "SHA256": "0" * 64}}}
@@ -2520,6 +2526,27 @@ class RequiredRegionContractTest(unittest.TestCase):
             rejected("does not record a gated", census_data=with_quality(CornerAspectsAfter=[3.4]))
             rejected("below the scaled-Jacobian gate",
                      census_data=with_quality(RequiredMinimumScaledJacobianAfter=.009))
+            # The Jacobian condition gate (decision 34): the seed carries the restorer's
+            # bound, records it, gates every scaled-Jacobian-gated required cell by it,
+            # and the restorer's required cells are within it.
+            rejected("differs from the label-restoration command",
+                     seed_report=with_value(seed, "--maximum-jacobian-condition", "500"))
+            rejected("must provide --maximum-jacobian-condition",
+                     seed_report={"Command": [token for token in seed["Command"]
+                                              if token not in ("--maximum-jacobian-condition", "1000")]},
+                     restoration_report={"Command": [token for token in restoration["Command"]
+                                                     if token not in ("--maximum-jacobian-condition", "1000")],
+                                         "Artifacts": restoration["Artifacts"]})
+            rejected("does not record a gated", census_data=with_quality(MaximumJacobianCondition=900.))
+            rejected("does not record a gated", census_data=with_quality(RequiredCellsAboveConditionAfter=1))
+            rejected("above the Jacobian condition gate",
+                     census_data=with_quality(RequiredMaximumJacobianConditionAfter=1000.5))
+            (root / "restored-above.projection.json").write_text(json.dumps(
+                {"RequiredTetrahedra": 5, "RequiredVertices": 12,
+                 "RequiredMaximumJacobianCondition": 1200.}))
+            above = copy.deepcopy(restoration)
+            above["Artifacts"]["restored-mesh"]["Path"] = str(root / "restored-above.msh")
+            rejected("required tetrahedra above the Jacobian condition gate", restoration_report=above)
             # The seed must have gated exactly the listed set (the pre-move count is
             # only reported) and the restorer must have found exactly that many
             # required cells in the adapted mesh.

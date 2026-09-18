@@ -73,6 +73,7 @@ def main():
     # Label-restoration gates (the seed stage carries the same values).
     parser.add_argument("--maximum-corner-aspect", type=float)
     parser.add_argument("--minimum-scaled-jacobian", type=float)
+    parser.add_argument("--maximum-jacobian-condition", type=float)
     parser.add_argument("--maximum-quality-displacement-over-normal", type=float)
     args = parser.parse_args()
     if args.stage == "metric":
@@ -167,7 +168,8 @@ def main():
         recipe = json.loads(args.recipe.read_text())
         args.output.with_suffix(".projection.json").write_text(json.dumps(
             {"RequiredTetrahedra": recipe["RequiredTetrahedra"]["Count"],
-             "RequiredVertices": 4, "MinimumScaledJacobianAfter": 0.5}) + "\n")
+             "RequiredVertices": 4, "MinimumScaledJacobianAfter": 0.5,
+             "RequiredMaximumJacobianCondition": 1.0}) + "\n")
     elif args.stage == "publish":
         if args.ownership is None or args.ownership_quadrature is None:
             parser.error("publish requires ownership and quadrature ownership")

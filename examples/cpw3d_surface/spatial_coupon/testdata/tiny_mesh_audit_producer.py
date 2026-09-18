@@ -84,16 +84,21 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                   scale=1.0, basis_paths=None, ratio=None, gates=None):
     """Recorded corner-ball census of the fixture seed (schema of the production seeder).
 
-    `gates` is (MaximumCornerAspect, MinimumScaledJacobian, DisplacementBoundOverNormal):
-    the seed-side required-region optimization record (decision 30) is written when
-    the production seeder's three gate options are passed."""
+    `gates` is (MaximumCornerAspect, MinimumScaledJacobian, MaximumJacobianCondition,
+    DisplacementBoundOverNormal): the seed-side required-region optimization record
+    (decision 30; the condition gate, decision 34) is written when the production
+    seeder's four gate options are passed."""
     contract = json.loads(contract_path.read_text())
     corners = contract["SemanticCorners"]
     quality = None
     if gates is not None:
-        maximum_aspect, minimum_scaled, ratio_bound = gates
+        maximum_aspect, minimum_scaled, maximum_condition, ratio_bound = gates
         quality = {"MaximumCornerAspect": maximum_aspect, "CornerAspectTarget": .95 * maximum_aspect,
                    "MinimumScaledJacobian": minimum_scaled, "ScaledJacobianTarget": 2 * minimum_scaled,
+                   "MaximumJacobianCondition": maximum_condition,
+                   "RequiredMaximumJacobianConditionBefore": 1.0,
+                   "RequiredMaximumJacobianConditionAfter": 1.0,
+                   "RequiredCellsAboveConditionAfter": 0,
                    "DisplacementBoundOverNormal": ratio_bound, "LayerRequiredReach": None,
                    "RequiredTetrahedra": 1, "CornerAspectsBefore": [1.0 for _ in corners],
                    "CornerAspectsAfter": [1.0 for _ in corners], "CornerMoves": [0 for _ in corners],
@@ -162,16 +167,17 @@ def main():
     parser.add_argument("--trace-triangles", type=Path)
     parser.add_argument("--process-library", type=Path)
     parser.add_argument("--trace-basis-size-ratio", type=float)
-    # The seed-side required-region gates (decision 30), required together.
+    # The seed-side required-region gates (decisions 30 and 34), required together.
     parser.add_argument("--maximum-corner-aspect", type=float)
     parser.add_argument("--minimum-scaled-jacobian", type=float)
+    parser.add_argument("--maximum-jacobian-condition", type=float)
     parser.add_argument("--maximum-quality-displacement-over-normal", type=float)
     args = parser.parse_args()
     gates = (args.maximum_corner_aspect, args.minimum_scaled_jacobian,
-             args.maximum_quality_displacement_over_normal)
+             args.maximum_jacobian_condition, args.maximum_quality_displacement_over_normal)
     if any(value is not None for value in gates):
         if any(value is None or value <= 0 for value in gates):
-            parser.error("the three seed quality gate options are required together")
+            parser.error("the four seed quality gate options are required together")
     else:
         gates = None
     if args.etch_boundary is not None and not args.etch_boundary.is_file():

@@ -516,12 +516,17 @@ def _quality_repair(points,tetrahedra,node_supports,supports,recipe,minimum_scal
 
 def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
             maximum_corner_aspect=None,maximum_quality_displacement=None,
-            edge_layer_maximum_aspect=None):
+            edge_layer_maximum_aspect=None,maximum_jacobian_condition=None):
     """maximum_displacement / maximum_quality_displacement are absolute bounds in um
     or (ratio, 'local') pairs: ratio x the local prescribed size at every vertex.
     edge_layer_maximum_aspect turns on the edge-layer quality rule for the recipe's
     recorded layer (required with the other quality controls; refused without a
-    recorded layer)."""
+    recorded layer).  maximum_jacobian_condition (the manifest gate, the seed's
+    --maximum-jacobian-condition; supervisor decision 34) bounds the Jacobian
+    condition number of the adapter's required tetrahedra judged by the scaled
+    Jacobian (all of them, or those outside the layer under the layer rule); the
+    required cells are the seed's verbatim, so the report field
+    RequiredMaximumJacobianCondition is the seed census's."""
     supports={int(k):v for k,v in recipe['PlanarSupports'].items()}
     refs=mesh.cell_data['medit:ref'];node_supports={};seen=set()
     for block,attributes in zip(mesh.cells,refs):
@@ -567,8 +572,9 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
     if any(value is not None for value in controls):
         if any(value is None for value in controls):
             raise ValueError('All post-adaptation quality controls are required together')
-    elif edge_layer_maximum_aspect is not None:
-        raise ValueError('Edge layer quality rule requires the post-adaptation quality controls')
+    elif edge_layer_maximum_aspect is not None or maximum_jacobian_condition is not None:
+        raise ValueError('Edge layer quality rule and Jacobian condition bound each requires the '
+                         'post-adaptation quality controls')
     if any(value is not None for value in controls):
         # Pins are matched on the native adapted coordinates, which the adapter
         # preserved exactly; projection may still correct them onto their supports.
@@ -628,7 +634,19 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
                                 repair_bound,pinned_nodes=pinned_nodes,frozen_nodes=frozen_nodes,
                                 layer_cells=layer_cells,layer_maximum_aspect=edge_layer_maximum_aspect)
         required=np.fromiter(required_nodes,dtype=int,count=len(required_nodes))
+        judged=required_mask if layer_cells is None else required_mask&~layer_cells
+        required_condition=(float(_tetra_quality(points,tetrahedra[judged])[1].max())
+                            if judged.any() else None)
+        if maximum_jacobian_condition is not None:
+            if not (np.isfinite(maximum_jacobian_condition) and maximum_jacobian_condition>1):
+                raise ValueError('Invalid Jacobian condition bound')
+            if required_condition is not None and required_condition>maximum_jacobian_condition:
+                raise ValueError(f'Required tetrahedra exceed the Jacobian condition bound: '
+                                 f'{required_condition} > {maximum_jacobian_condition}')
         quality.update({'RequiredTetrahedra':required_cells,'RequiredVertices':len(required_nodes),
+                        'RequiredMaximumJacobianCondition':required_condition,
+                        'MaximumJacobianConditionBound':maximum_jacobian_condition,
+                        'JacobianConditionGateCells':int(judged.sum()),
                         'FrozenEdgeLayerSurfaceVertices':len(frozen_surface),
                         'MaximumRequiredVertexCorrectionUm':(float(np.max(np.linalg.norm(
                             points[vertex_map[required]]-mesh.points[required],axis=1)))
@@ -673,7 +691,7 @@ def restore(mesh,recipe,maximum_displacement,minimum_scaled=None,
 
 def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None,
                             maximum_corner_aspect=None,maximum_quality_displacement=None,
-                            edge_layer_maximum_aspect=None):
+                            edge_layer_maximum_aspect=None,maximum_jacobian_condition=None):
     """Restore in the source-local frame and return local and published meshes.
 
     MMG may produce a different valid unstructured topology after a rigid source
@@ -717,7 +735,7 @@ def restore_in_source_frame(mesh,recipe,maximum_displacement,minimum_scaled=None
     local_semantic['RigidTransform']=[1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]
     restored,report=restore(local_mesh,local_recipe,maximum_displacement,minimum_scaled,
                             maximum_corner_aspect,maximum_quality_displacement,
-                            edge_layer_maximum_aspect)
+                            edge_layer_maximum_aspect,maximum_jacobian_condition)
     published=copy.deepcopy(restored)
     published.points=np.asarray(restored.points)@rotation.T+translation
     report.update({'RestorationFrame':'SourceLocal',
@@ -737,6 +755,10 @@ def main():
                    help='edge-layer quality rule (calibration only): inside the recorded edge layer '
                         'gate positive orientation and longest-edge/shortest-height aspect <= this '
                         'bound instead of the scaled Jacobian; requires the other quality controls')
+    p.add_argument('--maximum-jacobian-condition',type=float,
+                   help='Jacobian condition bound of the scaled-Jacobian-gated required tetrahedra '
+                        '(the manifest MaximumJacobianCondition, carried by the seed too); '
+                        'requires the other quality controls')
     p.add_argument('--source-local-output',type=Path,required=True)
     a=p.parse_args()
     if a.output.exists() or a.source_local_output.exists():raise ValueError('Do not overwrite candidates')
@@ -753,7 +775,7 @@ def main():
                           (a.maximum_quality_displacement_over_normal,'local'))
     mesh=read_mesh(a.input);local_output,output,report=restore_in_source_frame(
         mesh,recipe,maximum,a.minimum_scaled_jacobian,a.maximum_corner_aspect,
-        quality_displacement,a.edge_layer_maximum_aspect)
+        quality_displacement,a.edge_layer_maximum_aspect,a.maximum_jacobian_condition)
     if a.max_displacement_over_normal is not None:
         report['CorrectionBoundOverLocalSize']=a.max_displacement_over_normal
     if a.maximum_quality_displacement_over_normal is not None:

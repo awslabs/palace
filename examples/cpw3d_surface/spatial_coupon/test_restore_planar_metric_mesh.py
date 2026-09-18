@@ -722,6 +722,31 @@ class EdgeLayerQualityRuleTest(unittest.TestCase):
         self.assertTrue(report["EdgeLayerQuality"]["Passes"])
         self.assertEqual(report["EdgeLayerQuality"]["Cells"], 1)
         self.assertEqual(report["ScaledJacobianGateCells"], 2)
+        # The Jacobian condition bound (decision 34) judges the required cells outside
+        # the layer (none here: the one required cell is the layer cell), needs the
+        # quality controls, and fails closed on a required cell above it.
+        self.assertIsNone(report["RequiredMaximumJacobianCondition"])
+        self.assertEqual(report["JacobianConditionGateCells"], 0)
+        with self.assertRaisesRegex(ValueError, "requires the post-adaptation quality controls"):
+            restore_in_source_frame(mesh, layered, (.25, "local"), maximum_jacobian_condition=1000.)
+        # With the corner cell required too, it is the one judged cell.
+        two_required = meshio.Mesh(points.copy(), [("triangle", triangles), ("tetra", tetrahedra)],
+                                   cell_data={"medit:ref": [np.array([100, 100, 100]), np.full(3, 7)],
+                                              "medit:required": [np.zeros(3, dtype=np.int32),
+                                                                 np.array([1, 0, 1], dtype=np.int32)]})
+        layered2 = {**layered, "RequiredTetrahedra": {"Count": 2}}
+        _, _, bounded = restore_in_source_frame(two_required, layered2, (.25, "local"), .01, 40.,
+                                                (.75, "local"), 100., 1000.)
+        self.assertEqual(bounded["JacobianConditionGateCells"], 1)
+        self.assertEqual(bounded["MaximumJacobianConditionBound"], 1000.)
+        self.assertLessEqual(bounded["RequiredMaximumJacobianCondition"], 1000.)
+        self.assertGreater(bounded["RequiredMaximumJacobianCondition"], 1.)
+        with self.assertRaisesRegex(ValueError, "exceed the Jacobian condition bound"):
+            restore_in_source_frame(two_required, layered2, (.25, "local"), .01, 40., (.75, "local"),
+                                    100., 1.01)
+        with self.assertRaisesRegex(ValueError, "Invalid Jacobian condition bound"):
+            restore_in_source_frame(two_required, layered2, (.25, "local"), .01, 40., (.75, "local"),
+                                    100., 0.5)
         # A layer cell MMG did not keep as required is refused.
         mesh.cell_data["medit:required"][1][:] = 0
         with self.assertRaisesRegex(ValueError, "not required tetrahedra"):
