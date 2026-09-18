@@ -71,6 +71,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed silent misparsing of Nastran coordinates with implicit or Fortran `D` exponents
+    (e.g. `-7.-1` was read as `-7.0` instead of `-0.7`), and read blank or
+    trailing-trimmed fixed-width fields as zero instead of aborting.
+    [PR 951](https://github.com/awslabs/palace/pull/951).
 
 #### Performance Improvements
 
