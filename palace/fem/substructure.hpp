@@ -63,6 +63,17 @@ void MarkParentDofOwnership(const std::vector<const Substructure *> &subs,
 // parent DOFs on an interface (more than one owner bit set), else -1. Returns nG.
 int BuildInterfaceIndex(const std::vector<int> &owner, std::vector<int> &gamma_index);
 
+// Parallel-capable interface identification in true-DOF space. Given the parent finite
+// element space and the region/environment domain attribute sets, mark each parent true DOF
+// touched by region element support, by environment support, and by both (the shared
+// interface). Works on any MPI partition: L-vector attribute marks are reduced to true DOFs
+// across ranks via the parallel prolongation. Returns the global interface true-DOF count.
+int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
+                          const mfem::Array<int> &region_attrs,
+                          const mfem::Array<int> &environment_attrs,
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
+                          mfem::Array<int> &interface_marker);
+
 // Environment Dirichlet-to-Neumann operator: the dense Schur complement S_E and load g_E of
 // an environment substructure, condensed onto the interface in parent orientation and the
 // compact interface indexing. Reusable across region redesigns that preserve the interface.
