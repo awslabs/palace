@@ -7,6 +7,8 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -34,6 +36,7 @@ public:
 
   mfem::ParSubMesh &GetSubMesh() { return *submesh; }
   mfem::ParFiniteElementSpace &GetFESpace() { return *fespace; }
+  const mfem::ParFiniteElementSpace &GetFESpace() const { return *fespace; }
 
   // Signed submesh-DOF -> parent-DOF map.
   const std::vector<int> &GetParentDof() const { return par_dof; }
@@ -80,6 +83,26 @@ public:
 private:
   mfem::DenseMatrix S_E;
   mfem::Vector g_E;
+};
+
+// Applies the environment DtN Schur complement S_E as a Palace Operator on a region finite
+// element space's DOFs: y = (S_E on the shared interface) x, zero on region-interior DOFs.
+// The region's local<->parent orientation signs are applied so the action is in the
+// region's local orientation (matching a region operator assembled on its submesh). Serial
+// for now; the parallel interface gather is a later step.
+class RegionDtNOperator : public Operator
+{
+public:
+  RegionDtNOperator(const Substructure &region, const std::vector<int> &gamma_index,
+                    const DtNBoundaryOperator &dtn);
+  void Mult(const Vector &x, Vector &y) const override;
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+
+private:
+  std::vector<int> loc_gamma;    // region local DOF -> gamma index, or -1
+  std::vector<double> loc_sign;  // region local DOF -> +/-1 (interface DOFs)
+  const mfem::DenseMatrix &S;    // dtn.Schur(), parent orientation
+  mutable Vector xg, rg;         // interface work vectors
 };
 
 }  // namespace palace

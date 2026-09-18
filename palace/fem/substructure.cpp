@@ -239,4 +239,48 @@ DtNBoundaryOperator::DtNBoundaryOperator(const Substructure &environment,
   }
 }
 
+RegionDtNOperator::RegionDtNOperator(const Substructure &region,
+                                     const std::vector<int> &gamma_index,
+                                     const DtNBoundaryOperator &dtn)
+  : Operator(region.GetFESpace().GetVSize()), S(dtn.Schur())
+{
+  const auto &par = region.GetParentDof();
+  const auto &sgn = region.GetSign();
+  const int n = height;
+  loc_gamma.assign(n, -1);
+  loc_sign.assign(n, 0.0);
+  for (int i = 0; i < n; i++)
+  {
+    const int g = gamma_index[par[i]];
+    if (g >= 0)
+    {
+      loc_gamma[i] = g;
+      loc_sign[i] = sgn[i];
+    }
+  }
+  xg.SetSize(S.Height());
+  rg.SetSize(S.Height());
+}
+
+void RegionDtNOperator::Mult(const Vector &x, Vector &y) const
+{
+  xg = 0.0;
+  for (int i = 0; i < height; i++)
+  {
+    if (loc_gamma[i] >= 0)
+    {
+      xg(loc_gamma[i]) = loc_sign[i] * x(i);  // local -> parent orientation
+    }
+  }
+  S.Mult(xg, rg);
+  y = 0.0;
+  for (int i = 0; i < height; i++)
+  {
+    if (loc_gamma[i] >= 0)
+    {
+      y(i) = loc_sign[i] * rg(loc_gamma[i]);  // parent -> local orientation
+    }
+  }
+}
+
 }  // namespace palace

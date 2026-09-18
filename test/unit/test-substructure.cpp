@@ -409,4 +409,159 @@ TEST_CASE("DtN condensation reproduces the monolith and is reusable",
   }
 }
 
+TEST_CASE("Region DtN operator solves iteratively to the monolith",
+          "[substructure][Serial]")
+{
+  if (Mpi::Size(Mpi::World()) > 1)
+  {
+    SKIP("region DtN operator test is serial-only");
+  }
+  // Solve (K_region + S_E on Gamma) u = b_region + g_E with CG via RegionDtNOperator, and
+  // check it reproduces the monolithic solve on region DOFs.
+  auto run = [](bool nedelec)
+  {
+    const int nx = 6;
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::HEXAHEDRON);
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      mfem::Vector c;
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    serial.SetAttributes();
+    mfem::ParMesh mesh(Mpi::World(), serial);
+    std::unique_ptr<mfem::FiniteElementCollection> fec;
+    if (nedelec)
+    {
+      fec = std::make_unique<mfem::ND_FECollection>(1, 3);
+    }
+    else
+    {
+      fec = std::make_unique<mfem::H1_FECollection>(1, 3);
+    }
+    mfem::ParFiniteElementSpace pfes(&mesh, fec.get());
+    const int N = pfes.GetVSize();
+    mfem::Array<int> ar(1), ae(1);
+    ar[0] = 1;
+    ae[0] = 2;
+    Substructure region(pfes, ar, *fec), env(pfes, ae, *fec);
+    std::vector<int> owner, gamma_index;
+    MarkParentDofOwnership({&region, &env}, N, owner);
+    BuildInterfaceIndex(owner, gamma_index);
+
+    auto assemble = [&](mfem::ParFiniteElementSpace &fes,
+                        std::unique_ptr<mfem::SparseMatrix> &A, mfem::Vector &f)
+    {
+      mfem::ConstantCoefficient one(1.0);
+      mfem::BilinearForm a(&fes);
+      mfem::LinearForm l(&fes);
+      if (nedelec)
+      {
+        a.AddDomainIntegrator(new mfem::CurlCurlIntegrator);
+        a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
+        mfem::Vector one3(3);
+        one3 = 1.0;
+        auto *vc = new mfem::VectorConstantCoefficient(one3);
+        l.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(*vc));
+        l.Assemble();
+        delete vc;
+      }
+      else
+      {
+        a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+        a.AddDomainIntegrator(new mfem::MassIntegrator);
+        l.AddDomainIntegrator(new mfem::DomainLFIntegrator(one));
+        l.Assemble();
+      }
+      a.Assemble();
+      a.Finalize();
+      A = std::make_unique<mfem::SparseMatrix>(a.SpMat());
+      f.SetSize(fes.GetVSize());
+      f = l;
+    };
+
+    std::unique_ptr<mfem::SparseMatrix> Ae;
+    mfem::Vector fe;
+    assemble(env.GetFESpace(), Ae, fe);
+    DtNBoundaryOperator dtn(env, gamma_index, *Ae, fe);
+
+    // Region operator + RHS on the region submesh (local orientation).
+    std::unique_ptr<mfem::SparseMatrix> Ar;
+    mfem::Vector fr;
+    assemble(region.GetFESpace(), Ar, fr);
+    const auto &par = region.GetParentDof();
+    const auto &sgn = region.GetSign();
+    const int nr = Ar->Height();
+    mfem::Vector b(fr);
+    for (int i = 0; i < nr; i++)
+    {
+      const int g = gamma_index[par[i]];
+      if (g >= 0)
+      {
+        b(i) += sgn[i] * dtn.Load()(g);  // parent -> local orientation
+      }
+    }
+
+    // Combined operator K_region + S_E-on-Gamma, solved with CG.
+    RegionDtNOperator dtn_op(region, gamma_index, dtn);
+    mfem::SumOperator combined(Ar.get(), 1.0, &dtn_op, 1.0, false, false);
+    mfem::CGSolver cg;
+    cg.SetOperator(combined);
+    cg.SetRelTol(1.0e-12);
+    cg.SetMaxIter(2000);
+    cg.SetPrintLevel(0);
+    mfem::Vector u(nr);
+    u = 0.0;
+    cg.Mult(b, u);
+    CHECK(cg.GetConverged());
+
+    // Monolithic reference.
+    mfem::DenseMatrix A(N);
+    A = 0.0;
+    mfem::Vector rhs(N);
+    rhs = 0.0;
+    auto add = [&](Substructure &s, mfem::SparseMatrix &As, mfem::Vector &fs)
+    {
+      const auto &p = s.GetParentDof();
+      const auto &sg = s.GetSign();
+      for (int i = 0; i < As.Height(); i++)
+      {
+        const int *cols = As.GetRowColumns(i);
+        const double *vals = As.GetRowEntries(i);
+        for (int k = 0; k < As.RowSize(i); k++)
+        {
+          A(p[i], p[cols[k]]) += sg[i] * sg[cols[k]] * vals[k];
+        }
+        rhs(p[i]) += sg[i] * fs(i);
+      }
+    };
+    add(region, *Ar, fr);
+    add(env, *Ae, fe);
+    mfem::DenseMatrix Ai(A);
+    Ai.Invert();
+    mfem::Vector um(N);
+    Ai.Mult(rhs, um);
+
+    // Compare region solution (local orientation) to the monolith (parent orientation).
+    double num = 0.0, den = 0.0;
+    for (int i = 0; i < nr; i++)
+    {
+      const double us = sgn[i] * u(i);  // local -> parent orientation
+      const double e = us - um(par[i]);
+      num += e * e;
+      den += um(par[i]) * um(par[i]);
+    }
+    CHECK(std::sqrt(num / den) < 1.0e-8);
+  };
+
+  SECTION("H1 (scalar)")
+  {
+    run(false);
+  }
+  SECTION("H(curl) (definite, signed)")
+  {
+    run(true);
+  }
+}
+
 }  // namespace palace
