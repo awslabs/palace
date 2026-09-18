@@ -403,6 +403,11 @@
           "$ref": "#/$defs/Linear",
           "title": "Linear Solver",
           "description": "Configuration for the linear solver used by all simulation types."
+        },
+        "Substructuring": {
+          "$ref": "#/$defs/Substructuring",
+          "title": "Substructuring",
+          "description": "Configuration for domain-decomposition substructuring: condense the environment (rest of the domain) to a boundary operator on the interface and solve/redesign the region of interest against it."
         }
       }
     }
@@ -2828,6 +2833,61 @@
           "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        }
+      }
+    },
+    "SubstructuringMode": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Offline",
+          "description": "Condense the environment to a boundary (DtN) operator now."
+        },
+        {
+          "const": "Online",
+          "description": "Load a previously saved environment model and solve only the region."
+        }
+      ]
+    },
+    "Substructuring": {
+      "type": "object",
+      "title": "Substructuring",
+      "description": "Domain-decomposition substructuring: condense the environment (rest of the domain) to a Dirichlet-to-Neumann boundary operator on the shared interface and solve the region of interest against it, enabling region redesign without re-solving the environment.",
+      "additionalProperties": false,
+      "required": ["Region", "Environment"],
+      "properties": {
+        "Region": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": {
+              "type": "array",
+              "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "description": "Domain attributes defining the region of interest (redesigned/solved)."
+            }
+          }
+        },
+        "Environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": {
+              "type": "array",
+              "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "description": "Domain attributes defining the environment (condensed to the interface)."
+            }
+          }
+        },
+        "Mode": {
+          "$ref": "#/$defs/SubstructuringMode",
+          "description": "Whether to condense the environment now (Offline) or load a saved model (Online).",
+          "default": "Offline"
+        },
+        "SaveModel": {
+          "type": "string",
+          "description": "Optional path for the serialized environment DtN model, for offline/online reuse."
         }
       }
     },

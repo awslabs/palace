@@ -142,6 +142,44 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
 
 }  // namespace
 
+TEST_CASE("Config Substructuring", "[config][Serial]")
+{
+  SECTION("Fields parse and round-trip")
+  {
+    json solver = {{"Substructuring",
+                    {{"Region", {{"Attributes", {1}}}},
+                     {"Environment", {{"Attributes", {2, 3}}}},
+                     {"Mode", "Offline"},
+                     {"SaveModel", "env_dtn.dat"}}}};
+    config::SolverData data(solver);
+    REQUIRE(data.substructuring.has_value());
+    CHECK(data.substructuring->region_attributes == std::vector<int>{1});
+    CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
+    CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
+    CHECK(data.substructuring->save_model == "env_dtn.dat");
+  }
+
+  SECTION("Absent block leaves substructuring unset")
+  {
+    config::SolverData data(json::object());
+    CHECK(!data.substructuring.has_value());
+  }
+
+  SECTION("Overlapping region/environment attributes are rejected")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1, 2}}}},
+                       {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("must be disjoint"));
+  }
+}
+
 TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
 {
   auto MakeDomains = [](const std::vector<int> &material_attributes,

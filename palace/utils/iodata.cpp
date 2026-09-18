@@ -660,6 +660,23 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
+  // Validate substructuring configuration: region and environment attribute sets must be
+  // nonempty and disjoint (a well-posed complementary split).
+  if (solver.substructuring)
+  {
+    const auto &sub = *solver.substructuring;
+    MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
+                "Substructuring requires nonempty Region and Environment attribute sets!");
+    std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
+    for (int a : sub.environment_attributes)
+    {
+      MFEM_VERIFY(region_set.find(a) == region_set.end(),
+                  "Substructuring Region and Environment attribute sets must be disjoint "
+                  "(attribute "
+                      << a << " appears in both)!");
+    }
+  }
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;

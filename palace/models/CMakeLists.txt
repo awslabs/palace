@@ -23,6 +23,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spaceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/substructuringsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceconductivityoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacecurlsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacecurrentoperator.cpp
