@@ -107,6 +107,10 @@ public:
   [[nodiscard]] std::size_t n_cols() const { return cols.size(); }
   [[nodiscard]] std::size_t n_rows() const;
 
+  // Rows that every column has data for. These will never be revised by a later excitation
+  // pass, so they can be written to disk and forgotten.
+  [[nodiscard]] std::size_t n_complete_rows() const;
+
   void reserve(std::size_t n_rows, std::size_t n_cols);
 
   // Insert columns: map like interface.
@@ -152,6 +156,14 @@ class TableWithCSVFile
 {
   std::string csv_file_fullpath_;
 
+  // Number of rows already written to the file, so appends never rewrite or duplicate.
+  std::size_t rows_on_disk_ = 0;
+
+  // Set once the table has held a partially filled row. A whole-file write of such a table
+  // leaves NULL cells on disk, and restart validation reads the fill state back from them,
+  // so from then on only whole-file writes are safe.
+  bool wrote_partial_rows_ = false;
+
 public:
   Table table = {};
 
@@ -161,6 +173,10 @@ public:
   std::string_view get_csv_filepath() const { return {csv_file_fullpath_}; }
 
   void WriteFullTableTrunc();
+
+  // Append the rows that no later excitation pass will revise. Falls back to
+  // WriteFullTableTrunc whenever the rows already on disk could still be revised.
+  void WriteTableIncremental();
 };
 
 }  // namespace palace
