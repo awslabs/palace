@@ -33,9 +33,8 @@ public:
   void CondenseEnvironment();
 
   // Solve the region-condensed electrostatic problem: the region's own Dirichlet terminals
-  // plus the environment DtN term on the interface. Returns the potential on the parent H1
-  // true DOFs (the region-touched entries are the region solution; environment-interior
-  // entries are left zero). Requires CondenseEnvironment to have been called.
+  // plus the environment DtN term on the interface, then recover the environment interior.
+  // Returns the full parent H1 true-DOF potential. Requires CondenseEnvironment first.
   Vector SolveRegion();
 
   // Global parent H1 true-DOF size, for reporting.

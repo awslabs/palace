@@ -481,6 +481,33 @@ Vector SubstructuringSolver::SolveRegion()
   {
     u(impl->dbc_tdofs[i]) = impl->dbc_values(impl->dbc_tdofs[i]);
   }
+
+  // Recover the environment interior: u_E = -A_EE^-1 (A_env u)|_E, with u carrying the
+  // solved interface values and the environment Dirichlet data. This yields the full parent
+  // field.
+  {
+    Vector t(nt);
+    impl->A_env->Mult(u, t);
+    Vector rhs(nt);
+    rhs = 0.0;
+    for (int i = 0; i < nt; i++)
+    {
+      if (impl->is_env_int[i])
+      {
+        rhs(i) = -t(i);
+      }
+    }
+    Vector uE(nt);
+    uE = 0.0;
+    impl->solver_env->Mult(rhs, uE);
+    for (int i = 0; i < nt; i++)
+    {
+      if (impl->is_env_int[i])
+      {
+        u(i) = uE(i);
+      }
+    }
+  }
   return u;
 }
 

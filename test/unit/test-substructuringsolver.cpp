@@ -141,21 +141,14 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     mfem::Vector u_full;
     xgf.GetTrueDofs(u_full);
 
-    // Compare on region-touched true DOFs.
-    mfem::Array<int> ra(1), ea(1);
-    ra[0] = 1;
-    ea[0] = 2;
-    mfem::Array<int> rm, em, im;
-    MarkInterfaceTrueDofs(pfes, ra, ea, rm, em, im);
+    // Compare the full reconstructed field (region + recovered environment) to the monolith
+    // on all true DOFs.
     double num = 0.0, den = 0.0;
     for (int i = 0; i < pfes.GetTrueVSize(); i++)
     {
-      if (rm[i])
-      {
-        double e = u(i) - u_full(i);
-        num += e * e;
-        den += u_full(i) * u_full(i);
-      }
+      double e = u(i) - u_full(i);
+      num += e * e;
+      den += u_full(i) * u_full(i);
     }
     double gnum = 0.0, gden = 0.0;
     MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
