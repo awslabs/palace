@@ -805,6 +805,24 @@ TEST_CASE("DtN with Dirichlet terminals reproduces electrostatics",
       den += um * um;
     }
     CHECK(std::sqrt(num / den) < 1.0e-10);
+
+    // Recover the environment field from the interface solution and check the full
+    // reconstructed field (region + environment) matches the monolith everywhere.
+    mfem::Vector u_gamma(nG);
+    for (int a = 0; a < nG; a++)
+    {
+      u_gamma(a) = u(a);  // region compact solve is parent-oriented (H1)
+    }
+    mfem::Vector u_env = dtn.RecoverEnvironment(u_gamma);
+    const auto &epar = env.GetParentDof();
+    double enum_ = 0.0, eden = 0.0;
+    for (int i = 0; i < u_env.Size(); i++)
+    {
+      double e = u_env(i) - u_full[epar[i]];
+      enum_ += e * e;
+      eden += u_full[epar[i]] * u_full[epar[i]];
+    }
+    CHECK(std::sqrt(enum_ / eden) < 1.0e-10);
   };
 
   SECTION("uniform permittivity")

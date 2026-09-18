@@ -88,12 +88,29 @@ public:
   const mfem::DenseMatrix &Schur() const { return S_E; }  // nG x nG, parent orientation
   const mfem::Vector &Load() const { return g_E; }        // nG
 
+  // Recover the environment field on its submesh DOFs from the solved interface potential
+  // u_gamma (size nG, parent orientation): interior u_I = A_II^-1 (f_I - A_IG u_G), with
+  // interface DOFs set to u_gamma and Dirichlet DOFs to their prescribed values. Returned
+  // in the environment submesh's local orientation.
+  mfem::Vector RecoverEnvironment(const mfem::Vector &u_gamma) const;
+
 private:
   void Build(const Substructure &environment, const std::vector<int> &gamma_index,
              const mfem::SparseMatrix &A_env, const mfem::Vector &f_env,
              const std::vector<char> &dbc_marker, const mfem::Vector &dbc_values);
   mfem::DenseMatrix S_E;
   mfem::Vector g_E;
+
+  // Data retained for environment field recovery.
+  int rec_n = 0;  // environment submesh DOF count
+  mfem::DenseMatrix rec_Aii_inv, rec_AiG;
+  mfem::Vector rec_fi;
+  std::vector<int> rec_interior_dof;   // compact interior index -> env submesh DOF
+  std::vector<int> rec_gamma_dof;      // compact interface index -> env submesh DOF
+  std::vector<int> rec_gamma_glob;     // compact interface index -> global gamma index
+  std::vector<double> rec_gamma_sign;  // compact interface index -> ±1 (local orientation)
+  std::vector<char> rec_dbc_marker;
+  mfem::Vector rec_dbc_values;
 };
 
 // Applies the environment DtN Schur complement S_E as a Palace Operator on a region finite

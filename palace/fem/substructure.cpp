@@ -273,6 +273,71 @@ void DtNBoundaryOperator::Build(const Substructure &environment,
       S_E(gam_glob[a], gam_glob[b]) = gam_sign[a] * gam_sign[b] * rawS(a, b);
     }
   }
+
+  // Retain data for environment field recovery.
+  rec_n = n;
+  rec_Aii_inv = Aii_inv;
+  rec_AiG = AiG;
+  rec_fi = fi;
+  rec_gamma_glob = gam_glob;
+  rec_gamma_sign = gam_sign;
+  rec_interior_dof.assign(nI, -1);
+  rec_gamma_dof.assign(nG, -1);
+  for (int i = 0; i < n; i++)
+  {
+    if (i_of[i] >= 0)
+    {
+      rec_interior_dof[i_of[i]] = i;
+    }
+    if (g_of[i] >= 0)
+    {
+      rec_gamma_dof[g_of[i]] = i;
+    }
+  }
+  rec_dbc_marker = dbc_marker;
+  rec_dbc_values = dbc_values;
+}
+
+mfem::Vector DtNBoundaryOperator::RecoverEnvironment(const mfem::Vector &u_gamma) const
+{
+  const int nG = static_cast<int>(rec_gamma_dof.size());
+  const int nI = static_cast<int>(rec_interior_dof.size());
+  // Interface values in the environment's local orientation.
+  mfem::Vector ug_local(nG);
+  for (int b = 0; b < nG; b++)
+  {
+    ug_local(b) = rec_gamma_sign[b] * u_gamma(rec_gamma_glob[b]);
+  }
+  // Interior: u_I = A_II^-1 (f_I - A_IG u_G).
+  mfem::Vector ui(nI);
+  if (nI)
+  {
+    mfem::Vector rhs(rec_fi), t(nI);
+    rec_AiG.Mult(ug_local, t);
+    rhs -= t;
+    rec_Aii_inv.Mult(rhs, ui);
+  }
+  mfem::Vector u(rec_n);
+  u = 0.0;
+  for (int a = 0; a < nI; a++)
+  {
+    u(rec_interior_dof[a]) = ui(a);
+  }
+  for (int b = 0; b < nG; b++)
+  {
+    u(rec_gamma_dof[b]) = ug_local(b);
+  }
+  if (!rec_dbc_marker.empty())
+  {
+    for (int i = 0; i < rec_n; i++)
+    {
+      if (rec_dbc_marker[i])
+      {
+        u(i) = rec_dbc_values(i);
+      }
+    }
+  }
+  return u;
 }
 
 RegionDtNOperator::RegionDtNOperator(const Substructure &region,
