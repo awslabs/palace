@@ -197,4 +197,51 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
   }
 }
 
+TEST_CASE("SubstructuringSolver offline/online model reuse",
+          "[substructure][Serial][Parallel]")
+{
+  const std::string model_path = "substruct_model_roundtrip.bin";
+  auto make_config = [](const std::string &mode, const std::string &path)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", path}}}}}};
+    return IoData(config, false);
+  };
+
+  // Offline: condense the environment and write the model to disk.
+  IoData iodata_off = make_config("Offline", model_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  Vector u_off = off.SolveExcitation(1);
+
+  // Online: load the saved model (no environment materialization) and solve again.
+  IoData iodata_on = make_config("Online", model_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  Vector u_on = on.SolveExcitation(1);
+
+  Vector d(u_on);
+  d -= u_off;
+  CHECK(d.Norml2() <= 1.0e-12 * (u_off.Norml2() + 1.0e-30));
+}
+
 }  // namespace palace

@@ -3,6 +3,7 @@
 
 #include "substructuringsolver.hpp"
 
+#include <fstream>
 #include <map>
 #include <memory>
 #include <vector>
@@ -405,23 +406,66 @@ void SubstructuringSolver::CondenseEnvironment()
   };
   impl->S_dense.SetSize(nG);
   impl->S_dense = 0.0;
-  Vector e(impl->nt), y(impl->nt);
-  std::vector<double> col(nG);
-  for (int c = 0; c < nG; c++)
+
+  // Offline/online: the interface enumeration above is cheap and deterministic to rebuild,
+  // but materializing S_E costs |Gamma| environment solves. In Online mode with a saved
+  // model, load S_E instead; in Offline mode with a path set, materialize and save it.
+  const auto &subcfg = *impl->iodata.solver.substructuring;
+  const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
+  const std::string &model_path = subcfg.save_model;
+  const int rank = Mpi::Rank(comm);
+  bool loaded = false;
+  if (online && !model_path.empty())
   {
-    e = 0.0;
-    for (int i = 0; i < impl->nt; i++)
+    int nG_file = -1;
+    if (rank == 0)
     {
-      if (impl->is_gamma[i] && impl->gamma_global[i] == c)
+      std::ifstream f(model_path, std::ios::binary);
+      if (f.good())
       {
-        e(i) = 1.0;
+        f.read(reinterpret_cast<char *>(&nG_file), sizeof(int));
       }
     }
-    impl->dtn->Mult(e, y);
-    gather_interface(y, col.data());
-    for (int r = 0; r < nG; r++)
+    MPI_Bcast(&nG_file, 1, MPI_INT, 0, comm);
+    MFEM_VERIFY(nG_file == nG, "Saved substructuring model interface size ("
+                                   << nG_file << ") does not match this run (" << nG
+                                   << "); the mesh and partition count must be identical.");
+    if (rank == 0)
     {
-      impl->S_dense(r, c) = col[r];
+      std::ifstream f(model_path, std::ios::binary);
+      f.seekg(sizeof(int));
+      f.read(reinterpret_cast<char *>(impl->S_dense.GetData()), sizeof(double) * nG * nG);
+    }
+    MPI_Bcast(impl->S_dense.GetData(), nG * nG, MPI_DOUBLE, 0, comm);
+    loaded = true;
+  }
+  if (!loaded)
+  {
+    Vector e(impl->nt), y(impl->nt);
+    std::vector<double> col(nG);
+    for (int c = 0; c < nG; c++)
+    {
+      e = 0.0;
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_gamma[i] && impl->gamma_global[i] == c)
+        {
+          e(i) = 1.0;
+        }
+      }
+      impl->dtn->Mult(e, y);
+      gather_interface(y, col.data());
+      for (int r = 0; r < nG; r++)
+      {
+        impl->S_dense(r, c) = col[r];
+      }
+    }
+    if (!model_path.empty() && rank == 0)
+    {
+      std::ofstream f(model_path, std::ios::binary);
+      f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
+      f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
+              sizeof(double) * nG * nG);
     }
   }
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
