@@ -917,6 +917,11 @@ discover -s . -p "test_*.py"` ran 252 tests, OK (33 skipped);
 `run_general_mesh_suite.py --preflight-only` passes for the production manifest (15
 cases), the MA calibration manifest (6) and the sizing calibration manifest (2);
 `refreeze_manifest_tools.py --check` current.
+After the milestone-review scope addition (71fbe4d9d: headroom gate, P2 items) the
+same sweep ran 260 tests, OK (33 skipped); preflights 15 (every case with its
+`BuildCostEstimate`, maximum 0.89 of the cap on ten-edge) / 6 / 2 pass;
+`refreeze_manifest_tools.py --check` current. The 869465f32 roots stay bound to their
+commit's manifest (`cef6ba51...`); nothing was rebuilt.
 
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
