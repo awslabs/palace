@@ -41,6 +41,10 @@ public:
   // grounded. Reuses the materialized environment DtN. Returns the full parent field.
   Vector SolveExcitation(int drive_terminal_index);
 
+  // Solve K u = f for a full parent-space source f (magnetostatic current excitation),
+  // reusing the condensed environment. Returns the full parent field.
+  Vector SolveSource(const Vector &f);
+
   // Terminal indices (sorted), for a capacitance sweep.
   std::vector<int> TerminalIndices() const;
 

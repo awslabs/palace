@@ -331,6 +331,89 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatics",
   CHECK(std::sqrt(gnum / gden) < 1.0e-7);
 }
 
+TEST_CASE("SubstructuringSolver magnetostatic source excitation",
+          "[substructure][Serial][Parallel]")
+{
+  // Source-driven H(curl) solve (analogous to a magnetostatic current excitation): the
+  // region-condensed solve of K u = f must reproduce the monolith K^-1 f, K = 1/mu
+  // curl-curl
+  // + subdomain unit mass. No terminals: the regularized operator is SPD.
+  const int order = 1;
+  const double mu_r = 1.0, mu_e = 4.0;
+  json config = {
+      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
+          {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
+      {"Boundaries", {}},
+      {"Solver",
+       {{"Order", order},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+
+  // Parent ND source vector from a constant vector domain source.
+  auto &pmesh = mesh.back()->Get();
+  mfem::ND_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  mfem::Vector jv(3);
+  jv(0) = 0.3;
+  jv(1) = -0.7;
+  jv(2) = 1.1;
+  mfem::VectorConstantCoefficient jc(jv);
+  mfem::ParLinearForm lf(&pfes);
+  lf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
+  lf.Assemble();
+  Vector f(pfes.GetTrueVSize());
+  lf.ParallelAssemble(f);
+
+  Vector u = ss.SolveSource(f);
+
+  // Monolith: K u = f on the same ND space with the identical operator.
+  const int max_attr = pmesh.attributes.Max();
+  mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
+  nu_by_attr = 0.0;
+  mass_by_attr = 1.0;
+  nu_by_attr(0) = 1.0 / mu_r;
+  nu_by_attr(1) = 1.0 / mu_e;
+  mfem::PWConstCoefficient nu(nu_by_attr), mass(mass_by_attr);
+  mfem::ParBilinearForm a(&pfes);
+  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mass));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> K(a.ParallelAssemble());
+  mfem::HypreAMS ams(*K, &pfes);
+  ams.SetPrintLevel(0);
+  mfem::HyprePCG pcg(*K);
+  pcg.SetTol(1e-12);
+  pcg.SetMaxIter(1000);
+  pcg.SetPrintLevel(0);
+  pcg.SetPreconditioner(ams);
+  Vector u_full(pfes.GetTrueVSize());
+  u_full = 0.0;
+  pcg.Mult(f, u_full);
+
+  double num = 0.0, den = 0.0;
+  for (int i = 0; i < pfes.GetTrueVSize(); i++)
+  {
+    double e = u(i) - u_full(i);
+    num += e * e;
+    den += u_full(i) * u_full(i);
+  }
+  double gnum = 0.0, gden = 0.0;
+  MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+  MPI_Allreduce(&den, &gden, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+  CHECK(std::sqrt(gnum / gden) < 1.0e-7);
+}
+
 TEST_CASE("SubstructuringSolver offline/online model reuse",
           "[substructure][Serial][Parallel]")
 {

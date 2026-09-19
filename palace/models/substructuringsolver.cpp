@@ -672,6 +672,87 @@ Vector SubstructuringSolver::SolveRegion()
   return SolveExcitation(impl->terminal_tdofs.begin()->first);
 }
 
+Vector SubstructuringSolver::SolveSource(const Vector &f)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
+  const int nt = impl->nt;
+  MPI_Comm comm = impl->parent_fes.GetComm();
+
+  // Environment interior source response: solve A_EE w = f_E, correction (A_env w)|_Gamma.
+  Vector fE(nt), w(nt), Aw(nt);
+  fE = 0.0;
+  for (int i = 0; i < nt; i++)
+  {
+    if (impl->is_env_int[i])
+    {
+      fE(i) = f(i);
+    }
+  }
+  w = 0.0;
+  impl->solver_env->Mult(fE, w);
+  impl->A_env->Mult(w, Aw);
+  std::vector<double> src_glob(impl->nG_global, 0.0), loc(impl->nG_global, 0.0);
+  for (int i = 0; i < nt; i++)
+  {
+    if (impl->is_gamma[i])
+    {
+      loc[impl->gamma_global[i]] = Aw(i);
+    }
+  }
+  MPI_Allreduce(loc.data(), src_glob.data(), impl->nG_global, MPI_DOUBLE, MPI_SUM, comm);
+
+  // RHS: region/interface source minus the environment source correction on the interface.
+  Vector b(nt);
+  b = 0.0;
+  for (int i = 0; i < nt; i++)
+  {
+    if (impl->is_region_free[i])
+    {
+      b(i) = f(i);
+    }
+  }
+  for (int i = 0; i < nt; i++)
+  {
+    if (impl->is_gamma[i])
+    {
+      b(i) -= src_glob[impl->gamma_global[i]];
+    }
+  }
+
+  RegionCondensedOperator sysop(*impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
+  Vector u(nt);
+  u = 0.0;
+  mfem::CGSolver cg(comm);
+  cg.SetOperator(sysop);
+  cg.SetRelTol(1.0e-10);
+  cg.SetMaxIter(2000);
+  cg.SetPrintLevel(0);
+  cg.Mult(b, u);
+  MFEM_VERIFY(cg.GetConverged(), "Region-condensed CG solve did not converge!");
+
+  // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
+  Vector Au(nt), rhs(nt), uE(nt);
+  impl->A_env->Mult(u, Au);
+  rhs = 0.0;
+  for (int i = 0; i < nt; i++)
+  {
+    if (impl->is_env_int[i])
+    {
+      rhs(i) = fE(i) - Au(i);
+    }
+  }
+  uE = 0.0;
+  impl->solver_env->Mult(rhs, uE);
+  for (int i = 0; i < nt; i++)
+  {
+    if (impl->is_env_int[i])
+    {
+      u(i) = uE(i);
+    }
+  }
+  return u;
+}
+
 std::vector<int> SubstructuringSolver::TerminalIndices() const
 {
   std::vector<int> idx;
