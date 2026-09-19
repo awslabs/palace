@@ -541,7 +541,11 @@ CanonicalBuildId `6d6a2e8e4e75b4cbbdc63eb6fb869418ae1323784bb5a47bf994c415eadead
 rotate-z `36a640bfef0382ae775f1a71e3e5b0517f05d53c79290337a9b60e30cc00c29c`,
 CanonicalBuildId `61d7a9564b5c46e7fc36103bb43d0c6651e8a3522ead0fa81dee86d0d71bb672`).
 The probe roots keep their censuses (bound by the contracts' Derivation); their
-mesh binaries were removed.
+mesh binaries were removed. Validation of the decision-42 state (commits f6efe6367
+.. 2565fedf0): `python3 -m unittest discover -s . -p "test_*.py"` ran 250 tests,
+OK (33 skipped); `run_general_mesh_suite.py --preflight-only` passes for the
+production manifest (14 cases), the MA calibration manifest (6) and the sizing
+calibration manifest (2); `refreeze_manifest_tools.py --check` current.
 
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
