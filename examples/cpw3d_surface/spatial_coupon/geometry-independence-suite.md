@@ -204,20 +204,45 @@ protected-surface tolerance 1e-8, ownership closure 1e-12, MaximumElements
 placements, the consolidated audits, normalization and per-entry verification from
 the manifest case alone (roots `/tmp/coupon-gmsh-only-<case>-<commit>-<timestamp>`).
 
-### Evidence (Gmsh-only four-edge and ten-edge, commit f85c30932, 2026-09-18)
+### Evidence (Gmsh-only four-edge and ten-edge, commit 083874fee, 2026-09-19)
 
 Both production cases were rebuilt under the committed tools by
 `run_gmsh_only_case.py` after the band-curve fix (review P1 of the 1a0289994
 evidence: junction curves 1D-meshed at NormalSize, commit 8022ade03), the recipe
-bindings (review P2s, 3852dbd47) and the decision-39 volume size laws
-(f85c30932), and verified identity + rotate-z with empty failure lists
+bindings (review P2s, 3852dbd47), the decision-39 volume size laws (f85c30932)
+and the decision-40 tube layers following the size field on the axis (083874fee),
+and verified identity + rotate-z with empty failure lists
 (`per-entry-verification.json`: `Passed true`, `Failures []`,
 `TransformComparisonFailures []`, one shared CanonicalBuildId per case).
 
-| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / spacing | rings | cap regions (min SJ / max cond) | tets min SJ / max cond | prisms max cond | pyramids max cond | corners (10 / 4) | protected | closure | diagonal bands | stage s / GiB (build; publication) | audits s / GiB | verification s / GiB |
+| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / layer thickness min-P50-max | rings | cap regions (min SJ / max cond) | tets min SJ / max cond | prisms max cond | pyramids max cond | corners (10 / 4) | protected | closure | diagonal bands | stage s / GiB (build; publication) | audits s / GiB | verification s / GiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| four-edge-9d2cb9bbb3fe | **1,734,992** = 1,554,056 + 168,012 + 12,924 (+3.2% vs 1a0289994's 1,680,422: +2.0% band curves, +1.2% volume laws; 0.50x the 34B production 3,471,480) | 381,280 (22.9M) | 8 / 1,436 / 49.70-49.93 nm | 7 (0.25 ... 16 nm, R 31.75 nm) | 12: 0.0548 / 37.0 | 0.0270 / 86.0 | 588.7 | 8.73 | 3.36 / 3.66 / 2.95 / 3.53 | 0 (support vertices 1e-15) | 3.2e-13 (Gauss4, 628,938 points) | 0 (10 signature-, 32 footprint-, 10 junction-aligned; 0 on trace-basis edges: ShortEdgeThreshold 0.032, below the narrow-hat band width) | 111.1 / 4.20 (gmsh-build), 27.8 / 3.14 (publication); 93-107 / 3.9 per placement | 272-324 / 2.7 | 887 / 2.8 |
-| ten-edge-6791f1c84123 | **2,443,456** = 2,163,232 + 260,208 + 20,016 (+2.3% vs 2,389,131: +1.4% / +0.9%; 0.68x the 34B production 3,570,533) | 549,579 (32.8M) | 20 / 2,224 / 47.6-49.9 nm | 7 | 36: 0.0401 / 41.7 | 0.0218 / 93.4 | 588.5 | 8.72 | 3.39-3.70 (10 corners) | 0 (1.3e-15) | 5.1e-13 (956,142 points; 10 owner labels: 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 (10 signature-, 10 footprint-, 6 junction-aligned) | 180.0 / 4.28 (gmsh-build), 35.7 / 3.97 (publication); 136-141 / 4.9 per placement | 307-409 / 3.8 | 1,111 / 3.6 |
+| four-edge-9d2cb9bbb3fe | **1,742,434** = 1,557,718 + 171,522 + 13,194 (+0.43% vs f85c30932's 1,734,992; +3.7% vs 1a0289994's 1,680,422; 0.50x the 34B production 3,471,480) | 383,805 (23.0M) | 8 / 1,466 / 15.9 - 49.86 - 49.99 nm (f85c30932: 1,436 uniform layers of 49.70-49.93 nm) | 7 (0.25 ... 16 nm, R 31.75 nm) | 12: 0.0548 / 20.7 | 0.0442 / 42.6 (f85c30932: 0.0270 / 86.0) | 589.4 | 8.74 | 2.74 / 3.59 / 2.84 / 3.25 | 0 (support vertices 1e-15) | 8.4e-14 (Gauss4, 633,714 points) | 0 (8 signature-, 30 footprint-, 8 junction-aligned; 0 on trace-basis edges: ShortEdgeThreshold 0.032, below the narrow-hat band width) | 137.4 / 4.13 (gmsh-build), 31.7 / 3.20 (publication); 122-129 / 3.9 per placement | 291-298 / 4.1 | 877 / 2.8 |
+| ten-edge-6791f1c84123 | **2,465,185** = 2,175,133 + 269,334 + 20,718 (+0.89% vs 2,443,456; 0.69x the 34B production 3,570,533) | 556,661 (33.2M) | 20 / 2,302 / 15.9 - 49.82 - 49.94 nm (before 2,224 uniform layers of 47.6-49.9 nm) | 7 | 36: 0.0401 / 43.4 | 0.0217 / 101.2 (before 0.0218 / 93.4) | 588.8 | 8.73 | 3.34-3.78 (10 corners) | 0 (1.8e-15) | 7.8e-14 (970,074 points; 10 owner labels: 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 (10 signature-, 10 footprint-, 6 junction-aligned) | 230.5 / 4.53 (gmsh-build), 50.6 / 4.26 (publication); 175-180 / 5.0 per placement | 457-461 / 5.0 | 1,111 / 3.8 |
+
+Decision-40 tube layers (census `PrismTubes.LayerThickness`, per tube
+`Tubes[].LayerThickness`; the layer is the gradient-limited axis size at its
+midpoint, achieved-over-prescribed P50 0.994-1.000 on every tube; the largest
+neighbour ratio 1.59 (four) / 1.53 (ten) against the cap GrowthRatio 2): four-edge
+- the two tubes ending on the cut surface at (2,8) where the narrow-hat sources
+74/10 live: first layer 28.2 nm against the trace rule's 21.7 nm on the surface
+(the layer grows at FarGrowth 0.5 from the surface: 21.7 + 0.5 x 14 nm at its
+midpoint), then 25 nm inside the corner ball at the (2,0) end; the two tubes ending
+on the box at (10,-2): 49.9 nm there (no narrow hat; the far size), 25 nm at the
+(0,-2) corner end; the (2,0)->(10,0) and (0,-2)->(0,8) tubes: 25 nm at the
+corner-clearance ends, 15.9 nm at the bottom-tube ends 16 nm before the on-box
+corners (10,0) / (0,8) (the corner-ball shell size there; the top tubes are
+sqrt(16^2 + 100^2) nm from those corners, 25 nm); 49.9 nm mid-tube; per tube 162-205
+layers (before 159-200). Ten-edge: 40 tube ends - 4 on the box at 49.8 nm (50 nm
+prescribed), 34 corner ends at 24.9-25.0 nm, 2 at 15.9 nm (16 nm); per tube 23-165
+layers. Every layer is below TangentialSize (`LayersBelowTangentialSize` = all).
+Trace-apex shells (below) tightened: four-edge 25-50 / 50-100 nm longest edge P50
+38.6 -> 32.6 nm / 49.3 -> 42.7 nm, ten-edge 49.0 -> 35.8 nm / 62.9 -> 54.0 nm; the
+four-edge tetrahedra minimum scaled Jacobian rose from 0.027 to 0.044 (25 nm layers
+against the cap-graded tetrahedra instead of 50 nm). Not viable (probe under the
+same commit's tools, recorded here): grading the layers to CornerSize at the cap
+centres - 38 corner-ball tetrahedra below the SJ gate (minimum 0.0060) after the
+seed optimization; hence the axis law excludes the cap centres as ball-law points.
 
 H1 p1 is `Measurements.Complexity.H1DOFs` of the identity `mesh-complexity`
 record (= the node count); H1 p4 is `mixed_mesh.h1_dofs(mesh, 4)` on `identity.msh`
@@ -237,16 +262,16 @@ longest edge P50 / achieved-over-prescribed P50 per shell): trace apexes
 (shortest-edge endpoints of the narrow basis triangles; the physics-09 observable
 was the median longest edge within 0.1 um of the narrow-hat apexes, 57 nm on the
 1a0289994 mesh vs 42 nm on the MMG mesh) - four-edge 54 apexes, 0-25 / 25-50 /
-50-100 nm shells: 4.8 / 38.6 / 49.3 nm (2,473 / 1,176 / 3,299 cells; ratios 0.05 /
-0.50 / 0.52; the innermost shell sits inside the tube of the metal edge the hats
-touch), ten-edge 180 apexes: 4.7 / 49.0 / 62.9 nm (ratios 0.05 / 0.53 / 0.63);
-corner exterior (R = 0.1 um; shells R + 0-50 / 50-100 / 100-200 nm) four-edge
-41.6 / 51.1 / 69.5 nm (ratios 0.83 / 0.66 / 0.57; the anisotropic attractor field
-is finer than the exterior law, so the law is a recorded bound the mesh already
-satisfies), ten-edge 40.9 / 50.6 / 69.0 nm; junction lines (0-25 / 25-50 / 50-100 /
-100-200 nm) four-edge 41.1 / 75.4 / 104 / 145 nm (ratios 0.86 / 0.91 / 0.89 /
-0.95), ten-edge 40.0 / 75.3 / 102 / 128 nm. `TraceBasisSizing.GradingSlope` is
-FarGrowth 0.5 (before 0.675).
+50-100 nm shells: 4.9 / 32.6 / 42.7 nm (2,517 / 1,437 / 4,002 cells; ratios 0.05 /
+0.45 / 0.45; f85c30932: 4.8 / 38.6 / 49.3 nm; the innermost shell sits inside the
+tube of the metal edge the hats touch), ten-edge 180 apexes: 4.9 / 35.8 / 54.0 nm
+(ratios 0.06 / 0.45 / 0.53; before 4.7 / 49.0 / 62.9 nm); corner exterior (R = 0.1
+um; shells R + 0-50 / 50-100 / 100-200 nm) four-edge 33.5 / 45.0 / 67.4 nm (before
+41.6 / 51.1 / 69.5; the anisotropic attractor field is finer than the exterior law,
+so the law is a recorded bound the mesh already satisfies), ten-edge 33.5 / 44.0 /
+66.6 nm; junction lines (0-25 / 25-50 / 50-100 / 100-200 nm) four-edge 41.0 / 75.2 /
+104 / 141 nm, ten-edge 40.0 / 75.0 / 102 / 121 nm. `TraceBasisSizing.GradingSlope`
+is FarGrowth 0.5 (before 0.675).
 
 Cut-surface sizes (`PrismTubes.CutSurface`): four-edge matching surface edge P50
 0.160 (far); the trace rule is measured on the narrow basis triangles that contain
@@ -262,21 +287,22 @@ has no 3000/3001 un-etched label), so they carry no band (P50 ~178 nm; the 228 n
 maximum of the 1a0289994 statistic came from these sides, not from the box sides).
 The tube band at the tube surface starts at NormalSize and grows with FarGrowth
 0.5 to FarSize 0.16. Roots (binaries kept):
-`/tmp/coupon-gmsh-only-four-edge-9d2cb9bbb3fe-f85c30932-20260918-212532`
+`/tmp/coupon-gmsh-only-four-edge-9d2cb9bbb3fe-083874fee-20260918-225243`
 (identity.msh SHA-256
-`a94983da176d656c9e81ee1dddd8ed7bcc4bfa2e71a86398912b18d4ab5f4e16`, rotate-z
-`1a95d04a...`, CanonicalBuildId
-`e8931bb1d6d14ce56e1259b6284edb95e017ee4f91184b36788bf5c02c77b55a`),
-`/tmp/coupon-gmsh-only-ten-edge-6791f1c84123-f85c30932-20260918-212534`
+`647b2079786f02784a1e855ae197d874df19598e1f33cae40fe25b6d357e4c6f`, rotate-z
+`c0a2b136...`, CanonicalBuildId
+`1675018f3cac4a80194c0464a0648178214f80880f9c010eef63d6bed5011db7`),
+`/tmp/coupon-gmsh-only-ten-edge-6791f1c84123-083874fee-20260918-225246`
 (identity.msh SHA-256
-`897c46bc4c75c000a12bfdc0f1b9db643675e29124cccde22dc9a5e12d51f564`, rotate-z
-`2fa9e778...`, CanonicalBuildId
-`27ee76e3b09b8b5c6485ddf51dab6e89641161ea040903aaa8ada8e8eb945a8f`). The superseded
+`eb9986a40f6bb4e97a169fe478aa2fe647bf363ba2a1cf5f82306f5a1c3a5f73`, rotate-z
+`6864b616...`, CanonicalBuildId
+`15fb423f9f8a1f418f20fd9581dfbcef20605204609348bd9c9139f692c25d61`). The superseded
 1a0289994 roots (four-edge identity `e57ce087...`, 1,680,422 elements, the mesh
-of physics-09; ten-edge `7ff972ab...`) and the intermediate 3852dbd47 roots
-(four `dfb58639...`, 1,714,641; ten `9ff5ee0d...`, 2,422,099; band curves without
-the volume laws) keep their records; their mesh binaries were removed once these
-roots verified. Physics-09 (on the 1a0289994 four-edge mesh) adjudicated the
+of physics-09; ten-edge `7ff972ab...`), the intermediate 3852dbd47 roots (four
+`dfb58639...`, 1,714,641; ten `9ff5ee0d...`, 2,422,099; band curves without the
+volume laws) and the f85c30932 roots (four `a94983da...`, 1,734,992, CanonicalBuildId
+`e8931bb1...`; ten `897c46bc...`, 2,443,456, `27ee76e3...`; uniform tube layers)
+keep their records; their mesh binaries were removed once these roots verified. Physics-09 (on the 1a0289994 four-edge mesh) adjudicated the
 junction SA against the 50 nm first layer and localized the E/SA/MS regressions to
 the volume sizing these meshes now carry.
 
