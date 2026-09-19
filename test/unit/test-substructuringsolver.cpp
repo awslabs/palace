@@ -197,4 +197,87 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
   }
 }
 
+TEST_CASE("SubstructuringSolver anisotropic permittivity",
+          "[substructure][Serial][Parallel]")
+{
+  // The cube is layered along x with terminals at x = 0 and x = 1, so the field is purely
+  // x-directed and only the xx permittivity component matters. A diagonal anisotropic
+  // tensor diag(eps_x, *, *) must therefore give the same capacitance as the scalar-eps_x
+  // series capacitor: C11 = 1 / (0.5/eps_x_region + 0.5/eps_x_env).
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", {1.0, 5.0, 7.0}}},
+          {{"Attributes", {2}}, {"Permittivity", {10.0, 3.0, 2.0}}}}}}},
+      {"Boundaries",
+       {{"Terminal",
+         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  Vector phi0 = ss.SolveExcitation(1);
+  Vector phi1 = ss.SolveExcitation(2);
+  const double c00 = ss.MutualEnergy(phi0, phi0);
+  const double c01 = ss.MutualEnergy(phi0, phi1);
+  const double c_series = 1.0 / (0.5 / 1.0 + 0.5 / 10.0);
+  CHECK(std::abs(c00 - c_series) <= 1.0e-6 * c_series);
+  CHECK(std::abs(c00 + c01) <= 1.0e-8 * c_series);
+}
+
+TEST_CASE("SubstructuringSolver offline/online model reuse",
+          "[substructure][Serial][Parallel]")
+{
+  const std::string model_path = "substruct_model_roundtrip.bin";
+  auto make_config = [](const std::string &mode, const std::string &path)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", path}}}}}};
+    return IoData(config, false);
+  };
+
+  // Offline: condense the environment and write the model to disk.
+  IoData iodata_off = make_config("Offline", model_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  Vector u_off = off.SolveExcitation(1);
+
+  // Online: load the saved model (no environment materialization) and solve again.
+  IoData iodata_on = make_config("Online", model_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  Vector u_on = on.SolveExcitation(1);
+
+  Vector d(u_on);
+  d -= u_off;
+  CHECK(d.Norml2() <= 1.0e-12 * (u_off.Norml2() + 1.0e-30));
+}
+
 }  // namespace palace

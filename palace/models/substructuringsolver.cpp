@@ -3,6 +3,7 @@
 
 #include "substructuringsolver.hpp"
 
+#include <fstream>
 #include <map>
 #include <memory>
 #include <vector>
@@ -18,6 +19,34 @@ namespace palace
 
 namespace
 {
+
+// Piecewise-constant (per element attribute) matrix coefficient for anisotropic materials.
+// Attributes absent from the map contribute a zero tensor (e.g. environment attributes when
+// assembling the region operator).
+class PWMatrixCoefficient : public mfem::MatrixCoefficient
+{
+  const std::map<int, mfem::DenseMatrix> &mats;
+
+public:
+  PWMatrixCoefficient(int dim, const std::map<int, mfem::DenseMatrix> &m)
+    : mfem::MatrixCoefficient(dim), mats(m)
+  {
+  }
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    auto it = mats.find(T.Attribute);
+    if (it != mats.end())
+    {
+      K = it->second;
+    }
+    else
+    {
+      K.SetSize(width);
+      K = 0.0;
+    }
+  }
+};
 
 // Implicit environment Dirichlet-to-Neumann action on parent true DOFs:
 //   y|_Gamma = A_GG x - A_GE A_EE^-1 A_EG x
@@ -265,9 +294,7 @@ struct SubstructuringSolver::Impl
 
     // Domain-restricted scalar permittivity coefficients (zero outside the subdomain).
     const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-    mfem::Vector er(max_attr), ee(max_attr);
-    er = 0.0;
-    ee = 0.0;
+    const int dim = parent.Dimension();
     auto in = [](const mfem::Array<int> &s, int a)
     {
       for (int x : s)
@@ -279,6 +306,24 @@ struct SubstructuringSolver::Impl
       }
       return false;
     };
+    // Reconstruct the (possibly anisotropic) relative-permittivity tensor per attribute
+    // from its eigen-decomposition: eps_ij = sum_k s[k] v[k]_i v[k]_j.
+    auto tensor = [dim](const config::MaterialData &mat)
+    {
+      mfem::DenseMatrix e(dim);
+      e = 0.0;
+      for (int k = 0; k < 3; k++)
+      {
+        for (int i = 0; i < dim; i++)
+        {
+          for (int j = 0; j < dim; j++)
+          {
+            e(i, j) += mat.epsilon_r.s[k] * mat.epsilon_r.v[k][i] * mat.epsilon_r.v[k][j];
+          }
+        }
+      }
+      return e;
+    };
     for (const auto &mat : iodata.domains.materials)
     {
       for (int a : mat.attributes)
@@ -289,27 +334,30 @@ struct SubstructuringSolver::Impl
         }
         if (in(ra, a))
         {
-          er(a - 1) = mat.epsilon_r.s[0];
+          region_eps[a] = tensor(mat);
         }
         else if (in(ea, a))
         {
-          ee(a - 1) = mat.epsilon_r.s[0];
+          env_eps[a] = tensor(mat);
         }
       }
     }
-    A_region = AssembleParent(er);
-    A_env = AssembleParent(ee);
+    A_region = AssembleParent(region_eps);
+    A_env = AssembleParent(env_eps);
   }
 
-  std::unique_ptr<mfem::HypreParMatrix> AssembleParent(const mfem::Vector &eps_by_attr)
+  std::unique_ptr<mfem::HypreParMatrix>
+  AssembleParent(const std::map<int, mfem::DenseMatrix> &eps_by_attr)
   {
-    mfem::PWConstCoefficient eps(const_cast<mfem::Vector &>(eps_by_attr));
+    PWMatrixCoefficient eps(parent.Dimension(), eps_by_attr);
     mfem::ParBilinearForm a(&parent_fes);
     a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
   }
+
+  std::map<int, mfem::DenseMatrix> region_eps, env_eps;
 };
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
@@ -405,23 +453,66 @@ void SubstructuringSolver::CondenseEnvironment()
   };
   impl->S_dense.SetSize(nG);
   impl->S_dense = 0.0;
-  Vector e(impl->nt), y(impl->nt);
-  std::vector<double> col(nG);
-  for (int c = 0; c < nG; c++)
+
+  // Offline/online: the interface enumeration above is cheap and deterministic to rebuild,
+  // but materializing S_E costs |Gamma| environment solves. In Online mode with a saved
+  // model, load S_E instead; in Offline mode with a path set, materialize and save it.
+  const auto &subcfg = *impl->iodata.solver.substructuring;
+  const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
+  const std::string &model_path = subcfg.save_model;
+  const int rank = Mpi::Rank(comm);
+  bool loaded = false;
+  if (online && !model_path.empty())
   {
-    e = 0.0;
-    for (int i = 0; i < impl->nt; i++)
+    int nG_file = -1;
+    if (rank == 0)
     {
-      if (impl->is_gamma[i] && impl->gamma_global[i] == c)
+      std::ifstream f(model_path, std::ios::binary);
+      if (f.good())
       {
-        e(i) = 1.0;
+        f.read(reinterpret_cast<char *>(&nG_file), sizeof(int));
       }
     }
-    impl->dtn->Mult(e, y);
-    gather_interface(y, col.data());
-    for (int r = 0; r < nG; r++)
+    MPI_Bcast(&nG_file, 1, MPI_INT, 0, comm);
+    MFEM_VERIFY(nG_file == nG, "Saved substructuring model interface size ("
+                                   << nG_file << ") does not match this run (" << nG
+                                   << "); the mesh and partition count must be identical.");
+    if (rank == 0)
     {
-      impl->S_dense(r, c) = col[r];
+      std::ifstream f(model_path, std::ios::binary);
+      f.seekg(sizeof(int));
+      f.read(reinterpret_cast<char *>(impl->S_dense.GetData()), sizeof(double) * nG * nG);
+    }
+    MPI_Bcast(impl->S_dense.GetData(), nG * nG, MPI_DOUBLE, 0, comm);
+    loaded = true;
+  }
+  if (!loaded)
+  {
+    Vector e(impl->nt), y(impl->nt);
+    std::vector<double> col(nG);
+    for (int c = 0; c < nG; c++)
+    {
+      e = 0.0;
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_gamma[i] && impl->gamma_global[i] == c)
+        {
+          e(i) = 1.0;
+        }
+      }
+      impl->dtn->Mult(e, y);
+      gather_interface(y, col.data());
+      for (int r = 0; r < nG; r++)
+      {
+        impl->S_dense(r, c) = col[r];
+      }
+    }
+    if (!model_path.empty() && rank == 0)
+    {
+      std::ofstream f(model_path, std::ios::binary);
+      f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
+      f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
+              sizeof(double) * nG * nG);
     }
   }
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
