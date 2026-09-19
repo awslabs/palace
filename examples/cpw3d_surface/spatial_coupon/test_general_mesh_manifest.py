@@ -2812,7 +2812,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "does not follow the composed size field")
             rejected(lambda c: c["CurveSpacing"]["Curves"][0]["NodeSpacing"].__setitem__("Maximum", 1.0),
                      "does not follow the composed size field")
-            rejected(lambda c: c["CurveSpacing"]["Curves"][0]["AchievedOverPrescribed"].__setitem__("Maximum", 1.5),
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0]["AchievedOverPrescribed"].__setitem__("Maximum", 2.5),
                      "does not follow the composed size field")
             rejected(lambda c: c["CurveSpacing"]["Curves"][0].__setitem__("PrescribedMinimum", 0.0),
                      "does not follow the composed size field")

@@ -1501,10 +1501,12 @@ def validate_curve_spacing(census, normal, tangential, growth, band_count):
     against the composed size field: Count rows (the band curves among them, at
     Spacing = NormalSize; metal parts at TangentialSize), each with positive
     node-spacing statistics ordered Minimum <= P50 <= Maximum <= Spacing, a positive
-    PrescribedMinimum <= Spacing, AchievedOverPrescribed statistics with the maximum
-    within roundoff of 1 (every node interval <= the limited law it spans), a kept-grid
-    count within the grid intervals, and GradedCurves = the rows marked Graded; the
-    growth cap is the recipe's GrowthRatio."""
+    PrescribedMinimum <= Spacing, AchievedOverPrescribed statistics (each node interval
+    over the limited law at its midpoint) with the maximum within the growth cap - the
+    equidistribution bounds an interval by the law over the interval, which steps down
+    by at most GrowthRatio inside it (the corner-ball shells; every other law is
+    Lipschitz) -, a kept-grid count within the grid intervals, and GradedCurves = the
+    rows marked Graded; the growth cap is the recipe's GrowthRatio."""
     record = census.get("CurveSpacing")
     if (not isinstance(record, dict) or not isinstance(record.get("Rule"), str) or
             "composed" not in record["Rule"] or "gradient-limited" not in record["Rule"] or
@@ -1531,7 +1533,7 @@ def validate_curve_spacing(census, normal, tangential, growth, band_count):
                 not 0.0 < _census_number(row, "PrescribedMinimum", "Curve spacing row") <= spacing * (1.0 + 1e-9) or
                 not 0.0 < _census_number(achieved, "Minimum", "Curve achieved spacing") <=
                 _census_number(achieved, "P50", "Curve achieved spacing") <=
-                _census_number(achieved, "Maximum", "Curve achieved spacing") <= 1.0 + 1e-8 or
+                _census_number(achieved, "Maximum", "Curve achieved spacing") <= growth * (1.0 + 1e-9) or
                 _count(row.get("GridIntervalsKept"), "Kept grid intervals") >
                 _count(row.get("GridIntervals"), "Grid intervals") or
                 _count(row.get("InteriorNodes"), "Curve interior nodes") < 0 or

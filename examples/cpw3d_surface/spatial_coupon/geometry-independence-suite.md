@@ -129,8 +129,11 @@ Decision 43 (no new parameter; the recorded rules change):
   intervals kept, interior nodes, node spacing min / P50 / max, prescribed minimum,
   achieved-over-prescribed min / P50 / max); `validate_curve_spacing` binds the rows
   (spacing = NormalSize on band / junction rows and TangentialSize on metal rows,
-  statistics ordered and within the spacing, achieved-over-prescribed <= 1 within
-  roundoff, kept grid within the grid, the band curves covered). Before this the
+  statistics ordered and within the spacing, achieved-over-prescribed within the
+  growth cap - an interval is bounded by the law over its span, which steps down by
+  at most GrowthRatio inside it at a corner-ball shell -, kept grid within the grid,
+  the band curves covered). A law marginally below the spacing on one grid interval
+  splits it in two (ceil), so a band curve can show a 12.5 nm minimum interval. Before this the
   band curves ignored the trace rule along their length (a basis sliver crossing a
   junction line saw 25 nm curve nodes at a 11 nm request; the surface mesher cannot
   refine a curve's nodes), the most plausible remaining cause of the junction-source
