@@ -227,12 +227,12 @@ BoundaryPhysicalTraceCache::GetEntry(const mfem::ParFiniteElementSpace &fespace)
   entry.num_comp = NumComponents(fespace);
   // Each trace producer evaluates exactly one physical side. Its output restriction
   // retains canonical q order; the two buffers therefore never average/jump a face.
-  entry.side_a_eval.reset(new SurfaceFunctional(entry.kind, *mesh, bdr_attr_marker, fespace,
-                                                sampling_plan->LOD(), sampling_plan,
-                                                nullptr, 0));
-  entry.side_b_eval.reset(new SurfaceFunctional(entry.kind, *mesh, bdr_attr_marker, fespace,
-                                                sampling_plan->LOD(), sampling_plan,
-                                                nullptr, 1));
+  entry.side_a_eval =
+      std::make_unique<SurfaceFunctional>(entry.kind, *mesh, bdr_attr_marker, fespace,
+                                          sampling_plan->LOD(), sampling_plan, nullptr, 0);
+  entry.side_b_eval =
+      std::make_unique<SurfaceFunctional>(entry.kind, *mesh, bdr_attr_marker, fespace,
+                                          sampling_plan->LOD(), sampling_plan, nullptr, 1);
   MFEM_VERIFY(entry.side_a_eval->IsValid() && entry.side_b_eval->IsValid(),
               "Unable to assemble boundary physical trace evaluator!");
   trace_groups += static_cast<long long>(entry.side_a_eval->TraceGroupCount() +

@@ -99,8 +99,8 @@ PointFieldEvaluator::PointFieldEvaluator(
   {
     trace_fespace_a = &fespace;
   }
-  boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, fespace, lod,
-                                            std::move(sampling_plan), trace_cache));
+  boundary_eval = std::make_unique<SurfaceFunctional>(
+      kind, mesh, bdr_attr_marker, fespace, lod, std::move(sampling_plan), trace_cache);
   valid = boundary_eval->IsValid();
 }
 
@@ -137,9 +137,9 @@ PointFieldEvaluator::PointFieldEvaluator(
   {
     trace_fespace_a = &fespace;
   }
-  boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, fespace, mat_op,
-                                            lod, scaling, std::move(sampling_plan),
-                                            trace_cache));
+  boundary_eval =
+      std::make_unique<SurfaceFunctional>(kind, mesh, bdr_attr_marker, fespace, mat_op, lod,
+                                          scaling, std::move(sampling_plan), trace_cache);
   valid = boundary_eval->IsValid();
 }
 
@@ -177,9 +177,9 @@ PointFieldEvaluator::PointFieldEvaluator(
     trace_fespace_a = &nd_fespace;
     trace_fespace_b = &rt_fespace;
   }
-  boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, nd_fespace,
-                                            rt_fespace, mat_op, lod, scaling,
-                                            std::move(sampling_plan), trace_cache));
+  boundary_eval = std::make_unique<SurfaceFunctional>(
+      kind, mesh, bdr_attr_marker, nd_fespace, rt_fespace, mat_op, lod, scaling,
+      std::move(sampling_plan), trace_cache);
   valid = boundary_eval->IsValid();
 }
 
