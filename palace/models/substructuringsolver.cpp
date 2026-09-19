@@ -20,6 +20,34 @@ namespace palace
 namespace
 {
 
+// Piecewise-constant (per element attribute) matrix coefficient for anisotropic materials.
+// Attributes absent from the map contribute a zero tensor (e.g. environment attributes when
+// assembling the region operator).
+class PWMatrixCoefficient : public mfem::MatrixCoefficient
+{
+  const std::map<int, mfem::DenseMatrix> &mats;
+
+public:
+  PWMatrixCoefficient(int dim, const std::map<int, mfem::DenseMatrix> &m)
+    : mfem::MatrixCoefficient(dim), mats(m)
+  {
+  }
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    auto it = mats.find(T.Attribute);
+    if (it != mats.end())
+    {
+      K = it->second;
+    }
+    else
+    {
+      K.SetSize(width);
+      K = 0.0;
+    }
+  }
+};
+
 // Implicit environment Dirichlet-to-Neumann action on parent true DOFs:
 //   y|_Gamma = A_GG x - A_GE A_EE^-1 A_EG x
 // using the parent-space environment matrix A_env (with A_EE the environment-interior
@@ -266,9 +294,7 @@ struct SubstructuringSolver::Impl
 
     // Domain-restricted scalar permittivity coefficients (zero outside the subdomain).
     const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-    mfem::Vector er(max_attr), ee(max_attr);
-    er = 0.0;
-    ee = 0.0;
+    const int dim = parent.Dimension();
     auto in = [](const mfem::Array<int> &s, int a)
     {
       for (int x : s)
@@ -280,6 +306,24 @@ struct SubstructuringSolver::Impl
       }
       return false;
     };
+    // Reconstruct the (possibly anisotropic) relative-permittivity tensor per attribute
+    // from its eigen-decomposition: eps_ij = sum_k s[k] v[k]_i v[k]_j.
+    auto tensor = [dim](const config::MaterialData &mat)
+    {
+      mfem::DenseMatrix e(dim);
+      e = 0.0;
+      for (int k = 0; k < 3; k++)
+      {
+        for (int i = 0; i < dim; i++)
+        {
+          for (int j = 0; j < dim; j++)
+          {
+            e(i, j) += mat.epsilon_r.s[k] * mat.epsilon_r.v[k][i] * mat.epsilon_r.v[k][j];
+          }
+        }
+      }
+      return e;
+    };
     for (const auto &mat : iodata.domains.materials)
     {
       for (int a : mat.attributes)
@@ -290,27 +334,30 @@ struct SubstructuringSolver::Impl
         }
         if (in(ra, a))
         {
-          er(a - 1) = mat.epsilon_r.s[0];
+          region_eps[a] = tensor(mat);
         }
         else if (in(ea, a))
         {
-          ee(a - 1) = mat.epsilon_r.s[0];
+          env_eps[a] = tensor(mat);
         }
       }
     }
-    A_region = AssembleParent(er);
-    A_env = AssembleParent(ee);
+    A_region = AssembleParent(region_eps);
+    A_env = AssembleParent(env_eps);
   }
 
-  std::unique_ptr<mfem::HypreParMatrix> AssembleParent(const mfem::Vector &eps_by_attr)
+  std::unique_ptr<mfem::HypreParMatrix>
+  AssembleParent(const std::map<int, mfem::DenseMatrix> &eps_by_attr)
   {
-    mfem::PWConstCoefficient eps(const_cast<mfem::Vector &>(eps_by_attr));
+    PWMatrixCoefficient eps(parent.Dimension(), eps_by_attr);
     mfem::ParBilinearForm a(&parent_fes);
     a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
   }
+
+  std::map<int, mfem::DenseMatrix> region_eps, env_eps;
 };
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
