@@ -351,6 +351,55 @@ keep their records; their mesh binaries were removed once these roots verified. 
 junction SA against the 50 nm first layer and localized the E/SA/MS regressions to
 the volume sizing these meshes now carry.
 
+### Evidence (decision 41 sizing calibration variants V-a / V-b, commit efd393f38, 2026-09-19)
+
+Physics-10 on the decision-40 four-edge mesh (`647b2079...`) kept MA converged but
+left E +6.5/+7.3% at the narrow-hat sources 74/10 (cells within 0.1 um of the apexes:
+146/134 at median longest edge 53/57 nm against EL1c's 232/241 at 42/44 nm; the first
+prism layer at the (2,8) cut 28.2 nm against 21.7 nm prescribed), junction p_SA
++2..+3% and the z = 0 junction ring p_MS +5..+7%. Decision 41 calibrates the two
+recorded recipe parameters that control these volumes, each together with the
+surface layer at on-box tube ends (f7c23957b, above): V-a `--trace-basis-size-ratio
+0.5` and V-b `--lc-tangent 0.025`, as the labeled cases of
+`geometry-independence-calibration-sizing.json`. Mesher-only probes (f7c23957b) first
+bounded the element counts under the 4M cap (V-a 1,869,209, 121 s / 3.9 GB; V-b
+2,119,019, 126 s / 4.2 GB), then both cases were built through
+`run_gmsh_only_case.py` under the calibration manifest (identity + rotate-z-0.63,
+audits, per-entry verification: `Passed true`, `Failures []`,
+`TransformComparisonFailures []`, `CanonicalReuseFailures []`; every physical gate at
+its production value). The production manifest is unchanged (ratio 1.0 / 50 nm).
+
+| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p3 / p4 / p5, exact hybrid entity sums) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio / below TangentialSize / 2 | first layer at the (2,8) cut (top, bottom) | trace-apex cells within 0.1 um of 74 / 10 (median longest edge) | junction first layer cut-surface P50 / P90 (nm) | tets min SJ / max cond | prisms / pyramids max cond | caps (12) min SJ / max cond | corners (4) | protected / closure / diagonal bands | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| four-edge-calib-sizing-tbr-0.5 (V-a) | **1,869,209** = 1,683,863 + 172,107 + 13,239 (+7.3% vs 083874fee's 1,742,434) | 414,758 (10.55M / 24.83M / 48.29M; p4 +6.5%) | 8 / 1,471 / 10.85 - 49.75 - 50.0 / 1.93 (cap 2) / 52 | **10.85 nm** = the trace rule at ratio 0.5 on the surface (prescribed 10.85) | **575 / 533 at 29.5 / 31.6 nm** (r < 0.05: 170 / 161 at 25.0 / 26.2; r < 0.25: 1,918 / 1,824 at 36.2 / 35.8); cut-surface triangles within 0.1 um 257 / 249 at 12.7 / 13.5 nm | 21.6 / 27.9 (A/P 0.87: the trace rule refines the cut under the junctions too) | 0.0296 / 118.1 | 668.6 / 8.74 | 0.0305 / 67.6 | 3.13 / 3.44 / 3.47 / 3.54 | 0 (9.9e-16) / 2.5e-13 (653,577 points) / 0 | 115.1 / 4.27; 27.8 / 3.18; 104-106 / 3.82 | 265 / 2.82; 322 / 2.86 | 972 / 2.92 |
+| four-edge-calib-sizing-lct-0.025 (V-b) | **2,119,019** = 1,757,651 + 335,556 + 25,812 (+21.6%) | 514,194 (13.31M / 31.43M / 61.25M; p4 +34.8%) | 8 / 2,868 / 16.0 - 24.94 - 25.0 / 1.34 / 0 | **21.7 nm** = the trace rule at ratio 1.0 on the surface (prescribed 21.7; 28.2 before f7c23957b) | 146 / 134 at 52.1 / 56.8 nm (= the 083874fee mesh: the apexes at z = +/-2.1 are not on a tube); source 26 (z = -0.05, on the tube): 907 at 24.9 nm (before 613 at 44 nm) | 25.1 / 28.8 | 0.0267 / 87.8 | 299.4 / 4.48 | 0.0318 / 41.7 | 3.11 / 3.76 / 2.89 / 3.58 | 0 (9.9e-16) / 1.4e-13 (922,506 points) / 0 | 122.3 / 4.76; 29.6 / 3.74; 117-123 / 4.47 | 289 / 3.22; 378 / 3.20 | 1,085 / 3.25 |
+
+Trace-apex census (the physics-10 statistic: volume cells with centroid within r of
+the source apex, `matching_surface_local_sizing.py` of the assessment on the identity
+meshes): V-a multiplies the cells within 0.1 um of 74 / 10 by 3.9 / 4.0 and halves
+the median longest edge (53 / 57 -> 29.5 / 31.6 nm; EL1c 42 / 44 nm at 232 / 241
+cells), the census trace-apex shells 25-50 / 50-100 nm move 32.6 -> 32.1 / 42.7 ->
+41.3 nm (binned over all 54 apexes); V-b leaves the apex volumes unchanged and
+halves the layers along every tube (2,868 layers of 25 nm; prism max condition 589 ->
+299, pyramid 8.74 -> 4.48). Tube ends: both variants place the surface layer at every
+on-box end (V-a (2,8) 10.85 nm, (10,-2) 50.0 / 25.0 nm; V-b 21.7 nm, 25.0 nm), the
+corner-clearance ends at 24.9-25.0 nm and the bottom-tube ends before the on-box
+corners at 15.9-16.0 nm; V-a's largest neighbour ratio 1.93 is the surface layer
+against the trace rule growing at FarGrowth 0.5 (the analytic bound 1.95 at
+GrowthRatio 2, prism_edge_tubes.jl). Both cases share CanonicalBuildId
+`41e4f24391f99725716443a2eea578c00f419f0471c3af075c9d806990a55b1e` (the cache key
+does not encode recipe options, the documented calibration limitation: the label is
+bound to the build by the recorded gmsh-build command). Roots (binaries kept for
+physics-11/12): `/tmp/coupon-gmsh-only-four-edge-calib-sizing-tbr-0.5-efd393f38-20260919-021146`
+(identity.msh SHA-256
+`80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108`, rotate-z
+`97bfb753...`) and
+`/tmp/coupon-gmsh-only-four-edge-calib-sizing-lct-0.025-efd393f38-20260919-021148`
+(identity.msh `7db360bed45f2c7f94bf6857c603ed212ef6a1699ea0dce6e26677e2e4f98615`,
+rotate-z `5b000119...`); the mesher-only probe meshes were deleted. Physics-11/12
+adjudicate E at 74/10, SA at 48/47/35 and MS against physics-10; the adopted value
+becomes a recipe parameter with this evidence.
+
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
 Retired from production by decision 38; recorded as
