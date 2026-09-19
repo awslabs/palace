@@ -44,6 +44,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
     `Lc / Z₀` and so depended on the characteristic length `Lc`.
     [PR 936](https://github.com/awslabs/palace/pull/936).
+  - Fixed silent misparsing of Nastran coordinates written with an implicit exponent
+    (e.g. `-7.-1` for `-7.E-01`) or a Fortran `D` exponent, which were previously read as
+    their truncated prefix (e.g. `-7.0`). Blank fixed-width fields are now read as zero
+    instead of aborting, including on lines with trailing blank fields trimmed by the
+    writer. [PR 951](https://github.com/awslabs/palace/pull/951).
 
 #### Performance Improvements
 

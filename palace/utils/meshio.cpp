@@ -271,7 +271,18 @@ inline std::string GetLineNastran(std::ifstream &input)
   std::getline(input, str);
   MFEM_VERIFY(input.good(), "Unexpected read failure parsing mesh file!");
   str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
-  return str[0] == '$' ? "" : str;
+  if (str.empty() || str[0] == '$')
+  {
+    return "";
+  }
+  // Nastran fixed-format cards are 80 columns, but some writers trim trailing blanks.
+  // Pad so fixed-width substr slicing never throws std::out_of_range and trailing blank
+  // fields are read as blank (zero) by ConvertDoubleNastran.
+  if (str.size() < 80)
+  {
+    str.resize(80, ' ');
+  }
+  return str;
 }
 
 // COMSOL strings are parsed as an integer length followed by array of integers for the
@@ -293,32 +304,52 @@ inline std::string ReadStringComsolBinary(std::istream &input)
   return std::string(vstr.begin(), vstr.end());
 }
 
-// Nastran has a special floating point format: "-7.-1" instead of "-7.E-01" or "2.3+2"
-// instead of "2.3E+02".
+// Nastran has special floating point formats: "-7.-1" instead of "-7.E-01", "2.3+2"
+// instead of "2.3E+02", and Fortran-style 'D' exponents ("1.0D+00"). std::stod parses
+// only the longest valid prefix of such strings without signaling an error, so the
+// implicit exponent must be detected by a full-consumption check, not by exception.
 inline double ConvertDoubleNastran(const std::string &str)
 {
-  double d;
-  try
+  // Trim fixed-width field padding. A blank field is zero by Nastran convention.
+  const std::size_t first = str.find_first_not_of(' ');
+  if (first == std::string::npos)
   {
-    d = std::stod(str);
+    return 0.0;
   }
-  catch (const std::invalid_argument &ia)
+  std::string fstr(str, first, str.find_last_not_of(' ') - first + 1);
+  auto Parse = [&str](const std::string &s, std::size_t &pos)
   {
-    const std::size_t start = str.find_first_not_of(' ');
-    MFEM_VERIFY(start != std::string::npos,
-                "Invalid number conversion parsing Nastran mesh!")
-    std::string fstr = str.substr(start);
-    std::size_t pos = fstr.find('+', 1);  // Skip leading +/- sign
-    if (pos != std::string::npos)
+    try
     {
-      fstr.replace(pos, 1, "E+");
+      return std::stod(s, &pos);
     }
-    else if ((pos = fstr.find('-', 1)) != std::string::npos)
+    catch (const std::exception &)
     {
-      fstr.replace(pos, 1, "E-");
+      MFEM_ABORT("Invalid number \"" << str << "\" parsing Nastran mesh!");
+      return 0.0;  // Unreachable: MFEM_ABORT does not return.
     }
-    d = std::stod(fstr);
+  };
+  std::size_t pos = 0;
+  double d = Parse(fstr, pos);
+  if (pos == fstr.size())
+  {
+    return d;
   }
+  // Unconsumed suffix: an implicit exponent ("+2", "-1") or a 'D' exponent marker.
+  if (fstr[pos] == '+' || fstr[pos] == '-')
+  {
+    fstr.insert(pos, "E");
+  }
+  else if (fstr[pos] == 'D' || fstr[pos] == 'd')
+  {
+    fstr[pos] = 'E';
+  }
+  else
+  {
+    MFEM_ABORT("Invalid number \"" << str << "\" parsing Nastran mesh!");
+  }
+  d = Parse(fstr, pos);
+  MFEM_VERIFY(pos == fstr.size(), "Invalid number \"" << str << "\" parsing Nastran mesh!");
   return d;
 }
 
