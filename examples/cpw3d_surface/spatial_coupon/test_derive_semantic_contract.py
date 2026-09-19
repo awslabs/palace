@@ -91,6 +91,25 @@ class DeriveSemanticContractTest(unittest.TestCase):
         with self.assertRaisesRegex(FileNotFoundError, "mesh-signature.csv"):
             derive(HERE / "testdata")
 
+    def test_multi_model_or_non_cluster_library_is_a_contract_error(self):
+        broken = self.tmp / "source"
+        shutil.copytree(FOUR_EDGE, broken)
+        library_path = broken / "process-library.json"
+        library = json.loads(library_path.read_text())
+        library_path.write_text(json.dumps({**library, "Models": library["Models"] * 2}))
+        with self.assertRaisesRegex(ValueError, "exactly one model .* found 2"):
+            derive(broken)
+        arms = json.loads(json.dumps(library))
+        arms["Models"][0]["Topology"] = "Arms"
+        library_path.write_text(json.dumps(arms))
+        with self.assertRaisesRegex(ValueError, "topology 'Arms' is not SpatialEdgeCluster"):
+            derive(broken)
+        bare = json.loads(json.dumps(library))
+        del bare["Models"][0]["Edges"][0]["InterfaceSlot"]
+        library_path.write_text(json.dumps(bare))
+        with self.assertRaisesRegex(ValueError, "must carry InterfaceSlot and Conductor"):
+            derive(broken)
+
     def test_signature_and_process_library_pairs_must_agree(self):
         broken = self.tmp / "source"
         shutil.copytree(FOUR_EDGE, broken)

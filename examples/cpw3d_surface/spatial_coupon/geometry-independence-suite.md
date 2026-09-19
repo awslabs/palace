@@ -74,7 +74,14 @@ Physics on the real gallery case `three-edge-419576fdab24` (input 06; evidence
 below) transferred the recipe at EL4c level or better on every class except four
 isolated 0.05 um slivers (sources 25 / 26 / 133 / 134 at (-8, -0.5) / (-8, -0.55) on
 the bottom / top box edges: E +4..+8%, MA / MS / SA -3..-10%), while the same sliver
-at z = -0.05 (52 / 53) was accurate. The diagnosis on the verified root refuted the
+at z = -0.05 (52 / 53) was accurate. Class label used here and in the physics
+RESULTS (gallery-physics-06 / -06b): the **12-source narrow-hat class** of case 06 =
+hats narrower than 0.1 um, split into the **8 junction-adjacent slivers** (14 / 16 /
+41 / 43 / 52 / 53 / 122 / 124, 33-90 nm wide, at most 0.09 um from a junction, covered
+by the junction / band rules) and the **4 isolated box-edge slivers** (25 / 26 / 133 /
+134, 50 nm wide, 0.5 um from any junction, outside every tube / junction / corner
+rule). Only the isolated four failed under decision 42; the whole class transfers
+under decision 44. The diagnosis on the verified root refuted the
 first hypothesis (box-edge curve spacing): the outer-box edges are not explicitly
 1D-meshed (they are excluded from the feature curves and Gmsh meshes them from the
 composed callback field), and at the four supports the box-edge nodes were at
@@ -102,7 +109,15 @@ Decision 43 (no new parameter; the recorded rules change):
   `TraceBasisSizing` records `SizeMeasure`, `MinimumBasisAltitude`,
   `MinimumRequestedSize` = Ratio x it, and the report-only needle counts
   `NeedleTriangles` / `NeedleTrianglesBelowFarSize` (altitude < 0.6 x shortest edge,
-  `NeedleRule`); `mesh_stage_contract.validate_trace_basis_size_measure` (called by
+  `NeedleRule`; the threshold `trace_basis.NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE` is
+  defined once in Python - the stage contract and the fixture producer import it, the
+  Julia census constant mirrors it and the contract requires the recorded value to
+  equal it - and is a report-only classification threshold that never enters a size:
+  altitude / shortest edge = (b / c) sin C is 1 for the right slivers the ratio was
+  calibrated on, 0.866 equilateral, 0.707 right isosceles, so 0.6 lies below every
+  well-shaped triangle and counts exactly the triangles whose shortest-edge proxy
+  overstated the hat scale by more than 1.67x - case 06's needles are at 0.23);
+  `mesh_stage_contract.validate_trace_basis_size_measure` (called by
   `validate_gmsh_build_census`) recomputes all of them from the recorded mesh-frame
   triangles. The Python metric rule (`trace_basis.requested_sizes`,
   `basis_statistics`, `cut_surface_size_report` - now measured across the minimum
@@ -727,6 +742,59 @@ TangentialSize` states the rule. Tests: `GmshOnlyPipelineTest.
 test_gmsh_build_census_contract_negatives` (record present, flag, request, bound value,
 tube TangentialSize; a bounded command accepted); the fixture producer records the same
 rule.
+
+### Pre-build element estimate: the headroom gate (milestone review of f6efe6367..bcb9e18af, P1; 2026-09-19)
+
+The ten-edge root sits at 87.5% of the 4M cap and the cap fails closed only after a
+5-minute build. `estimate_build_cost.py` now estimates a production case's element
+count BEFORE anything is built, from the frozen inputs alone, and the case fails
+closed when the estimate exceeds the unchanged `Gates.MaximumElements`: in
+`run_general_mesh_suite.py --preflight-only` (per-case `BuildCostEstimate` record;
+the preflight fails) and in `run_gmsh_only_case.py` before its first stage (the root
+receives `build-cost-estimate.json` and nothing else; a tight-cap dry run on case 05
+refuses in under a second). The estimate is the size-field integral of the recipe's
+own laws, N = (1 / TetrahedraPerCubicSize) x sum over components of the integral of
+dV / h^3, plus the recipe's prisms and pyramids: far field (box volume / FarSize^3),
+tube band (NormalSize at the tube surface growing with FarGrowth, per tube length on
+the dielectric side), corner balls and tube caps (graded shells from CornerSize, then
+the corner exterior law), junction / band curves on a recorded proxy length (the
+metal-loop perimeter: the cut-surface junction lines are a producer outcome), and the
+trace basis - every basis triangle whose requested size s = TraceBasisSizeRatio x
+minimum altitude lies below FarSize contributes the half-space Steiner shell integral
+of s + FarGrowth x d over its area and perimeter, so a needle (small altitude, long
+perimeter) is charged what it costs. Tubes: Layers = length / TangentialSize (bounded
+by FarSize), prisms per layer Sectors + 2 Sectors (Rings - 1) = 117, pyramids Sectors
+= 9 at the production process. `TetrahedraPerCubicSize` = 0.216 is the one
+dimensionless model constant (tetrahedra Gmsh realizes per h^3 of the prescribed
+field; an equilateral tetrahedron has volume 0.1179 h^3): calibrated as the MINIMUM
+integral / actual ratio over the seven verified production roots below, so the
+estimate never falls below any calibrated build (fail-closed direction); recorded with
+the per-root ratios in `ProductionRecipe.BuildCostEstimate` and validated by
+`validate_manifest`. It changes no mesh and no gate. Estimate vs actual (the estimate
+of case 05 was evaluated on its inputs; its build had already run when the gate was
+added, so the comparison is post hoc for 05 as for the others):
+
+| case | estimated elements | actual | ratio | tets est / actual (ratio) | prisms est / actual; pyramids | integral shares far / tube / corners / junction / trace | estimate / cap |
+|---|---|---|---|---|---|---|---|
+| 05 | 1,486,171 | 1,485,070 | 1.001 | 1,324,891 / 1,322,026 (1.002) | 149,760 / 151,398; 11,520 / 11,646 | 0.57 / 0.13 / 0.00 / 0.02 / 0.29 | 0.372 |
+| 06 | 1,886,489 | 1,845,349 | 1.022 | 1,705,049 / 1,659,373 (1.028) | 168,480 / 172,692; 12,960 / 13,284 | 0.62 / 0.11 / 0.02 / 0.02 / 0.23 | 0.472 |
+| four-edge | 1,966,879 | 1,916,486 | 1.026 | 1,785,439 / 1,731,140 (1.031) | 168,480 / 172,107; 12,960 / 13,239 | 0.67 / 0.10 / 0.02 / 0.02 / 0.19 | 0.492 |
+| ten-edge | 3,561,695 | 3,498,453 | 1.018 | 3,278,951 / 3,208,149 (1.022) | 262,548 / 269,568; 20,196 / 20,736 | 0.52 / 0.09 / 0.04 / 0.02 / 0.33 | 0.890 |
+| 10 | 560,105 | 521,676 | 1.074 | 469,385 / 425,916 (1.102) | 84,240 / 88,920; 6,480 / 6,840 | 0.45 / 0.20 / 0.13 / 0.03 / 0.19 | 0.140 |
+| three-edge-current-calibration | 1,496,561 | 1,496,998 | 1.000 | 1,315,121 / 1,311,526 (1.003) | 168,480 / 172,224; 12,960 / 13,248 | 0.80 / 0.14 / 0.03 / 0.03 / 0.00 | 0.374 |
+| concave-multislot | 1,448,136 | 1,454,056 | 0.996 | 1,423,944 / 1,423,816 (1.000) | 22,176 / 27,720; 2,016 / 2,520 | 0.95 / 0.01 / 0.04 / 0.00 / 0.00 | 0.362 |
+
+The needle-heavy ten-edge basis is where the gate matters: its trace-basis integral
+(232k, min requested size 2.7 nm) is 63% of its far field and the estimate 3.56M is
+0.89 of the cap; evaluated with the pre-decision-44 shortest-edge measure instead of
+the altitude, the same model predicts the decision-44 tetrahedra growth as +26.9% /
++7.1% / +2.7% on ten-edge / 06 / four-edge against the measured +34.6% / +10.1% /
++2.8%, and the decision-42 ten-edge root (2,383,387 tets) at 1.084x. The tetrahedra
+ratios lie in 1.000-1.102 and the element ratios in 0.996-1.074: the prisms are
+under-counted where the layers follow the size field (20% on the 1 um concave coupon
+whose short tubes are mostly inside corner balls, 2-3% elsewhere), which the
+tetrahedra over-count covers except on that coupon (-0.4%). Calibration manifests
+(labeled experiments) are not gated by the estimate.
 
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
@@ -1594,7 +1662,19 @@ and records the census digest and labels under `Derivation`. It reproduces the
 frozen ten-edge contract exactly and the four-edge contract up to the two older
 substrate-vacuum role strings (`test_derive_semantic_contract.py`). The `06` /
 `10` probes recorded labels 1 / 3100 / 5001 / 6001 and 1 / 3100 / 5001 / 5002 /
-6001 / 6002: no un-etched plane under the producer-default footprint.
+6001 / 6002: no un-etched plane under the producer-default footprint. The workflow is
+two-pass by design: (1) derive without a census (PROVISIONAL: the required label set
+only), (2) a stages-only probe build of the same inputs under the production options
+with that provisional contract, then derive again with `--build-census
+PROBE/build-census.json`. The probe census is not validated by the stage contract
+(only its `InterfaceAreas` labels are read, and only labels inside the derived
+families are accepted); the production build that follows binds the final contract
+and validates its own census, and since the contract enters the build through its
+SemanticCorners only, the probe's `gmsh-build.msh` equals the production one (verified
+byte-identical on 05 / 06 / 10 / three-edge-current-calibration). A process library
+with more than one model, another topology than `SpatialEdgeCluster` (e.g. an Arms
+model) or edges without `InterfaceSlot` / `Conductor` is a contract error with that
+message, not a lookup failure.
 
 ## Preflight
 

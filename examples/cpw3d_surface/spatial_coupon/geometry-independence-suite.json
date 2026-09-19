@@ -89,6 +89,24 @@
     "DesignGate": {
       "Rule": "the achieved-anisotropy design gate (Gates.MinimumAchievedAspect / Gates.MaximumNormalFactor, unchanged) is replaced under the Gmsh-only pipeline by the prism tube design statement (general_mesh_audit_producer.TUBE_DESIGN_GATE; general_mesh_manifest.tube_design_statement): the recorded rings and extrusion are the design, the audit counts the mesh's prisms and pyramids against the census (CensusMatchesMesh), never gated; the physical gates (positive orientation and Jacobian condition for every element type, scaled Jacobian for tetrahedra, corner aspect, protected surfaces, ownership closure, element cap) are unchanged",
       "Rationale": "a tetrahedral band anisotropy statistic has no meaning next to a prism tube (200:1 prisms by design); the metal-edge resolution is the tube record itself"
+    },
+    "BuildCostEstimate": {
+      "Rule": "pre-build element estimate (estimate_build_cost.py, headroom gate): the recipe's size laws integrated over the coupon from the frozen inputs alone - far field (box volume / FarSize^3), tube band (NormalSize at the tube surface growing with FarGrowth, per tube length), corner balls and tube caps (graded shells from CornerSize, then the corner exterior law), junction / band curves on the metal-loop-perimeter proxy, and the trace basis (half-space Steiner shell integral of s + FarGrowth x d over every basis triangle with s = TraceBasisSizeRatio x minimum altitude < FarSize: needle altitude sets s, needle length the perimeter) - divided by TetrahedraPerCubicSize, plus the recipe's prisms and pyramids (Layers x (Sectors + 2 Sectors (Rings - 1)) and Layers x Sectors); the estimate must not exceed Gates.MaximumElements or the case fails closed before anything is built",
+      "TetrahedraPerCubicSize": 0.216,
+      "Calibration": {
+        "Rule": "tetrahedra realized by the Gmsh build per unit of the size-field integral, calibrated as the MINIMUM integral / actual-tetrahedra ratio over the verified production roots (so the estimate never falls below any calibrated build: fail-closed direction); the integral / actual ratios of the calibration roots are recorded here and every build root records its estimate next to its census (build-cost-estimate.json)",
+        "IntegralOverActualTetrahedra": {
+          "four-edge-9d2cb9bbb3fe (1d536c44..., 1,731,140 tets)": 0.2228,
+          "ten-edge-6791f1c84123 (8a871f22..., 3,208,149)": 0.2208,
+          "three-edge-419576fdab24 (95837ed5..., 1,659,373)": 0.2219,
+          "two-edge-8dd4bc70f183 (5d01204e..., 425,916)": 0.238,
+          "two-edge-3f8992613e95 (9f011ed3..., 1,322,026)": 0.2165,
+          "three-edge-current-calibration (5e48f2f7..., 1,311,526)": 0.2166,
+          "concave-multislot (7e7ca8c2..., 1,423,816)": 0.216
+        },
+        "Reference": "an equilateral tetrahedron of edge h has volume 0.1179 h^3; Gmsh realizes about 0.22 tetrahedra per h^3 of the prescribed field on these coupons (mean edge above the prescription in the graded regions)"
+      },
+      "Binding": "run_general_mesh_suite.py --preflight-only records BuildCostEstimate per production case and fails the preflight when the estimate exceeds MaximumElements; run_gmsh_only_case.py evaluates the same gate before the first stage and refuses to build (build-cost-estimate.json in the root); estimate_build_cost.py is a frozen Tools entry; calibration manifests (labeled experiments) are not gated by the estimate"
     }
   },
   "Tools": [
@@ -100,7 +118,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "212bcf44df73210e4419094b0326bb4d6642861ac4f896e8adadf3ebdd9d5609"
+      "SHA256": "1e776d86439d621cee96981625dc37f67ca295fedfffd871016288fb1d60c60a"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -120,7 +138,12 @@
     {
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
-      "SHA256": "1c5127672ad538d40b77bb78416baaa63cc100360e581606914a4db184130cde"
+      "SHA256": "c7fe28703a2247f65229f65964422bd5d2c0efb29850189f054cea1c0c7339ea"
+    },
+    {
+      "Name": "estimate_build_cost.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
+      "SHA256": "da4c7f5276c0093c01e90ff57e0fd3b743732cbd42b90c67cc7f0c6d3c5fb8ca"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -155,7 +178,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "d13e0f6292a0f33214a59739bbdb9f15cb48a79bb435ff75a428ba3542e6bad7"
+      "SHA256": "55316ee0e7646f5e8ce2994ef66bd858cb7c509ee3a23f44918960a929a0f875"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -2012,7 +2035,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "37df9f37bdb096a7b30892f984d3b786b2eb0b9d94efb78d87b5be12f965337a"
+      "mesher": "b63f91ac2ed73bd100c13b9c44f2d52fe3d81669abb85303dcd0acb0cb61285a"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

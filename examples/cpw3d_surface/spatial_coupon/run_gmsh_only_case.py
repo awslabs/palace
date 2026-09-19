@@ -6,7 +6,9 @@
 case (supervisor decision 41) - through the Gmsh-only canonical DAG (supervisor
 decision 38) and its evidence chain:
 
-  canonical-source-validation -> gmsh-build -> canonical-gmsh-publication
+  headroom gate (estimate_build_cost.py: the pre-build element estimate of a production
+  case must not exceed MaximumElements; recorded as build-cost-estimate.json)
+  -> canonical-source-validation -> gmsh-build -> canonical-gmsh-publication
   -> canonical build record -> proper-rigid-publication per variant
   -> consolidated audits + normalization per variant -> per-entry verification.
 
@@ -36,6 +38,8 @@ import time
 import tomllib
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from estimate_build_cost import gate as estimate_gate  # noqa: E402
 TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
                "TraceVertices": ("source-trace-vertices", "--trace-vertices"),
                "TraceTriangles": ("source-trace-triangles", "--trace-triangles"),
@@ -150,6 +154,16 @@ def main():
         return result.returncode
 
     if not args.audits_only:
+        # Headroom gate (fail closed before any build): the pre-build element estimate of a
+        # production case against the unchanged MaximumElements; recorded in the root.
+        if "Calibration" not in manifest:
+            cost = estimate_gate(manifest, manifest_path, case)
+            (root / "build-cost-estimate.json").write_text(json.dumps(cost, indent=2) + "\n")
+            print(f"ESTIMATE {args.case_id}: {cost['EstimatedElements']:.0f} elements "
+                  f"({cost['EstimateOverCap']:.3f} of the cap {cost['MaximumElements']})", flush=True)
+            if not cost["Passed"]:
+                raise SystemExit(f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap "
+                                 f"{cost['MaximumElements']}: not building (see {root}/build-cost-estimate.json)")
         (root / ("CALIBRATION.txt" if "Calibration" in manifest else "PRODUCTION.txt")).write_text(
             f"{label} at {commit} (decision 38): build options {recipe}, {TRACE_BASIS_RATIO_OPTION} "
             f"{trace_basis_ratio if trace_basis_ratio is not None else 'not passed (no trace basis)'}; "

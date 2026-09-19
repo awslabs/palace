@@ -10,6 +10,7 @@ from pathlib import Path
 
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_ORIENTATION_FLOOR,
                                 EDGE_LAYER_QUALITY_RULE)
+from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE
 from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     material_interface_attributes)
 
@@ -1086,8 +1087,9 @@ def validate_edge_layer_quality_rule(seed_report, restoration_report, layer, qua
 
 
 TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
-# Report-only needle classification fraction recorded by the census (decision 43).
-TRACE_BASIS_NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = 0.6
+# Report-only needle classification fraction recorded by the census (decision 43):
+# defined once in trace_basis.py (origin documented there); the census value must equal it.
+TRACE_BASIS_NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE
 
 
 def bound_trace_basis(report):

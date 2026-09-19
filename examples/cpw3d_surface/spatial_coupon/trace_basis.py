@@ -161,7 +161,18 @@ def unique_edge_lengths(points, triangles):
 
 
 # Report-only classification of a basis triangle as a needle: minimum altitude below
-# this fraction of its shortest edge (the same constant as the Julia census).
+# this fraction of its shortest edge.  Origin (decision 43 diagnosis): altitude /
+# shortest edge = (b / c) sin C for the two shorter edges a <= b, longest c and their
+# angle C - 1 for the right slivers the ratio was calibrated on (b = c, C = 90 deg),
+# 0.866 for an equilateral triangle, 0.707 for a right isosceles one; 0.6 lies below
+# every well-shaped triangle, so the class counts exactly the triangles whose
+# shortest-edge proxy (the pre-decision-44 measure) overstated the hat scale by more
+# than 1 / 0.6 = 1.67x (case 06's needles: 0.23).  It is a classification threshold for
+# the census counts (NeedleTriangles, NeedleTrianglesBelowFarSize) and never enters a
+# size: the trace rule uses the altitude itself.  Single Python definition (the stage
+# contract and the fixture producer import it); the Julia census constant
+# mesh_spatial_coupon.jl NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE mirrors it and the stage
+# contract requires the recorded value to equal this one.
 NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = 0.6
 
 

@@ -3123,7 +3123,10 @@ const TRACE_BASIS_SIZES = Float64[]                 # ratio x minimum altitude o
 const TRACE_BASIS_APEXES = NTuple{3, Float64}[]     # endpoints of the shortest edge of each
 # Report-only classification of a basis triangle as a needle: its minimum altitude
 # below this fraction of its shortest edge (the shortest-edge proxy overstated the
-# hat scale by more than 1 / 0.6). Not a mesh parameter.
+# hat scale by more than 1 / 0.6; altitude / shortest edge is 1 for right slivers,
+# 0.866 equilateral, 0.707 right isosceles). Not a mesh parameter: it never enters a
+# size. Mirrors trace_basis.NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE (the single documented
+# definition; the stage contract requires the census value to equal it).
 const NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = 0.6
 const TRACE_BASIS_SIZE_MEASURE =
     "minimum altitude of the basis triangle (2 x area / longest edge = 1 / the largest " *

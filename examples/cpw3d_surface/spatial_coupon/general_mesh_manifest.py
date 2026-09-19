@@ -166,7 +166,36 @@ def validate_production_recipe(manifest):
                 for key in keys)):
         raise ValueError("Production recipe must bind finite option values for the pipeline's "
                          "recipe stages: " + ", ".join(keys))
+    if manifest_pipeline(manifest) == GMSH_ONLY_PIPELINE:
+        validate_build_cost_estimate_model(recipe)
     return recipe
+
+
+BUILD_COST_ESTIMATE_KEY = "BuildCostEstimate"
+
+
+def validate_build_cost_estimate_model(recipe):
+    """The Gmsh-only production recipe carries the pre-build element estimate model
+    (estimate_build_cost.py): a positive finite TetrahedraPerCubicSize with its rule,
+    calibration record and binding text.  The estimate is gated by the manifest's
+    MaximumElements before any build (preflight and run_gmsh_only_case.py)."""
+    model = recipe.get(BUILD_COST_ESTIMATE_KEY)
+    if (not isinstance(model, dict) or not _finite_number(model.get("TetrahedraPerCubicSize"), positive=True) or
+            any(not isinstance(model.get(key), str) or not model[key] for key in ("Rule", "Binding")) or
+            not isinstance(model.get("Calibration"), dict) or not model["Calibration"]):
+        raise ValueError("Gmsh-only production recipe must carry the BuildCostEstimate model "
+                         "(TetrahedraPerCubicSize, Rule, Calibration, Binding)")
+    return model
+
+
+def preflight_build_cost(manifest, manifest_path, case):
+    """The pre-build element estimate of a production case against MaximumElements
+    (fail closed), or None for a manifest without the model (calibration manifests)."""
+    recipe = manifest.get(PRODUCTION_RECIPE_KEY)
+    if recipe is None or BUILD_COST_ESTIMATE_KEY not in recipe:
+        return None
+    from estimate_build_cost import gate as estimate_gate
+    return estimate_gate(manifest, manifest_path, case)
 
 
 def validate_production_recipe_commands(manifest, case, bounded_stages):
@@ -1216,6 +1245,15 @@ def run_manifest(args):
                            "DiscoveredEdgeCount": len(rows),
                            "DiscoveredSlots": sorted({int(row["Slot"]) for row in rows}),
                            "DiscoveredConductors": sorted({int(row["Conductor"]) for row in rows})})
+            cost = preflight_build_cost(manifest, manifest_path, case)
+            if cost is not None:
+                record[BUILD_COST_ESTIMATE_KEY] = {
+                    key: cost[key] for key in ("EstimatedTetrahedra", "EstimatedPrisms", "EstimatedPyramids",
+                                               "EstimatedElements", "MaximumElements", "EstimateOverCap",
+                                               "Integrals", "TetrahedraPerCubicSize", "Passed")}
+                if not cost["Passed"]:
+                    raise ValueError(f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds "
+                                     f"MaximumElements {cost['MaximumElements']} (headroom gate, fail closed)")
             sources[case["Id"]] = (hashes, paths, contract)
             record["Passed"] = True
         except (KeyError, OSError, TypeError, ValueError) as error:

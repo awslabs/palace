@@ -10,7 +10,7 @@
     "ProductionManifest": "geometry-independence-suite.json",
     "Binding": "each case declares Calibration.BuildCommandOptions (the options that differ from production, any subset) against Calibration.ProductionValues (the production BuildCommandOptions at the time of the decision-41 study, before decision 42: --trace-basis-size-ratio 1.0; a historical baseline, never updated after an adoption - the EL4c precedent of the legacy manifest); general_mesh_manifest.validate_calibration_case_options requires the label and differing finite values, and verify_canonical_case_entries.validate_calibration_commands requires the recorded gmsh-build command to execute every declared option exactly once at its value, never at its production value, and every undeclared production option only at its production value (the canonical cache key does not encode recipe options, so the recorded command is the binding of the label to the build); run_gmsh_only_case.py builds a case from ProductionValues overridden by BuildCommandOptions",
     "GateDeviations": {},
-    "Outcome": "physics-11 (PBS 45145, V-a mesh 80966c7d..., 0.508 node-h) reaches EL4c level or better on every class while MA stays converged: E 60/60 within 1% (worst +0.43%; 74/10/26 +0.03/+0.15/-0.10%), p_SA within 1/2/5% 35/44/58 (EL4c 35/40/56), p_MS median -0.60% worst -1.70%, p_MA +0.76/+0.76/+0.76% with 55/60 within 2%; physics-12 (PBS 45146, V-b mesh 7db360be..., 0.593 node-h) moves E/SA/MS by <= 0.53 points at 1.14x cost: REJECTED, TangentialSize stays 50 nm. Decision 42: TraceBasisSizeRatio 0.5 is the production recipe; the production four-edge root rebuilt under geometry-independence-suite.json reproduces the V-a identity mesh SHA256 80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108"
+    "Outcome": "physics-11 (PBS 45145, V-a mesh 80966c7d..., 0.508 node-h) reaches EL4c level or better on every class while MA stays converged: E 60/60 within 1% (worst +0.43%; 74/10/26 +0.03/+0.15/-0.10%), p_SA within 1/2/5% 35/44/58 (EL4c 35/40/56), p_MS median -0.60% worst -1.70%, p_MA +0.76/+0.76/+0.76% with 55/60 within 2%; physics-12 (PBS 45146, V-b mesh 7db360be..., 0.593 node-h) moves E/SA/MS by <= 0.53 points at 1.14x cost: REJECTED, TangentialSize stays 50 nm. Decision 42: TraceBasisSizeRatio 0.5 is the production recipe; the production four-edge root rebuilt under geometry-independence-suite.json reproduced the V-a identity mesh SHA256 80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108 under commits 21cf534ff..138618e57 (pre-decision-44 shortest-edge trace measure); since b6378f173 (decision 44: minimum-altitude measure and composed curve spacing) the production four-edge root is 1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5 (1,916,486 elements) and the physics-11 evidence stays bound to 80966c7d..."
   },
   "Gates": {
     "CornerTolerance": 1e-08,
@@ -34,7 +34,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "212bcf44df73210e4419094b0326bb4d6642861ac4f896e8adadf3ebdd9d5609"
+      "SHA256": "1e776d86439d621cee96981625dc37f67ca295fedfffd871016288fb1d60c60a"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -54,7 +54,12 @@
     {
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
-      "SHA256": "1c5127672ad538d40b77bb78416baaa63cc100360e581606914a4db184130cde"
+      "SHA256": "c7fe28703a2247f65229f65964422bd5d2c0efb29850189f054cea1c0c7339ea"
+    },
+    {
+      "Name": "estimate_build_cost.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
+      "SHA256": "da4c7f5276c0093c01e90ff57e0fd3b743732cbd42b90c67cc7f0c6d3c5fb8ca"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -89,7 +94,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "d13e0f6292a0f33214a59739bbdb9f15cb48a79bb435ff75a428ba3542e6bad7"
+      "SHA256": "55316ee0e7646f5e8ce2994ef66bd858cb7c509ee3a23f44918960a929a0f875"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -129,7 +134,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "37df9f37bdb096a7b30892f984d3b786b2eb0b9d94efb78d87b5be12f965337a"
+      "mesher": "b63f91ac2ed73bd100c13b9c44f2d52fe3d81669abb85303dcd0acb0cb61285a"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
@@ -309,7 +314,7 @@
       },
       "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; Gmsh-only pipeline; decision 41 V-a: --trace-basis-size-ratio 0.5 against the production 1.0, every other build option and every gate at its production value). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
       "Calibration": {
-        "Label": "TRACE-BASIS SIZE RATIO 0.5 (V-a, supervisor decision 41, 2026-09-19): the Gmsh-only production recipe with --trace-basis-size-ratio 0.5 - the cut-surface / volume trace law (decision 39a: basis-edge size at the cut surface growing with FarGrowth into the volume) at half the basis edge - every other option at its production value (TangentialSize 50 nm); the lever for the volume next to the trace apexes (physics-10: cells within 0.1 um of the 74/10 apexes median longest edge 53/57 nm against EL1c 42/44 nm, E +6.5/+7.3%); mesher-only probe at f7c23957b: 1,869,209 elements (1,683,863 tets + 172,107 prisms + 13,239 pyramids), 121 s / 3.9 GB, first layer on the cut surface at (2,8) 10.85 nm (the surface value of the trace rule), largest tube-layer neighbour ratio 1.93 (cap 2); MEASURED at efd393f38 (root /tmp/coupon-gmsh-only-four-edge-calib-sizing-tbr-0.5-efd393f38-20260919-021146, identity SHA256 80966c7d..., rotate-z 97bfb753..., CanonicalBuildId 41e4f243...): 1,869,209 elements (1,683,863 tets + 172,107 prisms + 13,239 pyramids), 414,758 nodes (H1 p4 24,827,674), 1,471 layers 10.85-50 nm (52 below 25 nm, neighbour ratio 1.93), first layer at the (2,8) cut 10.85 nm, cells within 0.1 um of the 74/10 apexes 575/533 at median longest edge 29.5/31.6 nm (083874fee: 146/134 at 53/57 nm; EL1c 232/241 at 42/44 nm), junction first layer 21.6 nm, tets min SJ 0.0296 / max cond 118.1, prisms 668.6, pyramids 8.74, corners 3.13/3.44/3.47/3.54, protected 0, closure 2.5e-13, build 115 s / 4.27 GiB; identity + rotate-z-0.63 verified (Passed true, Failures []); ADOPTED (decision 42, physics-11: E 60/60 within 1%, p_SA within 1/2/5% 35/44/58, p_MS median -0.60%, p_MA +0.76%, 0.508 node-h)",
+        "Label": "TRACE-BASIS SIZE RATIO 0.5 (V-a, supervisor decision 41, 2026-09-19): the Gmsh-only production recipe with --trace-basis-size-ratio 0.5 - the cut-surface / volume trace law (decision 39a: basis-edge size at the cut surface growing with FarGrowth into the volume) at half the local basis hat scale (measured as the shortest basis edge when this variant was built; since decision 44 / b6378f173 the production measure is the basis triangle's minimum altitude, identical for the right slivers this ratio was calibrated on) - every other option at its production value (TangentialSize 50 nm); the lever for the volume next to the trace apexes (physics-10: cells within 0.1 um of the 74/10 apexes median longest edge 53/57 nm against EL1c 42/44 nm, E +6.5/+7.3%); mesher-only probe at f7c23957b: 1,869,209 elements (1,683,863 tets + 172,107 prisms + 13,239 pyramids), 121 s / 3.9 GB, first layer on the cut surface at (2,8) 10.85 nm (the surface value of the trace rule), largest tube-layer neighbour ratio 1.93 (cap 2); MEASURED at efd393f38 (root /tmp/coupon-gmsh-only-four-edge-calib-sizing-tbr-0.5-efd393f38-20260919-021146, identity SHA256 80966c7d..., rotate-z 97bfb753..., CanonicalBuildId 41e4f243...): 1,869,209 elements (1,683,863 tets + 172,107 prisms + 13,239 pyramids), 414,758 nodes (H1 p4 24,827,674), 1,471 layers 10.85-50 nm (52 below 25 nm, neighbour ratio 1.93), first layer at the (2,8) cut 10.85 nm, cells within 0.1 um of the 74/10 apexes 575/533 at median longest edge 29.5/31.6 nm (083874fee: 146/134 at 53/57 nm; EL1c 232/241 at 42/44 nm), junction first layer 21.6 nm, tets min SJ 0.0296 / max cond 118.1, prisms 668.6, pyramids 8.74, corners 3.13/3.44/3.47/3.54, protected 0, closure 2.5e-13, build 115 s / 4.27 GiB; identity + rotate-z-0.63 verified (Passed true, Failures []); ADOPTED (decision 42, physics-11: E 60/60 within 1%, p_SA within 1/2/5% 35/44/58, p_MS median -0.60%, p_MA +0.76%, 0.508 node-h)",
         "BaseCase": "four-edge-9d2cb9bbb3fe",
         "BuildCommandOptions": {
           "--trace-basis-size-ratio": 0.5
@@ -322,7 +327,7 @@
           "--far-growth": 0.5,
           "--trace-basis-size-ratio": 1.0
         },
-        "AdoptedAsProductionRecipe": "supervisor decision 42 (2026-09-19): --trace-basis-size-ratio 0.5 is the production recipe of geometry-independence-suite.json (ProductionRecipe.BuildCommandOptions); this case stays declared against the pre-42 baseline (ProductionValues, ratio 1.0) and is the calibration entry proving the adoption: the production four-edge root reproduces its identity mesh SHA256 80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108 (physics-11 binds to the production root)"
+        "AdoptedAsProductionRecipe": "supervisor decision 42 (2026-09-19): --trace-basis-size-ratio 0.5 is the production recipe of geometry-independence-suite.json (ProductionRecipe.BuildCommandOptions); this case stays declared against the pre-42 baseline (ProductionValues, ratio 1.0) and is the calibration entry proving the adoption: the production four-edge root reproduced its identity mesh SHA256 80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108 under 21cf534ff..138618e57 (pre-decision-44 shortest-edge measure; physics-11 binds to that SHA); the production root since b6378f173 is 1d536c44... (minimum-altitude measure, 1,916,486 elements) and no longer equals this calibration mesh"
       }
     },
     {
@@ -463,7 +468,7 @@
       },
       "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; Gmsh-only pipeline; decision 41 V-b: --lc-tangent 0.025 against the production 0.05, every other build option and every gate at its production value). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
       "Calibration": {
-        "Label": "TANGENTIAL SIZE 25 nm (V-b, supervisor decision 41, 2026-09-19): the Gmsh-only production recipe with --lc-tangent 0.025 - the tube extrusion layers and the ridge grid at 25 nm (= NormalSize) instead of 50 nm - every other option at its production value (TraceBasisSizeRatio 1.0); the lever for the volume along the tubes (physics-10: z = 0 junction ring p_MS +5..+7%, narrow hats); mesher-only probe at f7c23957b: 2,119,019 elements (1,757,651 tets + 335,556 prisms + 25,812 pyramids), 126 s / 4.2 GB, first layer on the cut surface at (2,8) 21.7 nm (the surface value of the trace rule), largest tube-layer neighbour ratio 1.34 (cap 2); MEASURED at efd393f38 (root /tmp/coupon-gmsh-only-four-edge-calib-sizing-lct-0.025-efd393f38-20260919-021148, identity SHA256 7db360be..., rotate-z 5b000119..., CanonicalBuildId 41e4f243...): 2,119,019 elements (1,757,651 tets + 335,556 prisms + 25,812 pyramids), 514,194 nodes (H1 p4 31,428,110), 2,868 layers 16.0-25 nm (neighbour ratio 1.34), first layer at the (2,8) cut 21.7 nm, cells within 0.1 um of the 74/10 apexes 146/134 at 52.1/56.8 nm (unchanged: the apexes are not on a tube; source 26 on the tube 907 at 24.9 nm), junction first layer 25.1 nm, tets min SJ 0.0267 / max cond 87.8, prisms 299.4, pyramids 4.48, corners 3.11/3.76/2.89/3.58, protected 0, closure 1.4e-13, build 122 s / 4.76 GiB; identity + rotate-z-0.63 verified (Passed true, Failures []); REJECTED (decision 41 outcome, physics-12: E/SA/MS unchanged within 0.53 points at 1.14x cost; TangentialSize stays 50 nm)",
+        "Label": "TANGENTIAL SIZE 25 nm (V-b, supervisor decision 41, 2026-09-19): the Gmsh-only production recipe with --lc-tangent 0.025 - the tube extrusion layers and the ridge grid at 25 nm (= NormalSize) instead of 50 nm - every other option at its production value (TraceBasisSizeRatio 1.0, shortest-edge trace measure of the time; the altitude measure since decision 44); the lever for the volume along the tubes (physics-10: z = 0 junction ring p_MS +5..+7%, narrow hats); mesher-only probe at f7c23957b: 2,119,019 elements (1,757,651 tets + 335,556 prisms + 25,812 pyramids), 126 s / 4.2 GB, first layer on the cut surface at (2,8) 21.7 nm (the surface value of the trace rule), largest tube-layer neighbour ratio 1.34 (cap 2); MEASURED at efd393f38 (root /tmp/coupon-gmsh-only-four-edge-calib-sizing-lct-0.025-efd393f38-20260919-021148, identity SHA256 7db360be..., rotate-z 5b000119..., CanonicalBuildId 41e4f243...): 2,119,019 elements (1,757,651 tets + 335,556 prisms + 25,812 pyramids), 514,194 nodes (H1 p4 31,428,110), 2,868 layers 16.0-25 nm (neighbour ratio 1.34), first layer at the (2,8) cut 21.7 nm, cells within 0.1 um of the 74/10 apexes 146/134 at 52.1/56.8 nm (unchanged: the apexes are not on a tube; source 26 on the tube 907 at 24.9 nm), junction first layer 25.1 nm, tets min SJ 0.0267 / max cond 87.8, prisms 299.4, pyramids 4.48, corners 3.11/3.76/2.89/3.58, protected 0, closure 1.4e-13, build 122 s / 4.76 GiB; identity + rotate-z-0.63 verified (Passed true, Failures []); REJECTED (decision 41 outcome, physics-12: E/SA/MS unchanged within 0.53 points at 1.14x cost; TangentialSize stays 50 nm)",
         "BaseCase": "four-edge-9d2cb9bbb3fe",
         "BuildCommandOptions": {
           "--lc-tangent": 0.025

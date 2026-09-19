@@ -30,6 +30,16 @@ executable):
   alternative must be present, otherwise the derivation fails closed.  The census
   digest and its labels are recorded under Derivation.
 
+Two-pass workflow (by design): the un-etched plane set is a producer outcome, so a
+contract is derived twice - (1) without --build-census (PROVISIONAL: the required
+label set only), (2) a stages-only probe build of the same inputs under the
+production options with that provisional contract, then this tool again with
+--build-census PROBE/build-census.json.  The probe census is NOT validated by the stage
+contract here (only its InterfaceAreas labels are read, and only labels inside the
+derived families are accepted); the production build that follows binds the final
+contract and validates its own census.  Because the contract enters the build through
+its SemanticCorners only, the probe's gmsh-build.msh equals the production one.
+
 The inputs are SOURCE_DIR/mesh-signature.csv, plan-view-boundary.csv and
 process-library.json unless the case binds other file names (--signature,
 --boundary, --process-library).  A case without a process library (the synthetic
@@ -71,6 +81,32 @@ PROCESS_LIBRARY_PAIR_SOURCE = "process-library.json Models[0].Edges, equal to th
 SIGNATURE_PAIR_SOURCE = "mesh signature Slot / Conductor pairs (no process library is bound)"
 
 
+SUPPORTED_TOPOLOGY = "SpatialEdgeCluster"
+
+
+def process_library_pairs(process_library):
+    """(slot, conductor) of every edge of the library's single SpatialEdgeCluster model.
+    The label families assume one model whose Edges carry InterfaceSlot / Conductor;
+    a multi-model library or another topology (e.g. an Arms model) is a contract
+    error, not a lookup failure."""
+    library = json.loads(Path(process_library).read_text())
+    models = library.get("Models")
+    if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+        raise ValueError(f"{process_library}: the process library must carry exactly one model "
+                         f"(Models), found {len(models) if isinstance(models, list) else 'none'}")
+    model = models[0]
+    if model.get("Topology") != SUPPORTED_TOPOLOGY:
+        raise ValueError(f"{process_library}: model topology {model.get('Topology')!r} is not "
+                         f"{SUPPORTED_TOPOLOGY}; the label families are derived for edge clusters only")
+    edges = model.get("Edges")
+    if (not isinstance(edges, list) or not edges or
+            any(not isinstance(edge, dict) or "InterfaceSlot" not in edge or "Conductor" not in edge
+                for edge in edges)):
+        raise ValueError(f"{process_library}: every Models[0].Edges entry must carry InterfaceSlot "
+                         f"and Conductor")
+    return {(int(edge["InterfaceSlot"]), int(edge["Conductor"])) for edge in edges}
+
+
 def slot_conductor_pairs(signature, process_library):
     """Sorted (slot, conductor) pairs: Models[0].Edges of the process library when one is
     bound (it must agree with the signature), the signature's own pairs otherwise."""
@@ -80,9 +116,7 @@ def slot_conductor_pairs(signature, process_library):
     if process_library is None:
         pairs = signature_pairs
     else:
-        library = json.loads(Path(process_library).read_text())
-        edges = library["Models"][0]["Edges"]
-        pairs = sorted({(int(edge["InterfaceSlot"]), int(edge["Conductor"])) for edge in edges})
+        pairs = sorted(process_library_pairs(process_library))
         if pairs != signature_pairs:
             raise ValueError(f"Models[0].Edges slots/conductors {pairs} differ from the signature's "
                              f"{signature_pairs}")

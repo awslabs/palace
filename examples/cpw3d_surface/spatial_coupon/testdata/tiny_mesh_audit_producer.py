@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from mixed_mesh import volume_quality  # noqa: E402
+from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE  # noqa: E402
 
 
 def tube_cells(scale, offset):
@@ -201,7 +202,7 @@ def trace_basis_sizing(basis_paths, ratio, scale, slope=1.0, far_size=0.16):
     return {"Ratio": ratio, "RatioIsDimensionless": True, "Rule": "fixture",
             "SizeMeasure": "fixture: minimum altitude of the basis triangle",
             "NeedleRule": "fixture: report-only needle count",
-            "NeedleAltitudeOverShortestEdge": 0.6, "NeedleTriangles": 0,
+            "NeedleAltitudeOverShortestEdge": NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE, "NeedleTriangles": 0,
             "NeedleTrianglesBelowFarSize": 0, "MinimumBasisAltitude": altitude,
             "InputSHA256": digests, "Lower": [0.0, 0.0, -.001 * scale],
             "Upper": [10.001 * scale, .001 * scale, .001 * scale],
