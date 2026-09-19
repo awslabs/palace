@@ -1029,7 +1029,11 @@ void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
                                                  std::size_t num_excitations,
                                                  bool synthesis_seed)
 {
-  const std::size_t seed = synthesis_seed ? 1 : 0;
+  // With circuit synthesis, the seeded reference mode plus the exact band samples used to
+  // fit kₙ(ω) and the modal correction (a few dozen cross-section solves per port) also
+  // train the basis before the online sweep; reserve room so they are not dropped.
+  constexpr std::size_t synthesis_snapshots = 128;
+  const std::size_t seed = synthesis_seed ? synthesis_snapshots : 0;
   MFEM_VERIFY(num_excitations > 0, "Wave-port PROM training requires an excitation!");
   MFEM_VERIFY(max_samples <=
                   (std::numeric_limits<std::size_t>::max() - seed) / num_excitations,

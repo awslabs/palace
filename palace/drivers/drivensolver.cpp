@@ -434,16 +434,19 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
-  // Exact wave-port modes computed by the HDM samples have trained a separate per-port
-  // reduced eigenspace. Enable guarded Rayleigh-Ritz evaluation before circuit-synthesis
-  // dispersion fitting and the online output sweep; failed residual checks transparently
-  // fall back to the exact port eigensolver and enrich the basis.
-  space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
-
+  // Circuit synthesis samples the exact cross-section EVP at a tightened tolerance so the
+  // fitted pencil does not depend on the port-mode accuracy floor; keep those solves exact
+  // (they also enrich the per-port reduced basis).
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
+
+  // Exact wave-port modes computed by the HDM samples (and any synthesis samples) have
+  // trained a separate per-port reduced eigenspace. Enable guarded Rayleigh-Ritz evaluation
+  // for the online output sweep; failed residual checks transparently fall back to the
+  // exact port eigensolver and enrich the basis.
+  space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
   prom_op.PrepareOnlineExcitations();
   post_op.ConfigureReducedPostprocessing(prom_op);
 
