@@ -152,7 +152,8 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
 // transmission zeros and a relative tolerance for order-one reflection/transmission.
 palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
   {
     CHECK(actual.n_rows() == reference.n_rows());
     CHECK(actual.n_cols() == reference.n_cols());

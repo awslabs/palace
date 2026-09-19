@@ -577,8 +577,11 @@ eigenpair ``(\lambda, \bm{x})`` is accepted only if its full-space backward resi
 is below a tolerance derived from the port eigensolver tolerance and `"AdaptiveTol"`.
 Otherwise, or whenever the reduced problem does not yield the requested number of
 well-separated modes, the exact eigenvalue problem is solved instead and its eigenvector
-enriches the basis, up to a fixed capacity above the offline rank. Complex-frequency
-queries (from the eigenmode solver) always use the exact solver. At the end of the sweep,
+enriches the basis, up to a fixed capacity above the offline rank. The port mode
+reconstructed from an accepted reduced eigenvector feeds the excitation, the modal
+correction, and the S-parameter postprocessing exactly as an exact mode would.
+Complex-frequency queries (from the eigenmode solver) and the cross-section samples taken
+for circuit synthesis always use the exact solver. At the end of the sweep,
 *Palace* prints per-port statistics: the basis size and capacity, the numbers of reduced
 and exact solves, the number of fallbacks, and the worst accepted residual.
 
