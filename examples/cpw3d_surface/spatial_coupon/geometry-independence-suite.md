@@ -793,6 +793,63 @@ was re-examined; contracts are now derived, never authored:
   with `TangentialSizeBoundByFarSize true`: TangentialSize 0.05 -> 0.04), plus the
   new gallery case `two-edge-3f8992613e95` (input 05): evidence below.
 
+### Evidence (decision 45(b): gallery case 05, three-edge-current-calibration, concave-multislot; commit 869465f32, 2026-09-19)
+
+Built through `run_gmsh_only_case.py` under the production recipe (every option and
+gate at its production value; audits at 8 GiB), identity + rotate-z-0.63, verified
+`Passed true` with empty failure lists (`Failures`, `TransformComparisonFailures`,
+`CanonicalReuseFailures`); the verification reports bind the manifest SHA-256
+`cef6ba510fb2863be5f50d380b8fbe2dc565af8f441f70b907c3a285c7644f21` (commit
+869465f32). The probe builds that fed `derive_semantic_contract.py` produced
+`gmsh-build.msh` files byte-identical to the production builds' (case 05 also to a
+build with the pre-size-bound mesher bcb9e18af: the bound is the identity at Radius
+2), so the contract enters the build through its SemanticCorners only.
+
+| case | elements (tets + prisms + pyramids) | nodes | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners | protected (measure / vertex) | closure (points; owners) | diagonal | interface areas um^2 | SizeBounds | build s / GiB | audits s (identity / rotate) | verification s / GiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| two-edge-3f8992613e95 (input 05, 125 traces; trace ratio 0.5, 246 basis triangles, min altitude 14.9 nm, 18 needles / 10 below FarSize) | **1,485,070** = 1,322,026 + 151,398 + 11,646 | 351,848 | 4 / 1,294 / 15.98 - 49.88 - 49.91 / 1.93 | 4: 0.0714 / 18.7 | 0.0485 / 28.0 | 588.5 / 8.72 | 3.58 / 3.39 (both on the box) | 0 / 3.5e-18 (rot. 8.5e-16) | 1.38e-13 (488,406; 3100 / 5001 / 6001) | 0 | 1: 535.4, 3100: 129.6, 5001: 32.0, 6001: 35.2 | FarSize 0.16, request 0.05 -> 0.05, bound false | 89.8 / 4.25 | 176 / 239 | 705 / 2.5 |
+| three-edge-current-calibration (the 06 inputs without a trace basis) | **1,496,998** = 1,311,526 + 172,224 + 13,248 | 339,844 | 10 / 1,472 / 15.65 - 49.85 - 50.0 / 1.55 | 14: 0.0276 / 72.7 | 0.0276 / 72.7 | 589.5 / 8.74 | 3.14 / 3.27 / 3.52 / 3.80 / 3.57 | 0 / 3.5e-18 (rot. 8.9e-16) | 6.57e-13 (593,385; 3100 / 5001 / 6001) | 0 | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 (= case 06) | FarSize 0.16, 0.05 -> 0.05, false | 79.7 / 3.8 | 172 / 239 | 694 / 2.5 |
+| concave-multislot (Radius 0.5) | **1,454,056** = 1,423,816 + 27,720 + 2,520 | 265,608 | 12 / 280 / 16.56 - 29.58 - 39.83 / 1.28 | 24: 0.0572 / 22.7 | 0.0207 / 139.4 | 469.7 / 13.9 | 3.23 / 3.67 / 3.73 / 3.49 / 3.26 / 3.31 | 0 / 2.2e-16 (rot. 4.4e-16) | 2.66e-13 (252,990; 3100 / 3101 / 5001 / 5101 / 6001 / 6101) | 0 | 1: 51.80, 3100: 9.403, 3101: 7.007, 5001: 0.325, 5101: 0.245, 6001: 0.517, 6101: 0.405 | **FarSize 0.04, request 0.05 -> 0.04, bound true** (tube spacing max 39.8 nm) | 75.8 / 3.4 | 137 / 140 | 515 / 2.2 |
+
+Case 06's mesh (1,845,349) exceeds the same inputs without a trace basis by 348,351
+tetrahedra: the trace-basis rule's cost on that geometry. The concave-multislot
+coupon (1 x 1 um box at FarSize 0.04 = 2 x NormalSize) is nearly uniform and
+1.45M elements dense; it passes every physical gate unchanged. Roots (binaries kept):
+`/tmp/coupon-gmsh-only-two-edge-3f8992613e95-869465f32-20260919-134938` (identity.msh
+`9f011ed3a76e93f1245f3f893ad17dc0b924791161efc0e26b2e794fa9e51b6c`, rotate-z
+`d520f9ed0ad61288c9347be39b6776bbfc2a935ee48711865e4f794b21fff52e`, CanonicalBuildId
+`ac79dcb458e1104e46d9113fc116db23a18179b0c668de35e6a5b2e32b948ead`);
+`/tmp/coupon-gmsh-only-three-edge-current-calibration-869465f32-20260919-134938`
+(`5e48f2f7ee23f1f6f61710249e9eb833e3c3b7cd5b36bfd94011eebcc6ec37e3`,
+`0b0a46232dbb78b9c48f86b7588f3a432feb24817f7a58f14526face2c900f49`,
+`a03ce80a67dd8147d1b9ff2b25a1ef4723edb037dc04ca82ee42f3c4add2d65e`);
+`/tmp/coupon-gmsh-only-concave-multislot-869465f32-20260919-141300`
+(`7e7ca8c26c6baa701923154a4ba32dcb48a587937e05ff663950cf1e15653e9c`,
+`734fca04f8e26fda8650b19d553d3de11363a27a5d20d612ff604ceb7d83e501`,
+`9eff740479ddf11bb545414f40332af8aa3a69f6b925a5acf67b21952e4c8e7b`). Probe roots
+(censuses kept, meshes deleted) and the unbuildable cases' logs:
+`/tmp/coupon-matrix-case05-20260919/probe-root-<case>`; the 17 superseded mesh
+binaries (1.24 GB: the case-05 build launched before the size-bound commit, whose
+rotate-z audit failed on the changed mesher digest, and the probe meshes) are listed
+in `deleted-binaries.txt` there.
+
+**Matrix status under the Gmsh-only recipe (15 cases): built and verified 7**
+(four-edge, ten-edge, three-edge 06, two-edge 10, two-edge 05,
+three-edge-current-calibration, concave-multislot); **unbuildable 8**: five
+Radius-12.5 fixtures whose frozen boundary loops were authored on the Radius-2 box
+(process vs boundary contradiction, a frozen-input rewrite decision) and three
+Radius-0.5 fixtures outside the prism-tube recipe's stated scope (hole loop, rounded
+edge, downward layer). Of the ten cases the 2026-09-17 record found unbuildable, two
+now build (three-edge-current-calibration: its contract contradicted its labels and
+corners; concave-multislot: FarSize below TangentialSize) and eight remain so for
+the two reasons above, none of them a contract or size-rule question any more.
+
+Validation of the decision-45(b) state (6e4700cec, 869465f32): `python3 -m unittest
+discover -s . -p "test_*.py"` ran 252 tests, OK (33 skipped);
+`run_general_mesh_suite.py --preflight-only` passes for the production manifest (15
+cases), the MA calibration manifest (6) and the sizing calibration manifest (2);
+`refreeze_manifest_tools.py --check` current.
+
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
 Retired from production by decision 38; recorded as
