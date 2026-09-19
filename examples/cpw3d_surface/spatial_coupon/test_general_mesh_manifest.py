@@ -2551,13 +2551,24 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             statement = evidence["AchievedAnisotropy"]
             self.assertTrue(tube_design_statement(statement))
             # The tube statement is fail-closed: a census/mesh prism mismatch, a spacing
-            # above the tangential size, no rings, a wrong gate name, an inverted type.
+            # above the tangential size, no rings, a wrong gate name, an inverted type,
+            # and the decision-40 layer record (rule strings, growth cap = ratio, neighbour
+            # ratio within it, thickness extremes = the spacing extremes, uniform layers
+            # recorded where the maximum exceeds the tangential size).
+            layers = statement["LayerThickness"]
             for broken in ({**statement, "CensusMatchesMesh": False},
                            {**statement, "Prisms": 2}, {**statement, "MeshPyramids": 0},
                            {**statement, "SpacingMaximum": statement["TangentialSize"] * 1.01},
                            {**statement, "Rings": 0}, {**statement, "GrowthRatio": 1.0},
                            {**statement, "Gate": ANISOTROPY_GATE_NOT_APPLICABLE},
-                           {**statement, "Samples": 3}, {}):
+                           {**statement, "Samples": 3}, {},
+                           {**statement, "LayerRule": ""}, {**statement, "TubeAxisSizeLaw": None},
+                           {**statement, "LayerGrowthCap": statement["GrowthRatio"] * 1.5},
+                           {**statement, "LayerThickness": None},
+                           {**statement, "LayerThickness": {**layers, "MaximumNeighbourRatio": 2.5}},
+                           {**statement, "LayerThickness": {**layers, "Minimum": layers["Minimum"] * .5}},
+                           {**statement, "LayerThickness": {**layers, "Maximum": statement["TangentialSize"] * 2},
+                            "SpacingMaximum": statement["TangentialSize"] * 2}):
                 self.assertFalse(tube_design_statement(broken))
             contract = load_semantic_contract(root / "base" / "semantic.json")
             binding = {"CaseId": "base", "Variant": "identity", "TransformSHA256": evidence["TransformSHA256"],
@@ -2619,6 +2630,17 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "element budget differs from the build command cap")
             rejected(lambda c: c["PrismTubes"].__setitem__("InnerSize", .002),
                      "differs from the build command --edge-size")
+            rejected(lambda c: c["PrismTubes"]["LayerThickness"].__setitem__("MaximumNeighbourRatio", 2.5),
+                     "size-field layer rule")
+            rejected(lambda c: c["PrismTubes"].__setitem__("LayerGrowthCap", 3.0), "size-field layer rule")
+            rejected(lambda c: c["PrismTubes"].pop("TubeAxisSizeLaw"), "size-field layer rule")
+            rejected(lambda c: c["PrismTubes"]["LayerThickness"].__setitem__("Maximum", 1.0),
+                     "size-field layer rule")
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0]["LayerThickness"].__setitem__("MaximumNeighbourRatio", 2.5),
+                     "layer thickness record")
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0]["LayerThickness"].__setitem__("Maximum", .001),
+                     "layer thickness record")
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0].pop("LayerThickness"), "layer thickness record")
             rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Spacing", 1.0),
                      "exceed the tangential spacing")
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("RingSizes", [.001, .003, .004]),

@@ -842,12 +842,15 @@ def _trace_basis_edges(restoration_recipe_path):
 # prisms and pyramids against the census (informational, never gated).
 TUBE_DESIGN_GATE = "not-applicable: prism edge tubes"
 TUBE_DESIGN_RULE = ("the metal-edge resolution is the prism tube design statement recorded by the "
-                    "Gmsh-only build (rings from the inner size with the growth ratio, extrusion at "
-                    "the recorded spacing, explicit pyramids); the audit counts the mesh's prisms and "
-                    "pyramids and requires them to equal the census; no band anisotropy gate applies")
+                    "Gmsh-only build (rings from the inner size with the growth ratio, extrusion in "
+                    "layers following the size field on the tube axis within the tangential size and "
+                    "the growth ratio between neighbours - decision 40 -, explicit pyramids); the audit "
+                    "counts the mesh's prisms and pyramids and requires them to equal the census; no "
+                    "band anisotropy gate applies")
 TUBE_DESIGN_FIELDS = ("InnerSize", "GrowthRatio", "TangentialSize", "NormalSize", "FarSize",
                       "FarGrowth", "TubeCount", "TotalTubeLength", "Layers", "SpacingMinimum",
-                      "SpacingMaximum", "InnermostArc", "MaximumPrismEdgeAspect", "Prisms", "Pyramids")
+                      "SpacingMaximum", "LayerRule", "TubeAxisSizeLaw", "LayerGrowthCap",
+                      "LayerThickness", "InnermostArc", "MaximumPrismEdgeAspect", "Prisms", "Pyramids")
 
 
 def _tube_design_statement(mesh, census, normal_size):

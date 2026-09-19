@@ -1257,7 +1257,9 @@ def validate_gmsh_build_census(build_report, census, semantic):
     polygons, the junction segments, the trace basis sizing (iff bound), positive
     per-label interface areas over exactly the contract labels, the prism tube
     record (sizes equal to the command options, one tube per recorded row, spacing
-    within the tangential size, geometric rings, the sector angle equal to
+    within the tangential size, the layers following the size field on the axis
+    with their thickness statistics within the growth ratio, geometric rings, the
+    sector angle equal to
     --tube-sector-degrees or its default, the pyramid height 0.5 x the outermost
     ring, the band law's RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the
     band curves 1D-meshed at NormalSize with the achieved junction first-layer
@@ -1337,6 +1339,34 @@ def validate_gmsh_build_census(build_report, census, semantic):
                 _count(row.get("Layers"), "Tube layers") <= 0 or
                 _census_number(row, "Length", "Tube row") <= 0.0 for row in rows)):
         raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
+    # Decision 40: the layers follow the composed size field on the tube axis. Every
+    # tube records its layer thickness statistics (the largest layer is its Spacing,
+    # the neighbour ratio within the growth ratio), the record names the layer rule
+    # and the axis size law, and the growth cap is the ring growth ratio.
+    layer_statistics = tubes.get("LayerThickness")
+    if (not all(isinstance(tubes.get(name), str) and tubes[name]
+                for name in ("LayerRule", "TubeAxisSizeLaw")) or
+            _census_number(tubes, "LayerGrowthCap", "Prism tube record") != ratio or
+            not isinstance(layer_statistics, dict) or
+            _census_number(layer_statistics, "MaximumNeighbourRatio", "Tube layer thickness") > ratio or
+            not 0.0 < _census_number(layer_statistics, "Minimum", "Tube layer thickness") <=
+            _census_number(layer_statistics, "P50", "Tube layer thickness") <=
+            _census_number(layer_statistics, "Maximum", "Tube layer thickness") <= tubes["TangentialSize"] or
+            _census_number(tubes, "SpacingMinimum", "Prism tube record") != layer_statistics["Minimum"] or
+            _census_number(tubes, "SpacingMaximum", "Prism tube record") != layer_statistics["Maximum"]):
+        raise ValueError("Prism tube layers do not record the size-field layer rule within the growth ratio")
+    for row in rows:
+        layers = row.get("LayerThickness")
+        if (not isinstance(layers, dict) or
+                any(_census_number(layers, name, "Tube row layer thickness") <= 0.0
+                    for name in ("Minimum", "P50", "Maximum", "AtStart", "AtEnd",
+                                 "PrescribedAtStart", "PrescribedAtEnd")) or
+                layers["Maximum"] != row["Spacing"] or
+                _census_number(layers, "MaximumNeighbourRatio", "Tube row layer thickness") > ratio or
+                not isinstance(layers.get("AchievedOverPrescribed"), dict) or
+                any(_census_number(layers["AchievedOverPrescribed"], name, "Tube row achieved layers") <= 0.0
+                    for name in ("Minimum", "P50", "Maximum"))):
+            raise ValueError("Prism tube row lacks its layer thickness record within the growth ratio")
     section = tubes.get("Section")
     rings = _count(section.get("Rings") if isinstance(section, dict) else None, "Tube rings")
     sizes = section.get("RingSizes") if isinstance(section, dict) else None

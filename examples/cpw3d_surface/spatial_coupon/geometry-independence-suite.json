@@ -17,7 +17,7 @@
     "MaximumProtectedMeasureError": 1e-08
   },
   "ProductionRecipe": {
-    "Label": "Gmsh-only production recipe (supervisor decision 38, 2026-09-18): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded at the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface sizing, junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
+    "Label": "Gmsh-only production recipe (supervisor decision 38, 2026-09-18): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded in layers following the size field on the axis within the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface sizing, junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
     "Decision": "SUPERVISOR-DECISIONS.md items 37 (prism tube spike) and 38 (Gmsh-only pipeline)",
     "Pipeline": "gmsh-only",
     "BuildCommandOptions": {
@@ -27,12 +27,12 @@
       "--corner-size": 0.00025,
       "--far-growth": 0.5
     },
-    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value (and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true); the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
+    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value (and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true); the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "Parameters": {
       "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
       "GrowthRatio": "2: ring ratio of the tube cross-section and of the corner shells",
       "TubeRings": "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius) (7 rings, radius 31.75 nm on the four/ten-edge process)",
-      "TubeExtrusionSpacing": "<= TangentialSize (0.05 um); the spacing actually used divides the tube length and is recorded per tube",
+      "TubeExtrusionSpacing": "<= TangentialSize (0.05 um); the layer thickness follows the composed size field on the tube axis (decision 40: min of TangentialSize, the semantic-corner ball law, the trace-basis volume rule, the band rule and the corner-exterior rule; gradient-limited to (GrowthRatio - 1) / GrowthRatio, layers equidistributed in 1 / size, consecutive layers within GrowthRatio; census PrismTubes.LayerRule / TubeAxisSizeLaw / LayerGrowthCap, per-tube Tubes[].LayerThickness; the largest layer is the recorded per-tube Spacing)",
       "TubeSectorDegrees": "30 (--tube-sector-degrees, mesher default; the census Section.SectorDegrees must equal the option or its default)",
       "TubePyramidHeight": "0.5 x outermost ring size (PyramidHeightOverOuterRing 0.5, mesher constant TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING; the census PyramidHeight must equal 0.5 x the outermost RingSize)",
       "TubeCornerClearance": "R / tan(phi / 2) + h_K before a semantic corner; the cap centre is a graded point of the corner law",
@@ -99,7 +99,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "5ad500735b2ddcbd73f438a2ed8c2bcec815df9fbebdef44e992fb1f72c18f19"
+      "SHA256": "a5ae5e31cff4ed2f75a49a33ecfd922fbea7c19f5fde38356213cfab8d7feaab"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -149,12 +149,12 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "f03b398253564c62027f116a5e48809e596a6bde08f50f1790b35e15eb7eb4c4"
+      "SHA256": "2b0cb9546abf1823a07bed5a34273c7146eb238fb434c08ec0916a9f176f770a"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "23eb371fbd0135f300ec4d46c21732d22426a0a96c43ee20b2bd85a6b2d3e387"
+      "SHA256": "83e240ffb305ae92d7c18fdfaed03d904fca71fbcc38c68346fb522726fb5f01"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1609,7 +1609,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "dc971da2cb8e8397b3d8a92add46a51882e1060bb5500c6497fc46b347afdfc6"
+      "mesher": "89d9a6b48aad3978e902eac904900ba4d8fd4f32f8dda1f411f6efbb1cce5d34"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

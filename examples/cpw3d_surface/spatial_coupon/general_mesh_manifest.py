@@ -955,9 +955,12 @@ def tube_design_statement(widths):
     design statement (Gmsh-only pipeline, supervisor decision 38): the record
     declares TUBE_DESIGN_GATE with Samples 0, the recorded tube design (finite
     positive inner size / ratio > 1 / spacing within the tangential size, rings >= 1,
-    positive prism and pyramid counts) and the mesh's prism and pyramid counts equal
-    to the census (CensusMatchesMesh).  Anything less is judged by the anisotropy
-    gate as an ordinary band sample (and fails on Samples 0)."""
+    positive prism and pyramid counts, the decision-40 layer record: the layer rule
+    and axis size law named, LayerGrowthCap equal to the growth ratio, the layer
+    thickness Minimum <= P50 <= Maximum <= TangentialSize equal to the spacing
+    extremes and the neighbour ratio within the cap) and the mesh's prism and pyramid
+    counts equal to the census (CensusMatchesMesh).  Anything less is judged by the
+    anisotropy gate as an ordinary band sample (and fails on Samples 0)."""
     from general_mesh_audit_producer import TUBE_DESIGN_GATE, TUBE_DESIGN_RULE
     if not isinstance(widths, dict) or widths.get("Gate") != TUBE_DESIGN_GATE:
         return False
@@ -976,6 +979,18 @@ def tube_design_statement(widths):
             any(not isinstance(widths.get(name), int) or widths[name] <= 0
                 for name in ("TubeCount", "Layers", "Prisms", "Pyramids", "MeshPrisms", "MeshPyramids")) or
             widths["MeshPrisms"] != widths["Prisms"] or widths["MeshPyramids"] != widths["Pyramids"]):
+        return False
+    layers = widths.get("LayerThickness")
+    if (not all(isinstance(widths.get(name), str) and widths[name]
+                for name in ("LayerRule", "TubeAxisSizeLaw")) or
+            not _finite_number(widths.get("LayerGrowthCap"), positive=True) or
+            widths["LayerGrowthCap"] != widths["GrowthRatio"] or
+            not isinstance(layers, dict) or
+            any(not _finite_number(layers.get(name), positive=True)
+                for name in ("Minimum", "P50", "Maximum", "MaximumNeighbourRatio")) or
+            not layers["Minimum"] <= layers["P50"] <= layers["Maximum"] <= widths["TangentialSize"] or
+            layers["Minimum"] != widths["SpacingMinimum"] or layers["Maximum"] != widths["SpacingMaximum"] or
+            layers["MaximumNeighbourRatio"] > widths["LayerGrowthCap"]):
         return False
     return True
 

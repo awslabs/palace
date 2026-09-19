@@ -87,10 +87,92 @@ end
     @test_throws ErrorException tube_ring_count(0.002, 2.0, 0.0025)
     tube = EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 1.0, 0.05)
     @test tube.layers == 20 && tube_spacing(tube) ≈ 0.05
+    @test tube.stations ≈ collect(0.0:0.05:1.0) && tube_station(tube, 20) == 1.0
+    @test tube_station(tube, 2.5) ≈ 0.125
     tube = EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 1.01, 0.05)
     @test tube.layers == 21 && tube_spacing(tube) ≈ 1.01 / 21 && tube_spacing(tube) <= 0.05
     @test_throws ErrorException EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0],
                                          0.0, 1.0, 0.0)
+end
+
+@testset "tube layers follow the size field along the axis (decision 40)" begin
+    tube = EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 1.0, 0.05)
+    # A uniform field at the spacing gives uniform layers within the spacing.
+    stations, positions, sizes = graded_tube_stations(0.0, 0.99, s -> 0.05, 0.05, 2.0)
+    @test length(stations) == 21 && stations ≈ collect(range(0.0, 0.99; length=21))
+    @test positions[1] == 0.0 && positions[end] == 0.99 && all(sizes .<= 0.05)
+    # A field above the spacing is capped at the spacing; the layers never exceed it.
+    stations, _, _ = graded_tube_stations(0.0, 1.0, s -> 1.0, 0.05, 2.0)
+    @test length(stations) in (21, 22) && maximum(diff(stations)) < 0.05
+    @test maximum(diff(stations)) ≈ 0.05 rtol = 0.05
+    # A fine end: the corner-ball staircase 0.25 -> 25 nm within 0.1 from s = 0,
+    # then the spacing. The first layer is the inner size, the layers grow by at
+    # most the growth ratio, the far layers are the spacing, and the tube length
+    # is preserved exactly.
+    grading = CornerGrading(0.00025, 2.0, 0.025, 0.1)
+    fine_end(s) = min(0.05, corner_ball_size(grading, s) + 0.675 * max(s - 0.1, 0.0))
+    stations, positions, sizes = graded_tube_stations(0.0, 1.0, fine_end, 0.05, 2.0)
+    thickness = diff(stations)
+    graded = EdgeTube(tube, stations)
+    @test graded.layers == length(thickness) && graded.stations[end] == 1.0
+    # (a layer equidistributed in 1 / size is the size at its midpoint, 1.3 x the
+    # inner size where the field grows at the limited slope)
+    @test 0.5 * 0.00025 <= thickness[1] <= 2.0 * 0.00025
+    @test all(thickness .> 0.0) && all(thickness .<= 0.05)
+    ratios = thickness[2:end] ./ thickness[1:(end - 1)]
+    @test maximum(ratios) <= 2.0 && minimum(ratios) >= 0.5
+    @test maximum(ratios) > 1.5                      # the geometric grading is used
+    @test thickness[end] ≈ 0.05 rtol = 0.05          # the far end is at the spacing
+    @test count(>(0.045), thickness) >= 15           # most of the tube is at the spacing
+    @test graded.layers > 20 + 7                     # the fine end adds the graded layers
+    # The layer thickness follows the prescribed size along the whole axis.
+    statistics = tube_layer_statistics(graded, positions, sizes)
+    @test statistics["Minimum"] ≈ thickness[1]
+    @test statistics["Maximum"] ≈ 0.05 rtol = 0.05
+    @test statistics["AtStart"] ≈ thickness[1] && statistics["AtEnd"] ≈ thickness[end]
+    @test statistics["PrescribedAtStart"] ≈ 0.00025 && statistics["PrescribedAtEnd"] ≈ 0.05
+    @test 0.7 <= statistics["AchievedOverPrescribed"]["Minimum"]
+    @test statistics["AchievedOverPrescribed"]["Maximum"] <= 1.3
+    @test statistics["MaximumNeighbourRatio"] <= 2.0
+    # The mesh follows the stations: the pyramid apex of layer i sits mid-layer.
+    @test tube_station(graded, 0) == 0.0 && tube_station(graded, graded.layers) == 1.0
+    @test tube_station(graded, 0.5) ≈ 0.5 * thickness[1]
+    # Negative: uniform layers where the field prescribes finer. The uniform first
+    # layer spans sizes down to the inner size (200 x too thick); every graded layer
+    # is within 1.5 x the finest field over its span (the limited slope 1/2 bounds
+    # the field variation across a layer to a quarter of the layer).
+    @test 0.05 / minimum(fine_end.(range(0.0, 0.05; length=201))) >= 200.0
+    @test all(thickness[i] <= 1.5 * minimum(fine_end.(range(stations[i], stations[i + 1]; length=9)))
+              for i in eachindex(thickness))
+    # A field that steps down sharply is gradient-limited so that the neighbour
+    # ratio stays within the growth; the limiter reach is (growth - 1) / growth.
+    step_field(s) = s < 0.5 ? 0.05 : 0.001
+    stations, positions, sizes = graded_tube_stations(0.0, 1.0, step_field, 0.05, 2.0)
+    thickness = diff(stations)
+    @test maximum(thickness[2:end] ./ thickness[1:(end - 1)]) <= 2.0
+    @test minimum(thickness[2:end] ./ thickness[1:(end - 1)]) >= 0.5
+    @test minimum(thickness) ≈ 0.001 rtol = 0.15
+    # Guards: a non-positive field, a non-increasing station list, wrong ends.
+    @test_throws ErrorException graded_tube_stations(0.0, 1.0, s -> 0.0, 0.05, 2.0)
+    @test_throws ErrorException graded_tube_stations(0.0, 1.0, s -> 0.05, 0.05, 1.0)
+    @test_throws ErrorException EdgeTube(tube, [0.0, 0.5, 0.5, 1.0])
+    @test_throws ErrorException EdgeTube(tube, [0.0, 0.5, 0.9])
+    # The axis size law composes the corner law, the trace rule and the band laws
+    # without the tube rule (which reads NormalSize on the axis).
+    record = prepare_tube_band_sizing!([([0.0, 0.0, 0.0], [1.0, 0.0, 0.0])],
+                                       [([1.0, -1.0, 0.0], [1.0, 1.0, 0.0])],
+                                       0.04, 0.025, 0.16, 0.5, [(0.0, 0.0, 0.0)], 0.1)
+    @test record["BandSegments"] == 1
+    @test tube_band_size(0.5, 0.0, 0.0, 1.0) ≈ 0.025            # the tube rule on the axis
+    @test feature_band_size(0.5, 0.0, 0.0, 1.0) ≈ 0.16          # band + corner exterior only
+    @test tube_axis_size((0.5, 0.0, 0.0), 0.05, [(0.0, 0.0, 0.0)], grading, 0.675) ≈ 0.05
+    @test tube_axis_size((1.0, 0.0, 0.0), 0.05, [(0.0, 0.0, 0.0)], grading, 0.675) ≈ 0.025
+    @test tube_axis_size((0.98, 0.0, 0.0), 0.05, [(0.0, 0.0, 0.0)], grading, 0.675) ≈ 0.045
+    @test tube_axis_size((0.0, 0.0, 0.0), 0.05, [(0.0, 0.0, 0.0)], grading, 0.675) ≈ 0.00025
+    @test tube_axis_size((0.05, 0.0, 0.0), 0.05, [(0.0, 0.0, 0.0)], grading, 0.675) ≈ 0.025
+    @test tube_axis_size((0.12, 0.0, 0.0), 0.05, [(0.0, 0.0, 0.0)], grading, 0.675) ≈
+          min(0.05, 0.025 + 0.5 * 0.02)                          # corner exterior law
+    empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS); empty!(CORNER_EXTERIOR_POINTS)
 end
 
 @testset "metal edge segments: outward normals, corner clearance, box continuation" begin

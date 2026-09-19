@@ -6,9 +6,9 @@
 #
 # A straight metal edge is surrounded, on its dielectric side, by a tube whose 2D
 # cross-section is meshed once with geometric rings (ring k has radial size
-# inner_size x ratio^(k - 1)) and extruded along the edge at the tangential
-# spacing (at most lc_tangent; the recorded spacing divides the tube length),
-# giving prisms. The tube volumes are OCC polygon-sector prisms fragmented with
+# inner_size x ratio^(k - 1)) and extruded along the edge in layers whose
+# thickness follows the composed size field along the edge (at most lc_tangent;
+# supervisor decision 40), giving prisms. The tube volumes are OCC polygon-sector prisms fragmented with
 # the coupon CAD; their mesh (points, curves, faces, volumes) is installed
 # explicitly so that Mesh.MeshOnlyEmpty leaves it alone while Gmsh meshes the
 # remaining entities. The tube's outer lateral quadrangles carry explicit
@@ -102,7 +102,8 @@ function cad_rays(section::TubeSection)
 end
 
 # A tube: the edge line origin (a point on the edge), the frame (n, b, e), the
-# extrusion interval [s_start, s_end] along e from the origin, and the layer count.
+# extrusion interval [s_start, s_end] along e from the origin, and the layer
+# boundaries (stations) s_start = stations[1] < ... < stations[layers + 1] = s_end.
 struct EdgeTube
     origin::Vector{Float64}
     n::Vector{Float64}
@@ -111,11 +112,12 @@ struct EdgeTube
     s_start::Float64
     s_end::Float64
     layers::Int
+    stations::Vector{Float64}
 end
 
-# The layer count is the smallest number of equal layers whose spacing does not
+# Uniform layers: the smallest number of equal layers whose spacing does not
 # exceed `spacing` (a tube whose length is a multiple of the spacing keeps it
-# exactly; tube_spacing records the spacing actually used).
+# exactly; tube_spacing records the largest layer actually used).
 function EdgeTube(origin, n, b, s_start, s_end, spacing)
     n = collect(Float64, n) ./ norm(n)
     b = collect(Float64, b) ./ norm(b)
@@ -125,16 +127,152 @@ function EdgeTube(origin, n, b, s_start, s_end, spacing)
     spacing > 0.0 || error("tube spacing must be positive")
     extent = s_end - s_start
     layers = max(1, ceil(Int, extent / spacing * (1.0 - 1.0e-9)))
-    return EdgeTube(collect(Float64, origin), n, b, e, s_start, s_end, layers)
+    stations = [s_start + extent * i / layers for i in 0:layers]
+    return EdgeTube(collect(Float64, origin), n, b, e, s_start, s_end, layers, stations)
 end
 
-tube_spacing(tube::EdgeTube) = (tube.s_end - tube.s_start) / tube.layers
+# The same tube with the given layer boundaries.
+function EdgeTube(tube::EdgeTube, stations::AbstractVector)
+    stations = collect(Float64, stations)
+    length(stations) >= 2 && stations[1] == tube.s_start && stations[end] == tube.s_end ||
+        error("tube stations must run from s_start to s_end")
+    all(diff(stations) .> 0.0) || error("tube stations must increase")
+    return EdgeTube(tube.origin, tube.n, tube.b, tube.e, tube.s_start, tube.s_end,
+                    length(stations) - 1, stations)
+end
+
+tube_layer_thicknesses(tube::EdgeTube) = diff(tube.stations)
+# The extrusion spacing actually used: the largest layer (equal to every layer of
+# a uniform tube).
+tube_spacing(tube::EdgeTube) = maximum(tube_layer_thicknesses(tube))
 
 function tube_point(tube::EdgeTube, u, w, s)
     return tube.origin .+ u .* tube.n .+ w .* tube.b .+ s .* tube.e
 end
 
-tube_station(tube::EdgeTube, i) = tube.s_start + (tube.s_end - tube.s_start) * i / tube.layers
+# Axis coordinate of station i (an integer 0:layers) or of a point between two
+# stations (i + 1/2: the pyramid apex station of layer i).
+function tube_station(tube::EdgeTube, i)
+    k = clamp(floor(Int, i), 0, tube.layers - 1)
+    return tube.stations[k + 1] + (i - k) * (tube.stations[k + 2] - tube.stations[k + 1])
+end
+
+# Samples per prescribed size of the arclength quadrature that places the layer
+# boundaries (a resolution constant, not a mesh target).
+const TUBE_LAYER_SAMPLES_PER_SIZE = 8
+
+# Layer boundaries following a size field along the tube axis (supervisor decision
+# 40): `size_at(s)` is the composed size prescribed at axis coordinate s, capped at
+# `spacing`; the field is sampled adaptively (TUBE_LAYER_SAMPLES_PER_SIZE samples
+# per local size), gradient-limited along the axis to the slope
+# (growth - 1) / growth, and the layers equidistribute the arclength integral of
+# 1 / size with ceil(integral) layers, so every layer is at most the largest size
+# it spans (strictly below spacing: the cap is spacing x (1 - 1e-9), a tube whose
+# length is an exact multiple of a uniform spacing takes one more layer than the
+# uniform constructor) and consecutive layers differ by a factor of at most
+# exp((growth - 1) / growth) < growth (the recorded MaximumNeighbourRatio is
+# checked against `growth`, fail closed). Returns the stations and the sampled
+# (s, limited size) pairs for the census.
+function graded_tube_stations(s_start, s_end, size_at, spacing, growth)
+    s_end > s_start || error("tube interval must be increasing")
+    spacing > 0.0 || error("tube spacing must be positive")
+    growth > 1.0 || error("tube layer growth must exceed 1")
+    cap = spacing * (1.0 - 1.0e-9)
+    positions = [Float64(s_start)]
+    sizes = Float64[]
+    function prescribed(s)
+        h = min(cap, size_at(s))
+        isfinite(h) && h > 0.0 || error("tube axis size at $s is not positive: $h")
+        return h
+    end
+    push!(sizes, prescribed(s_start))
+    while positions[end] < s_end
+        step = sizes[end] / TUBE_LAYER_SAMPLES_PER_SIZE
+        next = min(s_end, positions[end] + step)
+        push!(positions, next)
+        push!(sizes, prescribed(next))
+    end
+    slope = (growth - 1.0) / growth
+    function limit!()
+        for i in 2:length(sizes)
+            sizes[i] = min(sizes[i], sizes[i - 1] + slope * (positions[i] - positions[i - 1]))
+        end
+        for i in (length(sizes) - 1):-1:1
+            sizes[i] = min(sizes[i], sizes[i + 1] + slope * (positions[i + 1] - positions[i]))
+        end
+    end
+    limit!()
+    # The limiter lowers sizes below the sampling density they were sampled at;
+    # refine the coarse intervals (midpoints at the prescribed size, then the
+    # limiter again) until every interval is resolved.
+    while true
+        coarse = [i for i in 1:(length(positions) - 1)
+                  if positions[i + 1] - positions[i] >
+                     min(sizes[i], sizes[i + 1]) / TUBE_LAYER_SAMPLES_PER_SIZE * (1.0 + 1.0e-9)]
+        isempty(coarse) && break
+        refined_positions = Float64[]
+        refined_sizes = Float64[]
+        coarse_set = Set(coarse)
+        for i in 1:(length(positions) - 1)
+            push!(refined_positions, positions[i]); push!(refined_sizes, sizes[i])
+            i in coarse_set || continue
+            mid = 0.5 * (positions[i] + positions[i + 1])
+            push!(refined_positions, mid); push!(refined_sizes, prescribed(mid))
+        end
+        push!(refined_positions, positions[end]); push!(refined_sizes, sizes[end])
+        positions = refined_positions
+        sizes = refined_sizes
+        limit!()
+    end
+    cumulative = zeros(length(positions))
+    for i in 2:length(positions)
+        cumulative[i] = cumulative[i - 1] + (positions[i] - positions[i - 1]) *
+                                            0.5 * (1.0 / sizes[i - 1] + 1.0 / sizes[i])
+    end
+    layers = max(1, ceil(Int, cumulative[end]))
+    stations = [Float64(s_start)]
+    for k in 1:(layers - 1)
+        target = k * cumulative[end] / layers
+        i = clamp(searchsortedlast(cumulative, target), 1, length(positions) - 1)
+        fraction = (target - cumulative[i]) / (cumulative[i + 1] - cumulative[i])
+        push!(stations, positions[i] + fraction * (positions[i + 1] - positions[i]))
+    end
+    push!(stations, Float64(s_end))
+    thicknesses = diff(stations)
+    all(thicknesses .> 0.0) || error("tube layer placement produced an empty layer")
+    ratios = thicknesses[2:end] ./ thicknesses[1:(end - 1)]
+    neighbour_ratio = isempty(ratios) ? 1.0 : max(maximum(ratios), 1.0 / minimum(ratios))
+    neighbour_ratio <= growth * (1.0 + 1.0e-9) ||
+        error("tube layers grow by $neighbour_ratio between neighbours, above $growth")
+    return stations, positions, sizes
+end
+
+# Per-tube layer statistics against the prescribed (gradient-limited) sizes
+# sampled by graded_tube_stations: thickness minimum / P50 / maximum, the
+# thickness and the prescribed size at both ends, the achieved-over-prescribed
+# ratio (each layer over the size at its midpoint) and the neighbour ratio.
+function tube_layer_statistics(tube::EdgeTube, positions, sizes)
+    thicknesses = tube_layer_thicknesses(tube)
+    function size_at(s)
+        i = clamp(searchsortedlast(positions, s), 1, length(positions) - 1)
+        fraction = (s - positions[i]) / (positions[i + 1] - positions[i])
+        return sizes[i] + fraction * (sizes[i + 1] - sizes[i])
+    end
+    midpoints = 0.5 .* (tube.stations[1:(end - 1)] .+ tube.stations[2:end])
+    achieved = [thicknesses[i] / size_at(midpoints[i]) for i in eachindex(thicknesses)]
+    ratios = thicknesses[2:end] ./ thicknesses[1:(end - 1)]
+    median(values) = sort(values)[cld(length(values), 2)]
+    return Dict{String, Any}(
+        "Minimum" => minimum(thicknesses), "P50" => median(thicknesses),
+        "Maximum" => maximum(thicknesses),
+        "AtStart" => thicknesses[1], "AtEnd" => thicknesses[end],
+        "PrescribedAtStart" => sizes[1], "PrescribedAtEnd" => sizes[end],
+        "AchievedOverPrescribed" => Dict{String, Any}(
+            "Minimum" => minimum(achieved), "P50" => median(achieved),
+            "Maximum" => maximum(achieved)),
+        "MaximumNeighbourRatio" => isempty(ratios) ? 1.0 :
+                                   max(maximum(ratios), 1.0 / minimum(ratios)))
+end
 
 # OCC tube volumes (one polygon-sector prism per material group), returned as
 # (dim, tag) pairs with their material group, before synchronization.
@@ -198,8 +336,9 @@ function tube_entities(tube::EdgeTube, section::TubeSection, group)
     mid = 0.5 * (tube.s_start + tube.s_end)
     entities = TubeEntity[]
     outer(j) = uw[:, section_node(section, K, j)]
-    # Points: edge ends and outer polygon vertices at both caps.
-    for (end_index, s) in ((0, tube.s_start), (tube.layers, tube.s_end))
+    # Points: edge ends and outer polygon vertices at both caps (end index 0 the
+    # start cap, 1 the end cap).
+    for (end_index, s) in ((0, tube.s_start), (1, tube.s_end))
         push!(entities, TubeEntity(0, :edge_point, (0, end_index), tube_point(tube, 0.0, 0.0, s)))
         for j in rays
             push!(entities, TubeEntity(0, :outer_point, (j, end_index),
@@ -368,7 +507,7 @@ function install_tube_curves!(state::TubeMesh, next_node, point_nodes)
     for (_, group, matched) in state.volumes
         first, last, _ = group
         rays = first:(last + 1)
-        for (end_index, i) in ((0, 0), (L, L))
+        for (end_index, i) in ((0, 0), (1, L))
             for (kind, id, local_index) in vcat(
                     [(:edge_point, (0, end_index), section_node(section, 0, 0))],
                     [(:outer_point, (j, end_index), section_node(section, K, j)) for j in rays])
@@ -392,7 +531,7 @@ function install_tube_curves!(state::TubeMesh, next_node, point_nodes)
                         (curve_node!(curve, local_index, i), curve_node!(curve, local_index, i + 1)))
             end
         end
-        for (end_index, i) in ((0, 0), (L, L))
+        for (end_index, i) in ((0, 0), (1, L))
             for j in first:last
                 curve = matched[(:cap_polygon, (j, end_index))]
                 curve in meshed && continue
@@ -446,7 +585,7 @@ function install_tube_faces!(state::TubeMesh, next_node)
     end
     for (_, group, matched) in state.volumes
         first, last, _ = group
-        for (end_index, i) in ((0, 0), (L, L))
+        for (end_index, i) in ((0, 0), (1, L))
             face = matched[(:cap, (0, end_index))]
             push!(meshed, face)
             for j in first:last, (a, b, c) in sector_triangles(section, j)
@@ -569,10 +708,10 @@ function tube_volume_after_fragment(record::TubeRecord, tool_index, fragment_map
     return descendants[1]
 end
 
-# Anisotropy of the tube prisms: longitudinal spacing over the smallest
-# cross-section edge (the innermost arc), and the ring sizes.
+# Anisotropy of the tube prisms: the largest longitudinal spacing over the
+# smallest cross-section edge (the innermost arc), and the ring sizes.
 function tube_anisotropy(tube::EdgeTube, section::TubeSection, pyramid_height)
-    spacing = (tube.s_end - tube.s_start) / tube.layers
+    spacing = tube_spacing(tube)
     inner_arc = section.ring_radii[1] * deg2rad(minimum(diff(section.angles)))
     outer_arc = 2.0 * tube_radius(section) * sin(0.5 * deg2rad(maximum(diff(section.angles))))
     return Dict{String, Any}(

@@ -3229,6 +3229,16 @@ function tube_band_size(x, y, z, lc)
     if isfinite(axis_distance)
         size = min(size, min(far, normal + growth * max(axis_distance - TUBE_BAND_OFFSET[], 0.0)))
     end
+    return feature_band_size(x, y, z, size)
+end
+
+# The band law of the feature curves outside the tubes and the corner-ball
+# exterior law, never above `lc` (the callback laws without the tube rule).
+function feature_band_size(x, y, z, lc)
+    size = lc
+    normal = TUBE_BAND_NORMAL[]
+    far = TUBE_BAND_FAR[]
+    growth = TUBE_BAND_FAR_GROWTH[]
     band_distance = Inf
     @inbounds for segment in BAND_SEGMENTS
         band_distance = min(band_distance, segment_point_distance(x, y, z, segment))
@@ -3245,6 +3255,41 @@ function tube_band_size(x, y, z, lc)
     end
     return size
 end
+
+# Size prescribed on a tube axis (supervisor decision 40): the composed size
+# field of the callback evaluated on the edge, without the tube rule (which
+# describes the tube's exterior and would read NormalSize on the axis): the
+# minimum of TangentialSize, the corner-ball law of the semantic corners along
+# the edge (corner_curve_size: the ball grading from CornerSize and the
+# process-band slope beyond the radius), the trace-basis volume law, the band law
+# of the feature curves outside the tubes and the corner-ball exterior law (whose
+# graded points include the tube cap centres: NormalSize within
+# CornerIsotropyRadius of a cap). The cap centres are NOT ball-law points of the
+# axis: grading the prism layers to CornerSize at a cap makes the lateral pyramid
+# faces CornerSize x outer-arc slivers by construction, and the corner-ball
+# tetrahedra against them fail the scaled-Jacobian gate (four-edge: 38 cells below
+# 0.01, minimum 0.0060). The tube's layer boundaries equidistribute the arclength
+# integral of the reciprocal size (graded_tube_stations).
+function tube_axis_size(point, lc_tangent, corners, grading::CornerGrading, slope)
+    size = corner_curve_size(point, corners, grading, lc_tangent, slope)
+    size = trace_basis_size(point[1], point[2], point[3], size)
+    return feature_band_size(point[1], point[2], point[3], size)
+end
+
+const TUBE_LAYER_RULE =
+    "layer thickness = the composed size field on the tube axis (TubeAxisSizeLaw), " *
+    "gradient-limited along the axis to (GrowthRatio - 1) / GrowthRatio and " *
+    "equidistributed in the arclength integral of its reciprocal with ceil(integral) " *
+    "layers, so every layer is <= the size it spans (<= TangentialSize) and consecutive " *
+    "layers differ by at most GrowthRatio (MaximumNeighbourRatio, fail closed) - decision 40"
+const TUBE_AXIS_SIZE_LAW =
+    "min(TangentialSize, corner-ball law of the semantic corners along the edge [CornerSize " *
+    "with GrowthRatio to NormalSize inside CornerIsotropyRadius, the process-band slope " *
+    "beyond], trace-basis volume rule, band rule, corner exterior rule [NormalSize within " *
+    "CornerIsotropyRadius of a semantic corner or tube cap centre, FarGrowth beyond]); " *
+    "excluded: the tube rule (the tube's exterior, NormalSize on the axis) and the cap " *
+    "centres as ball-law points (CornerSize layers at a cap make the pyramid faces slivers " *
+    "and the corner-ball tetrahedra fail the scaled-Jacobian gate)"
 
 # The band law at distance r from a feature curve outside the tubes.
 function band_law_size(r, normal, far, growth)
@@ -3904,23 +3949,34 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                            curve_meshes, timings, band_record, quality, graded_points,
                            semantic_corners, junction_curves, band_curves, footprint_polygons,
                            box, lc_fine, lc_tangent, lc_far, far_growth, trace_basis_record,
-                           max_elements, element_count)
+                           max_elements, element_count, layer_records)
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
     radius = description["Radius"]
+    lower, upper, box_tolerance = box
+    on_box(point) = on_outer_box(vcat(point, point), lower, upper, box_tolerance)
     tube_rows = Dict{String, Any}[]
     for (k, (tube, section)) in enumerate(tubes)
         segment = segments[(k + 1) ÷ 2]
+        start_point = tube_point(tube, 0.0, 0.0, tube.s_start)
+        end_point = tube_point(tube, 0.0, 0.0, tube.s_end)
         push!(tube_rows, Dict{String, Any}(
             "Origin" => tube.origin, "Normal" => tube.n, "Extrusion" => tube.e,
             "Start" => tube.s_start, "End" => tube.s_end, "Length" => tube.s_end - tube.s_start,
+            "StartPoint" => start_point, "EndPoint" => end_point,
+            "EndsOnBox" => [on_box(start_point), on_box(end_point)],
             "Layers" => tube.layers, "Spacing" => tube_spacing(tube),
+            "LayerThickness" => layer_records[k],
             "Materials" => section.materials, "Conductor" => segment.conductor,
             "Plane" => segment.plane, "CornerAngles" => collect(segment.corner_angles),
             "Edge" => isodd(k) ? "top" : "bottom"))
     end
+    thicknesses = reduce(vcat, tube_layer_thicknesses(tube) for (tube, _) in tubes)
     spacings = [row["Spacing"] for row in tube_rows]
+    neighbour_ratios = [row["LayerThickness"]["MaximumNeighbourRatio"] for row in tube_rows]
+    achieved_over_prescribed = [row["LayerThickness"]["AchievedOverPrescribed"]["P50"]
+                                for row in tube_rows]
     inner_arc = description["RingSizes"][1] * deg2rad(description["SectorDegrees"])
     caps = [point_region_tetrahedra(points, index, collect(point), radius)
             for point in graded_points[(length(semantic_corners) + 1):end]]
@@ -3965,7 +4021,9 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
                   "carries a prism tube on its dielectric side: geometric rings of size " *
                   "EdgeSize x GrowthRatio^(k-1) (RingSizes) over the sectors (SectorDegrees), " *
-                  "extruded along the edge in Layers of Spacing <= TangentialSize, the lateral " *
+                  "extruded along the edge in Layers whose thickness follows the composed size " *
+                  "field on the axis (LayerRule, TubeAxisSizeLaw; Spacing = the largest layer " *
+                  "<= TangentialSize), the lateral " *
                   "quadrangles closed by explicit pyramids (PyramidHeight); the tube ends at the " *
                   "outer box and CornerClearance before a semantic corner (CornerClearanceRule); " *
                   "the cap centre before a corner is a graded point of the corner law " *
@@ -3979,7 +4037,22 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         "Tubes" => tube_rows, "TubeCount" => length(tubes),
         "TotalTubeLength" => sum(row["Length"] for row in tube_rows),
         "Layers" => sum(row["Layers"] for row in tube_rows),
-        "SpacingMinimum" => minimum(spacings), "SpacingMaximum" => maximum(spacings),
+        "SpacingMinimum" => minimum(thicknesses), "SpacingMaximum" => maximum(thicknesses),
+        "LayerRule" => TUBE_LAYER_RULE, "TubeAxisSizeLaw" => TUBE_AXIS_SIZE_LAW,
+        "LayerGrowthCap" => description["RingSizes"][2] / description["RingSizes"][1],
+        "LayerThickness" => Dict{String, Any}(
+            "Rule" => "over every layer of every tube: Minimum / P50 / Maximum thickness, the " *
+                      "largest neighbour ratio and the per-tube P50 achieved-over-prescribed " *
+                      "(layer thickness over the gradient-limited axis size at its midpoint); " *
+                      "per tube in Tubes[].LayerThickness (ends: AtStart / AtEnd against " *
+                      "PrescribedAtStart / PrescribedAtEnd)",
+            "Minimum" => minimum(thicknesses),
+            "P50" => sort(thicknesses)[cld(length(thicknesses), 2)],
+            "Maximum" => maximum(thicknesses),
+            "MaximumNeighbourRatio" => maximum(neighbour_ratios),
+            "AchievedOverPrescribedP50Range" => [minimum(achieved_over_prescribed),
+                                                 maximum(achieved_over_prescribed)],
+            "LayersBelowTangentialSize" => count(<(lc_tangent * (1.0 - 1.0e-6)), thicknesses)),
         "InnermostArc" => inner_arc,
         "MaximumPrismEdgeAspect" => maximum(spacings) / min(inner_arc, description["RingSizes"][1]),
         "Volumes" => volume_census,
@@ -4661,6 +4734,7 @@ function generate_spatial_coupon(;
     tube_curves = Set{Int32}()
     tube_axis_curves = Int32[]
     tube_cap_points = Int32[]
+    tube_volume_groups = Vector{Tuple{Int32, Tuple{Int, Int, Int}, Dict}}[]
     if prism_tubes
         for (tube, section) in tubes
             volumes = Tuple{Int32, Tuple{Int, Int, Int}, Dict}[]
@@ -4680,8 +4754,7 @@ function generate_spatial_coupon(;
                 end
             end
             isempty(volumes) && error("A tube has no fragmented volume")
-            push!(tube_states, TubeMesh(tube, section, volumes;
-                                        pyramid_height=tube_sections["PyramidHeight"]))
+            push!(tube_volume_groups, volumes)
         end
         sort!(unique!(tube_axis_curves))
         sort!(unique!(tube_cap_points))
@@ -4696,6 +4769,41 @@ function generate_spatial_coupon(;
     longitudinal_curves = Int32[]
     corner_curves = Int32[]
     corner_grading_slope = (lc_far - lc_fine) / (process_core_width - process_fine_width)
+    # Under the prism tube recipe the trace rule is a volume law growing with
+    # FarGrowth from the cut surface (decision 39a); the legacy seed keeps the
+    # process-band slope.
+    trace_basis_record = trace_basis === nothing ? nothing :
+        prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far,
+                                    prism_tubes ? far_growth : corner_grading_slope)
+    # The band grading around the tubes and the band law of the remaining feature
+    # curves (junction lines, footprint edges, the un-tubed edge parts) are exact
+    # segment-distance laws evaluated in the size callback with the trace rule.
+    tube_band_record = prism_tubes ?
+        prepare_tube_band_sizing!(curve_segments(tube_axis_curves),
+                                  curve_segments([curve for curve in feature_curves
+                                                  if !(curve in tube_curves)]),
+                                  tube_sections["Radius"] + tube_sections["PyramidHeight"],
+                                  lc_fine, lc_far, far_growth, graded_points,
+                                  corner_isotropy_radius) :
+        nothing
+    # Tube layers follow the composed size field on the axis (decision 40): the
+    # tubes are re-stationed with the laws prepared above before their mesh is
+    # installed; the cross-section rings are unchanged.
+    tube_layer_records = Dict{String, Any}[]
+    if prism_tubes
+        for (k, (tube, section)) in enumerate(tubes)
+            stations, axis_positions, axis_sizes = graded_tube_stations(
+                tube.s_start, tube.s_end,
+                s -> tube_axis_size(tube_point(tube, 0.0, 0.0, s), lc_tangent, semantic_corners,
+                                    corner_grading, corner_grading_slope),
+                lc_tangent, edge_growth_ratio)
+            graded = EdgeTube(tube, stations)
+            tubes[k] = (graded, section)
+            push!(tube_layer_records, tube_layer_statistics(graded, axis_positions, axis_sizes))
+            push!(tube_states, TubeMesh(graded, section, tube_volume_groups[k];
+                                        pyramid_height=tube_sections["PyramidHeight"]))
+        end
+    end
     next_node = Ref(0)
     point_nodes = Dict{Int32, Int}()
     tube_curve_meshes = [install_tube_curves!(state, next_node, point_nodes) for state in tube_states]
@@ -4889,12 +4997,6 @@ function generate_spatial_coupon(;
     end
     isempty(corner_curves) && !prism_tubes || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
     prism_tubes && gmsh.option.setNumber("Mesh.Renumber", 0)
-    # Under the prism tube recipe the trace rule is a volume law growing with
-    # FarGrowth from the cut surface (decision 39a); the legacy seed keeps the
-    # process-band slope.
-    trace_basis_record = trace_basis === nothing ? nothing :
-        prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far,
-                                    prism_tubes ? far_growth : corner_grading_slope)
     # The sizes below lc_fine a field can ask for are the trace rule's and the corner
     # grading's, so the Gmsh floor follows the smallest requested trace size
     # (recorded in the census) and CornerSize.
@@ -4902,17 +5004,8 @@ function generate_spatial_coupon(;
         min(lc_fine, trace_basis_record["MinimumRequestedSize"])
     corner_size > 0.0 && (mesh_size_minimum = min(mesh_size_minimum, corner_size))
     prism_tubes && (mesh_size_minimum = min(mesh_size_minimum, edge_size))
-    # The band grading around the tubes and the band law of the remaining feature
-    # curves (junction lines, footprint edges, the un-tubed edge parts) are exact
-    # segment-distance laws evaluated in the size callback with the trace rule.
-    tube_band_record = prism_tubes ?
-        prepare_tube_band_sizing!(curve_segments(tube_axis_curves),
-                                  curve_segments([curve for curve in feature_curves
-                                                  if !(curve in tube_curves)]),
-                                  tube_sections["Radius"] + tube_sections["PyramidHeight"],
-                                  lc_fine, lc_far, far_growth, graded_points,
-                                  corner_isotropy_radius) :
-        nothing
+    # The trace rule and the tube/band laws (prepared before the tube layers were
+    # placed) compose with the background field in the size callback.
     if trace_basis_record !== nothing || tube_band_record !== nothing
         install_trace_basis_callback!()
     end
@@ -5129,7 +5222,8 @@ function generate_spatial_coupon(;
                           mixed_quality, graded_points, semantic_corners, junction_curves,
                           band_curves, footprint_polygons, (lower, upper, outer_tolerance),
                           lc_fine, lc_tangent, lc_far, far_growth,
-                          trace_basis_record, max_elements, element_count_after_generation) :
+                          trace_basis_record, max_elements, element_count_after_generation,
+                          tube_layer_records) :
         nothing
     if transform != IDENTITY_RIGID_TRANSFORM
         connectivity = gmsh.model.mesh.getElements()
