@@ -2,16 +2,20 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build one production manifest case through the Gmsh-only canonical DAG
-(supervisor decision 38) and its evidence chain:
+"""Build one Gmsh-only manifest case - a production case or a labeled calibration
+case (supervisor decision 41) - through the Gmsh-only canonical DAG (supervisor
+decision 38) and its evidence chain:
 
   canonical-source-validation -> gmsh-build -> canonical-gmsh-publication
   -> canonical build record -> proper-rigid-publication per variant
   -> consolidated audits + normalization per variant -> per-entry verification.
 
 Every stage command is generated from the manifest case (immutable inputs, process,
-mesh recipe, ProductionRecipe.BuildCommandOptions) and run under
-run_bounded_mesher.py with the manifest's stage bounds (audits: --audit-memory-gib).
+mesh recipe, the build options: ProductionRecipe.BuildCommandOptions of a production
+manifest, or a calibration case's Calibration.ProductionValues overridden by its
+Calibration.BuildCommandOptions; --trace-basis-size-ratio is one of the options,
+passed with the bound trace basis) and run under run_bounded_mesher.py with the
+manifest's stage bounds (audits: --audit-memory-gib).
 Nothing here is an evidence tool: the evidence is the bounded stage reports, the
 audit records and the verification report written under --root.
 
@@ -36,6 +40,8 @@ TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contrac
                "TraceTriangles": ("source-trace-triangles", "--trace-triangles"),
                "ProcessLibrary": ("source-process-library", "--process-library")}
 CANONICAL_STAGES = ("canonical-source-validation", "gmsh-build", "canonical-gmsh-publication")
+TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
+PRODUCTION_TRACE_BASIS_RATIO = 1.0
 STAGE_STEMS = {"canonical-source-validation": "canonical-source", "gmsh-build": "gmsh-build",
                "canonical-gmsh-publication": "canonical-publish"}
 AUDIT_KINDS = ("bounded-run", "mesh-topology-quality", "mesh-complexity", "mesh-invariants",
@@ -54,6 +60,25 @@ def number(value):
     return repr(float(value)) if isinstance(value, float) else str(value)
 
 
+def case_build_options(manifest, case):
+    """The gmsh-build recipe options of a case: a production case executes the
+    manifest's ProductionRecipe.BuildCommandOptions; a case of a labeled calibration
+    manifest executes its Calibration.ProductionValues overridden by its
+    Calibration.BuildCommandOptions (decision 41).  Returns (options without the trace
+    basis ratio, trace basis ratio, label); the ratio is passed with the bound trace
+    basis only (production 1.0 unless an option declares it)."""
+    calibration = case.get("Calibration") if "Calibration" in manifest else None
+    if calibration is not None:
+        options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
+        label = (f"CALIBRATION build {case['Id']} ({calibration['Label']}): options "
+                 f"{calibration['BuildCommandOptions']} against production {calibration['ProductionValues']}")
+    else:
+        options = dict(manifest["ProductionRecipe"]["BuildCommandOptions"])
+        label = f"Gmsh-only production build {case['Id']}"
+    ratio = float(options.pop(TRACE_BASIS_RATIO_OPTION, PRODUCTION_TRACE_BASIS_RATIO))
+    return options, ratio, label
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("case_id")
@@ -70,11 +95,11 @@ def main():
     manifest_path = args.manifest.resolve()
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("Pipeline") != "gmsh-only":
-        parser.error("the manifest must be the Gmsh-only production manifest")
+        parser.error("the manifest must be a Gmsh-only (production or labeled calibration) manifest")
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     os.chdir(repository)
     case = next(item for item in manifest["Cases"] if item["Id"] == args.case_id)
-    recipe = manifest["ProductionRecipe"]["BuildCommandOptions"]
+    recipe, trace_basis_ratio, label = case_build_options(manifest, case)
     gates = manifest["Gates"]
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     root = args.root or Path(f"/tmp/coupon-gmsh-only-{args.case_id}-{commit}-{time.strftime('%Y%m%d-%H%M%S')}")
@@ -116,9 +141,10 @@ def main():
         return result.returncode
 
     if not args.audits_only:
-        (root / "PRODUCTION.txt").write_text(
-            f"Gmsh-only production build {args.case_id} at {commit} (decision 38): build options {recipe}; "
-            f"NormalSize {normal} TangentialSize {tangent} FarSize {far}; process {process}; manifest {manifest_path}\n")
+        (root / ("CALIBRATION.txt" if "Calibration" in manifest else "PRODUCTION.txt")).write_text(
+            f"{label} at {commit} (decision 38): build options {recipe}, {TRACE_BASIS_RATIO_OPTION} "
+            f"{trace_basis_ratio}; NormalSize {normal} CornerIsotropyRadius {tangent} FarSize {far}; "
+            f"process {process}; manifest {manifest_path}\n")
         (root / "canonical-transform.json").write_text("[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]\n")
         (root / "input-hashes.json").write_text(json.dumps({k: v["SHA256"] for k, v in source["Files"].items()}, indent=2))
         (root / "gates.json").write_text(json.dumps(gates, indent=2))
@@ -141,7 +167,7 @@ def main():
         if "BasisContract" in paths:
             for role, (name, option) in TRACE_BASIS.items():
                 basis_inputs += ["--input", f"{name}={S[role]}"]; basis_options += [option, S[role]]
-            basis_options += ["--trace-basis-size-ratio", "1.0"]
+            basis_options += [TRACE_BASIS_RATIO_OPTION, number(trace_basis_ratio)]
         etch_inputs, etch_options = [], []
         if "RetainedEtch" in paths:
             etch_inputs = ["--input", f"source-retained-etch={S['RetainedEtch']}"]

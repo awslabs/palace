@@ -362,6 +362,49 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "label-restoration command does not execute"):
             validate_calibration_commands(restored, {**ruled, "label-restoration": stages["label-restoration"]})
 
+    def test_validate_calibration_commands_binds_the_gmsh_only_build_command(self):
+        # Under the Gmsh-only pipeline (decision 41) a calibration case declares
+        # BuildCommandOptions against ProductionValues: each declared option exactly
+        # once at its value, never at the production value; undeclared production
+        # options only at the production value; any subset of options may be declared.
+        production = {"--lc-tangent": 0.05, "--edge-size": 0.00025, "--edge-growth-ratio": 2.0,
+                      "--corner-size": 0.00025, "--far-growth": 0.5, "--trace-basis-size-ratio": 1.0}
+        def build(**values):
+            options = {**production, **values}
+            return {"gmsh-build": {"Command": ["julia", "mesh_spatial_coupon.jl", "--prism-tubes", "true"]
+                                   + [token for option, value in options.items()
+                                      for token in (option, repr(value))]}}
+        ratio_case = {"Calibration": {"BuildCommandOptions": {"--trace-basis-size-ratio": 0.5},
+                                      "ProductionValues": production}}
+        tangent_case = {"Calibration": {"BuildCommandOptions": {"--lc-tangent": 0.025},
+                                        "ProductionValues": production}}
+        validate_calibration_commands(ratio_case, build(**{"--trace-basis-size-ratio": 0.5}), "gmsh-only")
+        validate_calibration_commands(tangent_case, build(**{"--lc-tangent": 0.025}), "gmsh-only")
+        validate_calibration_commands({}, build(), "gmsh-only")
+        # The production build (every option at its production value) is not the label.
+        with self.assertRaisesRegex(ValueError, "--trace-basis-size-ratio=0.5 exactly once"):
+            validate_calibration_commands(ratio_case, build(), "gmsh-only")
+        # The other variant's build is not this label either.
+        with self.assertRaisesRegex(ValueError, "--lc-tangent=0.025 exactly once"):
+            validate_calibration_commands(tangent_case, build(**{"--trace-basis-size-ratio": 0.5}), "gmsh-only")
+        with self.assertRaisesRegex(ValueError, "away from its production value"):
+            validate_calibration_commands(ratio_case, build(**{"--trace-basis-size-ratio": 0.5,
+                                                               "--lc-tangent": 0.025}), "gmsh-only")
+        with self.assertRaisesRegex(ValueError, "declared at its production value"):
+            validate_calibration_commands({"Calibration": {"BuildCommandOptions": {"--lc-tangent": 0.05},
+                                                           "ProductionValues": production}},
+                                          build(), "gmsh-only")
+        with self.assertRaisesRegex(ValueError, "has no production value"):
+            validate_calibration_commands({"Calibration": {"BuildCommandOptions": {"--lc-fine": 0.01},
+                                                           "ProductionValues": production}},
+                                          build(**{"--lc-fine": 0.01}), "gmsh-only")
+        # The legacy stage blocks are not consulted under the Gmsh-only pipeline, and the
+        # Gmsh-only block requires the pipeline's production-values key.
+        with self.assertRaises(KeyError):
+            validate_calibration_commands({"Calibration": {"BuildCommandOptions": {"--lc-tangent": 0.025},
+                                                           "ProductionValuesBefore34B": production}},
+                                          build(**{"--lc-tangent": 0.025}), "gmsh-only")
+
     def test_variants_are_judged_by_the_case_gates_not_the_manifest_wide_rule(self):
         """A calibration manifest carrying Gates.EdgeLayerQualityRule judges a case that
         does not declare the rule (its stages never executed the bound) without it,

@@ -14,7 +14,41 @@ gates.
 Gmsh-only pipeline (`Pipeline: gmsh-only`, decision 38, below); the labeled
 calibration manifest `geometry-independence-calibration-ma.json` freezes the legacy
 MMG pipeline (`Pipeline: legacy-mmg`) so its calibration cases and evidence remain
-verifiable.
+verifiable, and the labeled calibration manifest
+`geometry-independence-calibration-sizing.json` (supervisor decision 41) freezes the
+Gmsh-only pipeline for the sizing calibration of the four-edge case (below).
+
+### Gmsh-only sizing calibration manifest (supervisor decision 41, 2026-09-19)
+
+`geometry-independence-calibration-sizing.json` is a CALIBRATION-ONLY manifest of
+the Gmsh-only pipeline: it carries a `Calibration` block (no `ProductionRecipe`),
+`GateDeviations` `{}` - every gate at its production value -, and `Tools` /
+`StageToolSHA256` mirrored from production by `refreeze_manifest_tools.py`
+(`CALIBRATION_MANIFESTS`; `--check` reports a stale mirror of either calibration
+manifest). Its cases clone the production four-edge case (same immutable inputs,
+hashes, semantic contract, variants and covariance comparison; `InventoryStatus`
+Calibration, `Calibration.BaseCase`) and declare `Calibration.BuildCommandOptions` -
+the build options that differ from production, any subset - against
+`Calibration.ProductionValues` (the production `BuildCommandOptions` with
+`--trace-basis-size-ratio 1.0`): `four-edge-calib-sizing-tbr-0.5` (V-a,
+`--trace-basis-size-ratio 0.5`) and `four-edge-calib-sizing-lct-0.025` (V-b,
+`--lc-tangent 0.025`). `validate_manifest`
+(`validate_calibration_case_options`) requires the label, non-empty options and
+differing finite production values; `verify_canonical_case_entries.
+validate_calibration_commands` is pipeline-aware (`PIPELINE_CALIBRATION_STAGE_OPTIONS`:
+the legacy seed / metric / adaptation / restoration blocks against
+`ProductionValuesBefore34B`, the Gmsh-only `gmsh-build` block against
+`ProductionValues`) and requires the recorded build command to execute every declared
+option exactly once at its value, never at its production value, and every undeclared
+production option only at its production value - the canonical cache key does not
+encode recipe options, so the recorded command is the binding of the label to the
+build (a root labeled V-b but built with the production options, or with V-a's, is
+rejected). `run_gmsh_only_case.py CASE --manifest geometry-independence-calibration-sizing.json`
+builds a calibration case from `ProductionValues` overridden by `BuildCommandOptions`
+(`case_build_options`; `--trace-basis-size-ratio` is one of the options and is passed
+with the bound trace basis; a production case executes the production recipe at 1.0)
+and writes `CALIBRATION.txt` instead of `PRODUCTION.txt` in the root. The production
+manifest is untouched (TraceBasisSizeRatio 1.0 / TangentialSize 0.05).
 
 ## Gmsh-only production pipeline (supervisor decision 38, 2026-09-18)
 

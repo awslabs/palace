@@ -10,7 +10,8 @@ readability, bound audit/stage records, exact canonical-build reuse) and the
 frozen physical-covariance comparison is evaluated whenever both compared
 variants have evidence - even when a variant fails - so one report lists every
 failure of the case.  A case with a `Calibration` block is additionally bound to
-its recorded seed/metric/adaptation commands (`validate_calibration_commands`).
+its recorded recipe-stage commands (`validate_calibration_commands`: the legacy
+seed/metric/adaptation/restoration commands or the Gmsh-only build command).
 The report is written whether or not the case passed;
 the exit status is nonzero unless everything passed.  Scope: a single case and
 its manifest variants; no matrix, physics or release qualification.
@@ -24,10 +25,12 @@ import sys
 
 from canonical_mesh_build import same_canonical_build
 from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUALITY_RULE_OPTION,
-                                   _check_artifact, _finite_number,
-                                   _physical_comparison_failures, _validate_bound_records,
-                                   _validate_mesh, audit_manifest_evidence, canonical_sha256,
-                                   case_gates, option_values as _option_values, sha256,
+                                   GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE,
+                                   PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY, _check_artifact,
+                                   _finite_number, _physical_comparison_failures,
+                                   _validate_bound_records, _validate_mesh,
+                                   audit_manifest_evidence, canonical_sha256, case_gates,
+                                   manifest_pipeline, option_values as _option_values, sha256,
                                    validate_manifest, validate_production_recipe_commands)
 from semantic_mesh_contract import load_semantic_contract, validate_feature_topology
 
@@ -41,36 +44,44 @@ _EXPECTED_ERRORS = (KeyError, OSError, TypeError, ValueError, json.JSONDecodeErr
 # A calibration case (labeled calibration manifest) declares the recipe options that
 # differ from production per stage command; the canonical cache key does not encode
 # them, so the recorded stage commands are the only binding of the label to the build.
-# A stage whose block is absent declares no calibration option for that stage.
-CALIBRATION_STAGE_OPTIONS = {"seed-generation": "SeedCommandOptions",
-                             "metric-preparation": "MetricCommandOptions",
-                             "native-adaptation-mmg": "AdaptationCommandOptions",
-                             "label-restoration": "RestorationCommandOptions"}
+# A stage whose block is absent declares no calibration option for that stage. The
+# stages and the key of the production values are the pipeline's: the legacy MMG
+# stages declared against the production values before decision 34B, the Gmsh-only
+# build command declared against the production BuildCommandOptions (decision 41).
+PIPELINE_CALIBRATION_STAGE_OPTIONS = {
+    LEGACY_MMG_PIPELINE: {"seed-generation": "SeedCommandOptions",
+                          "metric-preparation": "MetricCommandOptions",
+                          "native-adaptation-mmg": "AdaptationCommandOptions",
+                          "label-restoration": "RestorationCommandOptions"},
+    GMSH_ONLY_PIPELINE: {"gmsh-build": "BuildCommandOptions"},
+}
+CALIBRATION_STAGE_OPTIONS = PIPELINE_CALIBRATION_STAGE_OPTIONS[LEGACY_MMG_PIPELINE]
 # The edge-layer quality rule (decision 32) is a manifest gate; the seed and the
 # label restorer of a case declaring Calibration.EdgeLayerQualityRule execute its bound.
 EDGE_LAYER_QUALITY_RULE_STAGES = ("seed-generation", "label-restoration")
-# The production values a calibration case's options are declared against: those of
-# the production recipe before decision 34B (seed --lc-tangent 0.1, metric
-# --far-growth 1.0, no edge layer, adapter --hmin NormalSize, no corner grading).
-CALIBRATION_PRODUCTION_VALUES_KEY = "ProductionValuesBefore34B"
+# The production values a calibration case's options are declared against
+# (general_mesh_manifest.PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY).
+CALIBRATION_PRODUCTION_VALUES_KEY = PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY[LEGACY_MMG_PIPELINE]
 
 
-def validate_calibration_commands(case, bounded_stages):
-    """For a case with a `Calibration` block, the recorded seed-generation,
-    metric-preparation and native-adaptation commands must execute exactly each
-    declared option/value pair and none of the `ProductionValuesBefore34B` of those
-    options (the production values at the time of the study, before supervisor decision
-    34B adopted the EL4c recipe); an undeclared production option may appear only at
-    its recorded pre-34B production value.  An option
-    shared by several stage commands (the seed and the metric both take
-    `--edge-size`) is declared for each stage with one value.  Raises ValueError
-    otherwise."""
+def validate_calibration_commands(case, bounded_stages, pipeline=LEGACY_MMG_PIPELINE):
+    """For a case with a `Calibration` block, the recorded recipe-stage commands of the
+    pipeline (legacy: seed-generation, metric-preparation, native-adaptation,
+    label-restoration; Gmsh-only: gmsh-build) must execute exactly each declared
+    option/value pair and none of the production values of those options (legacy:
+    `ProductionValuesBefore34B`, the production values at the time of the study,
+    before supervisor decision 34B adopted the EL4c recipe; Gmsh-only:
+    `ProductionValues`); an undeclared production option may appear only at its
+    recorded production value.  An option shared by several stage commands (the seed
+    and the metric both take `--edge-size`) is declared for each stage with one
+    value.  Raises ValueError otherwise."""
     calibration = case.get("Calibration")
     if calibration is None:
         return
-    production = calibration[CALIBRATION_PRODUCTION_VALUES_KEY]
+    stage_options = PIPELINE_CALIBRATION_STAGE_OPTIONS[pipeline]
+    production = calibration[PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY[pipeline]]
     declared = {}
-    for stage, key in CALIBRATION_STAGE_OPTIONS.items():
+    for stage, key in stage_options.items():
         command = bounded_stages[stage]["Command"]
         for option, value in calibration.get(key, {}).items():
             stages = declared.setdefault(option, {})
@@ -87,7 +98,7 @@ def validate_calibration_commands(case, bounded_stages):
                 raise ValueError(f"{stage} command does not execute calibration option "
                                  f"{option}={value} exactly once (executed {executed})")
     for option, value in production.items():
-        for stage in CALIBRATION_STAGE_OPTIONS:
+        for stage in stage_options:
             if stage in declared.get(option, {}):
                 continue
             executed = _option_values(bounded_stages[stage]["Command"], option)
@@ -170,7 +181,7 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
                         if item.get("Kind") == "bounded-run")
     bounded_record = json.loads(_check_artifact(evidence_path.parent, bounded_item,
                                                 "audit record").read_text())
-    validate_calibration_commands(case, bounded_record["BoundedStages"])
+    validate_calibration_commands(case, bounded_record["BoundedStages"], manifest_pipeline(manifest))
     validate_production_recipe_commands(manifest, case, bounded_record["BoundedStages"])
     validate_edge_layer_quality_rule_binding(manifest, case, bounded_record["BoundedStages"])
     if shared["variant_digests"] & variant_digests:

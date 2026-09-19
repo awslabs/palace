@@ -4,13 +4,14 @@
 
 """Refreeze the repository-tool SHA-256 digests of the production suite manifest and
 mirror its `Tools` / shared `StageToolSHA256` stages into the labeled calibration
-manifest.
+manifests.
 
 The production manifest freezes the Gmsh-only pipeline's stages (supervisor decision
 38: canonical-source-validation, gmsh-build, canonical-gmsh-publication,
-proper-rigid-publication); the calibration manifest keeps the legacy MMG stages
+proper-rigid-publication); the MA calibration manifest keeps the legacy MMG stages
 (seed-generation, metric-preparation, native-adaptation-mmg, label-restoration) and
-shares the other three.  Each manifest is refrozen over the stages it freezes; the
+shares the other three; the sizing calibration manifest (supervisor decision 41)
+freezes the Gmsh-only stages and shares all four.  Each manifest is refrozen over the stages it freezes; the
 shared stages and `Tools` are mirrored from production.  Only tools that live in the
 repository are recomputed: every `Tools` entry and the stage-tool roles listed in
 STAGE_REPOSITORY_TOOLS.  Runtimes and the MMG library are machine-bound identities
@@ -21,9 +22,9 @@ machine-bound too (a build of `adapt_edge_metric.cpp`, never committed): its
 (`testdata/adapter-build.json`: command, compiler, source/exe/dylib SHA-256, rpath)
 whose source digest is the repository's `adapt_edge_metric.cpp`.  The Julia runtime
 roles (JULIA_RUNTIME_ROLES) are machine-bound likewise and change only through an
-explicit `--julia-runtime PATH` naming the launcher executable actually run.  The calibration
+explicit `--julia-runtime PATH` naming the launcher executable actually run.  Every calibration
 manifest must carry exactly the production tool digests (asserted by
-`test_general_mesh_manifest.py`), so both manifests are always refrozen together.
+`test_general_mesh_manifest.py`), so the manifests are always refrozen together.
 `--check` reports stale digests or a stale mirror without writing (exit 1).
 """
 import argparse
@@ -35,6 +36,9 @@ import sys
 HERE = Path(__file__).resolve().parent
 PRODUCTION_MANIFEST = HERE / "geometry-independence-suite.json"
 CALIBRATION_MANIFEST = HERE / "geometry-independence-calibration-ma.json"
+# The labeled calibration manifests: the legacy MMG edge-layer study and the
+# Gmsh-only sizing calibration (supervisor decision 41; shares every stage).
+CALIBRATION_MANIFESTS = (CALIBRATION_MANIFEST, HERE / "geometry-independence-calibration-sizing.json")
 # Stage tool roles whose identity is a repository file (relative to this directory).
 STAGE_REPOSITORY_TOOLS = {
     ("canonical-source-validation", "source-validator"): "transform_coupon_source_contract.py",
@@ -118,36 +122,41 @@ def shared_stages(production, calibration):
     return sorted(set(production["StageToolSHA256"]) & set(calibration["StageToolSHA256"]))
 
 
-def refreeze(production_path, calibration_path, *, check_only, adapter=None, julia_runtime=None):
-    """Refreeze both manifests (or only report); returns (changes, mirror_was_stale).
-    The calibration manifest's own (legacy) stages are refrozen from the repository;
-    its `Tools` and the stages shared with production are mirrored from production."""
+def refreeze(production_path, *calibration_paths, check_only, adapter=None, julia_runtime=None):
+    """Refreeze the production manifest and every calibration manifest (or only
+    report); returns (changes, mirror_was_stale).  A calibration manifest's own stages
+    (the legacy stages) are refrozen from the repository; its `Tools` and the stages
+    shared with production are mirrored from production."""
     production = json.loads(production_path.read_text())
-    calibration = json.loads(calibration_path.read_text())
+    calibrations = [json.loads(path.read_text()) for path in calibration_paths]
     production, changes = refrozen_production(production, production_path, adapter, julia_runtime)
-    calibration, calibration_changes = refrozen_production(calibration, calibration_path, adapter,
-                                                           julia_runtime)
-    # The calibration manifest's own stage roles (its legacy stages); its `Tools` and
-    # shared stages are mirrored below.
-    changes += [(f"calibration {name}", old, new) for name, old, new in calibration_changes
-                if "/" in name and name.split("/")[0] not in shared_stages(production, calibration)]
-    shared = shared_stages(production, calibration)
-    mirror_stale = (calibration["Tools"] != production["Tools"] or
-                    any(calibration["StageToolSHA256"][stage] != production["StageToolSHA256"][stage]
-                        for stage in shared))
+    mirror_stale = False
+    for calibration_path, calibration in zip(calibration_paths, calibrations):
+        calibration, calibration_changes = refrozen_production(calibration, calibration_path, adapter,
+                                                               julia_runtime)
+        # The calibration manifest's own stage roles (its legacy stages); its `Tools`
+        # and shared stages are mirrored below.
+        shared = shared_stages(production, calibration)
+        changes += [(f"{calibration_path.name} {name}", old, new) for name, old, new in calibration_changes
+                    if "/" in name and name.split("/")[0] not in shared]
+        mirror_stale |= (calibration["Tools"] != production["Tools"] or
+                         any(calibration["StageToolSHA256"][stage] != production["StageToolSHA256"][stage]
+                             for stage in shared))
     if not check_only and (changes or mirror_stale):
-        calibration["Tools"] = production["Tools"]
-        for stage in shared:
-            calibration["StageToolSHA256"][stage] = production["StageToolSHA256"][stage]
         production_path.write_text(json.dumps(production, indent=2) + "\n")
-        calibration_path.write_text(json.dumps(calibration, indent=2) + "\n")
+        for calibration_path, calibration in zip(calibration_paths, calibrations):
+            calibration["Tools"] = production["Tools"]
+            for stage in shared_stages(production, calibration):
+                calibration["StageToolSHA256"][stage] = production["StageToolSHA256"][stage]
+            calibration_path.write_text(json.dumps(calibration, indent=2) + "\n")
     return changes, mirror_stale
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--production", type=Path, default=PRODUCTION_MANIFEST)
-    parser.add_argument("--calibration", type=Path, default=CALIBRATION_MANIFEST)
+    parser.add_argument("--calibration", type=Path, nargs="+", default=list(CALIBRATION_MANIFESTS),
+                        help="labeled calibration manifests mirrored from production")
     parser.add_argument("--check", action="store_true",
                         help="report stale digests without writing; exit 1 when stale")
     parser.add_argument("--adapter-mmg", type=Path,
@@ -158,7 +167,7 @@ def main():
                              "the Julia runtime stage tools (seed, publisher, ownership)")
     args = parser.parse_args()
     try:
-        changes, mirror_stale = refreeze(args.production, args.calibration,
+        changes, mirror_stale = refreeze(args.production, *args.calibration,
                                          check_only=args.check, adapter=args.adapter_mmg,
                                          julia_runtime=args.julia_runtime)
     except (OSError, ValueError, json.JSONDecodeError) as error:

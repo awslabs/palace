@@ -183,6 +183,44 @@ def validate_production_recipe_commands(manifest, case, bounded_stages):
                 raise ValueError(f"{stage} command does not execute the production recipe "
                                  f"option {option}={value} exactly once (executed {executed})")
 
+# A Gmsh-only calibration case (labeled calibration manifest of the Gmsh-only
+# pipeline, supervisor decision 41) declares the build options that differ from
+# production (Calibration.BuildCommandOptions, any subset) against the production
+# values it was declared at (Calibration.ProductionValues); the recorded gmsh-build
+# command is bound to them by verify_canonical_case_entries.validate_calibration_commands.
+CALIBRATION_BUILD_OPTIONS_KEY = "BuildCommandOptions"
+# The production values a calibration case's options are declared against: under the
+# legacy MMG pipeline those of the production recipe before decision 34B (seed
+# --lc-tangent 0.1, metric --far-growth 1.0, no edge layer, adapter --hmin
+# NormalSize, no corner grading); under the Gmsh-only pipeline the production
+# manifest's BuildCommandOptions with --trace-basis-size-ratio 1.0.
+PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY = {LEGACY_MMG_PIPELINE: "ProductionValuesBefore34B",
+                                              GMSH_ONLY_PIPELINE: "ProductionValues"}
+
+
+def validate_calibration_case_options(manifest, case):
+    """Under a Gmsh-only calibration manifest every case declares a Calibration block
+    with a Label, a non-empty BuildCommandOptions dict of option -> finite number and a
+    ProductionValues dict holding every declared option at a different finite value.
+    Legacy-pipeline calibration cases are declared per stage (verified by the
+    per-case verifier) and are not judged here.  Raises ValueError otherwise."""
+    if "Calibration" not in manifest or manifest_pipeline(manifest) != GMSH_ONLY_PIPELINE:
+        return
+    calibration = case.get("Calibration")
+    options = calibration.get(CALIBRATION_BUILD_OPTIONS_KEY) if isinstance(calibration, dict) else None
+    production = (calibration.get(PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY[GMSH_ONLY_PIPELINE])
+                  if isinstance(calibration, dict) else None)
+    if (not isinstance(calibration.get("Label") if isinstance(calibration, dict) else None, str) or
+            not calibration["Label"] or
+            not isinstance(options, dict) or not options or not isinstance(production, dict) or
+            any(not isinstance(option, str) or not option.startswith("--") or not _finite_number(value)
+                for option, value in list(options.items()) + list(production.items())) or
+            any(option not in production or float(production[option]) == float(value)
+                for option, value in options.items())):
+        raise ValueError(f"{case.get('Id')} must declare its Gmsh-only calibration label and "
+                         f"build options against differing production values")
+
+
 # The trace basis is bound (seed cut-surface sizing and metric record) exactly when
 # a case freezes all four roles; a partial set fails preflight.
 TRACE_BASIS_ROLES = ("BasisContract", "TraceVertices", "TraceTriangles", "ProcessLibrary")
@@ -327,6 +365,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         if EDGE_LAYER_CASE_KEY in case:
             raise ValueError(f"{case['Id']} must declare its edge layer under Calibration")
         validate_case_element_cap(manifest, case)
+        validate_calibration_case_options(manifest, case)
         source = case.get("Source", {})
         files = source.get("Files")
         if not isinstance(files, dict) or any(role not in files for role in REQUIRED_ROLES):

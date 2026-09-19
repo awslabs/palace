@@ -2270,17 +2270,89 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertEqual(case["TransformComparison"], base["TransformComparison"])
         validate_manifest(calibration, calibration_path)
 
+    def test_sizing_calibration_manifest_is_a_labeled_gmsh_only_calibration(self):
+        # Decision 41: the sizing calibration manifest freezes the Gmsh-only pipeline,
+        # carries no production recipe and no gate deviation (every gate at its
+        # production value), mirrors the production tools and stages, and its cases
+        # clone the production four-edge case with Calibration.BuildCommandOptions
+        # declared against Calibration.ProductionValues (the production build options
+        # with --trace-basis-size-ratio 1.0), each differing from production in exactly
+        # its lever: V-a --trace-basis-size-ratio 0.5, V-b --lc-tangent 0.025.
+        from run_gmsh_only_case import case_build_options
+        production_path = HERE / "geometry-independence-suite.json"
+        sizing_path = HERE / "geometry-independence-calibration-sizing.json"
+        production = json.loads(production_path.read_text())
+        sizing = json.loads(sizing_path.read_text())
+        validate_manifest(sizing, sizing_path)
+        self.assertEqual(sizing["Pipeline"], "gmsh-only")
+        self.assertNotIn("ProductionRecipe", sizing)
+        self.assertEqual(sizing["Calibration"]["GateDeviations"], {})
+        self.assertEqual(sizing["Gates"], production["Gates"])
+        self.assertEqual(sizing["Tools"], production["Tools"])
+        self.assertEqual(sizing["StageToolSHA256"], production["StageToolSHA256"])
+        base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
+        production_values = {**production["ProductionRecipe"]["BuildCommandOptions"],
+                             "--trace-basis-size-ratio": 1.0}
+        levers = {}
+        for case in sizing["Cases"]:
+            self.assertIn("calib-sizing", case["Id"])
+            self.assertEqual(case["InventoryStatus"], "Calibration")
+            self.assertEqual(case["Calibration"]["BaseCase"], base["Id"])
+            self.assertEqual(case["Source"], base["Source"])
+            self.assertEqual(case["Variants"], base["Variants"])
+            self.assertEqual(case["TransformComparison"], base["TransformComparison"])
+            self.assertEqual(case["Calibration"]["ProductionValues"], production_values)
+            declared = case["Calibration"]["BuildCommandOptions"]
+            self.assertEqual(len(declared), 1)
+            levers.update(declared)
+            options, ratio, label = case_build_options(sizing, case)
+            self.assertIn("CALIBRATION", label)
+            expected = {**production_values, **declared}
+            self.assertEqual(ratio, expected.pop("--trace-basis-size-ratio"))
+            self.assertEqual(options, expected)
+        self.assertEqual(levers, {"--trace-basis-size-ratio": 0.5, "--lc-tangent": 0.025})
+        # A production case executes the production recipe at ratio 1.0.
+        options, ratio, label = case_build_options(production, base)
+        self.assertEqual((options, ratio), (production["ProductionRecipe"]["BuildCommandOptions"], 1.0))
+        self.assertNotIn("CALIBRATION", label)
+        # Malformed labels fail closed: a missing label, an option at its production
+        # value, an option without a production value, no option, a legacy-shaped block.
+        def rejected(mutate):
+            broken = copy.deepcopy(sizing)
+            mutate(broken["Cases"][0]["Calibration"])
+            with self.assertRaisesRegex(ValueError, "Gmsh-only calibration label"):
+                validate_manifest(broken, sizing_path, check_available_files=False)
+        rejected(lambda c: c.pop("Label"))
+        rejected(lambda c: c["BuildCommandOptions"].__setitem__("--trace-basis-size-ratio", 1.0))
+        rejected(lambda c: c["BuildCommandOptions"].__setitem__("--lc-fine", 0.01))
+        rejected(lambda c: c.__setitem__("BuildCommandOptions", {}))
+        rejected(lambda c: c.__setitem__("ProductionValues", None))
+        rejected(lambda c: c.__setitem__("BuildCommandOptions", {"lc-tangent": 0.025}))
+        rejected(lambda c: c.__setitem__("ProductionValues", c.pop("ProductionValuesBefore34B", None)))
+        with self.assertRaisesRegex(ValueError, "cannot carry a production recipe"):
+            validate_manifest({**sizing, "ProductionRecipe": production["ProductionRecipe"]}, sizing_path,
+                              check_available_files=False)
+
     def test_refreeze_manifest_tools_keeps_both_manifests_current_together(self):
-        # The in-repo refreeze recomputes every repository-tool digest of both manifests
-        # over the stages each freezes (production: the Gmsh-only pipeline; calibration:
-        # the legacy MMG pipeline) and mirrors Tools and the shared stages from
-        # production into the calibration manifest; the committed manifests must be
-        # current (fails closed when a refreeze was forgotten).
+        # The in-repo refreeze recomputes every repository-tool digest of the manifests
+        # over the stages each freezes (production: the Gmsh-only pipeline; MA
+        # calibration: the legacy MMG pipeline; sizing calibration: the Gmsh-only
+        # pipeline) and mirrors Tools and the shared stages from production into the
+        # calibration manifests; the committed manifests must be current (fails closed
+        # when a refreeze was forgotten).
         import refreeze_manifest_tools as refreezer
         production_path = HERE / "geometry-independence-suite.json"
         calibration_path = HERE / "geometry-independence-calibration-ma.json"
+        sizing_path = HERE / "geometry-independence-calibration-sizing.json"
         self.assertEqual(refreezer.refreeze(production_path, calibration_path, check_only=True),
                          ([], False))
+        self.assertEqual(refreezer.refreeze(production_path, *refreezer.CALIBRATION_MANIFESTS, check_only=True),
+                         ([], False))
+        self.assertEqual(tuple(refreezer.CALIBRATION_MANIFESTS), (calibration_path, sizing_path))
+        sizing = json.loads(sizing_path.read_text())
+        self.assertEqual(refreezer.shared_stages(json.loads(production_path.read_text()), sizing),
+                         ["canonical-gmsh-publication", "canonical-source-validation", "gmsh-build",
+                          "proper-rigid-publication"])
         production = json.loads(production_path.read_text())
         calibration = json.loads(calibration_path.read_text())
         self.assertEqual(set(production["StageToolSHA256"]),
@@ -2342,7 +2414,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             changes, mirror_stale = refreezer.refreeze(stale_production, stale_calibration,
                                                       check_only=True)
             self.assertEqual([(name, old) for name, old, _ in changes],
-                             [("calibration seed-generation/mesher", "3" * 64)])
+                             [("geometry-independence-calibration-ma.json seed-generation/mesher", "3" * 64)])
             self.assertFalse(mirror_stale)
             refreezer.refreeze(stale_production, stale_calibration, check_only=False)
             self.assertEqual(json.loads(stale_calibration.read_text()), calibration)
@@ -2374,7 +2446,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             (root / "testdata" / "adapter-build.json").write_text(json.dumps(record))
             changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=False,
                                             adapter=adapter)
-            self.assertEqual(changes, [("calibration native-adaptation-mmg/adapter-mmg",
+            self.assertEqual(changes, [("geometry-independence-calibration-ma.json native-adaptation-mmg/adapter-mmg",
                                         calibration["StageToolSHA256"]["native-adaptation-mmg"]
                                         ["adapter-mmg"], sha256(adapter))])
             self.assertEqual(json.loads(stale_calibration.read_text())["StageToolSHA256"]
@@ -2397,7 +2469,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertEqual(sorted(name for name, _, _ in changes),
                              sorted([f"{stage}/{role}" for stage, role in refreezer.JULIA_RUNTIME_ROLES
                                      if stage in production["StageToolSHA256"]] +
-                                    ["calibration seed-generation/runtime"]))
+                                    ["geometry-independence-calibration-ma.json seed-generation/runtime"]))
             for manifest_path in (stale_production, stale_calibration):
                 frozen = json.loads(manifest_path.read_text())["StageToolSHA256"]
                 for stage, role in refreezer.JULIA_RUNTIME_ROLES:

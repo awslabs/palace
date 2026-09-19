@@ -99,12 +99,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "a857403bedf960ea0fd1d1872163cc228f6cc7f4920a030ed1cca14facf05bc9"
+      "SHA256": "91708b7aa566e3fabd457a2c55be8818d8acb5e68f3dc43860b0dd675235a0c1"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "8ca5929c2aa53f29af0712619bd926cd112f5a863aed13a1777c73ff4c6f6b2b"
+      "SHA256": "1b9d43c6eae19827b2eb4ed7524a14187cd9497a07b02665673860e28c95920e"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
