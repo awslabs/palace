@@ -14,7 +14,7 @@
 #        [--pyramid-height 0.008] [--census census.json]
 
 include(joinpath(@__DIR__, "..", "mesh_spatial_coupon.jl"))
-include(joinpath(@__DIR__, "prism_tube.jl"))
+include(joinpath(@__DIR__, "..", "prism_edge_tubes.jl"))
 include(joinpath(@__DIR__, "hybrid_census.jl"))
 using TOML
 

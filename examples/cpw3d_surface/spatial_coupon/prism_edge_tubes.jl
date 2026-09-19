@@ -1,18 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Feasibility SPIKE (supervisor decision 37): localized prism edge tubes.
+# Localized prism edge tubes of the Gmsh-only spatial coupon mesher (supervisor
+# decisions 37 and 38; first built as the prism-tube feasibility spike).
 #
 # A straight metal edge is surrounded, on its dielectric side, by a tube whose 2D
 # cross-section is meshed once with geometric rings (ring k has radial size
-# inner_size x ratio^(k - 1)) and extruded along the edge with the production
-# tangential spacing, giving prisms. The tube volumes are OCC polygon-sector
-# prisms fragmented with the coupon CAD; their mesh (points, curves, faces,
-# volumes) is installed explicitly so that Mesh.MeshOnlyEmpty leaves it alone
-# while Gmsh meshes the remaining entities. The tube's outer lateral quadrangles
-# carry explicit pyramids, so Gmsh meshes pure tetrahedra against triangles.
-#
-# Not production: not part of the canonical pipeline or its audits.
+# inner_size x ratio^(k - 1)) and extruded along the edge at the tangential
+# spacing (at most lc_tangent; the recorded spacing divides the tube length),
+# giving prisms. The tube volumes are OCC polygon-sector prisms fragmented with
+# the coupon CAD; their mesh (points, curves, faces, volumes) is installed
+# explicitly so that Mesh.MeshOnlyEmpty leaves it alone while Gmsh meshes the
+# remaining entities. The tube's outer lateral quadrangles carry explicit
+# pyramids, so Gmsh meshes pure tetrahedra against triangles.
 
 import Gmsh: gmsh
 using LinearAlgebra
@@ -113,18 +113,22 @@ struct EdgeTube
     layers::Int
 end
 
+# The layer count is the smallest number of equal layers whose spacing does not
+# exceed `spacing` (a tube whose length is a multiple of the spacing keeps it
+# exactly; tube_spacing records the spacing actually used).
 function EdgeTube(origin, n, b, s_start, s_end, spacing)
     n = collect(Float64, n) ./ norm(n)
     b = collect(Float64, b) ./ norm(b)
     abs(dot(n, b)) < 1.0e-12 || error("tube frame must be orthogonal")
     e = cross(n, b)
     s_end > s_start || error("tube interval must be increasing")
-    layers = round(Int, (s_end - s_start) / spacing)
-    abs(layers * spacing - (s_end - s_start)) <= 1.0e-9 * spacing ||
-        error("tube length $(s_end - s_start) is not a multiple of the spacing $spacing")
-    layers >= 1 || error("tube needs at least one layer")
+    spacing > 0.0 || error("tube spacing must be positive")
+    extent = s_end - s_start
+    layers = max(1, ceil(Int, extent / spacing * (1.0 - 1.0e-9)))
     return EdgeTube(collect(Float64, origin), n, b, e, s_start, s_end, layers)
 end
+
+tube_spacing(tube::EdgeTube) = (tube.s_end - tube.s_start) / tube.layers
 
 function tube_point(tube::EdgeTube, u, w, s)
     return tube.origin .+ u .* tube.n .+ w .* tube.b .+ s .* tube.e

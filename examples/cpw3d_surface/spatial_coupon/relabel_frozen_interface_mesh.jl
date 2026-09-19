@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Apply the exact element-wise interface ownership partition to an already generated
-# all-tetrahedral mesh. This permits fixed-surface volume generation to remain
-# independent of bookkeeping slots while retaining the original response attributes.
+# linear volume mesh (tetrahedra, or the tetrahedra / prisms / pyramids of the
+# prism-tube build with triangular and quadrangular interface elements). This
+# permits fixed-surface volume generation to remain independent of bookkeeping
+# slots while retaining the original response attributes.
 using Gmsh: gmsh
 using DelimitedFiles
 using SHA
@@ -59,7 +61,7 @@ function surface_elements()
             types, tags, connectivity = gmsh.model.mesh.getElements(2, entity)
             for (type, elements, nodes) in zip(types, tags, connectivity)
                 _, _, _, nnode, _, primary = gmsh.model.mesh.getElementProperties(type)
-                primary == 3 || error("Physical surface contains a nontriangular element")
+                primary in (3, 4) || error("Physical surface contains an element that is neither a triangle nor a quadrangle")
                 for (i, element) in enumerate(elements)
                     haskey(result, element) && error("A surface element has multiple physical assignments")
                     result[element] = (Int(type), collect(nodes[(i - 1) * nnode + 1:i * nnode]))
@@ -221,11 +223,13 @@ function main()
                 println(target, readline(source))
                 for line in eachline(source)
                     fields = split(line, ',')
-                    length(fields) == 6 || error("Invalid partition certificate row")
+                    length(fields) == 7 || error("Invalid partition certificate row")
+                    # node_d is 0 for a triangle.
                     nodes = [coordinate_to_node[before_nodes[parse(UInt64, field)]]
-                             for field in fields[4:6]]
+                             for field in fields[4:7] if field != "0"]
                     element = serialized_faces[Tuple(sort(nodes))]
-                    println(target, join((element, fields[2], fields[3], nodes...), ','))
+                    println(target, join((element, fields[2], fields[3], nodes...,
+                                          fill(0, 4 - length(nodes))...), ','))
                 end
             end
         end

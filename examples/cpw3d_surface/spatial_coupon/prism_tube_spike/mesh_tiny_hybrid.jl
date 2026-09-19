@@ -10,7 +10,7 @@
 # usage: julia --project=test/examples mesh_tiny_hybrid.jl hybrid|tets output.msh [--inner-size um]
 #        [--spacing um] [--lc-edge um] [--pyramid-height um] [--census output.json]
 
-include(joinpath(@__DIR__, "prism_tube.jl"))
+include(joinpath(@__DIR__, "..", "prism_edge_tubes.jl"))
 include(joinpath(@__DIR__, "hybrid_census.jl"))
 
 function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7,

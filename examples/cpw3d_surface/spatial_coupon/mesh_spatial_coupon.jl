@@ -7,6 +7,7 @@ import Gmsh: gmsh
 using DelimitedFiles
 using LinearAlgebra
 using SHA
+include(joinpath(@__DIR__, "prism_edge_tubes.jl"))
 
 function signature_integer(value, name)
     value isa Real && isfinite(value) && value==round(value) ||
@@ -773,12 +774,14 @@ function seed_corner_census(corners, grading::CornerGrading, tolerance)
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
-    _, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
+    types, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
     tetrahedra = Vector{NTuple{4, Int}}()
-    for (tags, block) in zip(element_tags, element_nodes)
+    for (type, tags, block) in zip(types, element_tags, element_nodes)
         isempty(tags) && continue
+        # Tetrahedral blocks only (a tube's prisms and pyramids are not corner-ball
+        # cells); only the vertex nodes define the linear cells (high-order nodes follow).
+        gmsh.model.mesh.getElementProperties(type)[1] |> startswith("Tetrahedron") || continue
         nodes_per_element = length(block) ÷ length(tags)
-        # Only the vertex nodes define the linear cells (high-order nodes follow).
         for start in 1:nodes_per_element:length(block)
             push!(tetrahedra, ntuple(i -> index[block[start + i - 1]], 4))
         end
@@ -1686,12 +1689,15 @@ end
 
 # The linear cells of one dimension with their Gmsh element tags and entity tags
 # (only the vertex nodes define a linear cell; high-order nodes follow).
+# Only the linear simplex blocks of the dimension are read (prisms, pyramids and
+# quadrangles of a tube mesh are not simplices and stay untouched).
 function gmsh_entity_cells(index, dimension, ::Val{width}) where {width}
     cells = Vector{NTuple{width, Int}}(); tags = UInt[]; entities = Int[]
     for (_, entity) in gmsh.model.getEntities(dimension)
-        _, element_tags, element_nodes = gmsh.model.mesh.getElements(dimension, entity)
-        for (block_tags, block) in zip(element_tags, element_nodes)
+        types, element_tags, element_nodes = gmsh.model.mesh.getElements(dimension, entity)
+        for (type, block_tags, block) in zip(types, element_tags, element_nodes)
             isempty(block_tags) && continue
+            Int(type) == GMSH_LINEAR_ELEMENT_TYPE[dimension] || continue
             nodes_per_element = length(block) ÷ length(block_tags)
             nodes_per_element >= width || continue
             for (n, start) in enumerate(1:nodes_per_element:length(block))
@@ -1724,20 +1730,27 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
                                         maximum_jacobian_condition, displacement_ratio, tolerance,
                                         edge_layer_maximum_aspect,
                                         corner_grading=CornerGrading(0.0, growth_ratio, lc_fine,
-                                                                     radius))
+                                                                     radius);
+                                        fixed_node_tags=UInt[])
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(copy(coordinates), 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
     tetrahedra, tags, entities = gmsh_volume_cells(index)
     triangles, triangle_tags, triangle_entities = gmsh_entity_cells(index, 2, Val(3))
     lines, line_tags, line_entities = gmsh_entity_cells(index, 1, Val(2))
+    # The CAD point nodes and every node of a non-simplex cell (the prism tubes and
+    # their pyramids) stay where they are.
+    fixed = gmsh_point_nodes(index, size(points, 2))
+    for tag in fixed_node_tags
+        fixed[index[tag]] = true
+    end
     record, moved, collapse = optimize_required_region!(
         points, tetrahedra, triangles, corners, radius, lc_fine, spans, edge_size, growth_ratio,
         layer_thickness, row_zigzag, maximum_corner_aspect, minimum_scaled_jacobian,
         maximum_jacobian_condition, displacement_ratio, tolerance;
         edge_layer_maximum_aspect=edge_layer_maximum_aspect, corner_grading=corner_grading,
         triangle_entities=triangle_entities, lines=lines, line_entities=line_entities,
-        fixed=gmsh_point_nodes(index, size(points, 2)))
+        fixed=fixed)
     for i in moved
         gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
     end
@@ -1803,21 +1816,34 @@ function interface_areas()
     for (dim, attribute) in gmsh.model.getPhysicalGroups(2)
         area = 0.0
         triangles = 0
+        quadrangles = 0
         for entity in gmsh.model.getEntitiesForPhysicalGroup(dim, attribute)
-            _, element_tags, element_nodes = gmsh.model.mesh.getElements(2, entity)
-            for (tags, block) in zip(element_tags, element_nodes)
+            types, element_tags, element_nodes = gmsh.model.mesh.getElements(2, entity)
+            for (type, tags, block) in zip(types, element_tags, element_nodes)
                 isempty(tags) && continue
                 nodes_per_element = length(block) ÷ length(tags)
-                for start in 1:nodes_per_element:length(block)
-                    a, b, c = (points[:, index[block[start + i]]] for i in 0:2)
-                    area += 0.5 * norm(cross(b .- a, c .- a))
-                    triangles += 1
+                name = gmsh.model.mesh.getElementProperties(type)[1]
+                if startswith(name, "Triangle")
+                    for start in 1:nodes_per_element:length(block)
+                        a, b, c = (points[:, index[block[start + i]]] for i in 0:2)
+                        area += 0.5 * norm(cross(b .- a, c .- a))
+                        triangles += 1
+                    end
+                elseif startswith(name, "Quadrilateral")
+                    for start in 1:nodes_per_element:length(block)
+                        a, b, c, d = (points[:, index[block[start + i]]] for i in 0:3)
+                        area += 0.5 * norm(cross(b .- a, c .- a)) + 0.5 * norm(cross(c .- a, d .- a))
+                        quadrangles += 1
+                    end
+                else
+                    error("Unsupported surface element $name in the interface areas")
                 end
             end
         end
         push!(rows, Dict{String, Any}("Attribute" => Int(attribute),
                                       "Name" => gmsh.model.getPhysicalName(dim, attribute),
-                                      "Triangles" => triangles, "Area" => area))
+                                      "Triangles" => triangles, "Quadrangles" => quadrangles,
+                                      "Area" => area))
     end
     sort!(rows; by=row -> row["Attribute"])
     return rows
@@ -1888,10 +1914,11 @@ function longitudinal_face_census(longitudinal_curves, corners, reach)
                     push!(get!(curve_nodes, node, Set{Int32}()), curve)
             end
         end
-        _, element_tags, element_nodes = gmsh.model.mesh.getElements(2, surface)
+        types, element_tags, element_nodes = gmsh.model.mesh.getElements(2, surface)
         triangles = Vector{NTuple{3, Int}}()
-        for (tags, block) in zip(element_tags, element_nodes)
+        for (type, tags, block) in zip(types, element_tags, element_nodes)
             isempty(tags) && continue
+            startswith(gmsh.model.mesh.getElementProperties(type)[1], "Triangle") || continue
             nodes_per_element = length(block) ÷ length(tags)
             for start in 1:nodes_per_element:length(block)
                 push!(triangles, ntuple(i -> index[block[start + i - 1]], 3))
@@ -3159,8 +3186,86 @@ function trace_basis_size(x, y, z, lc)
     return size
 end
 
+# Segment-distance size laws of the prism tube recipe, evaluated with the trace
+# rule in the size callback (exact distances; Gmsh's Distance field samples curves).
+# Tube axes: NormalSize at the tube surface (axis distance TUBE_BAND_OFFSET[] =
+# R + pyramid height) growing with FarGrowth to FarSize. Band curves (the feature
+# curves outside the tubes: junction lines, footprint edges, un-tubed edge parts):
+# the metric band law NormalSize + RadialGrowth x min(r, ProtectedDistance) +
+# FarGrowth x max(r - ProtectedDistance, 0), ProtectedDistance = 2 x NormalSize.
+const TUBE_AXIS_SEGMENTS = NTuple{6, Float64}[]
+const BAND_SEGMENTS = NTuple{6, Float64}[]
+const TUBE_BAND_OFFSET = Ref(0.0)
+const TUBE_BAND_NORMAL = Ref(Inf)
+const TUBE_BAND_FAR = Ref(Inf)
+const TUBE_BAND_FAR_GROWTH = Ref(0.0)
+const BAND_RADIAL_GROWTH = 1.0
+const BAND_PROTECTED_DISTANCE_OVER_NORMAL = 2.0
+
+function segment_point_distance(x, y, z, segment)
+    ax, ay, az, bx, by, bz = segment
+    vx, vy, vz = bx - ax, by - ay, bz - az
+    dx, dy, dz = x - ax, y - ay, z - az
+    t = clamp((dx * vx + dy * vy + dz * vz) / (vx * vx + vy * vy + vz * vz), 0.0, 1.0)
+    return sqrt((dx - t * vx)^2 + (dy - t * vy)^2 + (dz - t * vz)^2)
+end
+
+function tube_band_size(x, y, z, lc)
+    size = lc
+    normal = TUBE_BAND_NORMAL[]
+    far = TUBE_BAND_FAR[]
+    growth = TUBE_BAND_FAR_GROWTH[]
+    isempty(TUBE_AXIS_SEGMENTS) && isempty(BAND_SEGMENTS) && return size
+    axis_distance = Inf
+    @inbounds for segment in TUBE_AXIS_SEGMENTS
+        axis_distance = min(axis_distance, segment_point_distance(x, y, z, segment))
+    end
+    if isfinite(axis_distance)
+        size = min(size, min(far, normal + growth * max(axis_distance - TUBE_BAND_OFFSET[], 0.0)))
+    end
+    band_distance = Inf
+    @inbounds for segment in BAND_SEGMENTS
+        band_distance = min(band_distance, segment_point_distance(x, y, z, segment))
+    end
+    if isfinite(band_distance)
+        protected = BAND_PROTECTED_DISTANCE_OVER_NORMAL * normal
+        size = min(size, min(far, normal + BAND_RADIAL_GROWTH * min(band_distance, protected) +
+                                  growth * max(band_distance - protected, 0.0)))
+    end
+    return size
+end
+
+function prepare_tube_band_sizing!(axis_segments, band_segments, offset, normal, far, far_growth)
+    empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS)
+    for (a, b) in axis_segments
+        push!(TUBE_AXIS_SEGMENTS, (a[1], a[2], a[3], b[1], b[2], b[3]))
+    end
+    for (a, b) in band_segments
+        push!(BAND_SEGMENTS, (a[1], a[2], a[3], b[1], b[2], b[3]))
+    end
+    TUBE_BAND_OFFSET[] = offset; TUBE_BAND_NORMAL[] = normal; TUBE_BAND_FAR[] = far
+    TUBE_BAND_FAR_GROWTH[] = far_growth
+    return Dict{String, Any}(
+        "TubeAxisSegments" => length(TUBE_AXIS_SEGMENTS),
+        "TubeAxisLength" => sum(norm([s[4] - s[1], s[5] - s[2], s[6] - s[3]]) for s in TUBE_AXIS_SEGMENTS; init=0.0),
+        "TubeSurfaceOffset" => offset, "NormalSize" => normal, "FarSize" => far,
+        "FarGrowth" => far_growth,
+        "TubeRule" => "size = min(FarSize, NormalSize + FarGrowth x max(distance to the tube " *
+                      "axis - TubeSurfaceOffset, 0)); TubeSurfaceOffset = tube radius + pyramid height",
+        "BandSegments" => length(BAND_SEGMENTS),
+        "BandLength" => sum(norm([s[4] - s[1], s[5] - s[2], s[6] - s[3]]) for s in BAND_SEGMENTS; init=0.0),
+        "RadialGrowth" => BAND_RADIAL_GROWTH,
+        "ProtectedDistance" => BAND_PROTECTED_DISTANCE_OVER_NORMAL * normal,
+        "BandRule" => "size = min(FarSize, NormalSize + RadialGrowth x min(r, ProtectedDistance) + " *
+                      "FarGrowth x max(r - ProtectedDistance, 0)), r the distance to the nearest " *
+                      "feature curve outside the tubes (junction lines, footprint edges, un-tubed " *
+                      "metal edge parts); ProtectedDistance = 2 x NormalSize",
+        "Composition" => "min(background field [anisotropic curve attractor, graded-point law], " *
+                         "trace rule, tube rule, band rule) in the Gmsh size callback")
+end
+
 function trace_basis_size_callback(dim, tag, x, y, z, lc, data)::Cdouble
-    return trace_basis_size(x, y, z, lc)
+    return tube_band_size(x, y, z, trace_basis_size(x, y, z, lc))
 end
 
 function install_trace_basis_callback!()
@@ -3216,6 +3321,528 @@ function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
         "MeshFrameTriangles" => [[collect(basis.points[v]) for v in triangle] for triangle in basis.triangles])
 end
 
+# ---------------------------------------------------------------------------
+# Prism edge tubes (supervisor decisions 37 and 38): the Gmsh-only recipe
+# replaces the tetrahedral edge layer by a localized prism tube around every
+# straight metal edge (top and bottom edge of every metal segment). The tube
+# cross-section has geometric rings of size EdgeSize x GrowthRatio^(k-1) (the
+# corner-ball shells with CornerSize = EdgeSize have the same law), is extruded at
+# the tangential spacing, and its lateral quadrangles carry explicit pyramids
+# (prism_edge_tubes.jl). A tube ends at the outer box where the edge does, and
+# TubeCornerClearance before a semantic corner: the largest tube-free clearance
+# any two tubes meeting at that corner need, R / tan(phi / 2) for the in-plane
+# angle phi between the edges, plus one outer ring size. The un-tubed edge part
+# inside the corner ball is meshed with tetrahedra graded from EdgeSize at the
+# tube cap centre (the cap centre is a graded point of the corner law) and from
+# CornerSize at the corner, so the cap triangles meet cells of their own size.
+
+# Straight metal edges of the plan-view boundary loops: the Physical sides (the
+# sides not lying on the outer box), with the horizontal normal pointing away
+# from the metal and the tube interval shrunk by the corner clearance at semantic
+# corners (0 at box continuation vertices). Returns rows with start, stop,
+# direction, normal, span, s_start, s_end, plane, conductor, corner angles.
+function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, tolerance)
+    segments = NamedTuple[]
+    on_box(p) = any(abs(p[d] - lower[d]) <= tolerance || abs(p[d] - upper[d]) <= tolerance
+                    for d in 1:2)
+    same_box_face(p, q) = any((abs(p[d] - lower[d]) <= tolerance && abs(q[d] - lower[d]) <= tolerance) ||
+                              (abs(p[d] - upper[d]) <= tolerance && abs(q[d] - upper[d]) <= tolerance)
+                              for d in 1:2)
+    is_corner(p, plane) = any(norm(collect(corner) .- [p[1], p[2], plane]) <= tolerance
+                              for corner in corners)
+    # Every straight side first, so that the angle between the sides meeting at a
+    # corner is known before the clearance is applied.
+    sides = NamedTuple[]
+    for loop in loops
+        loop.hole && error("Prism edge tubes support exterior conductor loops only")
+        n = length(loop.points)
+        for i in 1:n
+            p = loop.points[i]
+            q = loop.points[i % n + 1]
+            same_box_face(p, q) && continue
+            direction = [q[1] - p[1], q[2] - p[2]]
+            span = norm(direction)
+            span > tolerance || error("Degenerate metal edge $p -> $q")
+            direction ./= span
+            normal = [direction[2], -direction[1]]
+            midpoint = [0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])]
+            probe = midpoint .+ 1.0e-3 .* normal
+            if point_in_polygon((probe[1], probe[2]), loop.points, tolerance)
+                normal .*= -1.0
+            end
+            probe = midpoint .- 1.0e-3 .* normal
+            point_in_polygon((probe[1], probe[2]), loop.points, tolerance) ||
+                error("Unable to orient the metal edge $p -> $q")
+            for (point, other) in ((p, q), (q, p))
+                is_corner(point, loop.plane) || on_box(point) ||
+                    error("Metal edge end $point is neither a semantic corner nor on the box")
+            end
+            push!(sides, (start=[p[1], p[2]], stop=[q[1], q[2]], direction=direction,
+                          normal=normal, span=span, plane=loop.plane, conductor=loop.conductor,
+                          start_corner=is_corner(p, loop.plane), stop_corner=is_corner(q, loop.plane)))
+        end
+    end
+    isempty(sides) && error("No straight metal edges found")
+    # In-plane angle between two tube edges meeting at a corner: the smallest
+    # angle between the directions pointing away from the corner (pi when the
+    # corner has a single tube edge).
+    function corner_angle(point, plane, own_direction_away)
+        angle = Float64(pi)
+        for side in sides
+            abs(side.plane - plane) <= tolerance || continue
+            for (end_point, away) in ((side.start, side.direction), (side.stop, -side.direction))
+                norm(end_point .- point) <= tolerance || continue
+                dot(away, own_direction_away) >= 1.0 - 1.0e-12 && continue
+                angle = min(angle, acos(clamp(dot(away, own_direction_away), -1.0, 1.0)))
+            end
+        end
+        return angle
+    end
+    for side in sides
+        start_angle = side.start_corner ? corner_angle(side.start, side.plane, side.direction) : Float64(pi)
+        stop_angle = side.stop_corner ? corner_angle(side.stop, side.plane, -side.direction) : Float64(pi)
+        s_start = side.start_corner ? clearance_of_angle(start_angle) : 0.0
+        s_end = side.span - (side.stop_corner ? clearance_of_angle(stop_angle) : 0.0)
+        s_end > s_start || error("Metal edge $(side.start) -> $(side.stop) is too short for a tube")
+        push!(segments, (side..., s_start=s_start, s_end=s_end,
+                         corner_angles=(start_angle, stop_angle)))
+    end
+    return segments
+end
+
+# The etch footprint must carry the metal edge (trench wall under the sidewall) so
+# that the bottom tube's substrate sectors and vacuum sectors split exactly at the
+# wall; the fragment then keeps every tube entity whole (match_tube_entities is the
+# fail-closed check for producer-default footprints).
+function assert_etch_carries_edge(etch_loops, segment, tolerance)
+    for loop in etch_loops
+        n = length(loop.points)
+        for i in 1:n
+            p = loop.points[i]
+            q = loop.points[i % n + 1]
+            for (a, b) in ((p, q), (q, p))
+                norm([a[1], a[2]] .- segment.start) <= tolerance &&
+                    norm([b[1], b[2]] .- segment.stop) <= tolerance && return true
+            end
+        end
+    end
+    error("Etch footprint has no side coincident with the metal edge $(segment.start) -> $(segment.stop)")
+end
+
+# Ring count of the tube: the largest K with r_K + h_K <= the smallest transverse
+# bound (trench depth below the bottom edge, metal thickness between the two
+# edges, corner isotropy radius), so the pyramid apexes (h_K / 2 outside the
+# tube) stay one outer ring size away from the trench floor and the two tubes of
+# one sidewall never meet.
+function tube_ring_count(edge_size, ratio, bound)
+    rings = 0
+    while true
+        next = rings + 1
+        radius = edge_size * (ratio^next - 1.0) / (ratio - 1.0)
+        size = edge_size * ratio^(next - 1)
+        radius + size <= bound || break
+        rings = next
+    end
+    rings >= 1 || error("The tube inner size $edge_size does not fit the transverse bound $bound")
+    return rings
+end
+
+const TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
+
+# The OCC tube volumes of every straight metal edge of every upward process
+# layer (top edge at plane + thickness, bottom edge at the plane), before the
+# fragment. Returns the tool list, the per-volume records, the (tube, section)
+# pairs, the edge segments and the section description for the census.
+function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, ratio,
+                           sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
+                           lower, upper, tolerance)
+    overetch > 0.0 || error("Prism tubes require an etched trench (Overetch > 0)")
+    sectors = round(Int, 270.0 / sector_degrees)
+    abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
+    per_quadrant = round(Int, 90.0 / sector_degrees)
+    abs(per_quadrant * sector_degrees - 90.0) <= 1.0e-9 || error("Tube sector angle must divide 90 degrees")
+    bound = min(overetch, 0.5 * metal_thickness, corner_radius)
+    rings = tube_ring_count(edge_size, ratio, bound)
+    # Top edge: vacuum from the sidewall ray (-90) through the outward normal (0)
+    # and up (90) to the top-face ray (180). Bottom edge: substrate from the
+    # metal bottom face ray (180) to the trench wall ray (270), vacuum from the
+    # trench wall past the outward normal (360) to the sidewall ray (450).
+    top_section = TubeSection(edge_size, ratio, rings,
+                              [-90.0 + sector_degrees * j for j in 0:sectors], fill(2, sectors))
+    bottom_section = TubeSection(edge_size, ratio, rings,
+                                 [180.0 + sector_degrees * j for j in 0:sectors],
+                                 vcat(fill(1, per_quadrant), fill(2, sectors - per_quadrant)))
+    radius = tube_radius(top_section)
+    outer_ring = ring_sizes(top_section)[end]
+    pyramid_height = TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer_ring
+    radius + pyramid_height < overetch ||
+        error("The tube pyramids would reach the trench floor")
+    clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) + outer_ring
+    tools = Tuple{Int32, Int32}[]
+    records = TubeRecord[]
+    tubes = Tuple{EdgeTube, TubeSection}[]
+    segments = NamedTuple[]
+    for layer in layers
+        layer.sign > 0 || error("Prism tubes support upward process layers only")
+        layer_loops = [loop for loop in loops if abs(loop.plane - layer.plane) <= tolerance]
+        isempty(layer_loops) && error("Plan-view boundary is missing the tube layer $(layer.plane)")
+        layer_segments = metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance)
+        if etch_loops !== nothing
+            for segment in layer_segments
+                assert_etch_carries_edge(etch_loops, segment, tolerance)
+            end
+        end
+        for segment in layer_segments
+            n = [segment.normal[1], segment.normal[2], 0.0]
+            b = [0.0, 0.0, 1.0]
+            e = cross(n, b)
+            along = dot(e[1:2], segment.direction)
+            abs(abs(along) - 1.0) <= 1.0e-12 || error("Tube frame is not aligned with the edge")
+            for (z, section) in ((layer.plane + metal_thickness, top_section),
+                                 (layer.plane, bottom_section))
+                tube = if along > 0.0
+                    EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
+                             segment.s_end, lc_tangent)
+                else
+                    EdgeTube([segment.stop[1], segment.stop[2], z], n, b,
+                             segment.span - segment.s_end, segment.span - segment.s_start, lc_tangent)
+                end
+                push!(tubes, (tube, section))
+                for (tool, group) in add_tube_volumes!(occ, tube, section)
+                    push!(records, TubeRecord(tube, section, group, tool))
+                    push!(tools, tool)
+                end
+            end
+        end
+        append!(segments, layer_segments)
+    end
+    description = Dict{String, Any}(
+        "Rings" => rings, "RingSizes" => ring_sizes(top_section),
+        "RingRadii" => copy(top_section.ring_radii), "Radius" => radius,
+        "TransverseBound" => bound,
+        "RingRule" => "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, " *
+                      "CornerIsotropyRadius)",
+        "SectorDegrees" => sector_degrees, "Sectors" => sectors,
+        "PyramidHeight" => pyramid_height,
+        "PyramidHeightOverOuterRing" => TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING,
+        "CornerClearanceRule" => "R / tan(phi / 2) + h_K before a semantic corner, phi the " *
+                                 "smallest in-plane angle between the tube edges meeting there " *
+                                 "(h_K alone for a single tube edge); 0 at box continuation vertices",
+        "Top" => Dict("Angles" => top_section.angles, "Materials" => top_section.materials),
+        "Bottom" => Dict("Angles" => bottom_section.angles, "Materials" => bottom_section.materials))
+    return tools, records, tubes, segments, description
+end
+
+# Gmsh element type of the linear volume cells and their vertex counts.
+const GMSH_LINEAR_VOLUME_TYPES = Dict(4 => ("Tetrahedron", 4), 6 => ("Prism", 6), 7 => ("Pyramid", 5))
+
+# Corner frames of the linear volume cells: at each listed vertex the three edges
+# to its neighbours span the local Jacobian (the same frames as the Python
+# mixed-mesh audits). Tetrahedra keep the production vertex-0 frame.
+const VOLUME_CORNER_FRAMES = Dict(
+    4 => [(1, 2, 3, 4)],
+    6 => [(1, 2, 3, 4), (2, 3, 1, 5), (3, 1, 2, 6), (4, 6, 5, 1), (5, 4, 6, 2), (6, 5, 4, 3)],
+    7 => [(1, 2, 4, 5), (2, 3, 1, 5), (3, 4, 2, 5), (4, 1, 3, 5)])
+
+# Node tags of every non-simplex volume cell (the tube prisms and pyramids).
+function non_simplex_volume_nodes()
+    tags = UInt[]
+    types, _, element_nodes = gmsh.model.mesh.getElements(3)
+    for (type, block) in zip(types, element_nodes)
+        Int(type) == GMSH_LINEAR_ELEMENT_TYPE[3] && continue
+        append!(tags, block)
+    end
+    return unique!(tags)
+end
+
+# Per-type quality of every linear volume cell in the model: orientation (every
+# corner Jacobian determinant positive), Jacobian condition (largest / smallest
+# singular value of the corner edge matrix, maximum over the corners) and, for
+# tetrahedra, the scaled Jacobian of the vertex-0 frame (production definition).
+function mixed_volume_quality()
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(coordinates, 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    types, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
+    result = Dict{String, Any}()
+    total = 0
+    for (type, tags, block) in zip(types, element_tags, element_nodes)
+        isempty(tags) && continue
+        haskey(GMSH_LINEAR_VOLUME_TYPES, Int(type)) ||
+            error("Unsupported volume element type $type")
+        name, width = GMSH_LINEAR_VOLUME_TYPES[Int(type)]
+        cell_count = length(tags)
+        total += cell_count
+        frames = VOLUME_CORNER_FRAMES[Int(type)]
+        condition = zeros(cell_count)
+        scaled = fill(Inf, cell_count)
+        determinant = fill(Inf, cell_count)
+        for n in 1:cell_count
+            start = (n - 1) * width
+            for (v, a, b, c) in frames
+                p0 = points[:, index[block[start + v]]]
+                e1 = points[:, index[block[start + a]]] .- p0
+                e2 = points[:, index[block[start + b]]] .- p0
+                e3 = points[:, index[block[start + c]]] .- p0
+                jacobian = hcat(e1, e2, e3)
+                det_value = det(jacobian)
+                determinant[n] = min(determinant[n], det_value)
+                singular = svdvals(jacobian)
+                condition[n] = max(condition[n], singular[1] / max(singular[end], 1.0e-300))
+                scaled[n] = min(scaled[n], abs(det_value) / max(norm(e1) * norm(e2) * norm(e3), 1.0e-300))
+            end
+        end
+        quantile(values, q) = (sorted = sort(values);
+                               sorted[clamp(ceil(Int, q * length(sorted)), 1, length(sorted))])
+        result[name] = Dict{String, Any}(
+            "Count" => cell_count, "GmshType" => Int(type),
+            "PositiveOrientation" => all(>(0.0), determinant),
+            "NonpositiveCells" => count(<=(0.0), determinant),
+            "MinimumScaledJacobian" => minimum(scaled),
+            "ScaledJacobianQuantiles" => [quantile(scaled, q) for q in (0.0, 0.01, 0.5, 1.0)],
+            "MaximumJacobianCondition" => maximum(condition),
+            "JacobianConditionQuantiles" => [quantile(condition, q) for q in (0.0, 0.5, 0.99, 1.0)],
+            "CellsBelowScaledJacobian0.01" => count(<(0.01), scaled),
+            "CellsAboveCondition1000" => count(>(1000.0), condition))
+    end
+    result["Total"] = total
+    return result
+end
+
+# Gate the per-type quality (fail closed): positive orientation and the Jacobian
+# condition bound for every type, the scaled-Jacobian bound for tetrahedra.
+function gate_mixed_volume_quality(quality, minimum_scaled_jacobian, maximum_jacobian_condition)
+    failures = String[]
+    for (name, record) in quality
+        record isa Dict || continue
+        record["PositiveOrientation"] ||
+            push!(failures, "$name: $(record["NonpositiveCells"]) nonpositive cells")
+        record["MaximumJacobianCondition"] <= maximum_jacobian_condition ||
+            push!(failures, "$name: Jacobian condition $(record["MaximumJacobianCondition"]) > $maximum_jacobian_condition")
+        name == "Tetrahedron" && record["MinimumScaledJacobian"] < minimum_scaled_jacobian &&
+            push!(failures, "Tetrahedron: scaled Jacobian $(record["MinimumScaledJacobian"]) < $minimum_scaled_jacobian")
+    end
+    isempty(failures) || error("Mixed-element quality gates failed: " * join(failures, "; "))
+    return nothing
+end
+
+# Edge-length statistics of the surface elements of one physical label restricted
+# to elements whose centroid lies within `reach` of a segment set (or all of them
+# when the set is nothing): the achieved cut-surface / band sizes.
+function surface_size_statistics(points, index, attribute, segments, reach)
+    lengths = Float64[]
+    elements = 0
+    for entity in gmsh.model.getEntitiesForPhysicalGroup(2, attribute)
+        types, element_tags, element_nodes = gmsh.model.mesh.getElements(2, entity)
+        for (type, tags, block) in zip(types, element_tags, element_nodes)
+            isempty(tags) && continue
+            width = length(block) ÷ length(tags)
+            for start in 0:width:(length(block) - 1)
+                nodes = [points[:, index[block[start + i]]] for i in 1:width]
+                if segments !== nothing
+                    centroid = sum(nodes) ./ width
+                    minimum(span_point_distance(centroid, a, b) for (a, b) in segments) <= reach ||
+                        continue
+                end
+                elements += 1
+                for i in 1:width
+                    push!(lengths, norm(nodes[i] .- nodes[i % width + 1]))
+                end
+            end
+        end
+    end
+    isempty(lengths) && return Dict{String, Any}("Elements" => 0)
+    sort!(lengths)
+    at(q) = lengths[clamp(ceil(Int, q * length(lengths)), 1, length(lengths))]
+    return Dict{String, Any}("Elements" => elements, "Edges" => length(lengths),
+                             "EdgeMinimum" => lengths[1], "EdgeP10" => at(0.1),
+                             "EdgeP50" => at(0.5), "EdgeP90" => at(0.9),
+                             "EdgeMaximum" => lengths[end])
+end
+
+# Achieved cut-surface size against the trace rule: for every narrow basis
+# triangle (requested size below the far size) the mean edge length of the
+# matching-surface elements whose centroid lies in it, over the requested size.
+function trace_basis_achieved_sizes(points, index, matching_attribute, basis_record)
+    triangles = TRACE_BASIS_TRIANGLES
+    isempty(triangles) && return nothing
+    sums = zeros(length(triangles)); counts = zeros(Int, length(triangles))
+    for entity in gmsh.model.getEntitiesForPhysicalGroup(2, matching_attribute)
+        types, element_tags, element_nodes = gmsh.model.mesh.getElements(2, entity)
+        for (type, tags, block) in zip(types, element_tags, element_nodes)
+            isempty(tags) && continue
+            width = length(block) ÷ length(tags)
+            for start in 0:width:(length(block) - 1)
+                nodes = [points[:, index[block[start + i]]] for i in 1:width]
+                centroid = sum(nodes) ./ width
+                mean_edge = sum(norm(nodes[i] .- nodes[i % width + 1]) for i in 1:width) / width
+                for (k, t) in enumerate(triangles)
+                    a = (t[1], t[2], t[3]); b = (t[4], t[5], t[6]); c = (t[7], t[8], t[9])
+                    point_triangle_distance(Tuple(centroid), a, b, c) <= 1.0e-9 || continue
+                    sums[k] += mean_edge; counts[k] += 1
+                    break
+                end
+            end
+        end
+    end
+    ratios = [counts[k] > 0 ? sums[k] / counts[k] / TRACE_BASIS_SIZES[k] : NaN
+              for k in eachindex(triangles)]
+    covered = filter(isfinite, ratios)
+    return Dict{String, Any}(
+        "NarrowBasisTriangles" => length(triangles),
+        "TrianglesWithMatchingElements" => length(covered),
+        "AchievedOverRequestedMaximum" => isempty(covered) ? nothing : maximum(covered),
+        "AchievedOverRequestedP50" => isempty(covered) ? nothing : sorted_median(covered),
+        "Rule" => "mean edge length of the matching-surface elements whose centroid lies " *
+                  "in a narrow basis triangle over the triangle's requested size " *
+                  "(TraceBasisSizeRatio x its shortest edge)")
+end
+
+# Size statistics of the tetrahedra whose centroid lies within `reach` of a
+# segment set: mean edge length percentiles (the junction / footprint band sizes).
+function band_tetrahedron_statistics(points, index, segments, reach)
+    isempty(segments) && return Dict{String, Any}("Cells" => 0)
+    sizes = Float64[]
+    types, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
+    for (type, tags, block) in zip(types, element_tags, element_nodes)
+        Int(type) == 4 || continue
+        for start in 0:4:(length(block) - 1)
+            nodes = [points[:, index[block[start + i]]] for i in 1:4]
+            centroid = sum(nodes) ./ 4
+            minimum(span_point_distance(centroid, a, b) for (a, b) in segments) <= reach || continue
+            push!(sizes, sum(norm(nodes[i] .- nodes[j]) for i in 1:4 for j in (i + 1):4) / 6)
+        end
+    end
+    isempty(sizes) && return Dict{String, Any}("Cells" => 0)
+    sort!(sizes)
+    at(q) = sizes[clamp(ceil(Int, q * length(sizes)), 1, length(sizes))]
+    return Dict{String, Any}("Cells" => length(sizes), "Reach" => reach,
+                             "MeanEdgeP10" => at(0.1), "MeanEdgeP50" => at(0.5),
+                             "MeanEdgeP90" => at(0.9), "MeanEdgeMaximum" => sizes[end])
+end
+
+# Quality of the tetrahedra with a vertex within `reach` of a point (the cap
+# regions: the tube cap triangles meet these cells).
+function point_region_tetrahedra(points, index, center, reach)
+    scaled = Float64[]; condition = Float64[]
+    types, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
+    for (type, tags, block) in zip(types, element_tags, element_nodes)
+        Int(type) == GMSH_LINEAR_ELEMENT_TYPE[3] || continue
+        for start in 0:4:(length(block) - 1)
+            nodes = [points[:, index[block[start + i]]] for i in 1:4]
+            any(norm(node .- center) <= reach for node in nodes) || continue
+            push!(scaled, tetrahedron_scaled_jacobian(nodes))
+            push!(condition, tetrahedron_aspect(nodes))
+        end
+    end
+    return Dict{String, Any}("Point" => collect(center), "Reach" => reach, "Cells" => length(scaled),
+                             "MinimumScaledJacobian" => isempty(scaled) ? nothing : minimum(scaled),
+                             "MaximumJacobianCondition" => isempty(condition) ? nothing : maximum(condition))
+end
+
+# The prism tube census (source-local frame; reported, the gates are applied by
+# gate_mixed_volume_quality and the element budget).
+function prism_tube_census(tubes, segments, description, states, volume_census, face_meshes,
+                           curve_meshes, timings, band_record, quality, graded_points,
+                           semantic_corners, junction_curves, footprint_polygons, lc_fine,
+                           lc_tangent, lc_far, far_growth, trace_basis_record, max_elements,
+                           element_count)
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(coordinates, 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    radius = description["Radius"]
+    tube_rows = Dict{String, Any}[]
+    for (k, (tube, section)) in enumerate(tubes)
+        segment = segments[(k + 1) ÷ 2]
+        push!(tube_rows, Dict{String, Any}(
+            "Origin" => tube.origin, "Normal" => tube.n, "Extrusion" => tube.e,
+            "Start" => tube.s_start, "End" => tube.s_end, "Length" => tube.s_end - tube.s_start,
+            "Layers" => tube.layers, "Spacing" => tube_spacing(tube),
+            "Materials" => section.materials, "Conductor" => segment.conductor,
+            "Plane" => segment.plane, "CornerAngles" => collect(segment.corner_angles),
+            "Edge" => isodd(k) ? "top" : "bottom"))
+    end
+    spacings = [row["Spacing"] for row in tube_rows]
+    inner_arc = description["RingSizes"][1] * deg2rad(description["SectorDegrees"])
+    caps = [point_region_tetrahedra(points, index, collect(point), radius)
+            for point in graded_points[(length(semantic_corners) + 1):end]]
+    cap_scaled = filter(!isnothing, [cap["MinimumScaledJacobian"] for cap in caps])
+    cap_condition = filter(!isnothing, [cap["MaximumJacobianCondition"] for cap in caps])
+    junction_segments = curve_segments(junction_curves)
+    footprint_segments = Tuple{Vector{Float64}, Vector{Float64}}[]
+    for polygon in footprint_polygons
+        polygon_points = polygon["Points"]
+        plane = Float64(polygon["Plane"])
+        for i in eachindex(polygon_points)
+            a = polygon_points[i]; b = polygon_points[mod1(i + 1, length(polygon_points))]
+            push!(footprint_segments, ([a[1], a[2], plane], [b[1], b[2], plane]))
+        end
+    end
+    return Dict{String, Any}(
+        "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
+                  "carries a prism tube on its dielectric side: geometric rings of size " *
+                  "EdgeSize x GrowthRatio^(k-1) (RingSizes) over the sectors (SectorDegrees), " *
+                  "extruded along the edge in Layers of Spacing <= TangentialSize, the lateral " *
+                  "quadrangles closed by explicit pyramids (PyramidHeight); the tube ends at the " *
+                  "outer box and CornerClearance before a semantic corner (CornerClearanceRule); " *
+                  "the cap centre before a corner is a graded point of the corner law " *
+                  "(CornerSize = EdgeSize, the same shells as the rings), so the un-tubed edge " *
+                  "part and the cap region are tetrahedra graded from EdgeSize; no tetrahedral " *
+                  "edge layer",
+        "Section" => description,
+        "InnerSize" => description["RingSizes"][1], "GrowthRatio" => description["RingSizes"][2] / description["RingSizes"][1],
+        "TangentialSize" => lc_tangent, "NormalSize" => lc_fine, "FarSize" => lc_far,
+        "FarGrowth" => far_growth,
+        "Tubes" => tube_rows, "TubeCount" => length(tubes),
+        "TotalTubeLength" => sum(row["Length"] for row in tube_rows),
+        "Layers" => sum(row["Layers"] for row in tube_rows),
+        "SpacingMinimum" => minimum(spacings), "SpacingMaximum" => maximum(spacings),
+        "InnermostArc" => inner_arc,
+        "MaximumPrismEdgeAspect" => maximum(spacings) / min(inner_arc, description["RingSizes"][1]),
+        "Volumes" => volume_census,
+        "Prisms" => sum(Int[row["Prisms"] for row in volume_census]),
+        "Pyramids" => sum(Int[row["Pyramids"] for row in volume_census]),
+        "Faces" => face_meshes, "Curves" => curve_meshes, "Timings" => timings,
+        "SizeLaws" => band_record,
+        "Quality" => quality,
+        "CapRegions" => Dict{String, Any}(
+            "Rule" => "tetrahedra with a vertex within the tube radius of a cap centre before a corner",
+            "Caps" => length(caps),
+            "MinimumScaledJacobian" => isempty(cap_scaled) ? nothing : minimum(cap_scaled),
+            "MaximumJacobianCondition" => isempty(cap_condition) ? nothing : maximum(cap_condition),
+            "Regions" => caps),
+        "CutSurface" => Dict{String, Any}(
+            "Rule" => "edge lengths of the matching-surface elements (label 1): all, within " *
+                      "NormalSize of a junction line, and against the trace rule",
+            "All" => surface_size_statistics(points, index, 1, nothing, 0.0),
+            "NearJunctions" => surface_size_statistics(points, index, 1, junction_segments, lc_fine),
+            "TraceRule" => trace_basis_record === nothing ? nothing :
+                           trace_basis_achieved_sizes(points, index, 1, trace_basis_record)),
+        "Bands" => Dict{String, Any}(
+            "Rule" => "mean edge length of the tetrahedra whose centroid lies within NormalSize " *
+                      "of the junction lines / the footprint edges",
+            "Junction" => band_tetrahedron_statistics(points, index, junction_segments, lc_fine),
+            "Footprint" => band_tetrahedron_statistics(points, index, footprint_segments, lc_fine)),
+        "FarFieldBudgetPolicy" => Dict{String, Any}(
+            "Name" => "gmsh-only-fail-closed-cap",
+            "Rule" => "the requested far size is used as is (Pressure 1); the element budget " *
+                      "is a fail-closed gate on the generated mesh",
+            "RequestedFarSize" => lc_far, "EffectiveFarSize" => lc_far, "Pressure" => 1.0,
+            "Elements" => element_count, "MaximumElements" => max_elements,
+            "ElementBudgetFraction" => element_count / max_elements))
+end
+
+# Straight segments (start, stop) of a curve list from the CAD endpoints.
+function curve_segments(curves)
+    segments = Tuple{Vector{Float64}, Vector{Float64}}[]
+    for curve in curves
+        lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+        xyz = gmsh.model.getValue(1, curve, [lower[1], upper[1]])
+        push!(segments, (collect(xyz[1:3]), collect(xyz[4:6])))
+    end
+    return segments
+end
+
 function generate_spatial_coupon(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
@@ -3262,6 +3889,9 @@ function generate_spatial_coupon(;
     quality_displacement_over_normal::Float64=0.0,
     edge_layer_maximum_aspect::Float64=0.0,
     corner_size::Float64=0.0,
+    prism_tubes::Bool=false,
+    tube_sector_degrees::Float64=30.0,
+    far_growth::Float64=0.0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -3361,6 +3991,35 @@ function generate_spatial_coupon(;
     corner_grading = CornerGrading(corner_size, edge_growth_ratio, lc_fine, corner_isotropy_radius)
     corner_size == 0.0 || corner_grading_reach(corner_grading) <= corner_isotropy_radius ||
         error("The corner grading must reach the normal size inside the corner ball")
+    # Prism edge tubes (decision 38): EdgeSize is the inner ring size and the edge
+    # growth ratio the ring ratio; the tetrahedral edge layer is not built. The
+    # tubes need the tangential spacing, the corner balls with their grading, the
+    # seed quality gates (applied per element type) and the far growth of the
+    # band grading around the tubes.
+    if prism_tubes
+        edge_size > 0.0 || error("Prism tubes require --edge-size (the inner ring size)")
+        lc_tangent > 0.0 || error("Prism tubes require --lc-tangent (the extrusion spacing)")
+        corner_isotropy && corner_size > 0.0 ||
+            error("Prism tubes require the semantic contract corner balls with --corner-size")
+        corner_size == edge_size ||
+            error("Prism tubes require CornerSize == EdgeSize: one graded law for the semantic " *
+                  "corners and the tube cap centres")
+        seed_quality_gates || error("Prism tubes require the seed quality gates")
+        isfinite(far_growth) && far_growth > 0.0 ||
+            error("Prism tubes require --far-growth > 0 (band grading around the tubes)")
+        isfinite(tube_sector_degrees) && 0.0 < tube_sector_degrees <= 90.0 ||
+            error("Tube sector angle must lie in (0, 90] degrees")
+        fabricated && sidewall_angle == 90.0 && top_rounding == 0.0 && trench_rounding == 0.0 ||
+            error("Prism tubes require sharp vertical fabricated geometry")
+        matching_trace === nothing && surface_constraints === nothing ||
+            error("Prism tubes cannot be combined with matching-trace or surface constraints")
+        mesh_order == 1 || error("Prism tubes require a linear mesh")
+        edge_layer_maximum_aspect == 0.0 || error("Prism tubes replace the edge layer rule")
+        edge_layer = false
+        edge_layer_offsets = Float64[]
+    else
+        far_growth == 0.0 || error("--far-growth belongs to the prism tube recipe")
+    end
 
     edges = read_edges(signature)
     if length(unique(edge.slot for edge in edges)) > 1 &&
@@ -3510,6 +4169,12 @@ function generate_spatial_coupon(;
     substrate_seed = Tuple{Int32, Int32}[]
     vacuum_seed = Tuple{Int32, Int32}[]
     domains = Tuple{Int32, Int32}[]
+    tube_tools = Tuple{Int32, Int32}[]
+    tube_records = TubeRecord[]
+    tubes = Tuple{EdgeTube, TubeSection}[]
+    tube_segments = NamedTuple[]
+    tube_sections = Dict{String, Any}()
+    tube_volumes = Int32[]
     if fabricated
         metal = Tuple{Int32, Int32}[]
         for layer in layers
@@ -3580,10 +4245,27 @@ function generate_spatial_coupon(;
         end
         field, _ = occ.cut([outer], metal, -1, true, true)
         vacuum, _ = occ.cut(field, substrates, -1, true, false)
-        domains, domain_map = occ.fragment(vcat(substrates, vacuum), [])
+        objects = vcat(substrates, vacuum)
+        if prism_tubes
+            tube_tools, tube_records, tubes, tube_segments, tube_sections =
+                build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
+                                  edge_size, edge_growth_ratio, tube_sector_degrees,
+                                  metal_thickness, overetch, corner_isotropy_radius,
+                                  lc_tangent, lower, upper, tolerance)
+        end
+        domains, domain_map = occ.fragment(objects, tube_tools)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect
         vacuum_seed =
-            domain_map[(length(substrates) + 1):end] |> Iterators.flatten |> collect
+            domain_map[(length(substrates) + 1):length(objects)] |> Iterators.flatten |> collect
+        if prism_tubes
+            tube_volumes = Int32[tube_volume_after_fragment(record, index, domain_map, length(objects))
+                                 for (index, record) in enumerate(tube_records)]
+            for (index, record) in enumerate(tube_records)
+                material_seed = record.group[3] == 1 ? substrate_seed : vacuum_seed
+                (3, tube_volumes[index]) in material_seed ||
+                    error("Tube volume $(tube_volumes[index]) material differs from its section material")
+            end
+        end
     else
         vacuum, _ = occ.cut([outer], substrates, -1, true, false)
         tools = Tuple{Int32, Int32}[]
@@ -3665,6 +4347,10 @@ function generate_spatial_coupon(;
             continue
         end
 
+        # A face between two volumes of one material (a tube volume and the
+        # volume around it) is an interior face.
+        prism_tubes && length(up) == 2 && (isempty(adjacent_substrate) || isempty(adjacent_vacuum)) &&
+            continue
         point = point_on_surface(tag)
         edge = nearest_edge(edges, point, radius)
         attribute = 0
@@ -3700,8 +4386,10 @@ function generate_spatial_coupon(;
     end
     isempty(matching) && error("No matching surface was generated")
 
-    gmsh.model.addPhysicalGroup(3, substrate_tags, 1, "substrate")
-    gmsh.model.addPhysicalGroup(3, vacuum_tags, 2, "vacuum")
+    if !prism_tubes
+        gmsh.model.addPhysicalGroup(3, substrate_tags, 1, "substrate")
+        gmsh.model.addPhysicalGroup(3, vacuum_tags, 2, "vacuum")
+    end
     gmsh.model.addPhysicalGroup(2, unique(matching), 1, "matching_surface")
     for (attribute, surfaces) in sort(collect(boundary_groups))
         unique!(surfaces)
@@ -3762,11 +4450,51 @@ function generate_spatial_coupon(;
     junction_length = sum(gmsh.model.occ.getMass(1, curve) for curve in junction_curves)
     append!(feature_curves, junction_curves)
     sort!(unique!(feature_curves))
+    # Tube entities: their curves are meshed explicitly (never placed or used as
+    # attractors), the tube axes carry the band grading around the tubes, and the
+    # cap centres before a corner are graded points of the corner law.
+    tube_states = TubeMesh[]
+    tube_curves = Set{Int32}()
+    tube_axis_curves = Int32[]
+    tube_cap_points = Int32[]
+    if prism_tubes
+        for (tube, section) in tubes
+            volumes = Tuple{Int32, Tuple{Int, Int, Int}, Dict}[]
+            for (index, record) in enumerate(tube_records)
+                record.tube === tube || continue
+                matched = match_tube_entities(tube_volumes[index], tube, section, record.group,
+                                              1.0e-6 * radius)
+                push!(volumes, (tube_volumes[index], record.group, matched))
+                for ((kind, _), tag) in matched
+                    kind in (:edge_line, :outer_line, :cap_polygon, :cap_ray) && push!(tube_curves, tag)
+                    kind == :edge_line && push!(tube_axis_curves, tag)
+                    if kind == :edge_point
+                        point = gmsh.model.getValue(0, tag, Float64[])
+                        on_outer_box(vcat(point, point), lower, upper, outer_tolerance) ||
+                            push!(tube_cap_points, tag)
+                    end
+                end
+            end
+            isempty(volumes) && error("A tube has no fragmented volume")
+            push!(tube_states, TubeMesh(tube, section, volumes;
+                                        pyramid_height=tube_sections["PyramidHeight"]))
+        end
+        sort!(unique!(tube_axis_curves))
+        sort!(unique!(tube_cap_points))
+        isempty(tube_cap_points) && error("No tube ends before a semantic corner")
+    end
+    graded_points = copy(semantic_corners)
+    graded_point_tags = copy(corner_point_tags)
+    for tag in tube_cap_points
+        push!(graded_points, Tuple(gmsh.model.getValue(0, tag, Float64[])))
+        push!(graded_point_tags, tag)
+    end
     longitudinal_curves = Int32[]
     corner_curves = Int32[]
     corner_grading_slope = (lc_far - lc_fine) / (process_core_width - process_fine_width)
     next_node = Ref(0)
     point_nodes = Dict{Int32, Int}()
+    tube_curve_meshes = [install_tube_curves!(state, next_node, point_nodes) for state in tube_states]
     # Interior ridge node parameters and coordinates (curve order) of every
     # longitudinal curve; the mesh is assigned after the edge layer curves are
     # known, because a layer ridge is subdivided inside its span.
@@ -3775,6 +4503,7 @@ function generate_spatial_coupon(;
     transfinite_curves = Set{Int32}()
     if lc_tangent > 0.0
         for curve in feature_curves
+            curve in tube_curves && continue
             lower_parameter, upper_parameter =
                 gmsh.model.getParametrizationBounds(1, curve)
             parameter = 0.5 * (lower_parameter[1] + upper_parameter[1])
@@ -3784,7 +4513,7 @@ function generate_spatial_coupon(;
             if any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
                 push!(longitudinal_curves, curve)
                 placed = corner_isotropy ? corner_isotropic_curve_nodes(
-                    curve, semantic_corners, corner_grading, lc_tangent,
+                    curve, graded_points, corner_grading, lc_tangent,
                     corner_grading_slope) : nothing
                 if placed === nothing
                     curve_length = gmsh.model.occ.getMass(1, curve)
@@ -3940,7 +4669,8 @@ function generate_spatial_coupon(;
                 "ridge_nodes_added=$edge_layer_ridge_nodes, " *
                 "span_length=$(sum(row["SpanLength"] for row in edge_layer_curves))")
     end
-    isempty(corner_curves) || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
+    isempty(corner_curves) && !prism_tubes || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
+    prism_tubes && gmsh.option.setNumber("Mesh.Renumber", 0)
     trace_basis_record = trace_basis === nothing ? nothing :
         prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far, corner_grading_slope)
     # The sizes below lc_fine a field can ask for are the trace rule's and the corner
@@ -3949,9 +4679,22 @@ function generate_spatial_coupon(;
     mesh_size_minimum = trace_basis_record === nothing ? lc_fine :
         min(lc_fine, trace_basis_record["MinimumRequestedSize"])
     corner_size > 0.0 && (mesh_size_minimum = min(mesh_size_minimum, corner_size))
+    prism_tubes && (mesh_size_minimum = min(mesh_size_minimum, edge_size))
+    # The band grading around the tubes and the band law of the remaining feature
+    # curves (junction lines, footprint edges, the un-tubed edge parts) are exact
+    # segment-distance laws evaluated in the size callback with the trace rule.
+    tube_band_record = prism_tubes ?
+        prepare_tube_band_sizing!(curve_segments(tube_axis_curves),
+                                  curve_segments([curve for curve in feature_curves
+                                                  if !(curve in tube_curves)]),
+                                  tube_sections["Radius"] + tube_sections["PyramidHeight"],
+                                  lc_fine, lc_far, far_growth) :
+        nothing
+    if trace_basis_record !== nothing || tube_band_record !== nothing
+        install_trace_basis_callback!()
+    end
     if trace_basis_record !== nothing
         trace_basis_record["MeshSizeMinimum"] = mesh_size_minimum
-        install_trace_basis_callback!()
         println("Trace basis sizing: ratio=$(trace_basis_size_ratio), triangles=" *
                 "$(trace_basis_record["Triangles"]), below far=$(trace_basis_record["TrianglesBelowFarSize"]), " *
                 "basis edges below far=$(trace_basis_record["BasisEdgesBelowFarSize"]), " *
@@ -3974,7 +4717,9 @@ function generate_spatial_coupon(;
         # nearest curve tangent, so differently oriented cluster edges do not require a
         # single global frame; intersections naturally receive the stricter local metric.
         gmsh.model.mesh.field.add("AttractorAnisoCurve", 1)
-        gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
+        gmsh.model.mesh.field.setNumbers(1, "CurvesList",
+                                         Float64.([curve for curve in feature_curves
+                                                   if !(curve in tube_curves)]))
         gmsh.model.mesh.field.setNumber(1, "DistMin", process_fine_width)
         gmsh.model.mesh.field.setNumber(1, "DistMax", process_core_width)
         gmsh.model.mesh.field.setNumber(1, "SizeMinNormal", lc_fine)
@@ -3988,7 +4733,7 @@ function generate_spatial_coupon(;
             # the corner balls; Min/MinAniso wrappers would not (they re-derive the
             # anisotropic child's size), so the band prescription stays identical.
             gmsh.model.mesh.field.add("Distance", 2)
-            gmsh.model.mesh.field.setNumbers(2, "PointsList", Float64.(corner_point_tags))
+            gmsh.model.mesh.field.setNumbers(2, "PointsList", Float64.(graded_point_tags))
             gmsh.model.mesh.field.add("MathEval", 3)
             gmsh.model.mesh.field.setString(3, "F", "min(F1," * corner_size_expression(
                 "F2", corner_grading, lc_far, process_core_width - process_fine_width) * ")")
@@ -4035,8 +4780,37 @@ function generate_spatial_coupon(;
     if geometry_only
         return gmsh.finalize()
     end
-    gmsh.model.mesh.generate(3)
-    trace_basis_record === nothing || gmsh.model.mesh.removeSizeCallback()
+    tube_timings = Dict{String, Float64}()
+    tube_face_meshes = Dict{String, Any}[]
+    tube_volume_census = Dict{String, Any}[]
+    tube_discrete = Dict{Int, Vector{Int32}}()
+    if prism_tubes
+        # Three phases around the generator (prism_edge_tubes.jl): the tube curves
+        # are meshed, Gmsh meshes the surfaces, the tube faces are replaced by the
+        # explicit cap triangles / radial and pyramid faces, the OCC tube volumes
+        # are removed and Gmsh meshes the remaining volumes with tetrahedra, then
+        # discrete volumes receive the prisms and pyramids.
+        tube_timings["Generate2D"] = @elapsed gmsh.model.mesh.generate(2)
+        tube_timings["TubeFaces"] = @elapsed begin
+            tube_face_meshes = [install_tube_faces!(state, next_node) for state in tube_states]
+        end
+        remove_tube_volumes!(tube_states)
+        tube_timings["Generate3D"] = @elapsed gmsh.model.mesh.generate(3)
+        before_duplicates = sum(length(tags) for tags in gmsh.model.mesh.getElements(3)[2]; init=0)
+        gmsh.model.mesh.removeDuplicateElements([(3, tag) for (dim, tag) in gmsh.model.getEntities(3)])
+        after_duplicates = sum(length(tags) for tags in gmsh.model.mesh.getElements(3)[2]; init=0)
+        before_duplicates == after_duplicates ||
+            error("Gmsh produced $(before_duplicates - after_duplicates) duplicate volume elements")
+        tube_discrete, tube_volume_census = finalize_tube_volumes!(tube_states)
+        gmsh.model.addPhysicalGroup(3, vcat(setdiff(substrate_tags, tube_volumes),
+                                            get(tube_discrete, 1, Int32[])), 1, "substrate")
+        gmsh.model.addPhysicalGroup(3, vcat(setdiff(vacuum_tags, tube_volumes),
+                                            get(tube_discrete, 2, Int32[])), 2, "vacuum")
+    else
+        gmsh.model.mesh.generate(3)
+    end
+    (trace_basis_record === nothing && tube_band_record === nothing) ||
+        gmsh.model.mesh.removeSizeCallback()
     # Reject oversized linear meshes before allocating their high-order nodes.
     _, linear_tags, _ = gmsh.model.mesh.getElements(3)
     sum(length(tags) for tags in linear_tags) <= max_elements ||
@@ -4054,8 +4828,14 @@ function generate_spatial_coupon(;
             EDGE_LAYER_ROW_ZIGZAG, maximum_corner_aspect, minimum_scaled_jacobian,
             maximum_jacobian_condition, quality_displacement_over_normal, tolerance,
             edge_layer_maximum_aspect,
-            corner_grading) :
+            corner_grading; fixed_node_tags=prism_tubes ? non_simplex_volume_nodes() : UInt[]) :
         nothing
+    # Per-type quality of the mixed mesh, gated after the corner-ball optimization
+    # (fail closed): positive orientation and Jacobian condition for every type,
+    # scaled Jacobian for the tetrahedra.
+    mixed_quality = prism_tubes ? mixed_volume_quality() : nothing
+    prism_tubes && gate_mixed_volume_quality(mixed_quality, minimum_scaled_jacobian,
+                                             maximum_jacobian_condition)
     census_rows = corner_isotropy ?
         seed_corner_census(semantic_corners, corner_grading, tolerance) :
         Dict{String, Any}[]
@@ -4081,6 +4861,7 @@ function generate_spatial_coupon(;
         error("Spatial coupon exceeds node budget: $node_count > $max_nodes")
     element_count <= max_elements ||
         error("Spatial coupon exceeds element budget: $element_count > $max_elements")
+    element_count_after_generation = element_count
     if mesh_order > 1
         gmsh.model.mesh.optimize("HighOrderElastic", true, 20)
         gmsh.model.mesh.optimize("HighOrder", true, 20)
@@ -4118,6 +4899,13 @@ function generate_spatial_coupon(;
     # groups, so the census is taken after it (areas are rigid-invariant, and the
     # source-local frame is kept by measuring before the placement transform).
     area_rows = corner_isotropy ? interface_areas() : Dict{String, Any}[]
+    tube_record = prism_tubes ?
+        prism_tube_census(tubes, tube_segments, tube_sections, tube_states, tube_volume_census,
+                          tube_face_meshes, tube_curve_meshes, tube_timings, tube_band_record,
+                          mixed_quality, graded_points, semantic_corners, junction_curves,
+                          footprint_polygons, lc_fine, lc_tangent, lc_far, far_growth,
+                          trace_basis_record, max_elements, element_count_after_generation) :
+        nothing
     if transform != IDENTITY_RIGID_TRANSFORM
         connectivity = gmsh.model.mesh.getElements()
         gmsh.model.mesh.affineTransform(vec(transform'))
@@ -4146,6 +4934,14 @@ function generate_spatial_coupon(;
                 "JunctionCurves" => Dict{String, Any}(
                     "Count" => length(junction_curves),
                     "TotalLength" => junction_length,
+                    # Source-local CAD endpoints of every junction curve (the Gmsh-only
+                    # audit's junction band lines; a curved junction is recorded by its
+                    # chord and flagged).
+                    "Segments" => [vcat(a, b) for (a, b) in curve_segments(junction_curves)],
+                    "CurvedCurves" => count(
+                        abs(gmsh.model.occ.getMass(1, curve) - norm(b .- a)) >
+                        1.0e-9 * max(norm(b .- a), 1.0)
+                        for (curve, (a, b)) in zip(junction_curves, curve_segments(junction_curves))),
                     "Rule" => "curves of material-interface surfaces (substrate on one " *
                               "side, vacuum on the other) lying on the outer box: the " *
                               "cut-surface junctions of the trench floor/walls and the " *
@@ -4190,7 +4986,8 @@ function generate_spatial_coupon(;
                         Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
                                 for polygon in footprint_polygons]; init=0.0)),
                 "FootprintPolygons" => footprint_polygons,
-                "EdgeLayer" => Dict{String, Any}(
+                "PrismTubes" => tube_record,
+                "EdgeLayer" => prism_tubes ? nothing : Dict{String, Any}(
                     "EdgeSize" => edge_size,
                     "GrowthRatio" => edge_growth_ratio,
                     "Aspect" => edge_layer_aspect,
@@ -4295,6 +5092,8 @@ function generate_spatial_coupon(;
         println(stream, "  \"EdgeLayerAspect\": $edge_layer_aspect,")
         println(stream, "  \"EdgeLayerMaximumAspect\": $edge_layer_maximum_aspect,")
         println(stream, "  \"EdgeLayerRows\": $(length(edge_layer_offsets)),")
+        println(stream, "  \"PrismTubes\": $(prism_tubes ? "true" : "false"),")
+        println(stream, "  \"FarGrowth\": $far_growth,")
         println(stream, "  \"SemanticCornerCount\": $(length(semantic_corners)),")
         println(stream, "  \"RigidTransform\": [$(join(vec(transform'), ", "))],")
         println(stream, "  \"Algorithm3D\": $(Int(gmsh.option.getNumber("Mesh.Algorithm3D"))),")
@@ -4358,7 +5157,10 @@ function parse_options(args)
         "--maximum-quality-displacement-over-normal" =>
             ("quality_displacement_over_normal", Float64),
         "--edge-layer-maximum-aspect" => ("edge_layer_maximum_aspect", Float64),
-        "--corner-size" => ("corner_size", Float64)
+        "--corner-size" => ("corner_size", Float64),
+        "--prism-tubes" => ("prism_tubes", Bool),
+        "--tube-sector-degrees" => ("tube_sector_degrees", Float64),
+        "--far-growth" => ("far_growth", Float64)
     )
     index = 4
     while index <= length(args)
@@ -4432,6 +5234,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
         quality_displacement_over_normal =
             get(options, "quality_displacement_over_normal", 0.0),
         edge_layer_maximum_aspect = get(options, "edge_layer_maximum_aspect", 0.0),
-        corner_size = get(options, "corner_size", 0.0)
+        corner_size = get(options, "corner_size", 0.0),
+        prism_tubes = get(options, "prism_tubes", false),
+        tube_sector_degrees = get(options, "tube_sector_degrees", 30.0),
+        far_growth = get(options, "far_growth", 0.0)
     )
 end

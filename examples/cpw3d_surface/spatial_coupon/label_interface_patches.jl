@@ -4,10 +4,13 @@
 include(joinpath(@__DIR__,"interface_ownership.jl"))
 
 # Physical material/interface families are retained from CAD. Coarse per-element
-# slot labels are non-authoritative visualization/routing tags when a triangle
+# slot labels are non-authoritative visualization/routing tags when an element
 # crosses the response-ownership partition. Science uses the positive-weight
 # quadrature-point partition recorded below; the whole-element Lipschitz result is
-# retained separately as an ambiguity diagnostic.
+# retained separately as an ambiguity diagnostic. Interface elements are linear
+# triangles or linear quadrangles (the radial faces of the prism edge tubes);
+# both use the positive-weight Gauss4 rule of their type.
+const INTERFACE_ELEMENT_VERTICES = Dict("Triangle" => 3, "Quadrilateral" => 4)
 function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0,
                                  fabricated=false,metal_thickness=0.1,overetch=0.05,
                                  ownership_coordinates=identity)
@@ -21,7 +24,7 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
     unresolved_area=Dict{Int,Float64}();unresolved_count=Dict{Int,Int}()
     quadrature_area=Dict{Int,Float64}();quadrature_whole=0.;quadrature_points=0
     refinement_points=NTuple{4,Float64}[]
-    certificates=Tuple{UInt64,Int,Bool,NTuple{3,UInt64}}[]
+    certificates=Tuple{UInt64,Int,Bool,NTuple{4,UInt64}}[]
     old_groups=Tuple{Int32,Int32}[];old_entities=Set{Int32}()
     for (_,attribute) in gmsh.model.getPhysicalGroups(2)
         attribute==1 && continue
@@ -31,8 +34,11 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
             push!(old_entities,entity)
             types,element_tags,connectivity=gmsh.model.mesh.getElements(2,entity)
             for (type,etags,enodes) in zip(types,element_tags,connectivity)
-                name,_,_,nnode,_,primary=gmsh.model.mesh.getElementProperties(type)
-                startswith(name,"Triangle") && primary==3 || error("Interface labeling requires triangular faces")
+                name,_,order,nnode,_,primary=gmsh.model.mesh.getElementProperties(type)
+                kind=first(split(name))
+                haskey(INTERFACE_ELEMENT_VERTICES,kind) && primary==INTERFACE_ELEMENT_VERTICES[kind] && order==1 ||
+                    error("Interface labeling requires linear triangular or quadrangular faces")
+                vertices=primary
                 quadrature_rule="Gauss4"
                 integration_points,integration_weights=gmsh.model.mesh.getIntegrationPoints(type,quadrature_rule)
                 all(weight>0 for weight in integration_weights) ||
@@ -44,13 +50,16 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
                 for (i,etag) in enumerate(etags)
                     nodes=collect(enodes[(i-1)*nnode+1:i*nnode])
                     points=[coords[node] for node in nodes]
-                    center=ntuple(d->sum(points[j][d] for j in 1:3)/3,3)
+                    center=ntuple(d->sum(points[j][d] for j in 1:vertices)/vertices,3)
                     ownership_center=ownership_coordinates(center)
                     target=classify(attribute,ownership_center)
-                    ab=[points[2][d]-points[1][d] for d in 1:3]
-                    ac=[points[3][d]-points[1][d] for d in 1:3]
-                    corner_area=norm(cross(ab,ac))/2
-                    corner_area>0 || error("Degenerate interface triangle")
+                    corner_area=0.
+                    for j in 2:(vertices-1)
+                        ab=[points[j][d]-points[1][d] for d in 1:3]
+                        ac=[points[j+1][d]-points[1][d] for d in 1:3]
+                        corner_area+=norm(cross(ab,ac))/2
+                    end
+                    corner_area>0 || error("Degenerate interface element")
                     area=sum(integration_weights[q]*jacobian_measures[(i-1)*nq+q] for q in 1:nq)
                     area>0 || error("Nonpositive integrated interface area")
                     quadrature_whole+=area
@@ -67,7 +76,7 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
                     end
                     areas[target]=get(areas,target,0.)+area
                     counts[target]=get(counts,target,0)+1
-                    samples=[ntuple(d->0.8p[d]+0.2center[d],3) for p in points[1:3]]
+                    samples=[ntuple(d->0.8p[d]+0.2center[d],3) for p in points[1:vertices]]
                     if any(classify(attribute,ownership_coordinates(p))!=target for p in samples)
                         ambiguous[target]=get(ambiguous,target,0.)+area
                     end
@@ -75,7 +84,8 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
                     ownership_hull = hull === nothing ? nothing : ownership_coordinates.(hull)
                     certified=ownership_hull!==nothing &&
                               ownership.certify(attribute,ownership_center,ownership_hull)
-                    push!(certificates,(etag,target,certified,Tuple(nodes[1:3])))
+                    push!(certificates,(etag,target,certified,
+                                        ntuple(j->j<=vertices ? nodes[j] : UInt64(0),4)))
                     if !certified
                         unresolved_area[target]=get(unresolved_area,target,0.)+area
                         unresolved_count[target]=get(unresolved_count,target,0)+1
@@ -122,9 +132,9 @@ function label_interface_patches(edges,loops,radius,report_path;minimum_size=0.0
         for p in refinement_points;println(f,join(p,","));end
     end
     open(report_path*".elements.csv","w") do f
-        println(f,"element,attribute,certified,node_a,node_b,node_c")
+        println(f,"element,attribute,certified,node_a,node_b,node_c,node_d")
         for (element,attribute,certified,nodes) in sort!(certificates;by=first)
-            println(f,"$element,$attribute,$(Int(certified)),$(nodes[1]),$(nodes[2]),$(nodes[3])")
+            println(f,"$element,$attribute,$(Int(certified)),$(nodes[1]),$(nodes[2]),$(nodes[3]),$(nodes[4])")
         end
     end
     println("Element-wise interface slots: ",join(sort!(collect(keys(areas))),","),

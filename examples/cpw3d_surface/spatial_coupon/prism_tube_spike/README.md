@@ -45,7 +45,7 @@ requested sizes end at 31.75 nm and leave 10 nm between the pyramid apexes and t
 Gmsh's `generate()` deletes every face mesh before its 1D pass and every volume mesh before
 its 2D/3D passes, `Mesh.MeshOnlyEmpty` protects only the dimension being meshed, and
 `Mesh.Renumber` (default on) renumbers nodes after each pass. The tube mesh is therefore
-installed in three phases (`prism_tube.jl`): points and curves before `generate(2)`; the
+installed in three phases (`../prism_edge_tubes.jl`): points and curves before `generate(2)`; the
 faces (cap triangles, radial quadrangles on the metal / trench-wall strips, pyramid
 triangles on the lateral faces) after `generate(2)`; the OCC tube volumes are removed
 (non-recursively) before `generate(3)` and replaced afterwards by discrete volumes carrying
@@ -57,7 +57,7 @@ match must be one-to-one (a split tube entity is an error).
 
 | file | role |
 |---|---|
-| `prism_tube.jl` | cross-section, tube frames, OCC tube volumes, entity matching, three-phase explicit mesh installation |
+| `../prism_edge_tubes.jl` (moved out of the spike for the Gmsh-only production mesher, decision 38) | cross-section, tube frames, OCC tube volumes, entity matching, three-phase explicit mesh installation |
 | `hybrid_census.jl` | element counts / quality per type (Gmsh SICN, gamma), label areas, duplicate removal, JSON writer |
 | `mesh_tiny_hybrid.jl` | Step 0: small box + one metal ridge on an etched substrate, `hybrid` or pure `tets`, Gmsh 2.2 |
 | `mesh_prism_tube_coupon.jl` | Step 1: the four-edge hybrid coupon from the frozen inputs of a case directory |

@@ -46,7 +46,11 @@ end
     @test tube.e ≈ [1.0, 0.0, 0.0]
     @test tube_point(tube, 0.0, 0.0, tube.s_start) ≈ [2.1, 0.0, 0.1]
     @test tube_station(tube, tube.layers) ≈ 7.9
-    @test_throws ErrorException EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 1.03, 0.05)
+    # A length that is not a multiple of the spacing takes one more layer; the
+    # achieved spacing (<= the requested one) is recorded by tube_spacing.
+    uneven = EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 1.03, 0.05)
+    @test uneven.layers == 21 && tube_spacing(uneven) ≈ 1.03 / 21
+    @test_throws ErrorException EdgeTube([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 1.03, 0.0)
 end
 
 @testset "Tiny hybrid build" begin

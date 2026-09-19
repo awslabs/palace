@@ -108,10 +108,11 @@ function build_interface_ownership(edges,loops,radius;
     return (classify=classify,certify=certify)
 end
 
-# A quadratic triangular map lies in the convex hull of its Bernstein control
+# A linear triangle or quadrangle lies in the convex hull of its corners; a
+# quadratic triangular map lies in the convex hull of its Bernstein control
 # points. Lagrange mid-edge nodes alone do not provide that bound.
 function interface_triangle_hull(points)
-    length(points)==3 && return points
+    length(points) in (3,4) && return points
     if length(points)==6
         hull=copy(points[1:3])
         for (mid,a,b) in ((4,1,2),(5,2,3),(6,3,1))
