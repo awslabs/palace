@@ -503,8 +503,18 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   if (Mpi::Root(comm))
   {
     const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
-    const FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
+    FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+
+    // Drop intentionally-unstored outputs (large files no check consumes) from the live
+    // listing so their absence in the reference tree is not flagged as a missing file.
+    for (auto it = got.csv_files.begin(); it != got.csv_files.end();)
+    {
+      const bool unstored = std::any_of(
+          effective_opts.unstored_files.begin(), effective_opts.unstored_files.end(),
+          [&it](const std::string &pat) { return it->find(pat) != std::string::npos; });
+      it = unstored ? got.csv_files.erase(it) : std::next(it);
+    }
 
     CheckSetEqual("regression output directories", got.dirs,
                   ExpectedDirectories(max_refinement_iterations, effective_opts));
@@ -544,7 +554,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
         if (ValidateCSVTables(a, r, effective_opts) &&
             !SkipNumericComparison(effective_opts))
         {
-          custom_it->second(a, r);
+          custom_it->second(a, r, actual);
         }
         continue;
       }

@@ -928,6 +928,23 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
   return BuildParSumOperator(coeff, par_ops, set_essential);
 }
 
+std::unique_ptr<ComplexOperator>
+BuildOperatorWithA2(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexOperator *> &ops,
+                    const ComplexOperator *A2)
+{
+  if (A2 && !dynamic_cast<const ComplexParOperator *>(A2))
+  {
+    auto sum = BuildParSumOperator(coeff, ops, true);
+    return std::make_unique<SumComplexOperator>(std::move(sum), *A2);
+  }
+  std::vector<std::complex<double>> c(coeff);
+  std::vector<const ComplexOperator *> o(ops);
+  c.emplace_back(1.0, 0.0);
+  o.push_back(A2);
+  return BuildParSumOperator(c, o, true);
+}
+
 // TODO: replace with std::to_array in c++20.
 namespace detail
 {
