@@ -629,6 +629,76 @@ OK (33 skipped); `run_general_mesh_suite.py --preflight-only` passes for the
 production manifest (14 cases), the MA calibration manifest (6) and the sizing
 calibration manifest (2); `refreeze_manifest_tools.py --check` current.
 
+### Evidence (decision 43 production roots: three-edge 06, four-edge, ten-edge, two-edge 10; commits b6378f173 / 72185ce89, 2026-09-19)
+
+All four production cases were rebuilt through `run_gmsh_only_case.py` under the
+unchanged manifest options and gates (identity + rotate-z-0.63, audits,
+verification `Passed true`, `Failures []`, `TransformComparisonFailures []`,
+`CanonicalReuseFailures []`; the verification reports bind the manifest SHA-256
+`452fd4c32c0174d4...`). The three-edge and four-edge roots were launched from
+b6378f173 and verified under 72185ce89 (the fix-forward of the curve-spacing
+validator bound; the mesher is identical in both commits) - their first audit
+attempts, rejected by the too-strict bound, are kept under
+`superseded-audit-attempts/` / `failed-audits-b6378f173-validator/` in the roots.
+
+| case | elements (tets + prisms + pyramids); delta vs decision 42 | nodes (H1 p4) | tets min SJ / max cond | prisms / pyramids max cond | caps min SJ / max cond | corners | protected (measure / vertex) | closure | diagonal | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | trace rule achieved/requested P50 / max (narrow) | curves (graded) / min node spacing nm | build s / GiB | verification s / GiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| three-edge-419576fdab24 (06) | **1,845,349** = 1,659,373 + 172,692 + 13,284; **+152,347 tets (+9.0%)**, prisms / pyramids unchanged | 428,366 (24,551,802) | 0.0201 / 79.2 | 589.4 / 8.74 | 14: 0.0201 / 79.2 | 3.45 / 3.42 / 3.72 / 3.10 / 3.62 | 0 / 3.5e-18 | 3.9e-13 | 0 | 103 apexes: 4,844 / 3,706 / 9,685 at 6.7 / 33.6 / 43.2 | 0.97 / 1.06 (136) | 24 (24) / 0.23 (metal ridge parts at the corners; band curves 10.5, junction 17.7) | 117 / 4.6 | 926 / 2.9 |
+| four-edge-9d2cb9bbb3fe | **1,916,486** = 1,731,140 + 172,107 + 13,239; **+47,277 tets (+2.5%)**, prisms / pyramids unchanged | 426,520 (25,100,892) | 0.0213 / 97.7 | 588.1 / 8.72 | 12: 0.0213 / 97.7 | 3.10 / 3.78 / 3.71 / 3.43 | 0 / 9.9e-16 | 1.5e-13 | 0 | 58 apexes: 3,244 / 2,488 / 6,342 at 5.6 / 29.4 / 40.1 | 0.92 / 1.15 (78) | 36 (28) / 0.23 (band 11.0, junction 12.9) | 123 / 4.6 | 1,040 / 2.9 |
+| ten-edge-6791f1c84123 | **3,498,453** = 3,208,149 + 269,568 + 20,736; **+824,762 tets (+30.8%)**, prisms / pyramids unchanged; **87.5% of the 4M cap (501,547 headroom; the cap fails closed)** | 814,867 (45,596,995) | 0.0358 / 89.3 | 588.8 / 8.73 | 36: 0.0369 / 20.1 | 2.87 - 3.77 (10) | 0 / 1.3e-15 | 7.7e-14 (10 owner labels) | 0 | 224 apexes: 5,877 / 6,694 / 16,648 at 8.2 / 33.5 / 43.4 | 0.98 / 1.09 (302) | 48 (42) / 0.23 (band 12.5, junction 21.6) | 311 / **7.66 of 8** | 1,607 of 1,800 / 5.3 (concurrent with another audit) |
+| two-edge-8dd4bc70f183 (10) | **521,676** = 425,916 + 88,920 + 6,840; **+5,014 tets (+1.2%)**, prisms / pyramids unchanged | 134,927 (7,823,347) | 0.0202 / 99.3 | 586.3 / 8.69 | 20: 0.0319 / 55.7 | 3.30 / 3.54 / 3.73 / 3.25 / 3.74 / 3.38 | 0 / 0 | 1.2e-13 | 0 | 75 apexes: 3,185 / 2,063 / 6,075 at 4.7 / 37.2 / 45.5 | 0.86 / 1.08 (112) | 14 (12) / 0.23 (junction 21.6, band 25.0) | 48 / 2.4 | 261 / 0.9 |
+
+Roots and digests (binaries kept for the physics preflight; the decision-42 roots'
+mesh binaries were deleted, their censuses and reports kept):
+`/tmp/coupon-gmsh-only-three-edge-419576fdab24-b6378f173-20260919-162000`
+(identity.msh `95837ed5aca05bd52a571b27ba935014a4b40f16d1bd1c9cb9437a3bb5205a70`,
+rotate-z `bc352df932df76609159d18800ddc610c189cbb5e87a44bd057535b776a75cc3`,
+CanonicalBuildId `1a2a44781a334b67ff57f3f50eb744f6235af4262c429c71d857eef4472c46ae`);
+`/tmp/coupon-gmsh-only-four-edge-9d2cb9bbb3fe-b6378f173-20260919-162000`
+(identity.msh `1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5`,
+rotate-z `5443f2d8357159abda8d6425814598f859966ada2f66947317bb2b6360c4d72e`,
+CanonicalBuildId `6257fa3ce62225b11e1cb49419afc136206f9a83f3737c443236f16829b2dfd2`);
+`/tmp/coupon-gmsh-only-ten-edge-6791f1c84123-72185ce89-20260919-170018`
+(identity.msh `8a871f222da9370da81df84585e9a3c772a62aa67188d5934a239f697a2ca75a`,
+rotate-z `b1c15ecce0971df92c88543f32a240351b8bfdbfa392420c0120b88d8ecd729d`,
+CanonicalBuildId `bb8bf518c44b298a7ede5d3ccdd3712690c77336547ec2e6d938d66f6bf7a4b2`);
+`/tmp/coupon-gmsh-only-two-edge-8dd4bc70f183-72185ce89-20260919-170018`
+(identity.msh `5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04`,
+rotate-z `ebb790ad1b89a2b264780fc8f9d8e450bb47071fe9f6f89b797b1647c504139a`,
+CanonicalBuildId `5b42e72caf710458bbf13dae80845d802e7a41b7694b2ae5f8d68ffb3a6014a9`).
+
+**The four-edge production root no longer equals the physics-11 mesh**
+(`80966c7d...`, 1,869,209 elements): +47,277 tetrahedra (+2.5%), located where the
+four-edge basis has triangles whose altitude is below the shortest edge (its
+narrowest 21.7 nm slivers have a 15.3 nm altitude) and along the band curves the
+trace rule now grades (the junction slivers 74 / 10: top / bottom-face triangles
+within 0.3 um 412 -> 658 / 650 at mean edge 14.7 -> 10.5 nm, side-face triangles
+unchanged in size, tetrahedra within 0.1 um 575 / 533 -> 760 / 747 at longest edge
+P50 29.5 / 31.6 -> 25.4 / 26.1 nm; box-edge curve nodes 10.8-28 -> 7.6-21 nm). The
+physics-11 evidence of decision 42 stays bound to its own mesh SHA; the production
+root is the decision-43 mesh.
+
+Sliver-support statistics of case 06 before / after (the diagnosis measure, within
+0.3 um of the apex on each face and 0.1 um in the volume): sources 25 / 26 / 133 /
+134 - box-edge curve node spacing 24.8-37 -> 5.7-11.5 nm; side-face (x = -8) cut
+triangles 186-195 at mean edge 30-31 nm -> 305-315 at 25 nm; bottom / top-face
+(needle) triangles 104-124 at 35-36 nm -> 732-868 at 6.9-7.0 nm; tetrahedra 115-136
+at longest edge P50 52-57 nm -> 606-948 at 17.2-18.3 nm. The twin 52 / 53 (no
+needle) is nearly unchanged (431 -> 456 triangles at 26.9 -> 26.0 nm; tetrahedra
+210 -> 257 at 51 -> 49 nm). Every band / junction curve of case 06 is graded (the
+trace rule at the trench rows prescribes 24.9 nm < NormalSize along the junction
+lines, and the basis rows lower the footprint band curves locally); the un-tubed
+metal ridge parts inside the corner clearance grade to CornerSize (0.23-0.25 nm) as
+before. Physics on the new 06 root (gallery-physics-06b) closes the class.
+
+Validation of the decision-43 state (b6378f173, 72185ce89): `python3 -m unittest
+discover -s . -p "test_*.py"` ran 251 tests, OK (33 skipped);
+`run_general_mesh_suite.py --preflight-only` passes for the production manifest
+(14 cases), the MA calibration manifest (6) and the sizing calibration manifest (2);
+`refreeze_manifest_tools.py --check` current. Disk hygiene: the 19 superseded mesh
+binaries (1.70 GB: the four decision-42 roots and the three probe meshes) are listed
+in `/tmp/coupon-sliver-fix-20260919/deleted-binaries.txt`.
+
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
 Retired from production by decision 38; recorded as
