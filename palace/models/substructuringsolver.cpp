@@ -184,16 +184,18 @@ private:
 
 }  // namespace
 
-// Parallel region-condensed electrostatic solve. Region/environment operators are assembled
-// on the parent finite element space with domain-restricted (isotropic scalar) permittivity
-// coefficients; the interface is identified in true-DOF space; the environment is condensed
-// through an implicit distributed DtN. Reusing LaplaceOperator/KspSolver, tensor materials,
-// the capacitance sweep, and reuse-optimized (materialized) DtN are follow-ups.
+// Parallel region-condensed static solve (electrostatic H1 or magnetostatic H(curl)).
+// Region/environment operators are assembled on the parent finite element space with
+// domain- restricted material coefficients; the interface is identified in true-DOF space;
+// the environment is condensed through an implicit distributed DtN. The magnetostatic
+// curl-curl operator carries a subdomain mass regularization (gauge-free formulation is a
+// follow-up).
 struct SubstructuringSolver::Impl
 {
   const IoData &iodata;
   mfem::ParMesh &parent;
-  mfem::H1_FECollection fec;
+  bool magnetostatic;
+  std::unique_ptr<mfem::FiniteElementCollection> fec;
   mfem::ParFiniteElementSpace parent_fes;
   int nt;
 
@@ -203,7 +205,7 @@ struct SubstructuringSolver::Impl
   mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
-  std::unique_ptr<mfem::HypreBoomerAMG> amg_env;
+  std::unique_ptr<mfem::HypreSolver> prec_env;
   std::unique_ptr<mfem::HyprePCG> solver_env;
   std::unique_ptr<ImplicitDtN> dtn;
 
@@ -216,8 +218,14 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<MaterializedDtN> mat_dtn;
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
-    : iodata(iodata), parent(parent), fec(iodata.solver.order, parent.Dimension()),
-      parent_fes(&parent, &fec), nt(parent_fes.GetTrueVSize())
+    : iodata(iodata), parent(parent),
+      magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
+      fec(magnetostatic
+              ? std::unique_ptr<mfem::FiniteElementCollection>(
+                    new mfem::ND_FECollection(iodata.solver.order, parent.Dimension()))
+              : std::unique_ptr<mfem::FiniteElementCollection>(
+                    new mfem::H1_FECollection(iodata.solver.order, parent.Dimension()))),
+      parent_fes(&parent, fec.get()), nt(parent_fes.GetTrueVSize())
   {
     const auto &sub = *iodata.solver.substructuring;
     mfem::Array<int> ra(static_cast<int>(sub.region_attributes.size())),
@@ -306,9 +314,10 @@ struct SubstructuringSolver::Impl
       }
       return false;
     };
-    // Reconstruct the (possibly anisotropic) relative-permittivity tensor per attribute
-    // from its eigen-decomposition: eps_ij = sum_k s[k] v[k]_i v[k]_j.
-    auto tensor = [dim](const config::MaterialData &mat)
+    // Reconstruct the (possibly anisotropic) material tensor per attribute from its eigen-
+    // decomposition: M_ij = sum_k s[k] v[k]_i v[k]_j. For magnetostatics the curl-curl
+    // coefficient is the inverse permeability, so the reconstructed mu tensor is inverted.
+    auto tensor = [dim](const config::SymmetricMatrixData<3> &prop, bool invert)
     {
       mfem::DenseMatrix e(dim);
       e = 0.0;
@@ -318,9 +327,13 @@ struct SubstructuringSolver::Impl
         {
           for (int j = 0; j < dim; j++)
           {
-            e(i, j) += mat.epsilon_r.s[k] * mat.epsilon_r.v[k][i] * mat.epsilon_r.v[k][j];
+            e(i, j) += prop.s[k] * prop.v[k][i] * prop.v[k][j];
           }
         }
+      }
+      if (invert)
+      {
+        e.Invert();
       }
       return e;
     };
@@ -334,11 +347,11 @@ struct SubstructuringSolver::Impl
         }
         if (in(ra, a))
         {
-          region_eps[a] = tensor(mat);
+          region_eps[a] = tensor(magnetostatic ? mat.mu_r : mat.epsilon_r, magnetostatic);
         }
         else if (in(ea, a))
         {
-          env_eps[a] = tensor(mat);
+          env_eps[a] = tensor(magnetostatic ? mat.mu_r : mat.epsilon_r, magnetostatic);
         }
       }
     }
@@ -347,11 +360,32 @@ struct SubstructuringSolver::Impl
   }
 
   std::unique_ptr<mfem::HypreParMatrix>
-  AssembleParent(const std::map<int, mfem::DenseMatrix> &eps_by_attr)
+  AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr)
   {
-    PWMatrixCoefficient eps(parent.Dimension(), eps_by_attr);
+    PWMatrixCoefficient coef(parent.Dimension(), coef_by_attr);
     mfem::ParBilinearForm a(&parent_fes);
-    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
+    if (magnetostatic)
+    {
+      a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
+      // The curl-curl operator is singular on the gradient nullspace even with the
+      // interface held fixed; a subdomain-restricted mass term regularizes it. The
+      // region-condensed system reproduces the monolith for any consistent regularization
+      // (both use the same operator). A gauge-free magnetostatic formulation is a
+      // follow-up.
+      const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
+      mfem::Vector mass(max_attr);
+      mass = 0.0;
+      for (const auto &[a_attr, m] : coef_by_attr)
+      {
+        mass(a_attr - 1) = 1.0;
+      }
+      mfem::PWConstCoefficient mcoef(mass);
+      a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mcoef));
+      a.Assemble();
+      a.Finalize();
+      return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
+    }
+    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(coef));
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
@@ -386,13 +420,23 @@ void SubstructuringSolver::CondenseEnvironment()
   {
     std::unique_ptr<mfem::HypreParMatrix> tmp(impl->A_env_int->EliminateRowsCols(non_int));
   }
-  impl->amg_env = std::make_unique<mfem::HypreBoomerAMG>(*impl->A_env_int);
-  impl->amg_env->SetPrintLevel(0);
+  if (impl->magnetostatic)
+  {
+    auto ams = std::make_unique<mfem::HypreAMS>(*impl->A_env_int, &impl->parent_fes);
+    ams->SetPrintLevel(0);
+    impl->prec_env = std::move(ams);
+  }
+  else
+  {
+    auto amg = std::make_unique<mfem::HypreBoomerAMG>(*impl->A_env_int);
+    amg->SetPrintLevel(0);
+    impl->prec_env = std::move(amg);
+  }
   impl->solver_env = std::make_unique<mfem::HyprePCG>(*impl->A_env_int);
   impl->solver_env->SetTol(1.0e-13);
   impl->solver_env->SetMaxIter(1000);
   impl->solver_env->SetPrintLevel(0);
-  impl->solver_env->SetPreconditioner(*impl->amg_env);
+  impl->solver_env->SetPreconditioner(*impl->prec_env);
   impl->dtn = std::make_unique<ImplicitDtN>(*impl->A_env, *impl->solver_env, impl->is_gamma,
                                             impl->is_env_int);
 
