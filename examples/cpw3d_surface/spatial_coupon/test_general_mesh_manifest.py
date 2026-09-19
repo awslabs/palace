@@ -2945,14 +2945,15 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
 
     def test_production_manifest_records_the_gmsh_only_recipe(self):
         # Decision 38: the production manifest is Gmsh-only; its recipe is the build
-        # command's tube / corner / band options and the retired EL4c recipe is kept as
-        # a labeled record.
+        # command's tube / corner / band options (with the decision-42 trace-basis size
+        # ratio 0.5) and the retired EL4c recipe is kept as a labeled record.
         recipe = validate_production_recipe(self.production)
         self.assertEqual(self.production["Pipeline"], "gmsh-only")
         self.assertEqual(recipe["Pipeline"], "gmsh-only")
         self.assertEqual(recipe["BuildCommandOptions"],
                          {"--lc-tangent": .05, "--edge-size": .00025, "--edge-growth-ratio": 2.,
-                          "--corner-size": .00025, "--far-growth": .5})
+                          "--corner-size": .00025, "--far-growth": .5, "--trace-basis-size-ratio": .5})
+        self.assertNotIn("--trace-basis-size-ratio", recipe["UnchangedParameters"]["build"])
         self.assertEqual(recipe["BuildCommandOptions"]["--edge-size"],
                          recipe["BuildCommandOptions"]["--corner-size"])
         self.assertNotIn("SeedCommandOptions", recipe)
