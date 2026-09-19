@@ -17,6 +17,12 @@ inputs:
       build-time binaries remain executable on the host.
     required: false
     default: ''
+  runner:
+    description: >-
+      Self-hosted runner label this build runs on. A label starting with
+      'gpu' selects the CUDA build profile; anything else builds CPU-only.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -34,12 +40,12 @@ runs:
     - name: Select and validate build profile
       shell: bash
       run: |
-        # The runner matrix selects the profile; validate that GPU runners have
+        # The runner input selects the profile; validate that GPU runners have
         # a working NVIDIA GPU rather than silently falling back to CPU-only.
         # The CUDA architectures themselves are fixed in spack.yaml
         # (cuda_constraints). PALACE_CUDA is exported via $GITHUB_ENV so every
         # later step (and the podman build-arg) sees it.
-        if [[ "${{ startsWith(matrix.runner, 'gpu') }}" == "true" ]]; then
+        if [[ "${{ startsWith(inputs.runner, 'gpu') }}" == "true" ]]; then
           if ! nvidia-smi >/dev/null 2>&1; then
             echo "::error::GPU runner selected, but nvidia-smi failed."
             exit 1
