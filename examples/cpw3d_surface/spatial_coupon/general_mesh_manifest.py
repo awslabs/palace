@@ -14,8 +14,10 @@ from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT
 from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
 from mesh_array_io import read_mesh
 from canonical_mesh_build import same_canonical_build, validate_build_record
-from mesh_stage_contract import (CANONICAL_STAGE_ORDER, PLACEMENT_STAGE_ORDER, STAGE_ORDER,
-                                 validate_stage_dag)
+from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELINE_BUILD_STAGE,
+                                 PLACEMENT_STAGE_ORDER, STAGE_TOOLS, canonical_stage_order,
+                                 pipeline_of, stage_order, validate_stage_dag)
+from mixed_mesh import simplicial_view
 from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
                                     validate_feature_topology)
 
@@ -49,7 +51,7 @@ def _check_artifact(base, item, description):
 
 def _validate_mesh(path, contract):
     try:
-        analyze(read_mesh(path), contract, require_material_names=True)
+        analyze(simplicial_view(read_mesh(path)), contract, require_material_names=True)
     except SystemExit as error:
         raise ValueError("audited mesh is not a readable Gmsh mesh") from error
 
@@ -101,17 +103,37 @@ def _is_rigid_transform(transform, tolerance=1e-12):
 
 
 PRODUCER_DEFAULT_ETCH_FOOTPRINT = "producer-default"
-# The production recipe (supervisor decisions 34B/35, adopted from the EL4c
-# calibration case): the seed, metric and adaptation options every production build
-# executes, recorded in the production manifest and bound to the recorded stage
-# commands of every production case (the canonical cache key does not encode recipe
-# options; the recipe's EdgeLayer / CornerGrading records are bound by the stage
-# contract).  A labeled calibration manifest never carries it: its cases declare
-# their own options against the recorded pre-34B production values.
+# The production recipe: the options every production build executes, recorded in
+# the production manifest and bound to the recorded stage commands of every
+# production case (the canonical cache key does not encode recipe options; the
+# census / recipe records are bound by the stage contract).  Under the Gmsh-only
+# pipeline (supervisor decision 38) the recipe is the build command's tube, corner,
+# band and far-field options (BuildCommandOptions); under the legacy MMG pipeline
+# (decisions 34B/35) the seed, metric and adaptation options.  A labeled calibration
+# manifest never carries it: its cases declare their own options against the
+# recorded pre-34B production values.
 PRODUCTION_RECIPE_KEY = "ProductionRecipe"
-PRODUCTION_RECIPE_STAGE_OPTIONS = {"seed-generation": "SeedCommandOptions",
-                                   "metric-preparation": "MetricCommandOptions",
-                                   "native-adaptation-mmg": "AdaptationCommandOptions"}
+PIPELINE_PRODUCTION_RECIPE_STAGE_OPTIONS = {
+    GMSH_ONLY_PIPELINE: {"gmsh-build": "BuildCommandOptions"},
+    LEGACY_MMG_PIPELINE: {"seed-generation": "SeedCommandOptions",
+                          "metric-preparation": "MetricCommandOptions",
+                          "native-adaptation-mmg": "AdaptationCommandOptions"},
+}
+PRODUCTION_RECIPE_STAGE_OPTIONS = PIPELINE_PRODUCTION_RECIPE_STAGE_OPTIONS[LEGACY_MMG_PIPELINE]
+MANIFEST_PIPELINE_KEY = "Pipeline"
+
+
+def manifest_pipeline(manifest):
+    """The canonical pipeline of a manifest: the one whose exact stage set its
+    StageToolSHA256 freezes; an explicit `Pipeline` key must name the same one."""
+    stage_tools = manifest.get("StageToolSHA256")
+    if not isinstance(stage_tools, dict):
+        raise ValueError("Manifest must freeze every stage tool digest")
+    pipeline = pipeline_of(stage_tools)
+    declared = manifest.get(MANIFEST_PIPELINE_KEY)
+    if declared is not None and declared != pipeline:
+        raise ValueError(f"Manifest declares pipeline {declared} but freezes the {pipeline} stages")
+    return pipeline
 
 
 def option_values(command, option):
@@ -134,14 +156,15 @@ def validate_production_recipe(manifest):
         return None
     if "Calibration" in manifest:
         raise ValueError("A calibration manifest cannot carry a production recipe")
+    keys = PIPELINE_PRODUCTION_RECIPE_STAGE_OPTIONS[manifest_pipeline(manifest)].values()
     if (not isinstance(recipe, dict) or
             any(not isinstance(recipe.get(key), dict) or not recipe[key] or
                 any(not isinstance(option, str) or not option.startswith("--") or
                     not _finite_number(value)
                     for option, value in recipe[key].items())
-                for key in PRODUCTION_RECIPE_STAGE_OPTIONS.values())):
-        raise ValueError("Production recipe must bind finite option values for the seed, "
-                         "metric and adaptation stages")
+                for key in keys)):
+        raise ValueError("Production recipe must bind finite option values for the pipeline's "
+                         "recipe stages: " + ", ".join(keys))
     return recipe
 
 
@@ -152,7 +175,7 @@ def validate_production_recipe_commands(manifest, case, bounded_stages):
     recipe = manifest.get(PRODUCTION_RECIPE_KEY)
     if recipe is None or case.get("Calibration") is not None:
         return
-    for stage, key in PRODUCTION_RECIPE_STAGE_OPTIONS.items():
+    for stage, key in PIPELINE_PRODUCTION_RECIPE_STAGE_OPTIONS[manifest_pipeline(manifest)].items():
         command = bounded_stages[stage]["Command"]
         for option, value in recipe[key].items():
             executed = option_values(command, option)
@@ -284,13 +307,12 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
             if not path.is_file() or sha256(path) != digest:
                 raise ValueError(f"frozen tool hash mismatch: {name}")
     stage_tools = manifest.get("StageToolSHA256")
-    from mesh_stage_contract import STAGE_TOOLS
-    if (not isinstance(stage_tools, dict) or set(stage_tools) != set(STAGE_ORDER) or
-            any(not isinstance(stage_tools[stage], dict) or
-                set(stage_tools[stage]) != STAGE_TOOLS[stage] or
-                any(not isinstance(value, str) or len(value) != 64
-                    for value in stage_tools[stage].values())
-                for stage in STAGE_ORDER)):
+    pipeline = manifest_pipeline(manifest)
+    if (any(not isinstance(stage_tools[stage], dict) or
+            set(stage_tools[stage]) != STAGE_TOOLS[stage] or
+            any(not isinstance(value, str) or len(value) != 64
+                for value in stage_tools[stage].values())
+            for stage in stage_order(pipeline))):
         raise ValueError("Manifest must freeze every stage tool digest")
     matrix = set()
     comparison_kinds = set()
@@ -388,22 +410,45 @@ def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
     base = {"Transform": binding["Transform"]}
     # Recover reference and ownership paths from the independently validated
     # embedded stage bindings.
-    reference = bounded["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
-    restoration_recipe = bounded["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"]
+    reference = build_volume_binding(bounded)["Path"]
+    restoration_recipe, build_census = feature_record_bindings(bounded)
     publication = bounded["proper-rigid-publication"]["Artifacts"]
     ownership = publication["ownership-partition"]["Path"]
     quadrature = publication["ownership-quadrature-partition"]["Path"]
     topology = topology_record(dict(base), mesh_path, source_paths["SemanticContract"],
         source_paths["MeshRecipe"], source_paths["Process"], source_paths["Signature"],
-        reference, ownership, quadrature, restoration_recipe)["Measurements"]
+        reference, ownership, quadrature,
+        None if restoration_recipe is None else restoration_recipe["Path"],
+        build_census_path=None if build_census is None else build_census["Path"])["Measurements"]
     complexity = complexity_record(dict(base), mesh_path, source_paths["SemanticContract"],
                                    source_paths["MeshRecipe"])["Measurements"]
     invariants = invariants_record(dict(base), mesh_path)["Measurements"]
     return {**topology, **complexity, **invariants}
 
 
+def bounded_pipeline(bounded):
+    """The pipeline of a bounded-stage dict (keyed by stage name)."""
+    return pipeline_of(bounded)
+
+
+def build_volume_binding(bounded):
+    """The source-local volume build artifact binding: the Gmsh-only build mesh or
+    the legacy seed mesh."""
+    pipeline = bounded_pipeline(bounded)
+    role = "gmsh-mesh" if pipeline == GMSH_ONLY_PIPELINE else "seed-mesh"
+    return bounded[PIPELINE_BUILD_STAGE[pipeline]]["Artifacts"][role]
+
+
+def feature_record_bindings(bounded):
+    """(restoration recipe binding, build census binding): exactly one per pipeline."""
+    if bounded_pipeline(bounded) == GMSH_ONLY_PIPELINE:
+        return None, bounded["gmsh-build"]["Artifacts"]["build-census"]
+    return bounded["metric-preparation"]["Artifacts"]["restoration-recipe"], None
+
+
 def _validate_source_transformation(reports, binding, source_paths):
     """Independently validate source-transform inputs, outputs, and metric linkage."""
+    pipeline = bounded_pipeline(reports)
     from transform_coupon_source_contract import (
         transform_semantic_contract, transformed_supports, validate_rigid_transform)
     stage = reports["canonical-source-validation"]
@@ -439,7 +484,8 @@ def _validate_source_transformation(reports, binding, source_paths):
     if actual_semantic != expected_semantic or actual_supports != expected_supports:
         raise ValueError("transformed semantic/support artifact differs from source transform")
 
-    seed_inputs = reports["seed-generation"]["Inputs"]
+    build_stage = reports[PIPELINE_BUILD_STAGE[pipeline]]
+    seed_inputs = build_stage["Inputs"]
     retained_etch = binding["InputSHA256"].get("RetainedEtch")
     if retained_etch is None:
         if "source-retained-etch" in seed_inputs:
@@ -447,29 +493,38 @@ def _validate_source_transformation(reports, binding, source_paths):
     elif seed_inputs.get("source-retained-etch", {}).get("SHA256") != retained_etch:
         raise ValueError("seed did not consume the immutable retained etch footprint")
 
-    metric = reports["metric-preparation"]
     from mesh_stage_contract import TRACE_BASIS_INPUTS
     declared_basis = {role: binding["InputSHA256"].get(role) for role in TRACE_BASIS_ROLES}
-    for stage_name, stage_inputs in (("seed", seed_inputs), ("metric", metric["Inputs"])):
+    basis_stages = [("seed", seed_inputs)]
+    if pipeline == LEGACY_MMG_PIPELINE:
+        basis_stages.append(("metric", reports["metric-preparation"]["Inputs"]))
+    for stage_name, stage_inputs in basis_stages:
         for name, role in TRACE_BASIS_INPUTS.items():
             if declared_basis[role] is None:
                 if name in stage_inputs:
                     raise ValueError(f"{stage_name} bound a trace basis the case does not declare")
             elif stage_inputs.get(name, {}).get("SHA256") != declared_basis[role]:
                 raise ValueError(f"{stage_name} did not consume the immutable trace basis {role}")
-    recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
-    recipe = json.loads(recipe_path.read_text())
-    seed_semantic = Path(reports["seed-generation"]["Inputs"]["canonical-semantic-contract"]["Path"])
-    metric_semantic = Path(metric["Inputs"]["canonical-semantic-contract"]["Path"])
-    metric_supports = Path(metric["Inputs"]["canonical-supports"]["Path"])
-    if (seed_semantic.resolve() != semantic_path.resolve() or
-            metric_semantic.resolve() != semantic_path.resolve() or
-            metric_supports.resolve() != supports_path.resolve() or
-            recipe.get("TransformedSupportsArtifact") != str(supports_path.resolve()) or
-            recipe.get("TransformedSupportsSHA256") != sha256(supports_path) or
-            recipe.get("SemanticContract") != actual_semantic or
-            recipe.get("TransformedSupports") != actual_supports):
-        raise ValueError("metric recipe did not consume the reconstructed canonical supports")
+    seed_semantic = Path(build_stage["Inputs"]["canonical-semantic-contract"]["Path"])
+    if seed_semantic.resolve() != semantic_path.resolve():
+        raise ValueError("volume build did not consume the reconstructed canonical semantic contract")
+    if pipeline == LEGACY_MMG_PIPELINE:
+        metric = reports["metric-preparation"]
+        recipe_path = Path(metric["Artifacts"]["restoration-recipe"]["Path"])
+        recipe = json.loads(recipe_path.read_text())
+        metric_semantic = Path(metric["Inputs"]["canonical-semantic-contract"]["Path"])
+        metric_supports = Path(metric["Inputs"]["canonical-supports"]["Path"])
+        if (metric_semantic.resolve() != semantic_path.resolve() or
+                metric_supports.resolve() != supports_path.resolve() or
+                recipe.get("TransformedSupportsArtifact") != str(supports_path.resolve()) or
+                recipe.get("TransformedSupportsSHA256") != sha256(supports_path) or
+                recipe.get("SemanticContract") != actual_semantic or
+                recipe.get("TransformedSupports") != actual_supports):
+            raise ValueError("metric recipe did not consume the reconstructed canonical supports")
+    else:
+        census = json.loads(Path(build_stage["Artifacts"]["build-census"]["Path"]).read_text())
+        if census.get("SemanticContractSHA256") != sha256(semantic_path):
+            raise ValueError("build census did not consume the reconstructed canonical semantic contract")
 
     placement = reports["proper-rigid-publication"]
     placement_roles = {"source-semantic-contract": "SemanticContract",
@@ -498,6 +553,17 @@ def _validate_source_transformation(reports, binding, source_paths):
     final_supports = json.loads(Path(placement["Artifacts"]["transformed-supports"]["Path"]).read_text())
     if final_semantic != expected_semantic or final_supports != expected_supports:
         raise ValueError("published semantic/support objects differ from independent reconstruction")
+
+
+def topology_binds_feature_record(topology, bounded):
+    """The topology record binds the pipeline's feature record: the legacy
+    restoration recipe or the Gmsh-only build census, never both."""
+    recipe, census = feature_record_bindings(bounded)
+    if recipe is not None:
+        return (topology.get("RestorationRecipeSHA256") == recipe["SHA256"] and
+                "BuildCensusSHA256" not in topology)
+    return (topology.get("BuildCensusSHA256") == census["SHA256"] and
+            "RestorationRecipeSHA256" not in topology)
 
 
 def _validate_bound_records(evidence_path, evidence, binding, source_paths):
@@ -560,8 +626,9 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
                 raise ValueError("variant transform result differs from its bound audit")
         if item["Kind"] == "bounded-run":
             stage_items = record.get("BoundedStageRecords")
-            if (not isinstance(stage_items, list) or len(stage_items) != len(STAGE_ORDER) or
-                    {stage.get("Stage") for stage in stage_items} != set(STAGE_ORDER)):
+            if (not isinstance(stage_items, list) or
+                    {stage.get("Stage") for stage in stage_items} != set(binding["StageToolSHA256"]) or
+                    len(stage_items) != len(binding["StageToolSHA256"])):
                 raise ValueError("bounded stage records are incomplete")
             reports, stage_digests = validate_stage_dag(
                 {stage["Stage"]: Path(stage["Path"]) for stage in stage_items},
@@ -575,16 +642,17 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
                 raise ValueError("bounded stage and audit artifacts must be content-distinct")
             canonical_stage_digests = {
                 sha256(stage["Path"]) for stage in stage_items
-                if stage["Stage"] in CANONICAL_STAGE_ORDER}
+                if stage["Stage"] not in PLACEMENT_STAGE_ORDER}
             placement_stage_digests = stage_digests - canonical_stage_digests
             digests.update(stage_digests)
     bounded = records_by_kind["bounded-run"]["BoundedStages"]
+    pipeline = bounded_pipeline(bounded)
     placement = bounded["proper-rigid-publication"]
     canonical_record_path = Path(placement["Inputs"]["canonical-build-record"]["Path"])
     canonical_record = json.loads(canonical_record_path.read_text())
     canonical_tools = {
         f"{stage}/{role}": digest
-        for stage in CANONICAL_STAGE_ORDER
+        for stage in canonical_stage_order(pipeline)
         for role, digest in binding["StageToolSHA256"][stage].items()}
     validate_build_record(canonical_record, binding["InputSHA256"], binding["Gates"],
                           canonical_tools)
@@ -597,10 +665,8 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     _validate_source_transformation(bounded, binding, source_paths)
     topology = records_by_kind["mesh-topology-quality"]
     publication = bounded["proper-rigid-publication"]["Artifacts"]
-    if (topology.get("ReferenceMeshSHA256") !=
-            bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
-            topology.get("RestorationRecipeSHA256") !=
-            bounded["metric-preparation"]["Artifacts"]["restoration-recipe"]["SHA256"] or
+    if (topology.get("ReferenceMeshSHA256") != build_volume_binding(bounded)["SHA256"] or
+            not topology_binds_feature_record(topology, bounded) or
             topology.get("OwnershipReportSHA256") !=
             publication["ownership-partition"]["SHA256"] or
             topology.get("OwnershipQuadratureSHA256") !=
@@ -631,7 +697,7 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     if measurements.get("PhysicalCovariance") != recomputed_physical:
         raise ValueError("physical covariance differs from independent normalization")
     resources = measurements.get("Resources", {})
-    canonical_reports = [bounded[name] for name in CANONICAL_STAGE_ORDER]
+    canonical_reports = [bounded[name] for name in canonical_stage_order(pipeline)]
     placement_reports = [bounded[name] for name in PLACEMENT_STAGE_ORDER]
     expected_canonical = {
         "Seconds": sum(report["Seconds"] for report in canonical_reports),
@@ -651,6 +717,9 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     }
     if any(resources.get(key) != value for key, value in expected_resources.items()):
         raise ValueError("canonical/placement resource measurements differ from stage reports")
+    if (pipeline == GMSH_ONLY_PIPELINE and
+            not tube_design_statement(measurements.get("AchievedAnisotropy"))):
+        raise ValueError("Gmsh-only evidence lacks the prism tube design statement")
 
     required_sections = {"Resources", "ActualVolumeMaterials", "ActualBoundaryAttributes",
                          "ActualAdjacency", "OwnershipClosure", "ActualSemanticCorners",
@@ -768,7 +837,7 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         failures.append("protected-surfaces")
 
     widths = evidence.get("AchievedAnisotropy", {})
-    if not layer_covered_band(widths):
+    if not layer_covered_band(widths) and not tube_design_statement(widths):
         values = [widths.get(name) for name in ("Transverse1P90", "Transverse2P90",
                                                  "NormalTarget", "TangentialP50")]
         if (widths.get("Gate") != ANISOTROPY_GATE_APPLIED or
@@ -805,7 +874,8 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
             not _finite_number(judged.get("MinimumScaledJacobian"), nonnegative=True) or
             judged.get("MinimumScaledJacobian", -1) < gates["MinimumScaledJacobian"] or
             not _finite_number(judged.get("MaximumJacobianCondition"), positive=True) or
-            judged.get("MaximumJacobianCondition", math.inf) > gates["MaximumJacobianCondition"]):
+            judged.get("MaximumJacobianCondition", math.inf) > gates["MaximumJacobianCondition"] or
+            not _per_type_quality_passes(quality, gates)):
         failures.append("mesh-quality-jacobian")
     resources = evidence.get("Resources", {})
     resource_names = ("Seconds", "PeakRSSGiB", "Elements")
@@ -840,12 +910,74 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
     return failures
 
 
+def _per_type_quality_passes(quality, gates):
+    """Mixed-element quality (MeshQuality.ByType, Gmsh-only pipeline): every volume
+    element type is positively oriented within the Jacobian condition gate and the
+    tetrahedra are within the scaled-Jacobian gate; the top-level record must be
+    the aggregate of the types.  A record without ByType (legacy tetrahedral
+    evidence) passes this check and is judged by the top-level values alone."""
+    by_type = quality.get("ByType") if isinstance(quality, dict) else None
+    if by_type is None:
+        return True
+    if not isinstance(by_type, dict) or "Tetrahedron" not in by_type or not by_type:
+        return False
+    for name, record in by_type.items():
+        if (not isinstance(record, dict) or not isinstance(record.get("Samples"), int) or
+                record["Samples"] <= 0 or record.get("PositiveOrientation") is not True or
+                record.get("NonpositiveCells") != 0 or
+                not _finite_number(record.get("MaximumJacobianCondition"), positive=True) or
+                record["MaximumJacobianCondition"] > gates["MaximumJacobianCondition"] or
+                not _finite_number(record.get("MinimumScaledJacobian"), nonnegative=True)):
+            return False
+    tetrahedra = by_type["Tetrahedron"]
+    if tetrahedra["MinimumScaledJacobian"] < gates["MinimumScaledJacobian"]:
+        return False
+    return (quality.get("Samples") == sum(record["Samples"] for record in by_type.values()) and
+            quality.get("MaximumJacobianCondition") ==
+            max(record["MaximumJacobianCondition"] for record in by_type.values()) and
+            quality.get("MinimumScaledJacobian") == tetrahedra["MinimumScaledJacobian"])
+
+
 def _relative_error(a, b):
     scale = max(abs(a), abs(b), 1e-300)
     return abs(a - b) / scale
 
 
 ANISOTROPY_STATISTICS = ("TangentialP50", "Transverse1P90", "Transverse2P90")
+# The prism tube design statement compared between placements of one canonical
+# build (all recorded by the build; equal for every placement).
+TUBE_DESIGN_STATISTICS = ("InnerSize", "GrowthRatio", "TangentialSize", "SpacingMinimum",
+                          "SpacingMaximum", "Prisms", "Pyramids", "MeshPrisms", "MeshPyramids")
+
+
+def tube_design_statement(widths):
+    """True when the achieved-anisotropy design gate is replaced by the prism tube
+    design statement (Gmsh-only pipeline, supervisor decision 38): the record
+    declares TUBE_DESIGN_GATE with Samples 0, the recorded tube design (finite
+    positive inner size / ratio > 1 / spacing within the tangential size, rings >= 1,
+    positive prism and pyramid counts) and the mesh's prism and pyramid counts equal
+    to the census (CensusMatchesMesh).  Anything less is judged by the anisotropy
+    gate as an ordinary band sample (and fails on Samples 0)."""
+    from general_mesh_audit_producer import TUBE_DESIGN_GATE, TUBE_DESIGN_RULE
+    if not isinstance(widths, dict) or widths.get("Gate") != TUBE_DESIGN_GATE:
+        return False
+    if (widths.get("Samples") != 0 or widths.get("Rule") != TUBE_DESIGN_RULE or
+            widths.get("CensusMatchesMesh") is not True or
+            not _finite_number(widths.get("InnerSize"), positive=True) or
+            not _finite_number(widths.get("GrowthRatio"), positive=True) or
+            widths["GrowthRatio"] <= 1.0 or
+            not _finite_number(widths.get("TangentialSize"), positive=True) or
+            not _finite_number(widths.get("NormalTarget"), positive=True) or
+            not _finite_number(widths.get("SpacingMinimum"), positive=True) or
+            not _finite_number(widths.get("SpacingMaximum"), positive=True) or
+            not widths["SpacingMinimum"] <= widths["SpacingMaximum"] <= widths["TangentialSize"] or
+            not isinstance(widths.get("Rings"), int) or widths["Rings"] < 1 or
+            not isinstance(widths.get("RingSizes"), list) or len(widths["RingSizes"]) != widths["Rings"] or
+            any(not isinstance(widths.get(name), int) or widths[name] <= 0
+                for name in ("TubeCount", "Layers", "Prisms", "Pyramids", "MeshPrisms", "MeshPyramids")) or
+            widths["MeshPrisms"] != widths["Prisms"] or widths["MeshPyramids"] != widths["Pyramids"]):
+        return False
+    return True
 
 
 def layer_covered_band(widths):
@@ -884,11 +1016,15 @@ def layer_covered_band(widths):
 
 
 def _compared_anisotropy(evidence):
-    """The anisotropy statistics the covariance comparison uses: the gated band
-    sample, or the layer-adjacent band when the gate is not applicable."""
+    """The statistics the covariance comparison uses: the gated band sample, the
+    layer-adjacent band when the gate is not applicable, or the tube design
+    statement (mapped onto the comparison keys: the recorded tube statistics)."""
     widths = evidence.get("AchievedAnisotropy", {})
     if layer_covered_band(widths):
         return dict(widths["LayerAdjacentBand"], Gate=widths["Gate"])
+    if tube_design_statement(widths):
+        return {"Gate": widths["Gate"],
+                "Statistics": [float(widths[name]) for name in TUBE_DESIGN_STATISTICS]}
     return dict(widths, Gate=widths.get("Gate") if isinstance(widths, dict) else None)
 
 
@@ -935,7 +1071,8 @@ def _physical_comparison_failures(reference_evidence, transformed_evidence, comp
         failures.append("orientation/quality distribution")
     anisotropy = [_compared_anisotropy(item)
                   for item in (reference_evidence, transformed_evidence)]
-    statistics = [[item.get(name) for name in ANISOTROPY_STATISTICS] for item in anisotropy]
+    statistics = [item["Statistics"] if "Statistics" in item else
+                  [item.get(name) for name in ANISOTROPY_STATISTICS] for item in anisotropy]
     if (anisotropy[0]["Gate"] != anisotropy[1]["Gate"] or
             any(not _finite_number(value) for values in statistics for value in values) or
             max(_relative_error(a, b) for a, b in zip(*statistics)) >

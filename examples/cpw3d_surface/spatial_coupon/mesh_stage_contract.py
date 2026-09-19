@@ -14,14 +14,77 @@ from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
                                     material_interface_attributes)
 
 
-CANONICAL_STAGE_ORDER = (
-    "canonical-source-validation", "seed-generation", "metric-preparation",
-    "native-adaptation-mmg", "label-restoration", "canonical-gmsh-publication")
+# Two canonical-build pipelines share the source validation, the Gmsh publication
+# and the rigid placement.  The production pipeline (supervisor decision 38) is
+# Gmsh-only: the mesher's prism-tube build is the canonical volume mesh.  The
+# legacy MMG pipeline (seed -> metric -> MMG -> label restoration) is retired from
+# production and remains available under the labeled calibration manifest.  A
+# pipeline is identified by its exact stage set (`pipeline_of`); the module
+# constants below name the legacy order for the tools that predate decision 38.
+GMSH_ONLY_PIPELINE = "gmsh-only"
+LEGACY_MMG_PIPELINE = "legacy-mmg"
+PIPELINE_CANONICAL_STAGES = {
+    GMSH_ONLY_PIPELINE: ("canonical-source-validation", "gmsh-build",
+                         "canonical-gmsh-publication"),
+    LEGACY_MMG_PIPELINE: ("canonical-source-validation", "seed-generation", "metric-preparation",
+                          "native-adaptation-mmg", "label-restoration",
+                          "canonical-gmsh-publication"),
+}
 PLACEMENT_STAGE_ORDER = ("proper-rigid-publication",)
+CANONICAL_STAGE_ORDER = PIPELINE_CANONICAL_STAGES[LEGACY_MMG_PIPELINE]
 STAGE_ORDER = CANONICAL_STAGE_ORDER + PLACEMENT_STAGE_ORDER
+# The volume mesh stage of every pipeline and the volume artifact the publication
+# consumes from it.
+PIPELINE_BUILD_STAGE = {GMSH_ONLY_PIPELINE: "gmsh-build", LEGACY_MMG_PIPELINE: "seed-generation"}
+PIPELINE_PUBLISHED_VOLUME = {GMSH_ONLY_PIPELINE: "gmsh-mesh", LEGACY_MMG_PIPELINE: "restored-mesh"}
+
+
+def canonical_stage_order(pipeline):
+    if pipeline not in PIPELINE_CANONICAL_STAGES:
+        raise ValueError(f"Unknown canonical pipeline: {pipeline}")
+    return PIPELINE_CANONICAL_STAGES[pipeline]
+
+
+def stage_order(pipeline):
+    return canonical_stage_order(pipeline) + PLACEMENT_STAGE_ORDER
+
+
+def pipeline_of(stages, *, canonical_only=False):
+    """The pipeline whose exact canonical (+ placement) stage set is `stages`; fails
+    closed on any other set."""
+    names = set(stages)
+    for pipeline in PIPELINE_CANONICAL_STAGES:
+        expected = set(canonical_stage_order(pipeline) if canonical_only else stage_order(pipeline))
+        if names == expected:
+            return pipeline
+    raise ValueError("Stage set differs from every canonical pipeline: " + ", ".join(sorted(names)))
+
+
+def pipeline_of_tool_roles(roles):
+    """The pipeline whose canonical `stage/role` tool names are exactly `roles`."""
+    names = set(roles)
+    for pipeline in PIPELINE_CANONICAL_STAGES:
+        expected = {f"{stage}/{role}" for stage in canonical_stage_order(pipeline)
+                    for role in STAGE_TOOLS[stage]}
+        if names == expected:
+            return pipeline
+    raise ValueError("Canonical tool roles differ from the exact canonical schema of every pipeline")
+
+
+def canonical_artifact_roles(pipeline):
+    return frozenset(role for stage in canonical_stage_order(pipeline)
+                     for role in stage_outputs(stage, pipeline))
+
+
+def canonical_tool_roles(pipeline):
+    return frozenset(f"{stage}/{role}" for stage in canonical_stage_order(pipeline)
+                     for role in STAGE_TOOLS[stage])
+
+
 STAGE_TOOLS = {
     "canonical-source-validation": {"runtime", "source-validator"},
     "seed-generation": {"runtime", "mesher"},
+    "gmsh-build": {"runtime", "mesher"},
     "metric-preparation": {"runtime", "metric-preparer"},
     "native-adaptation-mmg": {"runtime", "adaptation-wrapper", "adapter-mmg", "mmg-library"},
     "label-restoration": {"runtime", "label-restorer"},
@@ -34,18 +97,32 @@ STAGE_INPUTS = {
                                     "source-boundary", "source-mask", "canonical-transform"},
     "seed-generation": {"source-signature", "source-boundary", "source-mask",
                         "canonical-semantic-contract"},
+    "gmsh-build": {"source-signature", "source-boundary", "source-mask",
+                   "canonical-semantic-contract"},
     "metric-preparation": {"seed-mesh", "seed-corner-census", "canonical-semantic-contract",
                            "canonical-supports"},
     "native-adaptation-mmg": {"mmg-seed", "metric", "pins", "fixed-triangles",
                               "required-tetrahedra", "restoration-recipe"},
     "label-restoration": {"adapted-mesh", "restoration-recipe"},
-    "canonical-gmsh-publication": {"restored-mesh", "source-process", "source-signature",
-                                   "source-boundary"},
+    # The publication consumes the pipeline's volume mesh (PIPELINE_PUBLISHED_VOLUME);
+    # stage_inputs(stage, pipeline) adds it.
+    "canonical-gmsh-publication": {"source-process", "source-signature", "source-boundary"},
     "proper-rigid-publication": {
         "canonical-candidate-mesh", "canonical-build-record", "placement-transform",
         "source-semantic-contract", "source-signature", "source-boundary", "source-mask",
         "source-process"},
 }
+
+
+def stage_inputs(stage, pipeline):
+    inputs = set(STAGE_INPUTS[stage])
+    if stage == "canonical-gmsh-publication":
+        inputs.add(PIPELINE_PUBLISHED_VOLUME[pipeline])
+    return inputs
+
+
+def stage_outputs(stage, pipeline):
+    return set(STAGE_OUTPUTS[stage])
 # Inputs a stage binds only when the case declares them. The device etch footprint
 # (retained-etch.csv) is bound for seed generation exactly when the case declares
 # a RetainedEtch source; otherwise the case records the producer default. The
@@ -62,10 +139,14 @@ TRACE_BASIS_OPTIONS = {"--trace-basis-contract": "source-basis-contract",
                        "--trace-triangles": "source-trace-triangles",
                        "--process-library": "source-process-library"}
 STAGE_OPTIONAL_INPUTS = {"seed-generation": {"source-retained-etch", *TRACE_BASIS_INPUTS},
+                         "gmsh-build": {"source-retained-etch", *TRACE_BASIS_INPUTS},
                          "metric-preparation": set(TRACE_BASIS_INPUTS)}
 STAGE_OUTPUTS = {
     "canonical-source-validation": {"canonical-semantic-contract", "canonical-supports"},
     "seed-generation": {"seed-mesh", "seed-corner-census"},
+    # The Gmsh-only build: the labeled mixed-element volume mesh and its census
+    # (the build report: tubes, per-type quality, size laws, footprint, junctions).
+    "gmsh-build": {"gmsh-mesh", "build-census"},
     "metric-preparation": {"mmg-seed", "metric", "pins", "fixed-triangles",
                            "required-tetrahedra", "restoration-recipe"},
     "native-adaptation-mmg": {"adapted-mesh", "adaptation-receipt"},
@@ -80,6 +161,7 @@ STAGE_OUTPUTS = {
 STAGE_PRIMARY_TOOL = {
     "canonical-source-validation": "source-validator",
     "seed-generation": "mesher",
+    "gmsh-build": "mesher",
     "metric-preparation": "metric-preparer",
     "native-adaptation-mmg": "adaptation-wrapper",
     "label-restoration": "label-restorer",
@@ -102,6 +184,10 @@ STAGE_BINDING_OPTIONS = {
                         "--boundary": ("Inputs", "source-boundary"),
                         "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
                         "--corner-census": ("Artifacts", "seed-corner-census")},
+    "gmsh-build": {"--mask": ("Inputs", "source-mask"),
+                   "--boundary": ("Inputs", "source-boundary"),
+                   "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
+                   "--corner-census": ("Artifacts", "build-census")},
     "metric-preparation": {
         "--semantic-contract": ("Inputs", "canonical-semantic-contract"),
         "--transformed-supports": ("Inputs", "canonical-supports"),
@@ -131,6 +217,8 @@ STAGE_BINDING_OPTIONS = {
 STAGE_OPTIONAL_BINDING_OPTIONS = {
     "seed-generation": {"--etch-boundary": ("Inputs", "source-retained-etch"),
                         **{option: ("Inputs", name) for option, name in TRACE_BASIS_OPTIONS.items()}},
+    "gmsh-build": {"--etch-boundary": ("Inputs", "source-retained-etch"),
+                   **{option: ("Inputs", name) for option, name in TRACE_BASIS_OPTIONS.items()}},
     "metric-preparation": {option: ("Inputs", name) for option, name in TRACE_BASIS_OPTIONS.items()},
 }
 # Bound inputs/outputs that are consumed positionally and must occur in argv.
@@ -139,6 +227,7 @@ STAGE_BINDING_ARGUMENTS = {
         ("Inputs", "canonical-transform"), ("Artifacts", "canonical-semantic-contract"),
         ("Artifacts", "canonical-supports")},
     "seed-generation": {("Inputs", "source-signature"), ("Artifacts", "seed-mesh")},
+    "gmsh-build": {("Inputs", "source-signature"), ("Artifacts", "gmsh-mesh")},
     "metric-preparation": {("Inputs", "seed-mesh")},
     "native-adaptation-mmg": {
         ("Inputs", "mmg-seed"), ("Inputs", "metric"), ("Inputs", "pins"),
@@ -146,12 +235,22 @@ STAGE_BINDING_ARGUMENTS = {
         ("Artifacts", "adaptation-receipt")},
     "label-restoration": {("Inputs", "adapted-mesh"), ("Inputs", "restoration-recipe"),
                           ("Artifacts", "restored-mesh")},
-    "canonical-gmsh-publication": {("Inputs", "restored-mesh"),
-                                   ("Artifacts", "canonical-candidate-mesh")},
+    # The publication's consumed volume mesh is added per pipeline by
+    # stage_binding_arguments.
+    "canonical-gmsh-publication": {("Artifacts", "canonical-candidate-mesh")},
     "proper-rigid-publication": {
         ("Inputs", "canonical-candidate-mesh"), ("Inputs", "placement-transform"),
         ("Artifacts", "candidate-mesh"), ("Artifacts", "transform-receipt")},
 }
+
+
+def stage_binding_arguments(stage, pipeline):
+    arguments = set(STAGE_BINDING_ARGUMENTS.get(stage, set()))
+    if stage == "canonical-gmsh-publication":
+        arguments.add(("Inputs", PIPELINE_PUBLISHED_VOLUME[pipeline]))
+    return arguments
+
+
 OWNERSHIP_AUDIT_OPTIONS = {"--process": "source-process", "--signature": "source-signature",
                            "--boundary": "source-boundary"}
 # Seed options whose values must equal the metric recipe's corner-isotropy
@@ -239,7 +338,8 @@ def validate_tool_invocation(stage, command, tools, working_directory=None):
         _require_path_option(command, option, tools[role], working_directory)
 
 
-def validate_command_bindings(stage, command, inputs, artifacts, working_directory=None):
+def validate_command_bindings(stage, command, inputs, artifacts, working_directory=None,
+                              pipeline=LEGACY_MMG_PIPELINE):
     """Require every consumed source/input/output path to be the bound one."""
     bound = {"Inputs": inputs, "Artifacts": artifacts}
     for option, (section, name) in STAGE_BINDING_OPTIONS.get(stage, {}).items():
@@ -249,7 +349,7 @@ def validate_command_bindings(stage, command, inputs, artifacts, working_directo
             _require_path_option(command, option, bound[section][name], working_directory)
         elif option in command:
             raise ValueError(f"Stage command passes {option} without a bound {name} input")
-    for section, name in STAGE_BINDING_ARGUMENTS.get(stage, set()):
+    for section, name in stage_binding_arguments(stage, pipeline):
         _require_path_argument(command, bound[section][name], f"{section.lower()} {name}",
                                working_directory)
 
@@ -280,7 +380,12 @@ def _validate_bindings(items, expected, description, optional=frozenset()):
 
 
 def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=None,
-                          expected_tool_sha256=None):
+                          expected_tool_sha256=None, pipeline=None):
+    """Validate one bounded stage report.  `pipeline` names the canonical pipeline
+    the stage belongs to; when None the publication stage is judged by the volume
+    input it bound (exactly one pipeline's), every other stage is pipeline-free."""
+    if pipeline is None:
+        pipeline = _report_pipeline(report, stage)
     if (report.get("Version") != 3 or report.get("Stage") != stage or
             report.get("ReturnCode") != 0 or report.get("StopReason") is not None or
             not isinstance(report.get("Command"), list) or not report["Command"] or
@@ -292,9 +397,9 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
     if launcher_name is not None and (producer.get("Name") != launcher_name or
                                       producer.get("SHA256") != launcher_sha256):
         raise ValueError("Stage launcher identity differs from the frozen launcher")
-    _validate_bindings(report.get("Inputs"), STAGE_INPUTS[stage], "stage input",
+    _validate_bindings(report.get("Inputs"), stage_inputs(stage, pipeline), "stage input",
                        STAGE_OPTIONAL_INPUTS.get(stage, frozenset()))
-    _validate_bindings(report.get("Artifacts"), STAGE_OUTPUTS[stage], "stage output")
+    _validate_bindings(report.get("Artifacts"), stage_outputs(stage, pipeline), "stage output")
     tools = report.get("Tools")
     if not isinstance(tools, dict) or set(tools) != STAGE_TOOLS[stage]:
         raise ValueError(f"Stage tools are incomplete: {stage}")
@@ -311,7 +416,7 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
         stage, report["Command"],
         {name: item["Path"] for name, item in report["Inputs"].items()},
         {name: item["Path"] for name, item in report["Artifacts"].items()},
-        report.get("WorkingDirectory"))
+        report.get("WorkingDirectory"), pipeline)
     if stage == "canonical-source-validation":
         transform = json.loads(Path(report["Inputs"]["canonical-transform"]["Path"]).read_text())
         if isinstance(transform, dict): transform = transform.get("Transform")
@@ -340,6 +445,25 @@ def validate_stage_report(report, stage, launcher_name=None, launcher_sha256=Non
     elif stage == "proper-rigid-publication":
         _validate_ownership_audit_binding(report)
     return report
+
+
+def stage_pipeline_of_inputs(stage, inputs):
+    """The pipeline a stage belongs to when the stage is pipeline-specific
+    (gmsh-build, the legacy stages, or the publication by its bound volume input
+    name); the legacy pipeline for the shared stages (their contract is identical)."""
+    if stage == "gmsh-build":
+        return GMSH_ONLY_PIPELINE
+    if stage == "canonical-gmsh-publication":
+        bound = [pipeline for pipeline, name in PIPELINE_PUBLISHED_VOLUME.items() if name in inputs]
+        if len(bound) != 1:
+            raise ValueError("Publication stage must bind exactly one pipeline's volume mesh")
+        return bound[0]
+    return LEGACY_MMG_PIPELINE
+
+
+def _report_pipeline(report, stage):
+    inputs = report.get("Inputs") if isinstance(report.get("Inputs"), dict) else {}
+    return stage_pipeline_of_inputs(stage, inputs)
 
 
 def _validate_ownership_audit_binding(report):
@@ -376,7 +500,7 @@ def _validate_ownership_audit_binding(report):
 
 
 def _validate_reports(report_paths, order, launcher_name, launcher_sha256,
-                      expected_tool_sha256):
+                      expected_tool_sha256, pipeline):
     if set(report_paths) != set(order):
         raise ValueError("Stage report set differs from the required DAG role")
     reports, report_digests = {}, set()
@@ -384,7 +508,7 @@ def _validate_reports(report_paths, order, launcher_name, launcher_sha256,
         path = Path(report_paths[stage])
         expected = None if expected_tool_sha256 is None else expected_tool_sha256[stage]
         report = validate_stage_report(json.loads(path.read_text()), stage, launcher_name,
-                                       launcher_sha256, expected)
+                                       launcher_sha256, expected, pipeline)
         digest = sha256(path)
         if digest in report_digests:
             raise ValueError("Bounded stage reports must be content-distinct")
@@ -1093,11 +1217,264 @@ def _validate_trace_basis_edges(recipe, triangles, digests, scale):
     return record
 
 
+# Options of the Gmsh-only build command (mesh_spatial_coupon.jl --prism-tubes) bound
+# to the census records: the tube recipe (inner ring size = corner size, ring ratio,
+# extrusion spacing, band sizes and growth), the corner ball, the element cap and
+# the fail-closed quality gates the mesher applies per element type.
+GMSH_BUILD_TUBE_OPTION = "--prism-tubes"
+GMSH_BUILD_RECIPE_OPTIONS = {"--edge-size": "InnerSize", "--edge-growth-ratio": "GrowthRatio",
+                             "--lc-tangent": "TangentialSize", "--lc-fine": "NormalSize",
+                             "--lc-far": "FarSize", "--far-growth": "FarGrowth"}
+GMSH_BUILD_GATE_OPTIONS = {"--maximum-corner-aspect": "MaximumCornerAspect",
+                           "--minimum-scaled-jacobian": "MinimumScaledJacobian",
+                           "--maximum-jacobian-condition": "MaximumJacobianCondition",
+                           "--maximum-quality-displacement-over-normal": "DisplacementBoundOverNormal"}
+GMSH_BUILD_ELEMENT_CAP_OPTION = "--max-elements"
+GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
+
+
+def _census_number(record, name, description):
+    value = record.get(name) if isinstance(record, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{description} lacks a finite {name}")
+    return float(value)
+
+
+def validate_gmsh_build_census(build_report, census, semantic):
+    """The Gmsh-only build census (the build report of decision 38) is bound to the
+    build command and the canonical semantic contract: the corner ball and its
+    grading to the tube inner size, the etch footprint provenance and simplified
+    polygons, the junction segments, the trace basis sizing (iff bound), positive
+    per-label interface areas over exactly the contract labels, the prism tube
+    record (sizes equal to the command options, one tube per recorded row, spacing
+    within the tangential size, geometric rings), the per-type quality computed by
+    the mesher within the command's gates for every volume type (orientation and
+    Jacobian condition; scaled Jacobian for the tetrahedra), the cap regions within
+    the scaled-Jacobian gate, the corner aspects within the corner gate and the
+    element count within the command's cap.  No tetrahedral edge layer is recorded."""
+    command = build_report["Command"]
+    if _option_value(command, GMSH_BUILD_TUBE_OPTION).lower() != "true":
+        raise ValueError(f"Gmsh-only build command does not pass {GMSH_BUILD_TUBE_OPTION} true")
+    if (not isinstance(census, dict) or census.get("Version") != 1 or
+            not isinstance(census.get("Corners"), list) or
+            not isinstance(census.get("LongitudinalFaces"), list)):
+        raise ValueError("Build census has an unsupported schema")
+    corners = census.get("SemanticCorners")
+    if (not isinstance(corners, list) or not corners or len(census["Corners"]) != len(corners) or
+            sorted(corners) != sorted(semantic.get("SemanticCorners", []))):
+        raise ValueError("Build census corners differ from the canonical semantic contract")
+    normal = _option_or_default(command, "--lc-fine", None)
+    radius = _option_or_default(command, "--corner-isotropy-radius", None)
+    if (_census_number(census, "IsotropicSize", "Build census") != normal or
+            _census_number(census, "CornerIsotropyRadius", "Build census") != radius):
+        raise ValueError("Build census size or corner radius differs from the build command")
+    etch = build_report["Inputs"].get("source-retained-etch")
+    if etch is None:
+        if census.get("EtchBoundary") != PRODUCER_DEFAULT_FOOTPRINT_PROVENANCE:
+            raise ValueError("Build census names an etch footprint the stage did not bind")
+    elif census.get("EtchBoundarySHA256") != etch["SHA256"]:
+        raise ValueError("Build census etch footprint differs from the bound retained etch")
+    areas = census.get("InterfaceAreas")
+    if (not isinstance(areas, list) or not areas or
+            any(not isinstance(row, dict) or isinstance(row.get("Attribute"), bool) or
+                not isinstance(row.get("Attribute"), int) or
+                _census_number(row, "Area", "Interface area row") <= 0 for row in areas)):
+        raise ValueError("Build census lacks positive per-label interface areas")
+    labels = [row["Attribute"] for row in areas]
+    if len(labels) != len(set(labels)) or set(labels) != boundary_attributes(semantic):
+        raise ValueError("Build census interface-area labels differ from the semantic contract")
+    validate_footprint_polygons(census)
+    gmsh_build_junction_segments(census)
+    validate_build_trace_basis(build_report, census)
+    if census.get("EdgeLayer") is not None:
+        raise ValueError("Gmsh-only build census records a tetrahedral edge layer")
+    grading = census.get("CornerGrading")
+    corner_size = _option_or_default(command, CORNER_SIZE_OPTION, 0.0)
+    ratio = _option_or_default(command, "--edge-growth-ratio", EDGE_LAYER_DEFAULTS["GrowthRatio"])
+    if (not isinstance(grading, dict) or corner_size <= 0.0 or not corner_size < normal or
+            ratio <= 1.0 or _census_number(grading, "CornerSize", "Corner grading") != corner_size or
+            _census_number(grading, "GrowthRatio", "Corner grading") != ratio or
+            _census_number(grading, "NormalSize", "Corner grading") != normal or
+            _census_number(grading, "Radius", "Corner grading") != radius):
+        raise ValueError("Build census corner grading differs from the build command")
+    expected = []
+    size = corner_size
+    while size < normal:
+        expected.append(expected[-1] + size if expected else size)
+        size *= ratio
+    reach = (normal - corner_size) / (ratio - 1.0)
+    if (grading.get("ShellRadii") != expected + [radius] or
+            grading.get("ShellSizes") != [corner_size * ratio**k for k in range(len(expected))] + [normal] or
+            _census_number(grading, "Reach", "Corner grading") != reach or not reach <= radius):
+        raise ValueError("Build census corner grading shells do not follow CornerSize and GrowthRatio")
+    tubes = census.get("PrismTubes")
+    if not isinstance(tubes, dict):
+        raise ValueError("Build census lacks the prism tube record")
+    for option, name in GMSH_BUILD_RECIPE_OPTIONS.items():
+        if _census_number(tubes, name, "Prism tube record") != _option_or_default(command, option, None):
+            raise ValueError(f"Prism tube record {name} differs from the build command {option}")
+    if tubes["InnerSize"] != corner_size:
+        raise ValueError("Prism tube inner size differs from the corner size: one graded law is required")
+    rows = tubes.get("Tubes")
+    if (not isinstance(rows, list) or not rows or tubes.get("TubeCount") != len(rows) or
+            any(not isinstance(row, dict) or
+                not 0.0 < _census_number(row, "Spacing", "Tube row") <= tubes["TangentialSize"] or
+                _count(row.get("Layers"), "Tube layers") <= 0 or
+                _census_number(row, "Length", "Tube row") <= 0.0 for row in rows)):
+        raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
+    section = tubes.get("Section")
+    rings = _count(section.get("Rings") if isinstance(section, dict) else None, "Tube rings")
+    sizes = section.get("RingSizes") if isinstance(section, dict) else None
+    if (rings <= 0 or not isinstance(sizes, list) or len(sizes) != rings or
+            any(abs(size - tubes["InnerSize"] * ratio**k) > 1e-12 * tubes["InnerSize"] * ratio**k
+                for k, size in enumerate(sizes))):
+        raise ValueError("Prism tube rings do not follow the inner size and growth ratio")
+    if (_count(tubes.get("Prisms"), "Tube prisms") <= 0 or
+            _count(tubes.get("Pyramids"), "Tube pyramids") <= 0):
+        raise ValueError("Prism tube record has no prisms or pyramids")
+    laws = tubes.get("SizeLaws")
+    if (not isinstance(laws, dict) or
+            any(_census_number(laws, name, "Size laws") != tubes[name]
+                for name in ("NormalSize", "FarSize", "FarGrowth")) or
+            not all(isinstance(laws.get(name), str) and laws[name]
+                    for name in ("TubeRule", "BandRule", "Composition"))):
+        raise ValueError("Prism tube size laws are not recorded")
+    gates = {name: _option_or_default(command, option, None)
+             for option, name in GMSH_BUILD_GATE_OPTIONS.items()}
+    if any(not math.isfinite(value) or value <= 0 for value in gates.values()):
+        raise ValueError("Gmsh-only build command lacks the quality gates")
+    quality = tubes.get("Quality")
+    if not isinstance(quality, dict):
+        raise ValueError("Prism tube record lacks the per-type quality")
+    total = 0
+    for name in GMSH_BUILD_VOLUME_TYPES:
+        record = quality.get(name)
+        if not isinstance(record, dict):
+            raise ValueError(f"Build census quality lacks the {name} record")
+        total += _count(record.get("Count"), f"{name} count")
+        if (record.get("PositiveOrientation") is not True or
+                _count(record.get("NonpositiveCells"), f"{name} nonpositive cells") != 0 or
+                _census_number(record, "MaximumJacobianCondition", name) >
+                gates["MaximumJacobianCondition"]):
+            raise ValueError(f"Build census {name} cells fail orientation or the condition gate")
+    if _census_number(quality["Tetrahedron"], "MinimumScaledJacobian", "Tetrahedra") < gates["MinimumScaledJacobian"]:
+        raise ValueError("Build census tetrahedra fall below the scaled-Jacobian gate")
+    if quality.get("Total") != total or total <= 0:
+        raise ValueError("Build census quality total differs from its per-type counts")
+    cap = _option_or_default(command, GMSH_BUILD_ELEMENT_CAP_OPTION, None)
+    budget = tubes.get("FarFieldBudgetPolicy")
+    if (not isinstance(budget, dict) or budget.get("Elements") != total or
+            budget.get("MaximumElements") != cap or total > cap or
+            _census_number(budget, "EffectiveFarSize", "Far-field budget") != tubes["FarSize"]):
+        raise ValueError("Build census element budget differs from the build command cap")
+    caps = tubes.get("CapRegions")
+    if (not isinstance(caps, dict) or _count(caps.get("Caps"), "Cap regions") <= 0 or
+            _census_number(caps, "MinimumScaledJacobian", "Cap regions") < gates["MinimumScaledJacobian"] or
+            _census_number(caps, "MaximumJacobianCondition", "Cap regions") > gates["MaximumJacobianCondition"]):
+        raise ValueError("Build census tube cap regions fail the tetrahedral gates")
+    optimization = census.get("SeedQualityOptimization")
+    if (not isinstance(optimization, dict) or
+            any(_census_number(optimization, name, "Seed quality optimization") != value
+                for name, value in gates.items()) or
+            _count(optimization.get("RequiredCellsBelowGateAfter"), "Corner cells below the gate") != 0 or
+            _count(optimization.get("RequiredCellsAboveConditionAfter"), "Corner cells above the condition gate") != 0 or
+            not isinstance(optimization.get("CornerAspectsAfter"), list) or
+            len(optimization["CornerAspectsAfter"]) != len(corners) or
+            any(isinstance(value, bool) or not isinstance(value, (int, float)) or
+                not math.isfinite(value) or value > gates["MaximumCornerAspect"]
+                for value in optimization["CornerAspectsAfter"])):
+        raise ValueError("Build census does not record gated corner balls")
+    return census
+
+
+def gmsh_build_junction_segments(census):
+    """The census junction curves as straight segments [x0 y0 z0 x1 y1 z1]: Count
+    finite nondegenerate segments whose total length is the recorded one and none
+    curved (the Gmsh-only build requires sharp vertical geometry)."""
+    curves = census.get("JunctionCurves")
+    if (not isinstance(curves, dict) or not isinstance(curves.get("Segments"), list) or
+            _count(curves.get("Count"), "Junction curves") <= 0 or
+            len(curves["Segments"]) != curves["Count"] or
+            _count(curves.get("CurvedCurves"), "Curved junction curves") != 0):
+        raise ValueError("Build census lacks straight junction segments")
+    total = 0.0
+    for segment in curves["Segments"]:
+        if (not isinstance(segment, list) or len(segment) != 6 or
+                any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                    for v in segment)):
+            raise ValueError("Build census junction segment is invalid")
+        length = math.dist(segment[:3], segment[3:])
+        if length <= 0:
+            raise ValueError("Build census junction segment is degenerate")
+        total += length
+    if abs(_census_number(curves, "TotalLength", "Junction curves") - total) > COPLANAR_TOLERANCE * total:
+        raise ValueError("Build census junction length differs from its segments")
+    return curves["Segments"]
+
+
+def validate_build_trace_basis(build_report, census):
+    """The build bound a trace basis (or none); when bound the command passes the
+    dimensionless ratio and the census TraceBasisSizing records it with the bound
+    digests and nonempty mesh-frame triangles."""
+    basis = bound_trace_basis(build_report)
+    ratio = _optional_ratio(build_report["Command"], basis is not None)
+    record = census.get("TraceBasisSizing")
+    if basis is None:
+        if record is not None:
+            raise ValueError("Build census records a trace basis the stage did not bind")
+        return None
+    triangles = record.get("MeshFrameTriangles") if isinstance(record, dict) else None
+    if (not isinstance(record, dict) or _census_number(record, "Ratio", "Trace basis sizing") != ratio or
+            record.get("RatioIsDimensionless") is not True or record.get("InputSHA256") != basis or
+            not isinstance(triangles, list) or not triangles or record.get("Triangles") != len(triangles) or
+            any(not isinstance(t, list) or len(t) != 3 or
+                any(not isinstance(v, list) or len(v) != 3 or
+                    any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
+                        for x in v) for v in t) for t in triangles)):
+        raise ValueError("Build census trace basis sizing differs from the bound trace basis")
+    return record
+
+
+def trace_basis_edges_of_census(census):
+    """Unique edges of the census mesh-frame basis triangles (source-local), or []."""
+    record = census.get("TraceBasisSizing")
+    if not isinstance(record, dict):
+        return []
+    edges = {}
+    for triangle in record["MeshFrameTriangles"]:
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            key = tuple(sorted((tuple(float(x) for x in triangle[a]), tuple(float(x) for x in triangle[b]))))
+            edges[key] = None
+    return [[*key[0], *key[1]] for key in edges]
+
+
+def validate_gmsh_only_dag(reports, canonical_mesh):
+    source = reports["canonical-source-validation"]
+    build = reports["gmsh-build"]
+    publication = reports["canonical-gmsh-publication"]
+    links = (
+        (build["Inputs"]["canonical-semantic-contract"]["SHA256"],
+         source["Artifacts"]["canonical-semantic-contract"]["SHA256"]),
+        (publication["Inputs"]["gmsh-mesh"]["SHA256"], build["Artifacts"]["gmsh-mesh"]["SHA256"]),
+        (publication["Artifacts"]["canonical-candidate-mesh"]["SHA256"], sha256(canonical_mesh)),
+    )
+    if any(actual != expected for actual, expected in links):
+        raise ValueError("Canonical mesh stage input/output digest chain is broken")
+    census = json.loads(Path(build["Artifacts"]["build-census"]["Path"]).read_text())
+    semantic = json.loads(Path(build["Inputs"]["canonical-semantic-contract"]["Path"]).read_text())
+    validate_gmsh_build_census(build, census, semantic)
+    return census
+
+
 def validate_canonical_dag(report_paths, canonical_mesh, launcher_name=None,
                            launcher_sha256=None, expected_tool_sha256=None):
-    reports, digests = _validate_reports(report_paths, CANONICAL_STAGE_ORDER,
+    pipeline = pipeline_of(report_paths, canonical_only=True)
+    reports, digests = _validate_reports(report_paths, canonical_stage_order(pipeline),
                                          launcher_name, launcher_sha256,
-                                         expected_tool_sha256)
+                                         expected_tool_sha256, pipeline)
+    if pipeline == GMSH_ONLY_PIPELINE:
+        validate_gmsh_only_dag(reports, canonical_mesh)
+        return reports, digests
     source = reports["canonical-source-validation"]
     seed_stage = reports["seed-generation"]
     seed = seed_stage["Artifacts"]["seed-mesh"]["SHA256"]
@@ -1145,7 +1522,7 @@ def validate_placement_dag(report_paths, final_mesh, canonical_record,
                            expected_tool_sha256=None):
     reports, digests = _validate_reports(report_paths, PLACEMENT_STAGE_ORDER,
                                          launcher_name, launcher_sha256,
-                                         expected_tool_sha256)
+                                         expected_tool_sha256, LEGACY_MMG_PIPELINE)
     publication = reports["proper-rigid-publication"]
     record = json.loads(Path(canonical_record).read_text())
     if (publication["Inputs"]["canonical-build-record"]["SHA256"] !=
@@ -1165,15 +1542,16 @@ def validate_placement_dag(report_paths, final_mesh, canonical_record,
 
 
 def validate_canonical_record_binding(record, canonical_reports, canonical_report_paths):
-    """The canonical build record must bind exactly the six stages' outputs and reports."""
+    """The canonical build record must bind exactly the pipeline's stage outputs and reports."""
+    pipeline = pipeline_of(canonical_report_paths, canonical_only=True)
+    order = canonical_stage_order(pipeline)
     artifacts = record.get("CanonicalArtifacts")
     report_hashes = record.get("CanonicalStageReportSHA256")
     if (not isinstance(artifacts, dict) or not isinstance(report_hashes, dict) or
-            set(report_hashes) != set(CANONICAL_STAGE_ORDER) or
-            set(artifacts) != {role for stage in CANONICAL_STAGE_ORDER
-                               for role in STAGE_OUTPUTS[stage]}):
+            set(report_hashes) != set(order) or
+            set(artifacts) != canonical_artifact_roles(pipeline)):
         raise ValueError("Canonical build record artifact/report roles differ from the stage DAG")
-    for stage in CANONICAL_STAGE_ORDER:
+    for stage in order:
         if report_hashes[stage] != sha256(canonical_report_paths[stage]):
             raise ValueError(f"Canonical build record binds a different stage report: {stage}")
         for role, item in canonical_reports[stage]["Artifacts"].items():
@@ -1185,17 +1563,18 @@ def validate_canonical_record_binding(record, canonical_reports, canonical_repor
 
 def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sha256=None,
                        expected_tool_sha256=None, canonical_record=None):
-    """Validate the complete canonical + mandatory placement DAG."""
-    if set(report_paths) != set(STAGE_ORDER):
-        raise ValueError("Exactly one report for every canonical and placement stage is required")
-    canonical_paths = {name: report_paths[name] for name in CANONICAL_STAGE_ORDER}
+    """Validate the complete canonical + mandatory placement DAG of either pipeline
+    (identified by the exact stage set of `report_paths`)."""
+    pipeline = pipeline_of(report_paths)
+    order = canonical_stage_order(pipeline)
+    canonical_paths = {name: report_paths[name] for name in order}
     placement_paths = {name: report_paths[name] for name in PLACEMENT_STAGE_ORDER}
     placement_report = json.loads(Path(placement_paths["proper-rigid-publication"]).read_text())
     record_path = canonical_record or placement_report["Inputs"]["canonical-build-record"]["Path"]
     record = json.loads(Path(record_path).read_text())
     canonical_mesh = record["CanonicalArtifacts"]["canonical-candidate-mesh"]["Path"]
     canonical_expected = None if expected_tool_sha256 is None else {
-        name: expected_tool_sha256[name] for name in CANONICAL_STAGE_ORDER}
+        name: expected_tool_sha256[name] for name in order}
     placement_expected = None if expected_tool_sha256 is None else {
         name: expected_tool_sha256[name] for name in PLACEMENT_STAGE_ORDER}
     canonical, canonical_digests = validate_canonical_dag(
@@ -1205,3 +1584,13 @@ def validate_stage_dag(report_paths, final_mesh, launcher_name=None, launcher_sh
         placement_paths, final_mesh, record_path, launcher_name, launcher_sha256,
         placement_expected)
     return {**canonical, **placement}, canonical_digests | placement_digests
+
+
+def dag_pipeline(reports):
+    """The pipeline of a validated report dict (canonical + placement stages)."""
+    return pipeline_of(reports)
+
+
+def build_stage_report(reports):
+    """The volume-build stage report of a validated DAG (gmsh-build or seed-generation)."""
+    return reports[PIPELINE_BUILD_STAGE[dag_pipeline(reports)]]

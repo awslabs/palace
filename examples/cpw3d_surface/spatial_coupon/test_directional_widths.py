@@ -119,7 +119,7 @@ class DirectionalWidthsTest(unittest.TestCase):
         # edge aspect, scaled Jacobian as a diagnostic) and the cells outside it
         # separately; the whole-mesh statistics are unchanged.
         from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
-        from general_mesh_audit_producer import _tetra_quality
+        from general_mesh_audit_producer import _volume_quality
         mesh = band_mesh()
         # Orient every box tetrahedron positively (the fixture's split is unoriented).
         cells = mesh.cells[0].data
@@ -127,10 +127,10 @@ class DirectionalWidthsTest(unittest.TestCase):
         negative = np.linalg.det(np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
                                            xyz[:, 3] - xyz[:, 0]), axis=2)) < 0
         cells[negative] = cells[negative][:, [0, 2, 1, 3]]
-        plain = _tetra_quality(mesh)
+        plain = _volume_quality(mesh)
         self.assertTrue(plain["PositiveOrientation"])
         self.assertIsNone(plain["EdgeLayer"]); self.assertNotIn("OutsideEdgeLayer", plain)
-        quality = _tetra_quality(mesh, [[1., 0., 0., 1.4, 0., 0.]], .005)
+        quality = _volume_quality(mesh, [[1., 0., 0., 1.4, 0., 0.]], .005)
         self.assertEqual({k: v for k, v in quality.items() if k not in ("EdgeLayer", "OutsideEdgeLayer")},
                          {k: v for k, v in plain.items() if k != "EdgeLayer"})
         layer, outside = quality["EdgeLayer"], quality["OutsideEdgeLayer"]

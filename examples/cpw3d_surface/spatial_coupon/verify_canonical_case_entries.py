@@ -104,9 +104,10 @@ def validate_edge_layer_quality_rule_binding(manifest, case, bounded_stages):
     the gate) executes the option in neither.  Raises ValueError otherwise."""
     rule = manifest.get("Gates", {}).get(EDGE_LAYER_QUALITY_RULE_GATE)
     declared = case.get("Calibration", {}).get(EDGE_LAYER_QUALITY_RULE_GATE)
+    # The Gmsh-only production DAG has neither stage: nothing executes the option.
     executed = {stage: _option_values(bounded_stages[stage]["Command"],
                                       EDGE_LAYER_QUALITY_RULE_OPTION)
-                for stage in EDGE_LAYER_QUALITY_RULE_STAGES}
+                for stage in EDGE_LAYER_QUALITY_RULE_STAGES if stage in bounded_stages}
     if rule is None or declared is None:
         if declared is not None:
             raise ValueError("case declares an edge-layer quality rule the manifest gates lack")
@@ -116,6 +117,7 @@ def validate_edge_layer_quality_rule_binding(manifest, case, bounded_stages):
         return None
     bound = float(rule["MaximumEdgeAspect"])
     if (not isinstance(declared, dict) or declared.get("MaximumEdgeAspect") != bound or
+            set(executed) != set(EDGE_LAYER_QUALITY_RULE_STAGES) or
             any(values != [bound] for values in executed.values())):
         raise ValueError(f"seed and label-restoration commands must execute "
                          f"{EDGE_LAYER_QUALITY_RULE_OPTION} {bound} exactly once "

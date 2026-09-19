@@ -7,18 +7,21 @@ import hashlib
 import json
 from pathlib import Path
 
-from mesh_stage_contract import (CANONICAL_STAGE_ORDER, STAGE_OUTPUTS, STAGE_TOOLS, sha256,
-                                 validate_stage_report)
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, LEGACY_MMG_PIPELINE,
+                                 canonical_artifact_roles, canonical_stage_order,
+                                 canonical_tool_roles, pipeline_of, pipeline_of_tool_roles,
+                                 sha256, validate_stage_report)
 
 
 CANONICAL_SOURCE_ROLES = ("Signature", "Boundary", "Mask", "Process",
                           "SemanticContract", "MeshRecipe")
-# Exact artifact and tool schemas are derived from the six canonical stages so the
-# build hash binds every canonical output and every runtime-resolved tool.
-CANONICAL_ARTIFACT_ROLES = frozenset(
-    role for stage in CANONICAL_STAGE_ORDER for role in STAGE_OUTPUTS[stage])
-CANONICAL_TOOL_ROLES = frozenset(
-    f"{stage}/{role}" for stage in CANONICAL_STAGE_ORDER for role in STAGE_TOOLS[stage])
+# Exact artifact and tool schemas are derived from the pipeline's canonical stages so
+# the build hash binds every canonical output and every runtime-resolved tool.  The
+# pipeline is identified by the exact canonical tool roles of the cache key (the
+# Gmsh-only production pipeline's gmsh-build/mesher, or the legacy MMG stages); the
+# module constants name the legacy schema.
+CANONICAL_ARTIFACT_ROLES = canonical_artifact_roles(LEGACY_MMG_PIPELINE)
+CANONICAL_TOOL_ROLES = canonical_tool_roles(LEGACY_MMG_PIPELINE)
 
 
 def canonical_sha256(value):
@@ -37,11 +40,19 @@ def _digests(value, description, expected_names=None):
     return dict(sorted(value.items()))
 
 
+def cache_key_pipeline(canonical_tool_sha256):
+    """The pipeline whose exact canonical tool roles a cache key (or tool dict) names."""
+    if not isinstance(canonical_tool_sha256, dict):
+        raise ValueError("Canonical tools must contain named SHA-256 digests")
+    return pipeline_of_tool_roles(canonical_tool_sha256)
+
+
 def canonical_cache_key(source_sha256, gates, canonical_tool_sha256):
     sources = _digests(source_sha256, "Canonical sources")
     if not set(CANONICAL_SOURCE_ROLES).issubset(sources):
         raise ValueError("Canonical sources omit a required immutable source role")
-    tools = _digests(canonical_tool_sha256, "Canonical tools", CANONICAL_TOOL_ROLES)
+    pipeline = cache_key_pipeline(canonical_tool_sha256)
+    tools = _digests(canonical_tool_sha256, "Canonical tools", canonical_tool_roles(pipeline))
     if not isinstance(gates, dict) or not gates:
         raise ValueError("Canonical qualification gates must be frozen")
     # Process, semantic and recipe hashes remain named explicitly even though all
@@ -60,8 +71,9 @@ def canonical_cache_key(source_sha256, gates, canonical_tool_sha256):
 def build_record(source_sha256, gates, canonical_tool_sha256, artifacts,
                  stage_report_sha256):
     key = canonical_cache_key(source_sha256, gates, canonical_tool_sha256)
-    if not isinstance(artifacts, dict) or set(artifacts) != CANONICAL_ARTIFACT_ROLES:
-        raise ValueError("Canonical artifacts differ from the exact six-stage output schema")
+    pipeline = cache_key_pipeline(canonical_tool_sha256)
+    if not isinstance(artifacts, dict) or set(artifacts) != canonical_artifact_roles(pipeline):
+        raise ValueError("Canonical artifacts differ from the exact canonical-stage output schema")
     artifact_bindings = {}
     for name, item in artifacts.items():
         if (not isinstance(item, dict) or not item.get("Path") or
@@ -75,7 +87,7 @@ def build_record(source_sha256, gates, canonical_tool_sha256, artifacts,
         "CanonicalCacheKey": key,
         "CanonicalArtifacts": dict(sorted(artifact_bindings.items())),
         "CanonicalStageReportSHA256": _digests(stage_report_sha256, "Canonical stage reports",
-                                               CANONICAL_STAGE_ORDER),
+                                               canonical_stage_order(pipeline)),
     }
     record["CanonicalBuildSHA256"] = canonical_sha256(record)
     return record
@@ -84,12 +96,13 @@ def build_record(source_sha256, gates, canonical_tool_sha256, artifacts,
 def build_record_from_stage_reports(source_sha256, gates, canonical_tool_sha256,
                                     report_paths):
     """Derive every canonical artifact and report hash from validated stage reports."""
-    if set(report_paths) != set(CANONICAL_STAGE_ORDER):
-        raise ValueError("Exactly one report for every canonical stage is required")
+    pipeline = pipeline_of(report_paths, canonical_only=True)
+    if cache_key_pipeline(canonical_tool_sha256) != pipeline:
+        raise ValueError("Canonical tool roles differ from the stage reports' pipeline")
     artifacts, report_sha256 = {}, {}
-    for stage in CANONICAL_STAGE_ORDER:
+    for stage in canonical_stage_order(pipeline):
         path = Path(report_paths[stage])
-        report = validate_stage_report(json.loads(path.read_text()), stage)
+        report = validate_stage_report(json.loads(path.read_text()), stage, pipeline=pipeline)
         for role, item in report["Tools"].items():
             if canonical_tool_sha256.get(f"{stage}/{role}") != item["SHA256"]:
                 raise ValueError(f"Canonical stage tool differs from the frozen tool: {stage}/{role}")
@@ -109,11 +122,12 @@ def validate_build_record(record, source_sha256, gates, canonical_tool_sha256,
     claimed = payload.pop("CanonicalBuildSHA256", None)
     if claimed != canonical_sha256(payload):
         raise ValueError("Canonical build hash differs from its immutable payload")
+    pipeline = cache_key_pipeline(canonical_tool_sha256)
     artifacts = record.get("CanonicalArtifacts")
-    if not isinstance(artifacts, dict) or set(artifacts) != CANONICAL_ARTIFACT_ROLES:
-        raise ValueError("Canonical build artifacts differ from the exact six-stage output schema")
+    if not isinstance(artifacts, dict) or set(artifacts) != canonical_artifact_roles(pipeline):
+        raise ValueError("Canonical build artifacts differ from the exact canonical-stage output schema")
     _digests(record.get("CanonicalStageReportSHA256"), "Canonical stage reports",
-             CANONICAL_STAGE_ORDER)
+             canonical_stage_order(pipeline))
     if check_files:
         for name, item in artifacts.items():
             if (not isinstance(item, dict) or not Path(item.get("Path", "")).is_file() or

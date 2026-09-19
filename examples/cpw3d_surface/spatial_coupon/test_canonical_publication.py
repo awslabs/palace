@@ -108,7 +108,7 @@ class CanonicalBuildTest(unittest.TestCase):
             for role in sorted(CANONICAL_ARTIFACT_ROLES):
                 with self.subTest(role=role):
                     missing = {name: item for name, item in artifacts.items() if name != role}
-                    with self.assertRaisesRegex(ValueError, "exact six-stage output schema"):
+                    with self.assertRaisesRegex(ValueError, "exact canonical-stage output schema"):
                         build_record(self.inputs(), self.GATES, self.tools(), missing,
                                      self.reports())
                     deleted = copy.deepcopy(record)
@@ -116,12 +116,12 @@ class CanonicalBuildTest(unittest.TestCase):
                     payload = {key: value for key, value in deleted.items()
                                if key != "CanonicalBuildSHA256"}
                     deleted["CanonicalBuildSHA256"] = canonical_sha256(payload)
-                    with self.assertRaisesRegex(ValueError, "exact six-stage output schema"):
+                    with self.assertRaisesRegex(ValueError, "exact canonical-stage output schema"):
                         validate_build_record(deleted, self.inputs(), self.GATES, self.tools(),
                                               check_files=False)
             extra = dict(artifacts)
             extra["unreviewed-extra"] = artifacts["adaptation-receipt"]
-            with self.assertRaisesRegex(ValueError, "exact six-stage output schema"):
+            with self.assertRaisesRegex(ValueError, "exact canonical-stage output schema"):
                 build_record(self.inputs(), self.GATES, self.tools(), extra, self.reports())
             for stage in CANONICAL_STAGE_ORDER:
                 with self.subTest(stage=stage):

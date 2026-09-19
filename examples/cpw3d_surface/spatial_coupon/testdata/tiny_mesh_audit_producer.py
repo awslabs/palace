@@ -2,18 +2,43 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Write a real two-material Gmsh mesh for evidence-chain regression tests."""
+"""Write a real two-material Gmsh mesh for evidence-chain regression tests.
+
+With `--prism-tubes true` (the Gmsh-only build of supervisor decision 38) the mesh
+also carries one prism with a pyramid on a lateral face and two quadrangle boundary
+faces, and the census records the prism tube design, the corner grading and the
+per-type quality in the production mesher's schema."""
 import argparse
 import hashlib
 import json
 import math
 from pathlib import Path
+import sys
 
 import meshio
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from mixed_mesh import volume_quality  # noqa: E402
 
-def produce(output, transform, scale=1.0):
+
+def tube_cells(scale, offset):
+    """One right prism (bottom a b c, top a' b' c') with a pyramid on its lateral face
+    (a b b' a'): six points, the prism, the pyramid, the boundary triangles and the two
+    remaining lateral quadrangles (0-based indices from `offset`)."""
+    base = 20.0
+    points = scale * np.array([[base, 0., 0.], [base + 1., 0., 0.], [base, 1., 0.],
+                               [base, 0., 1.], [base + 1., 0., 1.], [base, 1., 1.],
+                               [base + .5, -.5, .5]])
+    a, b, c, a1, b1, c1, apex = range(offset, offset + 7)
+    wedge = [[a, b, c, a1, b1, c1]]
+    pyramid = [[a, b, b1, a1, apex]]
+    triangles = [[a, c, b], [a1, b1, c1], [a, b, apex], [b, b1, apex], [b1, a1, apex], [a1, a, apex]]
+    quads = [[b, c, c1, b1], [c, a, a1, c1]]
+    return points, wedge, pyramid, triangles, quads
+
+
+def produce(output, transform, scale=1.0, prism_tubes=False):
     matrix = np.asarray(transform, dtype=float).reshape(4, 4)
     points = scale * np.array([[0., 0., 0.], [.08, 0., 0.], [0., .001, 0.],
                                [0., 0., .001], [0., 0., -.001], [10., 0., 0.],
@@ -34,23 +59,83 @@ def produce(output, transform, scale=1.0):
                               [offset, offset + 2, offset + 3],
                               [offset + 1, offset + 3, offset + 2]))
     points = np.vstack((points, scale * np.asarray(extra_points)))
+    tube = tube_cells(scale, len(points)) if prism_tubes else None
+    if tube is not None:
+        tube_points, wedge, pyramid, tube_triangles, quads = tube
+        points = np.vstack((points, tube_points))
+        triangles.extend(tube_triangles)
     homogeneous = np.column_stack((points, np.ones(len(points))))
     points = (homogeneous @ matrix.T)[:, :3]
     tetrahedra = np.asarray(tetrahedra)
     triangles = np.asarray(triangles)
-    mesh = meshio.Mesh(points, [("triangle", triangles), ("tetra", tetrahedra)],
-                       cell_data={"gmsh:physical": [
-                                      np.array([1, 1, 1, 2, 2, 2, 3] +
-                                               [1] * (len(triangles) - 7)),
-                                      np.array([1, 7] + [1] * (len(tetrahedra) - 2))],
-                                  "gmsh:geometrical": [np.ones(len(triangles), dtype=int),
-                                                       np.ones(len(tetrahedra), dtype=int)]},
+    cells = [("triangle", triangles), ("tetra", tetrahedra)]
+    physical = [np.array([1, 1, 1, 2, 2, 2, 3] + [1] * (len(triangles) - 7)),
+                np.array([1, 7] + [1] * (len(tetrahedra) - 2))]
+    if tube is not None:
+        cells += [("quad", np.asarray(quads)), ("wedge", np.asarray(wedge)),
+                  ("pyramid", np.asarray(pyramid))]
+        physical += [np.ones(len(quads), dtype=int), np.ones(len(wedge), dtype=int),
+                     np.ones(len(pyramid), dtype=int)]
+    mesh = meshio.Mesh(points, cells,
+                       cell_data={"gmsh:physical": physical,
+                                  "gmsh:geometrical": [np.ones(len(block), dtype=int)
+                                                       for _, block in cells]},
                        field_data={"substrate": np.array([1, 3]),
                                    "vacuum": np.array([7, 3]),
                                    "surface_1": np.array([1, 2]),
                                    "surface_2": np.array([2, 2]),
                                    "surface_3": np.array([3, 2])})
     meshio.write(output, mesh, file_format="gmsh22", binary=False)
+    return mesh
+
+
+def corner_grading(corner_size, ratio, normal, radius):
+    """The production seeder's CornerGrading record (shell radii and sizes)."""
+    radii, size = [], corner_size
+    while size < normal:
+        radii.append(radii[-1] + size if radii else size)
+        size *= ratio
+    return {"CornerSize": corner_size, "GrowthRatio": ratio, "NormalSize": normal, "Radius": radius,
+            "Reach": (normal - corner_size) / (ratio - 1.0), "Rule": "fixture",
+            "ShellRadii": radii + [radius],
+            "ShellSizes": [corner_size * ratio**k for k in range(len(radii))] + [normal]}
+
+
+def prism_tube_record(mesh, tubes):
+    """The production seeder's PrismTubes census record for the fixture: one tube of
+    one layer, three rings, the per-type quality measured on the written mesh."""
+    quality = volume_quality(mesh)
+    per_type = {name: {"Count": record["Samples"], "PositiveOrientation": record["PositiveOrientation"],
+                       "NonpositiveCells": record["NonpositiveCells"],
+                       "MinimumScaledJacobian": record["MinimumScaledJacobian"],
+                       "MaximumJacobianCondition": record["MaximumJacobianCondition"]}
+                for name, record in quality["ByType"].items()}
+    per_type["Total"] = quality["Samples"]
+    inner, ratio = tubes["edge_size"], tubes["ratio"]
+    rings = 3
+    return {"Rule": "fixture", "InnerSize": inner, "GrowthRatio": ratio,
+            "TangentialSize": tubes["lc_tangent"], "NormalSize": tubes["lc_fine"],
+            "FarSize": tubes["lc_far"], "FarGrowth": tubes["far_growth"],
+            "Tubes": [{"Spacing": tubes["lc_tangent"], "Layers": 1, "Length": tubes["lc_tangent"],
+                       "Edge": "top", "Conductor": 1}],
+            "TubeCount": 1, "TotalTubeLength": tubes["lc_tangent"], "Layers": 1,
+            "SpacingMinimum": tubes["lc_tangent"], "SpacingMaximum": tubes["lc_tangent"],
+            "InnermostArc": inner * math.pi / 6, "MaximumPrismEdgeAspect": tubes["lc_tangent"] / inner,
+            "Section": {"Rings": rings, "RingSizes": [inner * ratio**k for k in range(rings)],
+                        "PyramidHeight": .5 * inner * ratio**(rings - 1), "SectorDegrees": 30.0},
+            "Prisms": quality["ByType"].get("Prism", {}).get("Samples", 0),
+            "Pyramids": quality["ByType"].get("Pyramid", {}).get("Samples", 0),
+            "SizeLaws": {"NormalSize": tubes["lc_fine"], "FarSize": tubes["lc_far"],
+                         "FarGrowth": tubes["far_growth"], "TubeRule": "fixture tube rule",
+                         "BandRule": "fixture band rule", "Composition": "fixture composition"},
+            "Quality": per_type,
+            "CapRegions": {"Caps": 1, "MinimumScaledJacobian": .5, "MaximumJacobianCondition": 2.0},
+            "CutSurface": {"All": {"Elements": 7}}, "Bands": {},
+            "FarFieldBudgetPolicy": {"Name": "gmsh-only-fail-closed-cap", "Pressure": 1.0,
+                                     "RequestedFarSize": tubes["lc_far"],
+                                     "EffectiveFarSize": tubes["lc_far"],
+                                     "Elements": quality["Samples"],
+                                     "MaximumElements": tubes["max_elements"]}}
 
 
 def junction_curves(scale):
@@ -60,7 +145,7 @@ def junction_curves(scale):
     segments = [[*a, *b], [*b, *c], [*c, *a]]
     return {"Count": len(segments),
             "TotalLength": sum(math.dist(segment[:3], segment[3:]) for segment in segments),
-            "Segments": segments, "Rule": "fixture"}
+            "Segments": segments, "CurvedCurves": 0, "Rule": "fixture"}
 
 
 def trace_basis_sizing(basis_paths, ratio, scale):
@@ -81,7 +166,7 @@ def trace_basis_sizing(basis_paths, ratio, scale):
 
 
 def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None,
-                  scale=1.0, basis_paths=None, ratio=None, gates=None):
+                  scale=1.0, basis_paths=None, ratio=None, gates=None, tubes=None, mesh=None):
     """Recorded corner-ball census of the fixture seed (schema of the production seeder).
 
     `gates` is (MaximumCornerAspect, MinimumScaledJacobian, MaximumJacobianCondition,
@@ -108,9 +193,19 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                    "RequiredCellsBelowGateAfter": 0, "RepairComponents": 0, "RepairMoves": 0,
                    "MovedVertices": 0, "MaximumDisplacement": 0.0,
                    "MaximumDisplacementOverBound": 0.0}
+    tube_records = {}
+    if tubes is not None:
+        tube_records = {"PrismTubes": prism_tube_record(mesh, tubes),
+                        "CornerGrading": corner_grading(tubes["corner_size"], tubes["ratio"],
+                                                        isotropic_size, radius),
+                        "EdgeLayer": None}
+        if quality is not None:
+            quality["CornerSize"] = tubes["corner_size"]
     output.write_text(json.dumps({
         "Version": 1, "Frame": "SourceLocal", "SemanticCorners": corners,
-        "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size,
+        "SemanticContract": str(contract_path),
+        "SemanticContractSHA256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
+        "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size, **tube_records,
         "EtchBoundary": "producer-default" if etch_boundary is None else str(etch_boundary),
         "EtchBoundarySHA256": None if etch_boundary is None else
                               hashlib.sha256(etch_boundary.read_bytes()).hexdigest(),
@@ -172,7 +267,25 @@ def main():
     parser.add_argument("--minimum-scaled-jacobian", type=float)
     parser.add_argument("--maximum-jacobian-condition", type=float)
     parser.add_argument("--maximum-quality-displacement-over-normal", type=float)
+    # The Gmsh-only build (decision 38): the tube recipe options of the production mesher.
+    parser.add_argument("--prism-tubes", choices=("true", "false"), default="false")
+    parser.add_argument("--lc-tangent", type=float)
+    parser.add_argument("--lc-far", type=float)
+    parser.add_argument("--edge-size", type=float)
+    parser.add_argument("--edge-growth-ratio", type=float, default=2.0)
+    parser.add_argument("--corner-size", type=float)
+    parser.add_argument("--far-growth", type=float)
+    parser.add_argument("--max-elements", type=int)
     args = parser.parse_args()
+    tubes = None
+    if args.prism_tubes == "true":
+        tubes = {"lc_tangent": args.lc_tangent, "lc_far": args.lc_far, "lc_fine": args.lc_fine,
+                 "edge_size": args.edge_size, "ratio": args.edge_growth_ratio,
+                 "corner_size": args.corner_size, "far_growth": args.far_growth,
+                 "max_elements": args.max_elements}
+        if any(value is None for value in tubes.values()) or args.edge_size != args.corner_size:
+            parser.error("prism tubes need --lc-tangent, --lc-far, --edge-size == --corner-size, "
+                         "--far-growth and --max-elements")
     gates = (args.maximum_corner_aspect, args.minimum_scaled_jacobian,
              args.maximum_jacobian_condition, args.maximum_quality_displacement_over_normal)
     if any(value is not None for value in gates):
@@ -197,10 +310,10 @@ def main():
         parser.error("signature, mask, boundary, and semantic contract inputs must exist")
     if args.corner_census.exists():
         parser.error("corner census output must be fresh")
-    produce(args.output, json.loads(args.transform.read_text()), args.scale)
+    mesh = produce(args.output, json.loads(args.transform.read_text()), args.scale, tubes is not None)
     corner_census(args.corner_census, args.semantic_contract, args.corner_isotropy_radius,
                   args.lc_fine, args.etch_boundary, args.scale, basis_paths,
-                  args.trace_basis_size_ratio, gates)
+                  args.trace_basis_size_ratio, gates, tubes, mesh)
 
 
 if __name__ == "__main__":

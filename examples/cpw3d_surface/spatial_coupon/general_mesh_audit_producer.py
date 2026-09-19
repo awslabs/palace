@@ -25,8 +25,12 @@ from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_CELL_RULE,
                                 match_equivalent_planes, plane_deviation)
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
-from mesh_stage_contract import (CANONICAL_STAGE_ORDER, PLACEMENT_STAGE_ORDER, STAGE_ORDER,
-                                 sha256 as stage_sha256, validate_stage_dag)
+from mesh_stage_contract import (GMSH_ONLY_PIPELINE, PIPELINE_BUILD_STAGE, PLACEMENT_STAGE_ORDER,
+                                 canonical_stage_order, dag_pipeline, footprint_segments,
+                                 gmsh_build_junction_segments, sha256 as stage_sha256,
+                                 stage_order, trace_basis_edges_of_census, validate_stage_dag)
+from mixed_mesh import (SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts, h1_dofs,
+                        simplicial_view, volume_quality)
 from semantic_mesh_contract import load_semantic_contract
 
 
@@ -84,20 +88,28 @@ def _direction_aligned(alignment, resolvability):
             math.sin(_alignment_angle(alignment)) <= resolvability)
 
 
-def _on_basis_edge(direction, endpoints, basis_edges, reach):
-    """Whether a band lies on one bound trace-basis edge: direction aligned with the
-    edge and both band endpoints within `reach` of that edge segment (not its line)."""
+BASIS_EDGE_RULE = ("a band lies on a bound trace-basis edge when its direction is aligned with the "
+                   "edge within the band's own resolvability (ALIGNMENT_RULE) and both band "
+                   "endpoints are within 2 x ShortEdgeThreshold + RMSWidth of the edge SEGMENT "
+                   "(not its line): the band's extent along its axis is resolvable to its RMS "
+                   "width, as its direction is to RMSWidth / Span")
+
+
+def _on_basis_edge(direction, endpoints, basis_edges, reach, resolvability=0.0, width=0.0):
+    """Whether a band lies on one bound trace-basis edge (BASIS_EDGE_RULE): direction
+    aligned with the edge within `resolvability` and both band endpoints within
+    `reach` + `width` of that edge segment (not its line)."""
     endpoints = np.asarray(endpoints, dtype=float).reshape(2, 3)
     for segment in np.asarray(basis_edges, dtype=float).reshape(-1, 2, 3):
         vector = segment[1] - segment[0]
         length = np.linalg.norm(vector)
         if length <= 0:
             raise ValueError("Degenerate trace basis edge")
-        if abs(np.dot(direction, vector / length)) <= 1 - 1e-6:
+        if not _direction_aligned(abs(np.dot(direction, vector / length)), resolvability):
             continue
         delta = endpoints - segment[0]
         parameter = np.clip((delta @ vector) / (length * length), 0.0, 1.0)
-        if np.all(np.linalg.norm(delta - parameter[:, None] * vector, axis=1) <= reach):
+        if np.all(np.linalg.norm(delta - parameter[:, None] * vector, axis=1) <= reach + width):
             return True
     return False
 
@@ -224,7 +236,8 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             footprint_aligned = _direction_aligned(footprint_alignment, resolvability)
             junction_aligned = _direction_aligned(junction_alignment, resolvability)
             basis_aligned = bool(len(basis_edges)) and _on_basis_edge(
-                direction, (points[first], points[last]), basis_edges, 2.0 * threshold)
+                direction, (points[first], points[last]), basis_edges, 2.0 * threshold,
+                resolvability, width)
             feature_aligned = aligned or footprint_aligned or junction_aligned or basis_aligned
             bands += int(line_like and not feature_aligned)
             if line_like:
@@ -266,47 +279,45 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                                         "legitimately carry the NormalSize band), a cut-surface/"
                                         "material-interface junction line (same band), a bound "
                                         "trace-basis edge the band lies on (direction aligned and "
-                                        "both endpoints within 2 x ShortEdgeThreshold of the edge "
-                                        "segment; source-driven, decision 21)",
-                                "Alignment": ALIGNMENT_RULE},
+                                        "both endpoints within 2 x ShortEdgeThreshold + RMSWidth of "
+                                        "the edge segment; source-driven, decision 21)",
+                                "Alignment": ALIGNMENT_RULE, "TraceBasisEdge": BASIS_EDGE_RULE},
             "LineLikeBandsAlignedWith": aligned_counts,
             "TraceBasisEdgeBands": basis_bands,
             "LongShortEdgeComponents": components}
 
 
-def _tetra_quality(mesh, layer_spans=None, layer_reach=None):
-    """Whole-mesh Jacobian statistics; with recorded edge-layer spans also the
-    per-region statistics: 'OutsideEdgeLayer' (the cells MinimumScaledJacobian and
-    MaximumJacobianCondition judge under a layer quality rule) and 'EdgeLayer'
-    (EDGE_LAYER_QUALITY_RULE statistics: orientation above the roundoff floor,
-    longest-edge/shortest-height aspect, scaled Jacobian as a DIAGNOSTIC).  The
-    aspect bound is the manifest's; the record carries the measured maximum."""
-    tetrahedra, _ = blocks(mesh, "tetra")
-    xyz = mesh.points[tetrahedra]
-    jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
-                         xyz[:, 3] - xyz[:, 0]), axis=2)
-    determinant = np.linalg.det(jacobian)
-    singular = np.linalg.svd(jacobian, compute_uv=False)
-    condition = singular[:, 0] / singular[:, -1]
-    lengths = np.linalg.norm(jacobian, axis=1)
-    scaled = np.abs(determinant) / np.prod(lengths, axis=1)
-    if (not len(scaled) or not np.all(np.isfinite(condition)) or
-            np.any(singular[:, -1] <= 0)):
-        raise ValueError("Invalid tetrahedral Jacobian audit")
-    quantiles = (0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0)
-    def statistics(selected):
-        return {"Samples": int(selected.sum()),
-                "PositiveOrientation": bool(np.all(determinant[selected] > 0.0)),
-                "MinimumScaledJacobian": float(scaled[selected].min()),
-                "MaximumJacobianCondition": float(condition[selected].max()),
-                "ScaledJacobianQuantiles": np.quantile(scaled[selected], quantiles).tolist(),
-                "JacobianConditionQuantiles": np.quantile(condition[selected], quantiles).tolist()}
-    record = statistics(np.ones(len(tetrahedra), dtype=bool))
+def _volume_quality(mesh, layer_spans=None, layer_reach=None):
+    """Jacobian statistics of the native volume cells (mixed_mesh.volume_quality:
+    orientation and condition over every element type, the scaled Jacobian over the
+    tetrahedra, per-type records under ByType); with recorded edge-layer spans
+    (legacy MMG pipeline) also the per-region tetrahedral statistics:
+    'OutsideEdgeLayer' (the cells MinimumScaledJacobian and MaximumJacobianCondition
+    judge under a layer quality rule) and 'EdgeLayer' (EDGE_LAYER_QUALITY_RULE
+    statistics: orientation above the roundoff floor, longest-edge/shortest-height
+    aspect, scaled Jacobian as a DIAGNOSTIC).  The aspect bound is the manifest's;
+    the record carries the measured maximum."""
+    record = volume_quality(mesh)
     record["EdgeLayer"] = None
     if layer_spans is not None:
+        tetrahedra, _ = blocks(mesh, "tetra")
+        xyz = mesh.points[tetrahedra]
+        jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
+                             xyz[:, 3] - xyz[:, 0]), axis=2)
+        determinant = np.linalg.det(jacobian)
+        singular = np.linalg.svd(jacobian, compute_uv=False)
+        condition = singular[:, 0] / singular[:, -1]
+        scaled = np.abs(determinant) / np.prod(np.linalg.norm(jacobian, axis=1), axis=1)
         in_layer = edge_layer_cells(mesh.points, tetrahedra, layer_spans, layer_reach)
         if in_layer.any() and not in_layer.all():
-            record["OutsideEdgeLayer"] = statistics(~in_layer)
+            outside = ~in_layer
+            record["OutsideEdgeLayer"] = {
+                "Samples": int(outside.sum()),
+                "PositiveOrientation": bool(np.all(determinant[outside] > 0.0)),
+                "MinimumScaledJacobian": float(scaled[outside].min()),
+                "MaximumJacobianCondition": float(condition[outside].max()),
+                "ScaledJacobianQuantiles": np.quantile(scaled[outside], QUALITY_QUANTILES).tolist(),
+                "JacobianConditionQuantiles": np.quantile(condition[outside], QUALITY_QUANTILES).tolist()}
         # The measured layer aspect is compared with the manifest bound by the gate
         # evaluation; the producer records the statistics against a bound of +inf.
         layer = edge_layer_quality(mesh.points, tetrahedra, in_layer, math.inf)
@@ -315,6 +326,9 @@ def _tetra_quality(mesh, layer_spans=None, layer_reach=None):
         layer["CellRule"] = EDGE_LAYER_CELL_RULE
         record["EdgeLayer"] = layer
     return record
+
+
+QUALITY_QUANTILES = (0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0)
 
 
 def _point_aspects(mesh, points):
@@ -822,13 +836,68 @@ def _trace_basis_edges(restoration_recipe_path):
     return segments.reshape(-1, 2, 3), record.get("InputSHA256")
 
 
+# The achieved-anisotropy design gate of the legacy pipeline is replaced in the
+# Gmsh-only pipeline by the prism tube design statement (supervisor decision 38):
+# the recorded rings and extrusion are the design; the audit re-counts the mesh's
+# prisms and pyramids against the census (informational, never gated).
+TUBE_DESIGN_GATE = "not-applicable: prism edge tubes"
+TUBE_DESIGN_RULE = ("the metal-edge resolution is the prism tube design statement recorded by the "
+                    "Gmsh-only build (rings from the inner size with the growth ratio, extrusion at "
+                    "the recorded spacing, explicit pyramids); the audit counts the mesh's prisms and "
+                    "pyramids and requires them to equal the census; no band anisotropy gate applies")
+TUBE_DESIGN_FIELDS = ("InnerSize", "GrowthRatio", "TangentialSize", "NormalSize", "FarSize",
+                      "FarGrowth", "TubeCount", "TotalTubeLength", "Layers", "SpacingMinimum",
+                      "SpacingMaximum", "InnermostArc", "MaximumPrismEdgeAspect", "Prisms", "Pyramids")
+
+
+def _tube_design_statement(mesh, census, normal_size):
+    tubes = census.get("PrismTubes")
+    if not isinstance(tubes, dict):
+        raise ValueError("Build census lacks the prism tube record")
+    counts = element_counts(mesh)
+    statement = {name: tubes.get(name) for name in TUBE_DESIGN_FIELDS}
+    statement.update({
+        "Gate": TUBE_DESIGN_GATE, "Rule": TUBE_DESIGN_RULE, "Samples": 0,
+        "NormalTarget": float(normal_size),
+        "Rings": tubes.get("Section", {}).get("Rings"),
+        "RingSizes": tubes.get("Section", {}).get("RingSizes"),
+        "PyramidHeight": tubes.get("Section", {}).get("PyramidHeight"),
+        "MeshPrisms": counts["Prism"], "MeshPyramids": counts["Pyramid"],
+        "CensusMatchesMesh": (counts["Prism"] == tubes.get("Prisms") and
+                              counts["Pyramid"] == tubes.get("Pyramids")),
+        "CapRegions": {name: tubes.get("CapRegions", {}).get(name)
+                       for name in ("Caps", "MinimumScaledJacobian", "MaximumJacobianCondition")},
+        "CutSurface": tubes.get("CutSurface"), "Bands": tubes.get("Bands"),
+        "SizeLaws": tubes.get("SizeLaws")})
+    return statement
+
+
+def _census_feature_segments(census_path):
+    """Footprint edges, junction segments and trace basis edges recorded by the
+    Gmsh-only build census (source-local), with the footprint and basis provenance."""
+    census = json.loads(Path(census_path).read_text())
+    footprint = np.asarray(footprint_segments(census), dtype=float).reshape(-1, 2, 3)
+    junction = np.asarray(gmsh_build_junction_segments(census), dtype=float).reshape(-1, 2, 3)
+    basis = np.asarray(trace_basis_edges_of_census(census), dtype=float).reshape(-1, 2, 3)
+    provenance = census.get("EtchBoundarySHA256") or census.get("EtchBoundary")
+    sizing = census.get("TraceBasisSizing")
+    basis_provenance = sizing.get("InputSHA256") if isinstance(sizing, dict) else None
+    return census, footprint, provenance, junction, basis, basis_provenance
+
+
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
                     ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8,
-                    *, mesh=None):
+                    *, mesh=None, build_census_path=None):
+    """Topology / quality measurements of one placed mesh.  `restoration_recipe_path`
+    (legacy MMG pipeline) or `build_census_path` (Gmsh-only pipeline) supplies the
+    recorded feature segments; exactly one is given."""
+    if (restoration_recipe_path is None) == (build_census_path is None):
+        raise ValueError("Exactly one of the restoration recipe and the build census is required")
     mesh = read_mesh(mesh_path) if mesh is None else mesh
+    simplicial = simplicial_view(mesh)
     contract = load_semantic_contract(contract_path)
-    report, _ = analyze(mesh, contract, require_material_names=True)
+    report, _ = analyze(simplicial, contract, require_material_names=True)
     points = np.asarray(mesh.points)
     matrix = np.asarray(base["Transform"], dtype=float).reshape(4, 4)
     corners = np.asarray(contract["SemanticCorners"], dtype=float)
@@ -847,15 +916,20 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     segments = np.asarray(_signature_segments(signature_path), dtype=float).reshape(-1, 2, 3)
     homogeneous = np.concatenate((segments, np.ones((*segments.shape[:2], 1))), axis=2)
     transformed_recipe["PhysicalSegments"] = (homogeneous @ matrix.T)[..., :3].reshape(-1, 6).tolist()
-    footprint, footprint_provenance = _footprint_segments(restoration_recipe_path)
+    census = None
+    if build_census_path is None:
+        footprint, footprint_provenance = _footprint_segments(restoration_recipe_path)
+        junction = _junction_segments(restoration_recipe_path)
+        basis_edges, basis_provenance = _trace_basis_edges(restoration_recipe_path)
+    else:
+        (census, footprint, footprint_provenance, junction, basis_edges,
+         basis_provenance) = _census_feature_segments(build_census_path)
     homogeneous_footprint = np.concatenate(
         (footprint, np.ones((*footprint.shape[:2], 1))), axis=2)
     transformed_footprint = (homogeneous_footprint @ matrix.T)[..., :3].reshape(-1, 6)
-    junction = _junction_segments(restoration_recipe_path)
     homogeneous_junction = np.concatenate(
         (junction, np.ones((*junction.shape[:2], 1))), axis=2)
     transformed_junction = (homogeneous_junction @ matrix.T)[..., :3].reshape(-1, 6)
-    basis_edges, basis_provenance = _trace_basis_edges(restoration_recipe_path)
     homogeneous_basis = np.concatenate(
         (basis_edges, np.ones((*basis_edges.shape[:2], 1))), axis=2)
     transformed_basis = (homogeneous_basis @ matrix.T)[..., :3].reshape(-1, 6)
@@ -867,18 +941,23 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     # its cells are excluded from the band anisotropy statistics (decision 31) and
     # the design gate is not applicable by construction when the layer covers the
     # whole one-NormalSize band (decision 35; audit_edge_metric_mesh.achieved_anisotropy).
-    layer = json.loads(Path(restoration_recipe_path).read_text()).get("EdgeLayer")
+    layer = None
+    if census is None:
+        layer = json.loads(Path(restoration_recipe_path).read_text()).get("EdgeLayer")
     layer_spans = layer_reach = None
     if isinstance(layer, dict):
         spans = np.asarray(layer["Spans"], dtype=float).reshape(-1, 2, 3)
         homogeneous_spans = np.concatenate((spans, np.ones((*spans.shape[:2], 1))), axis=2)
         layer_spans = (homogeneous_spans @ matrix.T)[..., :3].reshape(-1, 6)
         layer_reach = edge_layer_required_reach(layer)
-    widths = directional_widths(mesh, transformed_recipe, layer_spans, layer_reach)
-    anisotropy = achieved_anisotropy(widths, transformed_recipe["NormalSize"],
-                                     layer if isinstance(layer, dict) else None)
-    _, material_attributes = blocks(mesh, "tetra")
-    _, boundary_attributes = blocks(mesh, "triangle")
+    if census is None:
+        widths = directional_widths(mesh, transformed_recipe, layer_spans, layer_reach)
+        anisotropy = achieved_anisotropy(widths, transformed_recipe["NormalSize"],
+                                         layer if isinstance(layer, dict) else None)
+    else:
+        anisotropy = _tube_design_statement(mesh, census, transformed_recipe["NormalSize"])
+    _, material_attributes = blocks(simplicial, "tetra")
+    _, boundary_attributes = blocks(simplicial, "triangle")
     actual_boundary_attributes = sorted(int(value)
                                         for value in np.unique(boundary_attributes))
     topology = contract["FeatureTopology"]
@@ -888,7 +967,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
         if not len(points):
             return points
         return (np.column_stack((points, np.ones(len(points)))) @ matrix.T)[:, :3]
-    reference_mesh = read_mesh(reference_mesh_path)
+    reference_mesh = simplicial_view(read_mesh(reference_mesh_path))
     transformed_reference = meshio.Mesh(
         (np.column_stack((reference_mesh.points, np.ones(len(reference_mesh.points)))) @
          matrix.T)[:, :3],
@@ -909,35 +988,26 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "SubdivisionNeighborhoods": _point_aspects(mesh, transformed(subdivision_points)),
               "CutNeighborhoods": _point_aspects(mesh, transformed(cut_points)),
               "ProtectedSurfaces": _protected_surface_report(
-                  transformed_reference, mesh, contract),
+                  transformed_reference, simplicial, contract),
               "AchievedAnisotropy": anisotropy,
               "TraceDiagonal": {**_global_diagonal_bands(
-                  mesh, transformed_recipe["PhysicalSegments"],
+                  simplicial, transformed_recipe["PhysicalSegments"],
                   transformed_recipe["NormalSize"], transformed_footprint,
                   transformed_junction, transformed_basis),
                   "FootprintSegmentProvenance": footprint_provenance,
                   "TraceBasisEdgeProvenance": basis_provenance},
-              "MeshQuality": _tetra_quality(mesh, layer_spans, layer_reach)}
+              "MeshQuality": {**_volume_quality(mesh, layer_spans, layer_reach),
+                              "ElementCounts": element_counts(mesh)}}
     base["Measurements"] = actual
     base["Topology"] = report
     base["ReferenceMeshSHA256"] = sha256(reference_mesh_path)
-    base["RestorationRecipeSHA256"] = sha256(restoration_recipe_path)
+    if census is None:
+        base["RestorationRecipeSHA256"] = sha256(restoration_recipe_path)
+    else:
+        base["BuildCensusSHA256"] = sha256(build_census_path)
     base["OwnershipReportSHA256"] = sha256(ownership_report_path)
     base["OwnershipQuadratureSHA256"] = sha256(ownership_quadrature_path)
     return base
-
-
-def _simplex_h1_dofs(mesh, order):
-    tetrahedra, _ = blocks(mesh, "tetra")
-    edges = np.sort(tetrahedra[:, ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))]
-                    .reshape(-1, 2), axis=1)
-    faces = np.sort(tetrahedra[:, ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))]
-                    .reshape(-1, 3), axis=1)
-    vertices = len(np.unique(tetrahedra))
-    edge_count, face_count = len(np.unique(edges, axis=0)), len(np.unique(faces, axis=0))
-    return (vertices + max(order - 1, 0) * edge_count +
-            max((order - 1) * (order - 2) // 2, 0) * face_count +
-            max((order - 1) * (order - 2) * (order - 3) // 6, 0) * len(tetrahedra))
 
 
 def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None):
@@ -946,13 +1016,17 @@ def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None)
     order = int(recipe["GeometryOrder"])
     topology = load_semantic_contract(contract_path)["FeatureTopology"]
     base["Measurements"] = {"Complexity": {
-        "H1DOFs": int(_simplex_h1_dofs(mesh, order)),
+        "H1DOFs": int(h1_dofs(mesh, order)),
+        "ElementCounts": element_counts(mesh),
         "FeatureCount": topology["PhysicalFeatureCount"],
         "CADSubdivisionCount": topology["CADSubdivisionCount"]}}
     return base
 
 
 def _mesh_invariants(mesh):
+    """Material volumes and label areas on the conforming simplicial view (exact for
+    the planar-faced prisms, pyramids and quadrangles of the tube build)."""
+    mesh = simplicial_view(mesh)
     tetrahedra, materials = blocks(mesh, "tetra")
     xyz = mesh.points[tetrahedra]
     volume = np.abs(np.linalg.det(np.stack((xyz[:, 1] - xyz[:, 0],
@@ -982,18 +1056,26 @@ def _inverse_transformed_mesh(mesh, matrix):
     return result
 
 
+def _same_cell_blocks(left, right):
+    left_blocks = [(kind, connectivity, labels) for kind, connectivity, labels in
+                   cell_blocks(left, (*VOLUME_KINDS, *SURFACE_KINDS))]
+    right_blocks = [(kind, connectivity, labels) for kind, connectivity, labels in
+                    cell_blocks(right, (*VOLUME_KINDS, *SURFACE_KINDS))]
+    return (len(left_blocks) == len(right_blocks) and
+            all(a[0] == b[0] and np.array_equal(a[1], b[1]) and np.array_equal(a[2], b[2])
+                for a, b in zip(left_blocks, right_blocks)))
+
+
 def _physical_covariance_report(identity, transformed, contract, matrix):
     normalized = _inverse_transformed_mesh(transformed, matrix)
-    left, _ = analyze(identity, contract, require_material_names=True)
-    right, _ = analyze(normalized, contract, require_material_names=True)
+    identity_view, normalized_view = simplicial_view(identity), simplicial_view(normalized)
+    left, _ = analyze(identity_view, contract, require_material_names=True)
+    right, _ = analyze(normalized_view, contract, require_material_names=True)
     left_invariants = _mesh_invariants(identity)
     right_invariants = _mesh_invariants(normalized)
-    left_quality, right_quality = _tetra_quality(identity), _tetra_quality(normalized)
+    left_quality, right_quality = _volume_quality(identity), _volume_quality(normalized)
     deterministic = {"PointCountEqual": len(identity.points) == len(normalized.points)}
-    deterministic["TopologyEqual"] = all(
-        np.array_equal(blocks(identity, kind)[0], blocks(normalized, kind)[0]) and
-        np.array_equal(blocks(identity, kind)[1], blocks(normalized, kind)[1])
-        for kind in ("triangle", "tetra"))
+    deterministic["TopologyEqual"] = _same_cell_blocks(identity, normalized)
     deterministic["CoordinateMaximumError"] = None
     if deterministic["PointCountEqual"]:
         deterministic["CoordinateMaximumError"] = float(np.max(
@@ -1003,16 +1085,18 @@ def _physical_covariance_report(identity, transformed, contract, matrix):
         "LabelsMaterialsAdjacencyMatch": (
             left["PhysicalVolumeNames"] == right["PhysicalVolumeNames"] and
             left["BoundaryAdjacency"] == right["BoundaryAdjacency"] and
-            set(blocks(identity, "triangle")[1]) == set(blocks(normalized, "triangle")[1]) and
-            set(blocks(identity, "tetra")[1]) == set(blocks(normalized, "tetra")[1])),
-        "ProtectedSurfaces": _protected_surface_report(identity, normalized, contract),
+            set(blocks(identity_view, "triangle")[1]) == set(blocks(normalized_view, "triangle")[1]) and
+            set(blocks(identity_view, "tetra")[1]) == set(blocks(normalized_view, "tetra")[1])),
+        "ProtectedSurfaces": _protected_surface_report(identity_view, normalized_view, contract),
         "ReferenceInvariants": left_invariants,
         "TransformedInvariants": right_invariants,
         "ReferenceQuality": left_quality,
         "TransformedQuality": right_quality,
         "ReferencePoints": len(identity.points), "TransformedPoints": len(normalized.points),
-        "ReferenceElements": len(blocks(identity, "tetra")[0]),
-        "TransformedElements": len(blocks(normalized, "tetra")[0]),
+        "ReferenceElements": element_counts(identity)["VolumeElements"],
+        "TransformedElements": element_counts(normalized)["VolumeElements"],
+        "ReferenceElementCounts": element_counts(identity),
+        "TransformedElementCounts": element_counts(normalized),
         # Diagnostic only: physical acceptance never depends on this subsection.
         "DeterministicTopologyDiagnostic": deterministic,
     }
@@ -1034,17 +1118,15 @@ def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
     error = float(np.max(np.linalg.norm(mesh.points - expected, axis=1)))
     if error > tolerance or receipt.get("MaximumCoordinateError", math.inf) > tolerance:
         raise ValueError("Final candidate does not apply the declared proper rigid transform")
-    for kind in ("triangle", "tetra"):
-        cells, refs = blocks(mesh, kind)
-        canonical_cells, canonical_refs = blocks(canonical, kind)
-        if not np.array_equal(cells, canonical_cells) or not np.array_equal(refs, canonical_refs):
-            raise ValueError("Rigid publication changed exact connectivity or labels")
+    if not _same_cell_blocks(mesh, canonical):
+        raise ValueError("Rigid publication changed exact connectivity or labels")
     contract = load_semantic_contract(contract_path)
     base["IdentityMeshPath"] = str(canonical_path.resolve())
     base["IdentityMeshSHA256"] = sha256(canonical_path)
     # Retain the field name for normalized-schema compatibility; the canonical
-    # source-local seed is shared rather than rebuilt per placement.
-    canonical_seed = Path(reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"])
+    # source-local volume build (the legacy seed or the Gmsh-only build mesh) is
+    # shared rather than rebuilt per placement.
+    canonical_seed = Path(_build_volume_artifact(reports)["Path"])
     base["IdentitySeedMeshPath"] = str(canonical_seed.resolve())
     base["IdentitySeedMeshSHA256"] = sha256(canonical_seed)
     base["TransformMaximumCoordinateError"] = error
@@ -1056,10 +1138,27 @@ def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
     return base
 
 
+def _build_volume_artifact(reports):
+    """The source-local volume build artifact of a validated DAG: the Gmsh-only
+    build mesh or the legacy seed mesh."""
+    pipeline = dag_pipeline(reports)
+    stage = PIPELINE_BUILD_STAGE[pipeline]
+    role = "gmsh-mesh" if pipeline == GMSH_ONLY_PIPELINE else "seed-mesh"
+    return reports[stage]["Artifacts"][role]
+
+
+def _feature_record_paths(reports):
+    """(restoration recipe path, build census path): exactly one per pipeline."""
+    if dag_pipeline(reports) == GMSH_ONLY_PIPELINE:
+        return None, reports["gmsh-build"]["Artifacts"]["build-census"]["Path"]
+    return reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"], None
+
+
 def bounded_record(base, mesh_path, stage_reports, *, mesh=None):
     mesh = read_mesh(mesh_path) if mesh is None else mesh
     reports, digests = validate_stage_dag(stage_reports, mesh_path)
-    canonical = [reports[name] for name in CANONICAL_STAGE_ORDER]
+    pipeline = dag_pipeline(reports)
+    canonical = [reports[name] for name in canonical_stage_order(pipeline)]
     placement = [reports[name] for name in PLACEMENT_STAGE_ORDER]
     canonical_resources = {
         "Seconds": sum(report["Seconds"] for report in canonical),
@@ -1072,13 +1171,15 @@ def bounded_record(base, mesh_path, stage_reports, *, mesh=None):
         "Seconds": canonical_resources["Seconds"] + placement_resources["Seconds"],
         "PeakRSSGiB": max(canonical_resources["PeakRSSGiB"],
                            placement_resources["PeakRSSGiB"]),
-        "Elements": len(blocks(mesh, "tetra")[0]),
+        "Elements": element_counts(mesh)["VolumeElements"],
+        "ElementCounts": element_counts(mesh),
         "CanonicalBuild": canonical_resources,
         "PlacementPublication": placement_resources}}
+    base["Pipeline"] = pipeline
     base["BoundedStages"] = reports
     base["BoundedStageRecords"] = [
         {"Stage": stage, "Path": str(Path(stage_reports[stage]).resolve()),
-         "SHA256": stage_sha256(stage_reports[stage])} for stage in STAGE_ORDER]
+         "SHA256": stage_sha256(stage_reports[stage])} for stage in stage_order(pipeline)]
     base["StageRecordSHA256"] = sorted(digests)
     return base
 
@@ -1098,14 +1199,14 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
         record = bounded_record(base, mesh, stage_reports, mesh=loaded_mesh)
     elif kind == "mesh-topology-quality":
         reports, _ = validate_stage_dag(stage_reports, mesh)
-        reference = reports["seed-generation"]["Artifacts"]["seed-mesh"]["Path"]
-        restoration_recipe = reports["metric-preparation"]["Artifacts"]["restoration-recipe"]["Path"]
+        reference = _build_volume_artifact(reports)["Path"]
+        restoration_recipe, build_census = _feature_record_paths(reports)
         publication = reports["proper-rigid-publication"]["Artifacts"]
         ownership = publication["ownership-partition"]["Path"]
         quadrature = publication["ownership-quadrature-partition"]["Path"]
         record = topology_record(base, mesh, contract, recipe, process, signature,
                                  reference, ownership, quadrature, restoration_recipe,
-                                 mesh=loaded_mesh)
+                                 mesh=loaded_mesh, build_census_path=build_census)
         record["Dependencies"] = {"SemanticContract": sha256(contract),
                                   "MeshRecipe": sha256(recipe), "Process": sha256(process),
                                   "Signature": sha256(signature)}

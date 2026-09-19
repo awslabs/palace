@@ -35,8 +35,8 @@ from general_mesh_manifest import (_physical_comparison_failures,
                                    layer_covered_band, run_manifest, sha256, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
-from mesh_stage_contract import (CANONICAL_STAGE_ORDER, validate_stage_report,
-                                 validate_tool_invocation)
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order,
+                                 validate_stage_report, validate_tool_invocation)
 from normalize_general_mesh_evidence import normalize
 from semantic_mesh_contract import (derive_feature_topology, load_semantic_contract,
                                     validate_semantic_contract)
@@ -82,13 +82,21 @@ TRACE_BASIS_BINDINGS = {"BasisContract": ("source-basis-contract", "--trace-basi
                         "TraceTriangles": ("source-trace-triangles", "--trace-triangles"),
                         "ProcessLibrary": ("source-process-library", "--process-library")}
 TRACE_BASIS_SIZE_RATIO = 1.0
+# Fixture Gmsh-only build options (decision 38): the tube inner size equals the corner
+# size, the extrusion spacing is the tangential size, the far size and growth close the
+# band laws, the element cap is the fixture manifest's.
+GMSH_BUILD_OPTIONS = ("--prism-tubes", "true", "--lc-tangent", str(CORNER_ISOTROPY_RADIUS),
+                      "--lc-far", "1.0", "--edge-size", "0.001", "--edge-growth-ratio", "2",
+                      "--corner-size", "0.001", "--far-growth", "0.5", "--max-elements", "1000")
 ANGLE = 0.63
 ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
             math.sin(ANGLE), math.cos(ANGLE), 0, 0,
             0, 0, 1, 0, 0, 0, 0, 1]
 
 
-class GeneralMeshManifestTest(unittest.TestCase):
+class FixtureMatrixMixin:
+    """Fixture cases, manifests and staged matrices of either canonical pipeline."""
+
     def write_case(self, root, name, edges, *, scale, retained_etch=False, trace_basis=False):
         directory = root / name; directory.mkdir()
         signature = directory / "signature.csv"
@@ -164,25 +172,16 @@ class GeneralMeshManifestTest(unittest.TestCase):
                            "SignatureColumns": ["Index", "Slot", "Conductor"],
                            "Files": files, **source_extra}, "TestScale": scale}
 
-    def make_suite(self, root):
-        require_native_fixture()
+    def make_suite(self, root, pipeline="legacy-mmg"):
+        if pipeline == "legacy-mmg":
+            require_native_fixture()
         cases = [self.write_case(root, "base", 1, scale=1),
                  self.write_case(root, "subdivided", 2, scale=2, retained_etch=True),
                  self.write_case(root, "six-edge-supplemental", 6, scale=3, trace_basis=True)]
         tools = [(MESHER.name, MESHER), (STAGER.name, STAGER),
                  (TRANSFORMER.name, TRANSFORMER),
                  (AUDITOR.name, AUDITOR), (BOUNDED.name, BOUNDED)]
-        manifest = {"Version": 2, "RepositoryRoot": ".",
-            "Gates": {"CornerTolerance": 1e-8, "MaximumNormalFactor": 2,
-                      "MinimumAchievedAspect": 1.5, "MaximumCornerAspect": 3,
-                      "MinimumNoncornerAspect": 10,
-                      "MaximumProtectedMeasureError": 1e-12,
-                      "MinimumScaledJacobian": .01,
-                      "MaximumJacobianCondition": 100, "MaximumSeconds": 10,
-                      "MaximumRSSGiB": 1, "MaximumElements": 1000},
-            "Tools": [{"Name": name, "Path": str(path), "SHA256": sha256(path)}
-                      for name, path in tools],
-            "StageToolSHA256": {
+        stage_tools = {
                 "canonical-source-validation": {"runtime": sha256(sys.executable),
                     "source-validator": sha256(TRANSFORMER)},
                 "seed-generation": {"runtime": sha256(sys.executable),
@@ -199,7 +198,27 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 "proper-rigid-publication": {"runtime": sha256(sys.executable),
                     "rigid-publisher": sha256(STAGER),
                     "ownership-runtime": sha256(sys.executable),
-                    "ownership-auditor": sha256(STAGER)}},
+                    "ownership-auditor": sha256(STAGER)}} if pipeline == "legacy-mmg" else {
+                "canonical-source-validation": {"runtime": sha256(sys.executable),
+                    "source-validator": sha256(TRANSFORMER)},
+                "gmsh-build": {"runtime": sha256(sys.executable), "mesher": sha256(MESHER)},
+                "canonical-gmsh-publication": {"runtime": sha256(sys.executable),
+                                               "publisher": sha256(STAGER)},
+                "proper-rigid-publication": {"runtime": sha256(sys.executable),
+                    "rigid-publisher": sha256(STAGER),
+                    "ownership-runtime": sha256(sys.executable),
+                    "ownership-auditor": sha256(STAGER)}}
+        manifest = {"Version": 2, "RepositoryRoot": ".", "Pipeline": pipeline,
+            "Gates": {"CornerTolerance": 1e-8, "MaximumNormalFactor": 2,
+                      "MinimumAchievedAspect": 1.5, "MaximumCornerAspect": 3,
+                      "MinimumNoncornerAspect": 10,
+                      "MaximumProtectedMeasureError": 1e-12,
+                      "MinimumScaledJacobian": .01,
+                      "MaximumJacobianCondition": 100, "MaximumSeconds": 10,
+                      "MaximumRSSGiB": 1, "MaximumElements": 1000},
+            "Tools": [{"Name": name, "Path": str(path), "SHA256": sha256(path)}
+                      for name, path in tools],
+            "StageToolSHA256": stage_tools,
             "ScalingComparisons": [
                 {"Id": "subdivision", "Kind": "cad-subdivision-sensitivity",
                  "Reference": ["base", "identity"], "Compared": ["subdivided", "identity"],
@@ -216,6 +235,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
                                preflight_only=preflight, audit_root=audit)
 
     def produce_matrix(self, root, manifest_path, manifest, compare_consolidated=False):
+        pipeline = manifest.get("Pipeline", "legacy-mmg")
         audits = root / "audits"; audits.mkdir()
         for case in manifest["Cases"]:
             directory = root / case["Id"]
@@ -273,7 +293,41 @@ class GeneralMeshManifestTest(unittest.TestCase):
                     path = directory / case["Source"]["Files"][role]["Name"]
                     basis_inputs[name] = path; basis_options += [option, str(path)]
                 basis_options += ["--trace-basis-size-ratio", str(TRACE_BASIS_SIZE_RATIO)]
-            launch(canonical_stem, canonical_reports, "seed-generation",
+            if pipeline == "gmsh-only":
+                # The Gmsh-only DAG (decision 38): the build is the canonical volume mesh.
+                launch(canonical_stem, canonical_reports, "gmsh-build",
+                    {"source-signature": directory / "signature.csv",
+                     "source-boundary": directory / "boundary.csv",
+                     "source-mask": directory / "mask.csv",
+                     "canonical-semantic-contract": canonical_semantic,
+                     **({"source-retained-etch": etch} if etch is not None else {}),
+                     **basis_inputs},
+                    {"gmsh-mesh": seed, "build-census": census},
+                    {"runtime": sys.executable, "mesher": MESHER},
+                    [sys.executable, str(MESHER), str(seed), str(identity_transform),
+                     "--scale", str(case["TestScale"]), "--signature", str(directory / "signature.csv"),
+                     "--mask", str(directory / "mask.csv"), "--boundary", str(directory / "boundary.csv"),
+                     "--semantic-contract", str(canonical_semantic),
+                     "--corner-isotropy-radius", str(CORNER_ISOTROPY_RADIUS),
+                     "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
+                     *(["--etch-boundary", str(etch)] if etch is not None else []),
+                     *basis_options, *SEED_QUALITY_GATE_OPTIONS, *GMSH_BUILD_OPTIONS])
+                launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
+                    {"gmsh-mesh": seed, "source-process": directory / "process.toml",
+                     "source-signature": directory / "signature.csv",
+                     "source-boundary": directory / "boundary.csv"},
+                    {"canonical-candidate-mesh": canonical_mesh,
+                     "canonical-ownership-partition": canonical_ownership,
+                     "canonical-ownership-quadrature-partition": canonical_quadrature},
+                    {"runtime": sys.executable, "publisher": STAGER},
+                    [sys.executable, str(STAGER), "publish", str(seed), str(canonical_mesh),
+                     "--ownership", str(canonical_ownership),
+                     "--ownership-quadrature", str(canonical_quadrature),
+                     "--process", str(directory / "process.toml"),
+                     "--signature", str(directory / "signature.csv"),
+                     "--boundary", str(directory / "boundary.csv")])
+            else:
+              launch(canonical_stem, canonical_reports, "seed-generation",
                 {"source-signature": directory / "signature.csv",
                  "source-boundary": directory / "boundary.csv",
                  "source-mask": directory / "mask.csv",
@@ -290,55 +344,55 @@ class GeneralMeshManifestTest(unittest.TestCase):
                  "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
                  *(["--etch-boundary", str(etch)] if etch is not None else []),
                  *basis_options, *SEED_QUALITY_GATE_OPTIONS])
-            launch(canonical_stem, canonical_reports, "metric-preparation",
-                {"seed-mesh": seed, "seed-corner-census": census,
-                 "canonical-semantic-contract": canonical_semantic,
-                 "canonical-supports": canonical_supports, **basis_inputs},
-                {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
-                 "fixed-triangles": fixed, "required-tetrahedra": required,
-                 "restoration-recipe": recipe},
-                {"runtime": sys.executable, "metric-preparer": STAGER},
-                [sys.executable, str(STAGER), "metric", str(seed), str(metric),
-                 "--mmg-seed", str(mmg_seed), "--pins", str(pins), "--fixed-triangles", str(fixed),
-                 "--required-tetrahedra", str(required), "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
-                 "--transformed-supports", str(canonical_supports),
-                 "--seed-census", str(census),
-                 "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS),
-                 *basis_options])
-            launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
-                {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
-                 "fixed-triangles": fixed, "required-tetrahedra": required,
-                 "restoration-recipe": recipe},
-                {"adapted-mesh": adapted, "adaptation-receipt": adaptation_receipt},
-                {"runtime": sys.executable, "adaptation-wrapper": WRAPPER, "adapter-mmg": ADAPTER,
-                 "mmg-library": MMG_LIBRARY},
-                [sys.executable, str(WRAPPER), str(mmg_seed), str(metric), str(pins), str(recipe),
-                 str(adapted), str(adaptation_receipt), "--adapter", str(ADAPTER),
-                 "--mmg-library", str(MMG_LIBRARY), "--hmin", ".1",
-                 "--hgrad", "1.3", "--fixed-triangles", str(fixed),
-                 "--required-tetrahedra", str(required)])
-            launch(canonical_stem, canonical_reports, "label-restoration",
-                {"adapted-mesh": adapted, "restoration-recipe": recipe},
-                {"source-local-restored-mesh": local_restored, "restored-mesh": restored},
-                {"runtime": sys.executable, "label-restorer": STAGER},
-                [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
-                 "--recipe", str(recipe), "--source-local-output", str(local_restored),
-                 *SEED_QUALITY_GATE_OPTIONS])
-            launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
-                {"restored-mesh": restored, "source-process": directory / "process.toml",
-                 "source-signature": directory / "signature.csv",
-                 "source-boundary": directory / "boundary.csv"},
-                {"canonical-candidate-mesh": canonical_mesh,
-                 "canonical-ownership-partition": canonical_ownership,
-                 "canonical-ownership-quadrature-partition": canonical_quadrature},
-                {"runtime": sys.executable, "publisher": STAGER},
-                [sys.executable, str(STAGER), "publish", str(restored), str(canonical_mesh),
-                 "--ownership", str(canonical_ownership),
-                 "--ownership-quadrature", str(canonical_quadrature),
-                 "--process", str(directory / "process.toml"),
-                 "--signature", str(directory / "signature.csv"),
-                 "--boundary", str(directory / "boundary.csv")])
-            canonical_tools = {f"{stage}/{role}": digest for stage in CANONICAL_STAGE_ORDER
+              launch(canonical_stem, canonical_reports, "metric-preparation",
+                  {"seed-mesh": seed, "seed-corner-census": census,
+                   "canonical-semantic-contract": canonical_semantic,
+                   "canonical-supports": canonical_supports, **basis_inputs},
+                  {"metric": metric, "mmg-seed": mmg_seed, "pins": pins,
+                   "fixed-triangles": fixed, "required-tetrahedra": required,
+                   "restoration-recipe": recipe},
+                  {"runtime": sys.executable, "metric-preparer": STAGER},
+                  [sys.executable, str(STAGER), "metric", str(seed), str(metric),
+                   "--mmg-seed", str(mmg_seed), "--pins", str(pins), "--fixed-triangles", str(fixed),
+                   "--required-tetrahedra", str(required), "--recipe", str(recipe), "--semantic-contract", str(canonical_semantic),
+                   "--transformed-supports", str(canonical_supports),
+                   "--seed-census", str(census),
+                   "--normal", str(NORMAL_SIZE), "--tangent", str(CORNER_ISOTROPY_RADIUS),
+                   *basis_options])
+              launch(canonical_stem, canonical_reports, "native-adaptation-mmg",
+                  {"mmg-seed": mmg_seed, "metric": metric, "pins": pins,
+                   "fixed-triangles": fixed, "required-tetrahedra": required,
+                   "restoration-recipe": recipe},
+                  {"adapted-mesh": adapted, "adaptation-receipt": adaptation_receipt},
+                  {"runtime": sys.executable, "adaptation-wrapper": WRAPPER, "adapter-mmg": ADAPTER,
+                   "mmg-library": MMG_LIBRARY},
+                  [sys.executable, str(WRAPPER), str(mmg_seed), str(metric), str(pins), str(recipe),
+                   str(adapted), str(adaptation_receipt), "--adapter", str(ADAPTER),
+                   "--mmg-library", str(MMG_LIBRARY), "--hmin", ".1",
+                   "--hgrad", "1.3", "--fixed-triangles", str(fixed),
+                   "--required-tetrahedra", str(required)])
+              launch(canonical_stem, canonical_reports, "label-restoration",
+                  {"adapted-mesh": adapted, "restoration-recipe": recipe},
+                  {"source-local-restored-mesh": local_restored, "restored-mesh": restored},
+                  {"runtime": sys.executable, "label-restorer": STAGER},
+                  [sys.executable, str(STAGER), "restore", str(adapted), str(restored),
+                   "--recipe", str(recipe), "--source-local-output", str(local_restored),
+                   *SEED_QUALITY_GATE_OPTIONS])
+              launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
+                  {"restored-mesh": restored, "source-process": directory / "process.toml",
+                   "source-signature": directory / "signature.csv",
+                   "source-boundary": directory / "boundary.csv"},
+                  {"canonical-candidate-mesh": canonical_mesh,
+                   "canonical-ownership-partition": canonical_ownership,
+                   "canonical-ownership-quadrature-partition": canonical_quadrature},
+                  {"runtime": sys.executable, "publisher": STAGER},
+                  [sys.executable, str(STAGER), "publish", str(restored), str(canonical_mesh),
+                   "--ownership", str(canonical_ownership),
+                   "--ownership-quadrature", str(canonical_quadrature),
+                   "--process", str(directory / "process.toml"),
+                   "--signature", str(directory / "signature.csv"),
+                   "--boundary", str(directory / "boundary.csv")])
+            canonical_tools = {f"{stage}/{role}": digest for stage in canonical_stage_order(pipeline)
                                for role, digest in manifest["StageToolSHA256"][stage].items()}
             canonical_record = root / f"{canonical_stem}-build.json"
             canonical_record.write_text(json.dumps(build_record_from_stage_reports(
@@ -412,6 +466,7 @@ class GeneralMeshManifestTest(unittest.TestCase):
                           audits / f"{stem}.json")
         return audits
 
+class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
     def test_variant_audits_match_standalone_records(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest_path, manifest = self.make_suite(root)
@@ -1733,6 +1788,20 @@ class GeneralMeshManifestTest(unittest.TestCase):
         short_edge = [[[-0.05, -0.02, 0.], (np.asarray([-0.05, -0.02, 0.]) + 0.4 * np.asarray(direction)).tolist()]]
         self.assertEqual(_global_diagonal_bands(mesh, unaligned, .025,
                                                 trace_basis_edges=short_edge)["GlobalDiagonalBands"], 1)
+        # The endpoint reach is 2 x threshold + the band's RMS width (the band's extent
+        # along its axis is resolvable to its width): an edge ending one width short of
+        # the band end is still the band's edge; one ending farther is not.
+        width = component["RMSWidth"]; span = component["Span"]
+        self.assertGreater(width, 0.)
+        start, end = (np.asarray(point) for point in component["Endpoints"])
+        axis = (end - start) / np.linalg.norm(end - start)
+        threshold = accepted["ShortEdgeThreshold"]
+        nearly = [[(start - 0.05 * axis).tolist(), (end - (2 * threshold + 0.9 * width) * axis).tolist()]]
+        self.assertEqual(_global_diagonal_bands(mesh, unaligned, .025,
+                                                trace_basis_edges=nearly)["GlobalDiagonalBands"], 0)
+        too_short = [[(start - 0.05 * axis).tolist(), (end - (2 * threshold + 1.5 * width) * axis).tolist()]]
+        self.assertEqual(_global_diagonal_bands(mesh, unaligned, .025,
+                                                trace_basis_edges=too_short)["GlobalDiagonalBands"], 1)
         self.assertEqual(_global_diagonal_bands(mesh, unaligned, .025,
                                                 trace_basis_edges=far_edge)["GlobalDiagonalBands"], 1)
         self.assertEqual(neither["FeatureSegments"]["TraceBasis"], 0)
@@ -1813,6 +1882,22 @@ class GeneralMeshManifestTest(unittest.TestCase):
         self.assertEqual(count, 1); self.assertFalse(band["AlignedWithPhysicalSegment"])
         self.assertIn("decision 36", _global_diagonal_bands(strip(0., 1.), segment, .025)
                       ["FeatureSegments"]["Alignment"])
+        # The same resolvability judges a band's alignment with a bound trace-basis edge
+        # (the four-edge narrow hats: a 11 um band of RMS width 33 nm on a basis edge
+        # tilts ~3 mrad from it): the 1 um band tilted 5 mrad lies on an untilted basis
+        # edge along x; at 20 mrad it does not.
+        unaligned = [[[0., 0., 0.], [0., 1., 0.]]]
+        for angle, expected in ((.005, 0), (.02, 1)):
+            mesh = strip(angle, 1.)
+            report = _global_diagonal_bands(mesh, unaligned, .025)
+            band = next(item for item in report["LongShortEdgeComponents"] if item["LineLike"])
+            start, end = (np.asarray(point) for point in band["Endpoints"])
+            basis = [[(start - np.array([.05, 0., 0.])).tolist(), [end[0] + .05, start[1], 0.]]]
+            report = _global_diagonal_bands(mesh, unaligned, .025, trace_basis_edges=basis)
+            self.assertEqual(report["GlobalDiagonalBands"], expected, angle)
+            band = next(item for item in report["LongShortEdgeComponents"] if item["LineLike"])
+            self.assertEqual(band["OnTraceBasisEdge"], expected == 0)
+        self.assertIn("RMSWidth", report["FeatureSegments"]["TraceBasisEdge"])
 
     def test_diagonal_detector_threshold_tolerates_construction_roundoff(self):
         # Seed grid edges sit at exactly 2 x NormalSize up to construction roundoff
@@ -2168,7 +2253,13 @@ class GeneralMeshManifestTest(unittest.TestCase):
             rejected(lambda m: m["Cases"][0].__setitem__("Calibration", {"MaximumElements": 5000000}),
                      "calibration or edge-layer block in a production manifest")
         self.assertEqual(calibration["Tools"], production["Tools"])
-        self.assertEqual(calibration["StageToolSHA256"], production["StageToolSHA256"])
+        # The calibration manifest keeps the legacy MMG stages (labeled); the shared
+        # stages mirror production.
+        self.assertEqual(calibration["Pipeline"], "legacy-mmg")
+        self.assertEqual(production["Pipeline"], "gmsh-only")
+        for stage in ("canonical-source-validation", "canonical-gmsh-publication",
+                      "proper-rigid-publication"):
+            self.assertEqual(calibration["StageToolSHA256"][stage], production["StageToolSHA256"][stage])
         base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
         for case in calibration["Cases"]:
             self.assertIn("calib-ma", case["Id"])
@@ -2180,18 +2271,36 @@ class GeneralMeshManifestTest(unittest.TestCase):
         validate_manifest(calibration, calibration_path)
 
     def test_refreeze_manifest_tools_keeps_both_manifests_current_together(self):
-        # The in-repo refreeze recomputes every repository-tool digest of the production
-        # manifest and mirrors Tools / StageToolSHA256 into the calibration manifest; the
-        # committed manifests must be current (fails closed when a refreeze was forgotten).
+        # The in-repo refreeze recomputes every repository-tool digest of both manifests
+        # over the stages each freezes (production: the Gmsh-only pipeline; calibration:
+        # the legacy MMG pipeline) and mirrors Tools and the shared stages from
+        # production into the calibration manifest; the committed manifests must be
+        # current (fails closed when a refreeze was forgotten).
         import refreeze_manifest_tools as refreezer
         production_path = HERE / "geometry-independence-suite.json"
         calibration_path = HERE / "geometry-independence-calibration-ma.json"
         self.assertEqual(refreezer.refreeze(production_path, calibration_path, check_only=True),
                          ([], False))
         production = json.loads(production_path.read_text())
-        for (stage, role), name in refreezer.STAGE_REPOSITORY_TOOLS.items():
-            self.assertEqual(production["StageToolSHA256"][stage][role], sha256(HERE / name),
-                             f"{stage}/{role}")
+        calibration = json.loads(calibration_path.read_text())
+        self.assertEqual(set(production["StageToolSHA256"]),
+                         {"canonical-source-validation", "gmsh-build", "canonical-gmsh-publication",
+                          "proper-rigid-publication"})
+        self.assertEqual(set(calibration["StageToolSHA256"]),
+                         {"canonical-source-validation", "seed-generation", "metric-preparation",
+                          "native-adaptation-mmg", "label-restoration", "canonical-gmsh-publication",
+                          "proper-rigid-publication"})
+        shared = refreezer.shared_stages(production, calibration)
+        self.assertEqual(shared, ["canonical-gmsh-publication", "canonical-source-validation",
+                                  "proper-rigid-publication"])
+        for manifest in (production, calibration):
+            for (stage, role), name in refreezer.STAGE_REPOSITORY_TOOLS.items():
+                if stage in manifest["StageToolSHA256"]:
+                    self.assertEqual(manifest["StageToolSHA256"][stage][role], sha256(HERE / name),
+                                     f"{stage}/{role}")
+        # The Gmsh-only build and the legacy seed are one mesher.
+        self.assertEqual(production["StageToolSHA256"]["gmsh-build"],
+                         calibration["StageToolSHA256"]["seed-generation"])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "examples" / "cpw3d_surface" / "spatial_coupon"
             root.mkdir(parents=True)
@@ -2200,17 +2309,17 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 shutil.copy(HERE / name, root / name)
             stale = copy.deepcopy(production)
             stale["Tools"][0]["SHA256"] = "0" * 64
-            stale["StageToolSHA256"]["seed-generation"]["mesher"] = "1" * 64
+            stale["StageToolSHA256"]["gmsh-build"]["mesher"] = "1" * 64
             stale_production = root / "geometry-independence-suite.json"
             stale_calibration = root / "geometry-independence-calibration-ma.json"
             stale_production.write_text(json.dumps(stale))
             # The calibration copy still mirrors the (current) production digests.
-            stale_calibration.write_text(json.dumps(json.loads(calibration_path.read_text())))
+            stale_calibration.write_text(json.dumps(calibration))
             changes, mirror_stale = refreezer.refreeze(stale_production, stale_calibration,
                                                       check_only=True)
             self.assertEqual([(name, old) for name, old, _ in changes],
                              [(production["Tools"][0]["Name"], "0" * 64),
-                              ("seed-generation/mesher", "1" * 64)])
+                              ("gmsh-build/mesher", "1" * 64)])
             self.assertFalse(mirror_stale)
             self.assertEqual(json.loads(stale_production.read_text()), stale)  # check-only
             changes, _ = refreezer.refreeze(stale_production, stale_calibration,
@@ -2220,29 +2329,43 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertEqual(refrozen, production)
             mirrored = json.loads(stale_calibration.read_text())
             self.assertEqual(mirrored["Tools"], production["Tools"])
-            self.assertEqual(mirrored["StageToolSHA256"], production["StageToolSHA256"])
+            for stage in shared:
+                self.assertEqual(mirrored["StageToolSHA256"][stage],
+                                 production["StageToolSHA256"][stage])
             self.assertEqual(mirrored["Gates"]["MinimumAchievedAspect"], 0.9)
             self.assertEqual(refreezer.refreeze(stale_production, stale_calibration,
                                                 check_only=True), ([], False))
-            # A calibration mirror that drifted from an otherwise current production
+            # A stale legacy stage of the calibration manifest is refrozen on its own.
+            drifted = json.loads(stale_calibration.read_text())
+            drifted["StageToolSHA256"]["seed-generation"]["mesher"] = "3" * 64
+            stale_calibration.write_text(json.dumps(drifted))
+            changes, mirror_stale = refreezer.refreeze(stale_production, stale_calibration,
+                                                      check_only=True)
+            self.assertEqual([(name, old) for name, old, _ in changes],
+                             [("calibration seed-generation/mesher", "3" * 64)])
+            self.assertFalse(mirror_stale)
+            refreezer.refreeze(stale_production, stale_calibration, check_only=False)
+            self.assertEqual(json.loads(stale_calibration.read_text()), calibration)
+            # A shared-stage mirror that drifted from an otherwise current production
             # manifest is stale on its own and is restored by the refreeze.
             drifted = json.loads(stale_calibration.read_text())
-            drifted["StageToolSHA256"]["native-adaptation-mmg"]["adapter-mmg"] = "2" * 64
+            drifted["StageToolSHA256"]["proper-rigid-publication"]["ownership-runtime"] = "2" * 64
             stale_calibration.write_text(json.dumps(drifted))
             self.assertEqual(refreezer.refreeze(stale_production, stale_calibration,
                                                 check_only=True), ([], True))
             refreezer.refreeze(stale_production, stale_calibration, check_only=False)
             self.assertEqual(json.loads(stale_calibration.read_text())["StageToolSHA256"],
-                             production["StageToolSHA256"])
+                             calibration["StageToolSHA256"])
             # Machine-bound identities are never recomputed.
             for stage, roles in production["StageToolSHA256"].items():
                 for role in roles:
                     if (stage, role) not in refreezer.STAGE_REPOSITORY_TOOLS:
                         self.assertEqual(json.loads(stale_production.read_text())
                                          ["StageToolSHA256"][stage][role], roles[role])
-            # The reviewed adapter is machine-bound: its digest changes only through an
-            # explicit --adapter-mmg naming the executable of the recorded build whose
-            # source digest is the repository's adapt_edge_metric.cpp.
+            # The reviewed adapter is machine-bound and lives only in the calibration
+            # manifest's legacy MMG stage: its digest changes only through an explicit
+            # --adapter-mmg naming the executable of the recorded build whose source
+            # digest is the repository's adapt_edge_metric.cpp.
             (root / "testdata").mkdir()
             shutil.copy(HERE / "adapt_edge_metric.cpp", root / "adapt_edge_metric.cpp")
             adapter = root / "adapt_edge_metric"; adapter.write_bytes(b"adapter build")
@@ -2251,12 +2374,13 @@ class GeneralMeshManifestTest(unittest.TestCase):
             (root / "testdata" / "adapter-build.json").write_text(json.dumps(record))
             changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=False,
                                             adapter=adapter)
-            self.assertEqual(changes, [("native-adaptation-mmg/adapter-mmg",
-                                        production["StageToolSHA256"]["native-adaptation-mmg"]
+            self.assertEqual(changes, [("calibration native-adaptation-mmg/adapter-mmg",
+                                        calibration["StageToolSHA256"]["native-adaptation-mmg"]
                                         ["adapter-mmg"], sha256(adapter))])
-            for path in (stale_production, stale_calibration):
-                self.assertEqual(json.loads(path.read_text())["StageToolSHA256"]
-                                 ["native-adaptation-mmg"]["adapter-mmg"], sha256(adapter))
+            self.assertEqual(json.loads(stale_calibration.read_text())["StageToolSHA256"]
+                             ["native-adaptation-mmg"]["adapter-mmg"], sha256(adapter))
+            self.assertNotIn("native-adaptation-mmg",
+                             json.loads(stale_production.read_text())["StageToolSHA256"])
             other = root / "other_adapter"; other.write_bytes(b"unrecorded build")
             with self.assertRaisesRegex(ValueError, "differ from the recorded build"):
                 refreezer.refreeze(stale_production, stale_calibration, check_only=True,
@@ -2266,15 +2390,19 @@ class GeneralMeshManifestTest(unittest.TestCase):
                 refreezer.refreeze(stale_production, stale_calibration, check_only=True,
                                    adapter=adapter)
             # The Julia launcher is machine-bound likewise: --julia-runtime refreezes the
-            # three Julia runtime roles together.
+            # Julia runtime roles of both manifests together.
             launcher = root / "julialauncher"; launcher.write_bytes(b"julia launcher")
             changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=False,
                                             julia_runtime=launcher)
             self.assertEqual(sorted(name for name, _, _ in changes),
-                             sorted(f"{stage}/{role}" for stage, role in refreezer.JULIA_RUNTIME_ROLES))
-            for stage, role in refreezer.JULIA_RUNTIME_ROLES:
-                self.assertEqual(json.loads(stale_calibration.read_text())["StageToolSHA256"]
-                                 [stage][role], sha256(launcher))
+                             sorted([f"{stage}/{role}" for stage, role in refreezer.JULIA_RUNTIME_ROLES
+                                     if stage in production["StageToolSHA256"]] +
+                                    ["calibration seed-generation/runtime"]))
+            for manifest_path in (stale_production, stale_calibration):
+                frozen = json.loads(manifest_path.read_text())["StageToolSHA256"]
+                for stage, role in refreezer.JULIA_RUNTIME_ROLES:
+                    if stage in frozen:
+                        self.assertEqual(frozen[stage][role], sha256(launcher))
             with self.assertRaisesRegex(ValueError, "does not exist"):
                 refreezer.refreeze(stale_production, stale_calibration, check_only=True,
                                    julia_runtime=root / "missing")
@@ -2282,9 +2410,9 @@ class GeneralMeshManifestTest(unittest.TestCase):
             committed = json.loads((HERE / "testdata" / "adapter-build.json").read_text())
             self.assertEqual(committed["SourceSHA256"], sha256(HERE / "adapt_edge_metric.cpp"))
             self.assertEqual(committed["ExecutableSHA256"],
-                             production["StageToolSHA256"]["native-adaptation-mmg"]["adapter-mmg"])
+                             calibration["StageToolSHA256"]["native-adaptation-mmg"]["adapter-mmg"])
             self.assertEqual(committed["MMGLibrarySHA256"],
-                             production["StageToolSHA256"]["native-adaptation-mmg"]["mmg-library"])
+                             calibration["StageToolSHA256"]["native-adaptation-mmg"]["mmg-library"])
 
     def test_remote_verified_contracts_match_source_model_and_physical_corners(self):
         manifest = json.loads((HERE / "geometry-independence-suite.json").read_text())
@@ -2353,6 +2481,257 @@ class GeneralMeshManifestTest(unittest.TestCase):
             self.assertEqual(remote["ten-edge-6791f1c84123"]["DiscoveredEdgeCount"], 10)
 
 
+class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
+    """Decision 38: the production DAG is canonical-source-validation -> gmsh-build ->
+    canonical-gmsh-publication -> proper-rigid-publication on a mixed-element mesh;
+    the build census is the bound build report, the audits run on prisms/pyramids/
+    quadrangles and the achieved-anisotropy gate is replaced by the tube design
+    statement."""
+
+    def _gmsh_only_matrix(self, root):
+        manifest_path, manifest = self.make_suite(root, pipeline="gmsh-only")
+        audits = self.produce_matrix(root, manifest_path, manifest)
+        return manifest_path, manifest, audits
+
+    def test_gmsh_only_matrix_passes_with_mixed_elements(self):
+        from general_mesh_audit_producer import TUBE_DESIGN_GATE
+        from mixed_mesh import element_counts
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self._gmsh_only_matrix(root)
+            self.assertTrue(run_manifest(self.args(manifest_path, root / "out", audit=audits)))
+            summary = json.loads((root / "out" / "summary.json").read_text())
+            self.assertTrue(summary["Passed"], summary)
+            evidence = json.loads((audits / "base--rotate-z-0.63.json").read_text())
+            counts = element_counts(read_mesh(root / "base--rotate-z-0.63.msh"))
+            self.assertEqual((counts["Prism"], counts["Pyramid"], counts["Quadrangle"]), (1, 1, 2))
+            self.assertEqual(evidence["Resources"]["Elements"], counts["VolumeElements"])
+            self.assertEqual(evidence["Resources"]["ElementCounts"], counts)
+            quality = evidence["MeshQuality"]
+            self.assertEqual(set(quality["ByType"]), {"Tetrahedron", "Prism", "Pyramid"})
+            self.assertTrue(all(item["PositiveOrientation"] for item in quality["ByType"].values()))
+            self.assertEqual(quality["MaximumJacobianCondition"],
+                             max(item["MaximumJacobianCondition"] for item in quality["ByType"].values()))
+            self.assertEqual(quality["MinimumScaledJacobian"],
+                             quality["ByType"]["Tetrahedron"]["MinimumScaledJacobian"])
+            statement = evidence["AchievedAnisotropy"]
+            self.assertEqual(statement["Gate"], TUBE_DESIGN_GATE)
+            self.assertTrue(statement["CensusMatchesMesh"])
+            self.assertEqual((statement["MeshPrisms"], statement["MeshPyramids"]), (1, 1))
+            self.assertEqual(statement["InnerSize"], .001)
+            self.assertEqual(evidence["Complexity"]["H1DOFs"], len(read_mesh(root / "base--rotate-z-0.63.msh").points))
+            # The material volume of the tube cells is exact on the simplicial view: the
+            # prism (1/2) plus the pyramid (1/6) at fixture scale 1.
+            substrate = evidence["ComparisonInvariants"]["Volume:1"]
+            tets_only = json.loads((root / "base--canonical-build.json").read_text())
+            self.assertIn("gmsh-mesh", tets_only["CanonicalArtifacts"])
+            self.assertIn("build-census", tets_only["CanonicalArtifacts"])
+            self.assertNotIn("restored-mesh", tets_only["CanonicalArtifacts"])
+            self.assertGreater(substrate, .5 + 1 / 6 - 1e-12)
+            # The topology record binds the census, not a restoration recipe.
+            topology = json.loads((root / "base--identity-mesh-topology-quality.json").read_text())
+            self.assertIn("BuildCensusSHA256", topology); self.assertNotIn("RestorationRecipeSHA256", topology)
+            bounded = json.loads((root / "base--identity-bounded-run.json").read_text())
+            self.assertEqual(bounded["Pipeline"], "gmsh-only")
+            self.assertEqual([item["Stage"] for item in bounded["BoundedStageRecords"]],
+                             ["canonical-source-validation", "gmsh-build", "canonical-gmsh-publication",
+                              "proper-rigid-publication"])
+            # Independent per-entry verification of the Gmsh-only case.
+            from verify_canonical_case_entries import verify_case
+            report = verify_case(manifest_path, audits, "six-edge-supplemental")
+            self.assertTrue(report["Passed"], report["Failures"])
+
+    def test_gmsh_only_negatives_fail_closed(self):
+        from general_mesh_audit_producer import TUBE_DESIGN_GATE
+        from general_mesh_manifest import tube_design_statement
+        from verify_canonical_case_entries import verify_case
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self._gmsh_only_matrix(root)
+            evidence_path = audits / "base--identity.json"
+            evidence = json.loads(evidence_path.read_text())
+            statement = evidence["AchievedAnisotropy"]
+            self.assertTrue(tube_design_statement(statement))
+            # The tube statement is fail-closed: a census/mesh prism mismatch, a spacing
+            # above the tangential size, no rings, a wrong gate name, an inverted type.
+            for broken in ({**statement, "CensusMatchesMesh": False},
+                           {**statement, "Prisms": 2}, {**statement, "MeshPyramids": 0},
+                           {**statement, "SpacingMaximum": statement["TangentialSize"] * 1.01},
+                           {**statement, "Rings": 0}, {**statement, "GrowthRatio": 1.0},
+                           {**statement, "Gate": ANISOTROPY_GATE_NOT_APPLICABLE},
+                           {**statement, "Samples": 3}, {}):
+                self.assertFalse(tube_design_statement(broken))
+            contract = load_semantic_contract(root / "base" / "semantic.json")
+            binding = {"CaseId": "base", "Variant": "identity", "TransformSHA256": evidence["TransformSHA256"],
+                       "InputSHA256": evidence["InputSHA256"], "ToolSHA256": evidence["ToolSHA256"],
+                       "StageToolSHA256": evidence["StageToolSHA256"], "Transform": IDENTITY,
+                       "Gates": manifest["Gates"]}
+            self.assertEqual(audit_manifest_evidence(evidence, manifest["Gates"], contract, binding), [])
+            tampered = copy.deepcopy(evidence)
+            tampered["AchievedAnisotropy"]["CensusMatchesMesh"] = False
+            self.assertIn("achieved-anisotropy",
+                          audit_manifest_evidence(tampered, manifest["Gates"], contract, binding))
+            # Per-type quality is gated: an inverted prism or a prism above the condition
+            # gate fails mesh-quality-jacobian even with passing tetrahedra.
+            for name, key, value in (("Prism", "PositiveOrientation", False),
+                                     ("Prism", "MaximumJacobianCondition", 1e6),
+                                     ("Pyramid", "NonpositiveCells", 1),
+                                     ("Tetrahedron", "MinimumScaledJacobian", 1e-3)):
+                tampered = copy.deepcopy(evidence)
+                tampered["MeshQuality"]["ByType"][name][key] = value
+                self.assertIn("mesh-quality-jacobian",
+                              audit_manifest_evidence(tampered, manifest["Gates"], contract, binding),
+                              (name, key))
+            tampered = copy.deepcopy(evidence); del tampered["MeshQuality"]["ByType"]["Tetrahedron"]
+            self.assertIn("mesh-quality-jacobian",
+                          audit_manifest_evidence(tampered, manifest["Gates"], contract, binding))
+            # A tampered census (prism count) breaks the bound records: the producer rerun
+            # differs from the recorded measurements.
+            census_path = root / "base--canonical-corner-census.json"
+            census = json.loads(census_path.read_text())
+            census["PrismTubes"]["Prisms"] = 2
+            census_path.write_text(json.dumps(census))
+            report = verify_case(manifest_path, audits, "base")
+            self.assertFalse(report["Passed"])
+            self.assertTrue(any("binding changed" in failure or "differ" in failure
+                                for failure in report["Failures"]), report["Failures"])
+
+    def test_gmsh_build_census_contract_negatives(self):
+        from mesh_stage_contract import validate_gmsh_build_census
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self._gmsh_only_matrix(root)
+            report = json.loads((root / "base--canonical-gmsh-build.log.json").read_text())
+            census = json.loads(Path(report["Artifacts"]["build-census"]["Path"]).read_text())
+            semantic = json.loads(Path(report["Inputs"]["canonical-semantic-contract"]["Path"]).read_text())
+            self.assertIs(validate_gmsh_build_census(report, census, semantic), census)
+            def rejected(mutate, message, target="census"):
+                broken_report, broken_census = copy.deepcopy(report), copy.deepcopy(census)
+                mutate(broken_census if target == "census" else broken_report)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(broken_report, broken_census, semantic)
+            rejected(lambda r: r["Command"].__setitem__(r["Command"].index("true"), "false"),
+                     "--prism-tubes true", target="report")
+            rejected(lambda c: c["PrismTubes"]["Quality"]["Prism"].__setitem__("PositiveOrientation", False),
+                     "Prism cells fail orientation")
+            rejected(lambda c: c["PrismTubes"]["Quality"]["Pyramid"].__setitem__("MaximumJacobianCondition", 1e4),
+                     "Pyramid cells fail orientation or the condition gate")
+            rejected(lambda c: c["PrismTubes"]["Quality"]["Tetrahedron"].__setitem__("MinimumScaledJacobian", 1e-3),
+                     "below the scaled-Jacobian gate")
+            rejected(lambda c: c["PrismTubes"]["FarFieldBudgetPolicy"].__setitem__("MaximumElements", 10),
+                     "element budget differs from the build command cap")
+            rejected(lambda c: c["PrismTubes"].__setitem__("InnerSize", .002),
+                     "differs from the build command --edge-size")
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Spacing", 1.0),
+                     "exceed the tangential spacing")
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("RingSizes", [.001, .003, .004]),
+                     "rings do not follow")
+            rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("MinimumScaledJacobian", 1e-3),
+                     "cap regions fail")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerAspectsAfter"].__setitem__(0, 10.0),
+                     "gated corner balls")
+            rejected(lambda c: c.__setitem__("EdgeLayer", {"EdgeSize": .004}), "tetrahedral edge layer")
+            rejected(lambda c: c["JunctionCurves"].__setitem__("CurvedCurves", 1), "straight junction")
+            rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),
+                     "corner grading differs from the build command")
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"].pop("BandRule"), "size laws are not recorded")
+            rejected(lambda c: c["InterfaceAreas"].pop(), "interface-area labels differ")
+            # A legacy six-stage report set cannot be verified under the Gmsh-only manifest,
+            # and the Gmsh-only stage set cannot be mistaken for the legacy one.
+            from mesh_stage_contract import pipeline_of
+            self.assertEqual(pipeline_of(manifest["StageToolSHA256"]), "gmsh-only")
+            with self.assertRaisesRegex(ValueError, "differs from every canonical pipeline"):
+                pipeline_of(list(manifest["StageToolSHA256"]) + ["metric-preparation"])
+            with self.assertRaisesRegex(ValueError, "declares pipeline"):
+                validate_manifest({**manifest, "Pipeline": "legacy-mmg"}, manifest_path)
+
+
+class MixedMeshTest(unittest.TestCase):
+    """mixed_mesh: the conforming simplicial view, the native per-type quality and the
+    H1 count of a prism / pyramid / quadrangle mesh."""
+
+    def mesh(self, invert_prism=False):
+        points = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.], [1., 0., 1.],
+                           [0., 1., 1.], [.5, -.5, .5], [0., 0., -1.]])
+        wedge = [[0, 1, 2, 3, 4, 5]] if not invert_prism else [[3, 4, 5, 0, 1, 2]]
+        # The prism's bottom triangle is the interior face shared with the tetrahedron.
+        cells = [("triangle", np.array([[3, 4, 5], [0, 1, 6], [1, 4, 6], [4, 3, 6], [3, 0, 6],
+                                        [0, 1, 7], [1, 2, 7], [2, 0, 7]])),
+                 ("quad", np.array([[1, 2, 5, 4], [2, 0, 3, 5]])),
+                 ("tetra", np.array([[0, 2, 1, 7]])),
+                 ("wedge", np.array(wedge)), ("pyramid", np.array([[0, 1, 4, 3, 6]]))]
+        return meshio.Mesh(points, cells, cell_data={"gmsh:physical": [
+            np.ones(8, dtype=int), np.ones(2, dtype=int), np.array([1]), np.array([1]), np.array([1])]},
+            field_data={"substrate": np.array([1, 3]), "surface_1": np.array([1, 2])})
+
+    def test_simplicial_view_is_conforming_and_measure_preserving(self):
+        from mixed_mesh import element_counts, simplicial_view, split_quad, split_wedge
+        mesh = self.mesh()
+        self.assertEqual(element_counts(mesh),
+                         {"Tetrahedron": 1, "Prism": 1, "Pyramid": 1, "Triangle": 8, "Quadrangle": 2,
+                          "VolumeElements": 3, "SurfaceElements": 10})
+        view = simplicial_view(mesh)
+        tetrahedra = view.cells[1].data; triangles = view.cells[0].data
+        self.assertEqual((len(tetrahedra), len(triangles)), (1 + 3 + 2, 8 + 4))
+        # Every interior face is shared by exactly two tetrahedra and every boundary face
+        # is one labeled triangle: the prism / pyramid / quadrangle splits agree.
+        faces = np.sort(tetrahedra[:, [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]].reshape(-1, 3), axis=1)
+        unique, counts = np.unique(faces, axis=0, return_counts=True)
+        self.assertTrue(np.all(counts <= 2))
+        boundary = {tuple(face) for face in unique[counts == 1]}
+        self.assertEqual(boundary, {tuple(sorted(face)) for face in triangles.tolist()})
+        xyz = view.points[tetrahedra]
+        signed = np.einsum("ij,ij->i", np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]),
+                           xyz[:, 3] - xyz[:, 0]) / 6
+        self.assertTrue(np.all(signed > 0))
+        self.assertAlmostEqual(float(signed.sum()), .5 + 1 / 6 + 1 / 6, places=14)
+        # The diagonal rule is a property of the face's vertex indices alone.
+        for quad in ([1, 2, 5, 4], [2, 5, 4, 1], [4, 5, 2, 1]):
+            diagonal = {frozenset(t) & frozenset(quad) for t in split_quad(quad)}
+            self.assertEqual({frozenset(t) for t in split_quad(quad)},
+                             {frozenset(t) for t in split_quad(list(reversed(quad)))})
+        for prism in ([0, 1, 2, 3, 4, 5], [1, 2, 0, 4, 5, 3], [3, 4, 5, 0, 1, 2]):
+            self.assertEqual({frozenset(t) for t in split_wedge(prism)},
+                             {frozenset(t) for t in split_wedge([0, 1, 2, 3, 4, 5])})
+        analysis, _ = analyze(view, {"VolumeMaterials": [{"Attribute": 1, "Material": "substrate"}],
+                                     "BoundaryLabels": [{"Attribute": 1, "Role": "air-outer",
+                                                         "AdjacentMaterials": [1]}],
+                                     "MetricSurfaceRoles": []}, require_material_names=True)
+        self.assertEqual(analysis["Tetrahedra"], 6)
+
+    def test_volume_quality_judges_native_cells_per_type(self):
+        from mixed_mesh import h1_dofs, volume_quality
+        quality = volume_quality(self.mesh())
+        self.assertEqual(quality["Samples"], 3)
+        self.assertEqual(set(quality["ByType"]), {"Tetrahedron", "Prism", "Pyramid"})
+        self.assertTrue(quality["PositiveOrientation"])
+        self.assertAlmostEqual(quality["ByType"]["Prism"]["MinimumScaledJacobian"], 1 / math.sqrt(2))
+        self.assertAlmostEqual(quality["ByType"]["Prism"]["MaximumJacobianCondition"],
+                               ((1 + math.sqrt(5)) / 2) ** 2)
+        self.assertEqual(quality["MinimumScaledJacobian"], quality["ByType"]["Tetrahedron"]["MinimumScaledJacobian"])
+        self.assertEqual(quality["MaximumJacobianCondition"],
+                         max(item["MaximumJacobianCondition"] for item in quality["ByType"].values()))
+        inverted = volume_quality(self.mesh(invert_prism=True))
+        self.assertFalse(inverted["PositiveOrientation"])
+        self.assertEqual(inverted["ByType"]["Prism"]["NonpositiveCells"], 1)
+        self.assertTrue(inverted["ByType"]["Tetrahedron"]["PositiveOrientation"])
+        # A sliver tetrahedron: the corner scaled Jacobian is tiny and the condition huge.
+        sliver = meshio.Mesh(np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [.5, .5, 6e-4]]),
+                             [("triangle", np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]])),
+                              ("tetra", np.array([[0, 1, 2, 3]]))],
+                             cell_data={"gmsh:physical": [np.ones(4, dtype=int), np.array([1])]})
+        quality = volume_quality(sliver)
+        self.assertAlmostEqual(quality["MinimumScaledJacobian"], 6e-4 / math.sqrt(.5 + 3.6e-7), places=12)
+        self.assertGreater(quality["MaximumJacobianCondition"], 1000.)
+        # H1 counts: vertices at order 1; at order 2 one node per unique edge (tet 6 +
+        # prism 9 + pyramid 8 - 3 shared tet/prism - 4 shared prism/pyramid = 16) and
+        # per unique quadrangle face (3).
+        mesh = self.mesh()
+        self.assertEqual(h1_dofs(mesh, 1), 8)
+        self.assertEqual(h1_dofs(mesh, 2), 8 + 16 + 3)
+        # Order 3: two nodes per edge, one per triangle face (tet 4 + prism 2 + pyramid 4
+        # - 1 shared = 9), four per quadrangle, two prism and one pyramid interior nodes
+        # (40 - 6 - 18 - 2 - 12 and 30 - 5 - 16 - 4 - 4).
+        self.assertEqual(h1_dofs(mesh, 3), 8 + 2 * 16 + 9 + 4 * 3 + 2 + 1)
+
+
 class AchievedAnisotropyDesignGateTest(unittest.TestCase):
     """Decisions 34B/35: the production manifest records the EL4c recipe; the
     achieved-anisotropy design gate judges the one-NormalSize band outside a recorded
@@ -2391,16 +2770,27 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
                                         self.contract, self.binding)
         return "achieved-anisotropy" in names
 
-    def test_production_manifest_records_the_el4c_recipe(self):
+    def test_production_manifest_records_the_gmsh_only_recipe(self):
+        # Decision 38: the production manifest is Gmsh-only; its recipe is the build
+        # command's tube / corner / band options and the retired EL4c recipe is kept as
+        # a labeled record.
         recipe = validate_production_recipe(self.production)
-        self.assertEqual(recipe["SeedCommandOptions"],
+        self.assertEqual(self.production["Pipeline"], "gmsh-only")
+        self.assertEqual(recipe["Pipeline"], "gmsh-only")
+        self.assertEqual(recipe["BuildCommandOptions"],
+                         {"--lc-tangent": .05, "--edge-size": .00025, "--edge-growth-ratio": 2.,
+                          "--corner-size": .00025, "--far-growth": .5})
+        self.assertEqual(recipe["BuildCommandOptions"]["--edge-size"],
+                         recipe["BuildCommandOptions"]["--corner-size"])
+        self.assertNotIn("SeedCommandOptions", recipe)
+        self.assertEqual(recipe["RetiredLegacyRecipe"]["SeedCommandOptions"],
                          {"--lc-tangent": .05, "--edge-size": .004, "--edge-growth-ratio": 2.,
                           "--edge-layer-aspect": 4., "--corner-size": .004})
-        self.assertEqual(recipe["MetricCommandOptions"],
-                         {"--far-growth": .5, "--edge-size": .004, "--edge-growth-ratio": 2.,
-                          "--edge-layer-aspect": 4., "--corner-size": .004})
-        self.assertEqual(recipe["AdaptationCommandOptions"], {"--hmin": .004})
-        # The physical gates and the design gate values are unchanged.
+        self.assertEqual(recipe["RetiredLegacyRecipe"]["AdaptationCommandOptions"], {"--hmin": .004})
+        for name in ("EdgeSize", "GrowthRatio", "TubeExtrusionSpacing", "CornerSize", "NormalSize",
+                     "FarSize", "FarGrowth", "TraceBasisSizeRatio", "TangentialSize"):
+            self.assertIn(name, recipe["Parameters"])
+        # The physical gates are unchanged; the design-gate values stay recorded.
         self.assertEqual(self.gates["MinimumAchievedAspect"], 1.5)
         self.assertEqual(self.gates["MaximumNormalFactor"], 2.0)
         self.assertEqual(self.gates["MinimumScaledJacobian"], .01)
@@ -2409,9 +2799,15 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         self.assertEqual(self.gates["MaximumProtectedMeasureError"], 1e-8)
         self.assertEqual(self.gates["MaximumElements"], 4000000)
         self.assertEqual((self.gates["MaximumSeconds"], self.gates["MaximumRSSGiB"]), (1800, 8.))
-        # The calibration manifest never carries the block and its cases keep their
-        # pre-34B production values; EL4c is labeled as the adopted recipe.
+        # The production stage set is the Gmsh-only DAG: no metric, MMG or restoration stage.
+        self.assertEqual(set(self.production["StageToolSHA256"]),
+                         {"canonical-source-validation", "gmsh-build", "canonical-gmsh-publication",
+                          "proper-rigid-publication"})
+        # The calibration manifest keeps the legacy pipeline, never carries the block and
+        # its cases keep their pre-34B production values; EL4c stays labeled as the
+        # recipe adopted by decision 34B.
         calibration = json.loads((HERE / "geometry-independence-calibration-ma.json").read_text())
+        self.assertEqual(calibration["Pipeline"], "legacy-mmg")
         self.assertNotIn("ProductionRecipe", calibration)
         with self.assertRaisesRegex(ValueError, "cannot carry a production recipe"):
             validate_production_recipe({**calibration, "ProductionRecipe": recipe})
@@ -2420,42 +2816,55 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         for case in calibration["Cases"]:
             self.assertNotIn("ProductionValues", case["Calibration"])
             self.assertEqual(case["Calibration"]["ProductionValuesBefore34B"]["--lc-tangent"], .1)
-        self.assertEqual(el4c["Calibration"]["ProductionValuesBefore34B"]["--edge-size"], 0.)
         self.assertEqual(el4c["Calibration"]["SeedCommandOptions"]["--lc-tangent"],
-                         recipe["SeedCommandOptions"]["--lc-tangent"])
-        self.assertEqual(el4c["Calibration"]["MetricCommandOptions"]["--far-growth"],
-                         recipe["MetricCommandOptions"]["--far-growth"])
-        self.assertEqual(el4c["Calibration"]["AdaptationCommandOptions"], recipe["AdaptationCommandOptions"])
-        # Malformed blocks are rejected.
-        for broken in ({**recipe, "AdaptationCommandOptions": {}},
-                       {**recipe, "SeedCommandOptions": {"--lc-tangent": "0.05"}},
-                       {**recipe, "MetricCommandOptions": {"far-growth": .5}}, []):
+                         recipe["RetiredLegacyRecipe"]["SeedCommandOptions"]["--lc-tangent"])
+        # Malformed blocks are rejected; a legacy-shaped block is rejected under the
+        # Gmsh-only pipeline and a Gmsh-only block under the legacy stage set.
+        for broken in ({**recipe, "BuildCommandOptions": {}},
+                       {**recipe, "BuildCommandOptions": {"--lc-tangent": "0.05"}},
+                       {**recipe, "BuildCommandOptions": {"far-growth": .5}},
+                       {**recipe, "BuildCommandOptions": {"--prism-tubes": True}},
+                       {key: value for key, value in recipe.items() if key != "BuildCommandOptions"}, []):
             with self.assertRaisesRegex(ValueError, "Production recipe must bind"):
                 validate_production_recipe({**self.production, "ProductionRecipe": broken})
+        legacy_stage_tools = {**calibration["StageToolSHA256"]}
+        with self.assertRaisesRegex(ValueError, "Production recipe must bind"):
+            validate_production_recipe({**self.production, "StageToolSHA256": legacy_stage_tools,
+                                        "Pipeline": "legacy-mmg", "ProductionRecipe": recipe})
+        with self.assertRaisesRegex(ValueError, "declares pipeline legacy-mmg"):
+            validate_production_recipe({**self.production, "Pipeline": "legacy-mmg"})
 
     def test_production_recipe_commands_are_bound_exactly_once(self):
-        stages = {"seed-generation": {"Command": ["julia", "seed.jl", "--lc-tangent", ".05",
-                                                  "--edge-size", "0.004", "--edge-growth-ratio", "2",
-                                                  "--edge-layer-aspect", "4", "--corner-size", ".004"]},
-                  "metric-preparation": {"Command": ["python3", "metric.py", "--far-growth", "0.5",
-                                                     "--edge-size", ".004", "--edge-growth-ratio", "2.0",
-                                                     "--edge-layer-aspect", "4.0", "--corner-size", "0.004"]},
-                  "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin", ".004"]}}
+        stages = {"gmsh-build": {"Command": ["julia", "mesh.jl", "--lc-tangent", ".05",
+                                             "--edge-size", "0.00025", "--edge-growth-ratio", "2",
+                                             "--corner-size", ".00025", "--far-growth", "0.5",
+                                             "--trace-basis-size-ratio", "1", "--prism-tubes", "true"]}}
         case = self.production["Cases"][0]
         validate_production_recipe_commands(self.production, case, stages)
         validate_production_recipe_commands({}, case, stages)                 # no recipe block
         validate_production_recipe_commands(self.production, {**case, "Calibration": {}}, stages)
-        for stage, command in (("seed-generation", ["julia", "seed.jl", "--lc-tangent", ".1",
-                                                    "--edge-size", "0.004", "--edge-growth-ratio", "2",
-                                                    "--edge-layer-aspect", "4", "--corner-size", ".004"]),
-                               ("metric-preparation", ["python3", "metric.py", "--edge-size", ".004",
-                                                       "--edge-growth-ratio", "2", "--edge-layer-aspect",
-                                                       "4", "--corner-size", "0.004"]),
-                               ("native-adaptation-mmg", ["python3", "adapt.py", "--hmin", ".025"]),
-                               ("native-adaptation-mmg", ["python3", "adapt.py", "--hmin", ".004",
-                                                          "--hmin", ".004"])):
-            with self.assertRaisesRegex(ValueError, f"{stage} command does not execute the production recipe"):
-                validate_production_recipe_commands(self.production, case, {**stages, stage: {"Command": command}})
+        good = stages["gmsh-build"]["Command"]
+        for command in (good[:2] + ["--lc-tangent", ".1"] + good[4:],
+                        [token for token in good if token not in ("--far-growth", "0.5")],
+                        good + ["--edge-size", "0.00025"],
+                        good[:2] + ["--edge-size", "0.004"] + good[6:]):
+            with self.assertRaisesRegex(ValueError, "gmsh-build command does not execute the production recipe"):
+                validate_production_recipe_commands(self.production, case,
+                                                    {"gmsh-build": {"Command": command}})
+        # The legacy recipe stages are bound under a legacy-pipeline manifest only.
+        calibration = json.loads((HERE / "geometry-independence-calibration-ma.json").read_text())
+        legacy = {**self.production, "StageToolSHA256": calibration["StageToolSHA256"],
+                  "Pipeline": "legacy-mmg",
+                  "ProductionRecipe": {"SeedCommandOptions": {"--lc-tangent": .05},
+                                       "MetricCommandOptions": {"--far-growth": .5},
+                                       "AdaptationCommandOptions": {"--hmin": .004}}}
+        legacy_stages = {"seed-generation": {"Command": ["julia", "seed.jl", "--lc-tangent", ".05"]},
+                         "metric-preparation": {"Command": ["python3", "metric.py", "--far-growth", "0.5"]},
+                         "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin", ".004"]}}
+        validate_production_recipe_commands(legacy, case, legacy_stages)
+        with self.assertRaisesRegex(ValueError, "native-adaptation-mmg command does not execute"):
+            validate_production_recipe_commands(legacy, case, {
+                **legacy_stages, "native-adaptation-mmg": {"Command": ["python3", "adapt.py", "--hmin", ".025"]}})
 
     def test_layer_covered_band_is_not_applicable_and_the_adjacent_band_is_informational(self):
         self.assertTrue(layer_covered_band(self.covered()))

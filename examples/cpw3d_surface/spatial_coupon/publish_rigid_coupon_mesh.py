@@ -14,7 +14,7 @@ import subprocess
 import meshio
 import numpy as np
 
-from general_mesh_audit_producer import _mesh_invariants, _ownership_report, _tetra_quality
+from general_mesh_audit_producer import _mesh_invariants, _ownership_report, _volume_quality
 from transform_coupon_source_contract import (read_transform, transform_semantic_contract,
                                                 transformed_supports)
 
@@ -199,9 +199,9 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
     output_digest = sha256(output_mesh)
     if not identity and output_digest == canonical_digest:
         raise ValueError("Nonidentity rigid publication reused canonical mesh bytes")
-    quality = _tetra_quality(right)
+    quality = _volume_quality(right)
     if quality["PositiveOrientation"] is not True:
-        raise ValueError("Rigid publication changed tetrahedron orientation")
+        raise ValueError("Rigid publication changed volume element orientation")
     before_invariants, after_invariants = _mesh_invariants(left), _mesh_invariants(right)
     measure_error = max((abs(after_invariants[key] - value) / max(abs(value), 1e-300)
                          for key, value in before_invariants.items()), default=0.0)

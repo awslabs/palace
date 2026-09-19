@@ -2,6 +2,8 @@
   "Version": 2,
   "RepositoryRoot": "../../..",
   "Scope": "CALIBRATION ONLY (MA/MS metal-edge-layer h-study, supervisor decision 22): mesh-only qualification of labeled calibration variants of the four-edge case; NOT the production geometry-independence suite; nothing here changes a production default, gate or manifest",
+  "Pipeline": "legacy-mmg",
+  "PipelineNote": "legacy MMG pipeline (seed-generation -> metric-preparation -> native-adaptation-mmg -> label-restoration), retired from production by supervisor decision 38 (the production manifest geometry-independence-suite.json is Gmsh-only); kept here so the calibration evidence and its cases remain verifiable",
   "Calibration": {
     "Purpose": "p_MA -10% / p_MS -1.4% offsets of the canonical four-edge coupon vs the graded_v2 reference are half p-convergence and half an h-limit of the metal edge/sidewall layer (6001: 6,423 tris at 0.113 um vs ~1.0M in the reference; physics-02). These variants refine that layer through EXISTING recipe parameters only.",
     "Decision": "SUPERVISOR-DECISIONS.md items 22 (V1/V2, 2026-09-16), 27-29 (seeded transverse edge layer, 2026-09-16), 30 (required tetrahedra, seed-side gates, 2026-09-16), 32 (1 nm x 50 nm layer with the layer-local quality rule, 2026-09-17) and 33 (corner grading inside the frozen corner balls and the clean 1 nm point, 2026-09-17), 34B (2026-09-17, EL4c adopted as the production recipe) and 35 (2026-09-18, design gate on a layer-covered band)",
@@ -69,17 +71,17 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "e50260ab477f1c360eb2a5c673f6c6df4723c37491b57008bea0ea290896ee0e"
+      "SHA256": "5ad500735b2ddcbd73f438a2ed8c2bcec815df9fbebdef44e992fb1f72c18f19"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "4054db13de28c27bdce2eeabc2ea8cf3aad2c75e7953dd98f8ed9ab0c7fbdb10"
+      "SHA256": "8ca5929c2aa53f29af0712619bd926cd112f5a863aed13a1777c73ff4c6f6b2b"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "17bb6d50544a0a77762f1944b40649305a01e4e3ee381b5e112884f1d74b1ecf"
+      "SHA256": "10e3a2e9520f011f21c297890a963d7e7b46f6f53548bbae89d492d51e8d44a5"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -90,11 +92,6 @@
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
       "SHA256": "6226884a7384d5e53c066873980f87b57829f8f405682c9d55f82dc2a436d4c8"
-    },
-    {
-      "Name": "prepare_edge_metric_scout.py",
-      "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "3d5159133bb938095d47fffe34d53680babfe9cbfa41496a0bc6ea22af66a588"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -112,34 +109,34 @@
       "SHA256": "642640f9e87399b5e6544bf6212ec0dbb9aea7e9716f540a7e997094540e557c"
     },
     {
+      "Name": "mixed_mesh.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/mixed_mesh.py",
+      "SHA256": "f2111135b62d4163a94b7414562eaef3c395c2b8b4ed1bd0d95ce4b4c9788379"
+    },
+    {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "87279b7e61a47169d89b2b000b1f822225b4ab91b3363a28127a250035351f39"
+      "SHA256": "62f15f895ffac663fda2aa6b4acae0834de43b53f8abf9e44cc1997643e30c6b"
     },
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "81b401fecbc0e4359bcd82a03822dda1c55e64712da3e2e9889ee8c366e021ad"
+      "SHA256": "f03b398253564c62027f116a5e48809e596a6bde08f50f1790b35e15eb7eb4c4"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "65aa5ff9ceba6ea4dc5d2b73709aa97fa64d6bbc9874d9c9a89f12c8ba642d42"
+      "SHA256": "2a4dc6b09b3a8771cb69ec4f69a8af17ec4c5d02cbd4b761d4d5f3cd6f40cdc7"
     },
     {
       "Name": "canonical_mesh_build.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/canonical_mesh_build.py",
-      "SHA256": "a0ce58d4b54304545104bf7c81419dcdd93d0351a7d33df87f05fd682f883210"
-    },
-    {
-      "Name": "run_native_mmg_adaptation.py",
-      "Path": "examples/cpw3d_surface/spatial_coupon/run_native_mmg_adaptation.py",
-      "SHA256": "c34339d88f14f07963c9f5c1b93215ba7614edc0687fd923b23a55394054ba4c"
+      "SHA256": "603877f919fe35561e1990d0d0b79849e0540a1e10c9501a708f477b95bca412"
     },
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731"
+      "SHA256": "18be72a645984b9f513b0fc59d777d4f2dc5e4311bb946d83cac6d72a5df63e5"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
@@ -154,7 +151,7 @@
     {
       "Name": "label_interface_patches.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/label_interface_patches.jl",
-      "SHA256": "ed3f9e08b934ccd300519c12da8cf250fcddd2ebe7697f2b8c9a31dccee0619c"
+      "SHA256": "56d3e1b690b940a89e5bcd7df6240f007e578db7e5f63f22863510628f3a53a7"
     },
     {
       "Name": "mesh_spatial_coupon_edge_cluster.jl",
@@ -169,7 +166,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "85fbfa0ff928070c3f1891cde3b5f850d774cba5389221684073d2d486a54634"
+      "mesher": "4c79ac09a11b290da360f288f6713ac593a7fb13fc630404e3a1cf49fe7cd561"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
@@ -187,11 +184,11 @@
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "publisher": "2906a5395ec957d1e4328183242ee9d7660ad8c23e7413af6e870c07629440d4"
+      "publisher": "5233e27ac6c931d9eada6c93c321283082fd7b49420d27f6e2ddb8cf144e1683"
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731",
+      "rigid-publisher": "18be72a645984b9f513b0fc59d777d4f2dc5e4311bb946d83cac6d72a5df63e5",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
     }

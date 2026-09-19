@@ -8,8 +8,9 @@ import json
 from pathlib import Path
 
 from canonical_mesh_build import validate_build_record
-from general_mesh_manifest import canonical_sha256, sha256, validate_manifest
-from mesh_stage_contract import CANONICAL_STAGE_ORDER, STAGE_ORDER, validate_stage_dag
+from general_mesh_manifest import (build_volume_binding, canonical_sha256, manifest_pipeline,
+                                   sha256, topology_binds_feature_record, validate_manifest)
+from mesh_stage_contract import canonical_stage_order, stage_order, validate_stage_dag
 
 
 REQUIRED_AUDITS = ("bounded-run", "mesh-topology-quality", "mesh-complexity",
@@ -116,8 +117,9 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                 "TransformMaximumCoordinateError")
         elif kind == "bounded-run":
             stage_items = record.get("BoundedStageRecords")
-            if (not isinstance(stage_items, list) or len(stage_items) != len(STAGE_ORDER) or
-                    {item.get("Stage") for item in stage_items} != set(STAGE_ORDER)):
+            expected_stages = stage_order(manifest_pipeline(manifest))
+            if (not isinstance(stage_items, list) or len(stage_items) != len(expected_stages) or
+                    {item.get("Stage") for item in stage_items} != set(expected_stages)):
                 raise ValueError("Bounded stage records are incomplete")
             stage_paths = {item["Stage"]: Path(item["Path"]) for item in stage_items}
             reports, stage_digests = validate_stage_dag(
@@ -131,7 +133,7 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
     canonical_record = json.loads(canonical_record_path.read_text())
     canonical_tools = {
         f"{stage}/{role}": digest
-        for stage in CANONICAL_STAGE_ORDER
+        for stage in canonical_stage_order(manifest_pipeline(manifest))
         for role, digest in manifest["StageToolSHA256"][stage].items()}
     validate_build_record(canonical_record, inputs, manifest["Gates"], canonical_tools)
     evidence["CanonicalBuildId"] = canonical_record["CanonicalBuildId"]
@@ -142,10 +144,8 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
         canonical_record["CanonicalArtifacts"].items()}
     topology = records_by_kind["mesh-topology-quality"]
     publication = bounded["proper-rigid-publication"]["Artifacts"]
-    if (topology.get("ReferenceMeshSHA256") !=
-            bounded["seed-generation"]["Artifacts"]["seed-mesh"]["SHA256"] or
-            topology.get("RestorationRecipeSHA256") !=
-            bounded["metric-preparation"]["Artifacts"]["restoration-recipe"]["SHA256"] or
+    if (topology.get("ReferenceMeshSHA256") != build_volume_binding(bounded)["SHA256"] or
+            not topology_binds_feature_record(topology, bounded) or
             topology.get("OwnershipReportSHA256") !=
             publication["ownership-partition"]["SHA256"] or
             topology.get("OwnershipQuadratureSHA256") !=

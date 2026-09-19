@@ -12,9 +12,9 @@ import signal
 import subprocess
 import time
 
-from mesh_stage_contract import (STAGE_INPUTS, STAGE_OPTIONAL_INPUTS, STAGE_OUTPUTS,
-                                 STAGE_TOOLS, binding,
-                                 sha256, validate_command_bindings, validate_tool_invocation)
+from mesh_stage_contract import (STAGE_OPTIONAL_INPUTS, STAGE_TOOLS, binding, sha256,
+                                 stage_inputs, stage_outputs, stage_pipeline_of_inputs,
+                                 validate_command_bindings, validate_tool_invocation)
 
 
 def tree_rss(root):
@@ -88,16 +88,20 @@ def main():
             parser.error("named inputs, artifacts, and tools require --stage")
     else:
         optional = STAGE_OPTIONAL_INPUTS.get(args.stage, frozenset())
-        if (not STAGE_INPUTS[args.stage] <= set(inputs) or
-                not set(inputs) <= STAGE_INPUTS[args.stage] | optional or
-                set(artifacts) != STAGE_OUTPUTS[args.stage]):
+        try:
+            pipeline = stage_pipeline_of_inputs(args.stage, inputs)
+        except ValueError as error:
+            parser.error(str(error))
+        if (not stage_inputs(args.stage, pipeline) <= set(inputs) or
+                not set(inputs) <= stage_inputs(args.stage, pipeline) | optional or
+                set(artifacts) != stage_outputs(args.stage, pipeline)):
             parser.error("stage input/output names do not match the frozen stage contract")
         if set(tools) != STAGE_TOOLS[args.stage] or any(not path.is_file()
                                                          for path in tools.values()):
             parser.error("stage tool roles must name every required existing tool")
         try:
             validate_tool_invocation(args.stage, command, tools)
-            validate_command_bindings(args.stage, command, inputs, artifacts)
+            validate_command_bindings(args.stage, command, inputs, artifacts, pipeline=pipeline)
         except ValueError as error:
             parser.error(str(error))
         if any(not path.is_file() for path in inputs.values()):

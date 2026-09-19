@@ -2,6 +2,7 @@
   "Version": 2,
   "RepositoryRoot": "../../..",
   "Scope": "Mesh-only geometry-independence qualification; source-135 trace audit is explicitly outside this gate",
+  "Pipeline": "gmsh-only",
   "Gates": {
     "CornerTolerance": 1e-08,
     "MaximumNormalFactor": 2.0,
@@ -16,70 +17,70 @@
     "MaximumProtectedMeasureError": 1e-08
   },
   "ProductionRecipe": {
-    "Label": "EL4c production recipe (supervisor decision 34B, 2026-09-17; adopted from calibration case four-edge-calib-ma-el4c of geometry-independence-calibration-ma.json): V2 seed tangential grid and far growth + 4 nm aspect-4 nested edge layer + 4 nm corner grading, corner balls and layer as MMG required tetrahedra (decision 30), seed-side required-region gates; every physical gate (Gates) unchanged",
-    "Decision": "SUPERVISOR-DECISIONS.md items 34 (B, production default) and 35 (achieved-anisotropy design gate not applicable by construction on a layer-covered band)",
-    "SeedCommandOptions": {
+    "Label": "Gmsh-only production recipe (supervisor decision 38, 2026-09-18): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded at the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface sizing, junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
+    "Decision": "SUPERVISOR-DECISIONS.md items 37 (prism tube spike) and 38 (Gmsh-only pipeline)",
+    "Pipeline": "gmsh-only",
+    "BuildCommandOptions": {
       "--lc-tangent": 0.05,
-      "--edge-size": 0.004,
+      "--edge-size": 0.00025,
       "--edge-growth-ratio": 2.0,
-      "--edge-layer-aspect": 4.0,
-      "--corner-size": 0.004
+      "--corner-size": 0.00025,
+      "--far-growth": 0.5
     },
-    "MetricCommandOptions": {
-      "--far-growth": 0.5,
-      "--edge-size": 0.004,
-      "--edge-growth-ratio": 2.0,
-      "--edge-layer-aspect": 4.0,
-      "--corner-size": 0.004
+    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value (and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true); the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, prisms, pyramids, size laws), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
+    "Parameters": {
+      "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
+      "GrowthRatio": "2: ring ratio of the tube cross-section and of the corner shells",
+      "TubeRings": "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius) (7 rings, radius 31.75 nm on the four/ten-edge process)",
+      "TubeExtrusionSpacing": "<= TangentialSize (0.05 um); the spacing actually used divides the tube length and is recorded per tube",
+      "TubePyramidHeight": "0.5 x outermost ring size",
+      "TubeCornerClearance": "R / tan(phi / 2) + h_K before a semantic corner; the cap centre is a graded point of the corner law",
+      "CornerSize": "= EdgeSize",
+      "CornerIsotropyRadius": "TangentialSize (4 x NormalSize)",
+      "NormalSize": "0.25 x MetalThickness (--lc-fine); the size at the tube surface and on the feature-curve bands",
+      "TangentialSize": "0.05 um (--lc-tangent): extrusion spacing and ridge grid",
+      "FarSize": "0.08 x Radius (--lc-far)",
+      "FarGrowth": "0.5: growth of the tube band and of the feature-curve bands beyond ProtectedDistance = 2 x NormalSize",
+      "TraceBasisSizeRatio": "1.0: cut-surface size = ratio x the local basis edge (trace rule)"
     },
-    "AdaptationCommandOptions": {
-      "--hmin": 0.004
-    },
-    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded seed-generation / metric-preparation / native-adaptation-mmg commands of every production case to execute each option exactly once at its value; the recipe EdgeLayer (EdgeSize 0.004, GrowthRatio 2, Aspect 4, rows 4/12/28 nm with nested tangential rows 12.5/25/50 nm on the 50 nm ridge grid, RequiredReach 0.0334) and CornerGrading (CornerSize 0.004, shells 4/8/16 nm at 4/12/28 nm, NormalSize to the 0.1 ball radius) records are bound by mesh_stage_contract.validate_edge_layer / validate_corner_grading / validate_required_region; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "UnchangedParameters": {
-      "seed": {
+      "build": {
         "--lc-fine": "NormalSize (0.25 x MetalThickness)",
         "--lc-far": "FarSize (0.08 x Radius)",
         "--corner-isotropy-radius": "TangentialSize (4 x NormalSize)",
-        "--trace-basis-size-ratio": 1.0,
         "--maximum-corner-aspect": 4.0,
         "--minimum-scaled-jacobian": 0.01,
         "--maximum-jacobian-condition": 1000.0,
         "--maximum-quality-displacement-over-normal": 0.75,
-        "--max-elements": 4000000
-      },
-      "metric": {
-        "--normal": "NormalSize",
-        "--tangent": "TangentialSize",
-        "--far": "FarSize",
-        "--protected-distance": "2 x NormalSize",
-        "--protect-surface": "2 x NormalSize",
-        "--maximum-elements": 4000000,
-        "--trace-basis-size-ratio": 1.0
-      },
-      "adaptation": {
-        "--hgrad": 1.15,
-        "--hausd": 1e-08
-      },
-      "restoration": {
-        "--max-displacement-over-normal": 0.25,
-        "--minimum-scaled-jacobian": 0.01,
-        "--maximum-corner-aspect": 4.0,
-        "--maximum-jacobian-condition": 1000.0,
-        "--maximum-quality-displacement-over-normal": 0.75
+        "--max-elements": 4000000,
+        "--trace-basis-size-ratio": "1.0 (passed exactly when the case binds a trace basis; bound by mesh_stage_contract.validate_build_trace_basis)"
       }
     },
-    "ValuesBefore34B": {
-      "--lc-tangent": 0.1,
-      "--far-growth": 1.0,
-      "--edge-size": 0.0,
-      "--corner-size": 0.0,
-      "--hmin": "NormalSize"
+    "RetiredLegacyRecipe": {
+      "Note": "the pre-38 MMG production recipe (decisions 34B/35: EL4c parameters, metric preparation, native MMG adaptation with required tetrahedra, label restoration) is retired from production; it remains available under the labeled calibration manifest geometry-independence-calibration-ma.json as the legacy-mmg pipeline",
+      "SeedCommandOptions": {
+        "--lc-tangent": 0.05,
+        "--edge-size": 0.004,
+        "--edge-growth-ratio": 2.0,
+        "--edge-layer-aspect": 4.0,
+        "--corner-size": 0.004
+      },
+      "MetricCommandOptions": {
+        "--far-growth": 0.5,
+        "--edge-size": 0.004,
+        "--edge-growth-ratio": 2.0,
+        "--edge-layer-aspect": 4.0,
+        "--corner-size": 0.004
+      },
+      "AdaptationCommandOptions": {
+        "--hmin": 0.004
+      },
+      "Evidence": "four-edge coupon vs the graded_v2 reference (8.74M tets), p4, 80 sources / 60 free-view: production (pre-34B) E max 4.1%, SA max 15%, p_MA median -10.08%, p_MS -1.46%, 0.453 node-h; V1/V2 (physics-03): E 60/60 within 1% (max 0.95%), SA max 8.7%, p_MA -9.11 / -8.99%, 0.454 node-h; EL4 (physics-04): p_MA -7.05%, p_MS -0.81%, E/SA no regression, 0.749 node-h; EL1 1 nm x 50 nm (physics-05): p_MA -10.94% (worse), E/SA unchanged, 0.836 node-h - rejected; EL4c (physics-06, PBS 44717): E 60/60 within 1% (max 0.81%), SA max 8.56%, p_MS median -0.75%, p_MA median -6.63% / magnitude-weighted -5.00% / strongest-20 -5.05%, PCG mean 22.6 / max 33, 0.752 node-h per 80-source p4 coupon, 3,471,507 tets (2.5x fewer than the reference); E and SA never regressed across V1/V2/EL4/EL4c"
     },
-    "Evidence": "four-edge coupon vs the graded_v2 reference (8.74M tets), p4, 80 sources / 60 free-view: production (pre-34B) E max 4.1%, SA max 15%, p_MA median -10.08%, p_MS -1.46%, 0.453 node-h; V1/V2 (physics-03): E 60/60 within 1% (max 0.95%), SA max 8.7%, p_MA -9.11 / -8.99%, 0.454 node-h; EL4 (physics-04): p_MA -7.05%, p_MS -0.81%, E/SA no regression, 0.749 node-h; EL1 1 nm x 50 nm (physics-05): p_MA -10.94% (worse), E/SA unchanged, 0.836 node-h - rejected; EL4c (physics-06, PBS 44717): E 60/60 within 1% (max 0.81%), SA max 8.56%, p_MS median -0.75%, p_MA median -6.63% / magnitude-weighted -5.00% / strongest-20 -5.05%, PCG mean 22.6 / max 33, 0.752 node-h per 80-source p4 coupon, 3,471,507 tets (2.5x fewer than the reference); E and SA never regressed across V1/V2/EL4/EL4c",
+    "Evidence": "prism-tube spike (decision 37, physics-08, PBS 44988): Gmsh-only hybrid four-edge mesh 1,588,715 elements, 21.5M H1 at p4 (0.57x production), p_MA vs the 0.5 nm reference median +0.47% / weighted +0.52% / strongest-20 +0.76%, p3/p4/p5 increments <= ~1 point (MA converged); the spike's E/SA regressions at the narrow hats (74/10) and junction sources are attributed to the missing volume grading (far growth, junction-line bands, tube-adjacent band), which this recipe records as explicit size laws; Gmsh-only four/ten-edge mesh evidence: geometry-independence-suite.md",
     "DesignGate": {
-      "Rule": "achieved-anisotropy (Gates.MinimumAchievedAspect 1.5 and Gates.MaximumNormalFactor 2.0, unchanged) judges the band within one NormalSize of the physical segments outside the recorded edge layer (audit_edge_metric_mesh.achieved_anisotropy, general_mesh_manifest.layer_covered_band); when the recorded layer covers every cell of that band the gate is not applicable by construction (AchievedAnisotropy.Gate 'not-applicable: layer-covered band', Samples 0): the layer's design statement is the bound EdgeLayer aspect rule (AchievedAnisotropy.EdgeLayer) and the layer-adjacent band - band cells within three NormalSize outside the layer - is recorded informationally (AchievedAnisotropy.LayerAdjacentBand: Cells, TangentialP50, Transverse1/2 P90, TransverseP90OverNormalSize, nearest-vertex distance to a span), never gated; any one-NormalSize band sample with cells outside a recorded layer (no layer, or an edge without one) is judged by 1.5 and the normal factor as before",
-      "Rationale": "the layer-adjacent band is the transition shell between the 4 nm layer and the 25 nm band, graded by the layer rows and the frozen 50 nm seed grid; its anisotropy is not a design intent (measured on EL4c identity: the one-NormalSize band is 26,870 layer cells and 0 others; the three-NormalSize band outside the layer is 5,955 cells with nearest vertices 33-83 nm from a span, TangentialP50 50.0 nm, transverse P90 40.5/66.5 nm, transverse P90 over NormalSize 2.66); E/SA never regressed across V1/V2/EL4/EL4c (physics-03..06); supervisor decision 35 (2026-09-18)"
+      "Rule": "the achieved-anisotropy design gate (Gates.MinimumAchievedAspect / Gates.MaximumNormalFactor, unchanged) is replaced under the Gmsh-only pipeline by the prism tube design statement (general_mesh_audit_producer.TUBE_DESIGN_GATE; general_mesh_manifest.tube_design_statement): the recorded rings and extrusion are the design, the audit counts the mesh's prisms and pyramids against the census (CensusMatchesMesh), never gated; the physical gates (positive orientation and Jacobian condition for every element type, scaled Jacobian for tetrahedra, corner aspect, protected surfaces, ownership closure, element cap) are unchanged",
+      "Rationale": "a tetrahedral band anisotropy statistic has no meaning next to a prism tube (200:1 prisms by design); the metal-edge resolution is the tube record itself"
     }
   },
   "Tools": [
@@ -91,17 +92,17 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "e50260ab477f1c360eb2a5c673f6c6df4723c37491b57008bea0ea290896ee0e"
+      "SHA256": "5ad500735b2ddcbd73f438a2ed8c2bcec815df9fbebdef44e992fb1f72c18f19"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "4054db13de28c27bdce2eeabc2ea8cf3aad2c75e7953dd98f8ed9ab0c7fbdb10"
+      "SHA256": "8ca5929c2aa53f29af0712619bd926cd112f5a863aed13a1777c73ff4c6f6b2b"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "17bb6d50544a0a77762f1944b40649305a01e4e3ee381b5e112884f1d74b1ecf"
+      "SHA256": "10e3a2e9520f011f21c297890a963d7e7b46f6f53548bbae89d492d51e8d44a5"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -112,11 +113,6 @@
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
       "SHA256": "6226884a7384d5e53c066873980f87b57829f8f405682c9d55f82dc2a436d4c8"
-    },
-    {
-      "Name": "prepare_edge_metric_scout.py",
-      "Path": "examples/cpw3d_surface/spatial_coupon/prepare_edge_metric_scout.py",
-      "SHA256": "3d5159133bb938095d47fffe34d53680babfe9cbfa41496a0bc6ea22af66a588"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -134,34 +130,34 @@
       "SHA256": "642640f9e87399b5e6544bf6212ec0dbb9aea7e9716f540a7e997094540e557c"
     },
     {
+      "Name": "mixed_mesh.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/mixed_mesh.py",
+      "SHA256": "f2111135b62d4163a94b7414562eaef3c395c2b8b4ed1bd0d95ce4b4c9788379"
+    },
+    {
       "Name": "run_bounded_mesher.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/run_bounded_mesher.py",
-      "SHA256": "87279b7e61a47169d89b2b000b1f822225b4ab91b3363a28127a250035351f39"
+      "SHA256": "62f15f895ffac663fda2aa6b4acae0834de43b53f8abf9e44cc1997643e30c6b"
     },
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "81b401fecbc0e4359bcd82a03822dda1c55e64712da3e2e9889ee8c366e021ad"
+      "SHA256": "f03b398253564c62027f116a5e48809e596a6bde08f50f1790b35e15eb7eb4c4"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "65aa5ff9ceba6ea4dc5d2b73709aa97fa64d6bbc9874d9c9a89f12c8ba642d42"
+      "SHA256": "2a4dc6b09b3a8771cb69ec4f69a8af17ec4c5d02cbd4b761d4d5f3cd6f40cdc7"
     },
     {
       "Name": "canonical_mesh_build.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/canonical_mesh_build.py",
-      "SHA256": "a0ce58d4b54304545104bf7c81419dcdd93d0351a7d33df87f05fd682f883210"
-    },
-    {
-      "Name": "run_native_mmg_adaptation.py",
-      "Path": "examples/cpw3d_surface/spatial_coupon/run_native_mmg_adaptation.py",
-      "SHA256": "c34339d88f14f07963c9f5c1b93215ba7614edc0687fd923b23a55394054ba4c"
+      "SHA256": "603877f919fe35561e1990d0d0b79849e0540a1e10c9501a708f477b95bca412"
     },
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731"
+      "SHA256": "18be72a645984b9f513b0fc59d777d4f2dc5e4311bb946d83cac6d72a5df63e5"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
@@ -176,7 +172,7 @@
     {
       "Name": "label_interface_patches.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/label_interface_patches.jl",
-      "SHA256": "ed3f9e08b934ccd300519c12da8cf250fcddd2ebe7697f2b8c9a31dccee0619c"
+      "SHA256": "56d3e1b690b940a89e5bcd7df6240f007e578db7e5f63f22863510628f3a53a7"
     },
     {
       "Name": "mesh_spatial_coupon_edge_cluster.jl",
@@ -1604,31 +1600,17 @@
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
       "source-validator": "7db8024676a18eee9da65770b5d99ea8ce0e1e57f9abd27d52aa2de2049b3f47"
     },
-    "seed-generation": {
+    "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "85fbfa0ff928070c3f1891cde3b5f850d774cba5389221684073d2d486a54634"
-    },
-    "metric-preparation": {
-      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "metric-preparer": "3d5159133bb938095d47fffe34d53680babfe9cbfa41496a0bc6ea22af66a588"
-    },
-    "native-adaptation-mmg": {
-      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "adaptation-wrapper": "c34339d88f14f07963c9f5c1b93215ba7614edc0687fd923b23a55394054ba4c",
-      "adapter-mmg": "72f741e3c024482822b1d704d3207890cf8720b787e0e4dddb4182444f919669",
-      "mmg-library": "a97d9580837712e79c637b0a7228f44c51e446ef32471a1104894e7fe7e378d5"
-    },
-    "label-restoration": {
-      "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "label-restorer": "5baf757913d709f90aa910dfacbc899d50e6c90c196a070db8415ffca0f76a5c"
+      "mesher": "4c79ac09a11b290da360f288f6713ac593a7fb13fc630404e3a1cf49fe7cd561"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "publisher": "2906a5395ec957d1e4328183242ee9d7660ad8c23e7413af6e870c07629440d4"
+      "publisher": "5233e27ac6c931d9eada6c93c321283082fd7b49420d27f6e2ddb8cf144e1683"
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "cf79b03ee4f3df3496252247d17aec220f0e8e0ad4d2ce68af40041989620731",
+      "rigid-publisher": "18be72a645984b9f513b0fc59d777d4f2dc5e4311bb946d83cac6d72a5df63e5",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
     }
