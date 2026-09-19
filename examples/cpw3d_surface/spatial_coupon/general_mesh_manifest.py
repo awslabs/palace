@@ -15,8 +15,9 @@ from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
 from mesh_array_io import read_mesh
 from canonical_mesh_build import same_canonical_build, validate_build_record
 from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELINE_BUILD_STAGE,
-                                 PLACEMENT_STAGE_ORDER, STAGE_TOOLS, canonical_stage_order,
-                                 pipeline_of, stage_order, validate_stage_dag)
+                                 PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
+                                 canonical_stage_order, pipeline_of, stage_order,
+                                 validate_stage_dag)
 from mixed_mesh import simplicial_view
 from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
                                     validate_feature_topology)
@@ -171,17 +172,29 @@ def validate_production_recipe(manifest):
 def validate_production_recipe_commands(manifest, case, bounded_stages):
     """A production case (no Calibration block) of a manifest carrying ProductionRecipe
     executed every recorded option exactly once at its recorded value in the seed,
-    metric and adaptation commands.  Raises ValueError otherwise."""
+    metric and adaptation commands.  The dimensionless trace-basis size ratio
+    (`--trace-basis-size-ratio`, supervisor decision 42) is passed with the bound
+    trace basis only: a case freezing the trace basis executes it exactly once at
+    the recipe value, a case without one never executes it.  Raises ValueError
+    otherwise."""
     recipe = manifest.get(PRODUCTION_RECIPE_KEY)
     if recipe is None or case.get("Calibration") is not None:
         return
+    files = case.get("Source", {}).get("Files", {})
+    trace_basis_bound = all(role in files for role in TRACE_BASIS_ROLES)
     for stage, key in PIPELINE_PRODUCTION_RECIPE_STAGE_OPTIONS[manifest_pipeline(manifest)].items():
         command = bounded_stages[stage]["Command"]
         for option, value in recipe[key].items():
             executed = option_values(command, option)
-            if executed != [float(value)]:
+            expected = [float(value)]
+            if option == TRACE_BASIS_RATIO_OPTION and not trace_basis_bound:
+                expected = []
+            if executed != expected:
                 raise ValueError(f"{stage} command does not execute the production recipe "
-                                 f"option {option}={value} exactly once (executed {executed})")
+                                 f"option {option}={value} exactly once (executed {executed})"
+                                 if expected else
+                                 f"{stage} command executes the production recipe option "
+                                 f"{option} without a bound trace basis (executed {executed})")
 
 # A Gmsh-only calibration case (labeled calibration manifest of the Gmsh-only
 # pipeline, supervisor decision 41) declares the build options that differ from
@@ -193,7 +206,10 @@ CALIBRATION_BUILD_OPTIONS_KEY = "BuildCommandOptions"
 # legacy MMG pipeline those of the production recipe before decision 34B (seed
 # --lc-tangent 0.1, metric --far-growth 1.0, no edge layer, adapter --hmin
 # NormalSize, no corner grading); under the Gmsh-only pipeline the production
-# manifest's BuildCommandOptions with --trace-basis-size-ratio 1.0.
+# BuildCommandOptions at the time of the decision-41 study (before decision 42:
+# --trace-basis-size-ratio 1.0).  Both are historical baselines: an adopted case
+# (EL4c under 34B, V-a under 42) stays declared against them and is labeled
+# AdoptedAsProductionRecipe.
 PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY = {LEGACY_MMG_PIPELINE: "ProductionValuesBefore34B",
                                               GMSH_ONLY_PIPELINE: "ProductionValues"}
 

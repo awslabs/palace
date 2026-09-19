@@ -13,8 +13,9 @@ decision 38) and its evidence chain:
 Every stage command is generated from the manifest case (immutable inputs, process,
 mesh recipe, the build options: ProductionRecipe.BuildCommandOptions of a production
 manifest, or a calibration case's Calibration.ProductionValues overridden by its
-Calibration.BuildCommandOptions; --trace-basis-size-ratio is one of the options,
-passed with the bound trace basis) and run under run_bounded_mesher.py with the
+Calibration.BuildCommandOptions; --trace-basis-size-ratio is one of the options and
+has no default here - it is passed, at the manifest's value, exactly when the case
+binds a trace basis) and run under run_bounded_mesher.py with the
 manifest's stage bounds (audits: --audit-memory-gib).
 Nothing here is an evidence tool: the evidence is the bounded stage reports, the
 audit records and the verification report written under --root.
@@ -41,7 +42,6 @@ TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contrac
                "ProcessLibrary": ("source-process-library", "--process-library")}
 CANONICAL_STAGES = ("canonical-source-validation", "gmsh-build", "canonical-gmsh-publication")
 TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
-PRODUCTION_TRACE_BASIS_RATIO = 1.0
 STAGE_STEMS = {"canonical-source-validation": "canonical-source", "gmsh-build": "gmsh-build",
                "canonical-gmsh-publication": "canonical-publish"}
 AUDIT_KINDS = ("bounded-run", "mesh-topology-quality", "mesh-complexity", "mesh-invariants",
@@ -65,8 +65,10 @@ def case_build_options(manifest, case):
     manifest's ProductionRecipe.BuildCommandOptions; a case of a labeled calibration
     manifest executes its Calibration.ProductionValues overridden by its
     Calibration.BuildCommandOptions (decision 41).  Returns (options without the trace
-    basis ratio, trace basis ratio, label); the ratio is passed with the bound trace
-    basis only (production 1.0 unless an option declares it)."""
+    basis ratio, trace basis ratio or None, label); the ratio is taken from the
+    options alone (no default; production 0.5 since decision 42) and is passed with
+    the bound trace basis only.  A case binding a trace basis under a manifest that
+    declares no ratio fails closed."""
     calibration = case.get("Calibration") if "Calibration" in manifest else None
     if calibration is not None:
         options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
@@ -75,7 +77,14 @@ def case_build_options(manifest, case):
     else:
         options = dict(manifest["ProductionRecipe"]["BuildCommandOptions"])
         label = f"Gmsh-only production build {case['Id']}"
-    ratio = float(options.pop(TRACE_BASIS_RATIO_OPTION, PRODUCTION_TRACE_BASIS_RATIO))
+    ratio = options.pop(TRACE_BASIS_RATIO_OPTION, None)
+    if "BasisContract" in case["Source"]["Files"]:
+        if ratio is None:
+            raise ValueError(f"{case['Id']} binds a trace basis but the manifest declares no "
+                             f"{TRACE_BASIS_RATIO_OPTION}")
+        ratio = float(ratio)
+    else:
+        ratio = None
     return options, ratio, label
 
 
@@ -143,7 +152,8 @@ def main():
     if not args.audits_only:
         (root / ("CALIBRATION.txt" if "Calibration" in manifest else "PRODUCTION.txt")).write_text(
             f"{label} at {commit} (decision 38): build options {recipe}, {TRACE_BASIS_RATIO_OPTION} "
-            f"{trace_basis_ratio}; NormalSize {normal} CornerIsotropyRadius {tangent} FarSize {far}; "
+            f"{trace_basis_ratio if trace_basis_ratio is not None else 'not passed (no trace basis)'}; "
+            f"NormalSize {normal} CornerIsotropyRadius {tangent} FarSize {far}; "
             f"process {process}; manifest {manifest_path}\n")
         (root / "canonical-transform.json").write_text("[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]\n")
         (root / "input-hashes.json").write_text(json.dumps({k: v["SHA256"] for k, v in source["Files"].items()}, indent=2))

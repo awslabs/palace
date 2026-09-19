@@ -18,6 +18,56 @@ verifiable, and the labeled calibration manifest
 `geometry-independence-calibration-sizing.json` (supervisor decision 41) freezes the
 Gmsh-only pipeline for the sizing calibration of the four-edge case (below).
 
+### Production recipe (supervisor decision 42, 2026-09-19): Gmsh-only, TraceBasisSizeRatio 0.5
+
+The production recipe is the Gmsh-only build of decisions 38-42
+(`ProductionRecipe` of `geometry-independence-suite.json`): prism edge tubes on every
+straight metal edge (inner ring 0.25 nm, ratio 2, layers following the size field on
+the axis with the surface layer at on-box ends, explicit pyramids), isotropic corner
+balls graded to the tube inner size, the etch footprint, junction-line and
+footprint bands, the decision-39 volume laws growing with FarGrowth 0.5, the
+trace-basis cut-surface / volume law at **TraceBasisSizeRatio 0.5** (decision 42:
+size <= 0.5 x the shortest edge of the nearest bound-basis triangle + FarGrowth x
+the distance to it; dimensionless, contract-derived, 1.0 before) and the far field
+by size fields. `ProductionRecipe.BuildCommandOptions` = `--lc-tangent 0.05
+--edge-size 0.00025 --edge-growth-ratio 2.0 --corner-size 0.00025 --far-growth 0.5
+--trace-basis-size-ratio 0.5`; `validate_production_recipe_commands` requires the
+recorded `gmsh-build` command of every production case to execute each option
+exactly once at its value - the ratio exactly once at 0.5 when the case binds a
+trace basis and never otherwise -, `run_gmsh_only_case.py` takes the ratio from the
+manifest options alone (no default: a basis-binding case under a manifest without
+the option fails closed), and `mesh_stage_contract.validate_trace_basis_sizing`
+binds the census `TraceBasisSizing.Ratio` to the executed value. Every physical
+gate is unchanged (positive orientation and Jacobian condition <= 1000 for every
+element type, tetrahedra SJ >= 0.01, corner aspect 4.0, protected 1e-8, closure
+1e-12, 4M elements, 1800 s / 8 GiB). **The MMG path (metric preparation, native
+MMG adaptation, label restoration, required-region optimizer, tetrahedral edge
+layer) is legacy calibration only**: it survives under the labeled
+`geometry-independence-calibration-ma.json` (`Pipeline: legacy-mmg`) so its study
+records stay verifiable, and it is never executed by a production case.
+
+Physics evidence of the recipe on the four-edge coupon (graded_v2 reference, p4, 80
+sources / 60 free-view; the assessment directory
+`coupon-accuracy-assessment-20260913`):
+
+| run | mesh (identity SHA-256, elements, H1 p4) | recipe state | E at 74 / 10 | E within 1% (worst) | p_SA 48 / 47 / 35 | p_SA within 1 / 2 / 5% | p_MS median; worst | p_MA median / weighted / strongest-20 (within 2%) | node-h per coupon |
+|---|---|---|---|---|---|---|---|---|---|
+| physics-08 (PBS 44988, decision 37 spike) | 7c17487f..., 1,588,715, 21.5M | prism tubes, ratio 1.0, no volume grading | +10.2 / +9.4% | 48 | -13.1 / +6.9 / +8.3% | - | -1.06%; +/-6-10% at 8 sources | +0.47 / +0.52 / +0.76% (49) | 0.55 |
+| physics-09 (PBS 45076, decision 38 DAG) | e57ce087..., 1,680,422, 22.2M | production DAG, 50 nm junction layer | +10.3 / +9.8% | 48 | -13.1 / +7 / +7% | - | +/-6-10% | +0.58 / +0.70 / +0.86% (54) | 0.516 |
+| physics-10 (PBS 45085, decisions 39-40) | 647b2079..., 1,742,434, 23.0M | volume laws, variable tube layers, ratio 1.0 | +6.5 / +7.3% | 54 (+7.3%) | -6.1 / +2.8 / +2.1% | 29 / 39 / 54 | -0.69%; +7.2% (30) | +0.67 / +0.72 / +0.80% (56) | 0.520 |
+| **physics-11 (PBS 45145, V-a = decision 42 production)** | **80966c7d..., 1,869,209, 24.8M** | **ratio 0.5, surface layer** | **+0.03 / +0.15%** | **60 (+0.43%)** | **-5.2 / +1.8 / +1.9%** | **35 / 44 / 58** | **-0.60%; -1.70% (47)** | **+0.76 / +0.76 / +0.76% (55; 20/20 strongest)** | **0.508** |
+| physics-12 (PBS 45146, V-b, rejected) | 7db360be..., 2,119,019, 31.4M | TangentialSize 25 nm, ratio 1.0 | +7.1 / +7.2% | 54 (+7.2%) | -6.1 / +2.9 / +2.1% | 29 / 39 / 54 | -0.75%; +8.1% (30) | +0.61 / +0.71 / +0.82% (55) | 0.593 |
+| EL4c (physics-06, PBS 44717; retired MMG production) | 3,471,507 tets | legacy MMG recipe | +0.5 / -0.2% | 60 (+0.81%) | -8.6 / +0.4 / +0.7% | 35 / 40 / 56 | -0.75%; -9.3% (26) | -6.63 / -5.00 / -5.05% (6) | 0.752 |
+
+V-a reaches the EL4c level or better on E, SA and MS while MA stays converged, at
+0.98x the physics-10 cost and 0.68x EL4c's; V-b moves nothing (<= 0.53 points) at
+1.14x cost. Decision 42 adopts the V-a ratio: the production four-edge root rebuilt
+under `geometry-independence-suite.json` reproduces the V-a identity mesh
+(`80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108`), so physics-11
+binds to the production root (evidence below). Residuals recorded by physics-11: MA
+movers 47 -4.2% / 74 +3.2% and the alternating MA at 35; p_MS at 26 alternates with
+p on every mesh; the reference is a p4 anchor.
+
 ### Gmsh-only sizing calibration manifest (supervisor decision 41, 2026-09-19)
 
 `geometry-independence-calibration-sizing.json` is a CALIBRATION-ONLY manifest of
@@ -28,27 +78,32 @@ the Gmsh-only pipeline: it carries a `Calibration` block (no `ProductionRecipe`)
 manifest). Its cases clone the production four-edge case (same immutable inputs,
 hashes, semantic contract, variants and covariance comparison; `InventoryStatus`
 Calibration, `Calibration.BaseCase`) and declare `Calibration.BuildCommandOptions` -
-the build options that differ from production, any subset - against
-`Calibration.ProductionValues` (the production `BuildCommandOptions` with
-`--trace-basis-size-ratio 1.0`): `four-edge-calib-sizing-tbr-0.5` (V-a,
-`--trace-basis-size-ratio 0.5`) and `four-edge-calib-sizing-lct-0.025` (V-b,
-`--lc-tangent 0.025`). `validate_manifest`
+the build options that differ from the baseline, any subset - against
+`Calibration.ProductionValues`, **the production `BuildCommandOptions` at the time
+of the study (before decision 42: `--trace-basis-size-ratio 1.0`), a historical
+baseline exactly like the legacy manifest's `ProductionValuesBefore34B`; it is not
+updated after an adoption** (the production manifest now carries
+`--trace-basis-size-ratio 0.5`): `four-edge-calib-sizing-tbr-0.5` (V-a,
+`--trace-basis-size-ratio 0.5`, labeled `AdoptedAsProductionRecipe` by decision 42 -
+the calibration entry proving the adoption, the production four-edge root reproduces
+its identity mesh SHA-256 `80966c7d...`) and `four-edge-calib-sizing-lct-0.025` (V-b,
+`--lc-tangent 0.025`, rejected by physics-12). `validate_manifest`
 (`validate_calibration_case_options`) requires the label, non-empty options and
-differing finite production values; `verify_canonical_case_entries.
+finite baseline values differing from the declared ones; `verify_canonical_case_entries.
 validate_calibration_commands` is pipeline-aware (`PIPELINE_CALIBRATION_STAGE_OPTIONS`:
 the legacy seed / metric / adaptation / restoration blocks against
 `ProductionValuesBefore34B`, the Gmsh-only `gmsh-build` block against
 `ProductionValues`) and requires the recorded build command to execute every declared
-option exactly once at its value, never at its production value, and every undeclared
-production option only at its production value - the canonical cache key does not
+option exactly once at its value, never at its baseline value, and every undeclared
+baseline option only at its baseline value - the canonical cache key does not
 encode recipe options, so the recorded command is the binding of the label to the
-build (a root labeled V-b but built with the production options, or with V-a's, is
+build (a root labeled V-b but built with the baseline options, or with V-a's, is
 rejected). `run_gmsh_only_case.py CASE --manifest geometry-independence-calibration-sizing.json`
 builds a calibration case from `ProductionValues` overridden by `BuildCommandOptions`
-(`case_build_options`; `--trace-basis-size-ratio` is one of the options and is passed
-with the bound trace basis; a production case executes the production recipe at 1.0)
-and writes `CALIBRATION.txt` instead of `PRODUCTION.txt` in the root. The production
-manifest is untouched (TraceBasisSizeRatio 1.0 / TangentialSize 0.05).
+(`case_build_options`; `--trace-basis-size-ratio` is one of the options, taken from
+the options alone and passed with the bound trace basis; a production case executes
+the production recipe's 0.5) and writes `CALIBRATION.txt` instead of
+`PRODUCTION.txt` in the root.
 
 ## Gmsh-only production pipeline (supervisor decision 38, 2026-09-18)
 
@@ -367,7 +422,7 @@ bounded the element counts under the 4M cap (V-a 1,869,209, 121 s / 3.9 GB; V-b
 `run_gmsh_only_case.py` under the calibration manifest (identity + rotate-z-0.63,
 audits, per-entry verification: `Passed true`, `Failures []`,
 `TransformComparisonFailures []`, `CanonicalReuseFailures []`; every physical gate at
-its production value). The production manifest is unchanged (ratio 1.0 / 50 nm).
+its production value). The production manifest was unchanged at efd393f38 (ratio 1.0 / 50 nm); decision 42 adopted the V-a ratio afterwards (above).
 
 | case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p3 / p4 / p5, exact hybrid entity sums) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio / below TangentialSize / 2 | first layer at the (2,8) cut (top, bottom) | trace-apex cells within 0.1 um of 74 / 10 (median longest edge) | junction first layer cut-surface P50 / P90 (nm) | tets min SJ / max cond | prisms / pyramids max cond | caps (12) min SJ / max cond | corners (4) | protected / closure / diagonal bands | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -397,8 +452,8 @@ physics-11/12): `/tmp/coupon-gmsh-only-four-edge-calib-sizing-tbr-0.5-efd393f38-
 `/tmp/coupon-gmsh-only-four-edge-calib-sizing-lct-0.025-efd393f38-20260919-021148`
 (identity.msh `7db360bed45f2c7f94bf6857c603ed212ef6a1699ea0dce6e26677e2e4f98615`,
 rotate-z `5b000119...`); the mesher-only probe meshes were deleted. Physics-11/12
-adjudicate E at 74/10, SA at 48/47/35 and MS against physics-10; the adopted value
-becomes a recipe parameter with this evidence.
+adjudicated E at 74/10, SA at 48/47/35 and MS against physics-10 (table above):
+V-a adopted (decision 42), V-b rejected.
 
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 

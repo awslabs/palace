@@ -2275,9 +2275,13 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         # carries no production recipe and no gate deviation (every gate at its
         # production value), mirrors the production tools and stages, and its cases
         # clone the production four-edge case with Calibration.BuildCommandOptions
-        # declared against Calibration.ProductionValues (the production build options
-        # with --trace-basis-size-ratio 1.0), each differing from production in exactly
-        # its lever: V-a --trace-basis-size-ratio 0.5, V-b --lc-tangent 0.025.
+        # declared against Calibration.ProductionValues - the production build options
+        # AT THE TIME OF THE STUDY (before decision 42: --trace-basis-size-ratio 1.0), a
+        # historical baseline like the legacy ProductionValuesBefore34B - each differing
+        # from that baseline in exactly its lever: V-a --trace-basis-size-ratio 0.5,
+        # V-b --lc-tangent 0.025.  Decision 42 adopted V-a: the production manifest now
+        # carries --trace-basis-size-ratio 0.5 and V-a is labeled AdoptedAsProductionRecipe
+        # (the EL4c precedent); the baseline stays historical.
         from run_gmsh_only_case import case_build_options
         production_path = HERE / "geometry-independence-suite.json"
         sizing_path = HERE / "geometry-independence-calibration-sizing.json"
@@ -2291,8 +2295,9 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         self.assertEqual(sizing["Tools"], production["Tools"])
         self.assertEqual(sizing["StageToolSHA256"], production["StageToolSHA256"])
         base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
-        production_values = {**production["ProductionRecipe"]["BuildCommandOptions"],
-                             "--trace-basis-size-ratio": 1.0}
+        production_options = production["ProductionRecipe"]["BuildCommandOptions"]
+        self.assertEqual(production_options["--trace-basis-size-ratio"], 0.5)
+        production_values = {**production_options, "--trace-basis-size-ratio": 1.0}
         levers = {}
         for case in sizing["Cases"]:
             self.assertIn("calib-sizing", case["Id"])
@@ -2311,10 +2316,32 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertEqual(ratio, expected.pop("--trace-basis-size-ratio"))
             self.assertEqual(options, expected)
         self.assertEqual(levers, {"--trace-basis-size-ratio": 0.5, "--lc-tangent": 0.025})
-        # A production case executes the production recipe at ratio 1.0.
+        adopted = next(case for case in sizing["Cases"] if case["Id"] == "four-edge-calib-sizing-tbr-0.5")
+        self.assertIn("AdoptedAsProductionRecipe", adopted["Calibration"])
+        self.assertIn("80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108",
+                      adopted["Calibration"]["AdoptedAsProductionRecipe"])
+        self.assertEqual(adopted["Calibration"]["BuildCommandOptions"]["--trace-basis-size-ratio"],
+                         production_options["--trace-basis-size-ratio"])
+        rejected_case = next(case for case in sizing["Cases"] if case["Id"] == "four-edge-calib-sizing-lct-0.025")
+        self.assertNotIn("AdoptedAsProductionRecipe", rejected_case["Calibration"])
+        self.assertIn("REJECTED", rejected_case["Calibration"]["Label"])
+        # A production case binding a trace basis executes the production recipe at the
+        # manifest's ratio (0.5); the ratio has no default in run_gmsh_only_case.py: a
+        # basis-binding case under a manifest without the option fails closed, and a
+        # case without a trace basis never receives a ratio.
         options, ratio, label = case_build_options(production, base)
-        self.assertEqual((options, ratio), (production["ProductionRecipe"]["BuildCommandOptions"], 1.0))
+        expected = dict(production_options)
+        self.assertEqual((options, ratio), (expected, expected.pop("--trace-basis-size-ratio")))
+        self.assertEqual(options, expected)
         self.assertNotIn("CALIBRATION", label)
+        without_ratio = copy.deepcopy(production)
+        without_ratio["ProductionRecipe"]["BuildCommandOptions"].pop("--trace-basis-size-ratio")
+        with self.assertRaisesRegex(ValueError, "binds a trace basis but the manifest declares no"):
+            case_build_options(without_ratio, base)
+        no_basis = next(item for item in production["Cases"] if item["Id"] == "one-edge-straight")
+        options, ratio, label = case_build_options(production, no_basis)
+        self.assertIsNone(ratio)
+        self.assertNotIn("--trace-basis-size-ratio", options)
         # Malformed labels fail closed: a missing label, an option at its production
         # value, an option without a production value, no option, a legacy-shaped block.
         def rejected(mutate):
@@ -2981,11 +3008,16 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
             validate_production_recipe({**self.production, "Pipeline": "legacy-mmg"})
 
     def test_production_recipe_commands_are_bound_exactly_once(self):
+        # Decision 42: --trace-basis-size-ratio 0.5 is a production recipe option passed
+        # with the bound trace basis only - a basis-binding case (four-edge) executes it
+        # exactly once at 0.5, a case without a trace basis (the first fixture) never.
+        self.assertEqual(self.production["ProductionRecipe"]["BuildCommandOptions"]["--trace-basis-size-ratio"], 0.5)
         stages = {"gmsh-build": {"Command": ["julia", "mesh.jl", "--lc-tangent", ".05",
                                              "--edge-size", "0.00025", "--edge-growth-ratio", "2",
                                              "--corner-size", ".00025", "--far-growth", "0.5",
-                                             "--trace-basis-size-ratio", "1", "--prism-tubes", "true"]}}
+                                             "--prism-tubes", "true"]}}
         case = self.production["Cases"][0]
+        self.assertNotIn("BasisContract", case["Source"]["Files"])
         validate_production_recipe_commands(self.production, case, stages)
         validate_production_recipe_commands({}, case, stages)                 # no recipe block
         validate_production_recipe_commands(self.production, {**case, "Calibration": {}}, stages)
@@ -2997,6 +3029,17 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "gmsh-build command does not execute the production recipe"):
                 validate_production_recipe_commands(self.production, case,
                                                     {"gmsh-build": {"Command": command}})
+        with self.assertRaisesRegex(ValueError, "without a bound trace basis"):
+            validate_production_recipe_commands(self.production, case,
+                                                {"gmsh-build": {"Command": good + ["--trace-basis-size-ratio", "0.5"]}})
+        basis_case = next(item for item in self.production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
+        validate_production_recipe_commands(self.production, basis_case,
+                                            {"gmsh-build": {"Command": good + ["--trace-basis-size-ratio", "0.5"]}})
+        for tail in ([], ["--trace-basis-size-ratio", "1.0"],
+                     ["--trace-basis-size-ratio", "0.5", "--trace-basis-size-ratio", "0.5"]):
+            with self.assertRaisesRegex(ValueError, "does not execute the production recipe option --trace-basis-size-ratio=0.5"):
+                validate_production_recipe_commands(self.production, basis_case,
+                                                    {"gmsh-build": {"Command": good + tail}})
         # The legacy recipe stages are bound under a legacy-pipeline manifest only.
         calibration = json.loads((HERE / "geometry-independence-calibration-ma.json").read_text())
         legacy = {**self.production, "StageToolSHA256": calibration["StageToolSHA256"],

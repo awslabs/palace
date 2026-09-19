@@ -17,17 +17,18 @@
     "MaximumProtectedMeasureError": 1e-08
   },
   "ProductionRecipe": {
-    "Label": "Gmsh-only production recipe (supervisor decision 38, 2026-09-18): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded in layers following the size field on the axis within the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface sizing, junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
-    "Decision": "SUPERVISOR-DECISIONS.md items 37 (prism tube spike) and 38 (Gmsh-only pipeline)",
+    "Label": "Gmsh-only production recipe (supervisor decisions 38-42, 2026-09-18/19): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded in layers following the size field on the axis within the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface / volume sizing at TraceBasisSizeRatio 0.5 (decision 42, calibrated by physics-11), junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
+    "Decision": "SUPERVISOR-DECISIONS.md items 37 (prism tube spike), 38 (Gmsh-only pipeline), 39 (volume size laws), 40 (tube layers follow the size field), 41 (surface layer at on-box tube ends; two-variant sizing calibration) and 42 (TraceBasisSizeRatio 0.5 adopted)",
     "Pipeline": "gmsh-only",
     "BuildCommandOptions": {
       "--lc-tangent": 0.05,
       "--edge-size": 0.00025,
       "--edge-growth-ratio": 2.0,
       "--corner-size": 0.00025,
-      "--far-growth": 0.5
+      "--far-growth": 0.5,
+      "--trace-basis-size-ratio": 0.5
     },
-    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value (and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true); the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
+    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value - --trace-basis-size-ratio exactly once at 0.5 when the case binds a trace basis and never otherwise (run_gmsh_only_case.py takes the ratio from these options alone, no default) - and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true; the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "Parameters": {
       "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
       "GrowthRatio": "2: ring ratio of the tube cross-section and of the corner shells",
@@ -48,7 +49,7 @@
       "CornerExteriorGrowth": "= FarGrowth (decision 39b): outside a corner ball the size is NormalSize + FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded point (census SizeLaws.CornerExteriorGrowth / CornerExteriorRule; achieved shells in SizeLaws.Achieved.CornerExterior)",
       "JunctionVolumeLaw": "the band law (NormalSize + RadialGrowth x min(r, ProtectedDistance) + FarGrowth beyond) on the junction lines throughout the volume (decision 39c; census SizeLaws.JunctionVolumeRule; achieved shells in SizeLaws.Achieved.JunctionLines)",
       "BandCurveSpacing": "NormalSize: the non-metal longitudinal feature curves (junction lines, footprint edges parallel to a metal edge) are 1D-meshed at the band law's size on the line (census BandCurves.Spacing; achieved first-layer transverse sizes in Bands.JunctionFirstLayer, report only)",
-      "TraceBasisSizeRatio": "1.0: cut-surface size = ratio x the local basis edge (trace rule)"
+      "TraceBasisSizeRatio": "0.5 (--trace-basis-size-ratio, decision 42; 1.0 before): cut-surface and volume trace law at half the local bound-basis edge (size <= 0.5 x the shortest edge of the nearest basis triangle + FarGrowth x the distance to it); dimensionless and contract-derived; calibrated by physics-11 (V-a) against physics-10 (ratio 1.0) and physics-12 (V-b TangentialSize 25 nm, rejected): E 60/60 within 1%, p_SA within 1/2/5% 35/44/58, p_MS median -0.60% worst -1.70%, p_MA converged (+0.76%), 0.508 node-h per coupon"
     },
     "UnchangedParameters": {
       "build": {
@@ -59,8 +60,7 @@
         "--minimum-scaled-jacobian": 0.01,
         "--maximum-jacobian-condition": 1000.0,
         "--maximum-quality-displacement-over-normal": 0.75,
-        "--max-elements": 4000000,
-        "--trace-basis-size-ratio": "1.0 (passed exactly when the case binds a trace basis; bound by mesh_stage_contract.validate_build_trace_basis)"
+        "--max-elements": 4000000
       }
     },
     "RetiredLegacyRecipe": {
@@ -84,7 +84,7 @@
       },
       "Evidence": "four-edge coupon vs the graded_v2 reference (8.74M tets), p4, 80 sources / 60 free-view: production (pre-34B) E max 4.1%, SA max 15%, p_MA median -10.08%, p_MS -1.46%, 0.453 node-h; V1/V2 (physics-03): E 60/60 within 1% (max 0.95%), SA max 8.7%, p_MA -9.11 / -8.99%, 0.454 node-h; EL4 (physics-04): p_MA -7.05%, p_MS -0.81%, E/SA no regression, 0.749 node-h; EL1 1 nm x 50 nm (physics-05): p_MA -10.94% (worse), E/SA unchanged, 0.836 node-h - rejected; EL4c (physics-06, PBS 44717): E 60/60 within 1% (max 0.81%), SA max 8.56%, p_MS median -0.75%, p_MA median -6.63% / magnitude-weighted -5.00% / strongest-20 -5.05%, PCG mean 22.6 / max 33, 0.752 node-h per 80-source p4 coupon, 3,471,507 tets (2.5x fewer than the reference); E and SA never regressed across V1/V2/EL4/EL4c"
     },
-    "Evidence": "prism-tube spike (decision 37, physics-08, PBS 44988): Gmsh-only hybrid four-edge mesh 1,588,715 elements, 21.5M H1 at p4 (0.57x production), p_MA vs the 0.5 nm reference median +0.47% / weighted +0.52% / strongest-20 +0.76%, p3/p4/p5 increments <= ~1 point (MA converged); the spike's E/SA regressions at the narrow hats (74/10) and junction sources are attributed to the missing volume grading (far growth, junction-line bands, tube-adjacent band), which this recipe records as explicit size laws; Gmsh-only four/ten-edge mesh evidence: geometry-independence-suite.md",
+    "Evidence": "prism-tube spike (decision 37, physics-08, PBS 44988): Gmsh-only hybrid four-edge mesh 1,588,715 elements, 21.5M H1 at p4 (0.57x production), p_MA vs the 0.5 nm reference median +0.47% / weighted +0.52% / strongest-20 +0.76%, p3/p4/p5 increments <= ~1 point (MA converged); physics-09 (decision 38 production DAG, mesh e57ce087..., PBS 45076): p_MA median +0.58%, E +10% at the narrow hats 74/10, p_SA -13.1% at 48; physics-10 (decision 40 variable tube layers, mesh 647b2079..., PBS 45085): E at 74/10 +6.5/+7.3%, p_SA 48 -6.1%, z = 0 junction ring p_MS +5..+7%; physics-11 (decision 41 V-a TraceBasisSizeRatio 0.5, mesh 80966c7d..., PBS 45145): E 60/60 within 1% (worst +0.43%), p_SA within 1/2/5% 35/44/58 (EL4c 35/40/56), p_MS median -0.60% worst -1.70%, p_MA median/weighted/strongest-20 +0.76/+0.76/+0.76% with 55/60 within 2%, PCG 19.9 mean / 39 max, 0.508 node-h per 80-source p4 coupon (EL4c 0.752); physics-12 (V-b TangentialSize 25 nm, mesh 7db360be..., PBS 45146): E/SA/MS unchanged within 0.53 points at 1.14x cost - rejected; decision 42 adopts the V-a ratio as this recipe: the production four-edge root reproduces the V-a mesh (SHA256 80966c7d...); Gmsh-only four/ten-edge mesh evidence: geometry-independence-suite.md",
     "DesignGate": {
       "Rule": "the achieved-anisotropy design gate (Gates.MinimumAchievedAspect / Gates.MaximumNormalFactor, unchanged) is replaced under the Gmsh-only pipeline by the prism tube design statement (general_mesh_audit_producer.TUBE_DESIGN_GATE; general_mesh_manifest.tube_design_statement): the recorded rings and extrusion are the design, the audit counts the mesh's prisms and pyramids against the census (CensusMatchesMesh), never gated; the physical gates (positive orientation and Jacobian condition for every element type, scaled Jacobian for tetrahedra, corner aspect, protected surfaces, ownership closure, element cap) are unchanged",
       "Rationale": "a tetrahedral band anisotropy statistic has no meaning next to a prism tube (200:1 prisms by design); the metal-edge resolution is the tube record itself"
@@ -99,7 +99,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "91708b7aa566e3fabd457a2c55be8818d8acb5e68f3dc43860b0dd675235a0c1"
+      "SHA256": "212bcf44df73210e4419094b0326bb4d6642861ac4f896e8adadf3ebdd9d5609"
     },
     {
       "Name": "verify_canonical_case_entries.py",
