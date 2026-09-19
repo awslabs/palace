@@ -440,6 +440,10 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
       }
     }
   }
+  // The names above were restored from the reference table, so rebuild the index the
+  // name-based lookups use.
+  t_csv_base.table.RebuildNameIndex();
+
   // Match expected column group pattern.
   auto expected_ex_idx_nrows = _impl::table_expected_filling(
       row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
