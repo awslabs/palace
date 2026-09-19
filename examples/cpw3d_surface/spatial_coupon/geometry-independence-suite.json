@@ -27,13 +27,14 @@
       "--corner-size": 0.00025,
       "--far-growth": 0.5
     },
-    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value (and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true); the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, prisms, pyramids, size laws), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
+    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value (and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true); the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, band curves at NormalSize spacing with the recorded junction first-layer sizes), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "Parameters": {
       "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
       "GrowthRatio": "2: ring ratio of the tube cross-section and of the corner shells",
       "TubeRings": "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius) (7 rings, radius 31.75 nm on the four/ten-edge process)",
       "TubeExtrusionSpacing": "<= TangentialSize (0.05 um); the spacing actually used divides the tube length and is recorded per tube",
-      "TubePyramidHeight": "0.5 x outermost ring size",
+      "TubeSectorDegrees": "30 (--tube-sector-degrees, mesher default; the census Section.SectorDegrees must equal the option or its default)",
+      "TubePyramidHeight": "0.5 x outermost ring size (PyramidHeightOverOuterRing 0.5, mesher constant TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING; the census PyramidHeight must equal 0.5 x the outermost RingSize)",
       "TubeCornerClearance": "R / tan(phi / 2) + h_K before a semantic corner; the cap centre is a graded point of the corner law",
       "CornerSize": "= EdgeSize",
       "CornerIsotropyRadius": "TangentialSize (4 x NormalSize)",
@@ -41,6 +42,9 @@
       "TangentialSize": "0.05 um (--lc-tangent): extrusion spacing and ridge grid",
       "FarSize": "0.08 x Radius (--lc-far)",
       "FarGrowth": "0.5: growth of the tube band and of the feature-curve bands beyond ProtectedDistance = 2 x NormalSize",
+      "RadialGrowth": "1.0: growth of the feature-curve band inside ProtectedDistance (mesher constant BAND_RADIAL_GROWTH; census SizeLaws.RadialGrowth)",
+      "ProtectedDistance": "2 x NormalSize (mesher constant BAND_PROTECTED_DISTANCE_OVER_NORMAL; census SizeLaws.ProtectedDistance)",
+      "BandCurveSpacing": "NormalSize: the non-metal longitudinal feature curves (junction lines, footprint edges parallel to a metal edge) are 1D-meshed at the band law's size on the line (census BandCurves.Spacing; achieved first-layer transverse sizes in Bands.JunctionFirstLayer, report only)",
       "TraceBasisSizeRatio": "1.0: cut-surface size = ratio x the local basis edge (trace rule)"
     },
     "UnchangedParameters": {
@@ -147,7 +151,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "78ad17e5275e6dd88e9a00dd32c53c1828baf2e770207501cbe7f5deff07e8a5"
+      "SHA256": "c8a8c519f5b78cc92f8869d5af8ce3024401bde901f3a7dc2ad500bdbfafc997"
     },
     {
       "Name": "canonical_mesh_build.py",

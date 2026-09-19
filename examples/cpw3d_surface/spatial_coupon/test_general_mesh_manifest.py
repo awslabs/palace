@@ -2632,6 +2632,20 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),
                      "corner grading differs from the build command")
             rejected(lambda c: c["PrismTubes"]["SizeLaws"].pop("BandRule"), "size laws are not recorded")
+            # The unbound-by-option tube parameters are bound to the option default or the
+            # mesher constants: sector angle, pyramid height rule, band growth, protected distance.
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("SectorDegrees", 45.0),
+                     "sector angle differs from the build command --tube-sector-degrees")
+            rejected(lambda r: r["Command"].extend(["--tube-sector-degrees", "45"]),
+                     "sector angle differs", target="report")
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("PyramidHeightOverOuterRing", .25),
+                     "pyramid height is not 0.5 x the outermost ring")
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("PyramidHeight", 1e-3),
+                     "pyramid height is not 0.5 x the outermost ring")
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"].__setitem__("RadialGrowth", .5),
+                     "band law growth or protected distance")
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"].__setitem__("ProtectedDistance", .1),
+                     "band law growth or protected distance")
             rejected(lambda c: c["PrismTubes"]["BandCurves"].__setitem__("Spacing", .05),
                      "Band curves are not 1D-meshed at NormalSize")
             rejected(lambda c: c["PrismTubes"]["Bands"]["JunctionFirstLayer"]["CutSurface"].pop("TransverseP90"),

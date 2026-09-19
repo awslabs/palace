@@ -74,26 +74,49 @@ build census (`build-census`, the bound build report):
   max(d_axis - (R + pyramid height), 0))`; feature-curve band (junction lines,
   footprint edges, un-tubed edge parts) `size = min(FarSize, NormalSize +
   RadialGrowth x min(r, 2 NormalSize) + FarGrowth x max(r - 2 NormalSize, 0))`
-  (the metric stage's band law); the trace-basis cut-surface rule
-  (TraceBasisSizeRatio x local basis edge) composed by `min` with the background
-  attractor / graded-point fields; the far field FarSize with the fail-closed
-  element cap (no far-budget pressure: the requested far size is used as is and the
-  build fails above `--max-elements`);
+  (the metric stage's band law; RadialGrowth 1 and ProtectedDistance 2 x
+  NormalSize are mesher constants bound by the census validator); the trace-basis
+  cut-surface rule (TraceBasisSizeRatio x local basis edge) composed by `min` with
+  the background attractor / graded-point fields; the far field FarSize with the
+  fail-closed element cap (no far-budget pressure: the requested far size is used
+  as is and the build fails above `--max-elements`);
+- band curves 1D-meshed at the band law (review P1 of the phase-3 evidence): the
+  non-metal longitudinal feature curves - the cut-surface / material-interface
+  junction lines and the footprint edges parallel to a metal edge - are placed at
+  NormalSize spacing (the band law on the line, composed with the corner law), so
+  the first cell layer against a junction is NormalSize transversally; on the
+  lc_tangent ridge grid it was TangentialSize (four-edge cut surface near junctions
+  P50 49.8 nm under commit 1a0289994), because the surface mesher cannot refine a
+  curve's nodes. The metal ridges keep the tangential grid (they carry the tubes).
+  The census records the band curves (`PrismTubes.BandCurves`: count, length,
+  Spacing = NormalSize, segments) and the achieved first-layer transverse size
+  against the junction lines (`PrismTubes.Bands.JunctionFirstLayer`: P10/P50/P90/
+  maximum and achieved-over-prescribed for the matching-surface elements and the
+  tetrahedra with a node on a line; report, not gate);
 - the census computed by the mesher itself (Gmsh's `minSJ` is the high-order
   mapping Jacobian, identically 1 for order-1 elements): per element type the
   corner-frame scaled Jacobian, Jacobian condition and orientation (tetrahedra,
   prisms, pyramids; gated fail closed: positive orientation and condition <= 1000
   for every type, SJ >= 0.01 for tetrahedra), tube rings / prisms / pyramids /
   layers / spacing / prism edge aspect, cap-region quality, cut-surface edge
-  statistics (all, near junctions, achieved over requested against the trace rule),
-  junction / footprint band tetrahedron sizes, size laws, corner shells, interface
-  areas with quadrangles, footprint simplification, straight junction segments,
-  element counts per type and the element-budget record.
+  statistics (all, near junctions, achieved over requested against the trace rule:
+  measured only on the narrow basis triangles that contain a matching-element
+  centroid, the unmeasured count reported), junction / footprint band tetrahedron
+  sizes (the footprint statistic over the footprint sides not on the outer box -
+  the feature curves - with the box sides reported separately as
+  `FootprintOnBox`, a far-field sample), the junction first-layer sizes, size
+  laws, corner shells, interface areas with quadrangles, footprint simplification,
+  straight junction segments, element counts per type and the element-budget
+  record.
 
 `mesh_stage_contract.validate_gmsh_build_census` binds the census to the build
 command and the canonical semantic contract (InnerSize = `--edge-size` =
 CornerSize, GrowthRatio, TangentialSize = `--lc-tangent`, NormalSize = `--lc-fine`,
-FarSize = `--lc-far`, FarGrowth, `--prism-tubes true`, rings geometric, every tube
+FarSize = `--lc-far`, FarGrowth, `--prism-tubes true`, rings geometric, the sector
+angle = `--tube-sector-degrees` or its default 30, PyramidHeight = 0.5 x the
+outermost ring (PyramidHeightOverOuterRing), the band law's RadialGrowth 1 and
+ProtectedDistance 2 x NormalSize, band curves at NormalSize spacing with the
+junction first-layer records present, every tube
 spacing within the tangential size, per-type quality within the command's gates,
 cap regions within the tetrahedral gates, corner aspects within the corner gate,
 element count within `--max-elements`, footprint provenance, junction segments
@@ -135,21 +158,29 @@ Both production cases were built under the committed tools by
 (`per-entry-verification.json`: `Passed true`, `Failures []`,
 `TransformComparisonFailures []`, one shared CanonicalBuildId per case).
 
-| case | elements (tets + prisms + pyramids) | nodes / H1 p1 (p4) | tubes / layers / spacing | rings | cap regions (min SJ / max cond) | tets min SJ / max cond | prisms max cond | pyramids max cond | corners (10 / 4) | protected | closure | diagonal bands | stage s / GiB (build; publication) | audits s / GiB | verification s / GiB |
+| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / spacing | rings | cap regions (min SJ / max cond) | tets min SJ / max cond | prisms max cond | pyramids max cond | corners (10 / 4) | protected | closure | diagonal bands | stage s / GiB (build; publication) | audits s / GiB | verification s / GiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | four-edge-9d2cb9bbb3fe | **1,680,422** = 1,499,486 + 168,012 + 12,924 (0.48x the 34B production 3,471,480) | 369,591 (22.2M) | 8 / 1,436 / 49.70-49.93 nm | 7 (0.25 ... 16 nm, R 31.75 nm) | 12: 0.0428 / 40.2 | 0.0211 / 94.8 | 737.6 | 8.73 | 3.30 / 3.58 / 3.15 / 3.58 | 0 (support vertices 1e-15) | 7.2e-13 (Gauss4, 580,494 points) | 0 (16 signature-, 49 footprint-, 16 junction-aligned; 2 on trace-basis edges) | 85.3 / 4.14 (gmsh-build), 26.5 / 3.23 (publication); 84-85 / 3.76 per placement | 219-232 / 2.6 | 747 / 2.7 |
 | ten-edge-6791f1c84123 | **2,389,131** = 2,108,907 + 260,208 + 20,016 (0.67x the 34B production 3,570,533) | 538,679 (32.2M) | 20 / (recorded per tube) / 47.6-49.9 nm | 7 | 36: 0.0401 / 41.7 | 0.0228 / 88.5 | 588.5 | 8.72 | 3.33-3.74 (10 corners) | 0 (1.3e-15) | 7.5e-13 (10 owner labels: 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 (12 signature-, 12 footprint-, 4 junction-aligned) | 137.5 / 5.28 (gmsh-build), 32.4 / 3.84 (publication); 132-139 / 4.77 per placement | 261-302 / 3.7 | 1,012 / 3.6 |
 
-Cut-surface sizes (census `PrismTubes.CutSurface`, identity): four-edge matching
-surface 94,084 triangles, edge P50 0.160 (far), near the junction lines (within
-NormalSize) P10/P50/P90 = 3.0 / 49.8 / 51.0 nm (3,097 triangles); the trace rule's
-76 narrow basis triangles are met at achieved/requested P50 0.72, maximum 1.14
-(60 with matching elements); ten-edge: near junctions 1.0 / 49.4 / 50.3 nm, trace
-rule 244 narrow triangles at P50 1.00, maximum 1.30. Band tetrahedra within
-NormalSize of the junction lines (four-edge): mean edge P10/P50/P90 3.3 / 52 / 57
-nm (8,422 cells); of the footprint edges 1.0 / 28 / 56 nm (11,002 cells). The
-tube band at the tube surface starts at NormalSize and grows with FarGrowth 0.5
-to FarSize 0.16. Roots (binaries kept):
+H1 p1 is `Measurements.Complexity.H1DOFs` of the identity `mesh-complexity`
+record (= the node count); H1 p4 is `mixed_mesh.h1_dofs(mesh, 4)` on `identity.msh`
+(not a recorded field). Cut-surface sizes (census `PrismTubes.CutSurface`,
+identity): four-edge matching surface 94,084 triangles, edge P50 0.160 (far),
+near the junction lines (within NormalSize) P10/P50/P90 = 3.0 / 49.8 / 51.0 nm
+(3,097 triangles) - TangentialSize, not the recorded NormalSize band (review P1;
+fixed by the band curves above, evidence below); the trace rule is measured on
+the narrow basis triangles that contain a matching-element centroid: four-edge
+60 of 76 measured (16 unmeasured), achieved/requested P50 0.72, maximum 1.14;
+ten-edge 148 of 244 measured (96 unmeasured), P50 1.00, maximum 1.30 - some
+narrow triangles are met only within ~30% (recorded, not gated); ten-edge near
+junctions 1.0 / 49.4 / 50.3 nm. Band tetrahedra within NormalSize of the junction
+lines (four-edge): mean edge P10/P50/P90 3.3 / 52 / 57 nm (8,422 cells); of the
+footprint edges 1.0 / 28 / 56 nm (11,002 cells; this statistic included the
+footprint sides on the outer box, hence the ten-edge footprint band maximum of
+228 nm - a far-field sample, since split into `Footprint` / `FootprintOnBox`).
+The tube band at the tube surface starts at NormalSize and grows with FarGrowth
+0.5 to FarSize 0.16. Roots (binaries kept):
 `/tmp/coupon-gmsh-only-four-edge-9d2cb9bbb3fe-1a0289994-20260918-181405`
 (identity.msh SHA-256
 `e57ce087e3f958e7d0756355eecea4c608f45eeeb5310d2a2a89113b5a099c80`, rotate-z

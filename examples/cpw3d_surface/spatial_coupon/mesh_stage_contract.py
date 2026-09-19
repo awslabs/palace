@@ -1225,6 +1225,16 @@ GMSH_BUILD_TUBE_OPTION = "--prism-tubes"
 GMSH_BUILD_RECIPE_OPTIONS = {"--edge-size": "InnerSize", "--edge-growth-ratio": "GrowthRatio",
                              "--lc-tangent": "TangentialSize", "--lc-fine": "NormalSize",
                              "--lc-far": "FarSize", "--far-growth": "FarGrowth"}
+# Tube cross-section option with the mesher's default (mesh_spatial_coupon.jl
+# --tube-sector-degrees) bound to the census Section.SectorDegrees.
+GMSH_BUILD_SECTOR_OPTION = ("--tube-sector-degrees", 30.0)
+# Mesher constants of the tube recipe bound to the census records: the pyramid
+# height over the outermost ring size (TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING), the
+# band law's radial growth inside the protected distance (BAND_RADIAL_GROWTH) and
+# the protected distance over NormalSize (BAND_PROTECTED_DISTANCE_OVER_NORMAL).
+GMSH_BUILD_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
+GMSH_BUILD_BAND_RADIAL_GROWTH = 1.0
+GMSH_BUILD_BAND_PROTECTED_DISTANCE_OVER_NORMAL = 2.0
 GMSH_BUILD_GATE_OPTIONS = {"--maximum-corner-aspect": "MaximumCornerAspect",
                            "--minimum-scaled-jacobian": "MinimumScaledJacobian",
                            "--maximum-jacobian-condition": "MaximumJacobianCondition",
@@ -1247,9 +1257,11 @@ def validate_gmsh_build_census(build_report, census, semantic):
     polygons, the junction segments, the trace basis sizing (iff bound), positive
     per-label interface areas over exactly the contract labels, the prism tube
     record (sizes equal to the command options, one tube per recorded row, spacing
-    within the tangential size, geometric rings, the band curves 1D-meshed at
-    NormalSize with the achieved junction first-layer transverse sizes recorded),
-    the per-type quality computed by
+    within the tangential size, geometric rings, the sector angle equal to
+    --tube-sector-degrees or its default, the pyramid height 0.5 x the outermost
+    ring, the band law's RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the
+    band curves 1D-meshed at NormalSize with the achieved junction first-layer
+    transverse sizes recorded), the per-type quality computed by
     the mesher within the command's gates for every volume type (orientation and
     Jacobian condition; scaled Jacobian for the tetrahedra), the cap regions within
     the scaled-Jacobian gate, the corner aspects within the corner gate and the
@@ -1331,6 +1343,14 @@ def validate_gmsh_build_census(build_report, census, semantic):
             any(abs(size - tubes["InnerSize"] * ratio**k) > 1e-12 * tubes["InnerSize"] * ratio**k
                 for k, size in enumerate(sizes))):
         raise ValueError("Prism tube rings do not follow the inner size and growth ratio")
+    if _census_number(section, "SectorDegrees", "Tube section") != _option_or_default(
+            command, *GMSH_BUILD_SECTOR_OPTION):
+        raise ValueError(f"Prism tube sector angle differs from the build command {GMSH_BUILD_SECTOR_OPTION[0]}")
+    if (_census_number(section, "PyramidHeightOverOuterRing", "Tube section") !=
+            GMSH_BUILD_PYRAMID_HEIGHT_OVER_OUTER_RING or
+            abs(_census_number(section, "PyramidHeight", "Tube section") -
+                GMSH_BUILD_PYRAMID_HEIGHT_OVER_OUTER_RING * sizes[-1]) > 1e-12 * sizes[-1]):
+        raise ValueError("Prism tube pyramid height is not 0.5 x the outermost ring size")
     if (_count(tubes.get("Prisms"), "Tube prisms") <= 0 or
             _count(tubes.get("Pyramids"), "Tube pyramids") <= 0):
         raise ValueError("Prism tube record has no prisms or pyramids")
@@ -1341,6 +1361,10 @@ def validate_gmsh_build_census(build_report, census, semantic):
             not all(isinstance(laws.get(name), str) and laws[name]
                     for name in ("TubeRule", "BandRule", "Composition"))):
         raise ValueError("Prism tube size laws are not recorded")
+    if (_census_number(laws, "RadialGrowth", "Size laws") != GMSH_BUILD_BAND_RADIAL_GROWTH or
+            _census_number(laws, "ProtectedDistance", "Size laws") !=
+            GMSH_BUILD_BAND_PROTECTED_DISTANCE_OVER_NORMAL * tubes["NormalSize"]):
+        raise ValueError("Prism tube band law growth or protected distance differs from the recipe")
     band_curves = tubes.get("BandCurves")
     if (not isinstance(band_curves, dict) or
             _census_number(band_curves, "Spacing", "Band curves") != tubes["NormalSize"] or
