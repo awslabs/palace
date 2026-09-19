@@ -398,7 +398,7 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
     const mfem::FiniteElement *fe = fes->GetBE(be);
     mfem::ElementTransformation *Tr = pmesh->GetBdrElementTransformation(be);
     const int int_order = fem::DefaultIntegrationOrder::Get(*Tr);
-    auto geom_order = std::make_pair(fe->GetGeomType(), int_order);
+    std::pair geom_order{fe->GetGeomType(), int_order};
     const mfem::IntegrationRule *ir;
     auto it = ir_map.find(geom_order);
     if (it == ir_map.end())
