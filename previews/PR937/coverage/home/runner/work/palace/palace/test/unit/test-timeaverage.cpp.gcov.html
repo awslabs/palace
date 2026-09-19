@@ -1,0 +1,435 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/test-timeaverage.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit</a> - test-timeaverage.cpp<span style="font-size: 80%;"> (source / <a href="test-timeaverage.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">145</td>
+            <td class="headerCovTableEntry">145</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-09-17 21:31:27</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntry">6</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;complex&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;memory&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;vector&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;nlohmann/json.hpp&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;catch2/generators/catch_generators_all.hpp&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;fem/gridfunction.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;fem/integrator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;models/domainpostoperator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;models/lumpedportoperator.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;models/spaceoperator.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;models/surfacepostoperator.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L23"><span class="lineNum">      23</span>              : #include &quot;utils/constants.hpp&quot;</span>
+<span id="L24"><span class="lineNum">      24</span>              : #include &quot;utils/filesystem.hpp&quot;</span>
+<span id="L25"><span class="lineNum">      25</span>              : #include &quot;utils/geodata.hpp&quot;</span>
+<span id="L26"><span class="lineNum">      26</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L27"><span class="lineNum">      27</span>              : #include &quot;utils/units.hpp&quot;</span>
+<span id="L28"><span class="lineNum">      28</span>              : </span>
+<span id="L29"><span class="lineNum">      29</span>              : // Physical normalization of quadratic (power, energy) outputs for the peak-phasor time-</span>
+<span id="L30"><span class="lineNum">      30</span>              : // harmonic convention. The expected values below are written directly from the physical</span>
+<span id="L31"><span class="lineNum">      31</span>              : // definitions and do not use any Palace helper:</span>
+<span id="L32"><span class="lineNum">      32</span>              : //</span>
+<span id="L33"><span class="lineNum">      33</span>              : //   - For a complex peak phasor F, the time average of the physical product over one</span>
+<span id="L34"><span class="lineNum">      34</span>              : //     period is &lt;Re{F e^{iωt}} Re{G e^{iωt}}&gt; = 1/2 Re{F G⋆}, so the time-averaged energy</span>
+<span id="L35"><span class="lineNum">      35</span>              : //     densities and Poynting vector are U_e = 1/4 ε |E|², U_m = 1/4 μ |H|², and</span>
+<span id="L36"><span class="lineNum">      36</span>              : //     S = 1/2 Re{E x H⋆}.</span>
+<span id="L37"><span class="lineNum">      37</span>              : //   - For real-valued instantaneous fields, U_e = 1/2 ε E², U_m = 1/2 μ H², S = E x H.</span>
+<span id="L38"><span class="lineNum">      38</span>              : //   - An excited lumped port carries unit time-averaged incident power in the frequency</span>
+<span id="L39"><span class="lineNum">      39</span>              : //     domain: for R = 50 Ω, V_inc = 10 V and I_inc = 0.2 A (peak), and the incident field</span>
+<span id="L40"><span class="lineNum">      40</span>              : //     itself projects to S = 1 and carries 1 W through the port.</span>
+<span id="L41"><span class="lineNum">      41</span>              : //</span>
+<span id="L42"><span class="lineNum">      42</span>              : // The reference fields are E = (1 + i, 0, 0) V/m and H = (0, 2 + 3i, 0) A/m in vacuum,</span>
+<span id="L43"><span class="lineNum">      43</span>              : // so that |E|² = 2, |H|² = 13, and E x H⋆ = (1 + i)(2 - 3i) ẑ = (5 - i) ẑ: the</span>
+<span id="L44"><span class="lineNum">      44</span>              : // time-averaged power density is (2.5 - 0.5i) W/m² along +z, U_e = ε₀/2 J/m³, and U_m = 13</span>
+<span id="L45"><span class="lineNum">      45</span>              : // μ₀/4 J/m³.</span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span>              : namespace palace</span>
+<span id="L48"><span class="lineNum">      48</span>              : {</span>
+<span id="L49"><span class="lineNum">      49</span>              : using namespace Catch::Matchers;</span>
+<span id="L50"><span class="lineNum">      50</span>              : using json = nlohmann::json;</span>
+<span id="L51"><span class="lineNum">      51</span>              : using VT = Units::ValueType;</span>
+<span id="L52"><span class="lineNum">      52</span>              : </span>
+<span id="L53"><span class="lineNum">      53</span>              : namespace</span>
+<span id="L54"><span class="lineNum">      54</span>              : {</span>
+<span id="L55"><span class="lineNum">      55</span>              : </span>
+<span id="L56"><span class="lineNum">      56</span>              : struct UniformFields</span>
+<span id="L57"><span class="lineNum">      57</span>              : {</span>
+<span id="L58"><span class="lineNum">      58</span>              :   // Cartesian components of the (possibly complex) uniform E [V/m] and H [A/m] fields.</span>
+<span id="L59"><span class="lineNum">      59</span>              :   std::complex&lt;double&gt; Ex, Hy;</span>
+<span id="L60"><span class="lineNum">      60</span>              :   bool complex;</span>
+<span id="L61"><span class="lineNum">      61</span>              : };</span>
+<span id="L62"><span class="lineNum">      62</span>              : </span>
+<span id="L63"><span class="lineNum">      63</span>              : // Project uniform E (ND) and B = μ₀ H (RT) fields, given in SI units, onto the grid</span>
+<span id="L64"><span class="lineNum">      64</span>              : // functions in nondimensional units.</span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC tlaBgGNC">          24 : void ProjectUniformFields(const Units &amp;units, const UniformFields &amp;f, GridFunction &amp;E,</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :                           GridFunction &amp;B)</span>
+<span id="L67"><span class="lineNum">      67</span>              : {</span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">          84 :   auto Project = [&amp;](mfem::ParGridFunction &amp;gf, double vx, double vy, double vz)</span></span>
+<span id="L69"><span class="lineNum">      69</span>              :   {</span>
+<span id="L70"><span class="lineNum">      70</span>              :     mfem::Vector v(3);</span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">          84 :     v(0) = vx;</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">          84 :     v(1) = vy;</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">          84 :     v(2) = vz;</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :     mfem::VectorConstantCoefficient coeff(v);</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">          84 :     gf.ProjectCoefficient(coeff);</span></span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">          84 :   };</span></span>
+<span id="L77"><span class="lineNum">      77</span>              :   const double mu0 = electromagnetics::mu0_;</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">          24 :   Project(E.Real(), units.Nondimensionalize&lt;VT::FIELD_E&gt;(f.Ex.real()), 0.0, 0.0);</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">          24 :   Project(B.Real(), 0.0, units.Nondimensionalize&lt;VT::FIELD_B&gt;(mu0 * f.Hy.real()), 0.0);</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">          24 :   if (f.complex)</span></span>
+<span id="L81"><span class="lineNum">      81</span>              :   {</span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">          18 :     Project(E.Imag(), units.Nondimensionalize&lt;VT::FIELD_E&gt;(f.Ex.imag()), 0.0, 0.0);</span></span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">          18 :     Project(B.Imag(), 0.0, units.Nondimensionalize&lt;VT::FIELD_B&gt;(mu0 * f.Hy.imag()), 0.0);</span></span>
+<span id="L84"><span class="lineNum">      84</span>              :   }</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">          24 : }</span></span>
+<span id="L86"><span class="lineNum">      86</span>              : </span>
+<span id="L87"><span class="lineNum">      87</span>              : // Time-averaged (complex phasor) or instantaneous (real) physical products, written from</span>
+<span id="L88"><span class="lineNum">      88</span>              : // the definitions.</span>
+<span id="L89"><span class="lineNum">      89</span>              : double ExpectedElectricEnergyDensity(const UniformFields &amp;f)</span>
+<span id="L90"><span class="lineNum">      90</span>              : {</span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC">          12 :   return (f.complex ? 0.25 : 0.5) * electromagnetics::epsilon0_ * std::norm(f.Ex);</span></span>
+<span id="L92"><span class="lineNum">      92</span>              : }</span>
+<span id="L93"><span class="lineNum">      93</span>              : </span>
+<span id="L94"><span class="lineNum">      94</span>              : double ExpectedMagneticEnergyDensity(const UniformFields &amp;f)</span>
+<span id="L95"><span class="lineNum">      95</span>              : {</span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">          12 :   return (f.complex ? 0.25 : 0.5) * electromagnetics::mu0_ * std::norm(f.Hy);</span></span>
+<span id="L97"><span class="lineNum">      97</span>              : }</span>
+<span id="L98"><span class="lineNum">      98</span>              : </span>
+<span id="L99"><span class="lineNum">      99</span>              : std::complex&lt;double&gt; ExpectedPoyntingZ(const UniformFields &amp;f)</span>
+<span id="L100"><span class="lineNum">     100</span>              : {</span>
+<span id="L101"><span class="lineNum">     101</span>              :   // E x H⋆ = Ex Hy⋆ ẑ.</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">          12 :   return (f.complex ? 0.5 : 1.0) * f.Ex * std::conj(f.Hy);</span></span>
+<span id="L103"><span class="lineNum">     103</span>              : }</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              : }  // namespace</span>
+<span id="L106"><span class="lineNum">     106</span>              : </span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">          24 : TEST_CASE(&quot;Time-averaged domain energies, surface power flux, and interface energy&quot;,</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :           &quot;[timeaverage][Serial][Parallel]&quot;)</span>
+<span id="L109"><span class="lineNum">     109</span>              : {</span>
+<span id="L110"><span class="lineNum">     110</span>              :   constexpr int order = 1;</span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">          24 :   fem::DefaultIntegrationOrder::p_trial = order;</span></span>
+<span id="L112"><span class="lineNum">     112</span> <span class="tlaGNC">          24 :   fem::DefaultIntegrationOrder::q_order_jac = true;</span></span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC">          24 :   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;</span></span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">          24 :   fem::DefaultIntegrationOrder::q_order_extra_qk = 0;</span></span>
+<span id="L115"><span class="lineNum">     115</span>              : </span>
+<span id="L116"><span class="lineNum">     116</span>              :   // Cases: complex phasor with nonzero real and imaginary parts, a global phase rotation of</span>
+<span id="L117"><span class="lineNum">     117</span>              :   // the same phasor (all outputs invariant), a purely real complex phasor (still time-</span>
+<span id="L118"><span class="lineNum">     118</span>              :   // averaged), and the real instantaneous control.</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">          24 :   const std::complex&lt;double&gt; rot = std::polar(1.0, 0.7);</span></span>
+<span id="L120"><span class="lineNum">     120</span>              :   const std::vector&lt;UniformFields&gt; cases = {</span>
+<span id="L121"><span class="lineNum">     121</span>              :       {std::complex&lt;double&gt;(1.0, 1.0), std::complex&lt;double&gt;(2.0, 3.0), true},</span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">          24 :       {rot * std::complex&lt;double&gt;(1.0, 1.0), rot * std::complex&lt;double&gt;(2.0, 3.0), true},</span></span>
+<span id="L123"><span class="lineNum">     123</span>              :       {std::complex&lt;double&gt;(1.0, 0.0), std::complex&lt;double&gt;(2.0, 0.0), true},</span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">          24 :       {std::complex&lt;double&gt;(1.0, 0.0), std::complex&lt;double&gt;(2.0, 0.0), false}};</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">          27 :   const auto &amp;fields = cases[GENERATE(0, 1, 2, 3)];</span></span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaGNC">          24 :   CAPTURE(fields.Ex, fields.Hy, fields.complex);</span></span>
+<span id="L127"><span class="lineNum">     127</span>              : </span>
+<span id="L128"><span class="lineNum">     128</span>              :   Units units(0.496, 1.453);</span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">          24 :   MPI_Comm comm = Mpi::World();</span></span>
+<span id="L130"><span class="lineNum">     130</span>              : </span>
+<span id="L131"><span class="lineNum">     131</span>              :   // Vacuum cube [0, sx] x [0, sy] x [0, sz], in nondimensional mesh units.</span>
+<span id="L132"><span class="lineNum">     132</span>              :   constexpr double sx = 1.1, sy = 2.5, sz = 3.8;</span>
+<span id="L133"><span class="lineNum">     133</span>              :   constexpr int resolution = 4;</span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">          48 :   auto serial_mesh = std::make_unique&lt;mfem::Mesh&gt;(mfem::Mesh::MakeCartesian3D(</span></span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">          24 :       resolution, resolution, resolution, mfem::Element::HEXAHEDRON, sx, sy, sz));</span></span>
+<span id="L136"><span class="lineNum">     136</span>              :   const int dim = serial_mesh-&gt;Dimension();</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">          48 :   Mesh mesh(std::make_unique&lt;mfem::ParMesh&gt;(comm, *serial_mesh));</span></span>
+<span id="L138"><span class="lineNum">     138</span>              :   serial_mesh.reset();</span>
+<span id="L139"><span class="lineNum">     139</span>              : </span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">          24 :   config::MaterialData material;</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">          48 :   material.attributes = {1};</span></span>
+<span id="L142"><span class="lineNum">     142</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">          48 :   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, mesh);</span></span>
+<span id="L144"><span class="lineNum">     144</span>              : </span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">          24 :   mfem::H1_FECollection h1_fec(order, dim);</span></span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">          24 :   mfem::ND_FECollection nd_fec(order, dim);</span></span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">          24 :   mfem::RT_FECollection rt_fec(order - 1, dim);</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">          24 :   FiniteElementSpace h1_fespace(mesh, &amp;h1_fec), nd_fespace(mesh, &amp;nd_fec),</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">          24 :       rt_fespace(mesh, &amp;rt_fec);</span></span>
+<span id="L150"><span class="lineNum">     150</span>              : </span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">          24 :   GridFunction E(nd_fespace, fields.complex), B(rt_fespace, fields.complex);</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">          24 :   ProjectUniformFields(units, fields, E, B);</span></span>
+<span id="L153"><span class="lineNum">     153</span>              : </span>
+<span id="L154"><span class="lineNum">     154</span>              :   const double sx_m = units.Dimensionalize&lt;VT::LENGTH&gt;(sx);</span>
+<span id="L155"><span class="lineNum">     155</span>              :   const double sy_m = units.Dimensionalize&lt;VT::LENGTH&gt;(sy);</span>
+<span id="L156"><span class="lineNum">     156</span>              :   const double sz_m = units.Dimensionalize&lt;VT::LENGTH&gt;(sz);</span>
+<span id="L157"><span class="lineNum">     157</span>              :   const double volume_m3 = sx_m * sy_m * sz_m;</span>
+<span id="L158"><span class="lineNum">     158</span>              :   const double top_area_m2 = sx_m * sy_m;</span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">          24 :   SECTION(&quot;Domain energies&quot;)</span></span>
+<span id="L161"><span class="lineNum">     161</span>              :   {</span>
+<span id="L162"><span class="lineNum">     162</span>              :     config::DomainPostData postpro;</span>
+<span id="L163"><span class="lineNum">     163</span>              :     config::DomainEnergyData energy;</span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">          12 :     energy.attributes = {1};</span></span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">          12 :     postpro.energy.emplace(1, energy);</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">          12 :     DomainPostOperator dom_post_op(postpro, mat_op, nd_fespace, rt_fespace);</span></span>
+<span id="L167"><span class="lineNum">     167</span>              : </span>
+<span id="L168"><span class="lineNum">     168</span>              :     const double U_e =</span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">          12 :         units.Dimensionalize&lt;VT::ENERGY&gt;(dom_post_op.GetElectricFieldEnergy(E));</span></span>
+<span id="L170"><span class="lineNum">     170</span>              :     const double U_m =</span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">          12 :         units.Dimensionalize&lt;VT::ENERGY&gt;(dom_post_op.GetMagneticFieldEnergy(B));</span></span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">          39 :     CHECK_THAT(U_e, WithinRel(ExpectedElectricEnergyDensity(fields) * volume_m3, 1.0e-10));</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">          39 :     CHECK_THAT(U_m, WithinRel(ExpectedMagneticEnergyDensity(fields) * volume_m3, 1.0e-10));</span></span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span>              :     // Subdomain reducers follow the same convention.</span>
+<span id="L176"><span class="lineNum">     176</span>              :     const double U_e_1 =</span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">          12 :         units.Dimensionalize&lt;VT::ENERGY&gt;(dom_post_op.GetDomainElectricFieldEnergy(1, E));</span></span>
+<span id="L178"><span class="lineNum">     178</span>              :     const double U_m_1 =</span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">          12 :         units.Dimensionalize&lt;VT::ENERGY&gt;(dom_post_op.GetDomainMagneticFieldEnergy(1, B));</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">          36 :     CHECK_THAT(U_e_1, WithinRel(U_e, 1.0e-12));</span></span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">          36 :     CHECK_THAT(U_m_1, WithinRel(U_m, 1.0e-12));</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">          48 :   }</span></span>
+<span id="L183"><span class="lineNum">     183</span>              : </span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">          24 :   SECTION(&quot;Surface power flux and interface energy&quot;)</span></span>
+<span id="L185"><span class="lineNum">     185</span>              :   {</span>
+<span id="L186"><span class="lineNum">     186</span>              :     // Power flux through the top face z = sz (boundary attribute 6 of MakeCartesian3D),</span>
+<span id="L187"><span class="lineNum">     187</span>              :     // with the normal oriented outward from the cube center, so that the +z power density</span>
+<span id="L188"><span class="lineNum">     188</span>              :     // gives a positive flux. The interface dielectric layer (thickness t, relative</span>
+<span id="L189"><span class="lineNum">     189</span>              :     // permittivity ε_r, both nondimensional here) on the same face has energy</span>
+<span id="L190"><span class="lineNum">     190</span>              :     // 1/2 t ε_r |E|² A (real) or 1/4 t ε_r |E|² A (complex peak phasor), in the internal</span>
+<span id="L191"><span class="lineNum">     191</span>              :     // units where ε₀ = 1.</span>
+<span id="L192"><span class="lineNum">     192</span>              :     constexpr int top_attr = 6;</span>
+<span id="L193"><span class="lineNum">     193</span>              :     constexpr double t = 0.01, eps_r = 3.0;</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">          12 :     config::BoundaryPostData postpro;</span></span>
+<span id="L195"><span class="lineNum">     195</span>              :     config::SurfaceFluxData flux;</span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">          12 :     flux.type = SurfaceFlux::POWER;</span></span>
+<span id="L197"><span class="lineNum">     197</span>              :     flux.two_sided = false;</span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">          12 :     flux.center = {0.5 * sx, 0.5 * sy, 0.5 * sz};</span></span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">          12 :     flux.no_center = false;</span></span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC">          12 :     flux.attributes = {top_attr};</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">          12 :     postpro.flux.emplace(1, flux);</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :     config::InterfaceDielectricData dielectric;</span>
+<span id="L203"><span class="lineNum">     203</span>              :     dielectric.type = InterfaceDielectric::DEFAULT;</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">          12 :     dielectric.t = t;</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">          12 :     dielectric.epsilon_r = eps_r;</span></span>
+<span id="L206"><span class="lineNum">     206</span>              :     dielectric.tandelta = 0.0;</span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">          12 :     dielectric.attributes = {top_attr};</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">          12 :     postpro.dielectric.emplace(1, dielectric);</span></span>
+<span id="L209"><span class="lineNum">     209</span>              :     SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">          12 :                                      nd_fespace);</span></span>
+<span id="L211"><span class="lineNum">     211</span>              : </span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">          12 :     const auto flux_nondim = surf_post_op.GetSurfaceFlux(1, &amp;E, &amp;B);</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">          12 :     const double P = units.Dimensionalize&lt;VT::POWER&gt;(flux_nondim.real());</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">          39 :     CHECK_THAT(P, WithinRel(ExpectedPoyntingZ(fields).real() * top_area_m2, 1.0e-10));</span></span>
+<span id="L215"><span class="lineNum">     215</span>              :     // Only the stationary real part of the power flux is reported.</span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">          12 :     CHECK_THAT(flux_nondim.imag(), WithinAbs(0.0, 1.0e-14));</span></span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              :     const double E2_nondim = std::norm(std::complex&lt;double&gt;(</span>
+<span id="L219"><span class="lineNum">     219</span>              :         units.Nondimensionalize&lt;VT::FIELD_E&gt;(fields.Ex.real()),</span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">          12 :         fields.complex ? units.Nondimensionalize&lt;VT::FIELD_E&gt;(fields.Ex.imag()) : 0.0));</span></span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaGNC">          12 :     const double expected_interface =</span></span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">          12 :         (fields.complex ? 0.25 : 0.5) * t * eps_r * E2_nondim * sx * sy;</span></span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">          12 :     CHECK_THAT(surf_post_op.GetInterfaceElectricFieldEnergy(1, E),</span></span>
+<span id="L224"><span class="lineNum">     224</span>              :                WithinRel(expected_interface, 1.0e-10));</span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaGNC">          48 :   }</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">          96 : }</span></span>
+<span id="L227"><span class="lineNum">     227</span>              : </span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">          12 : TEST_CASE(&quot;Lumped port unit time-averaged incident power&quot;,</span></span>
+<span id="L229"><span class="lineNum">     229</span>              :           &quot;[timeaverage][Serial][Parallel]&quot;)</span>
+<span id="L230"><span class="lineNum">     230</span>              : {</span>
+<span id="L231"><span class="lineNum">     231</span>              :   // A 50 Ω rectangular lumped port on the square (0,0,0)-(1,1,0) of the (3,2,1) box,</span>
+<span id="L232"><span class="lineNum">     232</span>              :   // direction +Y, with the domain at z &gt; 0 (see</span>
+<span id="L233"><span class="lineNum">     233</span>              :   // LumpedPort_BasicTests_1ElementPort_Cube321). Build the incident wave of the port</span>
+<span id="L234"><span class="lineNum">     234</span>              :   // explicitly, E = V_inc / l ŷ and H = -E / R_s x̂ (propagating into the domain, +z), from</span>
+<span id="L235"><span class="lineNum">     235</span>              :   // the excitation amplitudes reported by the port, and check with the production port</span>
+<span id="L236"><span class="lineNum">     236</span>              :   // functionals that the incident wave carries 1 W of time-averaged power, projects to S =</span>
+<span id="L237"><span class="lineNum">     237</span>              :   // 1, and reproduces V_inc.</span>
+<span id="L238"><span class="lineNum">     238</span>              :   MPI_Comm comm = Mpi::World();</span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">          15 :   auto solver_order = GENERATE(1, 2);</span></span>
+<span id="L240"><span class="lineNum">     240</span>              :   // Purely real phasor, and the same wave with a global phase.</span>
+<span id="L241"><span class="lineNum">     241</span>              :   const std::complex&lt;double&gt; phase =</span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">          18 :       GENERATE(std::complex&lt;double&gt;(1.0, 0.0), std::polar(1.0, -1.1));</span></span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">          12 :   CAPTURE(solver_order, phase);</span></span>
+<span id="L244"><span class="lineNum">     244</span>              : </span>
+<span id="L245"><span class="lineNum">     245</span>              :   const double L0 = 1.0e-6;</span>
+<span id="L246"><span class="lineNum">     246</span>              :   const double Lc = 7.0;</span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaGNC">          12 :   IoData iodata{Units(L0, Lc)};</span></span>
+<span id="L248"><span class="lineNum">     248</span>              :   iodata.model.mesh =</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">          36 :       fs::path(PALACE_TEST_DATA_DIR) / &quot;lumpedport_mesh/cube_mesh_3_2_1_hex.msh&quot;;</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaGNC">          12 :   iodata.model.L0 = L0;</span></span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">          12 :   iodata.model.Lc = Lc;</span></span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">          12 :   iodata.model.crack_bdr_elements = false;</span></span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">          12 :   iodata.solver.order = solver_order;</span></span>
+<span id="L254"><span class="lineNum">     254</span>              :   json domains_json = {</span>
+<span id="L255"><span class="lineNum">     255</span>              :       {&quot;Materials&quot;,</span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">         372 :        json::array({json::object({{&quot;Attributes&quot;, json::array({1, 2, 3, 4, 5, 6})},</span></span>
+<span id="L257"><span class="lineNum">     257</span>              :                                   {&quot;Permeability&quot;, 1.0},</span>
+<span id="L258"><span class="lineNum">     258</span>              :                                   {&quot;Permittivity&quot;, 1.0},</span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">          48 :                                   {&quot;LossTan&quot;, 0.0}})})}};</span></span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">          12 :   iodata.domains = config::DomainData(domains_json);</span></span>
+<span id="L261"><span class="lineNum">     261</span>              :   json boundaries_json = {</span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">         228 :       {&quot;LumpedPort&quot;, json::array({json::object({{&quot;Index&quot;, 1},</span></span>
+<span id="L263"><span class="lineNum">     263</span>              :                                                 {&quot;R&quot;, 50.0},</span>
+<span id="L264"><span class="lineNum">     264</span>              :                                                 {&quot;Excitation&quot;, 1},</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">          60 :                                                 {&quot;Attributes&quot;, json::array({1})},</span></span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaGNC">          48 :                                                 {&quot;Direction&quot;, &quot;+Y&quot;}})})}};</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">          12 :   iodata.boundaries = config::BoundaryData(boundaries_json);</span></span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">          12 :   iodata.CheckConfiguration();</span></span>
+<span id="L269"><span class="lineNum">     269</span>              : </span>
+<span id="L270"><span class="lineNum">     270</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L271"><span class="lineNum">     271</span>              :   {</span>
+<span id="L272"><span class="lineNum">     272</span>              :     std::vector&lt;std::unique_ptr&lt;mfem::ParMesh&gt;&gt; mfem_mesh;</span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">          12 :     auto smesh = mesh::Load(iodata, comm);</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">          12 :     iodata.NondimensionalizeInputs(smesh);</span></span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">          12 :     mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));</span></span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">          12 :     mesh::RefineMesh(iodata, mfem_mesh);</span></span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">          24 :     for (auto &amp;m : mfem_mesh)</span></span>
+<span id="L278"><span class="lineNum">     278</span>              :     {</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">          24 :       mesh.push_back(std::make_unique&lt;Mesh&gt;(std::move(m)));</span></span>
+<span id="L280"><span class="lineNum">     280</span>              :     }</span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">          12 :   }</span></span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">          12 :   SpaceOperator space_op(iodata, mesh);</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaGNC">          12 :   const auto &amp;port = space_op.GetLumpedPortOp().GetPort(1);</span></span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">          24 :   REQUIRE(port.HasExcitation());</span></span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaGNC">          12 :   REQUIRE(port.elems.size() == 1);</span></span>
+<span id="L286"><span class="lineNum">     286</span>              :   const auto &amp;elem = *port.elems.front();</span>
+<span id="L287"><span class="lineNum">     287</span>              : </span>
+<span id="L288"><span class="lineNum">     288</span>              :   // Excitation amplitudes: 10 V and 0.2 A peak for the 1 W time-averaged wave.</span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">          12 :   const double V_inc = port.GetExcitationVoltage(true);</span></span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">          12 :   const double I_inc = port.GetExcitationCurrent(true);</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">          12 :   CHECK_THAT(iodata.units.Dimensionalize&lt;VT::VOLTAGE&gt;(V_inc), WithinRel(10.0, 1.0e-12));</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">          12 :   CHECK_THAT(iodata.units.Dimensionalize&lt;VT::CURRENT&gt;(I_inc), WithinRel(0.2, 1.0e-12));</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">          12 :   CHECK_THAT(iodata.units.Dimensionalize&lt;VT::POWER&gt;(0.5 * V_inc * I_inc),</span></span>
+<span id="L294"><span class="lineNum">     294</span>              :              WithinRel(1.0, 1.0e-12));</span>
+<span id="L295"><span class="lineNum">     295</span>              : </span>
+<span id="L296"><span class="lineNum">     296</span>              :   // Incident wave fields from the port geometry: E_inc = V_inc / l along the port direction</span>
+<span id="L297"><span class="lineNum">     297</span>              :   // and H_inc = E_inc / R_s with R_s = R w / l the sheet resistance, oriented so that</span>
+<span id="L298"><span class="lineNum">     298</span>              :   // E x H points into the domain (+z).</span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">          12 :   const double E_inc = V_inc / elem.GetGeometryLength();</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">          12 :   const double Rs = port.GetExcitationRefResistance() * port.GetToSquare(elem);</span></span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaGNC">          12 :   const double H_inc = E_inc / Rs;</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">          12 :   GridFunction E(space_op.GetNDSpace(), true), B(space_op.GetRTSpace(), true);</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">          48 :   auto Project = [&amp;](mfem::ParGridFunction &amp;gf, double vx, double vy, double vz)</span></span>
+<span id="L304"><span class="lineNum">     304</span>              :   {</span>
+<span id="L305"><span class="lineNum">     305</span>              :     mfem::Vector v(3);</span>
+<span id="L306"><span class="lineNum">     306</span> <span class="tlaGNC">          48 :     v(0) = vx;</span></span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">          48 :     v(1) = vy;</span></span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">          48 :     v(2) = vz;</span></span>
+<span id="L309"><span class="lineNum">     309</span>              :     mfem::VectorConstantCoefficient coeff(v);</span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaGNC">          48 :     gf.ProjectCoefficient(coeff);</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">          48 :   };</span></span>
+<span id="L312"><span class="lineNum">     312</span>              :   const std::complex&lt;double&gt; Ey = phase * E_inc, Hx = -phase * H_inc;</span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">          12 :   Project(E.Real(), 0.0, Ey.real(), 0.0);</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">          12 :   Project(E.Imag(), 0.0, Ey.imag(), 0.0);</span></span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaGNC">          12 :   Project(B.Real(), Hx.real(), 0.0, 0.0);  // μ_r = 1 in nondimensional units.</span></span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaGNC">          12 :   Project(B.Imag(), Hx.imag(), 0.0, 0.0);</span></span>
+<span id="L317"><span class="lineNum">     317</span>              : </span>
+<span id="L318"><span class="lineNum">     318</span>              :   // Port voltage and S-parameter of the incident wave itself.</span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">          12 :   const auto V = port.GetVoltage(E);</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">          12 :   CHECK_THAT(V.real(), WithinRel((phase * V_inc).real(), 1.0e-10));</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">          12 :   CHECK_THAT(V.imag(), WithinAbs((phase * V_inc).imag(), 1.0e-10 * V_inc));</span></span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">          12 :   const auto S = port.GetSParameter(E);</span></span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaGNC">          12 :   CHECK_THAT(S.real(), WithinRel(phase.real(), 1.0e-10));</span></span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">          12 :   CHECK_THAT(S.imag(), WithinAbs(phase.imag(), 1.0e-10));</span></span>
+<span id="L325"><span class="lineNum">     325</span>              : </span>
+<span id="L326"><span class="lineNum">     326</span>              :   // Time-averaged power through the port, through both the per-port and batched paths,</span>
+<span id="L327"><span class="lineNum">     327</span>              :   // and the independent legacy coefficient path.</span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">          12 :   const auto P = port.GetPower(E, B);</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaGNC">          12 :   CHECK_THAT(iodata.units.Dimensionalize&lt;VT::POWER&gt;(P.real()), WithinRel(1.0, 1.0e-10));</span></span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">          12 :   CHECK_THAT(P.imag(), WithinAbs(0.0, 1.0e-10));</span></span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">          12 :   const auto P_legacy = port.GetPowerLegacy(E, B);</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC">          12 :   CHECK_THAT(P_legacy.real(), WithinRel(P.real(), 1.0e-10));</span></span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">          12 :   CHECK_THAT(P_legacy.imag(), WithinAbs(0.0, 1.0e-10));</span></span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">          12 :   const auto powers = space_op.GetLumpedPortOp().GetPowers(E, B);</span></span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">          24 :   REQUIRE(powers.count(1) == 1);</span></span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaGNC">          12 :   CHECK_THAT(powers.at(1).real(), WithinRel(P.real(), 1.0e-10));</span></span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaGNC">          12 :   CHECK_THAT(powers.at(1).imag(), WithinAbs(0.0, 1.0e-10));</span></span>
+<span id="L338"><span class="lineNum">     338</span>              : </span>
+<span id="L339"><span class="lineNum">     339</span>              :   // The assembled frequency domain source term is the dual of 2 H_inc for this incident</span>
+<span id="L340"><span class="lineNum">     340</span>              :   // wave: its action on the incident E field is 2 ∫ E_inc ⋅ H_inc dS = 2 V_inc I_inc = 4 W,</span>
+<span id="L341"><span class="lineNum">     341</span>              :   // twice the full power overlap of the unit time-averaged power mode.</span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">          12 :   ComplexVector RHS1;</span></span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">          24 :   REQUIRE(space_op.GetExcitationVector1(1, RHS1));</span></span>
+<span id="L344"><span class="lineNum">     344</span>              :   Vector e_inc(space_op.GetNDSpace().GetTrueVSize());</span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">          12 :   E.Real().ParallelProject(e_inc);</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">          12 :   double rhs_dot_e = linalg::Dot(comm, RHS1.Real(), e_inc);</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">          12 :   CHECK_THAT(iodata.units.Dimensionalize&lt;VT::POWER&gt;(rhs_dot_e),</span></span>
+<span id="L348"><span class="lineNum">     348</span>              :              WithinRel(4.0 * phase.real(), 1.0e-10));</span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">         492 : }</span></span>
+<span id="L350"><span class="lineNum">     350</span>              : </span>
+<span id="L351"><span class="lineNum">     351</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
