@@ -1225,8 +1225,13 @@ def _validate_trace_basis_edges(recipe, triangles, digests, scale):
 # the fail-closed quality gates the mesher applies per element type.
 GMSH_BUILD_TUBE_OPTION = "--prism-tubes"
 GMSH_BUILD_RECIPE_OPTIONS = {"--edge-size": "InnerSize", "--edge-growth-ratio": "GrowthRatio",
-                             "--lc-tangent": "TangentialSize", "--lc-fine": "NormalSize",
-                             "--lc-far": "FarSize", "--far-growth": "FarGrowth"}
+                             "--lc-fine": "NormalSize", "--lc-far": "FarSize",
+                             "--far-growth": "FarGrowth"}
+# Coupon-scale size bound (mesh_spatial_coupon.jl SIZE_BOUND_RULE): the census
+# TangentialSize is min(--lc-tangent, --lc-far) - FarSize = FarSizeOverRadius x Radius is
+# the coarsest size the coupon admits, so the along-edge tube spacing never exceeds it;
+# the request and the bound are recorded in census SizeBounds.
+GMSH_BUILD_TANGENTIAL_OPTION = "--lc-tangent"
 # Tube cross-section option with the mesher's default (mesh_spatial_coupon.jl
 # --tube-sector-degrees) bound to the census Section.SectorDegrees.
 GMSH_BUILD_SECTOR_OPTION = ("--tube-sector-degrees", 30.0)
@@ -1250,6 +1255,23 @@ def _census_number(record, name, description):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{description} lacks a finite {name}")
     return float(value)
+
+
+def validate_size_bounds(census, command):
+    """The census SizeBounds record binds the coupon-scale size bound to the build
+    command: RequestedTangentialSize = --lc-tangent, FarSize = --lc-far, TangentialSize
+    = min(request, FarSize) with the flag saying whether the bound acted."""
+    bounds = census.get("SizeBounds")
+    if not isinstance(bounds, dict) or not isinstance(bounds.get("Rule"), str) or not bounds["Rule"]:
+        raise ValueError("Build census lacks the SizeBounds record")
+    requested = _option_or_default(command, GMSH_BUILD_TANGENTIAL_OPTION, None)
+    far = _option_or_default(command, "--lc-far", None)
+    if (_census_number(bounds, "RequestedTangentialSize", "Size bounds") != requested or
+            _census_number(bounds, "FarSize", "Size bounds") != far or
+            _census_number(bounds, "TangentialSize", "Size bounds") != min(requested, far) or
+            bounds.get("TangentialSizeBoundByFarSize") is not (far < requested)):
+        raise ValueError("Build census SizeBounds do not follow TangentialSize = min(--lc-tangent, FarSize)")
+    return bounds
 
 
 def validate_gmsh_build_census(build_report, census, semantic):
@@ -1332,6 +1354,9 @@ def validate_gmsh_build_census(build_report, census, semantic):
     for option, name in GMSH_BUILD_RECIPE_OPTIONS.items():
         if _census_number(tubes, name, "Prism tube record") != _option_or_default(command, option, None):
             raise ValueError(f"Prism tube record {name} differs from the build command {option}")
+    validate_size_bounds(census, command)
+    if tubes["TangentialSize"] != _census_number(census["SizeBounds"], "TangentialSize", "Size bounds"):
+        raise ValueError("Prism tube record TangentialSize differs from the bound tangential size")
     if tubes["InnerSize"] != corner_size:
         raise ValueError("Prism tube inner size differs from the corner size: one graded law is required")
     rows = tubes.get("Tubes")

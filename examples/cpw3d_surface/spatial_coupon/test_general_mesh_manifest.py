@@ -2761,6 +2761,29 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "surface layer at an end on the box")
             rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Spacing", 1.0),
                      "exceed the tangential spacing")
+            # Coupon-scale size bound: TangentialSize = min(--lc-tangent, FarSize), the
+            # request, the far size and the flag recorded and bound to the command.
+            self.assertFalse(census["SizeBounds"]["TangentialSizeBoundByFarSize"])
+            self.assertEqual(census["SizeBounds"]["TangentialSize"], census["PrismTubes"]["TangentialSize"])
+            rejected(lambda c: c.pop("SizeBounds"), "lacks the SizeBounds record")
+            rejected(lambda c: c["SizeBounds"].__setitem__("TangentialSizeBoundByFarSize", True),
+                     "min\\(--lc-tangent, FarSize\\)")
+            rejected(lambda c: c["SizeBounds"].__setitem__("RequestedTangentialSize", 1.0),
+                     "min\\(--lc-tangent, FarSize\\)")
+            rejected(lambda c: c["SizeBounds"].__setitem__("TangentialSize", c["SizeBounds"]["FarSize"]),
+                     "min\\(--lc-tangent, FarSize\\)")
+            rejected(lambda c: c["PrismTubes"].__setitem__("TangentialSize", .5 * c["PrismTubes"]["TangentialSize"]),
+                     "differs from the bound tangential size")
+            bounded_report, bounded = copy.deepcopy(report), copy.deepcopy(census)
+            far = bounded["SizeBounds"]["FarSize"]
+            requested = 2.0 * far
+            bounded_report["Command"][bounded_report["Command"].index("--lc-tangent") + 1] = repr(requested)
+            bounded["SizeBounds"].update({"RequestedTangentialSize": requested, "TangentialSize": far})
+            bounded["PrismTubes"]["TangentialSize"] = far
+            with self.assertRaisesRegex(ValueError, "min\\(--lc-tangent, FarSize\\)"):
+                validate_gmsh_build_census(bounded_report, bounded, semantic)
+            bounded["SizeBounds"]["TangentialSizeBoundByFarSize"] = True
+            self.assertIs(validate_gmsh_build_census(bounded_report, bounded, semantic), bounded)
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("RingSizes", [.001, .003, .004]),
                      "rings do not follow")
             rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("MinimumScaledJacobian", 1e-3),

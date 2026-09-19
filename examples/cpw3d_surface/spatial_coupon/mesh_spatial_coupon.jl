@@ -3291,6 +3291,14 @@ const TUBE_BAND_FAR = Ref(Inf)
 const TUBE_BAND_FAR_GROWTH = Ref(0.0)
 const BAND_RADIAL_GROWTH = 1.0
 const BAND_PROTECTED_DISTANCE_OVER_NORMAL = 2.0
+# Coupon-scale size bound recorded in the census (SizeBounds; see the option checks).
+const SIZE_BOUND_RULE =
+    "TangentialSize = min(--lc-tangent, FarSize): FarSize = FarSizeOverRadius x Radius is " *
+    "the coarsest size the coupon admits (its matching-surface size), so the along-edge " *
+    "tube extrusion / ridge spacing never exceeds it; dimensionless in Radius x " *
+    "FarSizeOverRadius / --lc-tangent, identity for every coupon with FarSize >= --lc-tangent; " *
+    "NormalSize and EdgeSize = CornerSize are resolution sizes and are never bounded (a fine " *
+    "size above FarSize fails closed)"
 # Corner-ball exterior law (decision 39b): NormalSize (the ball boundary size) +
 # FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded
 # point (semantic corners and tube cap centres), up to FarSize.
@@ -4294,8 +4302,20 @@ function generate_spatial_coupon(;
     0.0 <= trench_rounding <= overetch || error("trench rounding must not exceed overetch")
     lc_fine > 0.0 || error("fine mesh size must be positive")
     lc_far >= lc_fine || error("far mesh size must not be smaller than fine mesh size")
-    (lc_tangent == 0.0 || lc_fine <= lc_tangent <= lc_far) ||
-        error("tangential mesh size must lie between fine and far sizes")
+    # Coupon-scale size bound: FarSize (FarSizeOverRadius x Radius) is the coarsest
+    # size the coupon admits - the size at its matching surface - so the tangential
+    # spacing (the along-edge tube extrusion / ridge grid, a coarsening size fixed by
+    # the recipe in absolute units) is bounded by it: TangentialSize = min(--lc-tangent,
+    # FarSize).  Dimensionless: the bound acts exactly when Radius < --lc-tangent /
+    # FarSizeOverRadius and leaves every larger coupon unchanged.  The resolution sizes
+    # (NormalSize, EdgeSize = CornerSize) are not bounded: a fine size above FarSize is
+    # a contradictory recipe and fails closed above.  Requested and bound values are
+    # recorded in the census (SizeBounds) and bound by the stage contract.
+    lc_tangent >= 0.0 || error("tangential mesh size must be nonnegative")
+    requested_lc_tangent = lc_tangent
+    lc_tangent = lc_tangent == 0.0 ? 0.0 : min(lc_tangent, lc_far)
+    (lc_tangent == 0.0 || lc_fine <= lc_tangent) ||
+        error("tangential mesh size must not be smaller than the fine size")
     process_core_width = process_core_width > 0.0 ?
                          process_core_width :
                          max(2metal_thickness, 4overetch, 8lc_fine)
@@ -5396,6 +5416,12 @@ function generate_spatial_coupon(;
                 "IsotropicSize" => lc_fine,
                 "Sqrt2IsotropicSize" => sqrt(2.0) * lc_fine,
                 "FarSize" => lc_far,
+                "SizeBounds" => Dict{String, Any}(
+                    "Rule" => SIZE_BOUND_RULE,
+                    "FarSize" => lc_far,
+                    "RequestedTangentialSize" => requested_lc_tangent,
+                    "TangentialSize" => lc_tangent,
+                    "TangentialSizeBoundByFarSize" => lc_tangent < requested_lc_tangent),
                 "GradingTransitionWidth" => process_core_width - process_fine_width,
                 "LongitudinalCurves" => length(longitudinal_curves),
                 "CornerIsotropicLongitudinalCurves" => length(corner_curves),

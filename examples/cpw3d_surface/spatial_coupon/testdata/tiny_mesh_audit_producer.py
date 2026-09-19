@@ -265,10 +265,19 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
     if tubes is not None:
         tubes["junction_lengths"] = [math.dist(segment[:3], segment[3:])
                                      for segment in junction_curves(scale)["Segments"]]
+        # Coupon-scale size bound of the production seeder (SIZE_BOUND_RULE): the
+        # tangential spacing is min(--lc-tangent, FarSize); the fixture requests below it.
+        requested = tubes["lc_tangent"]
+        tubes["lc_tangent"] = min(requested, tubes["lc_far"])
         tube_records = {"PrismTubes": prism_tube_record(mesh, tubes),
                         "CornerGrading": corner_grading(tubes["corner_size"], tubes["ratio"],
                                                         isotropic_size, radius),
-                        "EdgeLayer": None}
+                        "EdgeLayer": None,
+                        "SizeBounds": {"Rule": "fixture: TangentialSize = min(--lc-tangent, FarSize)",
+                                       "FarSize": tubes["lc_far"],
+                                       "RequestedTangentialSize": requested,
+                                       "TangentialSize": tubes["lc_tangent"],
+                                       "TangentialSizeBoundByFarSize": tubes["lc_tangent"] < requested}}
         if quality is not None:
             quality["CornerSize"] = tubes["corner_size"]
     output.write_text(json.dumps({

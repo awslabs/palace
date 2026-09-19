@@ -28,7 +28,7 @@
       "--far-growth": 0.5,
       "--trace-basis-size-ratio": 0.5
     },
-    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value - --trace-basis-size-ratio exactly once at 0.5 when the case binds a trace basis and never otherwise (run_gmsh_only_case.py takes the ratio from these options alone, no default) - and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true; the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes, the decision-43 CurveSpacing rows of every explicitly 1D-meshed curve within their spacing and the growth cap), the corner grading, the etch footprint, the junction segments, the trace basis sizing (with its minimum-altitude measure, MinimumBasisAltitude and needle counts recomputed from the recorded triangles) and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
+    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value - --trace-basis-size-ratio exactly once at 0.5 when the case binds a trace basis and never otherwise (run_gmsh_only_case.py takes the ratio from these options alone, no default) - and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true; the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = min(--lc-tangent, FarSize) with the census SizeBounds record, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes, the decision-43 CurveSpacing rows of every explicitly 1D-meshed curve within their spacing and the growth cap), the corner grading, the etch footprint, the junction segments, the trace basis sizing (with its minimum-altitude measure, MinimumBasisAltitude and needle counts recomputed from the recorded triangles) and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "Parameters": {
       "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
       "GrowthRatio": "2: ring ratio of the tube cross-section and of the corner shells",
@@ -40,7 +40,7 @@
       "CornerSize": "= EdgeSize",
       "CornerIsotropyRadius": "TangentialSize (4 x NormalSize)",
       "NormalSize": "0.25 x MetalThickness (--lc-fine); the size at the tube surface and on the feature-curve bands",
-      "TangentialSize": "0.05 um (--lc-tangent): extrusion spacing and ridge grid",
+      "TangentialSize": "0.05 um (--lc-tangent): extrusion spacing and ridge grid, bounded by the coupon-scale FarSize - TangentialSize = min(--lc-tangent, FarSize) (mesher SIZE_BOUND_RULE; census SizeBounds with RequestedTangentialSize / FarSize / TangentialSize / TangentialSizeBoundByFarSize, bound by mesh_stage_contract.validate_size_bounds): FarSize = FarSizeOverRadius x Radius is the coarsest size the coupon admits (its matching-surface size), so the along-edge tube spacing never exceeds it; dimensionless (the bound acts exactly when Radius < --lc-tangent / FarSizeOverRadius = 0.625 um, i.e. the Radius-0.5 synthetic coupons at FarSize 0.04) and the identity for every production coupon (Radius 2: FarSize 0.16). The resolution sizes NormalSize and EdgeSize = CornerSize are never bounded (a fine size above FarSize fails closed)",
       "FarSize": "0.08 x Radius (--lc-far)",
       "FarGrowth": "0.5: growth of the tube band and of the feature-curve bands beyond ProtectedDistance = 2 x NormalSize",
       "RadialGrowth": "1.0: growth of the feature-curve band inside ProtectedDistance (mesher constant BAND_RADIAL_GROWTH; census SizeLaws.RadialGrowth)",
@@ -155,7 +155,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "3e610e04cb8b9a8e22a73a5cc1c9784c6af1463aaf4805d2b2bd5579174f7f89"
+      "SHA256": "d13e0f6292a0f33214a59739bbdb9f15cb48a79bb435ff75a428ba3542e6bad7"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1878,7 +1878,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "a28b12cdc4ce743450884247c58e7fddd88a05f421b456faa7b597cdae8e7653"
+      "mesher": "37df9f37bdb096a7b30892f984d3b786b2eb0b9d94efb78d87b5be12f965337a"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
