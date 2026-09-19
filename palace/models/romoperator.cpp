@@ -1567,8 +1567,10 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
   Eigen::MatrixXd M_proj = Mp_r.imag().eval();
   const double sym_scale = std::max(M_proj.cwiseAbs().maxCoeff(), 1.0e-300);
   const double skew_rel = (M_proj - M_proj.transpose()).cwiseAbs().maxCoeff() / sym_scale;
-  MFEM_VERIFY(skew_rel <= 1.0e-10, "Synthesis residue direction matrix must be symmetric "
-                                       << "(relative skew part " << skew_rel << ")!");
+  // Fit noise leaves ~1e-10 relative skew (backend/int-width dependent); symmetrized next,
+  // so tolerate it while still catching an O(1) sign/index bug.
+  MFEM_VERIFY(skew_rel <= 1.0e-8, "Synthesis residue direction matrix must be symmetric "
+                                      << "(relative skew part " << skew_rel << ")!");
   M_proj = 0.5 * (M_proj + M_proj.transpose()).eval();
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(M_proj);
   MFEM_VERIFY(eig.info() == Eigen::Success,
