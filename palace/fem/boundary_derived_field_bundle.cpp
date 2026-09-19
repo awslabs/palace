@@ -183,8 +183,13 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
                                       mat_op->GetPermittivityReal());
   MaterialPropertyCoefficient invmu(mat_op->GetAttributeToMaterial(),
                                     mat_op->GetCurlCurlInvPermeability());
+  // Im{ε} enters only the surface charge of complex fields (D = ε E with the complex
+  // permittivity of a lossy dielectric); energies keep Re{ε}.
+  MaterialPropertyCoefficient epsilon_imag(mat_op->GetAttributeToMaterial(),
+                                           mat_op->GetPermittivityImag());
   const auto epsilon_ctx = ceed::PopulateCoefficientContext(3, &epsilon);
   const auto invmu_ctx = ceed::PopulateCoefficientContext(3, &invmu);
+  const auto epsilon_imag_ctx = ceed::PopulateCoefficientContext(3, &epsilon_imag);
 
   for (const auto &item : routes)
   {
@@ -300,7 +305,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
                     CEED_COPY_VALUES, out_offsets.data(), &out_restriction));
       scratch.restrictions.push_back(out_restriction);
 
-      std::vector<CeedIntScalar> ctx(9);
+      std::vector<CeedIntScalar> ctx(10);
       ctx[0].second = route.normal_sign;
       ctx[1].second = electric_scaling;  // Surface charge.
       ctx[2].second = magnetic_scaling;  // Surface current.
@@ -308,10 +313,12 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
       ctx[4].second = magnetic_scaling;  // Magnetic energy.
       ctx[5].second = magnetic_scaling;  // Poynting vector.
       ctx[6].second = route.average_scale;
-      ctx[7].first = 9;
+      ctx[7].first = 10;
       ctx.insert(ctx.end(), epsilon_ctx.begin(), epsilon_ctx.end());
       ctx[8].first = static_cast<CeedInt>(ctx.size());
       ctx.insert(ctx.end(), invmu_ctx.begin(), invmu_ctx.end());
+      ctx[9].first = static_cast<CeedInt>(ctx.size());
+      ctx.insert(ctx.end(), epsilon_imag_ctx.begin(), epsilon_imag_ctx.end());
 
       ceed::CeedQFunctionInfo info;
       info.apply_qf = batched_complex ? f_eval_bdr_derived_trace_complex_32

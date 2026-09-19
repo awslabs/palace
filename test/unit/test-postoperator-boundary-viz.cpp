@@ -126,6 +126,11 @@ std::vector<config::MaterialData> MakeTwoMaterials()
   lower.mu_r.s = {0.9, 1.0, 1.1};
   upper.epsilon_r.s = {11.7, 3.1, 2.4};
   upper.mu_r.s = {1.4, 1.8, 2.2};
+  // Different (and anisotropic) loss tangents on the two sides: the surface charge of a
+  // complex field uses the complex permittivity ε_r (1 - i tan δ), so both the Im{ε} cross
+  // terms and the interface jump between materials of different loss are exercised.
+  lower.tandelta.s = {0.05, 0.05, 0.05};
+  upper.tandelta.s = {0.2, 0.1, 0.3};
 
   return {lower, upper};
 }
@@ -1021,11 +1026,20 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CheckStats("B_imag", CompareVectorField(ReadBoundaryChecked("B_imag", 3), pmesh, lod,
                                           B_imag_legacy, rtol, atol));
 
+  // Surface charge of the complex field with the complex permittivity, from the legacy
+  // coefficient evaluated with Re{ε} and Im{ε}: Q_r = Re{ε} E_r ⋅ n - Im{ε} E_i ⋅ n,
+  // Q_i = Re{ε} E_i ⋅ n + Im{ε} E_r ⋅ n.
   mfem::Vector unused_x0;
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_legacy(
-      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_legacy(
-      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_re(&E.Real(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(&E.Imag(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
+      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
+      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
+  mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
   BdrSurfaceCurrentVectorCoefficient J_imag_legacy(B.Imag(), mat_op, invmu_scaling);
   CheckStats("Q_s_real", CompareScalarField(ReadBoundaryChecked("Q_s_real", 1), pmesh, lod,
@@ -1160,11 +1174,18 @@ TEST_CASE_METHOD(test::SharedTempDir,
              CompareVectorField(ReadBoundaryChecked("E_imag", 2), pmesh, lod, E_imag_legacy,
                                 rtol, atol));
 
+  // Same complex-permittivity surface charge reference as in 3D.
   mfem::Vector unused_x0;
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_legacy(
-      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_legacy(
-      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_re(&E.Real(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(&E.Imag(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
+      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
+      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
+  mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   CheckStats("Q_s_real boundary 2D",
              CompareScalarField(ReadBoundaryChecked("Q_s_real", 1), pmesh, lod,
                                 Q_real_legacy, rtol, atol));
