@@ -65,7 +65,8 @@ def read_edges(signature):
         rows = list(csv.DictReader(stream))
     edges = []
     for row in rows:
-        edges.append({"point": np.array([float(row[k]) for k in ("Px", "Py", "Pz")]),
+        edges.append({"slot": int(row["Slot"]), "conductor": int(row["Conductor"]),
+                      "point": np.array([float(row[k]) for k in ("Px", "Py", "Pz")]),
                       "gap": np.array([float(row[k]) for k in ("Gx", "Gy", "Gz")]),
                       "tangent": np.array([float(row[k]) for k in ("Tx", "Ty", "Tz")]),
                       "interval": (float(row["S0"]), float(row["S1"])),
@@ -73,14 +74,64 @@ def read_edges(signature):
     return edges
 
 
+def edge_chains(edges):
+    """Decision 47: collinear touching rows of one metal edge (same slot / conductor are
+    not in the estimator's rows, so same plane, tangent, gap and no vertex arm) form a
+    chain; returns {row index: (union start, union end) in the row's own coordinate}."""
+    tolerance = 1e-9 * max(1.0, max(float(np.abs(edge["point"]).max()) for edge in edges))
+    ends = [[edge["point"] + s * edge["tangent"] for s in edge["interval"]] for edge in edges]
+
+    def same_line(i, j):
+        a, b = edges[i], edges[j]
+        if a["vertex_arm"] or b["vertex_arm"] or a.get("slot") != b.get("slot") or a.get("conductor") != b.get("conductor"):
+            return False
+        if (np.abs(a["tangent"] - b["tangent"]).max() > tolerance or np.abs(a["gap"] - b["gap"]).max() > tolerance or
+                abs(a["point"][2] - b["point"][2]) > tolerance):
+            return False
+        delta = b["point"] - a["point"]
+        return np.linalg.norm(delta - np.dot(delta, a["tangent"]) * a["tangent"]) <= tolerance
+
+    unions, used = {}, set()
+    for i in range(len(edges)):
+        if i in used or edges[i]["vertex_arm"]:
+            continue
+        chain, used, changed = [i], used | {i}, True
+        while changed:
+            changed = False
+            for j in range(len(edges)):
+                if j in used or not same_line(i, j):
+                    continue
+                if any(np.linalg.norm(a - b) <= tolerance for k in chain for a in ends[k] for b in ends[j]):
+                    chain.append(j); used.add(j); changed = True
+        if len(chain) < 2:
+            continue
+        origin, tangent = edges[chain[0]]["point"], edges[chain[0]]["tangent"]
+        coordinate = lambda k, s: float(np.dot(edges[k]["point"] - origin, tangent)) + s
+        u0 = min(coordinate(k, edges[k]["interval"][0]) for k in chain)
+        u1 = max(coordinate(k, edges[k]["interval"][1]) for k in chain)
+        for k in chain:
+            shift = coordinate(k, 0.0)
+            unions[k] = (u0 - shift, u1 - shift)
+    return unions
+
+
 def coupon_box(edges, radius, metal_thickness, overetch):
-    """The mesher's coupon box (mesh_spatial_coupon.jl coupon_bounds / extended_interval)."""
+    """The mesher's coupon box (mesh_spatial_coupon.jl coupon_bounds / extended_interval,
+    with the decision-47 chain rule for CAD-subdivided edges)."""
     points = []
-    for edge in edges:
+    unions = edge_chains(edges)
+    for index, edge in enumerate(edges):
         first, second = edge["interval"]
         extension = 2.0 * radius
         tolerance = 1e-10 * radius
-        if edge["vertex_arm"]:
+        if index in unions:
+            u0, u1 = unions[index]
+            if (u1 - u0) / 2.0 >= radius - tolerance:
+                if abs(first - u0) <= tolerance:
+                    first -= extension
+                if abs(second - u1) <= tolerance:
+                    second += extension
+        elif edge["vertex_arm"]:
             if abs(first) <= tolerance:
                 second += extension
             elif abs(second) <= tolerance:

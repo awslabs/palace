@@ -8,8 +8,8 @@ import json
 from pathlib import Path
 import unittest
 
-from estimate_build_cost import (actual_counts, case_paths, coupon_box, estimate, gate, read_edges,
-                                 tube_rings)
+from estimate_build_cost import (actual_counts, case_paths, coupon_box, edge_chains, estimate, gate,
+                                 read_edges, tube_rings)
 from general_mesh_manifest import (BUILD_COST_ESTIMATE_KEY, preflight_build_cost, validate_build_cost_estimate_model,
                                    validate_manifest)
 
@@ -47,6 +47,19 @@ class EstimateBuildCostTest(unittest.TestCase):
         self.assertEqual(tubes["Pyramids"], tubes["Layers"] * 9)
         self.assertEqual(result["Corners"], 4)
         self.assertEqual(result["Sizes"]["TangentialSize"], 0.05)
+
+    def test_cad_subdivided_edge_keeps_the_unsubdivided_box(self):
+        # Decision 47: the two collinear half rows of one-edge-cad-subdivided chain into
+        # the straight edge's union, so both fixtures share the box and the estimate.
+        straight = estimate(case_paths(self.manifest, MANIFEST, self.case("one-edge-straight")), self.options,
+                            self.model["TetrahedraPerCubicSize"])
+        subdivided = estimate(case_paths(self.manifest, MANIFEST, self.case("one-edge-cad-subdivided")),
+                              self.options, self.model["TetrahedraPerCubicSize"])
+        self.assertEqual(subdivided["Box"], straight["Box"])
+        self.assertEqual(straight["Box"]["Lower"][:2], [-4.0, -8.0])
+        self.assertAlmostEqual(subdivided["EstimatedElements"], straight["EstimatedElements"])
+        ten = read_edges(case_paths(self.manifest, MANIFEST, self.case("ten-edge-6791f1c84123"))["Signature"])
+        self.assertEqual(edge_chains(ten), {})      # collinear rows separated by a slot never chain
 
     def test_size_bound_enters_the_estimate(self):
         result = estimate(case_paths(self.manifest, MANIFEST, self.case("concave-multislot")),

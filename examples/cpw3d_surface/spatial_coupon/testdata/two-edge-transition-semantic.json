@@ -6,7 +6,13 @@
     "PlanViewBoundarySHA256": "65b533f709eacbe36ec12a1f8e9a04f949aeaefd359564521779f91f99f0da30",
     "SignatureSHA256": "3c9bc97ae0b92c542bf37b65fb4966f68572ff618e4fc7a16baed2bbe16e14ec",
     "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature (from the signature alone when no process library is bound); semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family",
-    "Provisional": "un-etched plane labels unconfirmed: rebuild this contract with --build-census before freezing it"
+    "BuildCensusSHA256": "00b763e9e7c7201575b5c5ab1d508ed11c4e4e6e243496b963b04433deba529f",
+    "BuildCensusInterfaceLabels": [
+      1,
+      3100,
+      5001,
+      6001
+    ]
   },
   "VolumeMaterials": [
     {

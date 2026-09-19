@@ -85,7 +85,76 @@ function read_edges(path)
             abs(edge.tangent[3]) < 1.0e-8 &&
             abs(abs(edge.normal_sign)-1) < 1.0e-8 for edge in edges
     ) || error("Spatial coupon requires parallel or antiparallel process planes")
-    return [merge(edge,(normal_sign=sign(edge.normal_sign),)) for edge in edges]
+    edges = [merge(edge,(normal_sign=sign(edge.normal_sign),)) for edge in edges]
+    register_edge_chains!(edges)
+    return edges
+end
+
+# Coupon box rule for CAD-subdivided edges (supervisor decision 47): collinear rows of
+# one metal edge that touch end to end (same slot, conductor, plane, tangent and gap,
+# no vertex arm) form a chain, and the box extension is decided on the chain's union
+# interval instead of each row's own - the subdivision of a straight edge by the
+# source CAD must not change the coupon box. The union is expressed in each member
+# row's own edge coordinate (EDGE_CHAIN_UNIONS, filled by read_edges), so
+# extended_interval keeps its signature and every call site (box, strips, ownership)
+# sees one rule. Rows that are not chained (every registered real case: the probe of
+# 2026-09-19 found touching chains in the one-edge-cad-subdivided fixture only) keep
+# the single-row rule unchanged.
+const EDGE_CHAIN_UNIONS = Dict{Any, Tuple{Float64, Float64}}()
+const EDGE_CHAIN_RECORDS = Dict{String, Any}[]
+const COUPON_BOX_RULE =
+    "a row is extended by 2 x Radius at an end reaching Radius from its reference point " *
+    "(vertex arms at their far end); collinear touching rows of one metal edge (same slot, " *
+    "conductor, plane, tangent, gap; no vertex arm) form a chain judged on the union interval " *
+    "about its midpoint, so the source CAD's subdivision of a straight edge never changes the " *
+    "coupon box (decision 47; EdgeChains lists every chain with its union length and rows)"
+
+edge_chain_key(edge) = (edge.slot, edge.conductor, edge.point, edge.tangent, edge.gap, edge.interval)
+
+function register_edge_chains!(edges)
+    empty!(EDGE_CHAIN_UNIONS); empty!(EDGE_CHAIN_RECORDS)
+    n = length(edges)
+    tolerance = 1.0e-9 * max(1.0, maximum(maximum(abs, edge.point) for edge in edges))
+    endpoints(i) = [add(edges[i].point, scale(s, edges[i].tangent)) for s in edges[i].interval]
+    same_line(i, j) = edges[i].slot == edges[j].slot && edges[i].conductor == edges[j].conductor &&
+        !edges[i].vertex_arm && !edges[j].vertex_arm &&
+        all(abs(edges[i].tangent[d] - edges[j].tangent[d]) <= tolerance &&
+            abs(edges[i].gap[d] - edges[j].gap[d]) <= tolerance for d in 1:3) &&
+        abs(edges[i].point[3] - edges[j].point[3]) <= tolerance &&
+        begin
+            delta = (edges[j].point[1] - edges[i].point[1], edges[j].point[2] - edges[i].point[2], 0.0)
+            along = sum(delta[d] * edges[i].tangent[d] for d in 1:3)
+            sqrt(sum((delta[d] - along * edges[i].tangent[d])^2 for d in 1:3)) <= tolerance
+        end
+    touching(chain, j) = any(sqrt(sum((a[d] - b[d])^2 for d in 1:3)) <= tolerance
+                             for i in chain for a in endpoints(i) for b in endpoints(j))
+    used = falses(n)
+    for i in 1:n
+        (used[i] || edges[i].vertex_arm) && continue
+        chain = [i]; used[i] = true
+        changed = true
+        while changed
+            changed = false
+            for j in 1:n
+                (used[j] || !same_line(i, j) || !touching(chain, j)) && continue
+                push!(chain, j); used[j] = true; changed = true
+            end
+        end
+        length(chain) > 1 || continue
+        origin, tangent = edges[chain[1]].point, edges[chain[1]].tangent
+        coordinate(k, s) = sum((edges[k].point[d] - origin[d]) * tangent[d] for d in 1:3) + s
+        u0 = minimum(coordinate(k, edges[k].interval[1]) for k in chain)
+        u1 = maximum(coordinate(k, edges[k].interval[2]) for k in chain)
+        for k in chain
+            shift = coordinate(k, 0.0)
+            EDGE_CHAIN_UNIONS[edge_chain_key(edges[k])] = (u0 - shift, u1 - shift)
+        end
+        push!(EDGE_CHAIN_RECORDS, Dict{String, Any}(
+            "Rows" => sort(chain), "Slot" => edges[chain[1]].slot, "Conductor" => edges[chain[1]].conductor,
+            "UnionLength" => u1 - u0,
+            "Union" => [collect(add(origin, scale(u0, tangent))), collect(add(origin, scale(u1, tangent)))]))
+    end
+    return edges
 end
 
 function read_mask(path)
@@ -2029,7 +2098,17 @@ end
 function extended_interval(edge, radius)
     first, second = edge.interval
     extension = 2radius
-    if edge.vertex_arm
+    union = get(EDGE_CHAIN_UNIONS, edge_chain_key(edge), nothing)
+    if union !== nothing
+        # Decision 47: a chained row is extended where it carries the chain's outer end,
+        # and only when the chain's union reaches Radius from its own midpoint.
+        u0, u1 = union
+        tolerance = 1.0e-10radius
+        if (u1 - u0) / 2 >= radius - tolerance
+            abs(first - u0) <= tolerance && (first -= extension)
+            abs(second - u1) <= tolerance && (second += extension)
+        end
+    elseif edge.vertex_arm
         if abs(first) <= 1.0e-10radius
             second += extension
         elseif abs(second) <= 1.0e-10radius
@@ -5419,6 +5498,13 @@ function generate_spatial_coupon(;
                 "IsotropicSize" => lc_fine,
                 "Sqrt2IsotropicSize" => sqrt(2.0) * lc_fine,
                 "FarSize" => lc_far,
+                "CouponBox" => Dict{String, Any}(
+                    "Rule" => COUPON_BOX_RULE, "Radius" => radius,
+                    "Lower" => collect(lower), "Upper" => collect(upper),
+                    "EdgeChains" => copy(EDGE_CHAIN_RECORDS),
+                    "ChainedRows" => sum(Int[length(chain["Rows"]) for chain in EDGE_CHAIN_RECORDS]),
+                    "ExtendedChains" => count(chain -> chain["UnionLength"] / 2 >= radius - 1.0e-10radius,
+                                              EDGE_CHAIN_RECORDS)),
                 "SizeBounds" => Dict{String, Any}(
                     "Rule" => SIZE_BOUND_RULE,
                     "FarSize" => lc_far,

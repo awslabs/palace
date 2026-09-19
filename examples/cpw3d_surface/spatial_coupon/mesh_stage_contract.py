@@ -1276,6 +1276,38 @@ def validate_size_bounds(census, command):
     return bounds
 
 
+def validate_coupon_box(census):
+    """The census CouponBox record (decision 47): the box rule text, the radius, a
+    consistent box, and every CAD-subdivision chain with its rows, union length and the
+    extension verdict (a chain is extended iff its union reaches Radius from its
+    midpoint); ChainedRows / ExtendedChains are the recomputed counts."""
+    box = census.get("CouponBox")
+    if (not isinstance(box, dict) or not isinstance(box.get("Rule"), str) or
+            "subdivision" not in box["Rule"] or not isinstance(box.get("EdgeChains"), list)):
+        raise ValueError("Build census lacks the CouponBox rule record")
+    radius = _census_number(box, "Radius", "Coupon box")
+    lower, upper = box.get("Lower"), box.get("Upper")
+    if (radius <= 0.0 or not isinstance(lower, list) or not isinstance(upper, list) or
+            len(lower) != 3 or len(upper) != 3 or
+            any(not isinstance(a, (int, float)) or not isinstance(b, (int, float)) or not a < b
+                for a, b in zip(lower, upper))):
+        raise ValueError("Build census CouponBox radius or bounds are inconsistent")
+    rows, extended = 0, 0
+    for chain in box["EdgeChains"]:
+        chain_rows = chain.get("Rows") if isinstance(chain, dict) else None
+        if (not isinstance(chain_rows, list) or len(chain_rows) < 2 or
+                any(isinstance(row, bool) or not isinstance(row, int) or row <= 0 for row in chain_rows) or
+                len(set(chain_rows)) != len(chain_rows)):
+            raise ValueError("Build census CouponBox chain lacks two or more distinct rows")
+        length = _census_number(chain, "UnionLength", "Coupon box chain")
+        rows += len(chain_rows)
+        extended += length / 2.0 >= radius - 1e-10 * radius
+    if (_count(box.get("ChainedRows"), "Chained rows") != rows or
+            _count(box.get("ExtendedChains"), "Extended chains") != extended):
+        raise ValueError("Build census CouponBox chain counts do not follow the recorded chains")
+    return box
+
+
 def validate_gmsh_build_census(build_report, census, semantic):
     """The Gmsh-only build census (the build report of decision 38) is bound to the
     build command and the canonical semantic contract: the corner ball and its
@@ -1357,6 +1389,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
         if _census_number(tubes, name, "Prism tube record") != _option_or_default(command, option, None):
             raise ValueError(f"Prism tube record {name} differs from the build command {option}")
     validate_size_bounds(census, command)
+    validate_coupon_box(census)
     if tubes["TangentialSize"] != _census_number(census["SizeBounds"], "TangentialSize", "Size bounds"):
         raise ValueError("Prism tube record TangentialSize differs from the bound tangential size")
     if tubes["InnerSize"] != corner_size:

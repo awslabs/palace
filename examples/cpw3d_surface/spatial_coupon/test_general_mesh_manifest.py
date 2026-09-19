@@ -2765,6 +2765,19 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             # request, the far size and the flag recorded and bound to the command.
             self.assertFalse(census["SizeBounds"]["TangentialSizeBoundByFarSize"])
             self.assertEqual(census["SizeBounds"]["TangentialSize"], census["PrismTubes"]["TangentialSize"])
+            # Decision 47: the coupon box rule record with its CAD-subdivision chains.
+            self.assertEqual(census["CouponBox"]["EdgeChains"], [])
+            rejected(lambda c: c.pop("CouponBox"), "lacks the CouponBox rule record")
+            rejected(lambda c: c["CouponBox"].__setitem__("Upper", c["CouponBox"]["Lower"]), "bounds are inconsistent")
+            rejected(lambda c: c["CouponBox"].__setitem__("ChainedRows", 2), "chain counts do not follow")
+            rejected(lambda c: c["CouponBox"]["EdgeChains"].append({"Rows": [1], "UnionLength": 4.0}),
+                     "two or more distinct rows")
+            chained = copy.deepcopy(census)
+            chained["CouponBox"]["EdgeChains"].append({"Rows": [1, 2], "UnionLength": 4.0 * chained["CouponBox"]["Radius"]})
+            with self.assertRaisesRegex(ValueError, "chain counts do not follow"):
+                validate_gmsh_build_census(report, chained, semantic)
+            chained["CouponBox"].update({"ChainedRows": 2, "ExtendedChains": 1})
+            self.assertIs(validate_gmsh_build_census(report, chained, semantic), chained)
             rejected(lambda c: c.pop("SizeBounds"), "lacks the SizeBounds record")
             rejected(lambda c: c["SizeBounds"].__setitem__("TangentialSizeBoundByFarSize", True),
                      "min\\(--lc-tangent, FarSize\\)")

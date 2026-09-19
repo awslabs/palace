@@ -796,6 +796,93 @@ whose short tubes are mostly inside corner balls, 2-3% elsewhere), which the
 tetrahedra over-count covers except on that coupon (-0.4%). Calibration manifests
 (labeled experiments) are not gated by the estimate.
 
+### Synthetic fixtures regenerated on the Radius-2 process (supervisor decision 46) and the coupon box rule for CAD-subdivided edges (decision 47), 2026-09-19
+
+Decision 46: the five Radius-12.5 fixtures are synthetic generality tests, not gallery
+references, so a self-contradictory fixture has no evidentiary value and is
+regenerated as a consistent one: each is re-bound to the existing Radius-2 sharp
+process (`testdata/four-edge-9d2cb9bbb3fe/process.toml`, SHA `883b8b34...`: identical to
+`generality-sharp-process.toml` except Radius 12.5 -> 2.0 and the license header - the
+box every loop was authored on), its contract re-derived by
+`derive_semantic_contract.py` with a probe census, and its source hashes re-frozen as
+fixture version 2 (`FixtureVersion: 2`); the version-1 bindings (process SHA
+`703ec878...`, the pre-45(b) contract SHAs and the provisional ones of 869465f32) are
+kept in the manifest's `RetiredFixtures` record with the contradiction that retired
+them - never edited silently. The contradiction, per fixture (box the loop was
+authored on vs the Radius-12.5 box the version-1 binding produced; every Continuation
+vertex lies on the former): one-edge-straight [-4, 4] x [-8, 8] vs [-25, 25] x
+[-14.5, 14.5] (loop vertices (-4, +-8), (0, 8)); two-edge-transition [-8, 6] x [-8, 8]
+vs [-23, 27] x [-25, 25]; two-edge-multislot [-8, 8] x [-4, 8] vs [-22.5, 27.5] x
+[-25, 25]; six-edge-cluster [-9.9167, 8.9167] x [-4.5, 4.5] vs [-26, 25] x [-25.5,
+25.5]; one-edge-cad-subdivided shares one-edge-straight's loop but its two collinear
+half rows (P = (0, -1) / (0, 1), S in [-1, 1]) never reached Radius from their own
+reference points, so even at Radius 2 the pre-47 mesher shrank its box to [-4, 4] x
+[-4, 4] and the loop lay outside it (`RetiredFixtures` carries these numbers; probe
+logs under `/tmp/coupon-matrix-case05-20260919/probe-root-<case>-v1` /
+`probe-root-<case>`). Version-2 probe builds (production options): one-edge-straight
+796,062 elements (areas 1: 452.8, 3100: 64.8, 5001: 64.0, 6001: 65.6),
+two-edge-transition 1,496,338 (694.6 / 125.8 / 100.0 / 103.6 - the 06 plan at Radius
+2), two-edge-multislot 1,117,402 (7 labels, 3000 / 3001 absent), six-edge-cluster
+1,329,382 (11 labels), one-edge-cad-subdivided 796,062 with `gmsh-build.msh`
+byte-identical to one-edge-straight's (`1d19bb1c...`).
+
+Decision 47 (the fifth fixture): a coupon box that depends on how the source CAD
+subdivides a straight edge is a generality defect the `cad-subdivision-sensitivity`
+comparison exists to catch, so it is fixed in the mesher, gated by an inertness
+probe. Rule (`mesh_spatial_coupon.jl` `register_edge_chains!` / `extended_interval`,
+`COUPON_BOX_RULE`): collinear rows of one metal edge that touch end to end (same slot,
+conductor, plane, tangent and gap, no vertex arm) form a chain, and the 2 x Radius
+extension is decided on the chain's union interval about its midpoint (extended at
+both ends iff the union reaches Radius from the midpoint, i.e. total length >= 2 R -
+the single symmetric row rule applied to the union); every other row keeps the
+single-row rule exactly. Rows that merely share a line but do not touch (two edges
+separated by a slot) never chain. Recorded in the census `CouponBox` (rule, radius,
+bounds, `EdgeChains` with rows / union / union length, `ChainedRows`,
+`ExtendedChains`) and bound by `mesh_stage_contract.validate_coupon_box` (rule text,
+consistent bounds, chains with >= 2 distinct rows, recomputed counts; negatives in
+`GmshOnlyPipelineTest`); Julia test `test_edge_chains.jl` (a subdivided edge reproduces
+the unsubdivided box and extension, a chain shorter than 2 R is not extended, gapped /
+other-conductor / vertex-arm rows do not chain); the estimator's box replica carries
+the same rule (`estimate_build_cost.edge_chains`, tested). Inertness probe
+(`decision47-box-probe.txt`, the Python box replica cross-checked equal to the
+mesher's recorded box on the five trace-basis cases): the coupon box of every
+registered case of the three manifests is UNCHANGED by the rule - the only touching
+chain in the inventory is one-edge-cad-subdivided's (union length 4.0); ten-edge's four
+and six-edge's two collinear row pairs are separated by slots (e.g. ten-edge (-6.5,
+-0.6) S [0, 2] and (-6.5, 0.4) S [-2, 0]: a 1 um gap) and do not chain. Per case
+(before .. after, x-y):
+
+```
+suite             one-edge-straight                  R=2.0   before [-4.0, -8.0]..[4.0, 8.0] after [-4.0, -8.0]..[4.0, 8.0] chains=[] UNCHANGED
+suite             one-edge-cad-subdivided            R=12.5  before [-25.0, -14.5]..[25.0, 14.5] after [-25.0, -14.5]..[25.0, 14.5] chains=[(2, np.float64(4.0))] UNCHANGED
+suite             two-edge-transition                R=2.0   before [-8.0, -8.0]..[6.0, 8.0] after [-8.0, -8.0]..[6.0, 8.0] chains=[] UNCHANGED
+suite             two-edge-multislot                 R=2.0   before [-8.0, -4.0]..[8.0, 8.0] after [-8.0, -4.0]..[8.0, 8.0] chains=[] UNCHANGED
+suite             three-edge-current-calibration     R=2.0   before [-8.0, -8.0]..[6.0, 8.0] after [-8.0, -8.0]..[6.0, 8.0] chains=[] UNCHANGED
+suite             four-edge-9d2cb9bbb3fe             R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+suite             six-edge-cluster                   R=2.0   before [-9.9167, -4.5]..[8.9167, 4.5] after [-9.9167, -4.5]..[8.9167, 4.5] chains=[] UNCHANGED
+suite             ten-edge-6791f1c84123              R=2.0   before [-11.75, -8.6]..[9.8333, 8.4] after [-11.75, -8.6]..[9.8333, 8.4] chains=[] UNCHANGED
+suite             three-edge-419576fdab24            R=2.0   before [-8.0, -8.0]..[6.0, 8.0] after [-8.0, -8.0]..[6.0, 8.0] chains=[] UNCHANGED
+suite             two-edge-8dd4bc70f183              R=2.0   before [-5.0, -2.0]..[4.0, 3.0] after [-5.0, -2.0]..[4.0, 3.0] chains=[] UNCHANGED
+suite             two-edge-3f8992613e95              R=2.0   before [-4.0, -8.0]..[6.0, 8.0] after [-4.0, -8.0]..[6.0, 8.0] chains=[] UNCHANGED
+suite             concave-multislot                  R=0.5   before [-1.5, -1.5]..[2.7, 2.5] after [-1.5, -1.5]..[2.7, 2.5] chains=[] UNCHANGED
+suite             hole                               R=0.5   before [-2.3, -2.3]..[2.3, 2.3] after [-2.3, -2.3]..[2.3, 2.3] chains=[] UNCHANGED
+suite             rounded-strip                      R=0.5   before [-2.1, -1.2]..[2.1, 1.2] after [-2.1, -1.2]..[2.1, 1.2] chains=[] UNCHANGED
+suite             opposed-layers                     R=0.5   before [-2.1, -2.1]..[2.1, 2.1] after [-2.1, -2.1]..[2.1, 2.1] chains=[] UNCHANGED
+calibration-ma    four-edge-calib-ma-v1              R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-ma    four-edge-calib-ma-v2              R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-ma    four-edge-calib-ma-edge-layer-4nm  R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-ma    four-edge-calib-ma-el1nm-50        R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-ma    four-edge-calib-ma-el4c            R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-ma    four-edge-calib-ma-el1c            R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-sizingfour-edge-calib-sizing-tbr-0.5     R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+calibration-sizingfour-edge-calib-sizing-lct-0.025   R=2.0   before [-6.0, -8.0]..[10.0, 8.0] after [-6.0, -8.0]..[10.0, 8.0] chains=[] UNCHANGED
+```
+
+The unchanged real roots therefore stay valid: identical box and identical mesher
+behaviour on unchained rows; verified by rebuilding the two-edge 10 case under the new
+mesher and comparing its `gmsh-build.msh` SHA with the decision-43 root (evidence
+below).
+
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
 The 2026-09-17 record (below, under the retired recipe) found ten of the twelve
