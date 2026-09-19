@@ -1,0 +1,54 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+set(PROJECT_VERSION "@PROJECT_VERSION@")
+set(PALACE_BUILD_SYSTEM "@PALACE_BUILD_SYSTEM@")
+set(PALACE_BUILD_ID "@PALACE_BUILD_ID@")
+set(PALACE_BUILD_INFO_DEPENDENCIES [==[@PALACE_BUILD_INFO_DEPENDENCIES@]==])
+set(source_dir "@CMAKE_CURRENT_SOURCE_DIR@")
+set(output "@CMAKE_BINARY_DIR@/generated/BuildInfo.hpp")
+if(DEFINED PALACE_BUILD_INFO_SOURCE_DIR)
+  set(source_dir "${PALACE_BUILD_INFO_SOURCE_DIR}")
+endif()
+if(DEFINED PALACE_BUILD_INFO_OUTPUT)
+  set(output "${PALACE_BUILD_INFO_OUTPUT}")
+endif()
+
+set(PALACE_GIT_SHA "unavailable")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  file(REAL_PATH "${source_dir}/.." palace_root)
+  execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --show-toplevel
+    WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE result
+    OUTPUT_VARIABLE git_root ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(result EQUAL 0)
+    file(REAL_PATH "${git_root}" git_root)
+    if(git_root STREQUAL palace_root)
+      execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --verify HEAD
+        WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE result
+        OUTPUT_VARIABLE git_sha ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+      string(LENGTH "${git_sha}" git_sha_length)
+      if(result EQUAL 0 AND git_sha_length EQUAL 40 AND git_sha MATCHES "^[0-9a-f]+$")
+        execute_process(COMMAND "${GIT_EXECUTABLE}" diff --quiet HEAD --
+          WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE result ERROR_QUIET)
+        set(PALACE_GIT_SHA "${git_sha}")
+        if(result EQUAL 1)
+          string(APPEND PALACE_GIT_SHA "-dirty")
+        elseif(NOT result EQUAL 0)
+          set(PALACE_GIT_SHA "unavailable")
+        endif()
+      endif()
+    endif()
+  endif()
+endif()
+
+set(temp "${output}.tmp")
+if(DEFINED PALACE_BUILD_INFO_TEMP)
+  set(temp "${PALACE_BUILD_INFO_TEMP}")
+endif()
+configure_file("@PALACE_BUILD_INFO_MODULE_DIR@/BuildInfo.hpp.in" "${temp}" @ONLY)
+file(COPY_FILE "${temp}" "${output}" ONLY_IF_DIFFERENT RESULT copy_result)
+file(REMOVE "${temp}")
+if(NOT copy_result STREQUAL "0")
+  message(FATAL_ERROR "Could not publish build information: ${copy_result}")
+endif()
